@@ -514,8 +514,13 @@ class EnvWorker(Worker):
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
+        valid_action_mask = None
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
+            if isinstance(infos, dict):
+                valid_action_mask = infos.pop(
+                    "_robotwin_valid_action_mask", None
+                )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -573,6 +578,7 @@ class EnvWorker(Worker):
             "terminations": chunk_terminations,
             "truncations": chunk_truncations,
             "infos_list": infos_list,
+            "valid_action_mask": valid_action_mask,
         }
         return env_output, env_info, chunk_step_payload
 
@@ -601,6 +607,8 @@ class EnvWorker(Worker):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
+            if isinstance(infos, dict):
+                infos.pop("_robotwin_valid_action_mask", None)
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -1236,6 +1244,7 @@ class EnvWorker(Worker):
                             chunk_episode_payload = {
                                 **chunk_step_payload,
                                 "obs_list": [curr_obs, *obs_list[:-1]],
+                                "observations_are_action_aligned": True,
                             }
                         stage_builder.append_chunk_episode_data(
                             policy_output=policy_output,

@@ -32,7 +32,7 @@ runner:
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 20
+  val_check_interval: 200
   save_interval: -1
 
   resume_dir: null
@@ -59,6 +59,8 @@ algorithm:
       data_path: /mnt/public2/rhy/robotwin_lerobot
       rolling_lerobot_window_size: 50000
       lerobot_num_workers: 0
+      # Start training once the rolling dataset contains this many frames.
+      min_frames: 1024
 
   gamma: 0.99
 

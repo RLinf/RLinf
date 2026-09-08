@@ -238,6 +238,39 @@ class RoboTwinEnv(gym.Env):
 
         return chunk_rewards
 
+    @staticmethod
+    def _valid_action_mask_from_infos(info_list, chunk_step):
+        """Build a prefix mask for actions RoboTwin actually began executing.
+
+        Older RoboTwin revisions do not report ``executed_action_count``; in
+        that case all actions remain valid for backward compatibility.
+        """
+        executed_counts = []
+        for env_idx, info in enumerate(info_list):
+            raw_count = (
+                info.get("executed_action_count", chunk_step)
+                if isinstance(info, dict)
+                else chunk_step
+            )
+            count_values = np.asarray(raw_count).reshape(-1)
+            if count_values.size != 1:
+                raise RuntimeError(
+                    "RoboTwin executed_action_count must contain one value per "
+                    f"environment; env {env_idx} returned shape "
+                    f"{np.asarray(raw_count).shape}."
+                )
+            count = int(count_values[0])
+            if count < 0 or count > chunk_step:
+                raise RuntimeError(
+                    "RoboTwin executed_action_count must be in "
+                    f"[0, {chunk_step}], got {count} for env {env_idx}."
+                )
+            executed_counts.append(count)
+
+        counts = torch.as_tensor(executed_counts, dtype=torch.long)
+        action_indices = torch.arange(chunk_step, dtype=torch.long).unsqueeze(0)
+        return action_indices < counts.unsqueeze(1)
+
     def reset(
         self,
         env_idx: Optional[Union[int, list[int]]] = None,
@@ -338,8 +371,13 @@ class RoboTwinEnv(gym.Env):
                 f"an action chunk of length {chunk_step}."
             )
 
+        valid_action_mask = self._valid_action_mask_from_infos(
+            info_list, chunk_step
+        )
+
         obs_list = [self._extract_obs_image(raw_obs) for raw_obs in raw_obs_list]
         infos = list_of_dict_to_dict_of_list(info_list)
+        infos.pop("executed_action_count", None)
         infos_list = [{} for _ in range(chunk_step)]
         infos_list[-1] = infos
         if isinstance(terminations, list):
@@ -382,6 +420,10 @@ class RoboTwinEnv(gym.Env):
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(
                 past_dones, obs_list[-1], infos_list[-1]
             )
+
+        # Keep the public chunk_step return arity unchanged. EnvWorker removes
+        # this private field and passes it only to the online LeRobot builder.
+        infos_list[-1]["_robotwin_valid_action_mask"] = valid_action_mask
 
         chunk_terminations = torch.zeros((num_envs, chunk_step), dtype=bool)
         chunk_terminations[:, -1] = terminations

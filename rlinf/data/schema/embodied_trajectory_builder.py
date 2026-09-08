@@ -518,6 +518,55 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
             return bool(flags)
         return bool(flags)
 
+    @classmethod
+    def _normalize_valid_action_mask(
+        cls,
+        valid_action_mask,
+        *,
+        num_envs: int,
+        chunk_size: int,
+    ) -> np.ndarray | None:
+        if valid_action_mask is None:
+            return None
+        mask = cls._to_numpy(valid_action_mask)
+        if mask.shape != (num_envs, chunk_size):
+            raise ValueError(
+                "valid_action_mask must have shape "
+                f"({num_envs}, {chunk_size}), got {mask.shape}."
+            )
+        mask = np.asarray(mask, dtype=bool)
+        if chunk_size > 1 and np.any(mask[:, 1:] & ~mask[:, :-1]):
+            raise ValueError(
+                "valid_action_mask must be a contiguous prefix for every env."
+            )
+        return mask
+
+    @classmethod
+    def _flags_by_env(cls, flags, num_envs: int) -> np.ndarray:
+        values = cls._to_numpy(flags)
+        if values.ndim == 0:
+            return np.full(num_envs, bool(values), dtype=bool)
+        if values.shape[0] != num_envs:
+            raise ValueError(
+                f"Expected {num_envs} environment flags, got shape {values.shape}."
+            )
+        return np.asarray(values, dtype=bool).reshape(num_envs, -1).any(axis=1)
+
+    def _completion_info_for_env(
+        self,
+        infos_list,
+        env_idx: int,
+    ) -> Any:
+        info_batch = (
+            infos_list[-1]
+            if isinstance(infos_list, (list, tuple)) and infos_list
+            else infos_list
+        )
+        if isinstance(info_batch, dict) and "final_info" in info_batch:
+            info_batch = info_batch["final_info"]
+        env_info = self._slice_data(info_batch, env_idx, self.num_envs)
+        return copy.deepcopy(env_info)
+
     @staticmethod
     def _extract_obs_image_state(obs):
         if not isinstance(obs, dict):
@@ -753,6 +802,8 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
         terminations,
         truncations,
         infos_list,
+        valid_action_mask=None,
+        observations_are_action_aligned: bool = False,
     ) -> None:
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
         num_envs = self.num_envs
@@ -778,6 +829,16 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                 num_chunks=num_chunks,
                 action_dim=action_dim,
             )
+
+        valid_mask = self._normalize_valid_action_mask(
+            valid_action_mask,
+            num_envs=num_envs,
+            chunk_size=chunk_size,
+        )
+        if valid_mask is not None:
+            valid_lengths = valid_mask.sum(axis=1)
+            episode_terminations = self._flags_by_env(terminations, num_envs)
+            episode_truncations = self._flags_by_env(truncations, num_envs)
 
         for step_idx in range(chunk_size):
             step_obs = (
@@ -809,15 +870,35 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                 )
 
             for env_idx in range(num_envs):
-                done_by_term = self._scalar_flag(step_term, env_idx, num_envs)
-                done_by_trunc = self._scalar_flag(step_trunc, env_idx, num_envs)
+                if valid_mask is not None:
+                    if not valid_mask[env_idx, step_idx]:
+                        continue
+                    is_last_valid = step_idx == valid_lengths[env_idx] - 1
+                    done_by_term = bool(
+                        is_last_valid and episode_terminations[env_idx]
+                    )
+                    done_by_trunc = bool(
+                        is_last_valid and episode_truncations[env_idx]
+                    )
+                else:
+                    done_by_term = self._scalar_flag(step_term, env_idx, num_envs)
+                    done_by_trunc = self._scalar_flag(step_trunc, env_idx, num_envs)
                 env_done = done_by_term or done_by_trunc
                 env_obs, env_info = self._resolve_step_obs_info(
                     step_obs=step_obs,
                     step_info=step_info,
                     env_idx=env_idx,
-                    env_done=env_done,
+                    # Action-aligned inputs are already the pre-action states.
+                    # A post-action final_observation must not replace them or
+                    # seed the next episode; the next chunk carries reset obs.
+                    env_done=env_done and not observations_are_action_aligned,
                 )
+
+                completion_info = None
+                if observations_are_action_aligned and env_done:
+                    completion_info = self._completion_info_for_env(
+                        infos_list, env_idx
+                    )
 
                 if self._bool_from_env_info(env_info, "record_reset"):
                     self._env_buffers[env_idx] = []
@@ -898,6 +979,13 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                     frame[key] = self._to_uint8(np.asarray(img))
 
                 step_success = self._extract_success_from_info(frame_info)
+                if completion_info is not None:
+                    completion_success = self._extract_success_from_info(
+                        completion_info
+                    )
+                    if completion_success is not None:
+                        step_success = bool(step_success) or completion_success
+                    self._update_episode_success(env_idx, completion_info)
                 if step_success is not None:
                     frame["_frame_success"] = step_success
                 self._update_episode_success(env_idx, frame_info)
@@ -909,6 +997,24 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                         done_by_term=done_by_term,
                         done_by_trunc=done_by_trunc,
                     )
+
+        if valid_mask is not None:
+            for env_idx in range(num_envs):
+                if valid_lengths[env_idx] != 0:
+                    continue
+                done_by_term = bool(episode_terminations[env_idx])
+                done_by_trunc = bool(episode_truncations[env_idx])
+                if not (done_by_term or done_by_trunc):
+                    continue
+                self._update_episode_success(
+                    env_idx,
+                    self._completion_info_for_env(infos_list, env_idx),
+                )
+                self._maybe_flush_env(
+                    env_idx,
+                    done_by_term=done_by_term,
+                    done_by_trunc=done_by_trunc,
+                )
 
     def drain_episodes(self) -> list[list[dict[str, Any]]]:
         episodes = self.episodes
