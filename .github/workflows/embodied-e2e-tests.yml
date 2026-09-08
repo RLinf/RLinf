@@ -314,22 +314,15 @@ jobs:
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
           export LIBERO_TYPE=standard
           export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/FastWAM/models
-          export FASTWAM_CHECKPOINT_PATH=/workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
-          export FASTWAM_DATASET_STATS_PATH=/workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
           test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
           test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
           test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.2-TI2V-5B
           test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.1-T2V-1.3B
           source .venv/bin/activate
-          bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-            'cluster.component_placement={env\,rollout:0}' \
-            env.eval.total_num_envs=2 \
-            env.eval.max_episode_steps=10 \
-            env.eval.max_steps_per_rollout_epoch=10 \
-            rollout.model.model_path=${FASTWAM_CHECKPOINT_PATH} \
-            rollout.model.dataset_stats_path=${FASTWAM_DATASET_STATS_PATH}
+          bash tests/e2e_tests/embodied/run_eval.sh libero_spatial_fastwam_eval osmesa
 
       - name: Clean up
         if: always()
