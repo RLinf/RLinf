@@ -937,6 +937,9 @@ def validate_embodied_cfg(cfg):
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
 
     with open_dict(cfg):
+        cfg.rollout.enable_group_route_binding = bool(
+            cfg.rollout.get("enable_group_route_binding", False)
+        )
         if enable_eval:
             assert cfg.env.get("eval", None) is not None, (
                 "env.eval config is required when runner.val_check_interval > 0, "
@@ -1041,6 +1044,7 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    rollout_world_size = component_placement.get_world_size("rollout")
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
@@ -1076,6 +1080,17 @@ def validate_embodied_cfg(cfg):
     if cfg.runner.get("enable_decoupled_mode", False):
         assert stage_num == 1, (
             "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
+        )
+
+    if cfg.rollout.enable_group_route_binding:
+        assert cfg.runner.get("enable_decoupled_mode", False), (
+            "rollout.enable_group_route_binding=true requires "
+            "runner.enable_decoupled_mode=true"
+        )
+        assert env_world_size >= rollout_world_size, (
+            "rollout.enable_group_route_binding requires the env world size "
+            f"({env_world_size}) to be at least the rollout world size "
+            f"({rollout_world_size})"
         )
 
     if enable_eval:

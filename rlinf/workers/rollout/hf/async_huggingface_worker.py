@@ -16,7 +16,7 @@ import asyncio
 
 from omegaconf.omegaconf import DictConfig
 
-from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler import AcceleratorUtil, Channel, Worker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -68,7 +68,11 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         metric_channel: Channel,
     ):
         if self.env_decoupled_mode:
-            await self.decoupled_generate_one_epoch(input_channel, output_channel)
+            await self.decoupled_generate_one_epoch(
+                input_channel,
+                output_channel,
+                metric_channel,
+            )
         else:
             while True:
                 if self._background_weight_sync_active:
@@ -193,7 +197,10 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         return self.version
 
     async def decoupled_generate_one_epoch(
-        self, input_channel: Channel, output_channel: Channel
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        metric_channel: Channel,
     ):
         self.update_dagger_beta()
         decoupled_generate_time = 1
@@ -204,19 +211,24 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                     await self._poll_background_weight_sync()
                 await self.wait_if_stale()
             decoupled_generate_time = decoupled_generate_time + 1
-            (
-                env_output,
-                split_sizes,
-            ) = await self.recv_from_and_record_batch_routes_with_timeout(
-                group_name=self.cfg.env.group_name,
-                channel=input_channel,
-                tag="rollout_results",
-                batch_size=self.train_batch_size,
-                merge_fn=self._merge_obs_batches,
-                infer_batch_size_fn=self._infer_env_batch_size,
-                timeout_time=0.02,
-                recv_queue_size=self.rollout_queue_size,
-            )
+            with self.worker_timer("recv_wait"):
+                with AcceleratorUtil.profiling_range(
+                    self._accelerator_type, "recv_wait"
+                ):
+                    (
+                        env_output,
+                        split_sizes,
+                    ) = await self.recv_from_and_record_batch_routes_with_timeout(
+                        group_name=self.cfg.env.group_name,
+                        channel=input_channel,
+                        tag="rollout_results",
+                        batch_size=self.train_batch_size,
+                        merge_fn=self._merge_obs_batches,
+                        infer_batch_size_fn=self._infer_env_batch_size,
+                        timeout_time=0.02,
+                        recv_queue_size=self.rollout_queue_size,
+                        route_key=self._group_route_key(),
+                    )
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
@@ -228,11 +240,23 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 result,
                 final_obs=env_output.get("final_obs", None),
             )
-            self.send_to_recorded_batch_routes(
-                group_name=self.cfg.env.group_name,
-                channel=output_channel,
-                data=policy_output,
-                tag="rollout_results",
-                split_fn=self._split_policy_output,
-                split_sizes=split_sizes,
+            with self.worker_timer("send"):
+                with AcceleratorUtil.profiling_range(self._accelerator_type, "send"):
+                    self.send_to_recorded_batch_routes(
+                        group_name=self.cfg.env.group_name,
+                        channel=output_channel,
+                        data=policy_output,
+                        tag="rollout_results",
+                        split_fn=self._split_policy_output,
+                        split_sizes=split_sizes,
+                        route_key=self._group_route_key(),
+                    )
+
+            rollout_metrics = {
+                f"time/rollout/{key}": value
+                for key, value in self.pop_execution_times().items()
+            }
+            metric_channel.put(
+                {"rank": self._rank, "time": rollout_metrics},
+                async_op=True,
             )

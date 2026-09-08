@@ -84,6 +84,14 @@ class EmbodiedRunner:
         profile_steps_raw = (
             profiling_raw.get("steps", None) if profiling_enabled else None
         )
+        profile_groups_raw = (
+            profiling_raw.get("worker_groups", []) if profiling_enabled else []
+        )
+        if isinstance(profile_groups_raw, str):
+            profile_groups_raw = [profile_groups_raw]
+        self._profile_worker_groups = {
+            str(group_name).lower() for group_name in profile_groups_raw
+        }
         self._profile_all_steps = profiling_enabled and profile_steps_raw is None
         self._profile_steps: set[int] | None = (
             {int(s) for s in profile_steps_raw}
@@ -458,22 +466,56 @@ class EmbodiedRunner:
         self.log_thread.join(timeout=1.0)
 
     def _should_profile_step(self, step_idx: int) -> bool:
-        return self._profile_all_steps or (
-            self._profile_steps is not None and step_idx in self._profile_steps
+        return bool(self._profile_worker_groups) and (
+            self._profile_all_steps
+            or (self._profile_steps is not None and step_idx in self._profile_steps)
         )
 
+    def _starts_profiling_window(self, step_idx: int) -> bool:
+        """Return whether ``step_idx`` starts an explicit contiguous window."""
+        if not self._should_profile_step(step_idx):
+            return False
+        return self._profile_steps is None or step_idx - 1 not in self._profile_steps
+
+    def _ends_profiling_window(self, step_idx: int) -> bool:
+        """Return whether ``step_idx`` ends an explicit contiguous window."""
+        if not self._should_profile_step(step_idx):
+            return False
+        return self._profile_steps is None or step_idx + 1 not in self._profile_steps
+
+    def _profiling_targets(self):
+        """Yield only workers selected by ``cluster.profiling.worker_groups``."""
+        candidates = (
+            (self.cfg.actor.group_name, self.actor),
+            (self.cfg.rollout.group_name, self.rollout),
+            (self.cfg.env.group_name, self.env),
+            (self.cfg.reward.get("group_name", "RewardGroup"), self.reward),
+            (self.cfg.critic.get("group_name", "CriticGroup"), self.critic),
+        )
+        profile_all = "all" in self._profile_worker_groups
+        for group_name, worker in candidates:
+            if worker is not None and (
+                profile_all or str(group_name).lower() in self._profile_worker_groups
+            ):
+                yield worker
+
     def _open_profiling_window(self, step_idx: int) -> None:
-        """Dispatch ``start_profile`` to all compute worker groups for this step."""
+        """Open the capture window on selected, profiler-wrapped workers only."""
         self.logger.info(f"Opening profiling window at step {step_idx}")
-        self.actor.start_profile(step_idx).wait()
-        self.rollout.start_profile(step_idx).wait()
-        self.env.start_profile(step_idx).wait()
+        handles = [
+            worker.start_profile(step_idx) for worker in self._profiling_targets()
+        ]
+        for handle in handles:
+            handle.wait()
 
     def _close_profiling_window(self, step_idx: int) -> None:
-        """Dispatch ``stop_profile`` to all compute worker groups."""
-        self.actor.stop_profile().wait()
-        self.rollout.stop_profile().wait()
-        self.env.stop_profile().wait()
+        """Close the capture window on selected, profiler-wrapped workers only."""
+        # Dispatch every stop before waiting. Nsight report finalization can take
+        # seconds; sequential dispatch would let later groups keep recording
+        # while the first report is being exported.
+        handles = [worker.stop_profile() for worker in self._profiling_targets()]
+        for handle in handles:
+            handle.wait()
         self.logger.info(f"Closed profiling window at step {step_idx}")
 
     def run(self):
@@ -492,7 +534,9 @@ class EmbodiedRunner:
                 if self._should_profile_step(self.global_step)
                 else None
             )
-            if profiled_step is not None:
+            if profiled_step is not None and self._starts_profiling_window(
+                profiled_step
+            ):
                 self._open_profiling_window(profiled_step)
 
             with self.timer("step", trace_args={"step_idx": _step}):
@@ -545,7 +589,9 @@ class EmbodiedRunner:
                 self.global_step += 1
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
 
-            if profiled_step is not None:
+            if profiled_step is not None and self._ends_profiling_window(
+                profiled_step
+            ):
                 self._close_profiling_window(profiled_step)
 
             self._log_step_metrics(
@@ -576,7 +622,9 @@ class EmbodiedRunner:
                 if self._should_profile_step(self.global_step)
                 else None
             )
-            if profiled_step is not None:
+            if profiled_step is not None and self._starts_profiling_window(
+                profiled_step
+            ):
                 self._open_profiling_window(profiled_step)
 
             with self.timer("step", trace_args={"step_idx": _step}):
@@ -624,7 +672,9 @@ class EmbodiedRunner:
                 self.global_step += 1
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
 
-            if profiled_step is not None:
+            if profiled_step is not None and self._ends_profiling_window(
+                profiled_step
+            ):
                 self._close_profiling_window(profiled_step)
 
             self._log_step_metrics(

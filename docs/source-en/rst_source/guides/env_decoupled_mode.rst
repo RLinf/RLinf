@@ -82,6 +82,93 @@ A smaller ``rollout_queue_size`` usually reduces waiting time. A larger value ma
 improve inference batch utilization, but it may also increase the waiting time
 for each aggregation.
 
+Per-Group Route Binding
+-----------------------
+
+By default, decoupled mode uses a single global pool where any Rollout Worker
+may fetch any Env batch. Setting ``rollout.enable_group_route_binding: true``
+(default ``false``) instead partitions the pool into fixed per-group bindings:
+Env rank ``e`` maps to Rollout rank
+``floor(e * rollout_world_size / env_world_size)``. This proportional mapping
+supports non-divisible ratios, keeps group sizes within one Env Worker of each
+other, and guarantees that every Rollout Worker has at least one Env Worker
+when ``env_world_size >= rollout_world_size``.
+
+Each group uses the same ``route_key`` for Env-to-Rollout requests and
+Rollout-to-Env replies in both training and evaluation. The key is logical queue
+isolation inside the shared ChannelWorker; it does not launch another channel
+process or create a separate transport. There is no global-pool work stealing
+across keys.
+
+.. code-block:: yaml
+
+   runner:
+     enable_decoupled_mode: true
+
+   rollout:
+     enable_group_route_binding: true
+
+This gives a fixed ``1`` Rollout : ``N`` Env-Worker overlap, replicable as
+independent groups across a robot fleet — useful for real-robot rollout where
+each Rollout Worker drives a fixed set of robots. Non-divisible Env-to-Rollout
+ratios are supported as long as ``env_world_size >= rollout_world_size``.
+Set ``rollout.rollout_queue_size: 1`` when each robot must be served
+individually with inference batch size one instead of aggregating requests.
+
+Turtle2 Four-Stream Bringup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``realworld_dummy_turtle2_async_ppo_openpi_pi05_2gpu_4stream`` is a short
+single-node system example. Actor/train is fixed to GPU 0, rollout to GPU 1,
+and four CPU-only Env ranks share node 0. Because there is one Rollout rank,
+all four Env ranks map to ``grp0`` and are served one at a time with
+``rollout_queue_size: 1``. The example reuses ``RLinf-Pi05-LIBERO-SFT`` and its
+normalization statistics only for dummy bringup and profiling; zero dummy
+rewards do not demonstrate policy learning.
+
+The reference RTX PRO 5000 host requires ``NCCL_P2P_DISABLE=1`` for reliable
+two-GPU collectives. The sample sets it on the GPU node group and uses bucket
+weight synchronization after every global step; remove that environment
+override only after validating direct P2P on a different host.
+
+Run the five-step smoke test from the repository root, overriding both model
+paths if the checkpoint is not mounted at the path in the YAML:
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$PWD/examples/embodiment"
+   export MODEL_PATH=/absolute/path/to/RLinf-Pi05-LIBERO-SFT
+   python examples/embodiment/train_async.py \
+     --config-path examples/embodiment/config \
+     --config-name realworld_dummy_turtle2_async_ppo_openpi_pi05_2gpu_4stream \
+     actor.model.model_path="$MODEL_PATH" \
+     rollout.model.model_path="$MODEL_PATH"
+
+The resolved configuration is printed at startup. TensorBoard data and
+per-worker logs are written below ``runner.logger.log_path``. To capture one
+complete step after warm-up with Nsight Systems, enable the profile block:
+
+.. code-block:: bash
+
+   python examples/embodiment/train_async.py \
+     --config-path examples/embodiment/config \
+     --config-name realworld_dummy_turtle2_async_ppo_openpi_pi05_2gpu_4stream \
+     actor.model.model_path="$MODEL_PATH" \
+     rollout.model.model_path="$MODEL_PATH" \
+     cluster.profiling.enabled=true \
+     'cluster.profiling.steps=[3]'
+
+RLinf injects ``nsys profile`` around ``ActorGroup`` and ``RolloutGroup`` only;
+the four Env workers remain unwrapped and report per-rank chunk timing through
+RLinf metrics. Reports are under
+``<log_path>/<experiment_name>/profiling``. Export the two standard summaries
+with, for example:
+
+.. code-block:: bash
+
+   nsys stats --report nvtx_sum --format csv --timeunit ms worker.nsys-rep
+   nsys stats --report cuda_gpu_kern_sum --format csv --timeunit ms worker.nsys-rep
+
 Training Flow
 -------------
 
