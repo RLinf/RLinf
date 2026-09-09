@@ -103,6 +103,4 @@ def test_reset_history_stops_a_window_spanning_episodes(slots):
 
     lengths = [len(frames) for frames, _ in scorer.calls[NUM_ENVS:]]
     cleared = set(range(NUM_ENVS)) if slots is None else set(slots)
-    assert lengths == [
-        CHUNK if env in cleared else WINDOW for env in range(NUM_ENVS)
-    ]
+    assert lengths == [CHUNK if env in cleared else WINDOW for env in range(NUM_ENVS)]
