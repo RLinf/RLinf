@@ -365,6 +365,47 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
             env.close()
 
 
+def test_depth_reaches_the_policy_split_like_the_frames_beside_it():
+    """A policy reads depth the way it reads images: main view, then the rest.
+
+    The runner never sees the per-camera dict, so depth has to follow the same
+    main/extra split as the frames, keyed by the same camera.
+    """
+    from rlinf.envs.real.env import RealWorldEnv
+
+    def wrap(raw_observation):
+        env = RealWorldEnv.__new__(RealWorldEnv)
+        env.main_image_key = "wrist_1"
+        env.task_descriptions = ["pick up the cube"]
+        return env._wrap_obs(raw_observation)
+
+    frames = {
+        "wrist_1": np.zeros((1, 4, 4, 3), dtype=np.uint8),
+        "wrist_2": np.ones((1, 4, 4, 3), dtype=np.uint8),
+    }
+    state = {"tcp_pose": np.zeros((1, 7), dtype=np.float32)}
+
+    observation = wrap({"state": state, "frames": frames})
+    assert "main_depths" not in observation
+    assert "extra_view_depths" not in observation
+
+    observation = wrap(
+        {
+            "state": state,
+            "frames": frames,
+            "depths": {
+                "wrist_1": np.full((1, 4, 4), 0.5, dtype=np.float32),
+                "wrist_2": np.full((1, 4, 4), 1.5, dtype=np.float32),
+            },
+        }
+    )
+    assert observation["main_depths"].shape == (1, 4, 4)
+    assert torch.allclose(observation["main_depths"], torch.tensor(0.5))
+    # The extra views stack on axis 1, as the extra images do.
+    assert observation["extra_view_depths"].shape == (1, 1, 4, 4)
+    assert torch.allclose(observation["extra_view_depths"], torch.tensor(1.5))
+
+
 def test_franka_dummy_preserves_legacy_policy_schema():
     env = FrankaEnv(
         override_cfg={
@@ -626,6 +667,86 @@ def test_gim_arm_reopens_the_existing_camera_after_a_stall(monkeypatch):
 
     assert camera.reopens == 1
     assert frames["wrist_1"].shape == (4, 4, 3)
+
+
+def test_dual_franka_reads_depth_beside_each_frame():
+    """Both arms' cameras report depth through the same reading as the frame.
+
+    The dual env reads each camera on its own so a stalled one cannot stall
+    the control loop, which is why depth has to arrive on that path too.
+    """
+    near, far = 0.5, 1.5
+
+    class _Camera:
+        def __init__(self, with_depth):
+            self.timeouts = []
+            self._with_depth = with_depth
+
+        def get_observation(self, timeout=5, attempts=1, wait=0.0):
+            self.timeouts.append(timeout)
+            frame = np.zeros((8, 8, 3), dtype=np.uint8)
+            if not self._with_depth:
+                return {"frame": frame}
+            # The near/far step sits off the resize grid so an averaging
+            # resample would show up as a distance nothing measured.
+            depth = np.full((8, 8), far, dtype=np.float32)
+            depth[:, :3] = near
+            return {"frame": frame, "depth": depth}
+
+    def read(with_depth):
+        env = DualFrankaJointEnv.__new__(DualFrankaJointEnv)
+        camera = _Camera(with_depth)
+        env._cameras = {"left_wrist_0_rgb": camera}
+        env._last_camera_frame = {}
+        env._logger = SimpleNamespace(error=lambda *args, **kwargs: None)
+        env.camera_player = SimpleNamespace(put_frame=lambda frames: None)
+        env.observation_space = gym.spaces.Dict(
+            {
+                "frames": gym.spaces.Dict(
+                    {
+                        "left_wrist_0_rgb": gym.spaces.Box(
+                            0, 255, shape=(4, 4, 3), dtype=np.uint8
+                        )
+                    }
+                )
+            }
+        )
+        return camera, env._get_camera_observation()
+
+    camera, (frames, depths) = read(with_depth=False)
+    assert frames["left_wrist_0_rgb"].shape == (4, 4, 3)
+    assert depths == {}
+    # Read on the control period, not the default timeout, so a stalled
+    # camera falls back to its last reading instead of holding the loop.
+    assert camera.timeouts == [0.5]
+
+    _, (frames, depths) = read(with_depth=True)
+    depth = depths["left_wrist_0_rgb"]
+    assert depth.shape == (4, 4)
+    # Nearest resampling keeps every pixel at a measured distance.
+    distances = np.unique(depth)
+    assert len(distances) == 2
+    assert np.allclose(distances, [near, far])
+
+
+def test_dual_franka_declares_depth_only_where_a_camera_captures_it():
+    """The depth space follows the cameras, so a rig without one is unchanged."""
+
+    def camera_spaces(enable_camera_depth):
+        env = DualFrankaJointEnv.__new__(DualFrankaJointEnv)
+        env.hardware = DualFrankaConfig(
+            node_rank=0, base_camera_serials=["dummy"], camera_type="realsense"
+        )
+        env.config = SimpleNamespace(enable_camera_depth=enable_camera_depth)
+        return env._build_camera_spaces()
+
+    assert set(camera_spaces(False)) == {"frames"}
+
+    spaces = camera_spaces(True)
+    assert set(spaces) == {"frames", "depths"}
+    depth_space = spaces["depths"]["base_0_rgb"]
+    assert depth_space.shape == spaces["frames"]["base_0_rgb"].shape[:2]
+    assert depth_space.dtype == np.float32
 
 
 def test_dual_franka_runs_independent_arm_calls_concurrently():

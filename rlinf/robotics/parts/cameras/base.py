@@ -160,15 +160,21 @@ class BaseCamera(Camera, ABC):
             return False
         return True
 
-    def get_observation(self) -> Observation:
+    def get_observation(
+        self, timeout: float = 5, attempts: int = 1, wait: float = 0.0
+    ) -> Observation:
         """Return the latest frame, and its depth map in metres if captured.
 
         A driver that captures depth appends it to the frame as a fourth
         channel, which keeps one array moving through the capture thread. It
         is separated here because colour and depth are different dtypes in
         different units, and every reader would otherwise repeat this.
+
+        The read parameters are those of :meth:`get_frame`, for a caller on a
+        fixed control period that would rather reuse its last observation than
+        wait out the default timeout.
         """
-        frame = self.get_frame()
+        frame = self.get_frame(timeout=timeout, attempts=attempts, wait=wait)
         if not self._camera_info.enable_depth:
             return {"frame": frame}
         return {
