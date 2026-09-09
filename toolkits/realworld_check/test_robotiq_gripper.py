@@ -36,10 +36,11 @@ def main():
     parser.add_argument("--baudrate", type=int, default=115200, help="Modbus baud rate")
     args = parser.parse_args()
 
-    from rlinf.envs.realworld.common.gripper.robotiq_gripper import RobotiqGripper
+    from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
 
     print(f"[INFO] Connecting to Robotiq gripper on {args.port} ...")
     gripper = RobotiqGripper(port=args.port, baudrate=args.baudrate)
+    gripper.connect()
 
     if not gripper.is_ready():
         print("[ERROR] Gripper activation failed.")
@@ -60,12 +61,13 @@ def main():
         f"  position after close: {gripper.position:.4f} m, is_open={gripper.is_open}"
     )
 
-    print("[INFO] Moving to mid position (128) ...")
-    gripper.move(128)
+    half_open = gripper.max_width / 2
+    print(f"[INFO] Moving to half open ({half_open:.4f} m) ...")
+    gripper.move(half_open)
     time.sleep(2.0)
     print(f"  position after move: {gripper.position:.4f} m, is_open={gripper.is_open}")
 
-    gripper.cleanup()
+    gripper.disconnect()
     print("[INFO] Robotiq gripper check completed.")
 
 

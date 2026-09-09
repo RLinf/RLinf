@@ -16,7 +16,21 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0
+    actor,rollout: 0
+    env:
+      node_group: franka
+      placement: 0
+
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - node_rank: 0
+            disable_validate: true
+            robot_ip: 0.0.0.0
+            camera_serials: ["0123456789"]
 
 runner:
   task_type: embodied
@@ -73,9 +87,6 @@ env:
     override_cfg:
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
-      # Dummy placeholders for robot and camera
-      robot_ip: 0.0.0.0
-      camera_serials: ["0123456789", ]
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
@@ -86,9 +97,6 @@ env:
     override_cfg:
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
-      # Dummy placeholders for robot and camera
-      robot_ip: 0.0.0.0
-      camera_serials: ["0123456789", ]
 
 rollout:
   group_name: "RolloutGroup"

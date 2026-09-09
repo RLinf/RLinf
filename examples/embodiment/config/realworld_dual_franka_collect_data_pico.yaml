@@ -55,10 +55,9 @@ env:
     no_gripper: False
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: False
-    use_gello: False
-    use_gello_joint: False
-    use_pico: True
+    teleop:
+      - {pico: {drives: left}}
+      - {pico: {drives: right}}
 
     # Keep long enough for manual collection. The keyboard wrapper normally
     # terminates successful episodes before this limit.
@@ -76,8 +75,8 @@ env:
     # Shared keys are copied to both PicoExpert instances. The per-hand blocks
     # below only override values that differ between controllers:
     # left controller -> left arm action slice, right controller -> right arm
-    # action slice. DualFrankaTcpPicoIntervention adapts the 7D PicoExpert
-    # delta TCP command into the 20D DualFrankaTcpEnv rot6d action.
+    # action slice. PicoTcp composes each controller's delta onto the
+    # measured TCP pose, as the 20D DualFrankaTCPEnv rot6d action.
     pico:
       # Address of the external VR publisher. It should publish one JSON stream
       # containing headset_pose, left_controller, right_controller, and buttons.

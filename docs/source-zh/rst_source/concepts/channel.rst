@@ -26,6 +26,14 @@ Channel 模块提供分布式生产者—消费者队列，用于在 Worker 之�
 Worker 后，通信会自动绑定到该 Worker。已经在 Worker 内运行的代码也可以调用
 ``self.create_channel(...)`` 或 ``self.connect_channel("Samples")``。
 
+创建 channel 时会决定队列的放置位置、启动持有它的 actor，并返回一个句柄：
+
+- **决定队列放在哪里** — ``local=True`` 时队列留在调用进程内部，其他 Worker 无法连接。否则由 ``ChannelWorker`` actor 持有：放在 ``node_rank`` 指定的节点上；``distributed=True`` 时则每个节点各放一个。不指定 ``node_rank`` 时，channel 会放在第一个生产者所在的节点上，其次是第一个消费者，再次是创建它的 Worker，从而让 channel 靠近它承载的流量。
+- **启动 actor** — 用 ``NodePlacementStrategy`` 在选定的一个或多个节点上启动持有队列的 ``ChannelWorker``。如果同名 channel 已经存在，会直接连接到它，而不是报错。
+- **返回** 一个封装该 actor 的 ``Channel`` 对象。
+
+分布式 channel 会在某个 ``key`` 第一次被使用时把它绑定到一个副本上，选的是调用方所在节点的那个副本，数据因此留在产生它的地方。只有当同一个 key 总是从同一个节点产生时这才划算；如果 key 来自任意节点，就只剩下路由开销而没有局部性，此时 ``distributed`` 保持 False 即可。
+
 放入、获取和批量获取数据
 --------------------------
 

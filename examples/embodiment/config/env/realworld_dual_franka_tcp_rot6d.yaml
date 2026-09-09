@@ -1,5 +1,4 @@
-env_type: realworld
-
+env_type: real
 total_num_envs: 1
 
 auto_reset: True
@@ -12,9 +11,7 @@ use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 300
 max_episode_steps: 300
 # No teleop during autonomous policy rollout.
-use_spacemouse: False
-use_gello: False
-use_gello_joint: False
+teleop: none
 # Skip DualRelativeFrame / DualQuat2EulerWrapper — rot6d TCP obs can't be
 # euler'd without hitting gimbal on wrist pitch ≈ ±90°.
 use_relative_frame: False

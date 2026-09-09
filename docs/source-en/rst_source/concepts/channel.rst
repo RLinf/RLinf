@@ -28,6 +28,15 @@ produce or consume data:
 
 ``produce`` and ``consume`` are application-defined worker methods in this
 example. Passing the channel into a worker binds communication to that worker.
+
+Creating a channel places its queue, launches the actor that owns it, and
+returns a handle:
+
+- **Places the queue** — With ``local=True`` the queue stays inside the calling process, where no other worker can reach it. Otherwise a ``ChannelWorker`` actor holds it: one on the node given by ``node_rank``, or one on every node when ``distributed=True``. Leaving ``node_rank`` unset places the channel on its first producer's node, falling back to its first consumer and then to the creating worker, so a channel sits next to the traffic it carries.
+- **Launches the actor** — ``NodePlacementStrategy`` starts the ``ChannelWorker`` on the chosen node or nodes. Creating a channel whose name is already taken connects to the existing one instead of failing.
+- **Returns** a ``Channel`` object that wraps the actor.
+
+A distributed channel binds each ``key`` to one replica the first time that key is used, choosing the replica on the caller's own node, so data stays where it was produced. That pays off only when a key is always produced from the same node; a key arriving from anywhere buys routing overhead and no locality, so leave ``distributed`` at False.
 Code already running inside a worker may instead call
 ``self.create_channel(...)`` or ``self.connect_channel("Samples")``.
 

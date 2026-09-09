@@ -17,7 +17,7 @@
 Bypasses policy inference across action-chunk boundaries while human teleop
 continues. Requires ``algorithm.loss_type=embodied_dagger`` with online LeRobot
 collection enabled, a ``realworld`` env, and PICO teleop
-(``env.train.use_pico=True``); SpaceMouse is not supported. The env only
+(``env.train.teleop: pico``); SpaceMouse is not supported. The env only
 supplies hold actions; this module owns external-action request construction and the
 per-stage continue/skip state.
 """
@@ -28,6 +28,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.data.schema.embodied_types import PolicyInput
+from rlinf.envs import SupportedEnvType
 from rlinf.envs.utils import get_env_attr
 
 
@@ -88,7 +89,10 @@ class SmoothInterveneController:
                 raise ValueError(
                     "smooth_intervene requires algorithm.dagger.online_lerobot.enabled=True"
                 )
-            if OmegaConf.select(cfg, "env.train.env_type") != "realworld":
+            if (
+                SupportedEnvType(OmegaConf.select(cfg, "env.train.env_type"))
+                is not SupportedEnvType.REAL
+            ):
                 raise ValueError(
                     "smooth_intervene requires env.train.env_type to be 'realworld'"
                 )
@@ -96,15 +100,25 @@ class SmoothInterveneController:
                 raise ValueError(
                     "smooth_intervene requires exactly one env per EnvWorker stage"
                 )
-            if not bool(OmegaConf.select(cfg, "env.train.use_pico", default=False)):
+            # Imported here so a worker that never touches real hardware does
+            # not pay for the realworld env package at import time.
+            from rlinf.envs.real.wrappers.teleop.config import (
+                resolve_teleop_devices,
+            )
+            from rlinf.robotics.parts.teleop import TeleopDevice
+
+            # Every registered device, so a config naming a real one that this
+            # check then rejects says why -- rather than reporting it as a
+            # device that does not exist.
+            devices = resolve_teleop_devices(
+                OmegaConf.select(cfg, "env.train") or {},
+                supported=TeleopDevice.names(),
+            )
+            named = [d if isinstance(d, str) else next(iter(dict(d))) for d in devices]
+            if not named or any(name != "pico" for name in named):
                 raise ValueError(
-                    "smooth_intervene requires env.train.use_pico=True "
-                    "(PICO-only; SpaceMouse is not supported)"
-                )
-            if bool(OmegaConf.select(cfg, "env.train.use_spacemouse", default=False)):
-                raise ValueError(
-                    "smooth_intervene does not support SpaceMouse; "
-                    "set env.train.use_spacemouse=False and use_pico=True"
+                    "smooth_intervene requires every env.train.teleop entry to be "
+                    f"pico (PICO-only; got {named!r})"
                 )
         model_path = "actor.model" if enable_train else "rollout.model"
         return cls(
