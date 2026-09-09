@@ -434,7 +434,7 @@ Stage 2：运行 RLT Actor-Critic
 
 当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
 控制阶段。其他功能可根据具体任务需求进行定制
-（``rlinf/envs/realworld/common/wrappers/keyboard_rlt_policy_switch_wrapper.py``）。
+（``rlinf/envs/real/wrappers/episode/policy_switch.py``）。
 
 运行 ManiSkill Joint 示例
 -------------------------

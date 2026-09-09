@@ -565,7 +565,7 @@ inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
      group_name: "EnvGroup"
      eval:
        no_gripper: False
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        keyboard_reward_wrapper: single_stage
        override_cfg:
@@ -581,7 +581,7 @@ inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
   disable downsampling.
 - ``env.eval.keyboard_reward_wrapper`` — set to ``single_stage`` (or the appropriate
   stage key for your task) to enable the keyboard labeling interface.
-- ``env.eval.use_spacemouse`` — whether SpaceMouse is used for teleoperation (the
+- ``env.eval.teleop`` — which device takes over from the policy (the
   ``intervene_action`` in step info overrides the zero dummy action).
 - ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
 
@@ -845,7 +845,7 @@ which inherits environment parameters from ``env/realworld_bin_relocation.yaml``
      group_name: "EnvGroup"
      eval:
        no_gripper: True
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        override_cfg:
          target_ee_pose: TARGET_EE_POSE
@@ -910,8 +910,8 @@ How It Works
 
 Inside ``TeleopWorker``:
 
-1. ``RealWorldEnv`` is initialized with ``use_spacemouse=True``, wrapping the gym env with
-   ``SpacemouseIntervention``. Non-zero SpaceMouse input (or a button press) overrides the
+1. ``RealWorldEnv`` is initialized with ``teleop: spacemouse``, wrapping the gym env with
+   a SpaceMouse teleop intervention. Non-zero SpaceMouse input (or a button press) overrides the
    zero dummy action for 0.5 seconds.
 2. ``EmbodiedRewardWorker`` is launched on the GPU node via
    ``EmbodiedRewardWorker.launch_for_realworld(...)`` and initialized once at startup.
