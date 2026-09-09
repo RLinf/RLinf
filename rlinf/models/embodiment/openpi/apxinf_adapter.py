@@ -458,12 +458,12 @@ class OpenPIApxInfAdapter:
             image_size=int(self.model.image_size),
         )
         batch_size = len(prepared)
-        explicit_noise = env_obs.get("noise")
-        if self.noise_source == "observation" and explicit_noise is None:
-            raise ValueError("noise_source=observation requires env_obs['noise']")
-        sampled_noise = (
-            None if explicit_noise is not None else self._sample_noise(batch_size)
-        )
+        explicit_noise = None
+        if self.noise_source == "observation":
+            explicit_noise = env_obs.get("noise")
+            if explicit_noise is None:
+                raise ValueError("noise_source=observation requires env_obs['noise']")
+        sampled_noise = self._sample_noise(batch_size)
 
         normalized_rows = []
         timings = []

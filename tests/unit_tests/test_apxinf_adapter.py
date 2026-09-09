@@ -171,6 +171,23 @@ def test_observation_noise_is_required():
         adapter.predict_action_batch(_env_obs())
 
 
+def test_observation_noise_does_not_override_other_noise_sources():
+    env_obs = _env_obs()
+    explicit_noise = torch.full((2, 10, 32), 123.0)
+    env_obs["noise"] = explicit_noise
+
+    apxinf_model = _FakeModel()
+    _adapter(model=apxinf_model, noise_source="apxinf").predict_action_batch(env_obs)
+    assert all(call[3] is None for call in apxinf_model.calls)
+
+    torch_model = _FakeModel()
+    torch_adapter = _adapter(model=torch_model, noise_source="torch")
+    torch_adapter.predict_action_batch(env_obs)
+    assert all(call[3] is not None for call in torch_model.calls)
+    for index, call in enumerate(torch_model.calls):
+        assert not np.array_equal(call[3], explicit_noise[index].numpy())
+
+
 def test_torch_noise_is_reproducible_and_has_model_shape():
     model_a = _FakeModel()
     model_b = _FakeModel()
