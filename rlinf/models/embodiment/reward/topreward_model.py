@@ -109,10 +109,20 @@ class TOPRewardModel(nn.Module):
             + PROMPT_PREFIX
             + PROMPT_SUFFIX.format(instruction=instruction)
         )
+        pil = self._to_pil(frames_chw)
+        # Without video_metadata the processor assumes 24 fps, reads the clip as 0.67 s
+        # and hands the model 4 of the 16 frames (grid_thw t=2 rather than t=8).
         inputs = self.processor(
             text=[text],
-            videos=[self._to_pil(frames_chw)],
+            videos=[pil],
             fps=self.fps,
+            video_metadata=[
+                {
+                    "fps": self.fps,
+                    "total_num_frames": len(pil),
+                    "duration": len(pil) / self.fps,
+                }
+            ],
             return_tensors="pt",
         ).to(self.model.device)
         logits = self.model(**inputs).logits[0, -1].float()
