@@ -15,11 +15,12 @@
 """Tests for the collective timeout of the FSDP device mesh.
 
 ``init_device_mesh`` creates the default process group itself when none exists,
-using the backend's built-in 30-minute watchdog timeout. A mesh dimension that
-spans the whole world reuses that group, so every FSDP collective inherits the
-30 minutes, and no environment variable can raise it. ``create_device_mesh``
-therefore creates the group first, with the same ``RLINF_TIMEOUT`` that RLinf
-applies to its own inter-worker groups.
+using whatever watchdog timeout the backend ships with — 30 minutes for
+NCCL/Gloo, about 60 for HCCL, in every case below the 180 minutes RLinf gives
+its own groups. A mesh dimension that spans the whole world reuses that group,
+so every FSDP collective inherits that timeout, and no environment variable can
+raise it. ``create_device_mesh`` therefore creates the group first, with the
+same ``RLINF_TIMEOUT`` that RLinf applies to its own inter-worker groups.
 """
 
 import logging
@@ -34,9 +35,14 @@ from rlinf.hybrid_engines.fsdp.utils import create_device_mesh
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
 
-# The watchdog timeout a bare init_process_group() would install, and the value
-# create_device_mesh must be able to override.
-TORCH_DEFAULT_TIMEOUT = timedelta(minutes=30)
+# The timeout a bare init_process_group() installs is backend-specific -- 30
+# minutes for NCCL and Gloo, 3636 seconds for HCCL on Ascend -- so no test here
+# may hardcode it. What every backend has in common is that the value is not the
+# one RLINF_TIMEOUT asked for, and that it is below RLinf's own 180-minute
+# default. CONFIGURED_TIMEOUT is an arbitrary value distinguishable from all of
+# them.
+CONFIGURED_TIMEOUT = timedelta(minutes=97)
+RLINF_DEFAULT_TIMEOUT = timedelta(minutes=180)
 
 
 def free_port() -> str:
@@ -107,14 +113,14 @@ def group_timeout(group: dist.ProcessGroup) -> timedelta:
 
 
 def test_mesh_group_uses_the_configured_timeout(single_rank_env, monkeypatch):
-    """The mesh's process group carries RLINF_TIMEOUT, not torch's 30 minutes."""
-    monkeypatch.setenv("RLINF_TIMEOUT", "97")
+    """The mesh's process group carries RLINF_TIMEOUT, not the backend default."""
+    monkeypatch.setenv(
+        "RLINF_TIMEOUT", str(int(CONFIGURED_TIMEOUT.total_seconds() // 60))
+    )
 
     mesh = create_device_mesh(1)
 
-    timeout = group_timeout(mesh["fsdp"].get_group())
-    assert timeout == timedelta(minutes=97)
-    assert timeout != TORCH_DEFAULT_TIMEOUT
+    assert group_timeout(mesh["fsdp"].get_group()) == CONFIGURED_TIMEOUT
 
 
 def test_mesh_group_defaults_above_the_torch_watchdog(single_rank_env, monkeypatch):
@@ -123,7 +129,7 @@ def test_mesh_group_defaults_above_the_torch_watchdog(single_rank_env, monkeypat
 
     mesh = create_device_mesh(1)
 
-    assert group_timeout(mesh["fsdp"].get_group()) == timedelta(minutes=180)
+    assert group_timeout(mesh["fsdp"].get_group()) == RLINF_DEFAULT_TIMEOUT
 
 
 def test_existing_process_group_is_left_alone(single_rank_env, monkeypatch, caplog):
@@ -131,9 +137,11 @@ def test_existing_process_group_is_left_alone(single_rank_env, monkeypatch, capl
 
     RLINF_TIMEOUT cannot be applied retroactively, so the only thing left to do
     is say so — otherwise someone who followed the FAQ raises the variable and
-    still dies at 1800000 ms with no clue why.
+    still dies on the backend watchdog with no clue why.
     """
-    monkeypatch.setenv("RLINF_TIMEOUT", "97")
+    monkeypatch.setenv(
+        "RLINF_TIMEOUT", str(int(CONFIGURED_TIMEOUT.total_seconds() // 60))
+    )
     dist.init_process_group(timeout=timedelta(minutes=11))
 
     with caplog.at_level(logging.WARNING):
@@ -174,11 +182,17 @@ def test_collective_timeout_rejects_unusable_values(monkeypatch, value, message)
 def test_torch_still_installs_the_short_timeout_on_its_own(single_rank_env):
     """Pin the upstream behaviour that makes ``create_device_mesh`` necessary.
 
+    Letting ``init_device_mesh`` build the group leaves it on the backend's own
+    watchdog, whatever that happens to be, and ``RLINF_TIMEOUT`` is ignored. The
+    assertion is deliberately about what the timeout is *not*: the concrete value
+    differs per backend (1800s on NCCL/Gloo, 3636s on Ascend HCCL), so pinning a
+    number here would fail on some accelerator without anything being wrong.
+
     If PyTorch ever starts honouring a longer timeout for the implicitly created
     default group, this test fails and the workaround can be reconsidered.
     """
     assert not dist.is_initialized()
-    os.environ["RLINF_TIMEOUT"] = "97"
+    os.environ["RLINF_TIMEOUT"] = str(int(CONFIGURED_TIMEOUT.total_seconds() // 60))
     try:
         from torch.distributed.device_mesh import init_device_mesh
 
@@ -188,7 +202,9 @@ def test_torch_still_installs_the_short_timeout_on_its_own(single_rank_env):
 
     group = mesh["fsdp"].get_group()
     assert group is dist.distributed_c10d._get_default_group()
-    assert group_timeout(group) == TORCH_DEFAULT_TIMEOUT
+    timeout = group_timeout(group)
+    assert timeout != CONFIGURED_TIMEOUT
+    assert timeout < RLINF_DEFAULT_TIMEOUT
 
 
 def test_mesh_dimension_reuses_the_default_group(single_rank_env):

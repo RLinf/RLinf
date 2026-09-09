@@ -71,9 +71,10 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
     ``init_device_mesh``. When no default group exists, ``init_device_mesh``
     falls back to a bare ``init_process_group()``, which pins the group -- and
     therefore every FSDP collective, since a mesh dimension that spans the whole
-    world reuses the default group -- to the backend's built-in watchdog timeout
-    of 30 minutes. That is shorter than the timeout RLinf applies to its own
-    inter-worker groups, and it cannot be raised from the outside.
+    world reuses the default group -- to whatever watchdog timeout the backend
+    ships with: 30 minutes for NCCL and Gloo, around 60 for HCCL. All of them are
+    shorter than the timeout RLinf applies to its own inter-worker groups, and
+    none can be raised from the outside.
 
     Args:
         world_size (int): Number of ranks participating in FSDP.
