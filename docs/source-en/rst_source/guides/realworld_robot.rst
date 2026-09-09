@@ -30,7 +30,7 @@ Real-world training usually follows **one GPU training node + N robot control no
      - Runs ``actor``, ``rollout`` (and optional ``reward``); **only this node** runs the training entry script
    * - **1 … N**
      - Robot control
-     - Runs ``env`` workers and ``FrankaController``; one control-node rank per arm (see example docs for shared control nodes)
+     - Runs ``env`` workers and the Franka arm parts; one control-node rank per arm (see example docs for shared control nodes)
 
 All nodes must be on the **same LAN** (or overlay network; see :doc:`cloud_edge`), and
 ``cluster.num_nodes`` must match the number of nodes joined to Ray.
@@ -176,9 +176,11 @@ set camera/gripper types and ``controller_node_rank`` in ``hardware.configs``.
 Field details and collection examples are in :doc:`../examples/embodied/franka_zed_robotiq`.
 
 For training, place ``env`` on the Franka node group so that it receives the
-Franka hardware configuration.  The hardware config's ``node_rank: 0`` keeps
-the env worker on the GPU node for camera capture, while
-``controller_node_rank: 1`` pins ``FrankaController`` to the NUC:
+Franka hardware configuration. The hardware config's ``node_rank: 0`` keeps the
+env worker on the GPU node for camera capture, while ``controller_node_rank: 1``
+places the arm and its end effector on the NUC. They are separate parts with
+separate connections, and both follow that rank because both are wired to the
+same machine:
 
 .. code-block:: yaml
 

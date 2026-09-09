@@ -23,6 +23,7 @@ import pytest
 import ray
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.robotics import FrankaConfig
 from rlinf.scheduler import (
     AcceleratorType,
     Cluster,
@@ -34,7 +35,6 @@ from rlinf.scheduler.cluster.cluster import ClusterEnvVar, PathEnvMergeMode
 from rlinf.scheduler.cluster.config import ClusterConfig
 from rlinf.scheduler.hardware.accelerators.amd_gpu import RocprofSysConfig
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NsightConfig
-from rlinf.scheduler.hardware.robots.franka import FrankaConfig
 
 
 def accelerator_device_count() -> int:
