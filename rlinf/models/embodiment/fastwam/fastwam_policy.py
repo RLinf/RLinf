@@ -388,7 +388,7 @@ class FastWAMPolicy(FastWAM, BasePolicy):
         """Predict an action chunk for a batch of LIBERO observations.
 
         Args:
-            env_obs: dict from :class:`~rlinf.envs.libero.libero_env.LiberoEnv`
+            env_obs: dict from :class:`~rlinf.envs.sim.libero.libero_env.LiberoEnv`
                 with ``main_images`` / ``wrist_images`` ``[B,H,W,3]`` uint8,
                 ``states`` ``[B,8]`` and ``task_descriptions`` list[str].
 

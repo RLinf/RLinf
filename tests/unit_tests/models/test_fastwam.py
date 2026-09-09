@@ -258,7 +258,7 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
 
 def test_fastwam_reset_wait_preserves_shared_libero_default() -> None:
     repo_root = Path(__file__).resolve().parents[3]
-    libero_env = (repo_root / "rlinf/envs/libero/libero_env.py").read_text(
+    libero_env = (repo_root / "rlinf/envs/sim/libero/libero_env.py").read_text(
         encoding="utf-8"
     )
     eval_configs = [

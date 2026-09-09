@@ -235,7 +235,7 @@ GELLO 主手
 
    cd /path/to/RLinf
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.envs.realworld.common.gello.gello_joint_expert \
+   python -m rlinf.robotics.parts.teleop.gello_joint \
        --port /dev/serial/by-id/usb-FTDI_..._<LEFT_ID>-if00-port0
 
 该命令会持续刷新输出，例如：
@@ -466,7 +466,7 @@ Checkpoint 保存到
 
 **GELLO 输出停止**
    重启主手电源，重新连接 FTDI 转接器，并使用
-   ``python -m rlinf.envs.realworld.common.gello.gello_joint_expert --port ...``
+   ``python -m rlinf.robotics.parts.teleop.gello_joint --port ...``
    验证输出。
 
 **某一机械臂 reset 过程无响应**
