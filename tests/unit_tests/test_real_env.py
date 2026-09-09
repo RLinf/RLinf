@@ -304,6 +304,67 @@ def test_a_franka_observation_comes_from_one_snapshot():
     )
 
 
+def test_franka_depth_reaches_the_observation_only_when_asked_for():
+    """A rig without a depth camera keeps the schema a policy already reads.
+
+    Depth arrives as its own key rather than a fourth channel, so an existing
+    policy sees the frames it always saw and one that wants depth reads
+    metres without knowing which camera produced them.
+    """
+    from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE, SERIAL
+
+    with mocked_sdks():
+        from rlinf.envs.real.franka.base import FrankaEnv
+
+        def build(enable_camera_depth):
+            return FrankaEnv(
+                override_cfg={
+                    "enable_camera_depth": enable_camera_depth,
+                    "enable_camera_player": False,
+                    "step_frequency": 10000.0,
+                },
+                worker_info=None,
+                env_idx=0,
+                robot_info=_robot_info(
+                    FrankaConfig(
+                        node_rank=0,
+                        robot_ip="0.0.0.0",
+                        camera_serials=[SERIAL],
+                        disable_validate=True,
+                    )
+                ),
+            )
+
+        env = build(False)
+        try:
+            observation, _ = env.reset()
+            assert set(env.observation_space.spaces) == {"state", "frames"}
+            assert set(observation) == {"state", "frames"}
+        finally:
+            env.close()
+
+        env = build(True)
+        try:
+            observation, _ = env.reset()
+            assert set(observation) == {"state", "frames", "depths"}
+            depth = observation["depths"]["wrist_1"]
+            frame = observation["frames"]["wrist_1"]
+            # Cropped and resized to the same view as the frame beside it.
+            assert depth.shape == frame.shape[:2]
+            assert depth.dtype == np.float32
+            # Resampling by nearest keeps every pixel at a distance something
+            # was actually measured at; averaging would invent readings between
+            # the near and far halves, where nothing is.
+            distances = np.unique(depth)
+            assert len(distances) == 2
+            assert np.allclose(
+                distances, [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE]
+            )
+        finally:
+            env.close()
+
+
 def test_franka_dummy_preserves_legacy_policy_schema():
     env = FrankaEnv(
         override_cfg={

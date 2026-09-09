@@ -4624,6 +4624,57 @@ def test_child_says_what_a_part_is_expected_to_be():
             robot.child("end_effector", FrankyArm)
 
 
+def test_a_camera_reports_depth_in_metres_beside_its_frame():
+    """Devices count depth in their own units, so the camera converts.
+
+    RealSense reports raw z16 counts and asks the device how big one is; ZED
+    reports millimetres. A reader that had to know which is which would be
+    reading the camera's hardware, not its observation.
+    """
+    from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE, SERIAL
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+        camera = Camera.of(
+            CameraInfo(name="wrist_1", serial_number=SERIAL, enable_depth=True)
+        )
+        camera.connect()
+        try:
+            features = camera.observation_features
+            assert features["frame"]["dtype"] == "uint8"
+            assert features["depth"]["dtype"] == "float32"
+            assert len(features["depth"]["shape"]) == 2
+
+            observation = camera.get_observation()
+            assert observation["frame"].dtype == np.uint8
+            assert observation["frame"].ndim == 3
+            assert np.allclose(
+                np.unique(observation["depth"]),
+                [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE],
+            )
+        finally:
+            camera.disconnect()
+
+
+def test_a_camera_without_depth_declares_and_returns_only_a_frame():
+    """The depth key appears only where a camera captures one."""
+    from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import SERIAL
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+        camera = Camera.of(CameraInfo(name="wrist_1", serial_number=SERIAL))
+        camera.connect()
+        try:
+            assert set(camera.observation_features) == {"frame"}
+            assert set(camera.get_observation()) == {"frame"}
+        finally:
+            camera.disconnect()
+
+
 def test_a_stalled_camera_is_reopened_before_the_caller_sees_the_error():
     import queue
 
