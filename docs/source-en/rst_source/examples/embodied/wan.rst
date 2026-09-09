@@ -255,7 +255,7 @@ Key environment parameters:
 
 - ``enable_kir``: enable KIR (KeyFrame-Init Rollout). If disabled, reset samples only ``.npy`` files whose names do not include ``_kir``; if enabled, reset samples from all initialization files in ``dataset/``.
 - ``num_inference_steps``: World Model generation/inference steps (default ``5``). Fewer steps are faster but may reduce visual quality; even single-step generation can still improve performance.
-- ``reward_model.type``: reward model class — ``ResnetRewModel`` or ``TaskEmbedResnetRewModel``.
+- ``reward_model.type``: reward model class — ``ResnetRewModel``, ``TaskEmbedResnetRewModel``, or ``TOPRewardModel`` (see :ref:`wan-frozen-vlm-reward`).
 - ``reset_gripper_open``: initialize with an open gripper. Default ``True`` for train and eval; changing it is not recommended.
 
 **3. Launch**
@@ -265,6 +265,85 @@ OpenVLA-OFT + GRPO uses ``examples/embodiment/config/wan_libero_spatial_grpo_ope
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
+
+.. _wan-frozen-vlm-reward:
+
+Optional: a Frozen VLM as the Reward Model
+------------------------------------------
+
+The ``ResnetRewModel`` shipped with each Wan checkpoint is trained on the simulator's
+privileged state, so every suite needs its own ``resnet_rm.pth``. ``TOPRewardModel`` replaces
+it with a VLM that is never trained: it shows the generated frames together with a sentence
+*asserting* the task was completed, then reads ``log P(" True")`` for that sentence. Switching
+suites changes only the instruction text.
+
+The scorer needs ``transformers >= 4.57`` for Qwen3-VL, which is newer than the version
+OpenVLA-OFT pins, so install it into its own environment:
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model qwen3_vl --env wan
+
+Then point the env preset at the weights:
+
+.. code-block:: yaml
+
+   reward_model:
+     type: TOPRewardModel
+     from_pretrained: /Pathto/model/Qwen3-VL-8B-Instruct
+     success_prob_threshold: 0.46 # exp(log P(" True")) at or above this is a success
+     window_frames: 16            # frames per call, ending at the chunk boundary
+     max_frames: 16               # what the processor keeps of that window
+     fps: 2.0                     # video metadata the prompt template assumes
+
+``examples/embodiment/config/wan_libero_spatial_topreward_grpo_openvlaoft.yaml`` is a ready
+recipe:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh wan_libero_spatial_topreward_grpo_openvlaoft
+
+The score is thresholded to 0/1, so it means the same thing as the ResNet model's ``round()``:
+it drives ``terminations`` and the loss mask, and nothing downstream changes.
+
+Two things to know before tuning it:
+
+- **The window is the sensitive knob, not the threshold.** Scoring one action chunk in
+  isolation loses the separation between succeeding and failing episodes; letting the call see
+  the previous chunk as well restores it. The model keeps one chunk of frames per env slot and
+  drops them when that slot restarts, so a window never spans two episodes.
+- **The prompt asserts, it does not ask.** A question-style prompt scored an unrelated
+  instruction *higher* than the correct one on the same frames.
+
+.. list-table:: **Frozen VLM against the ResNet classifier, real LIBERO, n = 500**
+    :header-rows: 1
+    :widths: 22 20 20 20 18
+
+    * - Suite
+      - Base
+      - ResNet (best)
+      - Frozen VLM (best)
+      - Gap
+    * - Spatial
+      - 44.8%
+      - 57.4%
+      - 56.0%
+      - −1.4
+    * - Object
+      - 34.2%
+      - 36.8%
+      - 37.8%
+      - +1.0
+
+Both gaps sit inside this benchmark's 3.1-point standard error, so the frozen VLM matches a
+classifier trained on that exact domain. The object row used the threshold and window
+calibrated on spatial, carried over unchanged. Note that on object *both* scorers gain little
+over the base, so that row shows the scorer transfers across suites rather than that this
+recipe is strong on object.
+
+Cost is one forward per action chunk, which stays inside the run-to-run variation of the Wan
+rollout itself. Each env worker holds its own copy of the weights, so plan host memory for
+``env_world_size`` copies.
 
 Visualization and Results
 -------------------------

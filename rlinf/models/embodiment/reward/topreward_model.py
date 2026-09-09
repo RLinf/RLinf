@@ -104,8 +104,10 @@ class TOPRewardModel(nn.Module):
 
     @torch.no_grad()
     def _score(self, frames_chw: np.ndarray, instruction: str) -> float:
-        text = VIDEO_PLACEHOLDER + PROMPT_PREFIX + PROMPT_SUFFIX.format(
-            instruction=instruction
+        text = (
+            VIDEO_PLACEHOLDER
+            + PROMPT_PREFIX
+            + PROMPT_SUFFIX.format(instruction=instruction)
         )
         inputs = self.processor(
             text=[text],
