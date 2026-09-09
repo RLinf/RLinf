@@ -13,15 +13,19 @@ Channel 的创建与连接
 
     Worker.create_channel(
         channel_name,
-        node_id=0,
-        maxsize=0
+        maxsize=0,
+        distributed=False,
+        node_rank=0,
+        local=False,
     )
 
 该方法：
 
-- **确定放置位置** — 如果未指定 ``group_affinity`` 或 ``group_rank_affinity``，则 channel 会托管在当前 Worker 的 **group** 和 **rank** 上（即相同节点和 GPU）。  
-- **启动专用的 channel actor** — 使用 ``PackedPlacementStrategy`` 在所选节点/GPU 上启动一个 ``ChannelWorker`` （实际持有队列），并设置 ``num_processes=1``。  
-- **返回** 一个 ``Channel`` 对象，用于封装该 actor。channel actor 的地址为 ``channel_name:0``。  
+- **决定队列放在哪里** — ``local=True`` 时队列留在调用进程内部，其他 Worker 无法连接。否则由 ``ChannelWorker`` actor 持有：放在 ``node_rank`` 指定的节点上；``distributed=True`` 时则每个节点各放一个。
+- **启动 actor** — 用 ``NodePlacementStrategy`` 在选定的一个或多个节点上启动持有队列的 ``ChannelWorker``。如果同名 channel 已经存在，会直接连接到它，而不是报错。
+- **返回** 一个封装该 actor 的 ``Channel`` 对象。
+
+分布式 channel 会在某个 ``key`` 第一次被使用时把它绑定到一个副本上，选的是调用方所在节点的那个副本，数据因此留在产生它的地方。只有当同一个 key 总是从同一个节点产生时这才划算；如果 key 来自任意节点，就只剩下路由开销而没有局部性，此时 ``distributed`` 保持 False 即可。
 
 若要从其他 Worker 连接到已存在的 channel，请使用::
 

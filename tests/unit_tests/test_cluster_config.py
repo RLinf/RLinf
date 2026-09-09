@@ -23,6 +23,7 @@ import pytest
 import ray
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.robotics import FrankaConfig
 from rlinf.scheduler import (
     AcceleratorType,
     Cluster,
@@ -34,7 +35,6 @@ from rlinf.scheduler.cluster.cluster import ClusterEnvVar, PathEnvMergeMode
 from rlinf.scheduler.cluster.config import ClusterConfig
 from rlinf.scheduler.hardware.accelerators.amd_gpu import RocprofSysConfig
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NsightConfig
-from rlinf.scheduler.hardware.robots.franka import FrankaConfig
 
 
 def accelerator_device_count() -> int:
@@ -1038,6 +1038,35 @@ def test_cluster_env_configs_applied_in_worker_launch():
     assert env_values == [env_value]
     assert pythonpath_values[0] is not None
     assert pythonpath_values[0].split(os.pathsep)[0] == str(tests_root)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-specific argv limit")
+def test_worker_launch_with_large_inherited_environment(monkeypatch):
+    inherited_env = {
+        f"RLINF_TEST_INHERITED_{index:04d}": "x" * 64 for index in range(3000)
+    }
+    for key, value in inherited_env.items():
+        monkeypatch.setenv(key, value)
+
+    _reset_cluster_singleton()
+    cluster = Cluster(num_nodes=1)
+    placement = NodePlacementStrategy([0])
+    worker_group = EnvConfigCheckWorker.create_group().launch(
+        cluster=cluster,
+        placement_strategy=placement,
+        name="large_inherited_env_launch",
+    )
+
+    try:
+        first_key = next(iter(inherited_env))
+        last_key = next(reversed(inherited_env))
+        assert worker_group.get_env_marker(first_key).wait() == [
+            inherited_env[first_key]
+        ]
+        assert worker_group.get_env_marker(last_key).wait() == [inherited_env[last_key]]
+    finally:
+        worker_group._close()
+        _reset_cluster_singleton()
 
 
 def test_cluster_env_configs_path_append_mode_in_worker_launch():

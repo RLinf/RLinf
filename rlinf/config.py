@@ -24,6 +24,8 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+# Register built-in physical robots before parsing cluster hardware configs.
+import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (
@@ -904,6 +906,21 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_weight_sync_overlap_cfg(cfg):
+    """Reject overlapping weight sync with a syncer that applies in pieces.
+
+    Patch applies a synchronization in one step. Bucket yields between buckets,
+    so a rollout generating concurrently could sample a model with only part of
+    the new weights applied.
+    """
+    if not cfg.get("actor", {}).get("sync_weight_no_wait", False):
+        return
+    assert cfg.get("weight_syncer", {}).get("type", None) == "patch", (
+        "actor.sync_weight_no_wait=true requires weight_syncer.type=patch so a "
+        "rollout cannot observe a partially applied bucket sync."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1192,6 +1209,8 @@ def validate_embodied_cfg(cfg):
                 assert cfg.env.train.base_config_name == "r1pro_behavior", (
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
+
+    validate_weight_sync_overlap_cfg(cfg)
     return cfg
 
 

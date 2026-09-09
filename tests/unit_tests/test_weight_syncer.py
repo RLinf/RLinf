@@ -14,12 +14,19 @@
 
 import asyncio
 import copy
+import inspect
+import logging
+import unittest
 from collections import OrderedDict
+from types import MethodType
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.config import validate_weight_sync_overlap_cfg
+from rlinf.data.schema.embodied_types import EnvOutput
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
@@ -36,8 +43,16 @@ from rlinf.hybrid_engines.weight_syncer.patch_syncer import (
     as_coo_2d_view,
     downscale_nonnegative_indices,
 )
+from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
+from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.scheduler import AcceleratorType, Worker
+from rlinf.utils.env_helpers import SmoothInterveneController  # noqa: E402
 from rlinf.utils.utils import collect_param_names_need_sync
+from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
+from rlinf.workers.rollout.hf.async_huggingface_worker import (
+    AsyncMultiStepRolloutWorker,
+)
 
 
 class _TinyWeightSyncModel(torch.nn.Module):
@@ -1384,3 +1399,621 @@ def test_weight_syncer_factory_rejects_unknown_type():
     cfg = OmegaConf.create({"type": "unknown"})
     with pytest.raises(ValueError, match="Unsupported weight syncer type"):
         WeightSyncer.create(cfg)
+
+
+# Both async runners must pick the overlap up from the mixin, not from their own
+# copy of it.
+RUNNER_CLASSES = (AsyncEmbodiedRunner, AsyncPPOEmbodiedRunner)
+
+
+class _Handle:
+    def __init__(self, done: bool = False) -> None:
+        self.is_done = done
+        self.wait_calls = 0
+
+    def done(self) -> bool:
+        return self.is_done
+
+    def wait(self) -> None:
+        self.wait_calls += 1
+        self.is_done = True
+
+
+class _Actor:
+    def __init__(self, handles: list[_Handle]) -> None:
+        self.handles = handles
+        self.sync_calls = 0
+
+    def sync_model_to_rollout(self) -> _Handle:
+        handle = self.handles[self.sync_calls]
+        self.sync_calls += 1
+        return handle
+
+
+class _Rollout:
+    def __init__(
+        self,
+        blocking_handles: list[_Handle],
+        background_handles: list[_Handle],
+    ) -> None:
+        self.blocking_handles = blocking_handles
+        self.background_handles = background_handles
+        self.blocking_calls = 0
+        self.background_calls = 0
+
+    def sync_model_from_actor(self) -> _Handle:
+        handle = self.blocking_handles[self.blocking_calls]
+        self.blocking_calls += 1
+        return handle
+
+    def request_actor_sync_model(self) -> _Handle:
+        handle = self.background_handles[self.background_calls]
+        self.background_calls += 1
+        return handle
+
+
+def _make_runner(runner_cls, actor: _Actor, rollout: _Rollout, no_wait: bool = False):
+    """Build a runner with only the attributes the weight-sync path touches."""
+    runner = object.__new__(runner_cls)
+    runner.actor = actor
+    runner.rollout = rollout
+    runner.logger = logging.getLogger("test_async_weight_sync")
+    runner.sync_weight_no_wait = no_wait
+    runner._pending_rollout_weight_sync = None
+    runner._weight_sync_request_total = 0
+    runner._weight_sync_coalesced_total = 0
+    return runner
+
+
+class _LifecycleWorker:
+    """Worker-group stub for a zero-step runner lifecycle."""
+
+    def interact(self, **kwargs) -> _Handle:
+        return _Handle()
+
+    def generate(self, **kwargs) -> _Handle:
+        return _Handle()
+
+    def recv_rollout_trajectories(self, **kwargs) -> _Handle:
+        return _Handle()
+
+    def stop(self) -> _Handle:
+        return _Handle()
+
+
+def _make_async_rollout_worker(
+    apply_gates: list[asyncio.Event],
+) -> tuple[AsyncMultiStepRolloutWorker, list[asyncio.Event]]:
+    """Build only the rollout-side background-sync state machine."""
+    worker = object.__new__(AsyncMultiStepRolloutWorker)
+    worker._background_weight_sync_active = True
+    worker._weight_sync_requested = False
+    worker._weight_sync_work = None
+    worker._weight_sync_apply_total = 0
+    worker._weight_sync_coalesced_total = 0
+    worker._weight_sync_request_total = 0
+    worker.version = 0
+    apply_started = [asyncio.Event() for _ in apply_gates]
+
+    async def recv_and_apply(worker_self) -> int:
+        apply_index = worker_self.version
+        apply_started[apply_index].set()
+        await apply_gates[apply_index].wait()
+        worker_self.version += 1
+        return worker_self.version
+
+    worker._recv_and_apply_actor_sync = MethodType(recv_and_apply, worker)
+    return worker, apply_started
+
+
+async def _request_actor_sync_model(worker: AsyncMultiStepRolloutWorker) -> int:
+    """Call the undecorated worker method without constructing a Ray worker."""
+    request = inspect.unwrap(AsyncMultiStepRolloutWorker.request_actor_sync_model)
+    return await request(worker)
+
+
+def _weight_sync_cfg(no_wait: bool, syncer_type: str) -> OmegaConf:
+    return OmegaConf.create(
+        {
+            "actor": {"sync_weight_no_wait": no_wait},
+            "weight_syncer": {"type": syncer_type},
+        }
+    )
+
+
+@pytest.mark.parametrize("syncer_type", ["patch", "bucket"])
+def test_mixin_reads_the_flag_for_either_syncer(syncer_type) -> None:
+    """The mixin only reads the flag; the config layer rejects bad combos."""
+    runner = object.__new__(AsyncWeightSyncMixin)
+    runner.cfg = _weight_sync_cfg(no_wait=True, syncer_type=syncer_type)
+
+    runner.init_weight_sync_state()
+
+    assert runner.sync_weight_no_wait
+    assert runner._pending_rollout_weight_sync is None
+
+
+def test_nonblocking_weight_sync_requires_patch_syncer() -> None:
+    with pytest.raises(AssertionError, match="weight_syncer.type=patch"):
+        validate_weight_sync_overlap_cfg(
+            _weight_sync_cfg(no_wait=True, syncer_type="bucket")
+        )
+
+
+def test_nonblocking_weight_sync_accepts_patch_syncer() -> None:
+    validate_weight_sync_overlap_cfg(
+        _weight_sync_cfg(no_wait=True, syncer_type="patch")
+    )
+
+
+def test_blocking_weight_sync_allows_bucket_syncer() -> None:
+    validate_weight_sync_overlap_cfg(
+        _weight_sync_cfg(no_wait=False, syncer_type="bucket")
+    )
+
+
+def test_async_embodied_runner_startup_sync_is_blocking() -> None:
+    runner = object.__new__(AsyncEmbodiedRunner)
+    runner.global_step = 0
+    runner.max_steps = 0
+    runner.actor = _LifecycleWorker()
+    runner.rollout = _LifecycleWorker()
+    runner.env = _LifecycleWorker()
+    runner.reward = None
+    runner.env_channel = None
+    runner.rollout_channel = None
+    runner.reward_channel = None
+    runner.actor_channel = None
+    runner.env_metric_channel = None
+    runner.rollout_metric_channel = None
+    runner.update_rollout_weights = MagicMock()
+    runner.drain_pending_rollout_weight_sync = MagicMock()
+
+    runner.run()
+
+    runner.update_rollout_weights.assert_called_once_with()
+    runner.drain_pending_rollout_weight_sync.assert_called_once_with()
+
+
+def test_rollout_request_completes_only_after_weights_are_applied() -> None:
+    async def run_test() -> None:
+        apply_gate = asyncio.Event()
+        worker, apply_started = _make_async_rollout_worker([apply_gate])
+
+        request_task = asyncio.create_task(_request_actor_sync_model(worker))
+        await asyncio.wait_for(apply_started[0].wait(), timeout=5.0)
+        await asyncio.sleep(0)
+
+        assert not request_task.done()
+        assert worker._weight_sync_apply_total == 0
+        assert worker.version == 0
+
+        apply_gate.set()
+
+        assert await asyncio.wait_for(request_task, timeout=5.0) == 1
+        assert worker._weight_sync_apply_total == 1
+        assert worker._weight_sync_work is None
+        assert worker.version == 1
+
+    asyncio.run(run_test())
+
+
+def test_rollout_requests_coalesce_without_reordering_apply() -> None:
+    async def run_test() -> None:
+        first_apply_gate = asyncio.Event()
+        second_apply_gate = asyncio.Event()
+        worker, apply_started = _make_async_rollout_worker(
+            [first_apply_gate, second_apply_gate]
+        )
+
+        first_request = asyncio.create_task(_request_actor_sync_model(worker))
+        await asyncio.wait_for(apply_started[0].wait(), timeout=5.0)
+        second_request = asyncio.create_task(_request_actor_sync_model(worker))
+        await asyncio.sleep(0)
+
+        assert worker._weight_sync_coalesced_total == 1
+        assert not first_request.done()
+        assert not second_request.done()
+
+        first_apply_gate.set()
+        assert await asyncio.wait_for(first_request, timeout=5.0) == 1
+        await asyncio.wait_for(apply_started[1].wait(), timeout=5.0)
+        assert not second_request.done()
+        assert worker.version == 1
+
+        second_apply_gate.set()
+        assert await asyncio.wait_for(second_request, timeout=5.0) == 2
+        assert worker._weight_sync_apply_total == 2
+        assert worker._weight_sync_work is None
+        assert worker.version == 2
+
+    asyncio.run(run_test())
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_runner_inherits_the_shared_mixin(runner_cls) -> None:
+    assert issubclass(runner_cls, AsyncWeightSyncMixin)
+    # The overlap must resolve to the mixin, i.e. no runner-local reimplementation.
+    assert (
+        runner_cls.update_rollout_weights is AsyncWeightSyncMixin.update_rollout_weights
+    )
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_blocking_weight_sync_waits_for_both_sides(runner_cls) -> None:
+    actor_handle = _Handle()
+    rollout_handle = _Handle()
+    actor = _Actor([actor_handle])
+    rollout = _Rollout([rollout_handle], [])
+    runner = _make_runner(runner_cls, actor, rollout)
+
+    runner.update_rollout_weights()
+
+    assert actor.sync_calls == 1
+    assert rollout.blocking_calls == 1
+    assert rollout.background_calls == 0
+    assert actor_handle.wait_calls == 1
+    assert rollout_handle.wait_calls == 1
+    assert runner._pending_rollout_weight_sync is None
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_nonblocking_weight_sync_does_not_wait(runner_cls) -> None:
+    actor_handle = _Handle()
+    rollout_handle = _Handle()
+    actor = _Actor([actor_handle])
+    rollout = _Rollout([], [rollout_handle])
+    runner = _make_runner(runner_cls, actor, rollout, no_wait=True)
+
+    runner.update_rollout_weights(no_wait=True)
+
+    assert rollout.background_calls == 1
+    assert actor.sync_calls == 1
+    assert actor_handle.wait_calls == 0
+    assert rollout_handle.wait_calls == 0
+    assert runner._pending_rollout_weight_sync == (rollout_handle, actor_handle)
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_nonblocking_weight_sync_coalesces_until_previous_sync_finishes(
+    runner_cls,
+) -> None:
+    first_actor_handle = _Handle()
+    first_rollout_handle = _Handle(done=True)
+    second_actor_handle = _Handle()
+    second_rollout_handle = _Handle(done=True)
+    actor = _Actor([first_actor_handle, second_actor_handle])
+    rollout = _Rollout([], [first_rollout_handle, second_rollout_handle])
+    runner = _make_runner(runner_cls, actor, rollout, no_wait=True)
+
+    runner.update_rollout_weights(no_wait=True)
+    runner.update_rollout_weights(no_wait=True)
+
+    # The second request is dropped, not queued: still one sync in flight.
+    assert actor.sync_calls == 1
+    assert rollout.background_calls == 1
+    assert first_actor_handle.wait_calls == 0
+    assert first_rollout_handle.wait_calls == 0
+    assert runner._weight_sync_coalesced_total == 1
+    assert runner._weight_sync_request_total == 2
+
+    first_actor_handle.is_done = True
+    runner.update_rollout_weights(no_wait=True)
+
+    assert first_actor_handle.wait_calls == 1
+    assert first_rollout_handle.wait_calls == 1
+    assert actor.sync_calls == 2
+    assert rollout.background_calls == 2
+    assert runner._weight_sync_coalesced_total == 1
+    assert runner._weight_sync_request_total == 3
+    assert runner._pending_rollout_weight_sync == (
+        second_rollout_handle,
+        second_actor_handle,
+    )
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_blocking_weight_sync_drains_an_inflight_background_sync(runner_cls) -> None:
+    pending_actor_handle = _Handle()
+    pending_rollout_handle = _Handle()
+    blocking_actor_handle = _Handle()
+    blocking_rollout_handle = _Handle()
+    actor = _Actor([blocking_actor_handle])
+    rollout = _Rollout([blocking_rollout_handle], [])
+    runner = _make_runner(runner_cls, actor, rollout)
+    runner._pending_rollout_weight_sync = (
+        pending_rollout_handle,
+        pending_actor_handle,
+    )
+
+    runner.update_rollout_weights(no_wait=False)
+
+    assert pending_actor_handle.wait_calls == 1
+    assert pending_rollout_handle.wait_calls == 1
+    assert blocking_actor_handle.wait_calls == 1
+    assert blocking_rollout_handle.wait_calls == 1
+    assert runner._pending_rollout_weight_sync is None
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_teardown_drains_an_inflight_background_sync(runner_cls) -> None:
+    actor_handle = _Handle()
+    rollout_handle = _Handle()
+    runner = _make_runner(runner_cls, _Actor([]), _Rollout([], []))
+    runner._pending_rollout_weight_sync = (rollout_handle, actor_handle)
+
+    runner.drain_pending_rollout_weight_sync()
+
+    assert actor_handle.wait_calls == 1
+    assert rollout_handle.wait_calls == 1
+    assert runner._pending_rollout_weight_sync is None
+
+
+@pytest.mark.parametrize("runner_cls", RUNNER_CLASSES)
+def test_teardown_is_a_noop_without_a_pending_sync(runner_cls) -> None:
+    runner = _make_runner(runner_cls, _Actor([]), _Rollout([], []))
+
+    runner.drain_pending_rollout_weight_sync()
+
+    assert runner._pending_rollout_weight_sync is None
+
+
+class TestOverlapEnvBootstrap(unittest.TestCase):
+    def setUp(self):
+        self.cfg = OmegaConf.create(
+            {
+                "env": {
+                    "train": {
+                        "total_num_envs": 2,
+                        "max_steps_per_rollout_epoch": 8,
+                        "env_type": "dummy",
+                        "auto_reset": True,
+                        "video_cfg": {"save_video": False},
+                        "max_episode_steps": 10,
+                    },
+                    "eval": {
+                        "total_num_envs": 2,
+                        "max_steps_per_rollout_epoch": 8,
+                        "env_type": "dummy",
+                        "video_cfg": {"save_video": False},
+                        "max_episode_steps": 10,
+                    },
+                },
+                "actor": {
+                    "model": {
+                        "model_type": "dummy",
+                        "num_action_chunks": 4,
+                        "action_dim": 7,
+                    }
+                },
+                "rollout": {
+                    "group_name": "RolloutGroup",
+                    "pipeline_stage_num": 1,
+                    "collect_transitions": False,
+                },
+                "runner": {
+                    "val_check_interval": -1,
+                },
+                "algorithm": {
+                    "rollout_epoch": 1,
+                },
+                "cluster": {},
+            }
+        )
+
+        # Create EnvWorker instance without calling __init__
+        self.worker = object.__new__(EnvWorker)
+
+        # Manually set required attributes
+        self.worker.cfg = self.cfg
+        self.worker._rank = 0
+        self.worker._world_size = 1
+        self.worker._group_name = "EnvGroup"
+        self.worker._timer_metrics = {}
+        self.worker.stage_num = 1
+        self.worker.train_num_envs_per_stage = 2
+        self.worker.n_train_chunk_steps = 2
+        self.worker.rollout_epoch = 1
+        self.worker.enable_online_lerobot = False
+        self.worker.enable_offload = False
+        self.worker.train_enable_offload = False
+        self.worker.use_training_pipeline = False
+        self.worker.collect_transitions = False
+        self.worker.enable_rlt = False
+        self.worker.collect_prev_infos = True
+        self.worker.reward_mode = self.cfg.get("reward", {}).get(
+            "reward_mode", "per_step"
+        )
+        self.worker.history_reward_assign = self.cfg.get("reward", {}).get(
+            "history_reward_assign", True
+        )
+        self.worker._accelerator_type = AcceleratorType.NO_ACCEL
+        self.worker._prefetched_train_bootstrap = None
+        self.worker.smooth_intervene = SmoothInterveneController(
+            stage_num=self.worker.stage_num, enabled=False
+        )
+
+        # Mock env_list
+        mock_env = MagicMock(
+            wait_delay=AsyncMock(),
+            insert_delay_metrics=MagicMock(return_value=torch.empty(0)),
+        )
+        self.worker.env_list = [mock_env]
+
+        # Initialize last_obs_list for auto_reset=True
+        self.worker.last_obs_list = [{"main_images": torch.zeros(2, 3, 224, 224)}]
+        self.worker.last_intervened_info_list = [(None, None)]
+        self.worker.only_eval = False
+        self.worker.model_cfg = self.cfg.actor.model
+        self.worker.train_batch_size = (
+            self.cfg.env.train.total_num_envs // self.worker.stage_num
+        )
+        self.worker.env_decoupled_mode = False
+        self.worker.send_to = MagicMock()
+
+    def test_prefetch_consumption(self):
+        """Test that prefetched bootstrap is correctly consumed in interact()."""
+        rollout_channel = MagicMock()
+        input_channel = MagicMock()
+
+        # Mock recv_from to return a dummy PolicyOutput
+        mock_policy_output = MagicMock()
+        mock_policy_output.actions = torch.zeros(2, 28)
+        mock_policy_output.bootstrap_values = None
+        mock_policy_output.forward_inputs = {"action": torch.zeros(2, 28)}
+        mock_policy_output.versions = torch.zeros(2, 1)
+        mock_policy_output.intervene_flags = None
+
+        # Patch methods on the instance
+        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
+        self.worker.env_interact_step = MagicMock(
+            return_value=(
+                EnvOutput(
+                    obs={"main_images": torch.zeros(2, 3, 224, 224)},
+                    dones=torch.zeros(2, 4, dtype=torch.bool),
+                    truncations=torch.zeros(2, 4, dtype=torch.bool),
+                    terminations=torch.zeros(2, 4, dtype=torch.bool),
+                ),
+                {},
+                {},
+            )
+        )
+        self.worker.send_env_batch = MagicMock()
+        self.worker.store_last_obs_and_intervened_info = MagicMock()
+        self.worker.finish_rollout = MagicMock()
+        self.worker.compute_bootstrap_rewards = MagicMock(
+            return_value=torch.zeros(2, 4)
+        )
+        self.worker.record_env_metrics = MagicMock()
+
+        # 1. Prefetch
+        # We need to mock _bootstrap_and_send_train as it's called by prefetch_train_bootstrap
+        dummy_bootstrap = [
+            EnvOutput(obs={"m": torch.zeros(1)}, dones=torch.zeros(1, 4))
+        ]
+        self.worker._bootstrap_and_send_train = MagicMock(return_value=dummy_bootstrap)
+
+        self.worker.prefetch_train_bootstrap(rollout_channel)
+        self.assertEqual(self.worker._prefetched_train_bootstrap, dummy_bootstrap)
+
+        # 2. Interact (should consume the prefetch)
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # Mock send_rollout_trajectories as it's awaited
+            self.worker.send_rollout_trajectories = MagicMock(
+                return_value=asyncio.Future()
+            )
+            self.worker.send_rollout_trajectories.return_value.set_result(None)
+
+            loop.run_until_complete(
+                self.worker.interact(input_channel, rollout_channel, None, None)
+            )
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertIsNone(self.worker._prefetched_train_bootstrap)
+        # Verify that _bootstrap_and_send_train was NOT called during interact
+        # (it was only called once during prefetch)
+        self.worker._bootstrap_and_send_train.assert_called_once()
+        self.assertEqual(self.worker.record_env_metrics.call_count, 2)
+
+    def test_duplicate_prefetch_protection(self):
+        """Test that multiple prefetch calls raise RuntimeError."""
+        rollout_channel = MagicMock()
+        self.worker._bootstrap_and_send_train = MagicMock()
+
+        # First prefetch
+        self.worker.prefetch_train_bootstrap(rollout_channel)
+
+        # Second prefetch should raise RuntimeError
+        with self.assertRaises(RuntimeError) as cm:
+            self.worker.prefetch_train_bootstrap(rollout_channel)
+
+        self.assertIn("A prefetched train bootstrap already exists", str(cm.exception))
+
+    def test_record_env_metrics_appends_values(self):
+        """record_env_metrics should append env info tensors as-is."""
+        env_metrics = {}
+
+        self.worker.record_env_metrics(
+            env_metrics, {"episode_len": torch.tensor([5, 6])}
+        )
+        self.worker.record_env_metrics(
+            env_metrics, {"episode_len": torch.tensor([7, 8])}
+        )
+
+        self.assertEqual(len(env_metrics["episode_len"]), 2)
+        self.assertTrue(
+            torch.equal(env_metrics["episode_len"][0], torch.tensor([5, 6]))
+        )
+        self.assertTrue(
+            torch.equal(env_metrics["episode_len"][1], torch.tensor([7, 8]))
+        )
+
+    def test_interact_records_metrics_only_on_final_chunk_when_not_auto_reset(self):
+        """Non-auto-reset training should record episode metrics only once per rollout epoch."""
+        self.worker.cfg.env.train.auto_reset = False
+        self.worker.cfg.env.train.ignore_terminations = False
+        self.worker.env_list[0].reset.return_value = (
+            {"main_images": torch.zeros(2, 3, 224, 224)},
+            {},
+        )
+        self.worker.record_env_metrics = MagicMock()
+
+        rollout_channel = MagicMock()
+        input_channel = MagicMock()
+
+        mock_policy_output = MagicMock()
+        mock_policy_output.actions = torch.zeros(2, 28)
+        mock_policy_output.bootstrap_values = None
+        mock_policy_output.forward_inputs = {"action": torch.zeros(2, 28)}
+        mock_policy_output.versions = torch.zeros(2, 1)
+        mock_policy_output.intervene_flags = None
+
+        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
+        self.worker.env_interact_step = MagicMock(
+            return_value=(
+                EnvOutput(
+                    obs={"main_images": torch.zeros(2, 3, 224, 224)},
+                    dones=torch.zeros(2, 4, dtype=torch.bool),
+                    truncations=torch.zeros(2, 4, dtype=torch.bool),
+                    terminations=torch.zeros(2, 4, dtype=torch.bool),
+                ),
+                {"episode_len": torch.tensor([1, 2])},
+                {},
+            )
+        )
+        self.worker.send_env_batch = MagicMock()
+        self.worker.store_last_obs_and_intervened_info = MagicMock()
+        self.worker.finish_rollout = MagicMock()
+        self.worker.compute_bootstrap_rewards = MagicMock(
+            return_value=torch.zeros(2, 4)
+        )
+        self.worker._bootstrap_and_send_train = MagicMock(
+            return_value=[EnvOutput(obs={"m": torch.zeros(1)}, dones=torch.zeros(1, 4))]
+        )
+        self.worker.send_rollout_trajectories = MagicMock(
+            return_value=MagicMock(wait=MagicMock(return_value=None))
+        )
+
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                self.worker.interact(input_channel, rollout_channel, None, None)
+            )
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(self.worker.record_env_metrics.call_count, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
