@@ -14,7 +14,7 @@
 
 """GimArm env-level hardware test.
 
-Tests the RLinf GimArmController integration layer on real hardware:
+Tests the RLinf GimArm integration layer on real hardware:
 feedforward control thread, Butterworth filtering, smooth reset,
 move_joints, get_state (FK), and gripper — the same code path that
 GimArmEnv.step() and reset() use.
@@ -72,7 +72,7 @@ def main():
     )
     args = parser.parse_args()
 
-    from rlinf.envs.realworld.gim_arm.gim_arm_controller import GimArmController
+    from rlinf.robotics.parts.arms.gim_arm import GimArm
 
     passed = 0
     failed = 0
@@ -87,24 +87,26 @@ def main():
             print(f"  FAIL  {name}  {detail}")
 
     # ── 1. Launch controller via distributed Worker ──────────────────────────
-    print(f"\n[1] Launching GimArmController on '{args.can}' ...")
-    controller = GimArmController.launch_controller(
+    print(f"\n[1] Launching GimArm on '{args.can}' ...")
+    controller = GimArm(
         can_interface=args.can,
         arm_variant=args.variant,
         enable_gripper=not args.no_gripper,
         gripper_type=args.gripper_type,
+        node_rank=0,
     )
+    controller.connect()
     print("  Controller launched (SDK + feedforward thread started)")
 
     try:
         # ── 2. is_robot_up ───────────────────────────────────────────────────
         print("\n[2] Checking is_robot_up() ...")
-        up = controller.is_robot_up().wait()[0]
+        up = controller.is_robot_up()
         check("is_robot_up() returns True", up)
 
         # ── 3. get_state — verify shapes and print ──────────────────────────
         print("\n[3] Checking get_state() ...")
-        state = controller.get_state().wait()[0]
+        state = controller.get_state()
 
         check(
             "tcp_pose shape (7,)",
@@ -179,14 +181,14 @@ def main():
 
         def ramp_to(label, target_q):
             """Linearly interpolate from current position to target_q at 100 Hz."""
-            current_q = controller.get_state().wait()[0].arm_joint_position.copy()
+            current_q = controller.get_state().arm_joint_position.copy()
             target_q = np.array(target_q, dtype=np.float64)
             for i in range(1, num_steps + 1):
                 alpha = i / num_steps
                 interp = current_q + alpha * (target_q - current_q)
-                controller.move_joints(interp).wait()
+                controller.move_joints(interp)
                 time.sleep(step_dt)
-            state_after = controller.get_state().wait()[0]
+            state_after = controller.get_state()
             max_err = np.max(np.abs(state_after.arm_joint_position - target_q))
             check(
                 f"{label} (max_err={max_err:.4f})",
@@ -208,10 +210,10 @@ def main():
 
         # ── 5. reset_joint — smooth interpolation test ───────────────────────
         print("\n[5] Testing reset_joint() — smooth return to zero (3s) ...")
-        controller.reset_joint([0.0] * 6, duration=3.0).wait()
+        controller.reset_joint([0.0] * 6, duration=3.0)
         time.sleep(0.5)
 
-        state_after_reset = controller.get_state().wait()[0]
+        state_after_reset = controller.get_state()
         max_error = np.max(np.abs(state_after_reset.arm_joint_position))
         check(
             f"All joints near zero after reset (max_err={max_error:.4f})",
@@ -224,24 +226,24 @@ def main():
         if not args.no_gripper:
             print("\n[6] Testing gripper ...")
 
-            controller.open_gripper().wait()
+            controller.open_gripper()
             time.sleep(1.5)
-            state_open = controller.get_state().wait()[0]
+            state_open = controller.get_state()
             check("Gripper reports open after open_gripper()", state_open.gripper_open)
             print(f"  Gripper position: {state_open.gripper_position:.4f} rad")
 
-            controller.close_gripper().wait()
+            controller.close_gripper()
             time.sleep(1.5)
-            state_closed = controller.get_state().wait()[0]
+            state_closed = controller.get_state()
             check(
                 "Gripper reports closed after close_gripper()",
                 not state_closed.gripper_open,
             )
             print(f"  Gripper position: {state_closed.gripper_position:.4f} rad")
 
-            controller.open_gripper().wait()
+            controller.open_gripper()
             time.sleep(1.5)
-            state_reopen = controller.get_state().wait()[0]
+            state_reopen = controller.get_state()
             check("Gripper reports open after re-open", state_reopen.gripper_open)
             print(f"  Gripper position: {state_reopen.gripper_position:.4f} rad")
         else:
@@ -258,7 +260,7 @@ def main():
     finally:
         # ── 7. Cleanup ───────────────────────────────────────────────────────
         print("\n[7] Stopping controller ...")
-        controller.stop().wait()
+        controller.disconnect()
 
 
 if __name__ == "__main__":
