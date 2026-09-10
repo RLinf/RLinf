@@ -152,7 +152,9 @@ class TOPRewardModel(nn.Module):
             # failing episodes, so the call also sees how the episode got here.
             past = self._history.get(env)
             window = chunk if past is None else np.concatenate([past, chunk])
-            self._history[env] = chunk[-max(1, self.window_frames - self.chunk) :]
+            # Carrying the tail of the window rather than of this chunk lets a
+            # window_frames above 2 * chunk fill up over successive calls.
+            self._history[env] = window[-max(1, self.window_frames - self.chunk) :]
 
             logp = self._score(
                 window[-self.window_frames :], instructions[env * self.chunk]
