@@ -21,6 +21,8 @@
 
 /rlinf/models @guozhen1997
 
+/rlinf/robotics @andylin-hao
+
 /rlinf/runners @guozhen1997 @andylin-hao
 
 /rlinf/scheduler @andylin-hao
@@ -39,7 +41,7 @@
 /tests @andylin-hao
 /toolkits/auto_placement @Lin-xs
 /rlinf/utils/ckpt_convertor @qurakchin @guozhen1997
-/toolkits/realworld_check @andylin-hao @zanghz21
+/toolkits/realworld_check @andylin-hao
 
 /.cursor @andylin-hao
 /.pre-commit-config.yaml @andylin-hao
