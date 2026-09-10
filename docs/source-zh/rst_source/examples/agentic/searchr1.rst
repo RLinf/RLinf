@@ -114,7 +114,7 @@ Wiki配置文件
 
 下载 `qdrant <https://github.com/qdrant/qdrant/releases>`__ 并按照以下步骤构建 qdrant collection。首先，创建一个文件夹并把下载好的 qdrant 二进制文件放入该文件夹中，方便后续存储 qdrant 程序及其构建的 collection 文件。
 
-在 `examples/agent/tools/search_local_server_qdrant/build_index_qdrant.sh` 和 `examples/agent/tools/search_local_server_qdrant/launch_local_server_qdrant.sh` 中，根据之前下载的 wiki corpus, e5-base-v2 和 qdrant 路径更新 `WIKI2018_DIR`、 `retriever_path` 和 `qdrant_path` 的文件路径。
+在 `examples/agent/tools/search_local_server_qdrant/build_index.sh` 和 `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh` 中，根据之前下载的 wiki corpus, e5-base-v2 和 qdrant 路径更新 `WIKI2018_DIR`、 `retriever_path` 和 `qdrant_path` 的文件路径。
 
 使用以下指令构建 qdrant wiki 服务器的 collection：
 
@@ -129,9 +129,9 @@ Wiki配置文件
    /path/to/qdrant/qdrant &
 
    # 构建 qdrant collection
-   bash examples/agent/tools/search_local_server_qdrant/build_index_qdrant.sh
+   bash examples/agent/tools/search_local_server_qdrant/build_index.sh
 
-运行 launch_local_server_qdrant.sh 启动 Local Qdrant Wiki Server ，等待直至输出 server ip 等信息，代表 server 启动完成
+运行 launch_local_server.sh 启动 Local Qdrant Wiki Server ，等待直至输出 server ip 等信息，代表 server 启动完成
 
 .. code-block:: bash
 
@@ -139,7 +139,7 @@ Wiki配置文件
    /path/to/qdrant/qdrant &
 
    # 启动基于 qdrant 的 wiki server
-   bash examples/agent/tools/search_local_server_qdrant/launch_local_server_qdrant.sh
+   bash examples/agent/tools/search_local_server_qdrant/launch_local_server.sh
 
 Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
 
