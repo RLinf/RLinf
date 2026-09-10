@@ -101,6 +101,8 @@ class FrankaEnvConfig:
     enable_camera_player: bool = True
     # Per-camera [top, left, bottom, right] crop fractions, keyed by serial.
     camera_crop_regions: Optional[dict[str, list[float]]] = None
+    # Whether the cameras also capture depth, alongside every colour frame.
+    enable_camera_depth: bool = False
 
     is_dummy: bool = False
     use_dense_reward: bool = False
@@ -216,6 +218,7 @@ class FrankaEnv(gym.Env):
         self._franka_state = FrankaRobotState()
         #: Cropped frames from the most recent whole-robot reading.
         self._last_frames: dict[str, np.ndarray] = {}
+        self._last_depths: dict[str, np.ndarray] = {}
         if not self.config.is_dummy:
             self._reset_pose = np.concatenate(
                 [
@@ -658,6 +661,11 @@ class FrankaEnv(gym.Env):
             ee_state_key = "gripper_position"
             ee_low, ee_high = -1.0, 1.0
 
+        depth_cameras = [
+            camera_info
+            for camera_info in self._camera_infos
+            if camera_info.enable_depth
+        ]
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
@@ -682,6 +690,20 @@ class FrankaEnv(gym.Env):
                     }
                 ),
             }
+            | (
+                {
+                    "depths": gym.spaces.Dict(
+                        {
+                            camera_info.name: gym.spaces.Box(
+                                0.0, np.inf, shape=(128, 128), dtype=np.float32
+                            )
+                            for camera_info in depth_cameras
+                        }
+                    )
+                }
+                if depth_cameras
+                else {}
+            )
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
@@ -756,6 +778,7 @@ class FrankaEnv(gym.Env):
                     serial_number=serial,
                     camera_type=default_camera_type,
                     crop_region=crop_region,
+                    enable_depth=self.config.enable_camera_depth,
                 )
             )
 
@@ -792,6 +815,7 @@ class FrankaEnv(gym.Env):
         frame: np.ndarray,
         reshape_size: tuple[int, int],
         crop_region: tuple[float, float, float, float] | None = None,
+        interpolation: int = cv2.INTER_LINEAR,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Crop the frame and resize.
 
@@ -801,11 +825,12 @@ class FrankaEnv(gym.Env):
             crop_region: Optional relative crop ``(top, left, bottom, right)``
                 where each value is in ``[0, 1]``.  ``None`` falls back to the
                 default centre-square crop.
+            interpolation: OpenCV interpolation used by the resize.
 
         Returns:
             A tuple of ``(cropped_frame, resized_frame)``.
         """
-        h, w, _ = frame.shape
+        h, w = frame.shape[:2]
         if crop_region is not None:
             top_pct, left_pct, bottom_pct, right_pct = crop_region
             y1 = int(h * top_pct)
@@ -820,13 +845,18 @@ class FrankaEnv(gym.Env):
             cropped_frame = frame[
                 start_y : start_y + crop_size, start_x : start_x + crop_size
             ]
-        resized_frame = cv2.resize(cropped_frame, reshape_size)
+        resized_frame = cv2.resize(
+            cropped_frame, reshape_size, interpolation=interpolation
+        )
         return cropped_frame, resized_frame
 
-    def _frames_from(self, reading: dict[str, Any]) -> dict[str, np.ndarray]:
-        """Crop and resize the frames one robot reading carried."""
+    def _frames_from(
+        self, reading: dict[str, Any]
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """Crop and resize the frames and depth maps one robot reading carried."""
         crops = {info.name: info.crop_region for info in self._camera_infos}
         frames = {}
+        depths = {}
         display_frames = {}
         for name in self._cameras:
             frame = np.asarray(reading[name]["frame"])
@@ -839,8 +869,19 @@ class FrankaEnv(gym.Env):
             display_frames[name] = resized_frame  # Display frame in RGB.
             display_frames[f"{name}_full"] = cropped_frame  # Full crop for display.
 
+            if "depth" in reading[name]:
+                # Averaging a depth map invents distances between an object and
+                # whatever is behind it, so this resamples by nearest instead.
+                _, resized_depth = self._crop_frame(
+                    np.asarray(reading[name]["depth"], dtype=np.float32),
+                    reshape_size,
+                    crop_region=crops.get(name),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+                depths[name] = resized_depth
+
         self.camera_player.put_frame(display_frames)
-        return frames
+        return frames, depths
 
     # Robot action helpers.
 
@@ -945,7 +986,7 @@ class FrankaEnv(gym.Env):
         """
         reading = self.robot.get_observation()
         self._franka_state = self._state_from(reading)
-        self._last_frames = self._frames_from(reading)
+        self._last_frames, self._last_depths = self._frames_from(reading)
         return self._franka_state
 
     def _state_from(self, reading: dict[str, Any]) -> FrankaRobotState:
@@ -988,6 +1029,8 @@ class FrankaEnv(gym.Env):
                 "state": state,
                 "frames": frames,
             }
+            if self._last_depths:
+                observation["depths"] = self._last_depths
             return copy.deepcopy(observation)
         else:
             obs = self._base_observation_space.sample()
