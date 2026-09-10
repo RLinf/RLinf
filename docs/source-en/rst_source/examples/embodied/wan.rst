@@ -293,8 +293,7 @@ Then point the env preset at the weights:
      from_pretrained: /Pathto/model/Qwen3-VL-8B-Instruct
      success_prob_threshold: 0.46 # exp(log P(" True")) at or above this is a success
      window_frames: 16            # frames per call, ending at the chunk boundary
-     max_frames: 16               # what the processor keeps of that window
-     fps: 2.0                     # video metadata the prompt template assumes
+     fps: 2.0                     # drives the temporal encoding, via the processor's video_metadata
 
 ``examples/embodiment/config/wan_libero_spatial_topreward_grpo_openvlaoft.yaml`` is a ready
 recipe:
