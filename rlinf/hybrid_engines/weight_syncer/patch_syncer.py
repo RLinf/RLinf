@@ -856,6 +856,13 @@ class PatchWeightSyncer(WeightSyncer):
             dtype_resolver=lambda key, _dtype: receiver_dtypes[key],
         ):
             await send(bucket)
+            # `send` returns once the broadcast is enqueued, so drain it here: the barrier below
+            # runs on the sender's own group and cannot order the broadcast communicator.
+            if (
+                self._active_sender
+                and self.transport_device.type == Worker.torch_device_type
+            ):
+                Worker.torch_platform.current_stream().synchronize()
             # Only the source rank enters `send`, so without this the others would start the next
             # bucket's all-gather while it is still sending.
             if torch.distributed.is_initialized():

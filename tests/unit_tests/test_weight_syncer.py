@@ -825,23 +825,62 @@ def test_patch_weight_syncer_init_sync_barriers_after_every_bucket(monkeypatch):
 
     state_dict = model.state_dict()
     receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
-    sends = []
-    barriers = []
+    events = []
 
     async def _send(_bucket):
-        sends.append(len(sends))
+        events.append("send")
 
     monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-    monkeypatch.setattr(
-        torch.distributed, "barrier", lambda: barriers.append(len(barriers))
-    )
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: events.append("barrier"))
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu", raising=False)
+    stream = MagicMock()
+    stream.synchronize.side_effect = lambda: events.append("drain")
+    platform = MagicMock()
+    platform.current_stream.return_value = stream
+    monkeypatch.setattr(Worker, "torch_platform", platform, raising=False)
 
     asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
 
     # Only the source rank enters the send, so every bucket needs a barrier to keep the other
-    # ranks from starting the next bucket's all-gather.
-    assert len(sends) > 1
-    assert len(barriers) == len(sends)
+    # ranks from starting the next bucket's all-gather. The barrier runs on the sender's own
+    # group and cannot order the broadcast communicator, so the send must be drained first.
+    assert events.count("send") > 1
+    assert events == ["send", "drain", "barrier"] * events.count("send")
+
+
+def test_patch_weight_syncer_init_sync_does_not_drain_on_inactive_sender(monkeypatch):
+    model = _make_value_head_model(torch.device("cpu"))
+    syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+        init_sync_enabled=True,
+        init_sync_prefixes=["value_head"],
+        init_sync_bucket_size=32,
+    )
+    syncer._active_sender = False
+
+    state_dict = model.state_dict()
+    receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
+    events = []
+
+    async def _send(_bucket):
+        events.append("send")
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: events.append("barrier"))
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu", raising=False)
+    stream = MagicMock()
+    stream.synchronize.side_effect = lambda: events.append("drain")
+    platform = MagicMock()
+    platform.current_stream.return_value = stream
+    monkeypatch.setattr(Worker, "torch_platform", platform, raising=False)
+
+    asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
+
+    assert "drain" not in events
+    assert events.count("barrier") == events.count("send")
 
 
 def test_patch_weight_syncer_init_sync_bootstraps_full_state_dict():
