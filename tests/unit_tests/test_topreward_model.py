@@ -34,7 +34,6 @@ class _StubbedScorer(TOPRewardModel):
         self.chunk = CHUNK
         self.threshold = float(np.exp(threshold))
         self.window_frames = window_frames
-        self.max_frames = window_frames
         self.fps = 2.0
         self._history = {}
         self._logps = list(logps)

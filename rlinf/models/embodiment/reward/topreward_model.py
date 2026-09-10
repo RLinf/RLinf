@@ -46,7 +46,6 @@ class TOPRewardModel(nn.Module):
         chunk: int,
         success_prob_threshold: float = 0.46,
         window_frames: int = 16,
-        max_frames: int = 16,
         fps: float = 2.0,
         attn_implementation: str = "eager",
         dtype: str = "bfloat16",
@@ -55,7 +54,6 @@ class TOPRewardModel(nn.Module):
         self.chunk = int(chunk)
         self.threshold = float(success_prob_threshold)
         self.window_frames = int(window_frames)
-        self.max_frames = int(max_frames)
         self.fps = float(fps)
         self._history: dict[int, np.ndarray] = {}
 
@@ -94,8 +92,8 @@ class TOPRewardModel(nn.Module):
     def _to_pil(self, frames_chw: np.ndarray):
         from PIL import Image
 
-        if len(frames_chw) > self.max_frames:
-            keep = np.linspace(0, len(frames_chw) - 1, self.max_frames).astype(int)
+        if len(frames_chw) > self.window_frames:
+            keep = np.linspace(0, len(frames_chw) - 1, self.window_frames).astype(int)
             frames_chw = frames_chw[keep]
         return [
             Image.fromarray(np.transpose(frame, (1, 2, 0))[..., :3]).convert("RGB")

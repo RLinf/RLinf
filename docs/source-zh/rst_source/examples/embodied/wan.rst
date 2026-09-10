@@ -287,8 +287,7 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
      from_pretrained: /Pathto/model/Qwen3-VL-8B-Instruct
      success_prob_threshold: 0.46 # exp(log P(" True")) 达到该值即判成功
      window_frames: 16            # 每次调用喂入的帧数，末端对齐 chunk 边界
-     max_frames: 16               # processor 从该窗口保留的帧数
-     fps: 2.0                     # prompt 模板假定的视频元数据
+     fps: 2.0                     # 经 processor 的 video_metadata 进入时间编码
 
 ``examples/embodiment/config/wan_libero_spatial_topreward_grpo_openvlaoft.yaml`` 是现成配方：
 
