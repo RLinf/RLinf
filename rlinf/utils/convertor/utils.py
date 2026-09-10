@@ -24,7 +24,6 @@ from rlinf.config import SupportedModel
 class TransformType(Enum):
     SPLIT_QKV = "split_qkv"
     SPLIT_QKV_BIAS = "split_qkv_bias"
-    SPLIT_FC1 = "split_fc1"
     SPLIT_EXPERT_FC1 = "split_expert_fc1"
     SPLIT_NONE = "split_none"
 
@@ -94,42 +93,12 @@ class TransformFunc:
         new_statedict[weight_names[2]] = v_full.clone()
 
     @staticmethod
-    def split_fc1(
-        linear_fc1: torch.Tensor, new_statedict: dict, weight_names: list[str], config
-    ) -> None:
-        assert weight_names is not None and len(weight_names) == 2, (
-            f"split_fc1 transform expects two weight names, got {weight_names}"
-        )
-
-        tp_size = config.model_config.tensor_model_parallel_size
-        rollout_moe_dense_tp = (
-            config.rollout_moe_dense_tp_size or config.reshard_tp_size
-        )
-        gather_count = tp_size // rollout_moe_dense_tp
-        split_size = linear_fc1.shape[0] // gather_count
-        linear_fc1_slice = torch.split(linear_fc1, split_size, dim=0)
-
-        gate_proj_shards = []
-        up_proj_shards = []
-        for weight in linear_fc1_slice:
-            assert weight.shape[0] % 2 == 0, (
-                f"linear_fc1 weight shape {weight.shape} is not even along dim 0"
-            )
-            weight_chunk = torch.chunk(weight, 2, dim=0)
-            gate_proj_shards.append(weight_chunk[0])
-            up_proj_shards.append(weight_chunk[1])
-        gate_proj = torch.cat(gate_proj_shards, dim=0)
-        up_proj = torch.cat(up_proj_shards, dim=0)
-
-        new_statedict[weight_names[0]] = gate_proj.clone()
-        new_statedict[weight_names[1]] = up_proj.clone()
-
     @staticmethod
     def split_expert_fc1(
         linear_fc1: torch.Tensor, new_statedict: dict, weight_names: list[str], config
     ) -> None:
         assert weight_names is not None and len(weight_names) == 2, (
-            f"split_fc1 transform expects two weight names, got {weight_names}"
+            f"split_expert_fc1 transform expects two weight names, got {weight_names}"
         )
 
         weight_chunk = torch.chunk(linear_fc1, 2, dim=0)
@@ -196,8 +165,6 @@ class BaseConvertor:
             transform, targets = mapped
             if transform in (TransformType.SPLIT_QKV, TransformType.SPLIT_QKV_BIAS):
                 TransformFunc._split_gqa_tensor(v, converted, targets, self.cfg)
-            elif transform == TransformType.SPLIT_FC1:
-                TransformFunc.split_fc1(v, converted, targets, self.cfg)
             elif transform == TransformType.SPLIT_EXPERT_FC1:
                 TransformFunc.split_expert_fc1(v, converted, targets, self.cfg)
             elif transform == TransformType.SPLIT_NONE:

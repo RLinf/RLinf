@@ -19,7 +19,12 @@ from typing import Any, Callable, Literal
 import torch
 from omegaconf import DictConfig
 from packaging.version import parse
-from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
+
+try:
+    from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
+except ImportError:
+    # sglang 0.5.2/0.5.4 lack this symbol; these values are stable across versions.
+    GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache", "cuda_graph"]
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -196,10 +201,13 @@ class Scheduler(_Scheduler):
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
+                # NOTE: the key is to change device id to the current device id
+                # in case two processes have different CUDA_VISIBLE_DEVICES
                 list_args[6] = torch.cuda.current_device()
                 new_weight = func(*list_args)
                 batch_weight.append((rename(name), new_weight))
         else:
+            # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
                 batch_weight.append((rename(name), tensor))
 
@@ -261,7 +269,6 @@ class Scheduler(_Scheduler):
             self.batch_load_hf_weight(state_dict)
         state_dict = None
 
-        self.flush_cache()
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
             model = self.tp_worker.worker.model_runner.model

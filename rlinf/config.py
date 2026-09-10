@@ -120,7 +120,8 @@ SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
-SupportedModel.KIMI_K2 = SupportedModel.register("kimi_k2", force=True)
+# GLM-4.7-Flash: MLA (DeepSeek-V3-style) + GLM MoE + MTP, via Megatron-Bridge
+# GLM47FlashBridge (rlinf-megatron-bridge >=0.5.0). Needs mcore 0.18.
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)

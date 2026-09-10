@@ -815,13 +815,13 @@ class MegatronModelManager:
         ):
             return
 
-        for model_idx, model_chunk in enumerate(self.model):
+        for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
                 # All model bf16 weights live in two flat _ParamAndGradBuffer groups:
                 #   model_chunk.buffers                (dense/embed/attn, param_data)
                 #   model_chunk.expert_parallel_buffers (experts, param_data)
                 param_grad_buffers = list(model_chunk.buffers) + list(
-                    model_chunk.expert_parallel_buffers
+                    getattr(model_chunk, "expert_parallel_buffers", [])
                 )
                 for buffer in param_grad_buffers:
                     if (
@@ -888,7 +888,7 @@ class MegatronModelManager:
                 # Restore the two flat param_data groups (dense + expert) freed in
                 # offload. Symmetric to offload_model_weights_and_grad.
                 param_grad_buffers = list(model_chunk.buffers) + list(
-                    model_chunk.expert_parallel_buffers
+                    getattr(model_chunk, "expert_parallel_buffers", [])
                 )
                 for buffer in param_grad_buffers:
                     # sometimes, we don't want to load grad for pure inference

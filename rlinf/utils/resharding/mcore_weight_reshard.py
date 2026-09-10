@@ -345,6 +345,7 @@ class MegatronCoreWeightReshard:
                     full_tp_group,
                     dst_tp_rank,
                     self.config.reshard_tp_size,
+                    split_fc1=self.config.split_fc1,
                 )
                 # Dense MLP: full TP all_gather + slice to 1/effective_dense_tp.
                 effective_dense_tp = (
@@ -356,6 +357,7 @@ class MegatronCoreWeightReshard:
                     full_tp_group,
                     dense_dst_rank,
                     effective_dense_tp,
+                    split_fc1=self.config.split_fc1,
                 )
                 # Shared experts: full TP all_gather + slice to 1/rollout_full_tp.
                 shared_experts_dict = self.config.tp_reshard_fn(
@@ -363,6 +365,7 @@ class MegatronCoreWeightReshard:
                     full_tp_group,
                     dst_shared_rank,
                     rollout_full_tp,
+                    split_fc1=self.config.split_fc1,
                 )
                 # lm_head (output_layer) + MTP eh_proj: full TP all_gather + slice.
                 lm_head_tp = self.config.rollout_lm_head_tp_size
@@ -392,6 +395,7 @@ class MegatronCoreWeightReshard:
                     full_tp_group,
                     dst_tp_rank,
                     self.config.reshard_tp_size,
+                    split_fc1=self.config.split_fc1,
                 )
 
         if self.config.convert_fn is not None:

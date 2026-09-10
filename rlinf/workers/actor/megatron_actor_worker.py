@@ -95,41 +95,36 @@ class MegatronActor(MegatronWorker):
             self.offload_model_buffer = {}
 
         self.rollout_weights_reshard = None
-        if self.cfg.rollout.get("weight_reload", "sync") == "sync":
-            _rollout_tp = self.cfg.rollout.tensor_parallel_size
-            _sglang = self.cfg.rollout.get("sglang", {})
-            # reshard_tp_size is the rollout attention tp (not engine world size)
-            if _sglang.get("enable_dp_attention", False):
-                _rollout_attn_tp = _rollout_tp // _sglang.get("dp_size", 1)
-            else:
-                _rollout_attn_tp = _rollout_tp
-            # rollout ep: sglang forces ep_size == tp_size when enable_ep_moe,
-            # else 1 (plain TP for MoE).
-            _rollout_ep = _rollout_tp if _sglang.get("enable_ep_moe", False) else 1
-            _rollout_moe_dense_tp = _sglang.get("moe_dense_tp_size", None)
-            # lm_head TP: sglang ParallelLMHead uses the full engine TP group when enable_dp_lm_head=False, else the attn_tp group
-            _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
-            _rollout_lm_head_tp = (
-                _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
-            )
-            rollout_reshard_config = ReshardConfig(
-                model_type=self.cfg.rollout.model.model_type,
-                model_config=self.transformer_config,
-                reshard_tp_size=_rollout_attn_tp,
-                reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
-                mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
-                mg_tpe_size=self.role_cfg.model.expert_tensor_parallel_size,
-                moe_grouped_gemm=self.role_cfg.model.get("moe_grouped_gemm", None),
-                rollout_ep_size=_rollout_ep,
-                rollout_moe_dense_tp_size=_rollout_moe_dense_tp,
-                rollout_full_tp_size=_rollout_tp,
-                rollout_lm_head_tp_size=_rollout_lm_head_tp,
-                enable_dp_attention=_sglang.get("enable_dp_attention", False),
-            )
-            self.rollout_weights_reshard = MegatronCoreWeightReshard(
-                rollout_reshard_config
-            )
-            self._setup_rollout_weight_dst_ranks()
+        _rollout_tp = self.cfg.rollout.tensor_parallel_size
+        _sglang = self.cfg.rollout.get("sglang", {})
+        # Single source of truth, shared with _setup_rollout_weight_dst_ranks
+        # below — avoids the two diverging (e.g. when ep_size is set without
+        # enable_ep_moe).
+        _rollout_attn_tp = self.component_placement.rollout_attn_tp_size
+        _rollout_ep = self.component_placement.rollout_ep_size
+        _rollout_moe_dense_tp = _sglang.get("moe_dense_tp_size", None)
+        # lm_head TP: sglang ParallelLMHead uses the full engine TP group when
+        # enable_dp_lm_head=False, else the attn_tp group. Either way the
+        # actor (ColumnParallel by actor TP) must gather-to-full + slice to
+        # (dst_lm_head_rank, rollout_lm_head_tp_size) — one path for both flags.
+        _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
+        _rollout_lm_head_tp = _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
+        rollout_reshard_config = ReshardConfig(
+            model_type=self.cfg.rollout.model.model_type,
+            model_config=self.transformer_config,
+            reshard_tp_size=_rollout_attn_tp,
+            reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
+            mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
+            mg_tpe_size=self.role_cfg.model.expert_tensor_parallel_size,
+            moe_grouped_gemm=self.role_cfg.model.get("moe_grouped_gemm", None),
+            rollout_ep_size=_rollout_ep,
+            rollout_moe_dense_tp_size=_rollout_moe_dense_tp,
+            rollout_full_tp_size=_rollout_tp,
+            rollout_lm_head_tp_size=_rollout_lm_head_tp,
+            enable_dp_attention=_sglang.get("enable_dp_attention", False),
+        )
+        self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
+        self._setup_rollout_weight_dst_ranks()
 
     def process_inference_output(self, rollout_result, infer_out):
         rollout_result.recomputed_logprobs = infer_out

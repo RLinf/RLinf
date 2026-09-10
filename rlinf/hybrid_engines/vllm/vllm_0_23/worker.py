@@ -162,6 +162,11 @@ class VLLMWorker(_VllmInnerWorker):
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
 
+        # If KV cache wasn't offloaded (disaggregated), warm up now; otherwise
+        # onload_kv_cudagraph() does it after KV cache is restored.
+        if not self.offloaded_tags["kv_cache"]:
+            super().compile_or_warm_up_model()
+
     def onload_kv_cudagraph(self) -> None:
         """Onload KV cache + cuda graph deferred from sync_hf_weight.
         sync_hf_weight only woke weights for load_weights;

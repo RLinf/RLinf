@@ -15,7 +15,6 @@
 import asyncio
 import copy
 import dataclasses
-import inspect
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
@@ -179,7 +178,9 @@ class SGLangWorker(Worker):
             enable_dp_attention=self._cfg_rollout.sglang.get(
                 "enable_dp_attention", False
             ),
+            enable_dp_lm_head=self._cfg_rollout.sglang.get("enable_dp_lm_head", False),
             moe_dense_tp_size=self._cfg_rollout.sglang.get("moe_dense_tp_size", None),
+            moe_a2a_backend=self._cfg_rollout.sglang.get("moe_a2a_backend", None),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
@@ -204,15 +205,7 @@ class SGLangWorker(Worker):
         )
 
         self.log_on_first_rank(f"{server_args=}")
-        engine_kwargs = dataclasses.asdict(server_args)
-        # A100 (sm80) can't use deepep (needs sm90+NVSHMEM) -> "none" = FusedMoE.
-        _a2a = self._cfg_rollout.sglang.get("moe_a2a_backend", None)
-        if (
-            _a2a is not None
-            and "moe_a2a_backend" in inspect.signature(ServerArgs.__init__).parameters
-        ):
-            engine_kwargs["moe_a2a_backend"] = _a2a
-        self._engine = Engine(**engine_kwargs)
+        self._engine = Engine(**dataclasses.asdict(server_args))
 
     def shutdown(self):
         """

@@ -126,7 +126,9 @@ def reshard_fused_fc1(tensor, tp_group, dst_rank, dst_world_size):
     return gate, up
 
 
-def tp_reshard_fn_qwen2_5(model_state_dict, tp_group, dst_rank, dst_world_size):
+def tp_reshard_fn_qwen2_5(
+    model_state_dict, tp_group, dst_rank, dst_world_size, split_fc1=True
+):
     # Parameters that should skip TP resharding (just clone)
     param_skip_tp_reshard = [
         "linear_qkv.layer_norm_weight",
@@ -163,7 +165,9 @@ def tp_reshard_fn_qwen2_5(model_state_dict, tp_group, dst_rank, dst_world_size):
 
         # Fused fc1: per-rank split gate/up, separate all_gather + slice.
         # Output gate_proj/up_proj keys -> convertor SPLIT_NONE.
-        if "linear_fc1" in k:
+        # split_fc1=False (mcore-format inference reshard) keeps the fused
+        # linear_fc1 key instead, via the generic path below.
+        if split_fc1 and "linear_fc1" in k:
             gate, up = reshard_fused_fc1(v, tp_group, dst_rank, dst_world_size)
             model_state_dict[k.replace("linear_fc1", "gate_proj")] = gate
             model_state_dict[k.replace("linear_fc1", "up_proj")] = up
@@ -177,7 +181,9 @@ def tp_reshard_fn_qwen2_5(model_state_dict, tp_group, dst_rank, dst_world_size):
     return model_state_dict
 
 
-def tp_reshard_fn_qwen3_dense(model_state_dict, tp_group, dst_rank, dst_world_size):
+def tp_reshard_fn_qwen3_dense(
+    model_state_dict, tp_group, dst_rank, dst_world_size, split_fc1=True
+):
     # Parameters that should skip TP resharding (just clone)
     param_skip_tp_reshard = [
         "linear_qkv.layer_norm_weight",
@@ -216,7 +222,9 @@ def tp_reshard_fn_qwen3_dense(model_state_dict, tp_group, dst_rank, dst_world_si
             assert False, f"Unknown parameter: {k}"
 
         # Fused fc1: per-rank split gate/up, separate all_gather + slice.
-        if "linear_fc1" in k:
+        # split_fc1=False (mcore-format inference reshard) keeps the fused
+        # linear_fc1 key instead, via the generic path below.
+        if split_fc1 and "linear_fc1" in k:
             gate, up = reshard_fused_fc1(v, tp_group, dst_rank, dst_world_size)
             model_state_dict[k.replace("linear_fc1", "gate_proj")] = gate
             model_state_dict[k.replace("linear_fc1", "up_proj")] = up
@@ -282,7 +290,9 @@ def tp_reshard_fn_qwen3_moe(model_state_dict, tp_group, dst_rank, dst_world_size
     return model_state_dict
 
 
-def tp_reshard_fn_deepseek_v3(model_state_dict, tp_group, dst_rank, dst_world_size):
+def tp_reshard_fn_deepseek_v3(
+    model_state_dict, tp_group, dst_rank, dst_world_size, split_fc1=True
+):
     # DeepSeek-V3 / Kimi K2 / GLM-4.7-Flash text backbone: MLA attention + MoE.
     # TP reshard handles MLA projections and dense/shared MLP; routed expert
     # fc1/fc2 are skipped here (sliced by tpe_reshard_fn_deepseek_v3).
@@ -343,9 +353,10 @@ def tp_reshard_fn_deepseek_v3(model_state_dict, tp_group, dst_rank, dst_world_si
         else:
             assert False, f"Unknown parameter: {k}"
         # Unified fused fc1 (dense + shared): per-rank split gate/up, separate
-        # all_gather + slice. Output gate_proj/up_proj keys -> convertor
-        # SPLIT_NONE. Routed-expert fc1 (local_experts) excluded (block, ETP=1).
-        if "linear_fc1" in k and "local_experts" not in k:
+        # all_gather + slice. Routed-expert fc1 never reaches here (already
+        # skipped above by param_reshard_skip_weight). split_fc1=False
+        # (mcore-format inference reshard) keeps the fused key instead.
+        if split_fc1 and "linear_fc1" in k:
             gate, up = reshard_fused_fc1(v, tp_group, dst_rank, dst_world_size)
             model_state_dict[k.replace("linear_fc1", "gate_proj")] = gate
             model_state_dict[k.replace("linear_fc1", "up_proj")] = up

@@ -85,6 +85,16 @@ class ReshardConfig:
     ep_reshard_fn: Callable = None
     """Resharding function to use for resharding the model parallelism from expert_parallel_size to reshard_ep_size."""
 
+    @property
+    def split_fc1(self) -> bool:
+        """Whether tp_reshard_fn should split fused fc1 into gate_proj/up_proj.
+
+        True for sglang/vllm rollout (HF-format receiver expects gate/up);
+        False for mcore-format inference reshard (mcore receiver expects the
+        fused linear_fc1 key).
+        """
+        return self.reshard_weights_format != "mcore"
+
     def __post_init__(self):
         if self.model_type is None:
             raise ValueError(
