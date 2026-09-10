@@ -269,8 +269,18 @@ def opencv() -> types.ModuleType:
         return np.zeros((_LUMOS_H, _LUMOS_W, 3), dtype=np.uint8)
 
     def resize(image, size, interpolation=None):
+        # Environments resize their own observations with this, so it has to
+        # be the real thing wherever OpenCV is installed: a stand-in that
+        # answers in colour turns a depth map into an image. Without OpenCV,
+        # keep at least the shape and dtype the caller asked for.
+        if real_cv2 is not None:
+            if interpolation is None:
+                return real_cv2.resize(image, size)
+            return real_cv2.resize(image, size, interpolation=interpolation)
+        image = np.asarray(image)
         width, height = size
-        return np.zeros((height, width, 3), dtype=np.uint8)
+        shape = (height, width) if image.ndim == 2 else (height, width, image.shape[2])
+        return np.zeros(shape, dtype=image.dtype)
 
     class _OpenCV(types.ModuleType):
         """Delegate to real OpenCV except for device capture."""
