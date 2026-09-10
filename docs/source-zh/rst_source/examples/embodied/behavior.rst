@@ -223,7 +223,7 @@
 
    - BEHAVIOR 吞吐调优 → 先增加 env GPU 数量，再调 ``env.num_env_subprocess`` 和 ``env.train.total_num_envs``。
    - 每个 BEHAVIOR 进程可能占用约 10 GiB 显存；请按 GPU 显存调节 subprocess 数量。
-   - 缓存任务实例 → 使用 ``rlinf/envs/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
+   - 缓存任务实例 → 使用 ``rlinf/envs/sim/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
    - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
    - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
 
@@ -304,7 +304,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 
 BEHAVIOR 环境由 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 驱动。RLinf 先加载
 OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config`` 覆盖项（见
-``rlinf/envs/behavior/utils.py`` 中的 ``setup_omni_cfg``）。下表中的字段控制 reset 行为、场景
+``rlinf/envs/sim/behavior/utils.py`` 中的 ``setup_omni_cfg``）。下表中的字段控制 reset 行为、场景
 加载、仿真器频率与吞吐，大多有合理默认值，仅在自定义任务或调优性能时需要修改。
 
 .. list-table::
@@ -364,7 +364,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
 生成缓存任务实例
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rlinf/envs/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
+``rlinf/envs/sim/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
 ``*_template.json`` 与 ``*_template-tro_state.json`` 文件（它读取 ``scene_model``、
 ``activity_name``、``activity_definition_id``、机器人配置与房间加载设置，并临时切换为在线物体采样）。
 若设置了 ``activity_instance_dir`` 则写入该目录，否则写入 ``OMNIGIBSON_DATA_PATH`` 默认的
@@ -374,12 +374,12 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
 
    cd /path/to/RLinf
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format template \
      --start-idx 1 --end-idx 50
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format tro_state \
      --start-idx 1 --end-idx 50

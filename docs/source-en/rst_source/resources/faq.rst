@@ -237,6 +237,35 @@ generation from completing. Megatron then waits until Gloo times out.
 2. Resolve the underlying SGLang restore/memory issue.
 3. Relaunch the job (and Ray, if needed).
 
+FSDP Collective Times Out on the Backend Watchdog
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptom:** An FSDP actor is killed by the collective watchdog even though the
+step was still making progress:
+
+.. code-block:: text
+
+   WorkNCCL(SeqNum=1878, OpType=_ALLGATHER_BASE, ..., Timeout(ms)=1800000) ran for
+   1800000 milliseconds before timing out.
+
+The timeout in the message is the backend's built-in default — 1800000 ms on
+NCCL and Gloo, 3636000 ms on Ascend HCCL.
+
+**Likely Cause:** One rank spent longer than that between two FSDP collectives —
+a large gradient accumulation step, a slow checkpoint write, or a rank paused
+under a debugger while the others wait in an all-gather.
+
+**Fix:** FSDP collectives use the same timeout as the rest of RLinf's
+inter-worker communication, which defaults to 180 minutes. Raise it with
+``RLINF_TIMEOUT``, in minutes:
+
+.. code-block:: bash
+
+   export RLINF_TIMEOUT=360
+
+Ray captures the environment when it starts, so export this on every node
+**before** ``ray start``.
+
 Numerical Precision / Inference backend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

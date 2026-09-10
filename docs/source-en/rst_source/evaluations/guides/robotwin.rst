@@ -85,7 +85,7 @@ Available under ``evaluations/robotwin/``:
      - click_bell
      - LingBotVLA
 
-If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
+If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
 
 End-to-End Workflow
 -------------------
@@ -134,7 +134,7 @@ RoboTwin evaluation runs one trajectory per **success seed** in ``eval_seeds.jso
 Evaluation Protocol
 ~~~~~~~~~~~~~~~~~~~
 
-RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. Seeds are listed in ``rlinf/envs/robotwin/seeds/eval_seeds.json``, indexed by ``task_name``; the file currently covers **22 tasks** (150–320 seeds each).
+RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. Seeds are listed in ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``, indexed by ``task_name``; the file currently covers **22 tasks** (150–320 seeds each).
 
 In ``RoboTwinEnv``:
 
