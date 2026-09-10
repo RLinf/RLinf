@@ -953,7 +953,7 @@ def masked_normalization(
             Normalized x, with the same shape as x.
     """
     dtype = torch.float64 if high_precision else torch.float32
-    target_device = AcceleratorUtil.get_device_type(AcceleratorUtil.get_accelerator_type())
+    target_device = _get_metric_compute_device(x)
     x = x.to(dtype=dtype).to(target_device)
     if not inplace:
         x = x.clone()
