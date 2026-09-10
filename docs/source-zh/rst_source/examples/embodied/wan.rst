@@ -272,11 +272,13 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
 一份自己的 ``resnet_rm.pth``。``TOPRewardModel`` 用一个全程不训练的 VLM 取代它：把生成的画面连同
 一句\ **断言任务已完成**\ 的话一起喂进去，再读这句话的 ``log P(" True")``。换套件只需换指令文本。
 
-判分器需要 ``transformers >= 4.57`` 才认得 Qwen3-VL，比 OpenVLA-OFT 钉的版本新，因此装到独立环境：
+判分器在 env worker 内部构造，与 Wan 和策略同处一个进程，因此它跑在上面那条 Wan 安装命令建出的
+环境里——``bash requirements/install.sh embodied --model openvla-oft --env wan``。该环境需要
+``transformers >= 4.57`` 才认得 Qwen3-VL，比 OpenVLA-OFT 钉的版本新，装完后在该环境里升级：
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model qwen3_vl --env wan
+   uv pip install --upgrade "transformers>=4.57,<=4.57.6"
 
 然后在 env 预设中指向权重：
 
