@@ -283,8 +283,8 @@ Ray 集群启动
      - 每轮 rollout 步数上限；**必须能被** ``rollout.model.num_action_chunks`` **整除** （PnP 默认 ``num_action_chunks=10``）
    * - ``total_num_envs``
      - 并行环境数，真机通常为 1
-   * - ``use_spacemouse``
-     - 是否启用空间鼠标人工干预，评测时通常为 ``False``
+   * - ``teleop``
+     - 从策略手中接管的设备，评测时通常填 ``none``
 
 ``run_eval.sh`` 行为
 ~~~~~~~~~~~~~~~~~~~~
