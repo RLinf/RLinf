@@ -340,9 +340,11 @@ calibrated on spatial, carried over unchanged. Note that on object *both* scorer
 over the base, so that row shows the scorer transfers across suites rather than that this
 recipe is strong on object.
 
-Cost is one forward per action chunk, which stays inside the run-to-run variation of the Wan
-rollout itself. Each env worker holds its own copy of the weights, so plan host memory for
-``env_world_size`` copies.
+Cost is one forward per env slot per action chunk, run serially over the slots a worker owns,
+so a chunk step costs that worker ``total_num_envs / env_world_size`` forwards. The readings
+above came from 4096 forwards per training step, which stays inside the run-to-run variation
+of the Wan rollout itself. Each env worker holds its own copy of the weights, so plan host
+memory for ``env_world_size`` copies.
 
 Visualization and Results
 -------------------------

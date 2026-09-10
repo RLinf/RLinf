@@ -329,8 +329,10 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
 Object 那一行用的是在 Spatial 上标定的阈值与窗口，原样迁移、未作调整。注意 Object 上\ **两个判分器**\
 相对 base 都涨得很少，所以那一行说明的是判分器可跨套件迁移，而不是这套配方在 Object 上很强。
 
-代价是每个 action chunk 一次前向，落在 Wan rollout 自身的 run-to-run 波动之内。每个 env worker
-各持一份权重，因此宿主内存要按 ``env_world_size`` 份来规划。
+代价是每个 env slot 每个 action chunk 一次前向，在该 worker 持有的 slot 上串行执行，因此一个 chunk
+step 的代价是 ``total_num_envs / env_world_size`` 次前向。上面那些读数来自每训练步 4096 次前向，
+落在 Wan rollout 自身的 run-to-run 波动之内。每个 env worker 各持一份权重，因此宿主内存要按
+``env_world_size`` 份来规划。
 
 可视化与结果
 ----------------------------------------

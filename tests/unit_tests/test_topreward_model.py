@@ -92,6 +92,18 @@ def test_the_window_grows_into_the_previous_chunk():
     assert second[0][-1].max() == 255
 
 
+def test_a_window_longer_than_two_chunks_fills_up_over_calls():
+    scorer = _StubbedScorer([np.log(0.1)] * (3 * NUM_ENVS), window_frames=3 * CHUNK)
+
+    for _ in range(3):
+        scorer.predict_rew(_obs(0.0), _instructions())
+
+    lengths = [
+        len(frames) for frames, instruction in scorer.calls if instruction == "task-0"
+    ]
+    assert lengths == [CHUNK, 2 * CHUNK, 3 * CHUNK]
+
+
 @pytest.mark.parametrize("slots", [None, [0, 2]])
 def test_reset_history_stops_a_window_spanning_episodes(slots):
     scorer = _StubbedScorer([np.log(0.1)] * (2 * NUM_ENVS))
