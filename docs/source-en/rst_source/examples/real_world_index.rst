@@ -1,9 +1,9 @@
 RL with Real-World Robots
 =========================
 
-Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for GimArm, XSquare Turtle2, and Dexmal DOS-W1.
+Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for GimArm, XSquare Turtle2, Dexmal DOS-W1, AgileX Piper, and SO101.
 
-Each section gives the setup path for teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
+Choose a guide for hardware checks, teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
 
 .. raw:: html
 
@@ -62,6 +62,26 @@ Each section gives the setup path for teleoperation, data collection, sim-to-rea
 
    </div>
 
+Piper and SO101 Setup
+---------------------
+
+Use these guides to connect an arm and run its hardware test script. Piper and SO101 do not yet have supported real-world tasks or training workflows.
+
+.. grid:: 1 2 2 2
+   :gutter: 2
+
+   .. grid-item-card:: AgileX Piper
+      :link: embodied/piper
+      :link-type: doc
+
+      Configure CAN and run the Piper joint and gripper test script.
+
+   .. grid-item-card:: SO101
+      :link: embodied/so101
+      :link-type: doc
+
+      Set up motors, calibrate an SO-101, and run the joint and gripper test script.
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -71,3 +91,5 @@ Each section gives the setup path for teleoperation, data collection, sim-to-rea
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
+   Piper <embodied/piper>
+   SO101 <embodied/so101>
