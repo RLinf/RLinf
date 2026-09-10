@@ -135,7 +135,7 @@ Note that in the Bin-relocation task, the target end-effector pose represents
 the midpoint of the lowest point in the motion space. Specifically, to prevent
 the Franka end-effector from colliding with the rim of the container, a
 workspace region is carved out around the target pose to limit the robot's
-range of motion. See ``rlinf/envs/realworld/franka/tasks/franka_bin_relocation.py``
+range of motion. See ``rlinf/envs/real/franka/bin_relocation.py``
 for details.
 
 Follow the **Obtain the target pose** section in :doc:`franka` and use the
@@ -308,7 +308,9 @@ Step 5: Real-World Deployment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Modify ``evaluations/realworld/realworld_pnp_eval.yaml``
-to match your cluster, camera, and target pose:
+to match your cluster and target pose. RealSense cameras are discovered
+automatically. Set ``camera_serials`` in the hardware entry only to select a
+subset or specify the camera order:
 
 .. code-block:: yaml
 
@@ -323,7 +325,6 @@ to match your cluster, camera, and target pose:
      eval:
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
          task_description: "pick up the object and place it into the container"
 
 After SFT training completes, update the model checkpoint path in the deploy
@@ -383,7 +384,7 @@ Key fields you should customise for your task:
 
 Under the hood, ``FrankaEnv`` accepts ``override_cfg`` as a plain dict and uses
 a class-variable ``CONFIG_CLS`` to instantiate the dataclass config (defaults to
-``FrankaRobotConfig``). Subclasses such as ``PegInsertionEnv`` and ``BottleEnv``
+``FrankaEnvConfig``). Subclasses such as ``PegInsertionEnv`` and ``BottleEnv``
 override ``CONFIG_CLS`` to their own dataclass while sharing the same
 constructor.
 

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from rlinf.data.datasets.diffusion import TextDataset
-from rlinf.envs.diffusion.utils import cfg_get
+from rlinf.envs.sim.diffusion.utils import cfg_get
 
 
 class OCRDataset(TextDataset):

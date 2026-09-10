@@ -1,5 +1,4 @@
-env_type: realworld
-
+env_type: real
 total_num_envs: 1
 
 auto_reset: False
@@ -11,7 +10,7 @@ group_size: 1
 use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 300
 max_episode_steps: 300
-use_spacemouse: False
+teleop: none
 no_gripper: False
 main_image_key: wrist_1
 
@@ -62,23 +61,3 @@ override_cfg:
     rotational_clip_neg_y: 0.02
     rotational_clip_neg_z: 0.02
     rotational_Ki: 0
-  # Precision controller parameters for fine positioning.
-  precision_param:
-    translational_stiffness: 3000
-    translational_damping: 89
-    rotational_stiffness: 300
-    rotational_damping: 9
-    translational_Ki: 0.1
-    translational_clip_x: 0.01
-    translational_clip_y: 0.01
-    translational_clip_z: 0.01
-    translational_clip_neg_x: 0.01
-    translational_clip_neg_y: 0.01
-    translational_clip_neg_z: 0.01
-    rotational_clip_x: 0.05
-    rotational_clip_y: 0.05
-    rotational_clip_z: 0.05
-    rotational_clip_neg_x: 0.05
-    rotational_clip_neg_y: 0.05
-    rotational_clip_neg_z: 0.05
-    rotational_Ki: 0.1
