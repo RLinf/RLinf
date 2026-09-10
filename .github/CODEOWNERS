@@ -39,7 +39,7 @@
 /tests @andylin-hao
 /toolkits/auto_placement @Lin-xs
 /rlinf/utils/ckpt_convertor @qurakchin @guozhen1997
-/toolkits/realworld_check @andylin-hao @zanghz21
+/toolkits/realworld_check @andylin-hao
 
 /.cursor @andylin-hao
 /.pre-commit-config.yaml @andylin-hao
