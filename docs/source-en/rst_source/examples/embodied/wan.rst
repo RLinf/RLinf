@@ -332,8 +332,8 @@ Two things to know before tuning it:
     * - Object
       - 34.2%
       - 36.8%
-      - 37.8%
-      - +1.0
+      - 34.8%
+      - −2.0
 
 Both gaps sit inside this benchmark's 3.1-point standard error, so the frozen VLM matches a
 classifier trained on that exact domain. The object row used the threshold and window

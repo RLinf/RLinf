@@ -323,8 +323,8 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
     * - Object
       - 34.2%
       - 36.8%
-      - 37.8%
-      - +1.0
+      - 34.8%
+      - −2.0
 
 两个差都落在该基准 3.1 个百分点的标准误之内，即不训练的 VLM 与在该域上专门训过的判分器打平。
 Object 那一行用的是在 Spatial 上标定的阈值与窗口，原样迁移、未作调整。注意 Object 上\ **两个判分器**\
