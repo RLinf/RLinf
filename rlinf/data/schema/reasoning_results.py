@@ -1019,15 +1019,9 @@ class DynamicRolloutResult:
             "position_ids": torch.zeros(
                 *pad_seq_shape, dtype=torch.long, device=target_device
             ),
-            "is_end": torch.zeros(
-                1, dtype=torch.bool, device=target_device
-            ),
-            "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=target_device
-            ),
-            "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=target_device
-            ),
+            "is_end": torch.zeros(1, dtype=torch.bool, device=target_device),
+            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=target_device),
+            "response_lengths": torch.zeros(1, dtype=torch.int32, device=target_device),
             "ref_logprobs": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
@@ -1037,9 +1031,7 @@ class DynamicRolloutResult:
             "rollout_logprobs": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
-            "rewards": torch.zeros(
-                1, dtype=torch.float32, device=target_device
-            ),
+            "rewards": torch.zeros(1, dtype=torch.float32, device=target_device),
             "advantages": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
