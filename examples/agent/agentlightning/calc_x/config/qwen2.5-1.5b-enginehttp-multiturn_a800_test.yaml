@@ -1,0 +1,12 @@
+defaults:
+  - qwen2.5-1.5b-enginehttp-multiturn
+
+# Temporary single-GPU smoke-test override. Do not use for full-scale training.
+cluster:
+  component_placement:
+    actor,rollout,reward: 0
+
+# Leave sufficient device memory for the colocated Actor backward pass.
+# The formal multi-turn algorithm settings remain inherited from the base config.
+rollout:
+  gpu_memory_utilization: 0.4
