@@ -5087,6 +5087,90 @@ def test_piper_gripper_rides_the_arm_connection():
         arm.disconnect()
 
 
+def test_piper_controller_commands_use_measured_joints_after_clipping():
+    """An unreachable target must not accumulate into the next relative move."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import PiperRobot
+    from rlinf.robotics.parts.arms.piper import PiperArm
+    from toolkits.realworld_check.test_piper_controller import drive
+
+    with mocked_sdks():
+        robot = PiperRobot(arm=PiperArm.declare("can0"))
+        robot.connect()
+        try:
+            limit = PiperArm.JOINT_LIMITS_UPPER[0]
+            robot.send_action({"arm": {"joint_position": [limit, 0, 0, 0, 0, 0]}})
+            drive(robot, ["joint 1 5", "joint 1 -2", "grip 0.5", "quit"])
+            reading = robot.get_observation()["arm"]
+            assert reading["arm_joint_position"][0] == pytest.approx(
+                limit - np.deg2rad(2)
+            )
+            assert reading["end_effector"]["state"] == pytest.approx([0.5])
+        finally:
+            robot.disconnect()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "joint 0 2",
+        "joint 7 2",
+        "joint 1 6",
+        "joint 1 nan",
+        "joint 1 inf",
+        "joint one 2",
+        "grip -0.1",
+        "grip 1.1",
+        "grip nan",
+        "where extra",
+    ],
+)
+def test_piper_controller_rejects_invalid_commands_without_moving(command, caplog):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import PiperRobot
+    from rlinf.robotics.parts.arms.piper import PiperArm
+    from toolkits.realworld_check.test_piper_controller import drive
+
+    with mocked_sdks():
+        robot = PiperRobot(arm=PiperArm.declare("can0"))
+        robot.connect()
+        try:
+            before = robot.get_observation()["arm"]
+            drive(robot, [command])
+            after = robot.get_observation()["arm"]
+            np.testing.assert_array_equal(
+                after["arm_joint_position"], before["arm_joint_position"]
+            )
+            np.testing.assert_array_equal(
+                after["end_effector"]["state"], before["end_effector"]["state"]
+            )
+            assert any(record.levelname == "WARNING" for record in caplog.records)
+        finally:
+            robot.disconnect()
+
+
+def test_piper_controller_operates_without_a_gripper(caplog):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import PiperRobot
+    from rlinf.robotics.parts.arms.piper import PiperArm
+    from toolkits.realworld_check.test_piper_controller import drive
+
+    with mocked_sdks():
+        robot = PiperRobot(arm=PiperArm.declare("can0", with_gripper=False))
+        robot.connect()
+        try:
+            drive(robot, ["where", "grip 0.5", "joint 1 2", "quit", "joint 1 2"])
+            reading = robot.get_observation()["arm"]
+            assert "end_effector" not in reading
+            assert reading["arm_joint_position"][0] == pytest.approx(np.deg2rad(2))
+            assert "without a gripper" in caplog.text
+        finally:
+            robot.disconnect()
+
+
 def test_piper_without_a_gripper_exports_no_end_effector():
     from robot_mocks import mocked_sdks
 
