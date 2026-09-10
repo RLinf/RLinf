@@ -232,11 +232,9 @@ def retrieve_model_state_dict_in_cpu(
             if name in offloaded_buffer:
                 offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
             else:
-                item = (
-                    item.detach()
-                    .to(device="cpu", non_blocking=True, copy=True)
-                    .pin_memory()
-                )
+                item = item.detach().to(device="cpu", non_blocking=True, copy=True)
+                if not isinstance(item, DTensor):
+                    item = item.pin_memory()
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
@@ -679,12 +677,80 @@ def warmup_optimizer_state(optimizer: Optimizer) -> None:
     for p in all_params:
         p.grad = saved_grads[p]
 
+
+@torch.no_grad()
+def init_adamw_optimizer_state(optimizer):
+    def zeros_like_state(p):
+        if getattr(p, "is_meta", False) or (
+            hasattr(p, "device") and p.device.type == "meta"
+        ):
+            return None
+
+        if isinstance(p, DTensor):
+            local = p.to_local()
+
+            local_zero = torch.zeros_like(
+                local.detach(),
+                memory_format=torch.preserve_format,
+                device=local.device,  # Important: match the parameter's local device.
+            )
+
+            return DTensor.from_local(
+                local_zero,
+                device_mesh=p.device_mesh,
+                placements=p.placements,
+                run_check=False,
+                shape=p.shape,
+                stride=p.stride(),
+            )
+
+        return torch.zeros_like(
+            p.detach(),
+            memory_format=torch.preserve_format,
+            device=p.device,
+        )
+
+    initialized_params = []
+    for group in optimizer.param_groups:
+        amsgrad = group.get("amsgrad", False)
+        capturable = group.get("capturable", False)
+        fused = group.get("fused", False)
+
+        for p in group.get("params", []):
+            if p is None:
+                continue
+
+            state = optimizer.state[p]
+            if len(state) > 0:
+                continue
+
+            initialized_params.append(p)
+
+            if isinstance(p, DTensor):
+                local_device = p.to_local().device
+            else:
+                local_device = p.device
+
+            step_device = local_device if (capturable or fused) else torch.device("cpu")
+
+            state["step"] = torch.zeros(
+                (),
+                dtype=torch.float32,
+                device=step_device,
+            )
+
+            state["exp_avg"] = zeros_like_state(p)
+            state["exp_avg_sq"] = zeros_like_state(p)
+
+            if amsgrad:
+                state["max_exp_avg_sq"] = zeros_like_state(p)
+
     # The empty step above advances each Adam param's step counter to 1, which biases
     # the first real update through bias correction and diverges from a freshly-built
     # optimizer. Reset the step counter to 0 so this state initialization is a true
     # no-op for training dynamics, while preserving the already-zeroed exp_avg/exp_avg_sq
     # entries so load_state_dict still finds initialized state.
-    for p in all_params:
+    for p in initialized_params:
         st = optimizer.state.get(p, {})
         step = st.get("step", None)
         if step is None:

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time
+from contextlib import contextmanager
 from functools import partial
 from typing import Optional
 
@@ -64,10 +65,8 @@ from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
-    cpu_weight_swap,
     get_loss_agg_func,
     masked_mean,
-    retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
 
@@ -181,10 +180,11 @@ class FSDPActor(FSDPModelManager, Worker):
         if (
             self.kl_beta > 0 or self.reinpp_kl_beta > 0
         ) and self.combine_reference_model:
-            self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-                self,
-                is_fsdp=True,
+            self.ref_policy_state_dict = self.get_model_state_dict(
+                cpu_offload=True,
+                full_state_dict=False,
             )
+            self.offload_model_buffer = {}
 
         if self.enable_offload and not self.is_pipeline:
             self.offload_param_and_grad()
@@ -430,6 +430,44 @@ class FSDPActor(FSDPModelManager, Worker):
             if self.is_optimizer_offloaded:
                 self.load_optimizer(self.device)
 
+    @contextmanager
+    def _swap_to_ref_policy(self):
+        """Temporarily swap the actor weights to the reference-policy weights.
+
+        FSDP/FSDP2 models cannot safely use plain ``model.load_state_dict(...)`` for
+        reference-logprob passes. We therefore save and restore per-rank sharded state
+        dicts through the FSDP strategy API instead of using the old generic swap helper.
+
+        Using ``full_state_dict=True`` here is not reliable in our runtime because
+        non-zero ranks may observe an empty state dict. Per-rank shard state dicts are
+        therefore the safer choice as long as loading also goes through
+        ``set_model_state_dict`` with ``full_state_dict=False``.
+        """
+        assert self.ref_policy_state_dict is not None, (
+            "Reference policy state dict is None but reference swap is requested"
+        )
+
+        current_policy_state_dict = self.get_model_state_dict(
+            cpu_offload=True,
+            full_state_dict=False,
+        )
+        self._strategy.load_model_with_state_dict(
+            self.model,
+            self.ref_policy_state_dict,
+            cpu_offload=False,
+            full_state_dict=False,
+        )
+
+        try:
+            yield
+        finally:
+            self._strategy.load_model_with_state_dict(
+                self.model,
+                current_policy_state_dict,
+                cpu_offload=False,
+                full_state_dict=False,
+            )
+
     def compute_logprobs(self, logits, target):
         return compute_logprobs_from_logits(
             logits,
@@ -551,7 +589,7 @@ class FSDPActor(FSDPModelManager, Worker):
             assert self.ref_policy_state_dict is not None, (
                 "Reference policy state dict is None but compute_ref_logprobs is True"
             )
-            with cpu_weight_swap(self, self.ref_policy_state_dict, is_fsdp=True):
+            with self._swap_to_ref_policy():
                 ref_logprobs = torch.cat(
                     [self.forward_batch(batch) for batch in micro_batches]
                 ).cpu()
