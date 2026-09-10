@@ -277,12 +277,14 @@ it with a VLM that is never trained: it shows the generated frames together with
 *asserting* the task was completed, then reads ``log P(" True")`` for that sentence. Switching
 suites changes only the instruction text.
 
-The scorer needs ``transformers >= 4.57`` for Qwen3-VL, which is newer than the version
-OpenVLA-OFT pins, so install it into its own environment:
+The scorer is built inside the env worker, alongside Wan and the policy, so it runs in the
+environment the Wan install above creates -- ``bash requirements/install.sh embodied --model
+openvla-oft --env wan``. That environment needs ``transformers >= 4.57`` for Qwen3-VL, which
+is newer than the version OpenVLA-OFT pins, so upgrade it there after installing:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model qwen3_vl --env wan
+   uv pip install --upgrade "transformers>=4.57,<=4.57.6"
 
 Then point the env preset at the weights:
 
