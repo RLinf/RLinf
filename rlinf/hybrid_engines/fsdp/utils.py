@@ -56,6 +56,7 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
+from rlinf.scheduler.cluster import Cluster, ClusterEnvVar
 from rlinf.utils.logging import get_logger
 
 
@@ -77,7 +78,7 @@ def normalize_sharding_strategy(sharding_strategy: str) -> str:
     return str(sharding_strategy).strip().lower()
 
 
-def _assert_shard_size_agrees_across_ranks(shard_size: int, world_size: int) -> None:
+def _assert_shard_size_agrees_across_ranks(shard_size: int) -> None:
     """Reject a cluster whose nodes host different numbers of ranks.
 
     Every rank reads its own node's ``NODE_LOCAL_WORLD_SIZE``, so an uneven
@@ -85,15 +86,6 @@ def _assert_shard_size_agrees_across_ranks(shard_size: int, world_size: int) -> 
     collectives backing them. Comparing the value first turns that hang into an
     error naming what each rank reported.
     """
-    if not torch.distributed.is_initialized():
-        # Every rank builds this same one-dimensional mesh, so it cannot
-        # deadlock, and it brings up the default process group used below.
-        init_device_mesh(
-            Worker.torch_device_type,
-            mesh_shape=(world_size,),
-            mesh_dim_names=["fsdp"],
-        )
-
     shard_sizes = [None] * torch.distributed.get_world_size()
     torch.distributed.all_gather_object(shard_sizes, shard_size)
     if len(set(shard_sizes)) > 1:
@@ -136,7 +128,7 @@ def _resolve_hybrid_shard_size(world_size: int) -> int:
 
     # Run before the local checks below: once every rank agrees on shard_size,
     # those checks either pass everywhere or fail everywhere.
-    _assert_shard_size_agrees_across_ranks(shard_size, world_size)
+    _assert_shard_size_agrees_across_ranks(shard_size)
 
     if shard_size <= 0:
         raise ValueError(f"NODE_LOCAL_WORLD_SIZE must be positive, got {shard_size}.")
@@ -160,6 +152,9 @@ def create_device_mesh(
 ) -> DeviceMesh:
     """Build the device mesh that FSDP shards a model over.
 
+    The default process group is initialized explicitly so FSDP collectives use
+    RLinf's configured timeout instead of the backend default.
+
     Args:
         world_size: Number of ranks in the FSDP component.
         sharding_strategy: Value of ``fsdp_config.sharding_strategy``.
@@ -172,6 +167,16 @@ def create_device_mesh(
         ranks of one node. See :func:`_resolve_hybrid_shard_size` for the
         topologies ``hybrid_shard`` rejects.
     """
+    if torch.distributed.is_initialized():
+        get_logger().warning(
+            "The default process group already exists, so FSDP collectives keep "
+            f"the timeout it was created with rather than "
+            f"{Cluster.get_full_env_var_name(ClusterEnvVar.TIMEOUT)}."
+        )
+    else:
+        # Let torch resolve the backend as usual while overriding its timeout.
+        torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
+
     if normalize_sharding_strategy(sharding_strategy) == HYBRID_SHARD:
         shard_size = _resolve_hybrid_shard_size(world_size)
         return init_device_mesh(
@@ -179,7 +184,6 @@ def create_device_mesh(
             mesh_shape=(world_size // shard_size, shard_size),
             mesh_dim_names=("ddp", "fsdp"),
         )
-
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )

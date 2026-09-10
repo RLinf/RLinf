@@ -87,8 +87,7 @@ env:
     ignore_terminations: False
     total_num_envs: 1
     no_gripper: False
-    use_spacemouse: False
-    use_pico: True
+    teleop: pico
     pico:
       # Address of the PICO / XRoboToolkit publisher on the Franka node.
       zmq_addr: "ipc:///tmp/vr_data.ipc"
@@ -114,7 +113,6 @@ env:
     override_cfg:
       target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
-      camera_serials: ["SERIAL1", "SERIAL2"]
       use_dense_reward: False
 
   eval:
@@ -123,14 +121,12 @@ env:
     auto_reset: True
     ignore_terminations: False
     no_gripper: False
-    use_spacemouse: False
-    use_pico: False
+    teleop: none
     max_steps_per_rollout_epoch: 180
     max_episode_steps: 180
     override_cfg:
       target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
-      camera_serials: ["SERIAL1", "SERIAL2"]
       use_dense_reward: False
 
 rollout:

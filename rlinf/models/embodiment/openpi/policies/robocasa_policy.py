@@ -50,7 +50,7 @@ def _parse_image(image) -> np.ndarray:
 
 
 def extract_state_dict(data: Dict, state_space: Union[str, List[str]]) -> Dict:
-    from rlinf.envs.robocasa.utils import (
+    from rlinf.envs.sim.robocasa.utils import (
         _check_state_space,
         get_state_ids,
         get_state_space,
@@ -83,7 +83,7 @@ OBS_KEY_TO_OPENPI_IMAGE = {
 
 
 def extract_image_dict(data: Dict, image_space: Union[str, Dict]) -> Dict:
-    from rlinf.envs.robocasa.utils import (
+    from rlinf.envs.sim.robocasa.utils import (
         DEFAULT_ROBOCASA_IMAGE_SIZE,
         _check_image_space,
         get_image_space,
@@ -127,7 +127,7 @@ def extract_image_dict(data: Dict, image_space: Union[str, Dict]) -> Dict:
 
 
 def extract_action_ids(action_space: Union[str, List[str]]) -> Dict:
-    from rlinf.envs.robocasa.utils import (
+    from rlinf.envs.sim.robocasa.utils import (
         _check_action_space,
         get_action_ids,
         get_action_space,
