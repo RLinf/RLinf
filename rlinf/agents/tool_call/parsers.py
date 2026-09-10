@@ -91,6 +91,51 @@ class Searchr1QwenToolCallParser:
         return content, function_calls
 
 
+@register_toolcall_parser("deepseek-r1")
+class Searchr1DeepSeekR1ToolCallParser:
+    """Parse DeepSeek-R1 native function calls for the SearchR1 search tool."""
+
+    def __init__(self) -> None:
+        self.tool_calls_begin_token = "<｜tool▁calls▁begin｜>"
+        self.tool_calls_end_token = "<｜tool▁calls▁end｜>"
+        self.tool_calls_regex = re.compile(
+            rf"{re.escape(self.tool_calls_begin_token)}.*?"
+            rf"{re.escape(self.tool_calls_end_token)}",
+            re.DOTALL,
+        )
+        self.tool_call_regex = re.compile(
+            r"<｜tool▁call▁begin｜>function<｜tool▁sep｜>"
+            r"(?P<name>[^\n<]+)\s*\n```json\s*\n?"
+            r"(?P<arguments>\{.*?\})\s*\n?```"
+            r"<｜tool▁call▁end｜>",
+            re.DOTALL,
+        )
+
+    async def __call__(self, response_text: str) -> tuple[str, list[ToolRequest]]:
+        """Extract valid native ``search`` function calls from model output."""
+        if (
+            self.tool_calls_begin_token not in response_text
+            or self.tool_calls_end_token not in response_text
+        ):
+            return response_text, []
+
+        function_calls = []
+        for match in self.tool_call_regex.finditer(response_text):
+            try:
+                arguments = json.loads(match.group("arguments"))
+            except json.JSONDecodeError:
+                continue
+
+            keyword = arguments.get("keyword")
+            if match.group("name").strip() == "search" and isinstance(keyword, str):
+                function_calls.append(
+                    ToolRequest(name="search", arguments={"keyword": keyword})
+                )
+
+        content = self.tool_calls_regex.sub("", response_text)
+        return content, function_calls
+
+
 @register_toolcall_parser("rstar2-qwen")
 class Rstar2QwenToolCallParser:
     def __init__(self) -> None:
