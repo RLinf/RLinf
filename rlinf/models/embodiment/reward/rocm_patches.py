@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run Qwen-VL's patch embedding as a matmul, which ROCm survives.
+"""ROCm workarounds for the VLM reward model.
 
-Its Conv3d segfaults the process on ROCm 6.4, on transformers 4.57 and 5.16 alike.
+Qwen-VL's vision patch embedding is a Conv3d that segfaults the process on ROCm
+6.4, on transformers 4.57 and 5.16 alike. Run it as a matmul, which ROCm survives.
 """
 
 import types

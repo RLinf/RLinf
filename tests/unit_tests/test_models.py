@@ -35,7 +35,7 @@ from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
-from rlinf.models.embodiment.reward.qwen_vl_rocm_patch import (
+from rlinf.models.embodiment.reward.rocm_patches import (
     patch_vision_patch_embed,
 )
 from rlinf.scheduler import AcceleratorType, Worker

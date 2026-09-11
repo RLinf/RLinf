@@ -24,7 +24,7 @@ from omegaconf import DictConfig
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
-from rlinf.models.embodiment.reward.qwen_vl_rocm_patch import patch_vision_patch_embed
+from rlinf.models.embodiment.reward.rocm_patches import patch_vision_patch_embed
 from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
     apply_gt_success_bonus,
     load_vlm_processor,
