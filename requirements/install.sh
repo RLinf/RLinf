@@ -2023,16 +2023,11 @@ install_starvla_model() {
 
     # Prefer upstream StarVLA requirements first when available.
     if [ -f "$starvla_path/requirements.txt" ]; then
-        if is_aarch64_platform; then
-            # decord and eva-decord publish no aarch64 wheels. starVLA only
-            # imports decord in its own dataloaders, so build decord from
-            # source and skip the eva-decord duplicate.
-            maybe_build_decord_from_source
-            grep -Ev '^[[:space:]]*eva-decord' "$starvla_path/requirements.txt" \
-                | uv pip install -r -
-        else
-            uv pip install -r "$starvla_path/requirements.txt"
-        fi
+        maybe_build_decord_from_source
+        # eva-decord ships the same `decord` module as decord and has no
+        # aarch64 wheel, so install decord alone.
+        grep -Ev '^[[:space:]]*eva-decord' "$starvla_path/requirements.txt" \
+            | uv pip install -r -
     fi
 
     # Enforce RLinf-compatible runtime pins to avoid known breakages.
