@@ -164,25 +164,12 @@ class PiperEnv(gym.Env):
     def _setup_hardware(self) -> None:
         """Compose and connect the configured hardware."""
         assert self.env_idx >= 0, "env_idx must be nonnegative."
-        hardware = self.hardware
-        controller_node_rank = hardware.controller_node_rank
-        if controller_node_rank is None:
-            controller_node_rank = self.node_rank
-
-        self.robot = PiperRobot.build(
-            can_channel=hardware.can_channel,
-            backend=hardware.backend,
-            can_interface=hardware.can_interface,
-            model=hardware.model,
-            firmware=hardware.firmware,
-            speed_percent=hardware.speed_percent,
-            gripper_force=hardware.gripper_force,
-            gripper_max_width=hardware.gripper_max_width,
-            with_gripper=hardware.with_gripper,
-            env_idx=self.env_idx,
-            node_rank=controller_node_rank,
-            worker_rank=self.env_worker_rank,
+        self.robot = PiperRobot.from_config(
+            self.hardware,
             cameras={info.name: info for info in self._camera_infos()},
+            env_idx=self.env_idx,
+            node_rank=self.node_rank,
+            worker_rank=self.env_worker_rank,
         )
         self.robot.connect()
         # The arm part, for the operations the Arm contract names. Reading and

@@ -125,6 +125,8 @@ class MethodEndEffector(EndEffector):
         close_method: Host method that closes, in binary mode.
         state_index: Optional index or slice selecting the end-effector value
             out of a wider state field.
+        open_field: Host state field that says whether the gripper is open.
+            Without one, :attr:`is_open` keeps the base answer.
     """
 
     def __init__(
@@ -138,6 +140,7 @@ class MethodEndEffector(EndEffector):
         state_index: Optional[Union[int, slice]] = None,
         *,
         is_gripper: bool = False,
+        open_field: Optional[str] = None,
     ) -> None:
         self._host = self._owner = host
         self.state_field = state_field
@@ -147,6 +150,7 @@ class MethodEndEffector(EndEffector):
         self.close_method = close_method
         self.state_index = state_index
         self.is_gripper = is_gripper
+        self.open_field = open_field
 
     @property
     def action_dim(self) -> int:
@@ -185,6 +189,32 @@ class MethodEndEffector(EndEffector):
         opening = bool(target[0] >= 0)
         getattr(self._host, self.open_method if opening else self.close_method)()
         return True
+
+    def open(self, speed: float = 0.3) -> None:
+        """Open fully through the host; the host sets its own speed."""
+        self._host_method(self.open_method)()
+
+    def close(self, speed: float = 0.3, force: float = 130.0) -> None:
+        """Close fully through the host; the host sets its own speed and force."""
+        self._host_method(self.close_method)()
+
+    @property
+    def is_open(self) -> bool:
+        """Whether the host reports the gripper open."""
+        if self.open_field is None:
+            return super().is_open
+        return bool(host_state(self._host)[self.open_field])
+
+    def _host_method(self, name: str) -> Any:
+        """Return a host method, naming the host when it has none."""
+        method = getattr(self._host, name, None)
+        if method is None:
+            raise NotImplementedError(
+                f"{type(self._host).__name__} has no {name}(), so this end "
+                "effector cannot open or close fully. Command it through "
+                "'target' instead."
+            )
+        return method
 
 
 class MethodCamera(Camera):

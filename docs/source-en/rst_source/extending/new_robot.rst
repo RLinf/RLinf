@@ -487,7 +487,8 @@ robot composition. After the robot type is registered, callers can use either
 ``Robot.of_type("MobileManipulator", ...)`` or the convenience function
 ``build_robot("MobileManipulator", ...)``. Both calls still require the
 builder's keyword arguments; registration does not turn a hardware config into
-those arguments automatically.
+those arguments. The robot's own ``from_config()``, described with the cluster
+configuration below, is where that translation lives.
 
 For an in-tree implementation, place the module under
 ``rlinf/robotics/robots/`` and import it from that package's ``__init__.py``.
@@ -535,28 +536,55 @@ node. The env config selects the Gym ID separately, so the same hardware
 composition can serve navigation, mobile manipulation, or data-collection
 tasks.
 
-The environment receives that ``RobotInfo`` and calls the registered builder
-explicitly. This is the visible boundary where scheduler metadata such as the
-env worker rank is added:
+The environment receives that ``RobotInfo`` and turns its config into a robot
+through ``from_config()``. Implement it on the robot class beside ``build()``,
+so the translation from config fields to builder arguments is written once
+rather than in every environment that uses the robot:
 
 .. code-block:: python
 
-   hardware = robot_info.config
-   robot = build_robot(
-       "MobileManipulator",
-       base_backend=hardware.base_backend,
-       base_endpoint=hardware.base_endpoint,
-       arm_ip=hardware.arm_ip,
-       node_rank=hardware.node_rank,
-       controller_node_rank=hardware.controller_node_rank,
-       worker_rank=worker_info.rank,
+   class MobileManipulator(Robot):
+       ...
+
+       @classmethod
+       def from_config(
+           cls,
+           config: MobileManipulatorConfig,
+           *,
+           cameras=None,
+           env_idx: int = 0,
+           node_rank: int = 0,
+           worker_rank: int = 0,
+       ) -> "MobileManipulator":
+           return cls.build(
+               base_backend=config.base_backend,
+               base_endpoint=config.base_endpoint,
+               arm_ip=config.arm_ip,
+               node_rank=node_rank,
+               controller_node_rank=config.controller_node_rank,
+               worker_rank=worker_rank,
+               env_idx=env_idx,
+           )
+
+The config supplies the hardware. The keyword arguments supply what only the
+environment knows: the node it runs on, its worker rank and index, and the
+cameras its policy reads, which this robot does not carry. Parts run on
+``node_rank`` unless the config places them elsewhere, as
+``controller_node_rank`` does for the arm. The environment then builds the robot
+without restating any hardware field:
+
+.. code-block:: python
+
+   robot = MobileManipulator.from_config(
+       robot_info.config,
        env_idx=env_idx,
+       node_rank=worker_info.cluster_node_rank,
+       worker_rank=worker_info.rank,
    )
 
-Keeping this call explicit prevents the hardware registry from becoming an
-implicit adapter between unrelated config shapes. If several environments use
-the same robot, place the translation in shared setup code rather than copying
-it into each task.
+Name every field ``from_config()`` forwards, as ``build()`` names every
+argument it takes. The mapping stays short, and it is the one place a reader
+looks to see which setting reaches which part.
 
 8. Test the Integration
 -----------------------

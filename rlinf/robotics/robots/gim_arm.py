@@ -96,6 +96,43 @@ class GimArmRobot(Robot):
             **cls.build_cameras(cameras, node_rank=camera_node_rank),
         )
 
+    @classmethod
+    def from_config(
+        cls,
+        config: "GimArmConfig",
+        *,
+        cameras: Optional[Mapping[str, Any]] = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+        control_mode: str = "momentum_observer",
+    ) -> "GimArmRobot":
+        """Compose a GimArm from a :class:`GimArmConfig`.
+
+        The arm runs on ``config.controller_node_rank`` when it is set, else on
+        ``node_rank``.
+
+        Args:
+            control_mode: SDK control mode the arm starts in: ``"idle"``,
+                ``"gravity_comp"``, ``"momentum_observer"``, ``"position"``,
+                or ``"torque"``. The environment config chooses it, not the
+                hardware config.
+        """
+        controller_node_rank = config.controller_node_rank
+        return cls.build(
+            can_interface=config.can_interface,
+            arm_variant=config.arm_variant,
+            enable_gripper=config.enable_gripper,
+            gripper_type=config.gripper_type,
+            control_mode=control_mode,
+            env_idx=env_idx,
+            node_rank=node_rank
+            if controller_node_rank is None
+            else controller_node_rank,
+            worker_rank=worker_rank,
+            cameras=cameras,
+        )
+
 
 @dataclass
 class GimArmConfig(RobotConfig):

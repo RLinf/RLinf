@@ -56,7 +56,10 @@ the hardware. The following example keeps those phases visible in one place:
 ``Robot``. Construction records hardware arguments and placement, but it does
 not import a vendor SDK or open a device. ``describe()`` reads that declaration,
 so it can report paths, nodes, and connection ownership before the hardware is
-powered or reachable.
+powered or reachable. An environment starts from the scheduler's hardware config
+instead of builder arguments, and calls ``from_config()`` on the registered
+robot class. It forwards each config field to ``build()`` and places parts on
+the environment's node unless the config names another.
 
 Setup code then selects the capabilities it needs. ``child("arm", Arm)`` returns
 the part at ``arm`` and checks that it implements ``Arm``; the expected class is
@@ -70,7 +73,12 @@ names.
 already opened if a later one fails. Once connected, category methods such as
 ``Arm.is_robot_up()`` and ``Camera.is_ready()`` check whether the devices can be
 used; ``clear_errors()`` and ``reset_joint()`` are available for setup outside
-the per-step action stream.
+the per-step action stream. An arm that accepts ``tcp_pose`` commands also
+offers ``move_to()``, which travels to a tool pose through evenly spaced targets
+for homing between episodes. An end effector opens and closes fully with
+``open()`` and ``close()`` and reports ``is_open``. Each arm class states
+``DOF``, the number of joints it drives, so a joint target's width can be
+checked before any hardware is opened.
 
 The step loop uses two calls. ``get_observation()`` reads the composed robot once
 and returns a nested dictionary whose keys are the part paths.

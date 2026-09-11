@@ -120,6 +120,40 @@ class PiperRobot(Robot):
             **cls.build_cameras(cameras, node_rank=camera_node_rank),
         )
 
+    @classmethod
+    def from_config(
+        cls,
+        config: "PiperConfig",
+        *,
+        cameras: Optional[Mapping[str, Any]] = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+    ) -> "PiperRobot":
+        """Compose a Piper from a :class:`PiperConfig`.
+
+        The arm runs on ``config.controller_node_rank`` when it is set, else on
+        ``node_rank``.
+        """
+        controller_node_rank = config.controller_node_rank
+        return cls.build(
+            can_channel=config.can_channel,
+            backend=config.backend,
+            can_interface=config.can_interface,
+            model=config.model,
+            firmware=config.firmware,
+            speed_percent=config.speed_percent,
+            gripper_force=config.gripper_force,
+            gripper_max_width=config.gripper_max_width,
+            with_gripper=config.with_gripper,
+            env_idx=env_idx,
+            node_rank=node_rank
+            if controller_node_rank is None
+            else controller_node_rank,
+            worker_rank=worker_rank,
+            cameras=cameras,
+        )
+
 
 @dataclass
 class PiperConfig(RobotConfig):

@@ -304,6 +304,60 @@ def test_a_franka_observation_comes_from_one_snapshot():
     )
 
 
+def test_franka_step_moves_the_arm_by_the_scaled_clipped_delta(monkeypatch):
+    """One action is one Cartesian target: scaled, clipped, sent once.
+
+    The fake arm reports the identity pose at the origin, so the target is the
+    scaled delta itself until the safety box clips it.
+    """
+    from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import SERIAL
+    from scipy.spatial.transform import Rotation as R
+
+    with mocked_sdks():
+        env = FrankaEnv(
+            override_cfg={
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "action_scale": [0.02, 0.1, 1.0],
+                "ee_pose_limit_min": [-0.05, -0.05, 0.0, -0.1, -0.1, -0.5],
+                "ee_pose_limit_max": [0.05, 0.05, 0.01, 0.1, 0.1, 0.5],
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=_robot_info(
+                FrankaConfig(
+                    node_rank=0,
+                    robot_ip="0.0.0.0",
+                    camera_serials=[SERIAL],
+                    disable_validate=True,
+                )
+            ),
+        )
+        try:
+            env.reset()
+            sent = []
+            send = env.robot.send_action
+            monkeypatch.setattr(
+                env.robot,
+                "send_action",
+                lambda action: sent.append(action) or send(action),
+            )
+
+            # Full scale on every axis, gripper untouched.
+            env.step(np.array([1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 0.0]))
+
+            assert len(sent) == 1
+            target = sent[0]["arm"]["tcp_pose"]
+            assert target.dtype == np.float32
+            # x and y move by the scaled delta; z is clipped to the box's top.
+            np.testing.assert_allclose(target[:3], [0.02, -0.02, 0.01], atol=1e-6)
+            yaw = R.from_quat(target[3:]).as_euler("xyz")[2]
+            assert yaw == pytest.approx(0.1, abs=1e-6)
+        finally:
+            env.close()
+
+
 def test_franka_depth_reaches_the_observation_only_when_asked_for():
     """A rig without a depth camera keeps the schema a policy already reads.
 
@@ -3225,6 +3279,429 @@ def test_task_schema_uses_enumerated_hardware_without_changing_it(
             if robot_type == "Piper":
                 assert info.model == "Piper"
                 assert info.config.model == "piper_h"
+        finally:
+            env.close()
+
+
+#: Hardware each task below is built on, by name in ``TASK_SCHEMAS``.
+SCHEMA_HARDWARE = {
+    "Franka": ("Franka", {"camera_serials": ["MOCK0001"]}),
+    "FrankaHand": (
+        "Franka",
+        {"camera_serials": ["MOCK0001"], "end_effector_type": "ruiyan_hand"},
+    ),
+    "DualFranka": (
+        "DualFranka",
+        {
+            "base_camera_serials": ["MOCK0001"],
+            "left_camera_serials": ["MOCK0002"],
+            "right_camera_serials": [],
+        },
+    ),
+    "SO101": (
+        "SO101",
+        {
+            "serial_port": "/dev/bench",
+            "calibration_id": "bench",
+            "camera_serials": ["MOCK0001"],
+        },
+    ),
+    "Piper": ("Piper", {"camera_serials": ["MOCK0001"]}),
+    "GimArm": ("GimArm", {"camera_serials": ["MOCK0001"]}),
+    "DOSW1": ("DOSW1", {"robot_url": "bench", "camera_serials": ["MOCK0001"]}),
+    "Turtle2": ("Turtle2", {"camera_ids": [0]}),
+}
+
+#: What a policy sees for every registered task, through the default wrapper
+#: stack: action width and bounds (one number when every element shares it),
+#: action parts, state widths, frame sizes, and the teleop devices and wrappers
+#: the env declares. A policy is trained against exactly this, so a row changes
+#: only for a behaviour change named in the commit that makes it.
+TASK_SCHEMAS = {
+    "FrankaEnv-v1": (
+        "Franka",
+        {
+            "action": (6, -1.0, 1.0),
+            "parts": (("arm", 6, "CARTESIAN_DELTA"),),
+            "state": {
+                "gripper_position": 1,
+                "tcp_force": 3,
+                "tcp_pose": 6,
+                "tcp_torque": 3,
+                "tcp_vel": 6,
+            },
+            "frames": {"wrist_1": 128},
+            "teleop": (("spacemouse", "gello", "glove", "pico"), "spacemouse"),
+            "wrappers": (("GripperCloseEnv",), ("RelativeFrame", "Quat2EulerWrapper")),
+        },
+    ),
+    "PegInsertionEnv-v1": (
+        "Franka",
+        {
+            "action": (6, -1.0, 1.0),
+            "parts": (("arm", 6, "CARTESIAN_DELTA"),),
+            "state": {
+                "gripper_position": 1,
+                "tcp_force": 3,
+                "tcp_pose": 6,
+                "tcp_torque": 3,
+                "tcp_vel": 6,
+            },
+            "frames": {"wrist_1": 128},
+            "teleop": (("spacemouse", "gello", "glove", "pico"), "spacemouse"),
+            "wrappers": (("GripperCloseEnv",), ("RelativeFrame", "Quat2EulerWrapper")),
+        },
+    ),
+    "FrankaBinRelocationEnv-v1": (
+        "Franka",
+        {
+            "action": (6, -1.0, 1.0),
+            "parts": (("arm", 6, "CARTESIAN_DELTA"),),
+            "state": {
+                "gripper_position": 1,
+                "tcp_force": 3,
+                "tcp_pose": 6,
+                "tcp_torque": 3,
+                "tcp_vel": 6,
+            },
+            "frames": {"wrist_1": 128},
+            "teleop": (("spacemouse", "gello", "glove", "pico"), "spacemouse"),
+            "wrappers": (("GripperCloseEnv",), ("RelativeFrame", "Quat2EulerWrapper")),
+        },
+    ),
+    "BottleEnv-v1": (
+        "Franka",
+        {
+            "action": (6, -1.0, 1.0),
+            "parts": (("arm", 6, "CARTESIAN_DELTA"),),
+            "state": {
+                "gripper_position": 1,
+                "tcp_force": 3,
+                "tcp_pose": 6,
+                "tcp_torque": 3,
+                "tcp_vel": 6,
+            },
+            "frames": {"wrist_1": 128},
+            "teleop": (("spacemouse", "gello", "glove", "pico"), "spacemouse"),
+            "wrappers": (("GripperCloseEnv",), ("RelativeFrame", "Quat2EulerWrapper")),
+        },
+    ),
+    "DexpnpEnv-v1": (
+        "FrankaHand",
+        {
+            "action": (12, -1.0, 1.0),
+            "parts": (("arm", 6, "CARTESIAN_DELTA"), ("hand", 6, "HAND")),
+            "state": {
+                "hand_position": 6,
+                "tcp_force": 3,
+                "tcp_pose": 6,
+                "tcp_torque": 3,
+                "tcp_vel": 6,
+            },
+            "frames": {"wrist_1": 128},
+            "teleop": (("spacemouse", "gello", "glove", "pico"), "spacemouse"),
+            "wrappers": (("GripperCloseEnv",), ("RelativeFrame", "Quat2EulerWrapper")),
+        },
+    ),
+    "DualFrankaJointEnv-v1": (
+        "DualFranka",
+        {
+            "action": (
+                16,
+                (
+                    -2.8973,
+                    -1.7628,
+                    -2.8973,
+                    -3.0718,
+                    -2.8973,
+                    -0.0175,
+                    -2.8973,
+                    -1.0,
+                    -2.8973,
+                    -1.7628,
+                    -2.8973,
+                    -3.0718,
+                    -2.8973,
+                    -0.0175,
+                    -2.8973,
+                    -1.0,
+                ),
+                (
+                    2.8973,
+                    1.7628,
+                    2.8973,
+                    -0.0698,
+                    2.8973,
+                    3.7525,
+                    2.8973,
+                    1.0,
+                    2.8973,
+                    1.7628,
+                    2.8973,
+                    -0.0698,
+                    2.8973,
+                    3.7525,
+                    2.8973,
+                    1.0,
+                ),
+            ),
+            "parts": (
+                ("left.arm", 7, "JOINT_POSITION"),
+                ("left.end_effector", 1, "GRIPPER"),
+                ("right.arm", 7, "JOINT_POSITION"),
+                ("right.end_effector", 1, "GRIPPER"),
+            ),
+            "state": {
+                "gripper_position": 2,
+                "joint_position": 14,
+                "joint_velocity": 14,
+                "tcp_force": 6,
+                "tcp_pose": 14,
+                "tcp_torque": 6,
+                "tcp_vel": 12,
+            },
+            "frames": {"base_0_rgb": 224, "left_wrist_0_rgb": 224},
+            "teleop": (("gello_joint", "pico"), "none"),
+            "wrappers": ((), ()),
+        },
+    ),
+    "DualFrankaTCPEnv-v1": (
+        "DualFranka",
+        {
+            "action": (
+                20,
+                (
+                    -np.inf,
+                    -np.inf,
+                    -np.inf,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.0,
+                    -np.inf,
+                    -np.inf,
+                    -np.inf,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.5,
+                    -1.0,
+                ),
+                (
+                    np.inf,
+                    np.inf,
+                    np.inf,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.0,
+                    np.inf,
+                    np.inf,
+                    np.inf,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.0,
+                ),
+            ),
+            "parts": (
+                ("left.arm", 9, "CARTESIAN_POSE"),
+                ("left.end_effector", 1, "GRIPPER"),
+                ("right.arm", 9, "CARTESIAN_POSE"),
+                ("right.end_effector", 1, "GRIPPER"),
+            ),
+            "state": {"gripper_position": 2, "tcp_pose_rot6d": 18},
+            "frames": {"base_0_rgb": 224, "left_wrist_0_rgb": 224},
+            "teleop": (("gello_joint", "pico"), "none"),
+            "wrappers": ((), ()),
+        },
+    ),
+    "SO101ReachEnv-v1": (
+        "SO101",
+        {
+            "action": (
+                6,
+                (-1.91, -1.75, -1.69, -1.66, -2.79, 0.0),
+                (1.91, 1.75, 1.69, 1.66, 2.79, 1.0),
+            ),
+            "parts": (("arm", 5, "JOINT_POSITION"), ("end_effector", 1, "GRIPPER")),
+            "state": {"arm_joint_position": 5, "gripper_position": 1},
+            "frames": {"wrist_1": 128},
+            "teleop": (("so101_leader",), "none"),
+            "wrappers": ((), ()),
+        },
+    ),
+    "PiperReachEnv-v1": (
+        "Piper",
+        {
+            "action": (
+                7,
+                (-2.618, 0.0, -2.9671, -1.7453, -1.2217, -2.0944, 0.0),
+                (2.618, 3.1416, 0.0, 1.7453, 1.2217, 2.0944, 1.0),
+            ),
+            "parts": (("arm", 6, "JOINT_POSITION"), ("end_effector", 1, "GRIPPER")),
+            "state": {"arm_joint_position": 6, "gripper_position": 1, "tcp_pose": 7},
+            "frames": {"wrist_1": 128},
+            "teleop": ((), "none"),
+            "wrappers": ((), ()),
+        },
+    ),
+    "GimArmPegInsertionEnv-v1": (
+        "GimArm",
+        {
+            "action": (
+                7,
+                (-1.4, -3.0, 0.0, -1.5, -1.5, -1.88, -1.0),
+                (1.4, 0.0, 3.0, 1.5, 1.5, 1.9, 1.0),
+            ),
+            "parts": (("arm", 6, "JOINT_POSITION"), ("end_effector", 1, "GRIPPER")),
+            "state": {
+                "arm_joint_position": 6,
+                "gripper_position": 1,
+                "tcp_force": 3,
+                "tcp_pose": 7,
+                "tcp_torque": 3,
+                "tcp_vel": 6,
+            },
+            "frames": {"wrist_1": 128},
+            "teleop": ((), "none"),
+            "wrappers": ((), ()),
+        },
+    ),
+    "DOSW1PickEnv-v1": (
+        "DOSW1",
+        {
+            "action": (
+                14,
+                (
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    0.0,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    -3.1416,
+                    0.0,
+                ),
+                (
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    0.07,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    3.1416,
+                    0.07,
+                ),
+            ),
+            "parts": (
+                ("left.arm", 6, "JOINT_POSITION"),
+                ("left.end_effector", 1, "GRIPPER"),
+                ("right.arm", 6, "JOINT_POSITION"),
+                ("right.end_effector", 1, "GRIPPER"),
+            ),
+            "state": {
+                "left_gripper": 1,
+                "left_joint_positions": 6,
+                "right_gripper": 1,
+                "right_joint_positions": 6,
+            },
+            "frames": {"cam_front": 128},
+            "teleop": ((), "none"),
+            "wrappers": ((), ()),
+        },
+    ),
+    "ButtonEnv-v1": (
+        "Turtle2",
+        {
+            "action": (6, -1.0, 1.0),
+            "parts": (("arm", 6, "CARTESIAN_DELTA"),),
+            "state": {"tcp_pose": 6},
+            "frames": {"wrist_1": 128},
+            "teleop": (("spacemouse", "gello", "pico"), "spacemouse"),
+            "wrappers": (("GripperCloseEnv",), ("RelativeFrame", "Quat2EulerWrapper")),
+        },
+    ),
+}
+
+
+def _policy_schema(env) -> dict:
+    """Read the schema a policy sees off a built env, in ``TASK_SCHEMAS`` form."""
+
+    def bound(values):
+        values = [round(float(x), 4) for x in np.asarray(values).reshape(-1)]
+        return values[0] if len(set(values)) == 1 else tuple(values)
+
+    inner, observation, action = env.unwrapped, env.observation_space, env.action_space
+    frames = observation.spaces.get("frames", gym.spaces.Dict())
+    assert action.dtype == np.float32
+    assert all(space.dtype == np.float32 for space in observation["state"].values())
+    assert all(space.dtype == np.uint8 for space in frames.values())
+    return {
+        "action": (action.shape[0], bound(action.low), bound(action.high)),
+        "parts": tuple(
+            (part.name, part.width, part.kind.name)
+            for part in env.get_wrapper_attr("action_parts")()
+        ),
+        "state": {
+            key: space.shape[0] for key, space in sorted(observation["state"].items())
+        },
+        "frames": {key: space.shape[0] for key, space in sorted(frames.items())},
+        "teleop": (tuple(inner.TELEOP), inner.TELEOP_DEFAULT),
+        "wrappers": (tuple(inner.ACTION_WRAPPERS), tuple(inner.TRANSFORMS)),
+    }
+
+
+@pytest.mark.parametrize("env_id", sorted(TASK_SCHEMAS))
+def test_a_task_keeps_the_schema_its_policies_were_trained_on(env_id):
+    from robot_mocks import mocked_sdks
+
+    hardware_name, expected = TASK_SCHEMAS[env_id]
+    robot_type, hardware = SCHEMA_HARDWARE[hardware_name]
+    load_tasks()
+    registration = RobotDiscovery.registry[robot_type]
+    config = registration.config_cls(node_rank=0, **hardware)
+    override_cfg = {"is_dummy": True}
+    if robot_type != "Turtle2":
+        override_cfg["enable_camera_player"] = False
+    env_cfg = {"teleop": "none"}
+    if robot_type == "DualFranka":
+        env_cfg["no_gripper"] = False
+    with mocked_sdks():
+        info = registration.discovery_cls.enumerate(0, [config]).infos[0]
+        env = gym.make(
+            env_id,
+            override_cfg=override_cfg,
+            worker_info=None,
+            robot_info=info,
+            env_idx=0,
+            env_cfg=env_cfg,
+        )
+        try:
+            assert _policy_schema(env) == expected
         finally:
             env.close()
 

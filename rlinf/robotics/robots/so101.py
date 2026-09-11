@@ -92,6 +92,34 @@ class SO101Robot(Robot):
             **cls.build_cameras(cameras, node_rank=camera_node_rank),
         )
 
+    @classmethod
+    def from_config(
+        cls,
+        config: "SO101Config",
+        *,
+        cameras: Optional[Mapping[str, Any]] = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+    ) -> "SO101Robot":
+        """Compose an SO-101 from a :class:`SO101Config`.
+
+        The arm runs on ``config.controller_node_rank`` when it is set, else on
+        ``node_rank``.
+        """
+        controller_node_rank = config.controller_node_rank
+        return cls.build(
+            port=config.serial_port,
+            calibration_id=config.calibration_id,
+            max_relative_target=config.max_relative_target,
+            env_idx=env_idx,
+            node_rank=node_rank
+            if controller_node_rank is None
+            else controller_node_rank,
+            worker_rank=worker_rank,
+            cameras=cameras,
+        )
+
 
 @dataclass
 class SO101Config(RobotConfig):

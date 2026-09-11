@@ -359,7 +359,7 @@ builder 已经能够根据明确参数构造机器人；注册则为这一组合
 
 标准 discovery 流程会筛选属于当前节点的配置，通过同名大写环境变量补全未设置字段，并为每项配置返回一条硬件记录。如果配置包含相机字段，该流程还会复用公共的相机发现与校验逻辑。只有机器人的枚举方式确实不同时，才需要将自定义 ``RobotDiscovery`` 子类作为第二个参数传给 ``register_type()``。
 
-``Connection.register()`` 与 ``Robot.register_type()`` 对应两个不同的 registry：前者注册单个设备 driver，后者注册整台机器人的组合。完成机器人类型注册后，调用方既可以使用 ``Robot.of_type("MobileManipulator", ...)``，也可以调用便捷函数 ``build_robot("MobileManipulator", ...)``。两种方式都需要提供 builder 声明的参数；注册操作不会自动将硬件配置转换为这些参数。
+``Connection.register()`` 与 ``Robot.register_type()`` 对应两个不同的 registry：前者注册单个设备 driver，后者注册整台机器人的组合。完成机器人类型注册后，调用方既可以使用 ``Robot.of_type("MobileManipulator", ...)``，也可以调用便捷函数 ``build_robot("MobileManipulator", ...)``。两种方式都需要提供 builder 声明的参数；注册操作不会将硬件配置转换为这些参数，这一转换由机器人自身的 ``from_config()`` 完成，下文配置集群时会介绍。
 
 项目内置实现应放在 ``rlinf/robotics/robots/`` 下，并由该目录的 ``__init__.py`` 导入。这样，无论构造 ``Cluster`` 还是运行检查脚本，导入 ``rlinf.robotics.robots`` 时都会先完成注册。项目外部的集成则需在自己的 entry point 中显式导入注册模块。node probe 也会导入已注册的机器人模块，因此每个节点配置的 Python 环境都必须能够导入该模块。
 
@@ -389,23 +389,45 @@ builder 已经能够根据明确参数构造机器人；注册则为这一组合
 
 这些字段与前文的构造流程逐一对应：``type`` 选择已注册的机器人，每个 ``configs`` 项生成一条硬件记录；``node_rank`` 指定该记录由哪个节点持有，``base_backend`` 和两个地址标识具体设备，``controller_node_rank`` 则将复用的 Franka connection 部署到控制节点。env 配置另行选择 Gym ID，因此同一套硬件组合可以服务于导航、移动操作或数据采集任务。
 
-env 收到 ``RobotInfo`` 后，需要显式调用已注册的 builder。scheduler 提供的 env worker rank 等运行时信息也在这一边界加入：
+env 收到 ``RobotInfo`` 后，通过 ``from_config()`` 将其中的配置转换为机器人。该方法与 ``build()`` 一同实现在机器人类上，这样从配置字段到 builder 参数的转换只需编写一次，不必在每个使用该机器人的 env 中重复：
 
 .. code-block:: python
 
-   hardware = robot_info.config
-   robot = build_robot(
-       "MobileManipulator",
-       base_backend=hardware.base_backend,
-       base_endpoint=hardware.base_endpoint,
-       arm_ip=hardware.arm_ip,
-       node_rank=hardware.node_rank,
-       controller_node_rank=hardware.controller_node_rank,
-       worker_rank=worker_info.rank,
+   class MobileManipulator(Robot):
+       ...
+
+       @classmethod
+       def from_config(
+           cls,
+           config: MobileManipulatorConfig,
+           *,
+           cameras=None,
+           env_idx: int = 0,
+           node_rank: int = 0,
+           worker_rank: int = 0,
+       ) -> "MobileManipulator":
+           return cls.build(
+               base_backend=config.base_backend,
+               base_endpoint=config.base_endpoint,
+               arm_ip=config.arm_ip,
+               node_rank=node_rank,
+               controller_node_rank=config.controller_node_rank,
+               worker_rank=worker_rank,
+               env_idx=env_idx,
+           )
+
+硬件信息来自配置；关键字参数则提供只有 env 才知道的信息：它所在的节点、worker rank 与序号，以及 policy 读取的相机（这台机器人本身不带相机）。零部件默认部署在 ``node_rank`` 上，配置另行指定时除外，例如机械臂由 ``controller_node_rank`` 决定。env 随后无需重复任何硬件字段即可构造机器人：
+
+.. code-block:: python
+
+   robot = MobileManipulator.from_config(
+       robot_info.config,
        env_idx=env_idx,
+       node_rank=worker_info.cluster_node_rank,
+       worker_rank=worker_info.rank,
    )
 
-显式保留这次调用，可以避免硬件 registry 隐式转换不同层的配置结构。如果多个 env 共用同一种机器人，应将这段转换逻辑放入公共的硬件初始化代码，而不是复制到每个任务中。
+``from_config()`` 应逐一写明转发的字段，正如 ``build()`` 逐一写明接受的参数。这段映射很短，读者要确认某项设置最终作用于哪个零部件时，只需查看这一处。
 
 8. 测试集成
 -----------

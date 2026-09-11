@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Optional, Protocol
 import numpy as np
 
 from rlinf.robotics.parts.base import ControllablePart, Features, Observation
+from rlinf.robotics.pose import quat_slerp
 from rlinf.utils.logging import get_logger
 
 #: Canonical arm fields; mounted devices expose their own observations.
@@ -97,6 +98,11 @@ class Arm(ControllablePart):
         @Arm.register("franky")
         class FrankyArm(BaseArm): ...
     """
+
+    #: Joints the arm drives, when the class knows it before connecting. A
+    #: task checks its targets against this in dummy runs too, where no arm is
+    #: ever opened. ``None`` means the count is only known from the device.
+    DOF: ClassVar[Optional[int]] = None
 
     @classmethod
     def backends(cls) -> dict[str, type]:
@@ -175,6 +181,51 @@ class Arm(ControllablePart):
             "configuration you want through send_action, or use a backend that "
             "implements reset_joint()."
         )
+
+    def move_to(
+        self,
+        pose: "Sequence[float]",
+        *,
+        duration: float = 1.5,
+        rate_hz: float = 10.0,
+        clear_errors: bool = False,
+    ) -> None:
+        """Travel to a tool pose through evenly spaced ``tcp_pose`` commands.
+
+        Position is interpolated linearly and orientation by slerp, one
+        command every ``1 / rate_hz`` seconds, so a controller that tracks each
+        target arrives without a jump. The call returns once the last command
+        is sent, not when the arm has settled.
+
+        Args:
+            pose: Target pose, ``xyz`` plus an ``xyzw`` quaternion, in the
+                frame the arm reports ``tcp_pose`` in.
+            duration: Seconds the motion is spread over.
+            rate_hz: Commands per second.
+            clear_errors: Clear a latched fault before every command, for a
+                controller that stops accepting targets after one.
+
+        Raises:
+            NotImplementedError: If the arm does not accept ``tcp_pose``
+                commands.
+        """
+        if "tcp_pose" not in self.action_features:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not accept 'tcp_pose' commands, so "
+                "it cannot move to a tool pose. Drive its joints with "
+                "reset_joint() or 'joint_position' actions instead."
+            )
+        target = np.asarray(pose, dtype=float)
+        current = np.asarray(self.get_observation()["tcp_pose"], dtype=float)
+        waypoints = int(duration * rate_hz)
+        positions = np.linspace(current[:3], target[:3], waypoints + 1)
+        orientations = quat_slerp(current[3:], target[3:], waypoints + 1)
+        for position, orientation in zip(positions[1:], orientations[1:]):
+            if clear_errors:
+                self.clear_errors()
+            waypoint = np.concatenate([position, orientation]).astype(np.float32)
+            self.send_action({"tcp_pose": waypoint})
+            time.sleep(1.0 / rate_hz)
 
     def reconfigure_compliance_params(self, params: "Mapping[str, float]") -> None:
         """Apply a task's compliance request, as far as the backend can."""

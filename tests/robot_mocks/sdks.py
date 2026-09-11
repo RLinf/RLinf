@@ -100,6 +100,8 @@ def gim_arm() -> dict[str, types.ModuleType]:
             self.started = False
             self.mode = None
             self.targets: list[Any] = []
+            # The gripper goes where it was last sent, as a real one settles.
+            self.gripper_position = self.gripper_open_position
 
         def start(self, return_to_zero=False):
             self.started = True
@@ -115,13 +117,18 @@ def gim_arm() -> dict[str, types.ModuleType]:
             return ARM_DOF
 
         def get_reading(self):
-            return Reading() if self.started else None
+            if not self.started:
+                return None
+            reading = Reading()
+            reading.gripper_position = self.gripper_position
+            return reading
 
         def set_feedforward_target(self, target, dq, ddq):
             self.targets.append((target, dq, ddq))
 
         def set_gripper(self, position):
             self.targets.append(("gripper", position))
+            self.gripper_position = position
 
     class ButterworthFilter:
         def __init__(self, _cutoff, _dt, dof):

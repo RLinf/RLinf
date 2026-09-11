@@ -42,11 +42,11 @@
    finally:
        robot.disconnect()
 
-``build_robot()`` 根据注册名找到对应的机器人 builder，并返回尚未连接的 ``Robot``。构建阶段只记录硬件参数和 placement，不导入厂商 SDK，也不打开设备。``describe()`` 读取这些声明，因此机器人尚未上电或网络不可达时，也能检查访问路径、部署节点和连接归属。
+``build_robot()`` 根据注册名找到对应的机器人 builder，并返回尚未连接的 ``Robot``。构建阶段只记录硬件参数和 placement，不导入厂商 SDK，也不打开设备。``describe()`` 读取这些声明，因此机器人尚未上电或网络不可达时，也能检查访问路径、部署节点和连接归属。env 拿到的是 scheduler 分配的硬件配置，而不是 builder 参数，因此它调用已注册机器人类的 ``from_config()``：该方法把配置字段逐一传给 ``build()``，并把零部件部署到 env 所在节点，配置另行指定节点时除外。
 
 初始化代码随后取得所需能力。``child("arm", Arm)`` 返回 ``arm`` 路径上的零部件，并立即检查它是否属于 ``Arm``；编辑器也会将返回值推断为 ``Arm``。``parts_of_type(Camera)`` 则遍历完整组合，返回以完整路径为 key 的所有相机。任务依赖固定路径时使用 ``child()``；只关心设备类别而不依赖相机名称时，使用 ``parts_of_type()``。
 
-``connect()`` 会为每条 owner connection 打开一次资源；如果后续 connection 打开失败，它会回滚此前已经打开的资源。连接完成后，可通过 ``Arm.is_robot_up()`` 和 ``Camera.is_ready()`` 检查设备是否可用；``clear_errors()`` 与 ``reset_joint()`` 等初始化操作位于单步动作流之外。
+``connect()`` 会为每条 owner connection 打开一次资源；如果后续 connection 打开失败，它会回滚此前已经打开的资源。连接完成后，可通过 ``Arm.is_robot_up()`` 和 ``Camera.is_ready()`` 检查设备是否可用；``clear_errors()`` 与 ``reset_joint()`` 等初始化操作位于单步动作流之外。接受 ``tcp_pose`` 命令的机械臂还提供 ``move_to()``，它以均匀间隔的目标位姿移动到指定工具位姿，适合在两个 episode 之间回零。末端执行器通过 ``open()`` 与 ``close()`` 完全张开或闭合，并由 ``is_open`` 报告当前状态。每个机械臂类都声明 ``DOF``，即其驱动的关节数，因此在打开任何硬件之前就能检查关节目标的维度。
 
 step 循环只需两个接口。``get_observation()`` 对组合后的机器人执行一次完整读取，并按访问路径返回嵌套字典。``send_action()`` 接收层级相同的动作，只下发本次提供的分支，并将各零部件实际发送的动作作为 ``applied`` 返回。``disconnect()`` 最后按相反顺序关闭 connection；将它置于 ``finally`` 中，可以保证读取或控制失败后仍完成清理，而且重复调用不会产生额外影响。
 

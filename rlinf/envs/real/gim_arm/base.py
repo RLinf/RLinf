@@ -196,21 +196,13 @@ class GimArmEnv(gym.Env):
     def _setup_hardware(self) -> None:
         """Compose and connect the configured hardware."""
         assert self.env_idx >= 0, "env_idx must be nonnegative."
-        hardware = self.hardware
-        controller_node_rank = hardware.controller_node_rank
-        if controller_node_rank is None:
-            controller_node_rank = self.node_rank
-
-        self.robot = GimArmRobot.build(
-            can_interface=hardware.can_interface,
-            arm_variant=hardware.arm_variant,
-            enable_gripper=hardware.enable_gripper,
-            gripper_type=hardware.gripper_type,
-            control_mode=self.config.control_mode,
-            env_idx=self.env_idx,
-            node_rank=controller_node_rank,
-            worker_rank=self.env_worker_rank,
+        self.robot = GimArmRobot.from_config(
+            self.hardware,
             cameras={info.name: info for info in self._camera_infos()},
+            env_idx=self.env_idx,
+            node_rank=self.node_rank,
+            worker_rank=self.env_worker_rank,
+            control_mode=self.config.control_mode,
         )
         self.robot.connect()
         # The arm part, for the operations the Arm contract names. Reading

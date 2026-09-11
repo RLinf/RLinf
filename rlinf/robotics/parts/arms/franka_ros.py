@@ -14,7 +14,7 @@
 
 import sys
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import psutil
@@ -29,6 +29,8 @@ from rlinf.utils.logging import get_logger
 @Arm.register("franka_ros")
 class FrankaROSArm(BaseArm):
     """Franka arm controlled through ROS."""
+
+    DOF: ClassVar[int] = 7
 
     @classmethod
     def declare(

@@ -45,7 +45,6 @@ from ..utils.pose import (
     clip_euler_to_target_window,
     construct_adjoint_matrix,
     construct_homogeneous_matrix,
-    quat_slerp,
 )
 
 #: Default Cartesian impedance gains shared by Franka tasks.
@@ -279,28 +278,14 @@ class FrankaEnv(gym.Env):
     def _setup_hardware(self) -> None:
         assert self.env_idx >= 0, "env_idx must be set for FrankaEnv."
 
-        hardware = self.hardware
         self._camera_infos = self._build_camera_infos()
-
-        # Default the arm controller to the environment worker's node.
-        controller_node_rank = hardware.controller_node_rank
-        if controller_node_rank is None:
-            controller_node_rank = self.node_rank
         # The composed robot owns camera placement and lifecycle.
-        camera_node_rank = hardware.camera_node_rank
-        self.robot = FrankaRobot.build(
-            robot_ip=self.hardware.robot_ip,
-            env_idx=self.env_idx,
-            node_rank=controller_node_rank,
-            worker_rank=self.env_worker_rank,
-            backend=self.hardware.backend,
-            gripper_type=self.hardware.gripper_type,
-            compliance=hardware.compliance,
-            end_effector_type=self.hardware.end_effector_type,
-            end_effector_config=self.hardware.end_effector_config,
-            gripper_connection=self.hardware.gripper_connection,
+        self.robot = FrankaRobot.from_config(
+            self.hardware,
             cameras={info.name: info for info in self._camera_infos},
-            camera_node_rank=camera_node_rank,
+            env_idx=self.env_idx,
+            node_rank=self.node_rank,
+            worker_rank=self.env_worker_rank,
         )
         self.robot.connect()
         # Naming the class each part is expected to be keeps the driver's own
@@ -952,21 +937,13 @@ class FrankaEnv(gym.Env):
             return True
 
     def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5) -> None:
-        num_steps = int(timeout * self.config.step_frequency)
-        self._franka_state: FrankaRobotState = self._read_robot()
-        pos_path = np.linspace(
-            self._franka_state.tcp_pose[:3], pose[:3], int(num_steps) + 1
+        self._arm.move_to(
+            pose,
+            duration=timeout,
+            rate_hz=self.config.step_frequency,
+            clear_errors=True,
         )
-        quat_path = quat_slerp(
-            self._franka_state.tcp_pose[3:], pose[3:], int(num_steps) + 1
-        )
-
-        for pos, quat in zip(pos_path[1:], quat_path[1:]):
-            pose = np.concatenate([pos, quat])
-            self._move_action(pose.astype(np.float32))
-            time.sleep(1.0 / self.config.step_frequency)
-
-        self._franka_state: FrankaRobotState = self._read_robot()
+        self._franka_state = self._read_robot()
 
     def _move_action(self, position: np.ndarray) -> None:
         if self.config.is_dummy:

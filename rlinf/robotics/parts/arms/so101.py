@@ -30,7 +30,7 @@ Two things differ from the lerobot API and are converted here:
 
 import time
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 import numpy as np
 
@@ -85,6 +85,8 @@ class SO101Arm(BaseArm):
         "wrist_flex",
         "wrist_roll",
     )
+
+    DOF: ClassVar[int] = len(MOTORS)
 
     #: The gripper rides on the same bus and is exported as an end effector.
     GRIPPER: str = "gripper"
