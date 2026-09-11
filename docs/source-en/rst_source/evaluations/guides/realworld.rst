@@ -283,8 +283,8 @@ Key ``env.eval`` fields
      - Steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks`` (default 10 for PnP)
    * - ``total_num_envs``
      - Parallel env count; typically 1 on real hardware
-   * - ``use_spacemouse``
-     - Enable spacemouse intervention; usually ``False`` for eval
+   * - ``teleop``
+     - Device that takes over from the policy; usually ``none`` for eval
 
 ``run_eval.sh`` behavior
 ~~~~~~~~~~~~~~~~~~~~~~~~

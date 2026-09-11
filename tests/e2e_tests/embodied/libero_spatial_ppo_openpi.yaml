@@ -15,6 +15,15 @@ hydra:
 
 cluster:
   num_nodes: 1
+  collective:
+    tensor_buffer_pool:
+      max_bytes: 2147483648
+    tensor_compression:
+      enabled: true
+      codec: lz4
+      min_bytes: 16384
+      excluded_dtypes: [float32]
+      acceleration: 1
   component_placement:
     actor,env,rollout: 0-1
   tracer:

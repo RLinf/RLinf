@@ -1,0 +1,139 @@
+SO101 配置与控制
+================
+
+本文介绍如何配置 SO101 机械臂，并运行 RLinf 硬件测试脚本，读取反馈、检查关节运动与夹爪开合。
+
+.. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
+   :align: center
+   :width: 70%
+
+   SO-101 follower 及其夹爪。图片来源：Hugging Face LeRobot。
+
+概览
+----
+
+测试在连接机械臂的 Linux 主机上运行，无需 GPU 或模型 checkpoint。RLinf 目前尚未提供适用于 SO101 的真机任务或训练流程；本指南仅介绍硬件检查。
+
+硬件配置
+--------
+
+安装软件前，先准备机械臂及其控制主机。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - 组件
+     - 要求
+   * - Follower
+     - SO-101 机械臂及其夹爪、舵机控制板和套件指定的电源。
+   * - 控制主机
+     - 通过 USB 连接 follower 舵机控制板的 Linux 计算机。
+
+未组装的机械臂请先参考 `LeRobot SO-101 指南 <https://huggingface.co/docs/lerobot/so101>`_ 中的零件清单与组装说明。完成接线前，需要逐个配置新电机；下方安装流程包含相应命令。
+
+安装
+----
+
+在控制主机上按下方自定义环境流程安装机器人依赖。后续检查均在同一仓库目录和已激活的环境中运行。
+
+机器人控制节点
+~~~~~~~~~~~~~~
+
+在连接机器人的主机上克隆 RLinf，然后安装对应环境。
+
+.. include:: _setup_common.rst
+   :end-before: 然后，使用
+
+在仓库根目录安装机器人依赖：
+
+.. code-block:: bash
+
+   # Mainland China users can add --use-mirror for faster downloads.
+   bash requirements/install.sh embodied --env so101
+   source .venv/bin/activate
+   export REPO_PATH="$PWD"
+
+安装脚本包含 LeRobot 及 Feetech 支持。后续命令均在此仓库目录中运行，并保持环境已激活。平台要求见 :doc:`安装 </rst_source/start/installation>`。
+
+查找串口并配置电机
+^^^^^^^^^^^^^^^^^^
+
+连接舵机控制板的 USB 线缆，以及套件指定的电源。先查找 follower 对应的串口：
+
+.. code-block:: bash
+
+   lerobot-find-port
+
+按提示拔下 USB 线缆，再重新接入。工具报告的设备路径就是后续使用的串口；以下示例假设为 ``/dev/ttyACM0``。检查设备权限和当前用户组：
+
+.. code-block:: bash
+
+   ls -l /dev/ttyACM0
+   id -nG
+
+在 Ubuntu 上，如果串口属于 ``dialout`` 组，运行程序的账号也需要加入该组。若尚未加入，执行 ``sudo usermod -aG dialout "$USER"``，退出登录并重新登录，然后回到仓库目录，重新激活 ``.venv``。USB 重新接入后，应再次确认串口路径。
+
+新电机或更换后的电机需要按上游指南的接线顺序，逐个设置 ID 与波特率；此步骤通常只需执行一次：
+
+.. code-block:: bash
+
+   lerobot-setup-motors \
+     --robot.type=so101_follower \
+     --robot.port=/dev/ttyACM0
+
+每次仅将提示中指定的电机连接到控制板。工具设置该电机的 ID 和波特率后，才会提示连接下一个。6 个电机全部配置完成后，按指南完成组装并恢复串联接线。已配置好的机械臂可跳过电机配置，但仍需使用 RLinf 将采用的 ID 完成标定。
+
+标定 Follower
+^^^^^^^^^^^^^
+
+电机配置与组装完成后，在终端中标定 follower，再让 RLinf 打开串行总线：
+
+.. code-block:: bash
+
+   lerobot-calibrate \
+     --robot.type=so101_follower \
+     --robot.port=/dev/ttyACM0 \
+     --robot.id=rlinf_follower
+
+将串口替换为实际设备。按照指南将关节移到中间位置并确认提示，再按要求逐个移动关节，覆盖其运动范围。工具会报告保存的标定文件；请保留在运行 RLinf 的账号下，并使用相同的 ``--id rlinf_follower``。follower 不能使用 leader 的标定文件。
+
+.. warning::
+
+   RLinf worker 不会交互式标定 follower。标定缺失或与硬件不一致时，连接会失败。启动 worker 前，先用运行机械臂的账号完成标定。
+
+运行
+----
+
+follower 标定完成后，使用交互式测试检查关节与夹爪。脚本可能启动本机 Ray 实例，用于与机械臂通信。
+
+.. warning::
+
+   在硬件模式下，环境构造函数会将机械臂移至折叠姿态，关节角为 ``[0, -99, 95, 65, 0]`` 度。启动前请清空这条运动路径。``--no-reset`` 只跳过后续的一次复位，无法跳过构造时的运动。
+
+确认 follower 已标定，且初始折叠动作的路径无遮挡后，运行：
+
+.. code-block:: bash
+
+   CAMERA_SERIALS='' python -m toolkits.realworld_check.test_so101_env \
+     --port /dev/ttyACM0 --id rlinf_follower --step 2
+
+将串口替换为实际设备，ID 使用标定时的值。``CAMERA_SERIALS=''`` 关闭相机发现，使测试只使用机械臂。逐条输入以下指令，每次运动完成后再继续：
+
+.. code-block:: text
+
+   where
+   up
+   down
+   open
+   close
+   quit
+
+``up`` 和 ``down`` 分别将肩关节角度增加或减少 2 度，并非让末端沿竖直方向移动。每次关节运动后会打印反馈；``open`` 与 ``close`` 用于测试夹爪。``quit`` 关闭环境及其机械臂 worker。输入 ``help`` 可查看其他关节方向。
+
+在自己的程序中控制机械臂或接入相机，请参考 :doc:`机器人接口 </rst_source/concepts/robotics>`。
+
+新增真机任务
+------------
+
+硬件检查通过后，参考 :doc:`新增真机任务 </rst_source/extending/new_task>` 定义任务的复位流程、观测、动作、奖励和成功条件。开始训练前，需要先实现可运行的真机任务。

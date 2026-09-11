@@ -1,0 +1,286 @@
+# Copyright 2025 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import multiprocessing
+import warnings
+from multiprocessing import connection
+from typing import Any, Callable, Optional, Union
+
+import gym
+import numpy as np
+
+from rlinf.envs.sim.libero.utils import get_libero_type
+from rlinf.envs.venv import (
+    BaseVectorEnv,
+    CloudpickleWrapper,
+    EnvWorker,
+    ShArray,
+    SubprocEnvWorker,
+    SubprocVectorEnv,
+    _setup_buf,
+)
+
+# ---------------------------------------------------------------------------
+# Dynamic Module Import Logic for Libero Pro / Plus
+# ---------------------------------------------------------------------------
+libero_type = get_libero_type()
+
+if libero_type == "pro":
+    try:
+        from liberopro.liberopro.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=pro but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+elif libero_type == "plus":
+    try:
+        from liberoplus.liberoplus.envs import OffScreenRenderEnv
+    except ImportError as e:
+        print(
+            f"[Venv] Warning: LIBERO_TYPE=plus but import failed ({e}). Falling back to standard libero..."
+        )
+        from libero.libero.envs import OffScreenRenderEnv
+
+else:
+    try:
+        from libero.libero.envs import OffScreenRenderEnv
+    except ImportError:
+        try:
+            from liberopro.liberopro.envs import OffScreenRenderEnv
+        except ImportError:
+            try:
+                from liberoplus.liberoplus.envs import OffScreenRenderEnv
+            except ImportError:
+                raise ImportError(
+                    "Could not import OffScreenRenderEnv from libero, liberopro, or liberoplus."
+                )
+
+
+gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+gym_new_venv_step_type = tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]
+warnings.simplefilter("once", DeprecationWarning)
+
+LIBERO_CAMERA_OBS_NAMES = ("agentview_image", "robot0_eye_in_hand_image")
+
+
+def _set_camera_rendering(env, enabled: bool) -> None:
+    """Enable or disable LIBERO camera observables without resetting the env."""
+    rob = getattr(env, "env", env)
+    while hasattr(rob, "env"):
+        rob = rob.env
+    observables = getattr(rob, "_observables", None)
+    if observables is None:
+        return
+    for name in LIBERO_CAMERA_OBS_NAMES:
+        if name in observables:
+            observables[name]._enabled = enabled
+
+
+def _worker(
+    parent: connection.Connection,
+    p: connection.Connection,
+    env_fn_wrapper: CloudpickleWrapper,
+    obs_bufs: Optional[Union[dict, tuple, ShArray]] = None,
+) -> None:
+    def _encode_obs(
+        obs: Union[dict, tuple, np.ndarray], buffer: Union[dict, tuple, ShArray]
+    ) -> None:
+        if isinstance(obs, np.ndarray) and isinstance(buffer, ShArray):
+            buffer.save(obs)
+        elif isinstance(obs, tuple) and isinstance(buffer, tuple):
+            for o, b in zip(obs, buffer):
+                _encode_obs(o, b)
+        elif isinstance(obs, dict) and isinstance(buffer, dict):
+            for k in obs.keys():
+                _encode_obs(obs[k], buffer[k])
+        return None
+
+    parent.close()
+    env = env_fn_wrapper.data()
+    try:
+        while True:
+            try:
+                cmd, data = p.recv()
+            except EOFError:  # the pipe has been closed
+                p.close()
+                break
+            if cmd == "step":
+                env_return = env.step(data)
+                if obs_bufs is not None:
+                    _encode_obs(env_return[0], obs_bufs)
+                    env_return = (None, *env_return[1:])
+                p.send(env_return)
+            elif cmd == "reset":
+                retval = env.reset(**data)
+                reset_returns_info = (
+                    isinstance(retval, (tuple, list))
+                    and len(retval) == 2
+                    and isinstance(retval[1], dict)
+                )
+                if reset_returns_info:
+                    obs, info = retval
+                else:
+                    obs = retval
+                if obs_bufs is not None:
+                    _encode_obs(obs, obs_bufs)
+                    obs = None
+                if reset_returns_info:
+                    p.send((obs, info))
+                else:
+                    p.send(obs)
+            elif cmd == "close":
+                p.send(env.close())
+                p.close()
+                break
+            elif cmd == "render":
+                p.send(env.render(**data) if hasattr(env, "render") else None)
+            elif cmd == "seed":
+                if hasattr(env, "seed"):
+                    p.send(env.seed(data))
+                else:
+                    env.reset(seed=data)
+                    p.send(None)
+            elif cmd == "getattr":
+                p.send(getattr(env, data) if hasattr(env, data) else None)
+            elif cmd == "setattr":
+                setattr(env.unwrapped, data["key"], data["value"])
+            elif cmd == "check_success":
+                p.send(env.check_success())
+            elif cmd == "get_segmentation_of_interest":
+                p.send(env.get_segmentation_of_interest(data))
+            elif cmd == "get_sim_state":
+                p.send(env.get_sim_state())
+            elif cmd == "set_init_state":
+                obs = env.set_init_state(data)
+                p.send(obs)
+            elif cmd == "reconfigure":
+                env.close()
+                seed = data.pop("seed")
+                env = OffScreenRenderEnv(**data)
+                env.seed(seed)
+                p.send(None)
+            elif cmd == "get_camera_meta":
+                # Compute camera intrinsics/extrinsics and depth near/far
+                # from the robosuite sim, which is only reachable inside the
+                # worker subprocess.  Returns picklable lists/floats so the
+                # driver can back-project pixels to world without GT poses.
+                from robosuite.utils import camera_utils
+
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 256))
+                w = int(data.get("width", 256))
+                K = camera_utils.get_camera_intrinsic_matrix(sim, cam, h, w)
+                E = camera_utils.get_camera_extrinsic_matrix(sim, cam)
+                extent = float(sim.model.stat.extent)
+                near = float(sim.model.vis.map.znear) * extent
+                far = float(sim.model.vis.map.zfar) * extent
+                p.send(
+                    {
+                        "camera_name": cam,
+                        "height": h,
+                        "width": w,
+                        "intrinsic_K": K.tolist(),
+                        "extrinsic_cam2world": E.tolist(),
+                        "depth_near": near,
+                        "depth_far": far,
+                    }
+                )
+            elif cmd == "render_camera":
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 1024))
+                w = int(data.get("width", 1024))
+                depth = bool(data.get("depth", False))
+                p.send(
+                    sim.render(
+                        width=w,
+                        height=h,
+                        camera_name=cam,
+                        depth=depth,
+                    )
+                )
+            elif cmd == "set_camera_rendering":
+                _set_camera_rendering(env, data)
+                p.send(None)
+            else:
+                p.close()
+                raise NotImplementedError
+    except KeyboardInterrupt:
+        p.close()
+
+
+class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
+    def __init__(self, env_fn: Callable[[], gym.Env], share_memory: bool = False):
+        ctx = multiprocessing.get_context("spawn")
+        self.parent_remote, self.child_remote = ctx.Pipe()
+        self.share_memory = share_memory
+        self.buffer: Optional[Union[dict, tuple, ShArray]] = None
+        if self.share_memory:
+            dummy = env_fn()
+            obs_space = dummy.observation_space
+            dummy.close()
+            del dummy
+            self.buffer = _setup_buf(obs_space)
+        args = (
+            self.parent_remote,
+            self.child_remote,
+            CloudpickleWrapper(env_fn),
+            self.buffer,
+        )
+        self.process = ctx.Process(target=_worker, args=args, daemon=True)
+        self.process.start()
+        self.child_remote.close()
+        EnvWorker.__init__(self, env_fn)
+
+    def reconfigure_env_fn(self, env_fn_param):
+        self.parent_remote.send(["reconfigure", env_fn_param])
+        return self.parent_remote.recv()
+
+
+class ReconfigureSubprocEnv(SubprocVectorEnv):
+    def __init__(self, env_fns: list[Callable[[], gym.Env]], **kwargs: Any) -> None:
+        def worker_fn(fn: Callable[[], gym.Env]) -> ReconfigureSubprocEnvWorker:
+            return ReconfigureSubprocEnvWorker(fn, share_memory=False)
+
+        BaseVectorEnv.__init__(self, env_fns, worker_fn, **kwargs)
+
+    def reconfigure_env_fns(self, env_fns, id=None):
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        if self.is_async:
+            self._assert_id(id)
+
+        for j, i in enumerate(id):
+            self.workers[i].reconfigure_env_fn(env_fns[j])
+
+    def set_camera_rendering(self, enabled: bool, id=None):
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        if self.is_async:
+            self._assert_id(id)
+        for i in id:
+            self.workers[i].parent_remote.send(["set_camera_rendering", enabled])
+        for i in id:
+            self.workers[i].parent_remote.recv()
