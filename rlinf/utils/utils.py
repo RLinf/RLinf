@@ -454,6 +454,52 @@ def reshape_entropy(
     return entropy
 
 
+def compute_entropy_loss(
+    entropy: Optional[torch.Tensor],
+    entropy_type: str,
+    loss_mask: Optional[torch.Tensor],
+    action_dim: int = 7,
+    batch_size: int = 1,
+) -> torch.Tensor:
+    """
+    Reshape entropy for ``entropy_type`` and average it over the valid entries.
+
+    Two shape mismatches have to be reconciled before the average is a mean.
+    ``reshape_entropy`` can return one rank less than ``loss_mask``: models that
+    already reduce entropy to [bsz, 1] leave the "chunk_level" branch as [bsz],
+    and a [bsz] value tensor against a [bsz, 1] mask is an outer product rather
+    than a mask. And ``masked_mean`` divides by the sum of the mask it is handed
+    while its numerator sums the broadcast product, so a mask narrower than
+    ``entropy`` inflates the result by the broadcast factor.
+
+    Args:
+        entropy(Optional[torch.Tensor]): entropy as the model produced it.
+        entropy_type(str): "action_level", "chunk_level" or "token_level".
+        loss_mask(Optional[torch.Tensor]): valid-entry mask, or None to average all.
+        action_dim(int): action dimension, default is 7.
+        batch_size(int): batch size used to reshape action-level entropy.
+
+    Returns:
+        torch.Tensor: scalar mean entropy over the valid entries.
+    """
+    entropy = reshape_entropy(
+        entropy,
+        entropy_type=entropy_type,
+        action_dim=action_dim,
+        batch_size=batch_size,
+    )
+    if loss_mask is None:
+        return masked_mean(entropy, mask=None)
+
+    while entropy.dim() < loss_mask.dim():
+        entropy = entropy.unsqueeze(-1)
+    if loss_mask.shape != entropy.shape:
+        loss_mask = loss_mask.expand(
+            torch.broadcast_shapes(loss_mask.shape, entropy.shape)
+        )
+    return masked_mean(entropy, mask=loss_mask)
+
+
 def logprobs_from_logits_flash_attn(
     logits: torch.Tensor, labels: torch.Tensor, inplace_backward: bool = True
 ) -> torch.Tensor:
