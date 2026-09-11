@@ -35,6 +35,10 @@ from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
+from rlinf.models.embodiment.reward.qwen_vl_rocm_patch import (
+    patch_vision_patch_embed,
+)
+from rlinf.scheduler import AcceleratorType, Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
@@ -644,3 +648,127 @@ def test_delay_metrics_report_every_sample():
 
     assert metrics.tolist() == pytest.approx([0.03, 0.03])
     assert env.insert_delay_metrics().numel() == 0
+
+
+PATCH_IN_CHANNELS = 3
+PATCH_TEMPORAL = 2
+PATCH_SIZE = 16
+PATCH_EMBED_DIM = 32
+
+
+class _StubVisionPatchEmbed(torch.nn.Module):
+    """The shape contract every Qwen-VL patch embedding shares."""
+
+    def __init__(self):
+        super().__init__()
+        kernel_size = [PATCH_TEMPORAL, PATCH_SIZE, PATCH_SIZE]
+        self.proj = torch.nn.Conv3d(
+            PATCH_IN_CHANNELS,
+            PATCH_EMBED_DIM,
+            kernel_size=kernel_size,
+            stride=kernel_size,
+        )
+
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.view(
+            -1, PATCH_IN_CHANNELS, PATCH_TEMPORAL, PATCH_SIZE, PATCH_SIZE
+        )
+        return self.proj(hidden_states).view(-1, PATCH_EMBED_DIM)
+
+
+class _StubVisionTower(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.patch_embed = _StubVisionPatchEmbed()
+        self.other = torch.nn.Linear(PATCH_EMBED_DIM, PATCH_EMBED_DIM)
+
+
+def _set_accelerator(monkeypatch, accelerator: AcceleratorType) -> None:
+    monkeypatch.setattr(Worker, "accelerator_type", accelerator)
+
+
+def _real_qwen_vl_patch_embeds() -> dict[str, torch.nn.Module]:
+    """One instance of each Qwen-VL patch embedding transformers ships."""
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+        Qwen2_5_VisionPatchEmbed,
+    )
+    from transformers.models.qwen2_vl.modeling_qwen2_vl import PatchEmbed
+    from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed
+    from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
+        Qwen3VLMoeVisionConfig,
+    )
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        Qwen3VLMoeVisionPatchEmbed,
+    )
+
+    shape = {
+        "patch_size": PATCH_SIZE,
+        "temporal_patch_size": PATCH_TEMPORAL,
+        "in_channels": PATCH_IN_CHANNELS,
+    }
+    return {
+        "qwen2_vl": PatchEmbed(embed_dim=PATCH_EMBED_DIM, **shape),
+        "qwen2_5_vl": Qwen2_5_VisionPatchEmbed(embed_dim=PATCH_EMBED_DIM, **shape),
+        "qwen3_vl": Qwen3VLVisionPatchEmbed(
+            Qwen3VLVisionConfig(hidden_size=PATCH_EMBED_DIM, **shape)
+        ),
+        "qwen3_vl_moe": Qwen3VLMoeVisionPatchEmbed(
+            Qwen3VLMoeVisionConfig(hidden_size=PATCH_EMBED_DIM, **shape)
+        ),
+    }
+
+
+def test_rocm_patch_embed_matches_the_convolution(monkeypatch):
+    _set_accelerator(monkeypatch, AcceleratorType.AMD_GPU)
+    torch.manual_seed(0)
+    model = _StubVisionTower().eval()
+    patches = torch.randn(
+        7, PATCH_IN_CHANNELS * PATCH_TEMPORAL * PATCH_SIZE * PATCH_SIZE
+    )
+
+    with torch.no_grad():
+        expected = model.patch_embed(patches)
+        assert patch_vision_patch_embed(model) == 1
+        actual = model.patch_embed(patches)
+
+    assert actual.shape == expected.shape
+    torch.testing.assert_close(actual, expected)
+
+
+def test_rocm_patch_embed_leaves_the_parameters_alone(monkeypatch):
+    _set_accelerator(monkeypatch, AcceleratorType.AMD_GPU)
+    model = _StubVisionTower()
+    before = {name: value.clone() for name, value in model.state_dict().items()}
+
+    patch_vision_patch_embed(model)
+
+    after = model.state_dict()
+    assert sorted(after) == sorted(before)
+    for name, value in before.items():
+        torch.testing.assert_close(after[name], value)
+
+
+def test_rocm_patch_embed_is_a_noop_off_rocm(monkeypatch):
+    _set_accelerator(monkeypatch, AcceleratorType.NV_GPU)
+    model = _StubVisionTower()
+
+    assert patch_vision_patch_embed(model) == 0
+    assert "forward" not in model.patch_embed.__dict__
+
+
+def test_rocm_patch_embed_covers_every_qwen_vl_variant(monkeypatch):
+    pytest.importorskip("transformers")
+    _set_accelerator(monkeypatch, AcceleratorType.AMD_GPU)
+
+    for name, patch_embed in _real_qwen_vl_patch_embeds().items():
+        tower = torch.nn.Module()
+        tower.patch_embed = patch_embed.eval()
+        patches = torch.randn(
+            5, PATCH_IN_CHANNELS * PATCH_TEMPORAL * PATCH_SIZE * PATCH_SIZE
+        )
+
+        with torch.no_grad():
+            expected = tower.patch_embed(patches)
+            assert patch_vision_patch_embed(tower) == 1, name
+            torch.testing.assert_close(tower.patch_embed(patches), expected, msg=name)
