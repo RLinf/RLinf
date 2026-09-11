@@ -31,7 +31,9 @@ LATENT_HW = 4
 def _load_backend_module(monkeypatch):
     """Load the OpenSora backend with opensora stubbed out, so it needs no deps."""
     repo_root = Path(__file__).resolve().parents[2]
-    module_path = repo_root / "rlinf" / "envs" / "world_model" / "opensora_backend.py"
+    module_path = (
+        repo_root / "rlinf" / "envs" / "sim" / "world_model" / "opensora_backend.py"
+    )
 
     registry = types.ModuleType("opensora.registry")
     registry.MODELS = object()
@@ -58,7 +60,7 @@ def _load_backend_module(monkeypatch):
         monkeypatch.setitem(sys.modules, name, module)
 
     spec = importlib.util.spec_from_file_location(
-        "rlinf.envs.world_model.opensora_backend", module_path
+        "rlinf.envs.sim.world_model.opensora_backend", module_path
     )
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)

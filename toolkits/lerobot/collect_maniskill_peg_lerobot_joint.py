@@ -80,10 +80,10 @@ def _bootstrap_repo_paths() -> Path:
 RLINF_ROOT = _bootstrap_repo_paths()
 
 from rlinf.data.storage.lerobot import add_frame_to_dataset  # noqa: E402
-from rlinf.envs.maniskill.peg_insertion_side_variants import (  # noqa: E402
+from rlinf.envs.sim.maniskill.peg_insertion_side_variants import (  # noqa: E402
     PANDA_WIDE_WRISTCAM_UID as SHARED_PANDA_WIDE_WRISTCAM_UID,
 )
-from rlinf.envs.maniskill.peg_insertion_side_variants import (  # noqa: E402
+from rlinf.envs.sim.maniskill.peg_insertion_side_variants import (  # noqa: E402
     PEG_INSERTION_SIDE_WIDE_ENV_ID,
     PEG_INSERTION_SIDE_WIDE_OBSERVER_WIDE_WRIST_ENV_ID,
     register_rlinf_peg_insertion_side_variants,

@@ -29,7 +29,9 @@ CHUNK = 8
 def _load_backend_module(monkeypatch):
     """Load the Wan backend with diffsynth stubbed out, so it needs no Wan deps."""
     repo_root = Path(__file__).resolve().parents[2]
-    module_path = repo_root / "rlinf" / "envs" / "world_model" / "wan_backend.py"
+    module_path = (
+        repo_root / "rlinf" / "envs" / "sim" / "world_model" / "wan_backend.py"
+    )
 
     fake_wan_video = types.ModuleType("diffsynth.pipelines.wan_video_new")
     fake_wan_video.ModelConfig = object
@@ -46,7 +48,7 @@ def _load_backend_module(monkeypatch):
     )
 
     spec = importlib.util.spec_from_file_location(
-        "rlinf.envs.world_model.wan_backend", module_path
+        "rlinf.envs.sim.world_model.wan_backend", module_path
     )
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)

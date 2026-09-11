@@ -36,7 +36,9 @@ IMAGE_SIZE = (8, 8)
 def _load_env_module(monkeypatch):
     """Load the shared env module; only the dataset wrapper needs stubbing out."""
     repo_root = Path(__file__).resolve().parents[2]
-    module_path = repo_root / "rlinf" / "envs" / "world_model" / "world_model_env.py"
+    module_path = (
+        repo_root / "rlinf" / "envs" / "sim" / "world_model" / "world_model_env.py"
+    )
 
     # The dataset lives behind rlinf.data, whose package import pulls in the replay
     # buffer; these tests drive the env off a fake dataset instead.
@@ -45,7 +47,7 @@ def _load_env_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "rlinf.data.datasets.world_model", fake_dataset)
 
     spec = importlib.util.spec_from_file_location(
-        "rlinf.envs.world_model.world_model_env", module_path
+        "rlinf.envs.sim.world_model.world_model_env", module_path
     )
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)

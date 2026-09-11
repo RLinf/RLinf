@@ -108,7 +108,7 @@ env:
   train:
     ignore_terminations: True
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     chunk_pause_seconds: 0.4
     total_num_envs: 1
     main_image_key: wrist_1
@@ -123,7 +123,6 @@ env:
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       max_num_steps: 240
       binary_gripper_threshold: 0.1
       enable_gripper_penalty: False
@@ -131,7 +130,7 @@ env:
   eval:
     ignore_terminations: False
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     chunk_pause_seconds: 0.
     total_num_envs: 1
     main_image_key: wrist_2
@@ -144,7 +143,6 @@ env:
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       max_num_steps: 240
       binary_gripper_threshold: 0.02
       enable_gripper_penalty: False
