@@ -16,15 +16,13 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import Any, Callable, Optional
 
 import torch
 import torch.nn as nn
 
-from rlinf.scheduler import Worker
-
 from . import vlm_preprocess as vlm_input_utils
+from .accelerator import accelerator_autocast
 from .profile import resolve_vlm_interface
 
 _AUXILIARY_MODEL_INPUT_KEYS = {"dino_features"}
@@ -76,12 +74,7 @@ def run_backbone_pipeline(
             f"{sorted(_SUPPORTED_ACTION_HEADS)}, got {action_head_name!r}."
         )
 
-    device_type = Worker.torch_device_type
-    autocast_context = (
-        torch.autocast(device_type, dtype=torch.bfloat16)
-        if device_type is not None
-        else nullcontext()
-    )
+    autocast_ctx = accelerator_autocast(torch.bfloat16)
 
     if model_inputs is None:
         if examples is None:
@@ -126,7 +119,7 @@ def run_backbone_pipeline(
         hook_handle = embedding_layer.register_forward_hook(input_embedding_hook)
 
     try:
-        with autocast_context:
+        with autocast_ctx:
             vlm_outputs = vlm_interface(
                 **vlm_inputs,
                 use_cache=use_cache,

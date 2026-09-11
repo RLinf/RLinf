@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -26,10 +25,8 @@ from starVLA.training.trainer_utils.trainer_tools import (
 )
 from torch.distributions.normal import Normal
 
-from rlinf.scheduler import Worker
-
 from ..utils import data_pipeline as data_pipeline_utils
-from ..utils.accelerator import build_gaussian
+from ..utils.accelerator import accelerator_autocast, build_gaussian
 from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import (
     RL_BATCH_TENSOR_KEYS_TO_IGNORE,
@@ -98,13 +95,7 @@ def _run_oft_backbone_and_head(
     )
     model = policy.starvla_model
     last_hidden = backbone_output["last_hidden"]
-    device_type = Worker.torch_device_type
-    fp32_ctx = (
-        torch.autocast(device_type, dtype=torch.float32)
-        if device_type is not None
-        else nullcontext()
-    )
-    with fp32_ctx:
+    with accelerator_autocast(torch.float32):
         input_ids = model_inputs["input_ids"]
         action_queries = model._gather_action_token_embeddings(
             last_hidden,

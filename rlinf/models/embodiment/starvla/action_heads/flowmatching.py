@@ -18,19 +18,16 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from math import sqrt
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.nn as nn
 
-from rlinf.scheduler import Worker
-
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import state as state_utils
 from ..utils import vlm_preprocess as vlm_input_utils
-from ..utils.accelerator import build_gaussian
+from ..utils.accelerator import accelerator_autocast, build_gaussian
 from ..utils.backbone_pipeline import (
     compute_values_from_hidden,
     run_backbone_pipeline,
@@ -126,13 +123,7 @@ def _build_dual_dino_features(
         )
 
     dino_input = dino_encoder.prepare_dino_input(wrist_views)
-    device_type = Worker.torch_device_type
-    bf16_ctx = (
-        torch.autocast(device_type, dtype=torch.bfloat16)
-        if device_type is not None
-        else nullcontext()
-    )
-    with bf16_ctx:
+    with accelerator_autocast(torch.bfloat16):
         dino_feats = dino_encoder(dino_input)
 
     bsz = len(examples)
@@ -497,12 +488,7 @@ def run_default_forward_flowmatching(
 
     # Match the rollout path which runs ODE integration under fp32 autocast
     # to avoid bf16 truncation errors accumulating over Euler steps.
-    device_type = Worker.torch_device_type
-    fp32_ctx = (
-        torch.autocast(device_type, dtype=torch.float32)
-        if device_type is not None
-        else nullcontext()
-    )
+    fp32_ctx = accelerator_autocast(torch.float32)
 
     step_logprobs: list[torch.Tensor] = []
     step_entropy: list[torch.Tensor] = []
@@ -666,12 +652,7 @@ def run_rollout_flowmatching(
     # model under torch.autocast("cuda", dtype=torch.float32).  Without this,
     # the ODE integration inherits bf16 from the backbone and accumulates
     # truncation errors over num_steps Euler steps.
-    device_type = Worker.torch_device_type
-    fp32_ctx = (
-        torch.autocast(device_type, dtype=torch.float32)
-        if device_type is not None
-        else nullcontext()
-    )
+    fp32_ctx = accelerator_autocast(torch.float32)
 
     with fp32_ctx:
         actions_t = torch.randn(

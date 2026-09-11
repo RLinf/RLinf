@@ -12,29 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Gaussian action-distribution helper for the starVLA RLinf wrapper.
+"""Accelerator-neutral autocast and action distribution for starVLA.
 
-starVLA upstream targets CUDA and relies on CUDA kernel coverage. On other
-accelerators (Ascend NPU via ``torch_npu``, Intel XPU, ...) some of the dtypes
-it leaves in place have no kernel, so the policy distribution is built in
-float32 here.
+starVLA upstream targets CUDA. On other accelerators (Ascend NPU via
+``torch_npu``, Intel XPU, ...) a ``"cuda"`` autocast silently does nothing and
+some dtypes it leaves in place have no kernel, so the starVLA paths build their
+autocast and policy distribution through these helpers.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from contextlib import AbstractContextManager, nullcontext
 
 import torch
 from torch.distributions.normal import Normal
 
+from rlinf.scheduler import Worker
 
-def build_gaussian(
-    mean: torch.Tensor,
-    std: torch.Tensor,
-    *,
-    dtype: Optional[torch.dtype] = torch.float32,
-) -> Normal:
-    """Build a Gaussian action distribution with both arguments in ``dtype``.
+
+def accelerator_autocast(dtype: torch.dtype) -> AbstractContextManager:
+    """Autocast to ``dtype`` on the accelerator this worker resolved.
+
+    Args:
+        dtype: Autocast dtype, e.g. ``torch.bfloat16`` for the backbone or
+            ``torch.float32`` to undo it around an action head.
+
+    Returns:
+        A ``torch.autocast`` on ``Worker.torch_device_type``, or a no-op context
+        when the worker has no accelerator.
+    """
+    device_type = Worker.torch_device_type
+    if device_type is None:
+        return nullcontext()
+    return torch.autocast(device_type, dtype=dtype)
+
+
+def build_gaussian(mean: torch.Tensor, std: torch.Tensor) -> Normal:
+    """Build the Gaussian action distribution in float32.
 
     ``mean`` inherits the backbone dtype (bfloat16 when autocast did not upcast
     it) and ``std`` inherits the policy parameter dtype. Sampling from a
@@ -46,13 +60,8 @@ def build_gaussian(
     Args:
         mean: Distribution location, any floating dtype.
         std: Distribution scale, broadcastable against ``mean``.
-        dtype: Dtype to build the distribution in; ``None`` keeps the inputs
-            unchanged.
 
     Returns:
-        The ``Normal`` distribution over the (broadcast) action shape.
+        The float32 ``Normal`` over the (broadcast) action shape.
     """
-    if dtype is not None:
-        mean = mean.to(dtype=dtype)
-        std = std.to(dtype=dtype)
-    return Normal(mean, std)
+    return Normal(mean.to(dtype=torch.float32), std.to(dtype=torch.float32))

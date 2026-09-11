@@ -1394,6 +1394,36 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-starvla-libero-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export STARVLA_PATH=/workspace/dataset/starVLA
+          export DECORD_PATH=/workspace/dataset/decord
+          bash requirements/install.sh --platform ascend embodied --model starvla --env libero
+
+      - name: Libero-10 GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_starvla osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvlaoft-opensora-test:
     runs-on: embodied
     steps:

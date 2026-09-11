@@ -22,10 +22,6 @@ from typing import Any, Optional
 
 import numpy as np
 
-# starVLA's model-agnostic action helpers (``unnormalize_actions``,
-# ``get_action_stats``) live on ``starVLA.model.tools.FrameworkTools`` as static
-# functions. It is imported lazily because starVLA only exists in its own venv.
-
 
 def resolve_action_norm_stats(
     starvla_model: Any,
@@ -50,19 +46,13 @@ def resolve_action_norm_stats(
             f"unnorm_key={unnorm_key!r}."
         )
 
-    if unnorm_key in norm_stats:
-        raw_stats = norm_stats.get(unnorm_key)
-    else:
-        from starVLA.model.tools import FrameworkTools
+    if unnorm_key not in norm_stats:
+        raise RuntimeError(
+            "starVLA checkpoint has no action norm stats for "
+            f"unnorm_key={unnorm_key!r}; available keys: {sorted(norm_stats)}."
+        )
 
-        try:
-            raw_stats = FrameworkTools.get_action_stats(norm_stats, unnorm_key)
-        except Exception as exc:
-            raise RuntimeError(
-                "starVLA get_action_stats failed; cannot unnormalize actions for env. "
-                f"unnorm_key={unnorm_key!r}, error={type(exc).__name__}: {exc}."
-            ) from exc
-
+    raw_stats = norm_stats[unnorm_key]
     if raw_stats is None or not isinstance(raw_stats, Mapping):
         raise RuntimeError(
             "starVLA action norm stats payload is missing or invalid; cannot "
@@ -190,6 +180,7 @@ def unnormalize_actions_for_env(
             "Set cfg.unnorm_key=None to use normalized actions directly."
         )
 
+    # starVLA is installed only in the starvla venv.
     from starVLA.model.tools import FrameworkTools
 
     actions = np.asarray(normalized_actions, dtype=np.float32)

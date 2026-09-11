@@ -16,17 +16,14 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
-from rlinf.scheduler import Worker
-
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import state as state_utils
 from ..utils import vlm_preprocess as vlm_input_utils
-from ..utils.accelerator import build_gaussian
+from ..utils.accelerator import accelerator_autocast, build_gaussian
 from ..utils.backbone_pipeline import run_backbone_pipeline
 from ..utils.profile import RL_BATCH_TENSOR_KEYS_TO_IGNORE, resolve_action_chunk_len
 
@@ -246,13 +243,7 @@ def _run_adapter_pipeline(
         state_projected = model.proprio_projector(proprio=proprio)
 
     # 8) Predict actions from the fused multi-layer vision/query/state features.
-    device_type = Worker.torch_device_type
-    fp32_ctx = (
-        torch.autocast(device_type, dtype=torch.float32)
-        if device_type is not None
-        else nullcontext()
-    )
-    with fp32_ctx:
+    with accelerator_autocast(torch.float32):
         mean_actions = model.action_model.predict_action(
             multi_layer_hidden_states,
             vision_hidden_len=max_patch_len,

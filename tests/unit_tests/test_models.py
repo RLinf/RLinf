@@ -24,6 +24,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -35,6 +36,7 @@ from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
@@ -292,6 +294,122 @@ def test_value_model_does_not_rescale_gemma3_language_embeddings(monkeypatch):
         prefix_pad_masks,
         torch.tensor([[True, True, True, True, False]]),
     )
+
+
+_STARVLA_UTILS_DIR = (
+    Path(__file__).resolve().parents[2] / "rlinf/models/embodiment/starvla/utils"
+)
+_FRANKA_ACTION_STATS = {
+    "q01": [-0.5] * 7,
+    "q99": [0.5] * 7,
+    "min": [-1.0] * 7,
+    "max": [1.0] * 7,
+    "mask": [True] * 6 + [False],
+}
+
+
+def _load_starvla_util(name: str) -> ModuleType:
+    # The starvla package __init__ imports starVLA, which only its venv has.
+    spec = importlib.util.spec_from_file_location(
+        f"starvla_{name}_under_test", _STARVLA_UTILS_DIR / f"{name}.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(("source", "bound"), [("q01q99", 0.5), ("minmax", 1.0)])
+def test_starvla_action_stats_follow_the_configured_source(source, bound):
+    action_space = _load_starvla_util("action_space")
+    model = SimpleNamespace(norm_stats={"franka": {"action": _FRANKA_ACTION_STATS}})
+
+    stats = action_space.resolve_action_norm_stats(
+        model, "franka", action_dim=7, action_stats_source=source
+    )
+
+    np.testing.assert_array_equal(stats["q99"], [bound] * 7)
+    np.testing.assert_array_equal(stats["q01"], [-bound] * 7)
+    np.testing.assert_array_equal(stats["mask"], [True] * 6 + [False])
+
+
+def test_starvla_action_stats_name_the_available_keys_for_an_unknown_key():
+    action_space = _load_starvla_util("action_space")
+    model = SimpleNamespace(norm_stats={"franka": {"action": _FRANKA_ACTION_STATS}})
+
+    with pytest.raises(RuntimeError, match=r"available keys: \['franka'\]"):
+        action_space.resolve_action_norm_stats(model, "libero_spatial", action_dim=7)
+
+
+def test_starvla_action_stats_require_a_norm_stats_mapping():
+    action_space = _load_starvla_util("action_space")
+
+    with pytest.raises(RuntimeError, match="no usable 'norm_stats' mapping"):
+        action_space.resolve_action_norm_stats(
+            SimpleNamespace(norm_stats=None), "franka", action_dim=7
+        )
+
+
+def test_starvla_env_actions_keep_their_shape_and_map_the_libero_gripper(monkeypatch):
+    action_space = _load_starvla_util("action_space")
+    received_shapes = []
+
+    def unnormalize_actions(actions, action_norm_stats):
+        received_shapes.append(actions.shape)
+        return actions
+
+    tools = ModuleType("starVLA.model.tools")
+    tools.FrameworkTools = SimpleNamespace(unnormalize_actions=unnormalize_actions)
+    monkeypatch.setitem(sys.modules, "starVLA.model.tools", tools)
+
+    normalized = np.zeros((2, 3, 7), dtype=np.float32)
+    normalized[..., 0] = 0.25
+    normalized[0, :, 6] = 1.0
+    stats = {"q99": np.ones(7), "q01": -np.ones(7), "mask": np.ones(7, dtype=bool)}
+
+    env_actions = action_space.unnormalize_actions_for_env(
+        normalized, stats, policy_setup="libero"
+    )
+
+    # starVLA unnormalizes [T, action_dim]; the chunk layout comes back intact.
+    assert received_shapes == [(6, 7)]
+    assert env_actions.shape == (2, 3, 7)
+    np.testing.assert_array_equal(env_actions[..., 0], 0.25)
+    # LIBERO wants the 0/1 gripper as -1 (open) / +1 (closed).
+    np.testing.assert_array_equal(env_actions[0, :, 6], -1.0)
+    np.testing.assert_array_equal(env_actions[1, :, 6], 1.0)
+
+
+def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
+    accelerator = _load_starvla_util("accelerator")
+    # CPU stands in for a non-CUDA accelerator such as an Ascend NPU.
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+
+    with accelerator.accelerator_autocast(torch.bfloat16):
+        assert torch.is_autocast_enabled("cpu")
+        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+
+
+def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
+    accelerator = _load_starvla_util("accelerator")
+    monkeypatch.setattr(Worker, "torch_device_type", None)
+
+    with accelerator.accelerator_autocast(torch.bfloat16):
+        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_enabled("cuda")
+
+
+def test_starvla_gaussian_is_float32_and_keeps_the_gradient_path():
+    accelerator = _load_starvla_util("accelerator")
+    mean = torch.zeros(2, 3, dtype=torch.bfloat16, requires_grad=True)
+    log_std = torch.nn.Parameter(torch.zeros(3))
+
+    dist = accelerator.build_gaussian(mean, log_std.exp())
+    sample = dist.rsample()
+
+    assert dist.loc.dtype == dist.scale.dtype == sample.dtype == torch.float32
+    dist.log_prob(sample.detach()).sum().backward()
+    assert mean.grad is not None and mean.grad.dtype == torch.bfloat16
+    assert log_std.grad is not None
 
 
 def _history_cfg():

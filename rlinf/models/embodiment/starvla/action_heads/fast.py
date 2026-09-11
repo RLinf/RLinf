@@ -16,16 +16,14 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import torch
 
-from rlinf.scheduler import Worker
-
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import vlm_preprocess as vlm_input_utils
+from ..utils.accelerator import accelerator_autocast
 from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import (
     RL_BATCH_TENSOR_KEYS_TO_IGNORE,
@@ -324,13 +322,7 @@ def run_rollout_fast(
         elif max_length is not None:
             gen_kwargs["max_length"] = int(max_length)
 
-        device_type = Worker.torch_device_type
-        bf16_ctx = (
-            torch.autocast(device_type, dtype=torch.bfloat16)
-            if device_type is not None
-            else nullcontext()
-        )
-        with bf16_ctx:
+        with accelerator_autocast(torch.bfloat16):
             gen_out = vlm_interface.model.generate(
                 **prompt_inputs,
                 **gen_kwargs,
