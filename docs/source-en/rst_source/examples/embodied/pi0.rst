@@ -43,7 +43,7 @@ RL-fine-tune π\ :sub:`0`\  / π\ :sub:`0.5`\  on LIBERO, ManiSkill, MetaWorld, 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1 node · GPUs
+      NVIDIA CUDA · :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>` (π₀ / π₀.₅, LIBERO · ManiSkill)
 
 | **You'll do:** install → download an SFT checkpoint → pick a config → launch ``run_embodiment.sh`` → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint (steps below).
@@ -100,6 +100,8 @@ Observation and Action
 
 Installation
 ------------
+
+Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <pi0-hardware>` for your hardware.
 
 .. include:: _setup_common.rst
 
@@ -422,6 +424,129 @@ the LIBERO environment, run:
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
 --------------
+
+.. _pi0-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+NVIDIA uses the installation and launch steps above. AMD ROCm, Huawei Ascend
+CANN, and Moore Threads MUSA support the OpenPI π₀ / π₀.₅ model family on
+LIBERO and ManiSkill through the shared platform installer and scheduler device
+API. ManiSkill uses CPU simulation on the non-CUDA backends; MUSA additionally
+requires vendor simulator packages.
+
+AMD ROCm
+~~~~~~~~
+
+ROCm uses PyTorch's CUDA-compatible API, so OpenPI follows the shared AMD
+accelerator and installation path.
+
+.. include:: _amd_libero.rst
+
+Inside the container, or directly on a host with ROCm installed, create the
+OpenPI LIBERO environment:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero
+   source .venv/bin/activate
+
+Omit ``--rocm`` to detect the installed version, or add ``--use-mirror`` for
+downloads from mainland China.
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
+
+.. include:: _ascend_libero.rst
+
+The published LIBERO image does not contain an OpenPI environment. Create one
+inside that container, or run the same command directly on an Ascend host:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model openpi --env libero
+   source .venv/bin/activate
+
+Add ``--use-mirror`` for downloads from mainland China. The installer adds the
+matching ``torch-npu`` package and skips CUDA flash-attention; OpenPI then uses
+the common NPU worker and collective paths.
+
+Moore Threads MUSA
+~~~~~~~~~~~~~~~~~~
+
+MUSA reuses the image's Python, PyTorch, and ``torch_musa`` through a virtual
+environment with system site-packages enabled. The installer preserves those
+vendor packages and skips CUDA-only dependencies.
+
+.. include:: _musa_libero.rst
+
+Inside the container, create the OpenPI LIBERO environment:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform musa embodied --model openpi --env libero
+   source .venv/bin/activate
+
+Add ``--use-mirror`` for downloads from mainland China. If a Transformers model
+path requests ``attn_implementation: flash_attention_2`` but Transformers cannot
+detect the vendor package, select ``sdpa`` instead.
+
+LIBERO on AMD, Ascend, or MUSA
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Choose a LIBERO checkpoint and matching config from the model list above. The
+following commands use the π₀.₅ LIBERO-10 PPO path as a concrete example. Set
+both model paths in
+``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` and enable
+software rendering in the active environment.
+
+.. include:: _libero_osmesa.rst
+
+Launch the LIBERO PPO recipe:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+ManiSkill on AMD, Ascend, or MUSA
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On AMD or Ascend, install the combined ManiSkill and LIBERO environment for
+OpenPI. Use the command for the selected model accelerator:
+
+.. code-block:: bash
+
+   # AMD ROCm
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero
+
+   # Huawei Ascend CANN
+   bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero
+
+   source .venv/bin/activate
+
+For MUSA, use the vendor simulator image and its existing OpenPI environment:
+
+.. include:: _musa_maniskill.rst
+
+.. code-block:: bash
+
+   source switch_env openpi
+
+Configure CPU simulation for all three non-CUDA backends:
+
+.. include:: _maniskill_non_cuda.rst
+
+For π₀.₅, download ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT`` and set both model
+paths in ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml``. The π₀
+recipe uses ``maniskill_ppo_openpi.yaml`` instead. Adjust placement and batch
+sizes for the available devices, then launch the selected recipe; for example:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
 
 Visualization and Results
 -------------------------

@@ -1,7 +1,7 @@
 扩展
 ====
 
-请选择与改动范围相匹配的扩展点。如果 RLinf 已支持目标真机，只需修改奖励、复位流程或成功条件，请新增真机任务；如果需要接入传感器、执行器或整台机器人，请扩展 robotics。接入新硬件时，应先在本机验证单个零部件，再配置远程部署。
+请选择与改动范围相匹配的扩展点。如果 RLinf 已支持目标真机，只需修改奖励、复位流程或成功条件，请新增真机任务；如果需要接入传感器、执行器或整台机器人，请扩展 robotics。接入新硬件时，应先在本机验证单个零部件，再配置远程部署。模型扩展依次从 FSDP、Megatron、SGLang 读到 SFT；涉及后端集成或权重传输时，再进入最后的高级集成。
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -42,6 +42,12 @@
 
       在 Megatron+SGLang 后端上添加 HuggingFace 模型。
 
+   .. grid-item-card:: SGLang 具身模型
+      :link: sglang_embodied_model
+      :link-type: doc
+
+      使用 SGLang 后端接入具身模型，并在模拟器中评测。
+
    .. grid-item-card:: 新 SFT 模型
       :link: new_model_sft
       :link-type: doc
@@ -54,12 +60,6 @@
 
       添加 Megatron-Bridge 与权重同步工作流。
 
-   .. grid-item-card:: SGLang 具身模型
-      :link: sglang_embodied_model
-      :link-type: doc
-
-      使用 SGLang 后端接入具身模型，并在模拟器中评测。
-
 .. toctree::
    :hidden:
 
@@ -69,6 +69,6 @@
    新机器人 <new_robot>
    FSDP 新模型 <new_model_fsdp>
    Megatron 新模型 <new_model_megatron>
+   SGLang 具身模型 <sglang_embodied_model>
    新 SFT 模型 <new_model_sft>
    高级集成 <advanced-integrations/index>
-   SGLang 具身模型 <sglang_embodied_model>

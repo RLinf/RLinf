@@ -1,13 +1,51 @@
 具身模型
 ========
 
-本类示例以 **模型或策略类** 为主线，展示如何在 RLinf 中接入特定模型家族 —— 包括 checkpoint 加载、processor / config 接线、动作头实现、轻量级 MLP 策略，以及不依赖具体基准的一份强化学习微调参考配方。
+按模型或 policy 类型查找安装、checkpoint 和强化学习训练流程。若从基准出发选择示例，请参阅 :doc:`simulators_index`。
 
-如果你的出发点是 "我想训练或微调模型 *X*"，这里是合适的入口。若以基准为主线请参考 :doc:`simulators_index`\ 。
+.. _model-hardware-support:
+
+硬件支持
+------------
+
+模型示例默认使用 NVIDIA。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 也支持下列三个模型系列在 LIBERO 与 ManiSkill 上运行。选择模型链接可查看安装与启动步骤；在非 CUDA 后端上，ManiSkill 使用 CPU 运行 PhysX，并独立选择 renderer。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 38
+
+   * - 模型
+     - 硬件
+     - 环境与范围
+   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
+     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <openvla-oft-hardware>`
+     - LIBERO · ManiSkill
+   * - :doc:`GR00T N1.5 <embodied/gr00t>`
+     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <gr00t-hardware>`
+     - LIBERO · ManiSkill（需要带有 ``maniskill_widowx`` head 的 checkpoint）
+   * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
+     - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>`
+     - LIBERO · ManiSkill
+
+模型示例
+--------
+
+选择模型页面，查看完整流程及其支持的环境。
 
 .. raw:: html
 
    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/openvla_oft.html" style="display: block;"><img src="https://openvla-oft.github.io/static/images/libero_task_performance_results.png"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/openvla_oft.html" style="text-decoration: underline; color: blue;">
+           <b>OpenVLA-OFT</b>
+         </a><br>
+         在 NVIDIA CUDA、AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 上运行 LIBERO 训练
+       </p>
+     </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/mlp.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg"
@@ -115,6 +153,7 @@
    :hidden:
    :maxdepth: 2
 
+   OpenVLA-OFT <embodied/openvla_oft>
    MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
    GR00T <embodied/gr00t>
