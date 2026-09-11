@@ -12,12 +12,164 @@ correctness, use the **`docs-check`** skill.
 
 ## Voice and tone
 
+These apply to every page:
+
 - **Second person, imperative.** "You'll fine-tune…", "Run the script", "Set `cluster.num_nodes`".
   Never "RLinf provides a comprehensive guide to launching and managing…".
-- **Outcome first.** Open every page and section with what the reader gets, then how.
+- **State the page's purpose first.** The first prose sentence after the title,
+  or after a leading figure, must say directly what the page explains, enables,
+  routes, or lets the reader look up. Do not begin with background and wait until
+  a later paragraph to reveal why the page exists.
+- **Outcome first.** After stating the page's purpose, explain what the reader
+  gets and how. Open each section with the result it establishes.
 - **No throat-clearing.** Cut "This section provides a comprehensive guide to … within the RLinf framework, focusing on…". Start with the verb or the result.
-- **Short sentences.** One idea each. Prefer lists, cards, and tables to run-on paragraphs.
 - **Annotate commands.** After any non-trivial command, say what it does ("What this does: 1… 2…") and point to where to configure it further.
+- **Name what you mean.** Prefer `Robot.connect`, `PartGroup`, `Placement` to "the
+  common layer", "the robotics machinery", "the rest of the system".
+- **Avoid the usual tells:** "it is worth noting", "simply", "seamlessly",
+  "powerful", "leverage", "robust", "in order to", "a wide range of", and
+  paragraphs that all open the same way.
+
+### Explain before naming
+
+Use this basic language flow in documentation, review comments, and design
+conversations. The page-layout rules in this guide are docs-specific, but this
+order applies to any explanation:
+
+1. Start from the concrete situation or question the reader recognizes.
+2. Explain the idea in ordinary language and say what distinction matters.
+3. Introduce the exact class, method, field, or config name.
+4. Show one example that connects the name back to the idea.
+5. Add edge cases only after the normal path is clear.
+
+A heading, card title, or opening sentence must make sense before the reader
+knows the implementation. Do not introduce an unexplained API term in a heading
+and define it below. API and reference pages may use an identifier as a heading
+when that identifier is the reader's lookup target; elsewhere, introduce the
+term in prose first or write the heading in task-oriented language.
+
+This is progressive disclosure at sentence level. It is not a reason to hide
+precise names: once the idea is clear, use the real identifier consistently so
+readers can search for it in code.
+
+### Guide the reader from use to internals
+
+Progressive disclosure also determines the order of a whole page. Begin with the
+path most readers need and introduce system details only when they explain the
+next task. For an extensible system, use this sequence when it fits the topic:
+
+1. Use an existing component through the public API.
+2. Add one component in the normal local configuration.
+3. Compose it with components that already exist.
+4. Show the remote or distributed form without changing the caller's mental
+   model.
+5. Explain ownership, placement, connection management, or scheduler internals.
+
+Do not use an internal class hierarchy as the teaching outline. Related API
+terms such as ``exports`` and ``children`` may appear in code, but prose must
+first explain what each collection contains, how the two differ, and what type
+the corresponding method returns. Readers should never need to reverse-engineer
+a title or example before they can understand the distinction it is meant to
+teach.
+
+Examples should close the loop from declaration to use. When a page adds an
+extensible component, show how it combines with an existing component, how the
+application reads or controls it, and where it enters a real task or environment.
+An isolated class definition demonstrates syntax, not composability.
+
+### Technical accuracy is part of the prose
+
+Documentation is a user-facing description of the code's contract. Check public
+signatures, accepted input types, concrete return types, lifecycle behavior,
+configuration names, and call sites before describing them. If a constructor
+accepts two related types, explain what each type represents and why both forms
+are valid. Do not infer behavior from a class or field name, and do not describe
+an intended design when the implementation still behaves differently.
+
+For a behavior-preserving refactor, compare every affected path with the
+baseline and state the intentional differences. Update examples and conceptual
+pages in the same change when a public name, type relationship, ownership rule,
+or lifecycle changes.
+
+### Explanatory pages: Concepts and Guides
+
+Recipes, index pages, and reference tables should stay terse — a reader scanning
+for a command wants the command. Concepts and Guides are different: they exist to
+make someone understand a design, and terse prose actively fails at that. Write
+them like a colleague explaining the system at a whiteboard to an engineer who
+has to use it — concrete, willing to say why a choice was made, willing to name a
+sharp edge, and not selling anything.
+
+- **Concise, not clipped.** The rule that goes wrong most often, because "cut
+  throat-clearing" reads as licence to write telegraphically. A page where every
+  sentence starts cold and stops the instant the fact lands reads like a spec
+  sheet, not an explanation. Vary sentence length. Let a sentence finish its
+  thought instead of ending at the first period that would parse, and carry one
+  paragraph into the next with a real transition instead of restarting from zero.
+- **Take the reader with you.** Guiding words earn their place here: "Let's build
+  a Franka from the ground up", "Say your gripper hangs off the arm's own
+  connection", "Now that the parts are declared…", "We'll come back to placement
+  below". A few per page give it a spine; one in every paragraph becomes its own
+  tic.
+- **Vary paragraph shape.** If every paragraph is three sentences with the same
+  rhythm, the page sounds machine-written even when no individual sentence is
+  wrong. Some paragraphs are a single sentence; some run five. A code block that
+  explains itself may need a line of setup and nothing after it.
+- **Explain the mechanism, skip the pitch.** Don't end paragraph after paragraph
+  with a sentence whose only job is to say the design is good — "This keeps the
+  common behavior in one place", "That split prevents details from leaking",
+  "You get concurrency without having to coordinate it". A reader who has just
+  seen the mechanism can see the benefit. Two or three per page, where the payoff
+  genuinely isn't obvious from the mechanism.
+- **Say the thing; don't announce it.** "`build` never mentions the gripper"
+  beats "Notice that `build` never mentions the gripper".
+
+### Build a continuous article
+
+Every article needs a continuous line of thought, not a sequence of locally
+correct paragraphs. Its introduction, sections, examples, and transitions must
+let a reader follow one question from the page title to the final result. The
+amount of prose varies by page type: an index may establish its purpose in one
+sentence before routing through cards, and a reference page may lead with what
+can be looked up and how entries are organized. Neither is exempt from having a
+clear lead and a deliberate order.
+
+- **Give the page a lead.** Begin with a direct statement of what the page does.
+  The rest of the opening should establish the reader's situation, the result
+  the page will help them reach, the boundary of the topic, and the order in
+  which the page develops it. A list of features or implementation areas is not
+  a lead. A reader should be able to predict why the second section follows the
+  first.
+- **Give every section a lead.** Open a section by connecting it to the state
+  established above and naming the one question the section resolves. Do not
+  begin abruptly with a code block, table, API name, or isolated fact. The lead
+  should add direction, not merely repeat the heading.
+- **Make paragraphs depend on one another.** Develop the section as a chain:
+  establish the distinction, introduce the relevant API, show it in a complete
+  example, interpret the result, then carry that result into the next concern.
+  Reordering the paragraphs should change the explanation; if it does not, the
+  section is probably a fact list.
+- **Explain an interface in call order.** When a section teaches a workflow,
+  account for each public operation the example relies on, in the order a caller
+  uses it. State what the operation accepts or returns, why it is needed at that
+  point, and how its result feeds the next call. Do not place several unfamiliar
+  methods in one example and explain only the most interesting two.
+- **Frame and interpret examples.** Before a code block, state the concrete
+  result it demonstrates. After it, explain the important return values,
+  ownership or lifecycle effects, and the next decision the reader can now
+  make. Avoid line-by-line narration, but never leave the example to carry the
+  conceptual transition by itself.
+- **Close the local loop.** End a section with the established result or the
+  condition that motivates the next section when that relationship is not
+  already obvious. Use a real dependency between ideas rather than a generic
+  transition such as "Next, we discuss...".
+
+Before accepting any article, read only its introduction and the opening
+paragraph of each section. They should form a coherent outline on their own.
+Then read the full page and verify that each paragraph advances that outline.
+When the article teaches an interface, also verify that every API used in the
+primary example is explained and that every code block advances the same
+narrative.
 
 ## Information architecture
 
@@ -80,7 +232,7 @@ established groupings:
 
 - **Guides:** Configure · Launch & Scale · Data & Checkpoints · Performance · Hardware Backends · Agent Workflows.
 - **Reference:** API · Algorithms · Configuration · Evaluation Reference.
-- **Concepts:** Execution Model · Scheduling Model.
+- **Concepts:** Execution · Scheduling.
 - **Extending:** keep the primary add-component pages (New Environment, New Model with FSDP, New Model with Megatron, New SFT Model) as immediate children; group only advanced topics under Advanced Integrations (Megatron-Bridge, weight synchronization, reward-model workflow).
 - **Examples** keeps its own gallery category structure — do not regroup it.
 
@@ -327,6 +479,41 @@ Visualization and Results → TensorBoard / video / logger + link to Training me
   render it and a literal `**` leaks into the page. Use a space-bounded boundary,
   Chinese quotes, or drop the emphasis.
 
+### Writing the Chinese pages
+
+Parity covers structure and technical content, not sentence order. A ZH
+paragraph that reads better with a different number of sentences than its EN
+counterpart is correct, not a defect — mirroring the English clause by clause is
+exactly what makes a page read as a translation. Write the Chinese as Chinese:
+decide what the paragraph needs to say, then say it the way a Chinese engineer
+would say it to a colleague.
+
+Conventions, on every page:
+
+- 标题后的第一句应直接说明本页介绍什么、帮助读者完成什么，或可供查阅什么。若页面以图片开头，则从图片后的第一句开始遵循此要求。不要先铺陈背景，到后文才交代页面用途。
+- 全角标点：，。、；：（）「」。中文句子里不要混用半角逗号句号。
+- 中文与英文、数字之间空一格，例如「在 node_rank 指定的节点上」。
+- 中文正文不要按列宽手动换行。每个段落或列表项的正文在 RST 源文件中保持一行；reStructuredText 会把段内换行渲染成空格，在两个汉字之间留下不自然的间隔。标题、directive、表格和代码块所需的结构换行不受此规则影响。
+- 英文技术名词保留原文，不要硬译；术语前后统一。强化学习中的 policy 统一写作 policy，不译成“策略”；描述通用决策方法时仍可使用“策略”，例如“placement 策略”。
+- 自然不等于口语化。正文应采用清晰、克制的书面技术表达，避免“看看长什么样”“等需要时再看”“不用跟着改”等聊天式说法；同时避免“本文旨在”“进行相关操作”等公文腔。
+- 不要滥用「的」；少用「进行/实现/提供/负责/使得」这类空动词。
+- 被动改主动；长定语从句拆成短句：中文靠短句和动词推进，不靠从句堆叠。
+- 开发者日常使用的英文词不必硬译，例如 policy、key、value、mapping、endpoint、worker、binding、
+  wrapper、mock SDK、contract、shape、schema 和 API。先用中文解释它在当前场景中的作用，
+  再保留代码里能搜索到的名称。
+- Robotics 文档中，表示机械臂、夹爪、相机等 ``RobotPart`` 时统一使用「零部件」。不要将所有 part 都机械地翻译为「零部件」：``action_parts`` 中的 part 按语境写成「动作项」或「对应的机器人动作」。介绍组合模型时，优先说明「零部件的名称、层级和访问路径」，避免「按名称组织的部件树」「对外公开的部件树」等抽象且冗长的表达；API 名 ``parts`` 和 ``children`` 保留原文，分别解释为 connection 支持的零部件和组合中的直接下一级。
+- 标题只写读者已经理解的任务或概念。不要先在标题中抛出 ``exports``、``children`` 一类
+  实现名，再到正文里补定义。
+- 少用「本节将」「接下来」「此时」「因此」「这样就能」「值得注意的是」串联每一段。
+  这些词有明确作用时可以用，但不能代替真正的上下文和过渡。
+
+On Concepts and Guides pages, where the English follows the explanatory rules
+above, the Chinese needs the same treatment in its own idiom:
+
+- 用「我们」「先……再……」「不妨」「接下来」把读者带着走，段落之间要有过渡。
+- 去掉翻译腔和英文语序，例如「这就是全部的接入工作」「它由 X 负责读取」。
+- 破折号「——」少用，多用分句、冒号或直接断句。
+
 ## Review gate
 
 After each change:
@@ -337,3 +524,24 @@ After each change:
 - Run the **`docs-check`** skill (doc-to-code correctness + EN/ZH parity).
 - Confirm no new bullet-list index pages, no throat-clearing intros, and no
   `**bold**` glued between CJK characters.
+
+For every article, also read the page top to bottom in both languages before
+merging, and rewrite if any of these are true:
+
+- Most paragraphs are the same length and end in a sentence about why the design
+  is good.
+- Sentences begin cold and stop the moment the fact lands, with no transition
+  between paragraphs or sections.
+- The ZH page tracks the EN sentence for sentence.
+- The page introduction does not establish a result, scope, and reading order.
+- The first prose sentence does not state the page's purpose directly.
+- A section can be moved elsewhere without changing the surrounding
+  explanation, or begins with code or an API name before stating why it is
+  needed.
+- The primary example calls public methods that the surrounding prose never
+  explains, or explains them in an order unrelated to the workflow.
+
+Cadence is the hardest thing to hear in your own prose, so a second pass by a
+different writer — human or model — catches what a self-review will not. Give
+that reviewer specific examples of what reads wrong, not a general request to
+improve the writing; a vague brief comes back with the same cadence reworded.

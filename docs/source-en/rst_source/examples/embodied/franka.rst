@@ -403,8 +403,7 @@ The key differences from the SpaceMouse config are:
 
    env:
      eval:
-       use_spacemouse: False
-       use_gello: True
+       teleop: gello
        gello_port: "/dev/serial/by-id/usb-FTDI_..."  # Replace with your GELLO serial port
 
 **Running**
@@ -583,6 +582,13 @@ For more details regarding the configuration syntax of this kind of heterogeneou
 
 To hide policy inference latency on the real robot by overlapping it with action-chunk
 execution, see :doc:`RTC <../../guides/rtc>`.
+
+If a Franky impedance controller stops unexpectedly, the next arm command or
+state read raises an error, including the SDK motion error when available.
+Check the error on the robot control worker and resolve its cause before
+restarting training. For direct Python use, call ``disconnect()`` followed by
+``connect()`` before resuming commands; ``clear_errors()`` does not restart a
+failed tracking session.
 
 Visualization and Results
 -------------------------

@@ -224,6 +224,30 @@ Gloo 超时 / “Global rank x is not part of group”
 2. 先解决 SGLang 的恢复/显存问题。  
 3. 重新启动作业（必要时也重启 Ray）。
 
+FSDP 集合通信被后端看门狗超时杀掉
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**现象：** 训练步仍在正常推进，FSDP actor 却被集合通信看门狗杀掉：
+
+.. code-block:: text
+
+   WorkNCCL(SeqNum=1878, OpType=_ALLGATHER_BASE, ..., Timeout(ms)=1800000) ran for
+   1800000 milliseconds before timing out.
+
+报错里的超时值来自后端自带的默认值——NCCL 和 Gloo 是 1800000 ms，昇腾 HCCL 是 3636000 ms。
+
+**可能原因：** 某个 rank 在两次 FSDP 集合通信之间耗时超过了这个时间——例如梯度累积步过大、
+checkpoint 写入过慢，或者该 rank 挂在调试器里，而其余 rank 都在 all-gather 处等待。
+
+**修复：** FSDP 的集合通信与 RLinf 其余 worker 间通信共用同一个超时，默认 180 分钟。
+用 ``RLINF_TIMEOUT`` 调大它（单位为分钟）：
+
+.. code-block:: bash
+
+   export RLINF_TIMEOUT=360
+
+Ray 会在启动时捕获环境变量，因此必须在每个节点上 ``ray start`` **之前** 导出。
+
 数值精度 / 推理后端
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
