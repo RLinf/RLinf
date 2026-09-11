@@ -98,7 +98,6 @@ class DualFrankaTCPEnv(DualFrankaEnv):
         act_high = np.concatenate([left_high, right_high]).astype(np.float32)
         self.action_space = gym.spaces.Box(act_low, act_high)
 
-        camera_specs = self._all_camera_specs()
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
@@ -111,15 +110,8 @@ class DualFrankaTCPEnv(DualFrankaEnv):
                         ),
                     }
                 ),
-                "frames": gym.spaces.Dict(
-                    {
-                        name: gym.spaces.Box(
-                            0, 255, shape=(224, 224, 3), dtype=np.uint8
-                        )
-                        for name, _, _ in camera_specs
-                    }
-                ),
             }
+            | self._build_camera_spaces()
         )
 
     # Motion dispatch.
@@ -159,7 +151,7 @@ class DualFrankaTCPEnv(DualFrankaEnv):
     def _get_observation(self) -> dict[str, Any]:
         if self.config.is_dummy:
             return self.observation_space.sample()
-        frames = self._get_camera_frames()
+        frames, depths = self._get_camera_observation()
 
         state = {
             "gripper_position": np.array(
@@ -171,7 +163,10 @@ class DualFrankaTCPEnv(DualFrankaEnv):
             ),
             "tcp_pose_rot6d": self._tcp_rot6d_18d(),
         }
-        return copy.deepcopy({"state": state, "frames": frames})
+        observation = {"state": state, "frames": frames}
+        if depths:
+            observation["depths"] = depths
+        return copy.deepcopy(observation)
 
     def _tcp_rot6d_18d(self) -> np.ndarray:
         """Return both TCP poses using rot6d orientation."""
