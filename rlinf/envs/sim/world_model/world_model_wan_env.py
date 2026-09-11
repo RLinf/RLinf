@@ -24,6 +24,7 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from diffsynth.models.reward_model import ResnetRewModel, TaskEmbedResnetRewModel
 from diffsynth.pipelines.wan_video_new import ModelConfig, WanVideoPipeline
+from omegaconf import OmegaConf
 from PIL import Image
 
 from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
@@ -143,6 +144,16 @@ class WanEnv(BaseWorldEnv):
             rew_model = TaskEmbedResnetRewModel(
                 checkpoint_path=self.cfg.reward_model.from_pretrained,
                 task_suite_name=self.cfg.task_suite_name,
+            )
+        elif self.cfg.reward_model.type == "TOPRewardModel":
+            from rlinf.models.embodiment.reward.topreward_model import TOPRewardModel
+
+            rm_cfg = OmegaConf.to_container(self.cfg.reward_model, resolve=True)
+            rm_cfg.pop("type")
+            rew_model = TOPRewardModel(
+                model_path=rm_cfg.pop("from_pretrained"),
+                chunk=self.cfg.chunk,
+                **rm_cfg,
             )
         else:
             raise ValueError(f"Unknown reward model type: {self.cfg.reward_model.type}")
@@ -429,6 +440,10 @@ class WanEnv(BaseWorldEnv):
         self.task_descriptions = task_descriptions
         self.init_ee_poses = init_ee_poses
 
+        # A multi-chunk scorer caches frames; they must not cross into a new episode
+        if hasattr(self.reward_model, "reset_history"):
+            self.reward_model.reset_history()
+
         # Wrap observation to match libero_env format
         extracted_obs = self._wrap_obs()
         infos = {}
@@ -464,7 +479,7 @@ class WanEnv(BaseWorldEnv):
 
             rewards = self.reward_model.predict_rew(extract_chunk_obs)
             rewards = rewards.reshape(self.num_envs, self.chunk)
-        elif self.cfg.reward_model.type == "TaskEmbedResnetRewModel":
+        elif self.cfg.reward_model.type in ("TaskEmbedResnetRewModel", "TOPRewardModel"):
             extract_chunk_obs = extract_chunk_obs[
                 :, -self.chunk :, :, :, :, :
             ]  # [num_envs, chunk, 3, v, h, w]
