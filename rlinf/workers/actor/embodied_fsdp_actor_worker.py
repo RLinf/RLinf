@@ -53,8 +53,8 @@ from rlinf.utils.placement import (
 )
 from rlinf.utils.utils import (
     clear_memory,
+    compute_entropy_loss,
     masked_mean,
-    reshape_entropy,
 )
 
 
@@ -755,14 +755,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if self.cfg.algorithm.entropy_bonus > 0 and not loss_kwargs["critic_warmup"]:
-            entropy = output_dict["entropy"]
-            entropy = reshape_entropy(
-                entropy,
+            entropy_loss = compute_entropy_loss(
+                output_dict["entropy"],
                 entropy_type=self.cfg.algorithm.entropy_type,
+                loss_mask=loss_mask,
                 action_dim=self.cfg.actor.model.get("action_dim", 7),
                 batch_size=output_dict["logprobs"].shape[0],
             )
-            entropy_loss = masked_mean(entropy, mask=loss_mask)
             loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
