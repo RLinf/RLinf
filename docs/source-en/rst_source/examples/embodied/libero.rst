@@ -23,8 +23,7 @@ This page covers two families of LIBERO recipes:
 - :ref:`Original LIBERO suites <libero-benchmark>` — train OpenVLA-OFT and other VLAs with PPO/GRPO.
 - :ref:`LIBERO-Pro / LIBERO-Plus <liberopro-plus-benchmark>` — harder suites that stress generalization with anti-memorization perturbations.
 
-For LIBERO setup on **AMD ROCm** or **Ascend CANN** accelerators, see the
-:doc:`Supported Accelerators <../../guides/index>` tutorial.
+For backend setup, open the model instructions: :ref:`OpenVLA-OFT on AMD / Ascend <openvla-oft-hardware>`, :ref:`GR00T N1.5 on Ascend <gr00t-hardware>`, or :ref:`π₀.₅ on Moore Threads MUSA <pi0-hardware>`. These combinations cover standard LIBERO suites; LIBERO-Pro and LIBERO-Plus require separate validation.
 
 Overview
 --------
@@ -52,7 +51,7 @@ RL-finetune a VLA on the original LIBERO suites; OpenVLA-OFT + GRPO reaches ~98�
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1–2 nodes · 8–16 GPUs
+      NVIDIA CUDA · AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA
 
 | **You'll do:** install deps → download the base model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a downloaded base checkpoint (steps below).
@@ -174,7 +173,6 @@ Run It
 
 Each recipe is a YAML config under ``examples/embodiment/config/``. For OpenVLA-OFT on LIBERO:
 
-- **OpenVLA-OFT + PPO** — ``libero_10_ppo_openvlaoft.yaml``
 - **OpenVLA-OFT + GRPO** — ``libero_10_grpo_openvlaoft.yaml``
 
 Launch a config with ``run_embodiment.sh``:

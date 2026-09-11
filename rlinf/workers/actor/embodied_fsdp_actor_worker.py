@@ -388,6 +388,81 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         teacher_model.to("cpu")
         clear_memory()
 
+    @Worker.timer("actor/recompute_logprobs")
+    def recompute_prev_logprobs(self, batch_size_per_rank: int) -> dict[str, float]:
+        """
+        Recompute ``prev_logprobs`` with the actor's own forward, so both ends of
+        the PPO ratio come from the same path. Runs after the shuffle and reuses
+        the update loop's split, so each sample is scored in the micro-batch it
+        will be trained in.
+
+        Args:
+            batch_size_per_rank: Samples per optimizer step on this rank.
+
+        Returns:
+            Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob difference).
+        """
+        assert "forward_inputs" in self.rollout_batch, (
+            "Recomputing logprobs requires rollout forward_inputs."
+        )
+
+        rollout_logprobs = self.rollout_batch["prev_logprobs"]
+        rollout_size = rollout_logprobs.shape[0]
+        kwargs = {
+            "temperature": self.cfg.rollout.sampling_params.temperature_train,
+            "top_k": self.cfg.rollout.sampling_params.top_k,
+        }
+
+        recomputed_logprobs = []
+        with torch.no_grad():
+            for global_batch in split_dict_to_chunk(
+                self.rollout_batch, rollout_size // batch_size_per_rank
+            ):
+                for micro_batch in split_dict_to_chunk(
+                    global_batch,
+                    batch_size_per_rank // self.cfg.actor.micro_batch_size,
+                ):
+                    micro_batch = put_tensor_device(micro_batch, self.device)
+                    with self.amp_context:
+                        output = self.model(
+                            forward_inputs=micro_batch["forward_inputs"],
+                            compute_logprobs=True,
+                            compute_entropy=False,
+                            compute_values=False,
+                            use_cache=False,
+                            **kwargs,
+                        )
+                    recomputed_logprobs.append(output["logprobs"].detach().cpu())
+
+        recomputed_logprobs = torch.cat(recomputed_logprobs, dim=0).to(
+            rollout_logprobs.dtype
+        )
+        assert recomputed_logprobs.shape == rollout_logprobs.shape, (
+            f"recomputed logprobs shape {recomputed_logprobs.shape} must match "
+            f"rollout logprobs shape {rollout_logprobs.shape}."
+        )
+        clear_memory()
+
+        # Logprobs are per action token, the mask and the advantages per action.
+        action_dim = self.cfg.actor.model.get("action_dim", 7)
+        log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
+            *rollout_logprobs.shape[:-1], -1, action_dim
+        )
+        loss_mask = self.rollout_batch.get("loss_mask", None)
+        mask = (
+            None
+            if loss_mask is None
+            else loss_mask.bool().unsqueeze(-1).expand_as(log_ratio)
+        )
+        metrics = {
+            "actor/rollout_train_logprob_gap": masked_mean(
+                log_ratio.abs(), mask=mask
+            ).item()
+        }
+
+        self.rollout_batch["prev_logprobs"] = recomputed_logprobs
+        return metrics
+
     def _get_opd_teacher_model(self):
         if self._opd_teacher_model is None:
             teacher_model_config = build_expert_model_config(
@@ -525,6 +600,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
         metrics = {}
+        if self.cfg.algorithm.get("recompute_logprobs", False):
+            append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(

@@ -4,9 +4,8 @@ Extending
 Choose the smallest extension point that matches your change. If RLinf already
 connects the physical hardware, add a real-world task without touching robotics.
 If you need a new sensor, actuator, or robot, start with one local part and add
-placement later.
-The guides below take each path from a minimal implementation to registration
-and tests.
+placement later. For model work, continue from FSDP to Megatron, SGLang, and
+SFT, then use Advanced Integrations for backend integration and weight transport.
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -47,6 +46,12 @@ and tests.
 
       Add a HuggingFace model on the Megatron+SGLang backend.
 
+   .. grid-item-card:: SGLang Embodied Model
+      :link: sglang_embodied_model
+      :link-type: doc
+
+      Adapt the embodied model to the RLinf rollout worker using the sglang backend, and use various simulators to evaluate the model.
+
    .. grid-item-card:: New SFT Model
       :link: new_model_sft
       :link-type: doc
@@ -59,12 +64,6 @@ and tests.
 
       Add Megatron-Bridge and weight synchronization workflows.
 
-   .. grid-item-card:: SGLang Embodied Model
-      :link: sglang_embodied_model
-      :link-type: doc
-
-      Adapt the embodied model to the RLinf rollout worker using the sglang backend, and use various simulators to evaluate the model.
-
 .. toctree::
    :hidden:
 
@@ -74,6 +73,6 @@ and tests.
    New Robot <new_robot>
    New Model with FSDP <new_model_fsdp>
    New Model with Megatron <new_model_megatron>
+   SGLang Embodied Model <sglang_embodied_model>
    New SFT Model <new_model_sft>
    Advanced Integrations <advanced-integrations/index>
-   SGLang Embodied Model <sglang_embodied_model>

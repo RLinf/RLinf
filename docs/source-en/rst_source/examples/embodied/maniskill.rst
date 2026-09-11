@@ -29,7 +29,7 @@ RL-finetune a VLA on ManiSkill3; OpenVLA and OpenVLA-OFT exceed 90% success on p
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenVLA · OpenVLA-OFT · π₀ / π₀.₅ · MLP · ResNet
+      OpenVLA · OpenVLA-OFT · GR00T N1.5 · π₀ / π₀.₅ · MLP · ResNet
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -44,7 +44,7 @@ RL-finetune a VLA on ManiSkill3; OpenVLA and OpenVLA-OFT exceed 90% success on p
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1–2 nodes · 8–16 GPUs
+      NVIDIA CUDA · AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA (model-dependent)
 
 | **You'll do:** install deps → download assets + base model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the ManiSkill assets and a base checkpoint (steps below).
@@ -92,7 +92,7 @@ The walkthrough below uses **OpenVLA / OpenVLA-OFT** with **PPO/GRPO**; switch t
 
 .. seealso::
 
-   To run ManiSkill with **OpenPI** (π\ :sub:`0`\  / π\ :sub:`0.5`\ ), see :doc:`RL on π₀ and π₀.₅ Models <pi0>`.
+   Backend-specific ManiSkill setup is documented with each model: :ref:`OpenVLA-OFT <openvla-oft-hardware>`, :ref:`GR00T N1.5 <gr00t-hardware>`, and :ref:`OpenPI π₀ / π₀.₅ <pi0-hardware>`. AMD, Ascend, and MUSA use CPU PhysX simulation while the model remains on its selected accelerator. GR00T requires a compatible checkpoint with a ``maniskill_widowx`` embodiment head, and MUSA requires the vendor simulator packages.
 
 Installation
 ------------

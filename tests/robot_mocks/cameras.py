@@ -30,6 +30,15 @@ from ._fakes import module
 
 #: Camera serials available to multi-camera tests.
 SERIALS = ("MOCK0001", "MOCK0002", "MOCK0003")
+
+#: Metres per raw depth count, as a RealSense device reports it.
+DEPTH_SCALE = 0.001
+
+#: Raw counts in the near and far halves of the mock depth map. Two distinct
+#: values let a test see whether a resize averaged across the step between
+#: them, which is what separates nearest-neighbour from interpolation.
+DEPTH_NEAR = 500
+DEPTH_FAR = 1500
 SERIAL = SERIALS[0]
 
 
@@ -52,7 +61,8 @@ class _Frames:
         )
 
     def get_depth_frame(self):
-        image = np.zeros(self._shape, dtype=np.uint16)
+        image = np.full(self._shape, DEPTH_FAR, dtype=np.uint16)
+        image[:, : self._shape[1] // 2] = DEPTH_NEAR
         return types.SimpleNamespace(
             is_depth_frame=lambda: True, get_data=lambda: image
         )
@@ -69,7 +79,12 @@ def realsense(width: int = 64, height: int = 48) -> types.ModuleType:
         def start(self, config):
             self.started = True
             opened.append(config.serial)
-            return types.SimpleNamespace(get_device=lambda: None)
+            depth_sensor = types.SimpleNamespace(get_depth_scale=lambda: DEPTH_SCALE)
+            return types.SimpleNamespace(
+                get_device=lambda: types.SimpleNamespace(
+                    first_depth_sensor=lambda: depth_sensor
+                )
+            )
 
         def stop(self):
             self.started = False
@@ -254,8 +269,18 @@ def opencv() -> types.ModuleType:
         return np.zeros((_LUMOS_H, _LUMOS_W, 3), dtype=np.uint8)
 
     def resize(image, size, interpolation=None):
+        # Environments resize their own observations with this, so it has to
+        # be the real thing wherever OpenCV is installed: a stand-in that
+        # answers in colour turns a depth map into an image. Without OpenCV,
+        # keep at least the shape and dtype the caller asked for.
+        if real_cv2 is not None:
+            if interpolation is None:
+                return real_cv2.resize(image, size)
+            return real_cv2.resize(image, size, interpolation=interpolation)
+        image = np.asarray(image)
         width, height = size
-        return np.zeros((height, width, 3), dtype=np.uint8)
+        shape = (height, width) if image.ndim == 2 else (height, width, image.shape[2])
+        return np.zeros(shape, dtype=image.dtype)
 
     class _OpenCV(types.ModuleType):
         """Delegate to real OpenCV except for device capture."""
