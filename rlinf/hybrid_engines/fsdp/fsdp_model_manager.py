@@ -137,9 +137,18 @@ class FSDPModelManager:
             self._cfg.fsdp_config.amp_autocast.precision
         )
 
-        self._logger.info(f"[FSDP] AMP is enabled with precision: {precision}.")
+        device_type = Worker.torch_device_type
+        if device_type is None:
+            self._logger.info("[FSDP] AMP is disabled: no accelerator on this worker.")
+            return nullcontext()
 
-        return torch.amp.autocast(device_type="cuda", dtype=precision)
+        self._logger.info(
+            f"[FSDP] AMP is enabled with precision: {precision} on {device_type}."
+        )
+
+        # Not "cuda": on another backend that autocast disables itself (with a
+        # warning) and AMP would silently never apply.
+        return torch.amp.autocast(device_type=device_type, dtype=precision)
 
     def model_provider_func(self) -> torch.nn.Module:
         """

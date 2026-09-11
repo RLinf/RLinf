@@ -18,17 +18,16 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from math import sqrt
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
 
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import state as state_utils
 from ..utils import vlm_preprocess as vlm_input_utils
+from ..utils.accelerator import accelerator_autocast, build_gaussian
 from ..utils.backbone_pipeline import (
     compute_values_from_hidden,
     run_backbone_pipeline,
@@ -124,7 +123,7 @@ def _build_dual_dino_features(
         )
 
     dino_input = dino_encoder.prepare_dino_input(wrist_views)
-    with torch.autocast("cuda", dtype=torch.bfloat16):
+    with accelerator_autocast(torch.bfloat16):
         dino_feats = dino_encoder(dino_input)
 
     bsz = len(examples)
@@ -489,11 +488,7 @@ def run_default_forward_flowmatching(
 
     # Match the rollout path which runs ODE integration under fp32 autocast
     # to avoid bf16 truncation errors accumulating over Euler steps.
-    fp32_ctx = (
-        torch.autocast("cuda", dtype=torch.float32)
-        if rollout_hidden.is_cuda
-        else nullcontext()
-    )
+    fp32_ctx = accelerator_autocast(torch.float32)
 
     step_logprobs: list[torch.Tensor] = []
     step_entropy: list[torch.Tensor] = []
@@ -520,7 +515,7 @@ def run_default_forward_flowmatching(
                         raise RuntimeError(
                             "Internal error: missing step_std for flowmatching sampled transition."
                         )
-                    dist_step = Normal(
+                    dist_step = build_gaussian(
                         mean_next, resolved_step_std.expand_as(mean_next)
                     )
                     active_step_mask_3d = active_step_mask.view(-1, 1, 1)
@@ -657,11 +652,7 @@ def run_rollout_flowmatching(
     # model under torch.autocast("cuda", dtype=torch.float32).  Without this,
     # the ODE integration inherits bf16 from the backbone and accumulates
     # truncation errors over num_steps Euler steps.
-    fp32_ctx = (
-        torch.autocast("cuda", dtype=torch.float32)
-        if rollout_hidden.is_cuda
-        else nullcontext()
-    )
+    fp32_ctx = accelerator_autocast(torch.float32)
 
     with fp32_ctx:
         actions_t = torch.randn(
@@ -718,7 +709,7 @@ def run_rollout_flowmatching(
                     )
                 active_step_mask = denoise_inds[:, step].eq(step)
                 if bool(active_step_mask.any()):
-                    dist_step = Normal(mean_next, step_std.expand_as(mean_next))
+                    dist_step = build_gaussian(mean_next, step_std.expand_as(mean_next))
                     sampled_actions = dist_step.rsample()
                     active_step_mask_3d = active_step_mask.view(-1, 1, 1)
                     next_actions_preclip = torch.where(

@@ -2019,11 +2019,15 @@ install_starvla_model() {
     esac
 
     local starvla_path
-    starvla_path=$(clone_or_reuse_repo STARVLA_PATH "$VENV_DIR/starVLA" https://github.com/starVLA/starVLA.git -b "${STARVLA_GIT_REF:-starVLA-1.2}" --depth 1)
+    starvla_path=$(clone_or_reuse_repo STARVLA_PATH "$VENV_DIR/starVLA" https://github.com/starVLA/starVLA.git -b "${STARVLA_GIT_REF:-starVLA-v1.6}" --depth 1)
 
     # Prefer upstream StarVLA requirements first when available.
     if [ -f "$starvla_path/requirements.txt" ]; then
-        uv pip install -r "$starvla_path/requirements.txt"
+        maybe_build_decord_from_source
+        # eva-decord ships the same `decord` module as decord and has no
+        # aarch64 wheel, so install decord alone.
+        grep -Ev '^[[:space:]]*eva-decord' "$starvla_path/requirements.txt" \
+            | uv pip install -r -
     fi
 
     # Enforce RLinf-compatible runtime pins to avoid known breakages.
