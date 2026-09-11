@@ -69,6 +69,10 @@ class RealSenseCamera(BaseCamera):
                 info.fps,
             )
         self.profile = self._pipeline.start(config)
+        if self._enable_depth:
+            self._depth_scale = float(
+                self.profile.get_device().first_depth_sensor().get_depth_scale()
+            )
 
         # Align depth pixels with the color image.
         self._align = rs.align(rs.stream.color)

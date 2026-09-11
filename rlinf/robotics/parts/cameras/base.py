@@ -86,6 +86,7 @@ class BaseCamera(Camera, ABC):
         self._frame_queue: queue.Queue = queue.Queue()
         self._frame_capturing_thread: Optional[threading.Thread] = None
         self._frame_capturing_start = False
+        self._depth_scale = 1.0
 
     @property
     def name(self) -> str:
@@ -102,16 +103,24 @@ class BaseCamera(Camera, ABC):
         return self._device is not None
 
     @property
+    def depth_scale(self) -> float:
+        """Metres per unit of the depth channel this camera captures.
+
+        Devices report depth in their own units -- RealSense in raw ``z16``
+        counts whose size the device decides, ZED in millimetres -- so the
+        conversion belongs with the camera that knows it, not with whoever
+        reads the observation.
+        """
+        return self._depth_scale
+
+    @property
     def observation_features(self) -> Features:
-        """Describe the raw BGR frame returned by this camera."""
+        """Describe the BGR frame, and the depth map when one is captured."""
         width, height = self._camera_info.resolution
-        channels = 4 if self._camera_info.enable_depth else 3
-        return {
-            "frame": {
-                "shape": (height, width, channels),
-                "dtype": "uint16" if self._camera_info.enable_depth else "uint8",
-            }
-        }
+        features: Features = {"frame": {"shape": (height, width, 3), "dtype": "uint8"}}
+        if self._camera_info.enable_depth:
+            features["depth"] = {"shape": (height, width), "dtype": "float32"}
+        return features
 
     def _opened(self) -> None:
         """Create a fresh frame queue and start the capture thread.
@@ -151,9 +160,27 @@ class BaseCamera(Camera, ABC):
             return False
         return True
 
-    def get_observation(self) -> Observation:
-        """Return the latest raw frame under the canonical camera key."""
-        return {"frame": self.get_frame()}
+    def get_observation(
+        self, timeout: float = 5, attempts: int = 1, wait: float = 0.0
+    ) -> Observation:
+        """Return the latest frame, and its depth map in metres if captured.
+
+        A driver that captures depth appends it to the frame as a fourth
+        channel, which keeps one array moving through the capture thread. It
+        is separated here because colour and depth are different dtypes in
+        different units, and every reader would otherwise repeat this.
+
+        The read parameters are those of :meth:`get_frame`, for a caller on a
+        fixed control period that would rather reuse its last observation than
+        wait out the default timeout.
+        """
+        frame = self.get_frame(timeout=timeout, attempts=attempts, wait=wait)
+        if not self._camera_info.enable_depth:
+            return {"frame": frame}
+        return {
+            "frame": np.ascontiguousarray(frame[..., :3]).astype(np.uint8),
+            "depth": frame[..., 3].astype(np.float32) * self._depth_scale,
+        }
 
     def get_frame(
         self, timeout: float = 5, attempts: int = 1, wait: float = 0.0
