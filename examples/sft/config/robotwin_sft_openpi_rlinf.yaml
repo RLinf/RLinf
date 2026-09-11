@@ -43,7 +43,6 @@ actor:
   seed: 0
 
   model:
-    precision: fp32
     model_path: "/path/to/pi0_base_pytorch_new"
     num_action_chunks: 50 # interface for the env
     action_dim: 14
@@ -80,10 +79,9 @@ actor:
     gradient_checkpointing: True
     gradient_checkpointing_use_reentrant: False
     mixed_precision:
-      # fp32 is the SFT master-weight dtype; bf16 is the compute dtype.
-      param_dtype: bf16
-      reduce_dtype: fp32
-      buffer_dtype: fp32
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
 
 reward:
   use_reward_model: False

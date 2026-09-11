@@ -5,11 +5,10 @@ model_type: "openpi_rlinf"
 # YAML. Filesystem paths (model_path, openpi.assets_dir, openpi.asset_id) also
 # live in the experiment config so this template stays path-free.
 
-# Weight dtype for SFT: fp32. The fp32 weights are the FSDP optimizer master; FSDP
-# MixedPrecision casts params to bf16 only for compute (param_dtype is a separate
-# knob in the experiment config), so warmup-LR updates are not lost to bf16
-# rounding. (Eval casts the weights to bf16; see the embodiment template.)
-precision: fp32
+# OpenPI default: Gemma / SigLIP in bf16, action heads stay fp32.
+# openpi_rlinf does not support FSDP mixed precision — keep
+# mixed_precision.* bound to this field (null or fp32).
+precision: null
 
 # LoRA is not used, but the shared model factory reads these keys.
 is_lora: False

@@ -579,6 +579,30 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
 
+        if (
+            model_type is not None
+            and str(model_type) == SupportedModel.OPENPI_RLINF.value
+        ):
+            mp = cfg.fsdp_config.mixed_precision
+            all_none = (
+                mp.param_dtype is None
+                and mp.reduce_dtype is None
+                and mp.buffer_dtype is None
+            )
+            all_fp32 = (
+                mp.param_dtype == "fp32"
+                and mp.reduce_dtype == "fp32"
+                and mp.buffer_dtype == "fp32"
+            )
+            assert all_none or all_fp32, (
+                "openpi_rlinf does not support FSDP mixed precision "
+                f"(got param_dtype={mp.param_dtype!r}, "
+                f"reduce_dtype={mp.reduce_dtype!r}, "
+                f"buffer_dtype={mp.buffer_dtype!r}). "
+                "Set mixed_precision param/reduce/buffer dtype to null "
+                "(OpenPI default) or fp32."
+            )
+
     return cfg
 
 

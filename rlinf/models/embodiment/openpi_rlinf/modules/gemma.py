@@ -256,9 +256,7 @@ class Attention(nn.Module):
                 )
 
             self.o_proj.append(
-                nn.Linear(
-                    config.num_heads * config.head_dim, config.width, bias=False
-                )
+                nn.Linear(config.num_heads * config.head_dim, config.width, bias=False)
             )
 
         # Initialize weights
@@ -441,16 +439,10 @@ class Block(nn.Module):
 
         self.attn = Attention(configs)
         self.pre_attention_norms = nn.ModuleList(
-            [
-                RMSNorm(c.width, adaptive=adarms[i])
-                for i, c in enumerate(configs)
-            ]
+            [RMSNorm(c.width, adaptive=adarms[i]) for i, c in enumerate(configs)]
         )
         self.pre_ffw_norms = nn.ModuleList(
-            [
-                RMSNorm(c.width, adaptive=adarms[i])
-                for i, c in enumerate(configs)
-            ]
+            [RMSNorm(c.width, adaptive=adarms[i]) for i, c in enumerate(configs)]
         )
 
         # FFN: use LoRA version if lora config is present, else standard
@@ -564,10 +556,7 @@ class Module(nn.Module):
         )
 
         self.final_norms = nn.ModuleList(
-            [
-                RMSNorm(c.width, adaptive=self.adarms[i])
-                for i, c in enumerate(configs)
-            ]
+            [RMSNorm(c.width, adaptive=self.adarms[i]) for i, c in enumerate(configs)]
         )
 
         self.gradient_checkpointing = use_gradient_checkpointing

@@ -2,7 +2,8 @@ model_type: "openpi_rlinf"
 
 # Pi0 JAX-aligned PyTorch model-shape template for RoboTwin ALOHA SFT.
 # Filesystem paths are supplied by robotwin_sft_openpi.yaml.
-precision: fp32
+# OpenPI default: Gemma / SigLIP in bf16, action heads stay fp32.
+precision: null
 pi05: False
 
 is_lora: False

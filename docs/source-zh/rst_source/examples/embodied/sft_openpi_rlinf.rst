@@ -58,7 +58,7 @@ Pi0.5 + BEHAVIOR-1K
 该示例拆分为一个可复用、不含路径的 **模型模板**，以及一个提供文件系统路径的
 **实验配置**：
 
-- 实验配置：``examples/sft/config/behavior_pi05_vla.yaml``
+- 实验配置：``examples/sft/config/behavior_sft_openpi_pi05_rlinf.yaml``
 - 模型模板：``examples/sft/config/model/pi0_5_rlinf.yaml``
 
 实验配置通过 Hydra ``defaults`` 引入该模型模板：
@@ -73,13 +73,13 @@ Pi0.5 + BEHAVIOR-1K
 精度约定
 ~~~~~~~~
 
-OpenPI_RLinf 的 SFT 配置刻意将 **加载 dtype** 与 **计算 dtype** 分开：
+openpi_rlinf 不支持 FSDP mixed precision（``param_dtype`` 只能是 ``null``
+或 ``fp32``，并与 ``actor.model.precision`` 保持一致）：
 
-- 模型模板将 ``actor.model.precision`` 设为 ``fp32``\ （位于 ``pi0_5_rlinf.yaml``\ ）。
-  fp32 权重作为 **FSDP 优化器 master** 加载，从而保证 warmup 阶段较小的 LR 更新
-  不会因 bf16 舍入而丢失。
-- FSDP ``MixedPrecision`` 在 bf16 下计算，同时让梯度 all-reduce 与 buffer 保持
-  fp32：
+- SFT 模型模板将 ``actor.model.precision`` 设为 ``null``\ （位于
+  ``pi0_5_rlinf.yaml`` / ``pi0_rlinf.yaml``\ ），即 OpenPI 默认：Gemma /
+  SigLIP 为 bf16，action head 保持 fp32。
+- 将 FSDP dtype 绑定到模型精度，避免二者不一致：
 
   .. code:: yaml
 
@@ -87,12 +87,9 @@ OpenPI_RLinf 的 SFT 配置刻意将 **加载 dtype** 与 **计算 dtype** 分�
        fsdp_config:
          gradient_checkpointing: True
          mixed_precision:
-           param_dtype: bf16     # FSDP 计算 dtype
-           reduce_dtype: fp32    # 梯度 all-reduce 保持 fp32
-
-  ``param_dtype`` 是 FSDP 的 **计算** dtype，这里显式设为 bf16，而非从
-  ``actor.model.precision`` 插值得到：加载 dtype 选择器与计算 dtype 是两个相互
-  独立的开关，因此 fp32-master 加载仍然会以 bf16 进行计算。
+           param_dtype: ${actor.model.precision}
+           reduce_dtype: ${actor.model.precision}
+           buffer_dtype: ${actor.model.precision}
 - 在双专家 Gemma + SigLIP 骨干上启用了梯度检查点
   （``actor.fsdp_config.gradient_checkpointing: True``），以降低激活值显存占用。
 - 学习率调度采用与参考实现完全一致的 warmup + 余弦衰减，通过
@@ -164,7 +161,7 @@ SentencePiece tokenizer 路径。
 ~~~~~~~~~~~~
 
 所有文件系统路径都以 ``/path/to/...`` 占位符的形式直接写在配置中。在
-``examples/sft/config/behavior_pi05_vla.yaml`` 中将它们改为你自己暂存的资源路径：
+``examples/sft/config/behavior_sft_openpi_pi05_rlinf.yaml`` 中将它们改为你自己暂存的资源路径：
 
 - ``data.train_data_paths`` / ``data.behavior_dataset_root``：BEHAVIOR 流式数据集
   根目录。
@@ -224,7 +221,7 @@ Pi0 RoboTwin 配方同样使用 fp32 master weights、bf16 FSDP 计算和 fp32
 .. code:: bash
 
    # 回到仓库根目录
-   bash examples/sft/run_vla_sft.sh behavior_pi05_vla
+   bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05_rlinf
 
 Pi0 RoboTwin 使用对应的配置名：
 
