@@ -59,6 +59,8 @@ class DualFrankaEnvConfig:
     """Configuration for the dual-arm Franka environment."""
 
     enable_camera_player: bool = False
+    # Whether the cameras also capture depth, alongside every colour frame.
+    enable_camera_depth: bool = False
     is_dummy: bool = False
     use_dense_reward: bool = False
     step_frequency: float = 10.0
@@ -212,8 +214,8 @@ class DualFrankaEnv(gym.Env):
             self._right_arm.get_state,
         )
 
-        # Retain the latest valid frame while an individual camera recovers.
-        self._last_camera_frame: dict[str, np.ndarray] = {}
+        # Retain the latest valid reading while an individual camera recovers.
+        self._last_camera_frame: dict[str, dict[str, np.ndarray]] = {}
 
         self._open_cameras()
         self.camera_player = VideoPlayer(self.config.enable_camera_player)
@@ -271,7 +273,12 @@ class DualFrankaEnv(gym.Env):
     def _camera_infos(self) -> list[CameraInfo]:
         """Return declarations for all wrist and base cameras."""
         return [
-            CameraInfo(name=name, serial_number=serial, camera_type=ct)
+            CameraInfo(
+                name=name,
+                serial_number=serial,
+                camera_type=ct,
+                enable_depth=self.config.enable_camera_depth,
+            )
             for name, serial, ct in self._all_camera_specs()
         ]
 
@@ -309,27 +316,33 @@ class DualFrankaEnv(gym.Env):
         self._cameras = {}
 
     def _crop_frame(
-        self, frame: np.ndarray, reshape_size: tuple[int, int]
+        self,
+        frame: np.ndarray,
+        reshape_size: tuple[int, int],
+        interpolation: int = cv2.INTER_LINEAR,
     ) -> tuple[np.ndarray, np.ndarray]:
-        h, w, _ = frame.shape
+        h, w = frame.shape[:2]
         crop_size = min(h, w)
         start_x = (w - crop_size) // 2
         start_y = (h - crop_size) // 2
         cropped = frame[start_y : start_y + crop_size, start_x : start_x + crop_size]
-        resized = cv2.resize(cropped, reshape_size)
+        resized = cv2.resize(cropped, reshape_size, interpolation=interpolation)
         return cropped, resized
 
-    def _get_camera_frames(self) -> dict[str, np.ndarray]:
+    def _get_camera_observation(
+        self,
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Read all cameras and use the latest cached frame during recovery.
 
         A camera that stalls before producing its first frame raises an error.
         """
         frames: dict[str, np.ndarray] = {}
+        depths: dict[str, np.ndarray] = {}
         display_frames: dict[str, np.ndarray] = {}
 
         for name, camera in self._cameras.items():
             try:
-                frame = camera.get_frame(timeout=_CAMERA_FRAME_TIMEOUT_S)
+                reading = camera.get_observation(timeout=_CAMERA_FRAME_TIMEOUT_S)
             except queue.Empty:
                 # get_frame has already reopened it; keep the loop at 10 Hz by
                 # reusing the last good frame while it comes back.
@@ -339,17 +352,23 @@ class DualFrankaEnv(gym.Env):
                         f"Camera {name} stalled with no cached frame to fall back to."
                     )
                 self._logger.error("Camera %s stalled; using the last frame.", name)
-                frame = cached
+                reading = cached
 
             reshape_size = self.observation_space["frames"][name].shape[:2][::-1]
-            cropped, resized = self._crop_frame(frame, reshape_size)
+            cropped, resized = self._crop_frame(reading["frame"], reshape_size)
             frames[name] = resized[..., ::-1]
             display_frames[name] = resized
             display_frames[f"{name}_full"] = cropped
-            self._last_camera_frame[name] = frame
+            if "depth" in reading:
+                # Averaging a depth map invents distances between an object and
+                # whatever is behind it, so this resamples by nearest instead.
+                _, depths[name] = self._crop_frame(
+                    reading["depth"], reshape_size, interpolation=cv2.INTER_NEAREST
+                )
+            self._last_camera_frame[name] = reading
 
         self.camera_player.put_frame(display_frames)
-        return frames
+        return frames, depths
 
     # Hardware setup.
 
@@ -635,8 +654,36 @@ class DualFrankaEnv(gym.Env):
                 )
             )
 
+    def _build_camera_spaces(self) -> dict[str, gym.spaces.Dict]:
+        """Return the camera part of the observation space.
+
+        ``depths`` appears only where a camera captures depth, so a rig
+        without one keeps the schema its policy already reads.
+        """
+        camera_infos = self._camera_infos()
+        spaces: dict[str, gym.spaces.Dict] = {
+            "frames": gym.spaces.Dict(
+                {
+                    info.name: gym.spaces.Box(
+                        0, 255, shape=(224, 224, 3), dtype=np.uint8
+                    )
+                    for info in camera_infos
+                }
+            )
+        }
+        depth_cameras = [info for info in camera_infos if info.enable_depth]
+        if depth_cameras:
+            spaces["depths"] = gym.spaces.Dict(
+                {
+                    info.name: gym.spaces.Box(
+                        0.0, np.inf, shape=(224, 224), dtype=np.float32
+                    )
+                    for info in depth_cameras
+                }
+            )
+        return spaces
+
     def _build_observation_space(self, joint_position_dim: int) -> gym.spaces.Dict:
-        camera_specs = self._all_camera_specs()
         return gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
@@ -654,15 +701,8 @@ class DualFrankaEnv(gym.Env):
                         "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 3,)),
                     }
                 ),
-                "frames": gym.spaces.Dict(
-                    {
-                        name: gym.spaces.Box(
-                            0, 255, shape=(224, 224, 3), dtype=np.uint8
-                        )
-                        for name, _, _ in camera_specs
-                    }
-                ),
             }
+            | self._build_camera_spaces()
         )
 
     # Reward calculation.
