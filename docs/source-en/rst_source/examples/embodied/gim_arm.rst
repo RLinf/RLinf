@@ -366,8 +366,8 @@ Key configuration fields:
 .. note::
 
    Camera support is optional. If ``camera_serials`` is set to an empty list
-   ``[]`` or omitted, the environment will run without camera observations.
-   The ``frames`` key in the observation space will be an empty dictionary.
+   ``[]`` or omitted, the environment will run without camera observations,
+   and the observation has no ``frames`` key at all.
    This is useful for state-only policies or when cameras are not yet set up.
 
 Testing the Setup (Optional)

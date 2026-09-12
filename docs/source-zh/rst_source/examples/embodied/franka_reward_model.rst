@@ -243,7 +243,7 @@ Rollout 阶段的 worker 交互
 
 换句话说，reward model 在 RL 中 `不会` 作为 env worker 中的附加 reward 来源参与最终 reward 的构造，
 因为系统会直接绕过 ``env_reward`` 和 ``reward_model_output`` 加权求和的过程。
-因此，reward_mode、reward_weight、env_reward_weight 均不生效，最终 reward 由 FrankaEnv 内部直接基于 reward model 判定成功/失败后生成。
+因此，reward_mode、reward_weight、env_reward_weight 均不生效，最终 reward 由任务 env（``TaskEnv``）直接根据 reward model 的评分生成，代替任务自身的 reward。
 
 从系统的角度看，真机系统中的实际行为可以看做：
 直接替换 env worker 中的 env_reward，通过沿用原本 env_reward 的功能来实现奖励赋值和控制系统重置等目的，从根本上进行了 reward model 接入。

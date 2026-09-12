@@ -80,16 +80,16 @@ env:
     total_num_envs: 1
     override_cfg:
       is_dummy: True
-      use_arm_ids: [1]  # Use single arm for dummy test (0=left, 1=right)
-      target_ee_pose: [[0, 0, 0, 0, 0, 0], [0.0, 0.0, 0.15, 0.0, 1, 0.0]]
+      roles: ["right"]  # Arms this run drives; every table has one row each
+      target_ee_pose: [0.0, 0.0, 0.15, 0.0, 1, 0.0]
   
   eval:
     rollout_epoch: 1
     total_num_envs: 1
     override_cfg:
       is_dummy: True
-      use_arm_ids: [1]  # Use single arm for dummy test (0=left, 1=right)
-      target_ee_pose: [[0, 0, 0, 0, 0, 0], [0.0, 0.0, 0.15, 0.0, 1, 0.0]]
+      roles: ["right"]  # Arms this run drives; every table has one row each
+      target_ee_pose: [0.0, 0.0, 0.15, 0.0, 1, 0.0]
 
 rollout:
   group_name: "RolloutGroup"

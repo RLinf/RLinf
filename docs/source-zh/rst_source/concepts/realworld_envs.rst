@@ -8,30 +8,42 @@
 定义任务数据与行为
 ------------------
 
-先处理任务之间真正不同的内容：目标、成功条件、控制器参数和任务特有的复位运动。``rlinf/envs/real/franka/`` 中的每个任务对应一个模块；dataclass 保存这些配置值，无法用数据表达的行为则由 env class 覆盖，公共逻辑继续留在 ``base.py``。
+先处理任务之间真正不同的内容：目标、成功条件和任务特有的复位运动。``rlinf/envs/real/tasks/`` 中的任务只保存这些内容，并且只编写一次，供所有能运行它的机器人使用。插销任务由一个配置 dataclass 和一个 class 组成，后者在 ``CartesianTarget`` 的基础上加入自己的复位运动：
 
 .. code-block:: python
 
    @dataclass
-   class PegInsertionConfig(FrankaEnvConfig):
-       task_description: str = "peg and insertion"
-       target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
+   class PegInsertionConfig(FixtureConfig):
        random_xy_range: float = 0.05
+       clip_z_range_high: float = 0.1
+       ...
 
-       def __post_init__(self):
-           # 仅覆盖与公共阻抗参数不同的项。
-           self.compliance_param = compliance(translational_stiffness=2000)
-           ...
 
+   class PegInsertion(CartesianTarget):
+       CONFIG = PegInsertionConfig
+       DESCRIPTION = "peg and insertion"
+
+       def reset(self, parts, context):
+           # 先夹紧插销并抬离插孔，再返回初始位姿。
+           context.action.grasp(parts)
+           hold(parts)
+           lift(parts, context, 0.10)
+           self.go_to_rest(parts, context)
+
+``PegInsertionConfig`` 为任务统一提供目标、目标周围的工作空间和复位随机范围。任务只声明它对机器人的要求，即一个上报 ``tcp_pose`` 的机械臂，从不构造动作：无论机器人使用哪些通道，``context.action.grasp()`` 都通过 policy 所驱动的同一通道闭合夹爪。
+
+``rlinf/envs/real/franka/base.py`` 中的 ``FrankaEnv`` 等机器人 preset 提供另一半：机器人 class、把 policy 的数字转换为零部件命令的动作通道，以及 policy 读取的观测布局。任务 ID 于是只需一次注册，指定任务以及该任务默认需要的机器人侧设置：
+
+.. code-block:: python
 
    class PegInsertionEnv(FrankaEnv):
-       CONFIG_CLS = PegInsertionConfig
+       TASK = PegInsertion
+       DEFAULTS = {
+           "compliance_param": compliance(translational_stiffness=2000),
+           "action_scale": (0.02, 0.1, 1.0),
+       }
 
-       def go_to_rest(self, joint_reset=False):
-           # 先抬离插孔，再返回初始位姿，避免插销卡住。
-           ...
-
-``PegInsertionConfig`` 为继承的 env 逻辑统一提供目标、随机范围和控制器设置，``CONFIG_CLS`` 则告诉 ``PegInsertionEnv`` 应构造哪一种配置。``go_to_rest()`` 只覆盖与插销任务相关的复位顺序。``compliance()`` 将任务参数合并到 ``COMPLIANCE_DEFAULTS``；字段名错误或控制器不支持相应参数时，该函数会立即报错。插销任务只覆盖一项参数，bin relocation 覆盖十一项，其余任务数据也保存在各自配置中。
+``compliance()`` 将任务参数合并到 ``COMPLIANCE_DEFAULTS``；字段名错误或控制器不支持相应参数时，该函数会立即报错。插销任务只覆盖一项参数，bin relocation 覆盖十一项。运行中的设置优先于这些默认值。
 
 将硬件设置保留在机器人描述中
 ----------------------------
@@ -65,7 +77,9 @@
 
 通过 scheduler 运行时，节点 probe 完成枚举，worker placement 分配 ``RobotInfo``，再由 ``RealWorldEnv`` 将其传给任务构造函数。环境只读取其中的硬件配置，不修改原对象。``camera_serials``、``robot_ip`` 等字段不再允许出现在任务 override 中，应移至硬件条目。若硬件默认值已能描述所需的观测空间，dummy 环境可以省略 ``robot_info``；需要其他相机布局或末端执行器时，也应传入对应布局的描述。Franka 在 dummy 模式下也要求至少一个相机，因此构造时始终需要带有相机序列号的描述。离线运行可以使用虚拟序列号；dummy 构造过程不会打开或探测设备。
 
-共享任务 dataclass 分别命名为 ``FrankaEnvConfig``、``DualFrankaEnvConfig``、``SO101EnvConfig``、``PiperEnvConfig``、``GimArmEnvConfig``、``DOSW1EnvConfig`` 和 ``Turtle2EnvConfig``，对应的硬件配置仍位于 ``rlinf.robotics.robots``。Turtle2 的相机通道从任务字段 ``use_camera_ids`` 移至硬件字段 ``camera_ids``。Piper 的硬件字段 ``with_gripper`` 决定 action 包含 6 个关节值，还是包含夹爪开度的 7 个值。
+唯一仍然拥有独立 env 的机器人是 DOSW1，其任务 dataclass 保持原名 ``DOSW1EnvConfig``，对应的硬件配置仍位于 ``rlinf.robotics.robots``。Turtle2 的相机通道从任务字段 ``use_camera_ids`` 移至硬件字段 ``camera_ids``；本次运行驱动哪几条机械臂，也从 ``use_arm_ids`` 的编号改为任务的 ``roles``，直接写出机械臂的名字。
+
+Turtle2、双臂 Franka、单臂 Franka、Piper、SO-101 和 GimArm 的任务运行在 ``TaskEnv`` 上。运行时仍然只传入一个扁平的 ``override_cfg``，其中每个 key 交给声明它的那一个配置：``RegisteredTaskEnvConfig`` 负责 episode 如何运行、相机和 reward model；动作通道的配置（``PoseActionConfig`` 或 ``JointActionConfig``）负责动作缩放、增益和关节范围；任务配置（例如 ``PegInsertionConfig`` 或 ``JointReachConfig``）负责目标与奖励。有自身设置的 preset 会再增加一个配置，例如 GimArm 用于控制模式的 ``GimArmOptions``。这些配置都没有声明的 key 会被拒绝，``hand_target_state`` 等已停用的 key 会被丢弃并给出警告。Piper 的硬件字段 ``with_gripper`` 决定 action 包含 6 个关节值，还是包含夹爪开度的 7 个值。
 
 注册任务
 --------
@@ -84,28 +98,52 @@
 
 ``register_tasks`` 将每一项映射转换为 Gymnasium entry point，并把生成结果保存在 ``_ENTRY_POINTS``。用户配置和数据集元数据都会保存 Gym ID，因此数据采集开始后不应随意修改 ID。
 
+以这种方式注册到机器人上的每个任务，还会得到一个以任务命名、与机器人无关的 ID，例如 ``PegInsertion-v1`` 或 ``JointReach-v1``。它在运行所分配的机器人上执行该任务，并根据 ``robot_info.type`` 选择这台机器人的 preset，因此配置只需指定任务，机器人由集群的硬件配置决定。与机器人绑定的 ID 仍然保留。没有机器人描述的 dummy 运行无从选择机器人，仍需使用绑定机器人的 ID。
+
+与机器人无关的 ID 要求每台机器人只对应一个 preset；如果同一台机器人用两种方式驱动同一个任务，这个前提就不成立。双臂 Franka 注册了两次 ``MultiArmTarget``，一次按关节目标驱动，一次按末端位姿点驱动，两者的动作布局宽度不同，因此运行时必须指定 checkpoint 所对应的那个 ID。两者都设置 ``GENERIC_ID = False``，宁可让该任务没有与机器人无关的 ID，也不任意选择其中之一。
+
 通过机器人接口读写硬件
 ----------------------
 
-注册决定构造哪个 env class，env 实例随后在整个生命周期内持有同一台组合机器人。初始化时，它构建机械臂、末端执行器和相机，并调用 ``robot.connect()``；``close()`` 再通过 ``robot.disconnect()`` 释放资源。每个 step 只从 ``robot.get_observation()`` 取得一份嵌套观测，并通过 ``robot.send_action()`` 下发具名动作，不在旁路直接访问 driver 或厂商 SDK。
+注册决定构造哪个 env，``TaskEnv`` 实例随后在整个生命周期内持有同一台组合机器人。初始化时，它绑定任务、动作布局和观测所需的零部件，并连接机器人；``close()`` 再断开连接。每个 step 只从 ``robot.get_observation()`` 取得一份嵌套观测，各个通道通过 ``robot.send_action()`` 下发具名动作，不在旁路直接访问 driver 或厂商 SDK。
 
-不同硬件结构使用同一边界。Franka 的机械臂和末端执行器分别打开连接，因此使用并列路径；SO-101 的夹爪是机械臂总线上的另一个伺服，因此使用 ``arm.end_effector``。``SO101ReachEnv-v1`` 仍通过这套嵌套接口读写硬件，再将数据转换为 policy 使用的六维关节与夹爪向量。
+不同硬件结构使用同一边界。Franka 的机械臂和末端执行器分别打开连接，因此使用并列路径；SO-101 的夹爪是机械臂总线上的另一个伺服，因此使用 ``arm.end_effector``。绑定在两种结构下都能找到末端执行器，所以 SO-101 的关节通道和夹爪通道都无需知道夹爪的位置，就能把关节目标和夹爪开度放在一条命令中下发。
 
-单步读写接口保持精简，就绪检查和复位则需要设备类别提供的方法。env 可以从同一机器人中保留具类型零部件，用于完成这些初始化操作：
+episode 的结束时机和成败由一层决定：任务 env。它统计自己的步数，按自己的时长上限截断，应用 reward scale 和夹爪惩罚，并在 ``info`` 中报告任务是否认为这一步达成了目标。``RealWorldEnv`` 读取这些结果，而不再重新计算，只补充批量化所需的部分：它的 ``max_episode_steps`` 是在 env 时长上限之上再加一道上限，而不是替代它；``success_once`` 指标来自 env 的报告，而不是把缩放后的 reward 与 1 比较。
+
+单步读写接口保持精简，就绪检查和复位则需要设备类别提供的方法。任务通过绑定到其角色上的零部件访问这些方法，零部件按类别提供类型：
 
 .. code-block:: python
 
-   from rlinf.robotics import Arm, Camera
+   def home(self, parts, context):
+       arm = parts.arm()                  # 填充 "arm" 角色的 Arm
+       arm.reset_joint(self.config.reset_joint_qpos)
 
-   arm = robot.child("arm", Arm)
-   cameras = robot.parts_of_type(Camera)
+``parts.arm()`` 返回绑定到该角色的 ``Arm`` 接口，``parts.end_effector()`` 返回它携带的末端执行器。相机的 placement 和生命周期仍由机器人管理；env 从构造状态所用的同一份整机观测中读取画面，因此同一步的数据不会混入后续 SDK 读取的结果。
 
-   if not arm.is_robot_up():
-       raise RuntimeError("The arm is not ready.")
-   arm.reset_joint(reset_qpos)
-   ready = all(camera.is_ready() for camera in cameras.values())
+在不同机器人上运行同一任务
+--------------------------
 
-``child("arm", Arm)`` 检查任务要求的机械臂路径，并返回用于就绪检查和复位的 ``Arm`` 接口。``parts_of_type(Camera)`` 按完整路径返回所有相机，使 env 无需假设相机名称。相机的 placement 和生命周期仍由机器人管理；env 可以保留引用用于处理画面，但不应为同一设备构建或关闭第二个对象。构造当前步的状态和画面时，还应复用一次整机读取结果，避免混入后续 SDK 读取的数据。
+任务只规定自己需要什么，而不指定由哪台机器人提供，因此同一个任务 class 可以在运动学和动作通道都不同的机器人上运行。``PegInsertionEnv-v1`` 和 ``GimArmPegInsertionEnv-v1`` 运行的都是 ``PegInsertion``：
+
+.. code-block:: python
+
+   class PegInsertionEnv(FrankaEnv):         # 笛卡尔增量，灵巧手或夹爪位于机械臂旁
+       TASK = PegInsertion
+
+
+   class GimArmPegInsertionEnv(GimArmEnv):   # 关节目标，夹爪在机械臂总线上
+       TASK = PegInsertion
+       DEFAULTS = {
+           "reset_mode": "joint",
+           "safe_retract_qpos": (0.0, -1.5, 1.5, 0.0, 0.0, 0.0),
+       }
+
+Franka preset 在任务的工作空间内以笛卡尔增量移动末端。GimArm preset 下发绝对关节目标，末端工作空间对关节命令没有意义，因此它的通道会忽略工作空间。两者的奖励相同，都是末端到插销就位位姿的距离，因为两台机械臂都上报 ``tcp_pose``。唯一的区别在复位：GimArm 无法接收末端位姿，所以 ``reset_mode="joint"`` 通过关节配置回缩和停靠，而不是抬起末端。这样的选项对应机械臂之间真实存在的差异；任务从不根据机器人类型分支。
+
+属于某台机器人、而不属于任务或其通道的设置，例如 GimArm 的控制模式，放在 preset 的 ``OPTIONS`` dataclass 中，由 preset 传给 ``Robot.from_config``。preset 为其任务未声明的设置提供的默认值会被丢弃，因此 preset 的默认值不会妨碍它运行其他任务。
+
+单元测试在一个假关节机械臂上把 ``PegInsertion(PegInsertionConfig(reset_mode="joint"))`` 与一个关节通道、一个二值夹爪通道组合起来，不经过任何 Gymnasium ID。新机器人在拥有 preset 之前，也可以用同样的组合方式试运行现有任务。
 
 按照职责组织 wrapper
 ---------------------
@@ -226,9 +264,13 @@ env 侧仲裁能够保持清晰，前提是设备读取与动作映射分开。�
    * - ``real/registry.py``
      - ``task_factory`` 与 ``register_tasks``。
    * - ``real/env.py``
-     - ``RealWorldEnv``，框架根据 ``env_type: real`` 创建的向量化环境类。
+     - ``RealWorldEnv``，把一个任务 env 适配到批量化 runner：张量转换、主视角与额外视角的拆分、auto-reset、指标统计和 action chunk。episode 本身由它下层的任务 env 负责。
    * - ``real/task_env.py``
-     - ``RobotTask`` 和 ``RobotTaskEnv`` 划定任务逻辑与硬件代码的边界。
+     - ``TaskEnv`` 在一台机器人上运行一个任务；``RegisteredTaskEnv`` 根据运行配置构造它，供 Gymnasium ID 使用。
+   * - ``real/tasks/``
+     - 只编写一次、可在任何满足要求的机器人上运行的任务，以及把任务绑定到机器人零部件的要求核对。
+   * - ``real/policy/``
+     - policy 发出和读取的内容：每台机器人布局中的动作通道，以及 checkpoint 所依赖的观测 key、编码方式和颜色顺序。如果某个通道驱动的零部件比控制周期更慢，它会把实际动作放在 ``Command.defer`` 中返回，由布局在该角色自己的队列上执行，而不让 step 等待。
 
 后续阅读
 --------

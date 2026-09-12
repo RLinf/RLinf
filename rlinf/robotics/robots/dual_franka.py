@@ -101,6 +101,57 @@ class DualFrankaRobot(FrankaRobot):
             )
         return arms
 
+    @classmethod
+    def from_config(
+        cls,
+        config: "DualFrankaConfig",
+        *,
+        cameras: Optional[Mapping[str, Any]] = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+    ) -> "DualFrankaRobot":
+        """Compose a dual-arm Franka from a :class:`DualFrankaConfig`.
+
+        Each arm runs on its own ``*_controller_node_rank`` when set, else on
+        ``node_rank``. A camera named ``left_wrist_*`` or ``right_wrist_*``
+        joins that side's group and rides with that arm; every other camera is
+        robot-level.
+        """
+        if not isinstance(config, DualFrankaConfig):
+            raise TypeError(
+                f"{cls.__name__}.from_config() takes a DualFrankaConfig, got "
+                f"{type(config).__name__}."
+            )
+        per_arm: dict[str, dict[str, Any]] = {"left": {}, "right": {}}
+        robot_level: dict[str, Any] = {}
+        for name, camera in (cameras or {}).items():
+            side = next(
+                (s for s in ("left", "right") if name.startswith(f"{s}_wrist_")), None
+            )
+            if side is None:
+                robot_level[name] = camera
+            else:
+                per_arm[side][name] = camera
+        return cls.build(
+            left_robot_ip=config.left_robot_ip,
+            right_robot_ip=config.right_robot_ip,
+            env_idx=env_idx,
+            node_rank=node_rank,
+            left_node_rank=config.left_controller_node_rank,
+            right_node_rank=config.right_controller_node_rank,
+            worker_rank=worker_rank,
+            left_gripper_type=config.left_gripper_type,
+            right_gripper_type=config.right_gripper_type,
+            left_gripper_connection=config.left_gripper_connection,
+            right_gripper_connection=config.right_gripper_connection,
+            left_compliance=config.left_compliance or config.compliance,
+            right_compliance=config.right_compliance or config.compliance,
+            arm_cameras=per_arm,
+            cameras=robot_level,
+            camera_node_rank=getattr(config, "camera_node_rank", None),
+        )
+
 
 @dataclass
 class DualFrankaConfig(RobotConfig):

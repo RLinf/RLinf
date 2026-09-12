@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Piper tasks, and the env they are built on."""
+"""Piper tasks, and the preset they are built on."""
 
 from __future__ import annotations
 
 from rlinf.envs.real.registry import register_tasks
 from rlinf.robotics.parts.arms.piper import PiperRobotState
 
-from .base import PiperEnv, PiperEnvConfig
-from .reach import PiperReachConfig, PiperReachEnv
+from .base import PiperEnv
+from .reach import PiperReachEnv
 
 TASKS = {"PiperReachEnv-v1": PiperReachEnv}
 
@@ -29,9 +29,7 @@ _ENTRY_POINTS = register_tasks(__name__, globals(), TASKS)
 __all__ = [
     "TASKS",
     "PiperEnv",
-    "PiperReachConfig",
     "PiperReachEnv",
-    "PiperEnvConfig",
     "PiperRobotState",
     *_ENTRY_POINTS,
 ]

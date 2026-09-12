@@ -93,7 +93,8 @@ Before running evaluation, complete these checks in order:
 
       python -m toolkits.realworld_check.test_franka_camera
 
-   Record the camera serials and set ``env.eval.override_cfg.camera_serials``.
+   Record the camera serials and set ``camera_serials`` in the Franka entry under
+   ``cluster.node_groups[].hardware.configs``.
 
 2. **Target pose** (PnP tasks, control node):
 
@@ -184,6 +185,7 @@ Update ``evaluations/realworld/realworld_pnp_eval.yaml`` at minimum:
            configs:
              - robot_ip: ROBOT_IP
                node_rank: 1
+               camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
 
    runner:
      ckpt_path: /path/to/full_weights.pt
@@ -193,7 +195,6 @@ Update ``evaluations/realworld/realworld_pnp_eval.yaml`` at minimum:
        rollout_epoch: 20
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
          task_description: "pick up the object and place it into the container"
 
    rollout:
@@ -251,8 +252,8 @@ Required fields
      - ``env.eval.override_cfg``
      - PnP target pose ``[x,y,z,rx,ry,rz]``; affects success checks and motion clipping
    * - ``camera_serials``
-     - ``env.eval.override_cfg``
-     - RealSense serial list (**not** a ``node_groups`` field)
+     - ``cluster.node_groups[].hardware.configs``
+     - RealSense serial list; omit it to discover cameras by serial order
    * - ``task_description``
      - ``env.eval.override_cfg``
      - Language instruction; must match SFT training

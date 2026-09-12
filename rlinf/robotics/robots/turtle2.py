@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..discovery import (
     RobotConfig,
@@ -82,6 +82,37 @@ class Turtle2Robot(Robot):
         return cls(
             **cls.build_arms(connection),
             **cls.build_cameras(connection, count=len(camera_ids)),
+        )
+
+    @classmethod
+    def from_config(
+        cls,
+        config: "Turtle2Config",
+        *,
+        cameras: "Optional[Mapping[str, Any]]" = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+        frequency: int = 50,
+    ) -> "Turtle2Robot":
+        """Compose a Turtle2 from a :class:`Turtle2Config`.
+
+        The cameras come from ``config.camera_ids``, because this controller
+        exports its own channels rather than taking serial numbers, so a
+        ``cameras`` mapping is accepted and ignored.
+        """
+        if not isinstance(config, Turtle2Config):
+            raise TypeError(
+                f"{cls.__name__}.from_config() takes a Turtle2Config, got "
+                f"{type(config).__name__}."
+            )
+        del cameras
+        return cls.build(
+            frequency=frequency,
+            camera_ids=list(config.camera_ids),
+            env_idx=env_idx,
+            node_rank=node_rank,
+            worker_rank=worker_rank,
         )
 
 

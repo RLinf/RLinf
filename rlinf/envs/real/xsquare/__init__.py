@@ -19,7 +19,7 @@ from __future__ import annotations
 from rlinf.envs.real.registry import register_tasks
 from rlinf.robotics.parts.arms.turtle2 import Turtle2RobotState
 
-from .base import Turtle2Env, Turtle2EnvConfig
+from .base import Turtle2ActionConfig, Turtle2Env
 from .button import ButtonEnv
 
 #: Mapping from Gymnasium IDs to Turtle2 environment classes.
@@ -31,7 +31,7 @@ __all__ = [
     "TASKS",
     "ButtonEnv",
     "Turtle2Env",
-    "Turtle2EnvConfig",
+    "Turtle2ActionConfig",
     "Turtle2RobotState",
     *_ENTRY_POINTS,
 ]

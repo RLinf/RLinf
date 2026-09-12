@@ -45,7 +45,7 @@ def build_teleop(
         timeout: Optional operator-control hold window.
     """
     spec = action_spec(env)
-    facts = EnvFacts.about(env, spec.layout, spec.kinds)
+    facts = EnvFacts.about(env, spec.layout, spec.kinds, cfg)
 
     entries: list[Any] = []
     asked: list[type[TeleopDevice]] = []

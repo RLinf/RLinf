@@ -19,7 +19,7 @@ from __future__ import annotations
 from rlinf.envs.real.registry import register_tasks
 from rlinf.robotics.parts.arms.gim_arm import GimArmRobotState
 
-from .base import GimArmEnv, GimArmEnvConfig
+from .base import GimArmEnv, GimArmOptions
 from .peg_insertion import GimArmPegInsertionEnv
 
 # Use the shared factory even though this task declares no additional wrappers.
@@ -31,7 +31,7 @@ __all__ = [
     "TASKS",
     "GimArmEnv",
     "GimArmPegInsertionEnv",
-    "GimArmEnvConfig",
+    "GimArmOptions",
     "GimArmRobotState",
     *_ENTRY_POINTS,
 ]

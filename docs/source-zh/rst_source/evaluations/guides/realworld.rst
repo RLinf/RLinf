@@ -93,7 +93,7 @@ Dual Franka 部署目前通过该回退路径使用 ``realworld_eval_dual_franka
 
       python -m toolkits.realworld_check.test_franka_camera
 
-   记录输出的相机序列号，填入 ``env.eval.override_cfg.camera_serials``。
+   记录输出的相机序列号，填入 ``cluster.node_groups[].hardware.configs`` 中 Franka 条目的 ``camera_serials``。
 
 2. **目标位姿** （PnP 任务，控制节点）：
 
@@ -184,6 +184,7 @@ Ray 集群启动
            configs:
              - robot_ip: ROBOT_IP
                node_rank: 1
+               camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
 
    runner:
      ckpt_path: /path/to/full_weights.pt
@@ -193,7 +194,6 @@ Ray 集群启动
        rollout_epoch: 20
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
          task_description: "pick up the object and place it into the container"
 
    rollout:
@@ -251,8 +251,8 @@ Ray 集群启动
      - ``env.eval.override_cfg``
      - PnP 目标末端位姿 ``[x,y,z,rx,ry,rz]``，影响成功判定与运动截断
    * - ``camera_serials``
-     - ``env.eval.override_cfg``
-     - RealSense 序列号列表（**非** ``node_groups`` 字段）
+     - ``cluster.node_groups[].hardware.configs``
+     - RealSense 序列号列表；省略时按序列号顺序自动发现相机
    * - ``task_description``
      - ``env.eval.override_cfg``
      - 语言指令，须与 SFT 训练一致

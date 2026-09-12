@@ -45,6 +45,8 @@ from rlinf.utils.logging import get_logger
 class FrankyArm(BaseArm):
     """Franka arm controlled through libfranka by Franky."""
 
+    DOF: ClassVar[int] = 7
+
     #: Collision reflex trip points, in Nm and N.
     TORQUE_THRESHOLD: ClassVar[list[float]] = [80.0] * 4 + [11.0] * 3
     FORCE_THRESHOLD: ClassVar[list[float]] = [100.0] * 3 + [25.0] * 3

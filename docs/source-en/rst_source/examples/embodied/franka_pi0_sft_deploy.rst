@@ -382,11 +382,13 @@ Key fields you should customise for your task:
      ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
      ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
 
-Under the hood, ``FrankaEnv`` accepts ``override_cfg`` as a plain dict and uses
-a class-variable ``CONFIG_CLS`` to instantiate the dataclass config (defaults to
-``FrankaEnvConfig``). Subclasses such as ``PegInsertionEnv`` and ``BottleEnv``
-override ``CONFIG_CLS`` to their own dataclass while sharing the same
-constructor.
+``FrankaEnv-v1`` runs the ``CartesianTarget`` task, which scores the tool's
+distance to ``target_ee_pose`` and keeps every commanded pose inside the
+``ee_pose_limit_*`` box. Each key of ``override_cfg`` goes to the config that
+declares it: ``action_scale`` and ``compliance_param`` to the Cartesian
+control, the poses and thresholds to the task, and ``max_num_steps`` to the
+env. A key none of them declares is refused. ``PegInsertionEnv`` and
+``BottleEnv`` run other tasks on the same Franka preset.
 
 Standalone Evaluation
 ~~~~~~~~~~~~~~~~~~~~~

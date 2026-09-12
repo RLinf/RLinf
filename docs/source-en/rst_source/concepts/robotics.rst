@@ -56,7 +56,10 @@ the hardware. The following example keeps those phases visible in one place:
 ``Robot``. Construction records hardware arguments and placement, but it does
 not import a vendor SDK or open a device. ``describe()`` reads that declaration,
 so it can report paths, nodes, and connection ownership before the hardware is
-powered or reachable.
+powered or reachable. An environment starts from the scheduler's hardware config
+instead of builder arguments, and calls ``from_config()`` on the registered
+robot class. It forwards each config field to ``build()`` and places parts on
+the environment's node unless the config names another.
 
 Setup code then selects the capabilities it needs. ``child("arm", Arm)`` returns
 the part at ``arm`` and checks that it implements ``Arm``; the expected class is
@@ -70,7 +73,12 @@ names.
 already opened if a later one fails. Once connected, category methods such as
 ``Arm.is_robot_up()`` and ``Camera.is_ready()`` check whether the devices can be
 used; ``clear_errors()`` and ``reset_joint()`` are available for setup outside
-the per-step action stream.
+the per-step action stream. An arm that accepts ``tcp_pose`` commands also
+offers ``move_to()``, which travels to a tool pose through evenly spaced targets
+for homing between episodes. An end effector opens and closes fully with
+``open()`` and ``close()`` and reports ``is_open``. Each arm class states
+``DOF``, the number of joints it drives, so a joint target's width can be
+checked before any hardware is opened.
 
 The step loop uses two calls. ``get_observation()`` reads the composed robot once
 and returns a nested dictionary whose keys are the part paths.
@@ -82,6 +90,17 @@ command, and repeated calls are safe.
 
 The lifecycle is the same for every robot. What changes between robots is the
 set and nesting of the paths inside the observation and action dictionaries.
+
+Between episodes a task asks for what it wants rather than scripting it.
+``hold()`` stays where the arm is, so it stops chasing the last target a policy
+sent. ``clear(distance=..., qpos=...)`` gets clear of whatever the tool is
+touching: an arm driven by tool poses rises by the distance, and one driven by
+joint targets goes to the configuration named for it. ``go_home(Home(...))``
+travels to where the task wants the arm to wait, re-commanding it until it is
+within tolerance, and ``unwind(qpos)`` returns the joints to a known
+configuration. A task states both spellings of where to wait and each arm uses
+the one it can, which is why peg insertion is one task on a Franka and on a
+GimArm.
 
 Read the Interface Paths
 ------------------------
@@ -134,6 +153,30 @@ with one more path segment. ``describe()`` exposes ``via`` to explain why the
 segment is nested and which paths share a resource; task code uses the paths and
 values. The complete description is diagnostic text, not a serialization format.
 
+A field's name is not the whole contract. Two arms can both report
+``tcp_pose`` and mean different things by it, and a task that scores one would
+quietly misread the other. ``rlinf/robotics/fields.py`` therefore states what
+each canonical name means: ``tcp_pose`` is seven numbers, a position in metres
+in the base frame followed by an ``xyzw`` quaternion; ``arm_joint_position`` is
+one number per joint in radians. A part that reports those numbers says
+nothing extra. A part whose numbers differ declares its own meaning, and
+binding a task to it then fails with both meanings named instead of the task
+reading a gripper width as part of a rotation:
+
+.. code-block:: text
+
+   RequirementError: CartesianTarget cannot run on ExampleRobot: arm
+   (MethodArm) reports 'tcp_pose' as xyz+rpy+gripper_width in m,rad in the
+   base frame, not xyz+quat_xyzw in m in the base frame
+
+That refusal is the signal to convert inside the driver, which is where a
+vendor's convention belongs. ``MethodArm`` takes ``decode`` and ``encode``
+for exactly this: one conversion per field, each way, after which the part
+reports the canonical meaning and every task runs on it. Turtle2's controller
+speaks Euler angles and carries the gripper's width in the vector it calls
+``tcp_pose``; converting there is what lets it run the same tasks as a Franka,
+and the width stays the gripper's own state.
+
 Compose Parts Without Changing the Interface
 --------------------------------------------
 
@@ -180,9 +223,10 @@ error recovery, and joint reset, and use ``parts_of_type(Camera)`` to find frame
 sources. The robot still owns the placement and lifecycle of those cameras; the
 environment only consumes their observations.
 
-Existing policies that expect flat vectors use ``LegacyObservationAdapter`` and
-``VectorActionAdapter`` at this boundary. The adapters translate representation;
-the robot interface remains named and nested. That separation is also what lets
+``TaskEnv`` builds the policy's ``state`` and ``frames`` from that one reading,
+as its ``ObservationSpec`` declares them, key by key, with the encoding and
+colour order a checkpoint was trained on. The policy's representation lives
+there; the robot interface remains named and nested. That separation is also what lets
 placement change without reaching task code.
 
 Keep Placement Out of Task Code
@@ -205,10 +249,11 @@ Keep Task Logic Separate
 ------------------------
 
 A part defines how to sense or move hardware; a task defines why those readings
-and motions matter. Reward, termination, task-specific reset behavior, and
-Gymnasium spaces therefore belong to a ``RobotTask`` or a concrete real-world
-env. ``RobotTaskEnv`` joins a generic task to the robot and owns the lifecycle,
-while specialized envs can use the same robot calls directly.
+and motions matter. Reward, termination, and task-specific reset behavior
+therefore belong to a ``Task``, and what a policy's numbers mean belongs to the
+channels of an ``ActionLayout``. ``TaskEnv`` joins a task, a layout, and a
+robot, checks that the robot has what they need, and owns the lifecycle. Specialized envs that
+have not moved onto it use the same robot calls directly.
 
 The result is two independent contracts: robot paths remain stable across tasks
 and placement, while a task can change its policy-facing schema without changing

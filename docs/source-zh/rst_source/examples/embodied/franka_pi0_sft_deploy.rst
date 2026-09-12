@@ -359,10 +359,7 @@ Bin-relocation 任务。
      ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
      ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
 
-底层实现上，``FrankaEnv`` 现在接受 ``override_cfg`` 字典，并使用类变量
-``CONFIG_CLS`` 来实例化数据类配置（默认为 ``FrankaEnvConfig``）。
-``PegInsertionEnv`` 和 ``BottleEnv`` 等子类通过覆盖 ``CONFIG_CLS``
-来使用各自的数据类，同时共享相同的构造函数。
+``FrankaEnv-v1`` 运行 ``CartesianTarget`` 任务：它根据末端到 ``target_ee_pose`` 的距离评分，并把每个下发的位姿限制在 ``ee_pose_limit_*`` 范围内。``override_cfg`` 中的每个 key 交给声明它的配置：``action_scale`` 和 ``compliance_param`` 交给笛卡尔控制，位姿与阈值交给任务，``max_num_steps`` 交给 env。三者都没有声明的 key 会被拒绝。``PegInsertionEnv`` 和 ``BottleEnv`` 在同一个 Franka preset 上运行其他任务。
 
 真机评估 / 部署
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

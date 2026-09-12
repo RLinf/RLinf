@@ -201,6 +201,44 @@ class FrankaRobot(Robot):
             **cls.build_cameras(cameras, node_rank=camera_node_rank),
         )
 
+    @classmethod
+    def from_config(
+        cls,
+        config: "FrankaConfig",
+        *,
+        cameras: Optional[Mapping[str, Any]] = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+    ) -> "FrankaRobot":
+        """Compose a single-arm Franka from a :class:`FrankaConfig`.
+
+        The arm runs on ``config.controller_node_rank`` when it is set, else on
+        ``node_rank``, and the cameras on ``config.camera_node_rank``.
+        """
+        if not isinstance(config, FrankaConfig):
+            raise TypeError(
+                f"{cls.__name__}.from_config() takes a FrankaConfig, got "
+                f"{type(config).__name__}."
+            )
+        controller_node_rank = config.controller_node_rank
+        return cls.build(
+            robot_ip=config.robot_ip,
+            env_idx=env_idx,
+            node_rank=node_rank
+            if controller_node_rank is None
+            else controller_node_rank,
+            worker_rank=worker_rank,
+            backend=config.backend,
+            gripper_type=config.gripper_type,
+            compliance=config.compliance,
+            end_effector_type=config.end_effector_type,
+            end_effector_config=config.end_effector_config,
+            gripper_connection=config.gripper_connection,
+            cameras=cameras,
+            camera_node_rank=config.camera_node_rank,
+        )
+
 
 @dataclass
 class FrankaConfig(RobotConfig):

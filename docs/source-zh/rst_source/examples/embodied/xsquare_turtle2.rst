@@ -270,10 +270,9 @@ Python 解释器路径和环境变量；之后在该节点上由 Ray 启动的�
     train:
       override_cfg:
         is_dummy: False
-        use_arm_ids: [1]          # 0=左臂，1=右臂；双臂使用 [0,1]
+        roles: ["right"]          # 本次运行驱动的机械臂；双臂写 ["left", "right"]
         use_camera_ids: [2]       # 要使用的相机 ID（0、1 或 2）
-        target_ee_pose:           # [[左臂目标位姿], [右臂目标位姿]]，欧拉角 [x,y,z,rz,ry,rx]
-          - [0, 0, 0, 0, 0, 0]
+        target_ee_pose:           # 每个 role 一行，欧拉角 [x,y,z,rz,ry,rx]
           - [0.3, 0.0, 0.15, 0.0, 1.0, 0.0]
 
   actor:

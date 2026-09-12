@@ -1,95 +1,111 @@
 新增真机任务
 ============
 
-本页说明在 RLinf 已支持目标真机的前提下，如何新增真机任务，而无需修改机器人实现。新任务可以定义特有的目标、奖励和复位方式；完成后将得到任务配置、env 类、Gymnasium ID 和对应的 YAML 配置，后续步骤会依次定义并验证这些内容。
+本页说明在 RLinf 已支持目标真机的前提下，如何新增真机任务，而无需修改机器人实现。完成后将得到一个任务 class、一行机器人上的注册、一个 Gymnasium ID 和一份可直接启动的 YAML 配置。
 
 本页所述真机任务专指 ``rlinf/envs/real`` 下的任务模块。如需为模拟器或 benchmark 新增 task，请参阅 :doc:`new_env`。
 
-核心任务流程不修改机器人构造、设备 placement 或遥操作。目标、compliance 参数、成功条件和复位行为属于任务，现有机器人与 wrapper stack 保持不变。如果硬件本身尚未接入，请先按照 :doc:`new_robot` 实现零部件，并确认观测和动作能够正常传递，再添加任务。如果还需要 RLinf 尚未提供的操作者设备或 wrapper，应先完成任务主流程，再将其作为文末所述的独立扩展处理。
+任务只规定怎样算完成工作：目标在哪里，机器人必须上报哪些量才能评分，episode 之间如何恢复场景，以及每一步得到多少奖励。任务从不构造动作。policy 的动作如何送到机械臂由机器人的动作通道负责，硬件的连接与 placement 由机器人负责，因此同一个任务可以在所有满足其要求的机器人上运行。如果硬件本身尚未接入，请先按照 :doc:`new_robot` 实现零部件，并确认观测和动作能够正常传递，再添加任务。如果还需要 RLinf 尚未提供的操作者设备或 wrapper，应先完成任务主流程，再将其作为文末所述的独立扩展处理。
 
-核心流程包含五步：定义任务数据，将其绑定到 env class，注册稳定的 Gymnasium ID，为一次运行添加配置，并验证注册结果。后续章节说明哪些能力可直接复用，并介绍新增操作者设备和新增 wrapper 两类可选扩展；大多数任务无需执行这两部分。
+核心流程包含四步：编写任务，将其注册到机器人上，为一次运行添加配置，并验证注册结果。后续章节说明哪些能力可直接复用，并介绍新增操作者设备和新增 wrapper 两类可选扩展；大多数任务无需执行这两部分。
 
 核心流程
 --------
 
-以下示例为 Franka 添加 ``WipeEnv-v1``。每一步都会产生下一步的输入：dataclass 配置 env，env class 注册为 Gymnasium ID，YAML 选择该 ID，最后的检查则在硬件打开前确认整条解析路径可用。
+以下示例新增一个擦拭任务，并以 ``WipeEnv-v1`` 在现有 Franka 上运行。每一步都会产生下一步的输入：任务以一个 ID 注册到机器人上，YAML 选择该 ID，最后的检查则在硬件打开前确认整条解析路径可用。
 
-如果新任务使用关节空间机械臂，实施顺序不变，只需继承对应的 env 基类。``SO101ReachEnv-v1`` 和 ``examples/embodiment/config/env/so101_reach.yaml`` 展示了当前 SO-101 的实现：动作包含五个绝对关节目标和一个连续夹爪值。机器人中的夹爪路径仍为 ``arm.end_effector``，env 负责将这套嵌套接口转换为 policy 使用的六维动作。
+1. 编写任务
+~~~~~~~~~~~
 
-1. 定义任务配置
-~~~~~~~~~~~~~~~
-
-在 ``rlinf/envs/real/<robot>/<task>.py`` 中新建模块，并继承该机器人的配置 dataclass。配置类只需添加擦拭任务所需的字段：
+新建 ``rlinf/envs/real/tasks/wipe.py``。按末端位置评分的任务基于 ``CartesianTarget`` 编写，它已经负责目标位姿、目标周围的工作空间、到达目标的奖励，以及把机械臂送回初始位姿的流程。任务的数值放在一个配置 dataclass 中，任务 class 只补充不同的部分：
 
 .. code-block:: python
 
-   import copy
-   from dataclasses import dataclass, field
+   from collections.abc import Sequence
+   from dataclasses import dataclass
 
-   import numpy as np
-
-   from rlinf.robotics.actions import ActionKind, ActionPart
-
-   from .base import FrankaEnv, FrankaEnvConfig, compliance
+   from rlinf.envs.real.tasks.cartesian import (
+       CartesianTarget,
+       FixtureConfig,
+       hold,
+       lift,
+       reach_target,
+   )
+   from rlinf.envs.real.tasks import Evaluation, Needs
 
 
    @dataclass
-   class WipeConfig(FrankaEnvConfig):
-       task_description: str = "wipe the surface"
-       target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
-       reward_threshold: np.ndarray = field(
-           default_factory=lambda: np.array([0.02, 0.02, 0.02, 0.2, 0.2, 0.2])
-       )
+   class WipeConfig(FixtureConfig):
+       reward_threshold: Sequence[float] = (0.02, 0.02, 0.02, 0.2, 0.2, 0.2)
        random_xy_range: float = 0.03
+       clip_z_range_high: float = 0.05
+       contact_force: float = 5.0
 
-       def __post_init__(self):
-           self.compliance_param = compliance(
-               translational_stiffness=800,   # 降低刚度以保持接触
-               translational_clip_z=0.02,
+
+   class Wipe(CartesianTarget):
+       CONFIG = WipeConfig
+       DESCRIPTION = "wipe the surface"
+
+       def requirements(self):
+           return {"arm": Needs(observes=frozenset({"tcp_pose", "tcp_force"}))}
+
+       def reset(self, parts, context):
+           hold(parts)
+           lift(parts, context, 0.05)
+           self.go_to_rest(parts, context)
+
+       def evaluate(self, reading, applied):
+           arm = reading.arm()
+           reached = reach_target(
+               arm["tcp_pose"],
+               self.config.target_ee_pose,
+               self.config.reward_threshold,
+               dense=self.config.use_dense_reward,
            )
-           self.target_ee_pose = np.array(self.target_ee_pose)
-           self.action_scale = np.array([0.02, 0.1, 1])
+           pressing = arm["tcp_force"][2] < -self.config.contact_force
+           in_zone = reached.in_zone and pressing
+           return Evaluation(reward=float(in_zone), in_zone=in_zone)
 
-这些字段分别回答任务执行中的不同问题：``task_description`` 提供语言指令，``target_ee_pose`` 定义目标，``reward_threshold`` 判断各项位姿误差是否足够小，``random_xy_range`` 控制复位时的随机范围；``action_scale`` 限制一次 policy 动作的移动幅度，``compliance_param`` 则配置执行动作时使用的控制器。
+配置中的字段分别回答不同的问题：``target_ee_pose`` 是工件位姿，``reward_threshold`` 判断位置误差是否足够小，``random_xy_range`` 决定每个 episode 之间初始位姿的随机范围。``FixtureConfig`` 根据 ``clip_*_range`` 字段在目标周围划定工作空间，并让机械臂停在目标上方 ``clip_z_range_high`` 处；运行时若直接设置 ``ee_pose_limit_min``、``ee_pose_limit_max`` 或 ``reset_ee_pose``，则以设置值代替推导值。运行未设置 ``task_description`` 时，``DESCRIPTION`` 就是语言指令。
 
-阻抗参数只需声明与默认值不同的部分。``compliance()`` 会将差异项合并到 ``COMPLIANCE_DEFAULTS``；字段名错误或控制器不支持相应参数时，任务配置在构建阶段就会报错，不会将无效参数继续传给阻抗控制器。
+env 按以下顺序调用任务的方法。``requirements()`` 规定每个角色的零部件必须上报哪些量，这里在 ``CartesianTarget`` 所需的 ``tcp_pose`` 之外增加了 ``tcp_force``，并在机器人连接之前完成检查。``workspace`` 交给通道，通道会把每个下发的位姿限制在其中。``home()`` 在连接后执行一次，``reset()`` 在每个 episode 开始时执行，此时通道已经应用了机械臂的柔顺参数。擦拭任务先把抹布抬离表面，再由 ``go_to_rest()`` 把机械臂送回初始位姿；插销任务在同一位置夹紧插销并将其抬出插孔。``evaluate()`` 根据每一步之后的读数评分，``in_zone`` 计入结束 episode 所需的 ``success_hold_steps`` 连续成功次数，夹爪惩罚由 env 扣除，因此任务只需报告这一步应得的奖励。
 
-2. 定义 env 类
-~~~~~~~~~~~~~~
+机器人无法运行该任务时，系统会在连接任何硬件之前给出原因：
 
-配置类已经包含任务所需的数据，env class 接下来将这些数据接入现有机器人的执行流程。首先指定前一步定义的配置类型；对于多数任务，这就是全部实现：
+.. code-block:: text
+
+   RequirementError: Wipe cannot run on FrankaRobot: arm (PoseOnlyArm) does not
+   report ['tcp_force']; it reports ['tcp_pose']
+
+关节空间机械臂以同样的方式使用关节任务。Piper 和 SO-101 都运行 ``JointReach``：``SO101ReachEnv-v1`` 的注册只有 ``class SO101ReachEnv(SO101Env): TASK = JointReach`` 一行，``PiperReachEnv-v1`` 则在 Piper 上注册同一个 class。preset 的动作布局把 policy 的扁平动作（SO-101 上是五个绝对关节目标加一个连续夹爪值）转换为发给 ``arm`` 和 ``arm.end_effector`` 的命令。运行配置可参考 ``examples/embodiment/config/env/so101_reach.yaml``。
+
+2. 注册到机器人
+~~~~~~~~~~~~~~~
+
+任务可以在任何满足其要求的机器人上运行，接下来由机器人的 preset 决定这个 ID 驱动哪一台。新建 ``rlinf/envs/real/franka/wipe.py``：
 
 .. code-block:: python
+
+   from rlinf.envs.real.tasks.wipe import Wipe
+
+   from .base import FrankaEnv, compliance
+
 
    class WipeEnv(FrankaEnv):
-       CONFIG_CLS = WipeConfig
+       TASK = Wipe
+       DEFAULTS = {
+           "compliance_param": compliance(
+               translational_stiffness=800,   # 降低刚度以保持接触
+               translational_clip_z=0.02,
+           ),
+           "action_scale": (0.02, 0.1, 1.0),
+       }
 
-``CONFIG_CLS`` 告诉继承的构造流程应使用哪个 dataclass 解析 ``override_cfg``。仅当任务的运行行为确有差异时才覆盖相应 hook。最常见的是 ``go_to_rest``：插销任务在返回初始位姿前需要先抬高末端，避免插销卡在插孔中。
+``FrankaEnv`` 提供机器人、动作通道、观测布局和遥操作设备；注册只指定任务，以及该任务默认需要的设置。``action_scale`` 限制一次 policy 动作移动末端的幅度，``compliance_param`` 设置执行动作时使用的阻抗控制器。阻抗参数只需声明与默认值不同的部分：``compliance()`` 会将差异项合并到 ``COMPLIANCE_DEFAULTS``，字段名错误或控制器不支持相应参数时会在导入时报错。运行中设置了这些 key 时，以运行的设置为准。
 
-.. code-block:: python
+注册只负责配置，不能覆盖 ``step``、``reset`` 或观测，这些由 ``TaskEnv`` 对所有机器人统一执行，并有测试保证这一点。
 
-       def go_to_rest(self, joint_reset=False):
-           reset_pose = copy.deepcopy(self._franka_state.tcp_pose)
-           reset_pose[2] += 0.05
-           self._interpolate_move(reset_pose, timeout=1)
-           super().go_to_rest(joint_reset)
-
-如果任务沿用原有动作空间，则无需实现 ``action_parts``。如果任务修改动作空间，则必须声明每段动作对应的零部件及其语义；遥操作根据这些语义匹配设备，而不能只根据维度判断。
-
-.. code-block:: python
-
-       def action_parts(self):
-           return (
-               ActionPart("arm", 6, ActionKind.CARTESIAN_DELTA),
-               ActionPart("end_effector", 1, ActionKind.GRIPPER),
-           )
-
-各段宽度之和必须与动作空间维度一致，否则系统会在构建阶段报错。
-
-3. 注册任务
-~~~~~~~~~~~~
-
-env class 可以执行任务后，还需要一个供配置和数据集长期引用的稳定 ID。在 ``rlinf/envs/real/<robot>/__init__.py`` 的 ``TASKS`` mapping 中加入该 class：
+然后为这个 class 指定供配置和数据集长期引用的稳定 ID。在 ``rlinf/envs/real/franka/__init__.py`` 的 ``TASKS`` mapping 中加入一项：
 
 .. code-block:: python
 
@@ -100,9 +116,11 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
        "WipeEnv-v1": WipeEnv,
    }
 
-``register_tasks`` 根据该映射生成 entry point，并将其注册到 Gymnasium。wrapper 由 env 自行声明，无需在此重复配置。Gym ID 会写入用户配置和数据集元数据，因此数据采集开始后不应再修改 ID。
+``register_tasks`` 根据该映射生成 entry point，并将其注册到 Gymnasium。wrapper 无需在此配置：动作布局声明了与其动作相匹配的 wrapper，``build_stack`` 会读取这项声明。注册 ``WipeEnv-v1`` 的同时也会注册 ``Wipe-v1``，它在运行所分配的机器人上执行 ``Wipe``；其他机器人注册 ``Wipe`` 后会自动加入该 ID，无需新增 ID。
 
-4. 添加环境配置
+Gym ID 会写入用户配置和数据集元数据，因此数据采集开始后不应再修改 ID。
+
+3. 添加环境配置
 ~~~~~~~~~~~~~~~
 
 注册 ID 后，YAML 可以为一次具体运行选择该任务，并提供随实验变化的参数。在 ``examples/embodiment/config/env/`` 下新增文件，结构如下：
@@ -117,10 +135,11 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
    override_cfg:
      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
      random_xy_range: 0.03
+     action_scale: [0.01, 0.1, 1.0]
 
-``env_type: real`` 选择 RLinf 的真机 env adapter，``init_params.id`` 选择上一步注册的 Gymnasium 任务，``teleop`` 指定评估或数据采集使用的操作者设备。``override_cfg`` 会传给 ``WipeConfig``，其中每个 key 都应对应任务配置字段；机器人地址和 placement 仍应写在集群硬件配置中。
+``env_type: real`` 选择 RLinf 的真机 env adapter，``init_params.id`` 选择上一步注册的 Gymnasium 任务，``teleop`` 指定评估或数据采集使用的操作者设备。``override_cfg`` 是一个扁平 mapping，每个 key 交给声明它的那一个配置：env 的配置负责 episode 如何运行，动作通道的配置负责缩放和增益，``WipeConfig`` 负责任务本身。三者都没有声明的 key 会被拒绝。机器人地址和 placement 仍应写在集群硬件配置中。
 
-5. 验证注册结果
+4. 验证注册结果
 ~~~~~~~~~~~~~~~
 
 此时，从 YAML 到任务 class 的核心路径已经完整。连接硬件前，先导入真机 env package，并确认 ID 可以解析：
@@ -132,12 +151,12 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
 
    assert "WipeEnv-v1" in registry
 
-``tests/unit_tests/test_real_env.py`` 会检查所有内置任务，请将新 ID 加入 ``EXPECTED_IDS``。这项断言只验证注册；如果任务改变了面向机器人的观测或动作路径，还需按照 :doc:`new_robot` 运行 mock 和真机检查。
+``tests/unit_tests/test_real_env.py`` 会检查所有内置任务。请将新 ID 加入 ``EXPECTED_IDS``，并在 ``TASK_SCHEMAS`` 中为 policy 将要训练的观测和动作添加一行。若不经过 Gymnasium ID 运行任务，可以手动组合 ``TaskEnv(robot, Wipe(), layout, observation=...)``，单元测试就是这样在假零部件上运行任务的。这项断言只验证注册；如果任务改变了面向机器人的观测或动作路径，还需按照 :doc:`new_robot` 运行 mock 和真机检查。
 
 复用现有基础设施
 ----------------
 
-符合现有机器人与 wrapper contract 的任务完成以上五步即可。下列职责已经由相应层次负责，任务代码应直接调用或配置这些能力，不应再次实现：
+符合现有机器人与 wrapper contract 的任务完成以上四步即可。下列职责已经由相应层次负责，任务代码应直接调用或配置这些能力，不应再次实现：
 
 .. list-table::
    :header-rows: 1
@@ -147,6 +166,12 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
      - 现有实现
    * - 连接硬件、部署零部件
      - ``Robot.connect``，见 :doc:`../concepts/robotics`。
+   * - 把 policy 动作转换为机械臂、夹爪和灵巧手的命令
+     - 机器人 preset 的 ``ActionLayout`` 通道，例如 ``PoseDelta``、``JointPositions`` 以及末端执行器通道。
+   * - 把下发的位姿限制在范围内
+     - 任务的 ``workspace``，位姿通道会把每个位姿裁剪到其中。
+   * - 用学习得到的 reward model 评分
+     - ``use_reward_model``，由 env worker 根据运行的 ``reward`` 配置设置。
    * - 遥操作
      - 环境配置中的 ``teleop`` 选择设备，wrapper 栈负责组装。
    * - 手动标记奖励、手动结束 episode
@@ -154,7 +179,7 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
    * - 相对坐标系、欧拉角转换、夹爪维度裁剪
      - ``real/wrappers/transforms/``，由 wrapper 栈加载。
    * - 各任务共用的阻抗参数
-     - ``COMPLIANCE_DEFAULTS``，任务只需声明差异项。
+     - ``franka/base.py`` 中的 ``COMPLIANCE_DEFAULTS``，任务只需在注册的 ``DEFAULTS`` 中声明差异项。
 
 新增遥操作设备
 --------------
@@ -207,7 +232,7 @@ env class 可以执行任务后，还需要一个供配置和数据集长期引�
            raise ValueError("teleop device 'pedal' requires a port")
        return TeleopEntry(cls(port=port), drives=options.get("drives"))
 
-最后把 ``pedal`` 加入对应 env 的 ``TELEOP`` 元组，声明该 env 能够表示这种设备产生的动作。这一步不会重复注册设备，公共 builder 会通过 ``TeleopDevice`` 查找该名称。如果机器人不包含 ``end_effector``，系统会在构建阶段报错。
+最后把 ``pedal`` 加入机器人 preset 的 ``TELEOP`` 元组，声明该 env 能够表示这种设备产生的动作。这一步不会重复注册设备，公共 builder 会通过 ``TeleopDevice`` 查找该名称。如果机器人不包含 ``end_effector``，系统会在构建阶段报错。
 
 如果同一套硬件需要第二种映射方式，例如输出关节角而非笛卡尔量，继承已有设备并覆盖 ``action`` 即可，``GelloJoint`` 与 ``Gello`` 就是这样的关系。
 

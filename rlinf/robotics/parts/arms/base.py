@@ -16,13 +16,15 @@
 
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from typing import Any, ClassVar, Optional, Protocol
 
 import numpy as np
 
+from rlinf.robotics.fields import describe
 from rlinf.robotics.parts.base import ControllablePart, Features, Observation
+from rlinf.robotics.pose import quat_slerp
 from rlinf.utils.logging import get_logger
 
 #: Canonical arm fields; mounted devices expose their own observations.
@@ -35,6 +37,44 @@ ARM_STATE_FIELDS: tuple[str, ...] = (
     "tcp_torque",
     "arm_jacobian",
 )
+
+
+@dataclass(frozen=True)
+class Home:
+    """Where a task wants an arm to wait between episodes.
+
+    A task states the same place in both spellings it might know, because
+    where an arm should wait is a task's business while how it gets there is
+    the arm's. An arm that takes tool poses travels to ``pose``; one that only
+    takes joint targets goes to ``qpos``. Whichever it cannot use it ignores.
+
+    Attributes:
+        pose: Tool pose, ``xyz`` plus an ``xyzw`` quaternion.
+        qpos: Joint configuration, one value per joint.
+        tolerance: How near the pose counts as arrived, in metres. An
+            absolute distance, because a relative one asks for micrometres of
+            a rest pose near the origin and centimetres of one far from it.
+        attempts: Times to re-command the pose before giving up on it.
+        duration: Seconds each motion is spread over.
+        rate_hz: Commands per second while travelling.
+        require_arrival: Raise if the arm never reaches the pose, for a task
+            whose next episode is meaningless from anywhere else. Off by
+            default, because an arm left near its rest pose is usually better
+            than an episode that never starts.
+        arrive_within: Seconds to keep watching for the arm to arrive after a
+            motion is commanded. A controller that interpolates toward a
+            target is still moving when the last waypoint is sent, so a task
+            on one gives it time rather than judging it immediately.
+    """
+
+    pose: "Optional[Sequence[float]]" = None
+    qpos: "Optional[Sequence[float]]" = None
+    tolerance: float = 0.01
+    attempts: int = 3
+    duration: float = 1.5
+    rate_hz: float = 10.0
+    require_arrival: bool = False
+    arrive_within: float = 0.0
 
 
 @dataclass
@@ -97,6 +137,11 @@ class Arm(ControllablePart):
         @Arm.register("franky")
         class FrankyArm(BaseArm): ...
     """
+
+    #: Joints the arm drives, when the class knows it before connecting. A
+    #: task checks its targets against this in dummy runs too, where no arm is
+    #: ever opened. ``None`` means the count is only known from the device.
+    DOF: ClassVar[Optional[int]] = None
 
     @classmethod
     def backends(cls) -> dict[str, type]:
@@ -176,6 +221,187 @@ class Arm(ControllablePart):
             "implements reset_joint()."
         )
 
+    @property
+    def takes_poses(self) -> bool:
+        """Whether this arm can be commanded a tool pose."""
+        return "tcp_pose" in self.action_features
+
+    def hold(self) -> None:
+        """Stay where you are, and forget the target you were travelling to.
+
+        A reset starts from here, so the arm does not resume toward the last
+        target a policy sent while the scene is being put back.
+        """
+        reading = self.get_observation()
+        if self.takes_poses:
+            self.clear_errors()
+            pose = np.asarray(reading["tcp_pose"], dtype=float)
+            self.send_action({"tcp_pose": pose.astype(np.float32)})
+            return
+        joints = np.asarray(reading["arm_joint_position"], dtype=float)
+        self.send_action({"joint_position": joints})
+
+    def clear(
+        self,
+        *,
+        distance: "Optional[float]" = None,
+        qpos: "Optional[Sequence[float]]" = None,
+        duration: float = 1.0,
+        rate_hz: float = 10.0,
+        settle: float = 0.5,
+    ) -> None:
+        """Get clear of whatever the tool is touching.
+
+        An arm that takes tool poses rises ``distance`` from where it is. One
+        that does not goes to ``qpos``, a configuration known to be clear of
+        the fixture. An arm given neither has no way to get clear and stays
+        where it is.
+
+        Args:
+            distance: Metres of clearance a pose-driven arm should rise.
+            qpos: Configuration a joint-driven arm clears to.
+            duration: Seconds the motion is spread over.
+            rate_hz: Commands per second while travelling.
+            settle: Seconds to wait after a joint move.
+        """
+        if self.takes_poses and distance is not None:
+            pose = np.asarray(self.get_observation()["tcp_pose"], dtype=float)
+            pose[2] += distance
+            self.move_to(pose, duration=duration, rate_hz=rate_hz, clear_errors=True)
+            return
+        if qpos is not None:
+            self.reset_joint(list(qpos))
+            time.sleep(settle)
+
+    def go_home(self, home: "Home") -> None:
+        """Travel to where the task wants the arm to wait.
+
+        A pose-driven arm re-commands the pose until it is within
+        ``home.tolerance`` of it, because a controller that tracks a target
+        does not always arrive on the first attempt.
+
+        Raises:
+            NotImplementedError: If the arm can use neither spelling of the
+                request.
+            RuntimeError: If ``home.require_arrival`` is set and the arm is
+                still short of the pose after every attempt.
+        """
+        if self.takes_poses and home.pose is not None:
+            target = np.asarray(home.pose, dtype=float)
+
+            def arrived() -> bool:
+                """Whether the tool is within tolerance of the rest pose."""
+                where = np.asarray(self.get_observation()["tcp_pose"], dtype=float)
+                return bool(np.all(np.abs(where[:3] - target[:3]) <= home.tolerance))
+
+            for _ in range(max(1, home.attempts)):
+                if arrived():
+                    return
+                self.move_to(
+                    target,
+                    duration=home.duration,
+                    rate_hz=home.rate_hz,
+                    clear_errors=True,
+                )
+                if self._settles(arrived, home):
+                    return
+            if home.require_arrival and not arrived():
+                where = np.asarray(self.get_observation()["tcp_pose"], dtype=float)
+                raise RuntimeError(
+                    f"{type(self).__name__} did not reach its rest pose in "
+                    f"{max(1, home.attempts)} attempts: at {where[:3].round(4)}, "
+                    f"wanted {target[:3].round(4)}."
+                )
+            return
+        if home.qpos is not None:
+            self.reset_joint(list(home.qpos))
+            return
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot be sent to a tool pose, and the "
+            "task named no joint configuration for it to wait at. Give the "
+            "task a rest configuration for this arm."
+        )
+
+    @staticmethod
+    def _settles(arrived: "Callable[[], bool]", home: "Home") -> bool:
+        """Watch for ``arrived`` for ``home.arrive_within`` seconds.
+
+        An arm whose controller interpolates toward a target is still moving
+        when the last waypoint is sent, so judging it then reports a miss it
+        was about to make good. Watching costs nothing on an arm that is
+        already there, because the first look ends it.
+
+        Returns:
+            Whether the arm arrived within the time allowed.
+        """
+        if home.arrive_within <= 0:
+            return arrived()
+        period = 1.0 / max(home.rate_hz, 1e-6)
+        deadline = time.time() + home.arrive_within
+        while True:
+            if arrived():
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(period)
+
+    def unwind(self, qpos: "Optional[Sequence[float]]", settle: float = 0.5) -> None:
+        """Return the joints to a known configuration, unwinding any drift.
+
+        Args:
+            qpos: The configuration; ``None`` leaves the joints alone.
+            settle: Seconds to wait afterwards.
+        """
+        if qpos is None:
+            return
+        self.reset_joint(list(qpos))
+        time.sleep(settle)
+
+    def move_to(
+        self,
+        pose: "Sequence[float]",
+        *,
+        duration: float = 1.5,
+        rate_hz: float = 10.0,
+        clear_errors: bool = False,
+    ) -> None:
+        """Travel to a tool pose through evenly spaced ``tcp_pose`` commands.
+
+        Position is interpolated linearly and orientation by slerp, one
+        command every ``1 / rate_hz`` seconds, so a controller that tracks each
+        target arrives without a jump. The call returns once the last command
+        is sent, not when the arm has settled.
+
+        Args:
+            pose: Target pose, ``xyz`` plus an ``xyzw`` quaternion, in the
+                frame the arm reports ``tcp_pose`` in.
+            duration: Seconds the motion is spread over.
+            rate_hz: Commands per second.
+            clear_errors: Clear a latched fault before every command, for a
+                controller that stops accepting targets after one.
+
+        Raises:
+            NotImplementedError: If the arm does not accept ``tcp_pose``
+                commands.
+        """
+        if "tcp_pose" not in self.action_features:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not accept 'tcp_pose' commands, so "
+                "it cannot move to a tool pose. Drive its joints with "
+                "reset_joint() or 'joint_position' actions instead."
+            )
+        target = np.asarray(pose, dtype=float)
+        current = np.asarray(self.get_observation()["tcp_pose"], dtype=float)
+        waypoints = int(duration * rate_hz)
+        positions = np.linspace(current[:3], target[:3], waypoints + 1)
+        orientations = quat_slerp(current[3:], target[3:], waypoints + 1)
+        for position, orientation in zip(positions[1:], orientations[1:]):
+            if clear_errors:
+                self.clear_errors()
+            waypoint = np.concatenate([position, orientation]).astype(np.float32)
+            self.send_action({"tcp_pose": waypoint})
+            time.sleep(1.0 / rate_hz)
+
     def reconfigure_compliance_params(self, params: "Mapping[str, float]") -> None:
         """Apply a task's compliance request, as far as the backend can."""
         if params:
@@ -215,7 +441,7 @@ class BaseArm(Arm, ABC):
     @property
     def observation_features(self) -> Features:
         """Describe the canonical arm observation fields."""
-        return {name: {} for name in self.STATE_FIELDS}
+        return {name: describe(name) for name in self.STATE_FIELDS}
 
     def get_observation(self) -> Observation:
         """Select the canonical fields out of this arm's state."""

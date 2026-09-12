@@ -32,13 +32,13 @@ override_cfg:
   # Replace with your reset pose [x, y, z, rx, ry, rz]. Keep it above the target for a safe approach.
   reset_ee_pose: [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]
   max_num_steps: 300
-  # Position success tolerance [x, y, z, rx, ry, rz]. FrankaEnv currently checks xyz.
+  # Position success tolerance [x, y, z, rx, ry, rz]. Only xyz is scored.
   reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
   # Disable extra gripper penalties for rollout-only evaluation.
   enable_gripper_penalty: false
   # [xyz delta scale, rpy delta scale, gripper scale]. Keep 1.0 for Pi0 realworld actions.
   action_scale: [1.0, 1.0, 1.0]
-  # Replace with your workspace clip box [x, y, z, rx, ry, rz] used by FrankaEnv._clip_position_to_safety_box().
+  # Replace with your workspace box [x, y, z, rx, ry, rz]; every commanded pose is kept inside it.
   ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
   ee_pose_limit_max: [0.6, 0.2, 0.35, -2.64, 0.5, 0.5]
   # Compliance controller parameters for normal motion.

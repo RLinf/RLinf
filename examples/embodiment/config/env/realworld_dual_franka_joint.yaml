@@ -14,6 +14,12 @@ max_episode_steps: 300
 # _dispatch_arm_motion. List one gello_joint entry per arm to hand control to
 # a pair of leader arms, which also needs the GELLO ports below.
 teleop: none
+# GELLO direct-stream: when True, a 1 kHz daemon in DualGelloJointStream pushes
+# joint targets straight to each controller, bypassing env.step's rate gate.
+# env.step still reads state and observations at step_frequency, but leaves the
+# arms to the stream, so two writers never race franky's motion queue. Only
+# meaningful with the gello_joint leader arms.
+teleop_direct_stream: false
 use_relative_frame: False  # Not applicable for joint-space control
 no_gripper: False
 # Pre-wired GELLO serial ports (by-id paths are stable across reboots).
@@ -35,10 +41,9 @@ init_params:
 override_cfg:
   is_dummy: false
   task_description: "dual arm joint-space manipulation task"
-  # Joint action mode: "absolute" for direct GELLO mapping, "delta" for RL.
-  joint_action_mode: "absolute"
-  # Scaling factor for delta mode (rad per unit action). Ignored in absolute.
-  joint_action_scale: 0.1
+  # Absolute joint targets, for direct GELLO mapping. For RL, set
+  # joint_action_scale to the radians one action unit should move a joint;
+  # leaving it unset commands the joints directly.
   max_num_steps: 300
   # Only [2] (gripper channel) is consumed in joint-space; [0] / [1] are
   # Cartesian-only and ignored here.
@@ -54,10 +59,3 @@ override_cfg:
     - [0.7,  0.0, 0.6, 3.1416, 3.1416, 3.1416]
     - [0.7,  0.4, 0.6, 3.1416, 3.1416, 3.1416]
   success_hold_steps: 1
-  # GELLO direct-stream: when True, a 1 kHz daemon in DualGelloJointStream
-  # pushes joint targets straight to each controller, bypassing env.step's rate
-  # gate. env.step still reads state / obs at step_frequency but does NOT forward
-  # move_joints, so two writers never race franky's motion queue. Only meaningful
-  # with the gello_joint leader arms; with any other device it stops joint
-  # dispatch entirely.
-  teleop_direct_stream: false

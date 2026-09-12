@@ -136,10 +136,11 @@ placement 决定设备在哪里读取，常规 env loop 则决定动作下发频
 
    env:
      eval:
-       override_cfg:
-         teleop_direct_stream: true
+       teleop_direct_stream: true
 
-仅在跟随延迟明显时启用该选项。启用后，``env.step`` 不再发送关节目标；如果配置有误，机器人将保持静止。
+该配置项与 ``teleop`` 并列，而不写在 ``override_cfg`` 中，因为它决定一次运行会构建哪些 wrapper，而不是机器人本身的配置。
+
+仅在跟随延迟明显时启用该选项。直推设备会声明自己负责下发哪些动作部件，env.step 随即不再驱动这些部件，两者不会以不同频率争抢同一个控制器。因此，如果配置有误，机器人将保持静止，而不会收到错误的运动指令。
 
 延迟还有另一种成因，提高下发频率并不能解决。如果 follower 能平滑到达目标，却总是落后 leader 一点，说明机械臂的柔顺性增益偏软。:doc:`Dual Franka PICO 采集与 DAgger <../examples/embodied/dual_franka_pico_dagger>` 列出了 Franka 上的相关参数以及为遥操作调好的取值。
 

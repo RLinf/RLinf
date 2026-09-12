@@ -39,6 +39,10 @@ DEPTH_SCALE = 0.001
 #: them, which is what separates nearest-neighbour from interpolation.
 DEPTH_NEAR = 500
 DEPTH_FAR = 1500
+
+#: Colour every mock frame is filled with, in the BGR order cameras deliver.
+#: Three different values, so a test can tell which order a policy received.
+FRAME_BGR = (200, 100, 50)
 SERIAL = SERIALS[0]
 
 
@@ -51,6 +55,7 @@ class _Frames:
     def _image(self, channels):
         self._count += 1
         frame = np.zeros((*self._shape, channels), dtype=np.uint8)
+        frame[..., :3] = FRAME_BGR
         frame[0, 0, 0] = self._count % 256
         return frame
 

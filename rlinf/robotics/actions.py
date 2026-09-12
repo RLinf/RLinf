@@ -44,6 +44,9 @@ class ActionKind(enum.Enum):
     HAND = "hand"
     """Finger positions of a dexterous hand."""
 
+    BASE_VELOCITY = "base_velocity"
+    """Velocity of a mobile base in its own frame, such as ``[vx, wz]``."""
+
 
 class ActionPart:
     """Named span of an environment action vector.

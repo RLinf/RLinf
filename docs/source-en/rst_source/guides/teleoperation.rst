@@ -189,12 +189,15 @@ read state but no longer forwards motion:
 
    env:
      eval:
-       override_cfg:
-         teleop_direct_stream: true
+       teleop_direct_stream: true
 
-Enable direct streaming only when tracking visibly lags. Because ``env.step`` no
-longer dispatches joint targets in this mode, a misconfigured rig remains still
-instead of receiving malformed motion.
+The setting sits beside ``teleop``, not in ``override_cfg``, because it changes
+which wrappers a run builds rather than how the robot is configured.
+
+Enable direct streaming only when tracking visibly lags. A streaming device
+names the action parts it delivers, and the step stops commanding those, so the
+two never race one controller at different rates. A misconfigured rig therefore
+remains still instead of receiving malformed motion.
 
 Lag has a second cause that a higher rate does not fix. If the follower reaches
 its targets smoothly but settles behind the leader, the arm's compliance gains

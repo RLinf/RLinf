@@ -17,7 +17,7 @@ import threading
 import time
 import warnings
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -95,6 +95,8 @@ class GimArm(BaseArm):
     position targets. Hardware dependencies are loaded during :meth:`connect`.
     """
 
+    DOF: ClassVar[int] = 6
+
     def __init__(
         self,
         can_interface: str,
@@ -133,7 +135,10 @@ class GimArm(BaseArm):
             return {}
         return {
             "end_effector": MethodEndEffector(
-                self, state_field="gripper_position", is_gripper=True
+                self,
+                state_field="gripper_position",
+                is_gripper=True,
+                open_field="gripper_open",
             )
         }
 

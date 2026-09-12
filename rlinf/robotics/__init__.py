@@ -25,11 +25,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # Provide static types for names exported through lazy __getattr__.
     # Tests keep this list synchronized with _MODULE_GROUPS.
-    from .adapters import (
-        LegacyObservationAdapter,
-        VectorActionAdapter,
-        VectorActionBinding,
-    )
     from .discovery import (
         RobotAutoConfig,
         RobotConfig,
@@ -105,11 +100,6 @@ _MODULE_GROUPS: dict[str, tuple[str, ...]] = {
         "Turtle2Config",
         "Turtle2Robot",
     ),
-    ".adapters": (
-        "LegacyObservationAdapter",
-        "VectorActionAdapter",
-        "VectorActionBinding",
-    ),
     ".discovery": (
         "RobotAutoConfig",
         "RobotConfig",
@@ -148,7 +138,6 @@ __all__ = [
     "FrankaRobot",
     "GimArmConfig",
     "GimArmRobot",
-    "LegacyObservationAdapter",
     "MethodArm",
     "MethodCamera",
     "MethodEndEffector",
@@ -168,8 +157,6 @@ __all__ = [
     "SO101Robot",
     "Turtle2Config",
     "Turtle2Robot",
-    "VectorActionAdapter",
-    "VectorActionBinding",
     "build_robot",
     "register_robot",
 ]

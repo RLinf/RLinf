@@ -66,6 +66,9 @@ env:
     teleop:
       - {gello_joint: {drives: left}}
       - {gello_joint: {drives: right}}
+    # Keep direct_stream ON so the 1 kHz daemon owns the arms and env.step
+    # only reads state and drives the grippers. Pair with the entries above.
+    teleop_direct_stream: true
     # Foot-pedal-driven keyboard wrapper for GELLO collection. The 3-key
     # pedal maps to:
     #   a (pre)  → start a new rec episode at the current pose
@@ -80,21 +83,13 @@ env:
     override_cfg:
       enable_camera_player: true
       task_description: TASK_DESCRIPTION                          # Replace: prompt for this collection
-      joint_action_mode: "absolute"
-      # Safe dual-arm bookkeeping pose (joint-space step does NOT consume
-      # these, but DualFrankaEnv keeps the fields populated for downstream
-      # tooling); same values as the Cartesian collect config.
+      # Absolute joint targets: 'joint_action_scale' is left unset.
+      # Safe dual-arm bookkeeping pose; a joint-space step does not consume it,
+      # but downstream tooling reads it.
       target_ee_pose:
         - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
         - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
-      reset_ee_pose:
-        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
-        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
       success_hold_steps: 1
-      # Keep direct_stream ON so the 1 kHz daemon owns move_joints and
-      # env.step only reads state / grippers.  Pair with
-      # the gello_joint entries above.
-      teleop_direct_stream: true
 
     data_collection:
       enabled: True

@@ -14,6 +14,7 @@
 
 """Robot composition and lifecycle management."""
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .parts.base import PartGroup, RobotPart, RobotPartType
@@ -38,6 +39,35 @@ class Robot(PartGroup):
             f"{cls.__name__} does not implement build(), which only robots "
             "composed from the registry by type name need. Construct "
             f"{cls.__name__}(part=..., ...) directly instead."
+        )
+
+    @classmethod
+    def from_config(
+        cls,
+        config: "RobotConfig",
+        *,
+        cameras: Optional[Mapping[str, Any]] = None,
+        env_idx: int = 0,
+        node_rank: int = 0,
+        worker_rank: int = 0,
+    ) -> "Robot":
+        """Compose an unconnected robot from its registered hardware config.
+
+        This is how an environment gets its robot without knowing which one
+        it is: the config the scheduler hands it names every setting, and the
+        robot class knows which of its build arguments each one feeds.
+
+        Args:
+            config: The hardware config registered for this robot type.
+            cameras: Camera declarations by name, as the policy will see them.
+            env_idx: Index of the environment within its worker.
+            node_rank: Node of the environment using the robot. Parts go
+                there unless the config places them elsewhere.
+            worker_rank: Rank of the environment worker, for worker names.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement from_config(). Call "
+            f"{cls.__name__}.build(...) with the settings it takes instead."
         )
 
     @classmethod

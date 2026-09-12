@@ -19,7 +19,9 @@ from typing import Any, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.spatial.transform import Rotation as R
 
+from rlinf.robotics.fields import FieldMeaning
 from rlinf.robotics.parts.base import Connection, RobotPart
 from rlinf.robotics.parts.views import MethodArm, MethodCamera, MethodEndEffector
 from rlinf.utils.logging import get_logger
@@ -29,6 +31,34 @@ _ARM_SIDES: dict[str, str] = {"left": "follow1", "right": "follow2"}
 
 #: Index of the gripper value inside an arm's pose vector.
 _GRIPPER_STATE_INDEX = 6
+
+#: What this controller's own pose vector holds. The arm view converts it, so
+#: no part reports this; it is kept as the reason the conversion exists.
+_VENDOR_POSE = FieldMeaning("xyz+rpy+gripper_width", "m,rad", 7, frame="base")
+
+
+def _pose_from_vendor(value: ArrayLike) -> np.ndarray:
+    """Canonical ``tcp_pose`` from this controller's own pose vector.
+
+    The controller reports position, xyz Euler angles and the gripper's width
+    in one seven-number vector. The width is the gripper's, and each gripper
+    reports it as its own state, so the pose keeps only the first six numbers
+    and carries the orientation as the ``xyzw`` quaternion every task reads.
+    """
+    vendor = np.asarray(value, dtype=np.float64).reshape(7)
+    quat = R.from_euler("xyz", vendor[3:6]).as_quat()
+    return np.concatenate([vendor[:3], quat]).astype(np.float32)
+
+
+def _pose_to_vendor(value: ArrayLike) -> np.ndarray:
+    """This controller's six-number target from a canonical ``tcp_pose``.
+
+    The gripper is commanded through its own method, so a pose target carries
+    no width.
+    """
+    pose = np.asarray(value, dtype=np.float64).reshape(7)
+    euler = R.from_quat(pose[3:7]).as_euler("xyz")
+    return np.concatenate([pose[:3], euler])
 
 
 @dataclass
@@ -89,6 +119,11 @@ class Turtle2Connection(Connection):
                     "joint_position": f"{prefix}_joints",
                     "joint_current": f"{prefix}_cur_data",
                 },
+                # This controller speaks Euler angles and carries the gripper
+                # width in the pose it reads, so the view converts both ways
+                # and every task sees the canonical pose.
+                decode={"tcp_pose": _pose_from_vendor},
+                encode={"tcp_pose": _pose_to_vendor},
             )
             parts[f"{side}_end_effector"] = MethodEndEffector(
                 self,

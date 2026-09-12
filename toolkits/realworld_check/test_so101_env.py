@@ -293,7 +293,7 @@ def drive(
         if name == "home":
             # The pose the session started from, not all zeros, which stands
             # the arm straight up.
-            target = np.asarray(env.config.reset_joint_qpos, dtype=float)
+            target = np.asarray(env.task.config.reset_joint_qpos, dtype=float)
         elif name == "open":
             grip = 1.0
         elif name == "close":

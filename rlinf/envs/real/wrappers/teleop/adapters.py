@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any, Optional
 
 import gymnasium as gym
@@ -71,30 +72,55 @@ class DualGelloJointStream(TeleopStreamer):
         kwargs["options"] = options
         return kwargs
 
+    #: The roles this device drives, in the order its readings come in.
+    SIDES: tuple[str, str] = ("left", "right")
+
+    @staticmethod
+    def _parts(env: gym.Env) -> Optional[Any]:
+        """The env's bound parts, or ``None`` before it has any."""
+        return getattr(env.unwrapped, "parts", None)
+
     def _arms(self, env: gym.Env) -> tuple[Optional[Any], Optional[Any]]:
-        inner = env.unwrapped
-        return getattr(inner, "_left_arm", None), getattr(inner, "_right_arm", None)
+        parts = self._parts(env)
+        if parts is None:
+            return None, None
+        return tuple(parts.arm(side) for side in self.SIDES)
 
     def _hands(self, env: gym.Env) -> tuple[Optional[Any], Optional[Any]]:
-        inner = env.unwrapped
-        return getattr(inner, "_left_hand", None), getattr(inner, "_right_hand", None)
+        parts = self._parts(env)
+        if parts is None:
+            return None, None
+        return tuple(parts.end_effector(side) for side in self.SIDES)
 
-    @staticmethod
-    def _run_both(env: gym.Env, left: Any, right: Any) -> tuple[Any, Any]:
-        """Run paired controller calls through the env's arm queues."""
-        run = getattr(env.unwrapped, "_run_arm_calls", None)
-        if callable(run):
-            return run(left, right)
-        return left(), right()
+    def _run_both(self, env: gym.Env, left: Any, right: Any) -> tuple[Any, Any]:
+        """Run one call per arm at the same time, and wait for both.
 
-    @staticmethod
-    def _submit_one(env: gym.Env, arm: int, call: Any) -> None:
+        Each role has its own queue on the action layout, so the two arms move
+        together and one arm's controller never costs the other a wait.
+        """
+        layout = getattr(env.unwrapped, "action", None)
+        if layout is None:
+            return left(), right()
+        results: dict[str, Any] = {}
+
+        def keep(side: str, call: Any) -> Callable[[], None]:
+            def run() -> None:
+                results[side] = call()
+
+            return run
+
+        for side, call in zip(self.SIDES, (left, right)):
+            layout.defer(side, keep(side, call))
+        layout.drain()
+        return results.get(self.SIDES[0]), results.get(self.SIDES[1])
+
+    def _submit_one(self, env: gym.Env, arm: int, call: Any) -> None:
         """Queue a gripper edge without delaying the stream."""
-        submit = getattr(env.unwrapped, "_submit_arm_call", None)
-        if callable(submit):
-            submit(arm, call)
-        else:
+        layout = getattr(env.unwrapped, "action", None)
+        if layout is None:
             call()
+            return
+        layout.defer(self.SIDES[arm], call)
 
     def ready_to_stream(self, env: gym.Env) -> bool:
         """Return whether both follower controllers are available."""
@@ -131,12 +157,11 @@ class DualGelloJointStream(TeleopStreamer):
                 np.asarray(right_q, dtype=np.float64).tolist()
             ),
         )
-        inner = env.unwrapped
-        inner._left_state, inner._right_state = self._run_both(
-            env,
-            left_arm.get_state,
-            right_arm.get_state,
-        )
+        # The followers moved outside the step loop, so the env's cached
+        # reading is behind them until it reads again.
+        refresh = getattr(env.unwrapped, "refresh_reading", None)
+        if callable(refresh):
+            refresh()
         return True
 
     def stream_once(self, env: gym.Env) -> None:

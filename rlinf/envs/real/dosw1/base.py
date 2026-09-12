@@ -22,11 +22,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, cast
 
-import cv2
 import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.real.utils.config import get_hardware_config
+from rlinf.envs.real.utils.frames import policy_frame
 from rlinf.envs.real.utils.seeding import seed_sampled_spaces
 from rlinf.envs.real.utils.video import VideoPlayer
 from rlinf.envs.real.wrappers.episode.keyboard import KeyboardListener
@@ -345,6 +345,11 @@ class DOSW1Env(gym.Env):
                         "[DOSW1Env] Failed to toggle leader follow to %s",
                         enabled,
                     )
+
+    @property
+    def num_steps(self) -> int:
+        """Steps taken in the current episode."""
+        return self._num_steps
 
     def _dispatch_action(self, policy_action: np.ndarray) -> np.ndarray:
         if self.control_mode == ControlMode.MODEL:
@@ -748,15 +753,10 @@ class DOSW1Env(gym.Env):
         frames: dict[str, np.ndarray] = {}
         display_frames: dict[str, np.ndarray] = {}
         for camera in self._cameras:
-            frame_rgb = camera.get_frame()
-            height, width = frame_rgb.shape[:2]
-            crop = min(height, width)
-            start_x = (width - crop) // 2
-            start_y = (height - crop) // 2
-            cropped = frame_rgb[start_y : start_y + crop, start_x : start_x + crop]
-            resized = cv2.resize(cropped, (IMAGE_W, IMAGE_H))
-            frames[camera.name] = resized[..., ::-1]
-            display_frames[camera.name] = resized
+            frames[camera.name], _ = policy_frame(
+                camera.get_frame(), (IMAGE_H, IMAGE_W)
+            )
+            display_frames[camera.name] = frames[camera.name][..., ::-1]
         self._camera_player.put_frame(display_frames)
         return frames
 

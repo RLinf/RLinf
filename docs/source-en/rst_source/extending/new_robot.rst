@@ -240,104 +240,130 @@ branches that shared one would run in declaration order.
 3. Use the Robot in a Real-World Environment
 --------------------------------------------
 
-Hardware code says how to move the base. Task code decides where to move it,
-when an episode succeeds, and which subset of the robot a policy controls. The
-following ``RobotTask`` exposes only the base even though the robot also carries
-an arm:
+Hardware code says how to move the base. Two other pieces decide what happens
+on it during an episode: a *task* decides where the base should go and when the
+episode succeeds, and an *action layout* decides what a policy's numbers mean.
+Neither is specific to this robot. ``TaskEnv`` takes the composed robot, a
+task, and the layout, and runs episodes with them:
 
 .. code-block:: python
 
-   import gymnasium as gym
+   from rlinf.envs.real.policy import (
+       ActionLayout,
+       Channel,
+       Command,
+       ObservationSpec,
+       Phase,
+       Source,
+       StateKey,
+   )
+   from rlinf.envs.real.task_env import TaskEnv, TaskEnvConfig
+   from rlinf.envs.real.tasks import Evaluation, Needs, Task
+   from rlinf.robotics import MobileBase
+   from rlinf.robotics.actions import ActionKind
 
-   from rlinf.envs.real.task_env import RobotTask, RobotTaskEnv
 
+   class DriveToTarget(Task):
+       DESCRIPTION = "drive the mobile manipulator to the target"
 
-   class DriveToTarget(RobotTask):
-       def __init__(self, target_xy: np.ndarray):
+       def __init__(self, target_xy):
+           super().__init__()
            self.target_xy = np.asarray(target_xy, dtype=np.float32)
 
-       @property
-       def description(self) -> str:
-           return "drive the mobile manipulator to the target"
+       def requirements(self):
+           return {"base": Needs(kind=MobileBase, observes=frozenset({"pose"}))}
 
-       @property
-       def observation_space(self) -> gym.Space:
-           return gym.spaces.Dict(
-               {
-                   "base": gym.spaces.Dict(
-                       {
-                           "pose": gym.spaces.Box(
-                               -np.inf, np.inf, shape=(3,), dtype=np.float32
-                           )
-                       }
-                   )
-               }
+       def reset(self, parts, context):
+           parts.part("base").reset()
+
+       def evaluate(self, reading, applied):
+           position = reading.part("base")["pose"][:2]
+           reached = float(np.linalg.norm(position - self.target_xy)) < 0.05
+           return Evaluation(reward=float(reached), in_zone=reached)
+
+
+   class Drive(Channel):
+       """Two numbers, straight onto the base's velocity."""
+
+       LIMITS = np.array([0.5, 1.0], dtype=np.float32)
+
+       def __init__(self):
+           super().__init__(
+               role="base",
+               name="base",
+               width=2,
+               kind=ActionKind.BASE_VELOCITY,
+               phase=Phase.WITH,
            )
 
-       @property
-       def action_space(self) -> gym.Space:
-           return gym.spaces.Dict(
-               {
-                   "base": gym.spaces.Dict(
-                       {
-                           "velocity": gym.spaces.Box(
-                               low=np.array([-0.5, -1.0], dtype=np.float32),
-                               high=np.array([0.5, 1.0], dtype=np.float32),
-                           )
-                       }
-                   )
-               }
-           )
+       def bounds(self):
+           return -self.LIMITS, self.LIMITS
 
-       @staticmethod
-       def observe(robot: Robot) -> dict:
-           return {"base": robot.get_observation()["base"]}
+       def requirements(self):
+           return {
+               "base": Needs(kind=MobileBase, commands=frozenset({"velocity"}))
+           }
 
-       def reset(self, robot: Robot, *, seed=None, options=None):
-           del seed, options
-           robot.reset()
-           return self.observe(robot), {}
-
-       def step(self, robot: Robot, action: dict):
-           robot.send_action(action)
-           observation = self.observe(robot)
-           distance = float(
-               np.linalg.norm(observation["base"]["pose"][:2] - self.target_xy)
-           )
-           reached = distance < 0.05
-           return observation, float(reached), reached, False, {"distance": distance}
+       def command(self, parts, values, reading):
+           return Command(send={"base": {"velocity": values}})
 
 
-   env = RobotTaskEnv(robot, DriveToTarget(np.array([1.0, 0.0])))
+   env = TaskEnv(
+       robot,
+       DriveToTarget([1.0, 0.0]),
+       ActionLayout((Drive(),)),
+       observation=ObservationSpec(
+           (StateKey("base_pose", (3,), (Source("pose", role="base"),)),)
+       ),
+       config=TaskEnvConfig(max_num_steps=200),
+   )
    try:
        observation, info = env.reset()
        observation, reward, terminated, truncated, info = env.step(
-           {"base": {"velocity": np.array([0.1, 0.0], dtype=np.float32)}}
+           np.array([0.1, 0.0], dtype=np.float32)
        )
    finally:
        env.close()
 
-Read the task in the order the environment calls it. ``observation_space`` and
-``action_space`` declare the policy boundary before an episode starts;
-``observe()`` then selects the matching ``base`` branch from the larger robot
-observation. ``reset()`` stops and resets the robot before returning the first
-observation. On each step, ``step()`` sends the canonical action, reads the new
-pose, and derives reward, termination, and diagnostic information from the same
-state.
+Read the example in the order the environment uses it. Both the task and the
+channel name the role ``base`` and state what the part filling it must be,
+report, and accept. ``TaskEnv`` binds each role to a part of the composed robot
+and checks those declarations before it connects anything: a robot with no
+``MobileBase``, or one whose base does not accept ``velocity``, is refused with
+a ``RequirementError`` that names the role and what the part offers. Only then
+does construction connect the robot.
 
-``RobotTaskEnv(robot, task)`` joins these task rules to the composed runtime. It
-connects the robot during construction, forwards Gymnasium ``reset()`` and
-``step()`` to the task, and disconnects in ``close()``. A manipulation task can
-expand both spaces and the action dictionary with ``arm`` and
-``end_effector``; the base driver and robot composition remain unchanged.
+``reset()`` calls the task's ``reset``, which stops the base, and returns the
+first observation. Each ``step()`` clips the action to the layout's bounds,
+lets each channel turn its own slice into a part command, waits out the control
+period, reads the whole robot once, and asks the task to score that reading.
+``ObservationSpec`` says what the policy sees: here one ``state`` entry,
+``base_pose``, read from the base's ``pose``. ``close()`` disconnects the
+robot.
 
-To launch the task through RLinf's distributed ``RealWorldEnv``, register the
-environment with Gymnasium and set ``env_type: real`` plus its Gym ID in the env
-YAML. The current rollout interface expects policy-facing ``state`` and
-``frames`` observations, so add ``LegacyObservationAdapter`` and
-``VectorActionAdapter`` when the policy uses that representation. Follow
-:doc:`New Real-World Tasks <new_task>` for registration, YAML, wrappers, and
-compatibility checks.
+A channel that drives a part slower than the control period should not make the
+step wait for it. Such a channel decides on the calling thread, so the step
+still reports what it asked for, and returns the actuation as ``Command.defer``
+instead of running it. The layout runs deferred work on a queue per role, in
+the order it was handed over, and lets it finish before the next reset and
+before the environment closes. ``BinaryGripper(awaited=False)`` is the shipped
+example: a gripper whose fingers take longer to close than one tick of a 10 Hz
+loop.
+
+The arm is on the robot but untouched, because neither the task nor the layout
+names it. A manipulation task adds an ``arm`` role, and the layout gains that
+arm's channels beside the base's; the base driver and the robot composition
+stay as they are. That is also how a second arm is added, since a channel names
+the role it drives. RLinf ships channels for joint targets, tool-pose deltas
+and end effectors in ``rlinf.envs.real.policy``, and tasks such as joint reach
+in ``rlinf.envs.real.tasks``, and any of them runs on this robot wherever its
+requirements are met.
+
+To launch a task through RLinf's distributed ``RealWorldEnv``, give it a
+Gymnasium ID. Subclass ``RegisteredTaskEnv`` once for the robot, naming its
+robot class and control and describing what its policy observes, and once per
+task on top of that. Follow :doc:`New Real-World Tasks <new_task>` for
+registration, YAML, and wrappers.
 
 4. Place the Same Composition on Hardware Nodes
 ------------------------------------------------
@@ -458,7 +484,7 @@ absorbed by ``**kwargs`` and silently ignored.
 .. warning::
 
    Call ``connect()`` before reading observations or sending commands, and
-   ``disconnect()`` during teardown. ``RobotTaskEnv`` performs both lifecycle
+   ``disconnect()`` during teardown. ``TaskEnv`` performs both lifecycle
    operations when it owns the robot.
 
 6. Register the Robot Type
@@ -487,7 +513,8 @@ robot composition. After the robot type is registered, callers can use either
 ``Robot.of_type("MobileManipulator", ...)`` or the convenience function
 ``build_robot("MobileManipulator", ...)``. Both calls still require the
 builder's keyword arguments; registration does not turn a hardware config into
-those arguments automatically.
+those arguments. The robot's own ``from_config()``, described with the cluster
+configuration below, is where that translation lives.
 
 For an in-tree implementation, place the module under
 ``rlinf/robotics/robots/`` and import it from that package's ``__init__.py``.
@@ -535,28 +562,55 @@ node. The env config selects the Gym ID separately, so the same hardware
 composition can serve navigation, mobile manipulation, or data-collection
 tasks.
 
-The environment receives that ``RobotInfo`` and calls the registered builder
-explicitly. This is the visible boundary where scheduler metadata such as the
-env worker rank is added:
+The environment receives that ``RobotInfo`` and turns its config into a robot
+through ``from_config()``. Implement it on the robot class beside ``build()``,
+so the translation from config fields to builder arguments is written once
+rather than in every environment that uses the robot:
 
 .. code-block:: python
 
-   hardware = robot_info.config
-   robot = build_robot(
-       "MobileManipulator",
-       base_backend=hardware.base_backend,
-       base_endpoint=hardware.base_endpoint,
-       arm_ip=hardware.arm_ip,
-       node_rank=hardware.node_rank,
-       controller_node_rank=hardware.controller_node_rank,
-       worker_rank=worker_info.rank,
+   class MobileManipulator(Robot):
+       ...
+
+       @classmethod
+       def from_config(
+           cls,
+           config: MobileManipulatorConfig,
+           *,
+           cameras=None,
+           env_idx: int = 0,
+           node_rank: int = 0,
+           worker_rank: int = 0,
+       ) -> "MobileManipulator":
+           return cls.build(
+               base_backend=config.base_backend,
+               base_endpoint=config.base_endpoint,
+               arm_ip=config.arm_ip,
+               node_rank=node_rank,
+               controller_node_rank=config.controller_node_rank,
+               worker_rank=worker_rank,
+               env_idx=env_idx,
+           )
+
+The config supplies the hardware. The keyword arguments supply what only the
+environment knows: the node it runs on, its worker rank and index, and the
+cameras its policy reads, which this robot does not carry. Parts run on
+``node_rank`` unless the config places them elsewhere, as
+``controller_node_rank`` does for the arm. The environment then builds the robot
+without restating any hardware field:
+
+.. code-block:: python
+
+   robot = MobileManipulator.from_config(
+       robot_info.config,
        env_idx=env_idx,
+       node_rank=worker_info.cluster_node_rank,
+       worker_rank=worker_info.rank,
    )
 
-Keeping this call explicit prevents the hardware registry from becoming an
-implicit adapter between unrelated config shapes. If several environments use
-the same robot, place the translation in shared setup code rather than copying
-it into each task.
+Name every field ``from_config()`` forwards, as ``build()`` names every
+argument it takes. The mapping stays short, and it is the one place a reader
+looks to see which setting reaches which part.
 
 8. Test the Integration
 -----------------------

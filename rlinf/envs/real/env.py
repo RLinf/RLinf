@@ -28,7 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
 from rlinf.envs.real.venv import NoAutoResetSyncVectorEnv
-from rlinf.envs.utils import to_tensor
+from rlinf.envs.utils import get_env_attr, to_tensor
 from rlinf.robotics.discovery import RobotInfo
 from rlinf.scheduler import WorkerInfo
 
@@ -68,8 +68,6 @@ class RealWorldEnv(gym.Env):
             cfg.get("override_cfg", OmegaConf.create({})), resolve=True
         )
 
-        self.video_cfg = cfg.video_cfg
-
         self.seed = cfg.seed + seed_offset
         self.num_envs = num_envs
         self.total_num_processes = total_num_processes
@@ -88,7 +86,6 @@ class RealWorldEnv(gym.Env):
 
         self._is_start = True
         self._init_metrics()
-        self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self._init_reset_state_ids()
 
     def _create_env(self, env_idx: int) -> gym.Env:
@@ -200,13 +197,18 @@ class RealWorldEnv(gym.Env):
 
     @property
     def elapsed_steps(self) -> np.ndarray:
-        return self._elapsed_steps
+        """Steps each environment has taken, as that environment counts them.
+
+        The episode belongs to the environment, so its own counter is the one
+        reported and the one the timeout is measured against.
+        """
+        return np.array(
+            [env.get_wrapper_attr("num_steps") for env in self.env.envs],
+            dtype=np.int32,
+        )
 
     def _init_metrics(self) -> None:
-        self.prev_step_reward = np.zeros(self.num_envs)
-
         self.success_once = np.zeros(self.num_envs, dtype=bool)
-        self.fail_once = np.zeros(self.num_envs, dtype=bool)
         self.returns = np.zeros(self.num_envs)
         self.intervened_once = np.zeros(self.num_envs, dtype=bool)
         self.intervened_steps = np.zeros(self.num_envs, dtype=int)
@@ -215,19 +217,13 @@ class RealWorldEnv(gym.Env):
         if env_idx is not None:
             mask = np.zeros(self.num_envs, dtype=bool)
             mask[env_idx] = True
-            self.prev_step_reward[mask] = 0.0
             self.success_once[mask] = False
-            self.fail_once[mask] = False
             self.returns[mask] = 0
-            self._elapsed_steps[mask] = 0
             self.intervened_once[mask] = False
             self.intervened_steps[mask] = 0
         else:
-            self.prev_step_reward[:] = 0
             self.success_once[:] = False
-            self.fail_once[:] = False
             self.returns[:] = 0.0
-            self._elapsed_steps[:] = 0
             self.intervened_once[:] = False
             self.intervened_steps[:] = 0
 
@@ -247,8 +243,14 @@ class RealWorldEnv(gym.Env):
 
         episode_info["success_once"] = self.success_once.copy()
         episode_info["return"] = self.returns.copy()
-        episode_info["episode_len"] = self.elapsed_steps.copy()
-        episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_len = self.elapsed_steps
+        episode_info["episode_len"] = episode_len
+        episode_info["reward"] = np.divide(
+            episode_info["return"],
+            episode_len,
+            out=np.zeros_like(episode_info["return"], dtype=float),
+            where=episode_len > 0,
+        )
         episode_info["intervened_once"] = self.intervened_once
         episode_info["intervened_steps"] = self.intervened_steps
         episode_info["success_no_intervened"] = self.success_once.copy() & (
@@ -275,25 +277,41 @@ class RealWorldEnv(gym.Env):
             self._reset_metrics()
         return extracted_obs, infos
 
+    def _state_order(self, state: Mapping[str, Any]) -> tuple[str, ...]:
+        """The order the state keys concatenate in, as the env declares it.
+
+        A policy is trained against one order, so the environment's own
+        observation layout names it. An environment without a declared layout
+        keeps the sorted order every shipped checkpoint was trained on.
+        """
+        spec = get_env_attr(self.env.envs[0], "observation", None)
+        order = getattr(spec, "flatten", None)
+        return order() if callable(order) else tuple(sorted(state))
+
     def _wrap_obs(self, raw_obs: Mapping[str, Any]) -> Observation:
         """Convert batched raw observations to the runner representation."""
         obs = {}
 
         state = raw_obs["state"]
-        full_states = np.concatenate([state[k] for k in sorted(state)], axis=-1)
+        full_states = np.concatenate(
+            [state[key] for key in self._state_order(state)], axis=-1
+        )
         obs["states"] = full_states
 
-        frames = raw_obs["frames"]
-        if self.main_image_key not in frames:
-            raise KeyError(
-                f"main_image_key {self.main_image_key!r} not in {list(frames)}"
-            )
-        obs["main_images"] = frames[self.main_image_key]
-        raw_images = OrderedDict(sorted(frames.items()))
-        raw_images.pop(self.main_image_key)
+        # A camera-free rig reports no frames at all, and a state-only policy
+        # reads none.
+        frames = raw_obs.get("frames")
+        if frames:
+            if self.main_image_key not in frames:
+                raise KeyError(
+                    f"main_image_key {self.main_image_key!r} not in {list(frames)}"
+                )
+            obs["main_images"] = frames[self.main_image_key]
+            raw_images = OrderedDict(sorted(frames.items()))
+            raw_images.pop(self.main_image_key)
 
-        if raw_images:
-            obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            if raw_images:
+                obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
         raw_depths = raw_obs.get("depths")
         if raw_depths:
@@ -320,19 +338,22 @@ class RealWorldEnv(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
-        self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        # A null limit delegates episode boundaries to an external wrapper.
-        if self.cfg.max_episode_steps is None:
-            timeout_truncations = np.zeros_like(truncations, dtype=bool)
-        else:
-            timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
-        if not self.manual_episode_control_only:
-            truncations = timeout_truncations
+        # The environment truncates on its own horizon; this is the runner's
+        # cap on top of it. A null limit leaves the boundary to the env and to
+        # any episode wrapper above it.
+        truncations = np.asarray(truncations, dtype=bool).reshape(self.num_envs)
+        if (
+            self.cfg.max_episode_steps is not None
+            and not self.manual_episode_control_only
+        ):
+            truncations = truncations | (
+                self.elapsed_steps >= self.cfg.max_episode_steps
+            )
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
-        success_current_step = np.isclose(step_reward, 1.0)
+        success_current_step = self._success_from(infos, step_reward)
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):
@@ -491,6 +512,18 @@ class RealWorldEnv(gym.Env):
 
     def _calc_step_reward(self, reward: np.ndarray) -> np.ndarray:
         return reward.astype(np.float32)
+
+    def _success_from(self, infos: EnvInfos, step_reward: np.ndarray) -> np.ndarray:
+        """Whether each environment counted this step as reaching its goal.
+
+        The environment reports it, because a reward that has been scaled or
+        charged a gripper penalty no longer says so. An environment that does
+        not report it yet is read the old way, from a reward of exactly one.
+        """
+        reported = infos.get("in_zone")
+        if reported is None:
+            return np.isclose(step_reward, 1.0)
+        return np.asarray(reported, dtype=bool).reshape(self.num_envs)
 
     def _get_random_reset_state_ids(self, num_reset_states: int) -> np.ndarray:
         reset_state_ids = self._generator.integers(

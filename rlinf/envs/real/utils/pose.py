@@ -13,16 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from numpy.typing import ArrayLike
 from scipy.spatial.transform import Rotation as R
-
-
-def normalize(q: ArrayLike) -> np.ndarray:
-    q = np.array(q, dtype=float)
-    n = np.linalg.norm(q)
-    if n == 0:
-        raise ValueError("Zero-norm quaternion")
-    return q / n
 
 
 def wrap_to_pi(angle: float | np.ndarray) -> float | np.ndarray:
@@ -55,48 +46,6 @@ def clip_euler_to_target_window(
     upper_delta = upper_euler - target_euler
     clipped_delta = np.clip(delta, lower_delta, upper_delta)
     return wrap_to_pi(target_euler + clipped_delta)
-
-
-def quat_slerp(q0: ArrayLike, q1: ArrayLike, t: float) -> np.ndarray:
-    """Spherically interpolate between two quaternions."""
-
-    q0 = normalize(q0)
-    q1 = normalize(q1)
-
-    dot = np.dot(q0, q1)
-
-    # Align quaternion hemispheres to follow the shortest path.
-    if dot < 0:
-        q1 = -q1
-        dot = -dot
-
-    dot = np.clip(dot, -1.0, 1.0)
-
-    if np.isscalar(t):
-        t_arr = np.linspace(0, 1, t, dtype=float)
-    else:
-        t_arr = np.array(t, dtype=float)
-
-    results = []
-
-    # Use normalized linear interpolation for nearly identical quaternions.
-    if dot > 0.9995:
-        for tt in t_arr:
-            q = normalize(q0 + tt * (q1 - q0))
-            results.append(q)
-    else:
-        theta_0 = np.arccos(dot)
-        sin_theta_0 = np.sin(theta_0)
-
-        for tt in t_arr:
-            theta = theta_0 * tt
-            s0 = np.sin(theta_0 - theta) / sin_theta_0
-            s1 = np.sin(theta) / sin_theta_0
-            q = s0 * q0 + s1 * q1
-            results.append(q)
-
-    results = np.stack(results)
-    return results
 
 
 def construct_adjoint_matrix(tcp_pose: np.ndarray) -> np.ndarray:

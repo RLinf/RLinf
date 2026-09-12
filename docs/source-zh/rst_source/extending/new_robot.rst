@@ -175,85 +175,96 @@ Franka builder 将末端执行器单独返回，是因为 Franka Hand 会打开�
 3. 在真机环境中使用组合机器人
 ------------------------------
 
-硬件代码定义底盘如何运动，任务代码则定义目标位置、成功条件以及 policy 实际控制的零部件。下面的 ``RobotTask`` 只向 policy 提供底盘观测和动作；同一机器人中已经组合的机械臂保持空闲：
+硬件代码定义底盘如何运动。episode 中还有两件事需要决定：任务（task）决定底盘应当到达哪里、何时算作成功，动作布局（action layout）决定 policy 输出的数字表示什么含义。二者都不依赖这台机器人。``TaskEnv`` 接收组合好的机器人、一个任务和这个布局，并用它们运行 episode：
 
 .. code-block:: python
 
-   import gymnasium as gym
+   from rlinf.envs.real.policy import (
+       ActionLayout,
+       Channel,
+       Command,
+       ObservationSpec,
+       Phase,
+       Source,
+       StateKey,
+   )
+   from rlinf.envs.real.task_env import TaskEnv, TaskEnvConfig
+   from rlinf.envs.real.tasks import Evaluation, Needs, Task
+   from rlinf.robotics import MobileBase
+   from rlinf.robotics.actions import ActionKind
 
-   from rlinf.envs.real.task_env import RobotTask, RobotTaskEnv
 
+   class DriveToTarget(Task):
+       DESCRIPTION = "drive the mobile manipulator to the target"
 
-   class DriveToTarget(RobotTask):
-       def __init__(self, target_xy: np.ndarray):
+       def __init__(self, target_xy):
+           super().__init__()
            self.target_xy = np.asarray(target_xy, dtype=np.float32)
 
-       @property
-       def description(self) -> str:
-           return "drive the mobile manipulator to the target"
+       def requirements(self):
+           return {"base": Needs(kind=MobileBase, observes=frozenset({"pose"}))}
 
-       @property
-       def observation_space(self) -> gym.Space:
-           return gym.spaces.Dict(
-               {
-                   "base": gym.spaces.Dict(
-                       {
-                           "pose": gym.spaces.Box(
-                               -np.inf, np.inf, shape=(3,), dtype=np.float32
-                           )
-                       }
-                   )
-               }
+       def reset(self, parts, context):
+           parts.part("base").reset()
+
+       def evaluate(self, reading, applied):
+           position = reading.part("base")["pose"][:2]
+           reached = float(np.linalg.norm(position - self.target_xy)) < 0.05
+           return Evaluation(reward=float(reached), in_zone=reached)
+
+
+   class Drive(Channel):
+       """两个数字，直接作为底盘速度。"""
+
+       LIMITS = np.array([0.5, 1.0], dtype=np.float32)
+
+       def __init__(self):
+           super().__init__(
+               role="base",
+               name="base",
+               width=2,
+               kind=ActionKind.BASE_VELOCITY,
+               phase=Phase.WITH,
            )
 
-       @property
-       def action_space(self) -> gym.Space:
-           return gym.spaces.Dict(
-               {
-                   "base": gym.spaces.Dict(
-                       {
-                           "velocity": gym.spaces.Box(
-                               low=np.array([-0.5, -1.0], dtype=np.float32),
-                               high=np.array([0.5, 1.0], dtype=np.float32),
-                           )
-                       }
-                   )
-               }
-           )
+       def bounds(self):
+           return -self.LIMITS, self.LIMITS
 
-       @staticmethod
-       def observe(robot: Robot) -> dict:
-           return {"base": robot.get_observation()["base"]}
+       def requirements(self):
+           return {
+               "base": Needs(kind=MobileBase, commands=frozenset({"velocity"}))
+           }
 
-       def reset(self, robot: Robot, *, seed=None, options=None):
-           del seed, options
-           robot.reset()
-           return self.observe(robot), {}
-
-       def step(self, robot: Robot, action: dict):
-           robot.send_action(action)
-           observation = self.observe(robot)
-           distance = float(
-               np.linalg.norm(observation["base"]["pose"][:2] - self.target_xy)
-           )
-           reached = distance < 0.05
-           return observation, float(reached), reached, False, {"distance": distance}
+       def command(self, parts, values, reading):
+           return Command(send={"base": {"velocity": values}})
 
 
-   env = RobotTaskEnv(robot, DriveToTarget(np.array([1.0, 0.0])))
+   env = TaskEnv(
+       robot,
+       DriveToTarget([1.0, 0.0]),
+       ActionLayout((Drive(),)),
+       observation=ObservationSpec(
+           (StateKey("base_pose", (3,), (Source("pose", role="base"),)),)
+       ),
+       config=TaskEnvConfig(max_num_steps=200),
+   )
    try:
        observation, info = env.reset()
        observation, reward, terminated, truncated, info = env.step(
-           {"base": {"velocity": np.array([0.1, 0.0], dtype=np.float32)}}
+           np.array([0.1, 0.0], dtype=np.float32)
        )
    finally:
        env.close()
 
-应按照 env 的调用顺序理解这段任务代码。``observation_space`` 与 ``action_space`` 在 episode 开始前声明 policy 边界，``observe()`` 再从完整机器人观测中选出对应的 ``base`` 分支。``reset()`` 先停止并复位机器人，再返回首个观测；每次调用 ``step()`` 时，任务依次下发标准动作、读取新位姿，并从同一份状态计算奖励、终止条件和诊断信息。
+应按照 env 的调用顺序理解这段代码。任务和通道（channel）都声明了 ``base`` 这个角色（role），并说明承担该角色的零部件必须是什么类别、报告哪些字段、接受哪些命令。``TaskEnv`` 会在连接任何设备之前，把每个角色绑定到组合机器人上的零部件，并逐项核对这些声明：如果机器人没有 ``MobileBase``，或者底盘不接受 ``velocity``，构造会抛出 ``RequirementError``，并指出是哪个角色、对应零部件实际提供了什么。核对通过后，构造过程才会连接机器人。
 
-``RobotTaskEnv(robot, task)`` 将这些任务规则与组合机器人连接起来。构造 env 时会连接机器人，Gymnasium 的 ``reset()`` 与 ``step()`` 会转发给任务，``close()`` 则负责断开。移动操作任务可以在两类 space 和动作字典中加入 ``arm`` 与 ``end_effector``，无需修改底盘 driver 或机器人组合。
+``reset()`` 调用任务的 ``reset``\ （这里是让底盘停下），再返回首个观测。每次 ``step()`` 先把动作裁剪到布局声明的范围内，由每个通道把自己那一段转换成零部件命令，等待一个控制周期，然后对整台机器人读取一次，并请任务基于这次读数评分。``ObservationSpec`` 描述 policy 看到的内容：这里只有一个 ``state`` 条目 ``base_pose``，读自底盘的 ``pose``。``close()`` 负责断开机器人。
 
-如需通过 RLinf 分布式 ``RealWorldEnv`` 启动该任务，应先注册 Gymnasium ID，并在 env YAML 中设置 ``env_type: real`` 和对应 ID。当前 rollout 接口使用面向 policy 的 ``state`` 与 ``frames`` 观测；已有 policy 采用该表示时，请在环境边界配置 ``LegacyObservationAdapter`` 和 ``VectorActionAdapter``。任务注册、YAML、wrapper 与兼容性检查请参阅 :doc:`新增真机任务 <new_task>`。
+如果某个通道驱动的零部件比控制周期更慢，就不应让 step 等待它。这类通道在调用线程上完成判断，因此发出请求的那一步仍然能报告自己做了什么，而把实际动作放在 ``Command.defer`` 中交还给布局，不在当场执行。布局按角色分队列运行这些延迟命令，同一角色保持交付顺序，并在下一次 reset 之前和环境关闭之前等待它们完成。``BinaryGripper(awaited=False)`` 就是内置的例子：夹爪合拢所需的时间超过 10 Hz 控制循环的一个周期。
+
+机械臂虽然在机器人上，却不会被驱动，因为任务和布局都没有提到它。移动操作任务会增加一个 ``arm`` 角色，布局中也会在底盘通道旁加入机械臂的通道；底盘 driver 与机器人组合都无需改动。由于通道自己声明驱动哪个角色，增加第二条机械臂也是同样的做法。RLinf 在 ``rlinf.envs.real.policy`` 中提供了关节目标、末端位姿增量和末端执行器等通道，在 ``rlinf.envs.real.tasks`` 中提供了关节到达等任务，只要这台机器人满足它们的要求，就可以直接运行。
+
+如需通过 RLinf 分布式 ``RealWorldEnv`` 启动任务，需要为它注册 Gymnasium ID：先为这台机器人继承一次 ``RegisteredTaskEnv``，写明机器人类、它的动作通道以及 policy 的观测内容，再为每个任务各继承一层。注册、YAML 与 wrapper 的具体做法请参阅 :doc:`新增真机任务 <new_task>`。
 
 4. 将同一组合部署到硬件节点
 ----------------------------
@@ -346,7 +357,7 @@ placement 只决定各条连接在哪个节点打开，不改变任务访问零�
 
 .. warning::
 
-   读取观测或发送命令前必须调用 ``connect()``，清理阶段必须调用 ``disconnect()``。由 ``RobotTaskEnv`` 持有机器人时，这两个生命周期操作分别在环境创建和 ``close()`` 中完成。
+   读取观测或发送命令前必须调用 ``connect()``，清理阶段必须调用 ``disconnect()``。由 ``TaskEnv`` 持有机器人时，这两个生命周期操作分别在环境创建和 ``close()`` 中完成。
 
 6. 注册机器人类型
 -----------------
@@ -359,7 +370,7 @@ builder 已经能够根据明确参数构造机器人；注册则为这一组合
 
 标准 discovery 流程会筛选属于当前节点的配置，通过同名大写环境变量补全未设置字段，并为每项配置返回一条硬件记录。如果配置包含相机字段，该流程还会复用公共的相机发现与校验逻辑。只有机器人的枚举方式确实不同时，才需要将自定义 ``RobotDiscovery`` 子类作为第二个参数传给 ``register_type()``。
 
-``Connection.register()`` 与 ``Robot.register_type()`` 对应两个不同的 registry：前者注册单个设备 driver，后者注册整台机器人的组合。完成机器人类型注册后，调用方既可以使用 ``Robot.of_type("MobileManipulator", ...)``，也可以调用便捷函数 ``build_robot("MobileManipulator", ...)``。两种方式都需要提供 builder 声明的参数；注册操作不会自动将硬件配置转换为这些参数。
+``Connection.register()`` 与 ``Robot.register_type()`` 对应两个不同的 registry：前者注册单个设备 driver，后者注册整台机器人的组合。完成机器人类型注册后，调用方既可以使用 ``Robot.of_type("MobileManipulator", ...)``，也可以调用便捷函数 ``build_robot("MobileManipulator", ...)``。两种方式都需要提供 builder 声明的参数；注册操作不会将硬件配置转换为这些参数，这一转换由机器人自身的 ``from_config()`` 完成，下文配置集群时会介绍。
 
 项目内置实现应放在 ``rlinf/robotics/robots/`` 下，并由该目录的 ``__init__.py`` 导入。这样，无论构造 ``Cluster`` 还是运行检查脚本，导入 ``rlinf.robotics.robots`` 时都会先完成注册。项目外部的集成则需在自己的 entry point 中显式导入注册模块。node probe 也会导入已注册的机器人模块，因此每个节点配置的 Python 环境都必须能够导入该模块。
 
@@ -389,23 +400,45 @@ builder 已经能够根据明确参数构造机器人；注册则为这一组合
 
 这些字段与前文的构造流程逐一对应：``type`` 选择已注册的机器人，每个 ``configs`` 项生成一条硬件记录；``node_rank`` 指定该记录由哪个节点持有，``base_backend`` 和两个地址标识具体设备，``controller_node_rank`` 则将复用的 Franka connection 部署到控制节点。env 配置另行选择 Gym ID，因此同一套硬件组合可以服务于导航、移动操作或数据采集任务。
 
-env 收到 ``RobotInfo`` 后，需要显式调用已注册的 builder。scheduler 提供的 env worker rank 等运行时信息也在这一边界加入：
+env 收到 ``RobotInfo`` 后，通过 ``from_config()`` 将其中的配置转换为机器人。该方法与 ``build()`` 一同实现在机器人类上，这样从配置字段到 builder 参数的转换只需编写一次，不必在每个使用该机器人的 env 中重复：
 
 .. code-block:: python
 
-   hardware = robot_info.config
-   robot = build_robot(
-       "MobileManipulator",
-       base_backend=hardware.base_backend,
-       base_endpoint=hardware.base_endpoint,
-       arm_ip=hardware.arm_ip,
-       node_rank=hardware.node_rank,
-       controller_node_rank=hardware.controller_node_rank,
-       worker_rank=worker_info.rank,
+   class MobileManipulator(Robot):
+       ...
+
+       @classmethod
+       def from_config(
+           cls,
+           config: MobileManipulatorConfig,
+           *,
+           cameras=None,
+           env_idx: int = 0,
+           node_rank: int = 0,
+           worker_rank: int = 0,
+       ) -> "MobileManipulator":
+           return cls.build(
+               base_backend=config.base_backend,
+               base_endpoint=config.base_endpoint,
+               arm_ip=config.arm_ip,
+               node_rank=node_rank,
+               controller_node_rank=config.controller_node_rank,
+               worker_rank=worker_rank,
+               env_idx=env_idx,
+           )
+
+硬件信息来自配置；关键字参数则提供只有 env 才知道的信息：它所在的节点、worker rank 与序号，以及 policy 读取的相机（这台机器人本身不带相机）。零部件默认部署在 ``node_rank`` 上，配置另行指定时除外，例如机械臂由 ``controller_node_rank`` 决定。env 随后无需重复任何硬件字段即可构造机器人：
+
+.. code-block:: python
+
+   robot = MobileManipulator.from_config(
+       robot_info.config,
        env_idx=env_idx,
+       node_rank=worker_info.cluster_node_rank,
+       worker_rank=worker_info.rank,
    )
 
-显式保留这次调用，可以避免硬件 registry 隐式转换不同层的配置结构。如果多个 env 共用同一种机器人，应将这段转换逻辑放入公共的硬件初始化代码，而不是复制到每个任务中。
+``from_config()`` 应逐一写明转发的字段，正如 ``build()`` 逐一写明接受的参数。这段映射很短，读者要确认某项设置最终作用于哪个零部件时，只需查看这一处。
 
 8. 测试集成
 -----------

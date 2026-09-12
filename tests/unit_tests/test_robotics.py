@@ -46,7 +46,6 @@ from rlinf.robotics import (
     EndEffector,
     FrankaRobot,
     GimArmConfig,
-    LegacyObservationAdapter,
     MethodArm,
     MethodEndEffector,
     PartGroup,
@@ -56,8 +55,6 @@ from rlinf.robotics import (
     RobotDiscovery,
     RobotPart,
     Turtle2Config,
-    VectorActionAdapter,
-    VectorActionBinding,
     register_robot,
 )
 from rlinf.robotics.parts.arms import (
@@ -436,46 +433,6 @@ def test_a_connection_hands_out_the_part_it_backs_not_a_controllable_one():
     assert not isinstance(wrist, ControllablePart)
     with pytest.raises(TypeError, match="not controllable"):
         Robot(wrist=wrist).send_action({"wrist": {}})
-
-
-def test_legacy_adapters_preserve_policy_facing_layouts():
-    canonical_observation = {
-        "arms": {
-            "left": {"state": {"joint_position": np.arange(6)}},
-            "right": {"state": {"joint_position": np.arange(6, 12)}},
-        },
-        "cameras": {
-            "front": {"rgb": np.zeros((8, 8, 3), dtype=np.uint8)},
-        },
-    }
-    observation_adapter = LegacyObservationAdapter(
-        state_fields={
-            "left_joint_position": ("arms", "left", "state", "joint_position"),
-            "right_joint_position": (
-                "arms",
-                "right",
-                "state",
-                "joint_position",
-            ),
-        },
-        frame_fields={"front": ("cameras", "front", "rgb")},
-    )
-    action_adapter = VectorActionAdapter(
-        action_dim=12,
-        bindings=[
-            VectorActionBinding(("arms", "left", "arm", "target"), 0, 6),
-            VectorActionBinding(("arms", "right", "arm", "target"), 6, 12),
-        ],
-    )
-
-    legacy_observation = observation_adapter.adapt(canonical_observation)
-    canonical_action = action_adapter.adapt(np.arange(12))
-
-    assert set(legacy_observation) == {"state", "frames"}
-    assert legacy_observation["state"]["left_joint_position"].tolist() == list(range(6))
-    assert canonical_action["arms"]["right"]["arm"]["target"].tolist() == list(
-        range(6, 12)
-    )
 
 
 def test_all_builtin_configs_construct_from_a_node_rank_alone():
@@ -1600,7 +1557,7 @@ def test_robotics_devices_do_not_depend_on_the_scheduler_or_gym():
     robotics_dir = _ROOT / "rlinf" / "robotics"
     device_paths = [
         robotics_dir / "robot.py",
-        robotics_dir / "adapters.py",
+        robotics_dir / "pose.py",
         *robotics_dir.joinpath("parts").rglob("*.py"),
     ]
     forbidden = ("gymnasium", "rlinf.scheduler")
@@ -1804,6 +1761,48 @@ def test_parts_on_separate_connections_still_run_together():
     # The hand no longer shares the arm's connection, so the two run at once.
     assert robot.child("left")._batches() == [["arm"], ["end_effector"]]
     assert set(robot.child("left").children) >= {"arm", "end_effector"}
+
+
+def test_disjoint_connections_are_commanded_at_the_same_time():
+    """Two arms on their own connections move together, not one after another.
+
+    A dual-arm robot depends on this: commanding one arm must not cost the
+    other a control period.
+    """
+    import threading
+
+    rendezvous = threading.Barrier(2, timeout=2.0)
+
+    class Side(ControllablePart):
+        @property
+        def observation_features(self) -> dict:
+            return {"joint_position": {}}
+
+        @property
+        def action_features(self) -> dict:
+            return {"joint_position": {}}
+
+        def _open(self):
+            return "link"
+
+        def get_observation(self) -> dict:
+            return {"joint_position": 0.0}
+
+        def send_action(self, action):
+            # Neither side can pass this unless the other is already inside.
+            rendezvous.wait()
+            return action
+
+    robot = PartGroup(left=Side(), right=Side())
+    robot.connect()
+    try:
+        assert robot._batches() == [["left"], ["right"]]
+        applied = robot.send_action(
+            {"left": {"joint_position": 1.0}, "right": {"joint_position": 2.0}}
+        )
+    finally:
+        robot.disconnect()
+    assert set(applied) == {"left", "right"}
 
 
 def test_a_group_spanning_two_sessions_pulls_both_into_one_batch():
@@ -3965,12 +3964,11 @@ def test_a_worker_installs_the_fakes_for_itself():
 def test_a_wrapper_that_narrows_the_action_declares_it():
     from types import SimpleNamespace
 
-    from rlinf.envs.real.franka.base import FrankaEnv
+    from rlinf.envs.real.policy import ActionLayout, BinaryGripper, PoseDelta
     from rlinf.envs.real.wrappers.transforms import GripperCloseEnv
 
-    inner = SimpleNamespace(
-        action_parts=lambda: FrankaEnv.action_parts(SimpleNamespace(_is_hand=False))
-    )
+    layout = ActionLayout((PoseDelta("arm"), BinaryGripper("arm")))
+    inner = SimpleNamespace(action_parts=layout.parts)
     wrapper = GripperCloseEnv.__new__(GripperCloseEnv)
     wrapper.env = SimpleNamespace(get_wrapper_attr=lambda name: getattr(inner, name))
 
@@ -4818,6 +4816,221 @@ def test_an_arm_that_cannot_reset_its_joints_says_so():
     arm.disconnect()
 
 
+class _PoseArm(Arm):
+    """An arm that goes wherever it is sent and reports where it is."""
+
+    def __init__(self, pose: np.ndarray, commands: tuple[str, ...]) -> None:
+        self.pose = np.asarray(pose, dtype=float)
+        self.commands = commands
+        self.events: list[Any] = []
+
+    @property
+    def observation_features(self) -> dict[str, dict]:
+        return {"tcp_pose": {}}
+
+    @property
+    def action_features(self) -> dict[str, dict]:
+        return {name: {} for name in self.commands}
+
+    def _open(self) -> Any:
+        return "device"
+
+    def get_observation(self) -> dict[str, np.ndarray]:
+        return {"tcp_pose": self.pose.copy()}
+
+    def send_action(self, action: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        self.events.append(("send", action["tcp_pose"]))
+        self.pose = np.asarray(action["tcp_pose"], dtype=float)
+        return action
+
+    def clear_errors(self) -> None:
+        self.events.append("clear")
+
+
+def test_an_arm_moves_to_a_pose_through_evenly_spaced_commands(monkeypatch):
+    start = np.array([0.4, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0])
+    target = np.concatenate(
+        [[0.5, 0.2, 0.1], R.from_euler("z", 90, degrees=True).as_quat()]
+    )
+    arm = _PoseArm(start, commands=("tcp_pose",))
+    sleeps: list[float] = []
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+
+    arm.move_to(target, duration=1.0, rate_hz=4.0, clear_errors=True)
+
+    # One command per period, each preceded by a fault clear when asked for.
+    assert [event if event == "clear" else event[0] for event in arm.events] == [
+        "clear",
+        "send",
+    ] * 4
+    sent = [event[1] for event in arm.events if event != "clear"]
+    assert sleeps == [0.25] * 4
+    assert all(command.dtype == np.float32 for command in sent)
+    np.testing.assert_allclose(sent[-1], target, atol=1e-6)
+    # A quarter of the way: position on the straight line, rotation a quarter
+    # of the arc. Averaging the quaternions instead would turn 21.6 degrees.
+    np.testing.assert_allclose(sent[0][:3], start[:3] + 0.25 * (target[:3] - start[:3]))
+    yaw = R.from_quat(sent[0][3:]).as_euler("xyz", degrees=True)[2]
+    assert yaw == pytest.approx(22.5, abs=1e-3)
+
+
+def test_an_arm_that_takes_no_pose_commands_refuses_to_move_to_a_pose():
+    arm = _PoseArm(np.array([0.4, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]), ("joint_position",))
+
+    with pytest.raises(NotImplementedError, match="does not accept 'tcp_pose'"):
+        arm.move_to(np.array([0.5, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]))
+    assert arm.events == []
+
+
+def test_an_arm_declares_how_many_joints_it_drives():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        backends = Arm.backends()
+    # Known before anything connects, so a dummy run can check a target's width.
+    assert {
+        name: backends[name].DOF
+        for name in ("franky", "franka_ros", "pyagxarm", "so101", "gim_arm")
+    } == {"franky": 7, "franka_ros": 7, "pyagxarm": 6, "so101": 5, "gim_arm": 6}
+
+
+def test_a_hosted_gripper_opens_closes_and_says_which_it_is():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        arm = GimArm("can0", "gim_arm_xl", True, "parallel")
+        arm.connect()
+        try:
+            gripper = arm.child("end_effector", EndEffector)
+            gripper.close()
+            assert not gripper.is_open
+            gripper.open()
+            assert gripper.is_open
+        finally:
+            arm.disconnect()
+
+    # A host with no way to open fully says so, rather than doing nothing.
+    host = SimpleNamespace(get_state=lambda: {"width": np.array([0.02])})
+    gripper = MethodEndEffector(host, "width", command="set_width", is_gripper=True)
+    with pytest.raises(NotImplementedError, match="no open_gripper"):
+        gripper.open()
+
+
+def _from_config_cases() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """Each robot's config, with the build arguments the envs gave it by hand."""
+    from rlinf.robotics.parts.arms.base import CartesianCompliance
+
+    return [
+        (
+            "Franka",
+            {
+                "robot_ip": "10.0.0.2",
+                "backend": "franky",
+                "camera_node_rank": 5,
+                "gripper_type": "robotiq",
+                "gripper_connection": "/dev/gripper",
+                "end_effector_config": {"port": "/dev/hand"},
+            },
+            {
+                "robot_ip": "10.0.0.2",
+                "backend": "franky",
+                "gripper_type": "robotiq",
+                "compliance": CartesianCompliance(),
+                "end_effector_type": None,
+                "end_effector_config": {"port": "/dev/hand"},
+                "gripper_connection": "/dev/gripper",
+                "camera_node_rank": 5,
+            },
+        ),
+        (
+            "Piper",
+            {"can_channel": "can1", "model": "piper_h", "with_gripper": False},
+            {
+                "can_channel": "can1",
+                "backend": None,
+                "can_interface": "socketcan",
+                "model": "piper_h",
+                "firmware": None,
+                "speed_percent": 30,
+                "gripper_force": 1.0,
+                "gripper_max_width": 0.07,
+                "with_gripper": False,
+            },
+        ),
+        (
+            "SO101",
+            {"serial_port": "/dev/bench", "calibration_id": "bench"},
+            {
+                "port": "/dev/bench",
+                "calibration_id": "bench",
+                "max_relative_target": None,
+            },
+        ),
+        (
+            "GimArm",
+            {"arm_variant": "gim_arm", "enable_gripper": False},
+            {
+                "can_interface": "can0",
+                "arm_variant": "gim_arm",
+                "enable_gripper": False,
+                "gripper_type": "parallel",
+                "control_mode": "momentum_observer",
+            },
+        ),
+    ]
+
+
+@pytest.mark.parametrize("controller_node_rank", [None, 7])
+@pytest.mark.parametrize("robot_type,settings,expected", _from_config_cases())
+def test_a_robot_is_built_from_the_config_the_scheduler_hands_out(
+    monkeypatch, robot_type, settings, expected, controller_node_rank
+):
+    import pickle
+
+    from rlinf.robotics.discovery import RobotDiscovery
+
+    registration = RobotDiscovery.registry[robot_type]
+    robot_cls = registration.robot_cls
+    config = registration.config_cls(
+        node_rank=3, controller_node_rank=controller_node_rank, **settings
+    )
+    before = pickle.dumps(config)
+    calls: list[dict[str, Any]] = []
+    build = robot_cls.build
+    monkeypatch.setattr(
+        robot_cls,
+        "build",
+        classmethod(lambda cls, **kwargs: calls.append(kwargs) or build(**kwargs)),
+    )
+    from rlinf.robotics.parts.cameras import CameraInfo
+
+    cameras = {"wrist_1": CameraInfo(name="wrist_1", serial_number="MOCK0001")}
+
+    robot = robot_cls.from_config(
+        config, cameras=cameras, env_idx=4, node_rank=3, worker_rank=2
+    )
+
+    assert isinstance(robot, robot_cls)
+    assert calls == [
+        {
+            **expected,
+            "env_idx": 4,
+            # The arm follows the env to its node unless the config places it.
+            "node_rank": 3 if controller_node_rank is None else 7,
+            "worker_rank": 2,
+            "cameras": cameras,
+        }
+    ]
+    assert pickle.dumps(config) == before
+
+
+def test_a_single_arm_franka_refuses_a_dual_arm_config():
+    from rlinf.robotics import DualFrankaConfig
+
+    with pytest.raises(TypeError, match="takes a FrankaConfig"):
+        FrankaRobot.from_config(DualFrankaConfig(node_rank=0))
+
+
 def test_so101_reports_joints_in_radians_and_the_gripper_as_a_fraction():
     """lerobot speaks degrees and 0..100; every other arm here speaks radians."""
     from robot_mocks import mocked_sdks
@@ -5609,16 +5822,20 @@ def test_dummy_env_and_wrapper_use_custom_driver_contract(registered_tool, monke
         wrapped.close()
 
 
-def test_connected_env_uses_part_dimensions(registered_tool):
+def test_a_hand_is_driven_one_channel_per_finger_of_its_driver(registered_tool):
     from rlinf.envs.real.franka import FrankaEnv
+    from rlinf.envs.real.policy import PoseActionConfig
+    from rlinf.robotics import FrankaConfig
+
+    hardware = FrankaConfig(node_rank=0, end_effector_type="pose_tool")
+    layout = FrankaEnv.make_action(
+        hardware, PoseActionConfig(hand_reset_state=[0.0] * 3)
+    )
+    assert layout.parts()[-1].width == 3
 
     tool = registered_tool(gain=1.0)
-    env = FrankaEnv.__new__(FrankaEnv)
-    env._end_effector = tool
-    env._last_hand_command = None
-    env.config = SimpleNamespace(hand_action_scale=1.0)
-    assert env.action_parts()[-1].width == 3
-    env._end_effector_action(np.array([0.2, 0.4, 0.6]))
+    parts = SimpleNamespace(end_effector=lambda role="arm": tool)
+    layout.channels[-1].command(parts, np.array([0.2, 0.4, 0.6]), None)
     np.testing.assert_allclose(tool.get_state(), [0.2, 0.4, 0.6])
 
 

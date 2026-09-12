@@ -57,12 +57,35 @@ class EnvFacts:
         env: gym.Env,
         layout: Mapping[str, slice],
         kinds: Mapping[str, ActionKind],
+        cfg: EnvConfig | None = None,
     ) -> "EnvFacts":
-        """Build action metadata from an environment."""
-        config = getattr(env.unwrapped, "config", None)
+        """Build action metadata from an environment.
+
+        The scale comes from the channel that commands the joints, because
+        that channel decides what one action unit is worth. An env that keeps
+        its own config is read as before.
+        """
+        inner = env.unwrapped
+        config = getattr(inner, "config", None)
+        scale = cls._joint_scale(inner)
+        if scale is None:
+            scale = float(getattr(config, "joint_action_scale", 0.1))
+        stream = (cfg or {}).get("teleop_direct_stream", None)
+        if stream is None:
+            stream = getattr(config, "teleop_direct_stream", False)
         return cls(
             layout=layout,
             kinds=kinds,
-            joint_action_scale=float(getattr(config, "joint_action_scale", 0.1)),
-            direct_stream=bool(getattr(config, "teleop_direct_stream", False)),
+            joint_action_scale=scale,
+            direct_stream=bool(stream),
         )
+
+    @staticmethod
+    def _joint_scale(inner: gym.Env) -> float | None:
+        """Radians per action unit, from the first channel driving joints."""
+        action = getattr(inner, "action", None)
+        for channel in getattr(action, "channels", ()):
+            scale = getattr(channel, "scale", None)
+            if channel.kind is ActionKind.JOINT_DELTA and scale is not None:
+                return float(scale)
+        return None

@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SO-101 tasks, and the env they are built on."""
+"""SO-101 tasks, and the preset they are built on."""
 
 from __future__ import annotations
 
 from rlinf.envs.real.registry import register_tasks
 from rlinf.robotics.parts.arms.so101 import SO101RobotState
 
-from .base import SO101Env, SO101EnvConfig
-from .reach import SO101ReachConfig, SO101ReachEnv
+from .base import SO101Env
+from .reach import SO101ReachEnv
 
 TASKS = {"SO101ReachEnv-v1": SO101ReachEnv}
 
@@ -29,9 +29,7 @@ _ENTRY_POINTS = register_tasks(__name__, globals(), TASKS)
 __all__ = [
     "TASKS",
     "SO101Env",
-    "SO101ReachConfig",
     "SO101ReachEnv",
-    "SO101EnvConfig",
     "SO101RobotState",
     *_ENTRY_POINTS,
 ]

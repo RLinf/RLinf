@@ -2,135 +2,168 @@ New Real-World Tasks
 ====================
 
 This guide explains how to add a real-world task when RLinf already knows how to
-connect the physical robot. By the end, you will have a config dataclass, a
-small env class, a registered Gymnasium ID, and a YAML config you can launch.
+connect the physical robot. By the end, you will have a task class, a one-line
+registration on the robot, a Gymnasium ID, and a YAML config you can launch.
 
 This guide covers task modules under ``rlinf/envs/real``. To add a task to a
 simulator or benchmark, follow :doc:`new_env` instead.
 
-For the core task path, leave robot construction, device placement, and
-teleoperation unchanged. Targets, compliance settings, success rules, and reset
-behavior belong to the task; the existing robot and wrapper stack remain in
-place. If the hardware itself is new, follow :doc:`new_robot` first and return
+A task says what counts as doing the job: where the target is, what the robot
+must report to be scored, how the scene is put back between episodes, and what
+each step earns. It never builds an action. How a policy's action reaches the
+arm belongs to the robot's action channels, and connecting and placing the hardware
+belongs to the robot, so one task runs on every robot that reports what it
+needs. If the hardware itself is new, follow :doc:`new_robot` first and return
 here once one observation and action can pass through it. If the task also needs
 an operator device or wrapper that RLinf does not provide, complete the task
 path first and treat that as the separate extension described near the end.
 
-The core workflow has five steps: define the task data, bind it to an env class,
-register a stable Gymnasium ID, configure one run, and verify the registration.
-The sections after that explain which infrastructure is already provided and
-cover two optional extensions—a new operator device or a new wrapper—that most
-tasks do not need.
+The core workflow has four steps: write the task, register it on a robot,
+configure one run, and verify the registration. The sections after that explain
+which infrastructure is already provided and cover two optional extensions -- a
+new operator device or a new wrapper -- that most tasks do not need.
 
 Core Workflow
 -------------
 
-The examples below add a ``WipeEnv-v1`` task to the existing Franka support.
-Each step produces an input for the next one: the dataclass configures the env,
-the env class is registered under an ID, the YAML selects that ID, and the final
-check confirms that the whole lookup path is available before hardware opens.
+The examples below add a wiping task and run it on the existing Franka support
+as ``WipeEnv-v1``. Each step produces an input for the next one: the task is
+registered on a robot under an ID, the YAML selects that ID, and the final check
+confirms that the whole lookup path is available before hardware opens.
 
-For a joint-space arm, use the same sequence with its existing env base.
-``SO101ReachEnv-v1`` and ``examples/embodiment/config/env/so101_reach.yaml`` are
-the current references for five absolute joint targets plus one continuous
-gripper action. The robot still exposes the gripper at
-``arm.end_effector``; the env is responsible for presenting the flat six-value
-action expected by its policy.
+1. Write the Task
+~~~~~~~~~~~~~~~~~
 
-1. Write the Config
-~~~~~~~~~~~~~~~~~~~
-
-Create ``rlinf/envs/real/<robot>/<task>.py`` beside the other tasks for that
-robot. Inherit its config dataclass and add the fields required by your task:
+Create ``rlinf/envs/real/tasks/wipe.py``. A task that scores where the tool is
+builds on ``CartesianTarget``, which already owns the target pose, the workspace
+around it, the reward for reaching it, and the routine that returns the arm to
+rest. A config dataclass holds the task's values, and the task class adds only
+what differs:
 
 .. code-block:: python
 
-   import copy
-   from dataclasses import dataclass, field
+   from collections.abc import Sequence
+   from dataclasses import dataclass
 
-   import numpy as np
-
-   from rlinf.robotics.actions import ActionKind, ActionPart
-
-   from .base import FrankaEnv, FrankaEnvConfig, compliance
+   from rlinf.envs.real.tasks.cartesian import (
+       CartesianTarget,
+       FixtureConfig,
+       reach_target,
+   )
+   from rlinf.envs.real.tasks import Evaluation, Needs
 
 
    @dataclass
-   class WipeConfig(FrankaEnvConfig):
-       task_description: str = "wipe the surface"
-       target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
-       reward_threshold: np.ndarray = field(
-           default_factory=lambda: np.array([0.02, 0.02, 0.02, 0.2, 0.2, 0.2])
-       )
+   class WipeConfig(FixtureConfig):
+       reward_threshold: Sequence[float] = (0.02, 0.02, 0.02, 0.2, 0.2, 0.2)
        random_xy_range: float = 0.03
+       clip_z_range_high: float = 0.05
+       contact_force: float = 5.0
 
-       def __post_init__(self):
-           self.compliance_param = compliance(
-               translational_stiffness=800,   # softer, to keep contact
-               translational_clip_z=0.02,
+
+   class Wipe(CartesianTarget):
+       CONFIG = WipeConfig
+       DESCRIPTION = "wipe the surface"
+
+       def requirements(self):
+           return {"arm": Needs(observes=frozenset({"tcp_pose", "tcp_force"}))}
+
+       def reset(self, parts, context):
+           arm = parts.arm()
+           arm.hold()
+           arm.clear(distance=0.05, rate_hz=context.rate_hz)
+           self.go_to_rest(parts, context)
+
+       def evaluate(self, reading, applied):
+           arm = reading.arm()
+           reached = reach_target(
+               arm["tcp_pose"],
+               self.config.target_ee_pose,
+               self.config.reward_threshold,
+               dense=self.config.use_dense_reward,
            )
-           self.target_ee_pose = np.array(self.target_ee_pose)
-           self.action_scale = np.array([0.02, 0.1, 1])
+           pressing = arm["tcp_force"][2] < -self.config.contact_force
+           in_zone = reached.in_zone and pressing
+           return Evaluation(reward=float(in_zone), in_zone=in_zone)
 
-The fields answer distinct questions. ``task_description`` supplies the
-language instruction, ``target_ee_pose`` defines the goal, and
-``reward_threshold`` decides when each pose error is small enough.
-``random_xy_range`` controls reset variation. ``action_scale`` limits how far
-one policy action moves the arm, while ``compliance_param`` configures the
-controller used during that motion.
+The config's fields answer distinct questions. ``target_ee_pose`` is the
+fixture pose, ``reward_threshold`` decides when the position error is small
+enough, and ``random_xy_range`` sets how far the rest pose varies between
+episodes. ``FixtureConfig`` lays the workspace out around the target from the
+``clip_*_range`` fields and rests the arm ``clip_z_range_high`` above it; a run
+that sets ``ee_pose_limit_min``, ``ee_pose_limit_max`` or ``reset_ee_pose``
+outright replaces the derived value. ``DESCRIPTION`` is the language
+instruction a run gets unless it sets ``task_description``.
 
-State only compliance gains that differ. ``compliance()`` merges them onto
-``COMPLIANCE_DEFAULTS`` and raises on any gain the controller does not accept.
-A misspelled gain therefore fails while the task config is built instead of
-reaching the impedance controller and being ignored.
+The env calls the task's methods in this order. ``requirements()`` names what
+each role's part must report, here ``tcp_force`` beside the ``tcp_pose``
+``CartesianTarget`` needs, and is checked before the robot connects.
+``workspace`` is handed to the channels, which keep every commanded pose inside
+it. ``home()`` runs once after connecting, and ``reset()`` at the start of each
+episode, after the channels have applied the arm's compliance gains. The wipe
+asks the arm to hold and then to get clear before ``go_to_rest()`` sends it
+back to where it waits; peg insertion grips its peg first, in the same place.
+A task asks for clearance and never says how to take it, so the same reset
+runs on an arm that is driven by joint targets.
+``evaluate()`` scores the reading taken after each step. ``in_zone`` counts
+toward the ``success_hold_steps`` streak that ends an episode, and the env
+subtracts the gripper penalty, so a task only reports what the step earned.
 
-2. Write the Env
-~~~~~~~~~~~~~~~~
+A robot that cannot run the task is refused with the reason, before any
+hardware connects:
 
-The config contains all task values; the env class now attaches those values to
-the existing robot-specific execution flow. Set the class's config type first.
-For many tasks, that is the entire class:
+.. code-block:: text
+
+   RequirementError: Wipe cannot run on FrankaRobot: arm (PoseOnlyArm) does not
+   report ['tcp_force']; it reports ['tcp_pose']
+
+Joint-space arms use the same pattern with a joint task. Piper and SO-101 both
+run ``JointReach``: ``SO101ReachEnv-v1`` is the whole registration
+``class SO101ReachEnv(SO101Env): TASK = JointReach``, and ``PiperReachEnv-v1``
+registers the same class on Piper. The preset's action layout turns the
+policy's flat action, five absolute joint targets plus one continuous gripper
+value on SO-101, into commands for ``arm`` and ``arm.end_effector``.
+``examples/embodiment/config/env/so101_reach.yaml`` is the reference run
+config.
+
+2. Register It on a Robot
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The task runs on any robot that meets its requirements; the robot's preset now
+decides which one this ID drives. Create ``rlinf/envs/real/franka/wipe.py``:
 
 .. code-block:: python
+
+   from rlinf.envs.real.tasks.wipe import Wipe
+
+   from .base import FrankaEnv, compliance
+
 
    class WipeEnv(FrankaEnv):
-       CONFIG_CLS = WipeConfig
+       TASK = Wipe
+       DEFAULTS = {
+           "compliance_param": compliance(
+               translational_stiffness=800,   # softer, to keep contact
+               translational_clip_z=0.02,
+           ),
+           "action_scale": (0.02, 0.1, 1.0),
+       }
 
-``CONFIG_CLS`` tells the inherited constructor which dataclass to build from
-``override_cfg``. Override a runtime hook only when the task needs different
-behavior. ``go_to_rest`` is the common case because homing depends on the task's
-end pose. Peg insertion, for example, lifts clear of the slot first; otherwise
-the peg catches on the way up:
+``FrankaEnv`` supplies the robot, the action channels, the observation layout,
+and the teleop devices; the registration names the task and the settings this
+task wants by default. ``action_scale`` limits how far one policy
+action moves the tool, and ``compliance_param`` sets the impedance controller
+used during that motion. State only the gains that differ: ``compliance()``
+merges them onto ``COMPLIANCE_DEFAULTS`` and raises on any gain the controller
+does not accept, so a misspelled gain fails at import. A run that sets any of
+these keys overrides the default.
 
-.. code-block:: python
+A registration only configures. It may not override ``step``, ``reset`` or the
+observation, which ``TaskEnv`` runs the same way for every robot; a test
+enforces this.
 
-       def go_to_rest(self, joint_reset=False):
-           reset_pose = copy.deepcopy(self._franka_state.tcp_pose)
-           reset_pose[2] += 0.05
-           self._interpolate_move(reset_pose, timeout=1)
-           super().go_to_rest(joint_reset)
-
-A task that keeps its robot's action space inherits how that action is read. A
-task that changes the action space declares the change, because a teleop device
-is matched against what each part means rather than how wide it is:
-
-.. code-block:: python
-
-       def action_parts(self):
-           return (
-               ActionPart("arm", 6, ActionKind.CARTESIAN_DELTA),
-               ActionPart("end_effector", 1, ActionKind.GRIPPER),
-           )
-
-The declared widths must add up to the action space exactly; a mismatch is an
-error rather than a slice that lands somewhere unintended.
-
-3. Register the Task
-~~~~~~~~~~~~~~~~~~~~
-
-Once the class can run the task, give it the stable ID that configs and datasets
-will store. Add one entry to the robot's ``TASKS`` table in
-``rlinf/envs/real/<robot>/__init__.py``, naming the env class:
+Then give the class the stable ID that configs and datasets will store. Add one
+entry to the robot's ``TASKS`` table in ``rlinf/envs/real/franka/__init__.py``:
 
 .. code-block:: python
 
@@ -142,13 +175,17 @@ will store. Add one entry to the robot's ``TASKS`` table in
    }
 
 ``register_tasks`` builds the entry point and registers the id with Gymnasium.
-The wrapper stack does not appear here: the env declared it above, and
-``build_stack`` reads that declaration.
+The wrapper stack does not appear here: the action layout declares the wrappers that
+fit its action, and ``build_stack`` reads that declaration.
+
+Registering ``WipeEnv-v1`` also registers ``Wipe-v1``, which runs ``Wipe`` on
+whichever robot the run is given; a second robot that registers ``Wipe`` joins
+it without a new ID.
 
 User configs and dataset metadata store the gym id. Changing it later breaks
 those references. Choose the name before collecting data.
 
-4. Add the Env Config
+3. Add the Env Config
 ~~~~~~~~~~~~~~~~~~~~~
 
 The ID makes the task discoverable; the YAML now selects it for one run and
@@ -165,15 +202,17 @@ supplies the values that vary by experiment. Add a file under
    override_cfg:
      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
      random_xy_range: 0.03
+     action_scale: [0.01, 0.1, 1.0]
 
 ``env_type: real`` selects RLinf's physical-environment adapter, and
 ``init_params.id`` selects the Gymnasium task registered in the previous step.
 ``teleop`` names the operator device for evaluation or data collection.
-``override_cfg`` is passed to ``WipeConfig``, so every key there must be a task
-config field; robot addresses and placement remain in the cluster hardware
-configuration.
+``override_cfg`` is one flat mapping, and each key goes to the one config that
+declares it: the env's for how an episode runs, the action channels' for scales
+and gains, and ``WipeConfig`` for the task. A key none of them declares is refused.
+Robot addresses and placement remain in the cluster hardware configuration.
 
-5. Check the Registration
+4. Check the Registration
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The core path is now complete from YAML to task class. Before connecting
@@ -187,14 +226,18 @@ hardware, import the real-world env package and confirm that the ID resolves:
    assert "WipeEnv-v1" in registry
 
 ``tests/unit_tests/test_real_env.py`` makes the same assertion for every shipped
-task. Add your ID to ``EXPECTED_IDS`` there. A passing assertion establishes
-registration only; run the mock and hardware checks from :doc:`new_robot` when
-the task changes the robot-facing observation or action path.
+task. Add your ID to ``EXPECTED_IDS`` there, and a row to ``TASK_SCHEMAS`` for
+the observation and action a policy will be trained on. To run the task without
+a Gymnasium ID, compose it by hand as ``TaskEnv(robot, Wipe(), layout,
+observation=...)``; the unit tests do this on fake parts. A passing assertion
+establishes registration only; run the mock and hardware checks from
+:doc:`new_robot` when the task changes the robot-facing observation or action
+path.
 
 Reuse Existing Infrastructure
 -----------------------------
 
-The five steps above are enough for a task that fits the existing robot and
+The four steps above are enough for a task that fits the existing robot and
 wrapper contracts. The following responsibilities stay in their current
 layers, so task code should call or configure them instead of reimplementing
 them:
@@ -207,6 +250,14 @@ them:
      - Where it already lives
    * - Connecting and placing hardware
      - ``Robot.connect``; see :doc:`../concepts/robotics`.
+   * - Turning a policy action into arm, gripper and hand commands
+     - The channels of the robot preset's ``ActionLayout``, such as
+       ``PoseDelta``, ``JointPositions`` and the end-effector channels.
+   * - Keeping commanded poses in bounds
+     - The task's ``workspace``, which the pose channel clips every pose to.
+   * - Scoring with a learned reward model
+     - ``use_reward_model``, which the env worker sets from the run's
+       ``reward`` section.
    * - Teleoperation
      - ``teleop`` in the env config selects one; the wrapper stack builds
        it.
@@ -215,7 +266,8 @@ them:
    * - Relative frames, Euler conversion, gripper narrowing
      - ``real/wrappers/transforms/``, applied by the wrapper stack.
    * - Impedance gains that every task shares
-     - ``COMPLIANCE_DEFAULTS``; state only your deltas.
+     - ``COMPLIANCE_DEFAULTS`` in ``franka/base.py``; state only your deltas
+       in the registration's ``DEFAULTS``.
 
 Adding a Teleop Device
 ----------------------
@@ -288,8 +340,8 @@ robot being driven:
            raise ValueError("teleop device 'pedal' requires a port")
        return TeleopEntry(cls(port=port), drives=options.get("drives"))
 
-Finally add ``pedal`` to the environment's ``TELEOP`` tuple, which declares that
-the env can represent the device's action. That does not register it a second
+Finally add ``pedal`` to the robot preset's ``TELEOP`` tuple, which declares
+that the env can represent the device's action. That does not register it a second
 time: the shared builder resolves the name through ``TeleopDevice``. A robot
 without an ``end_effector`` rejects the rig at build time.
 

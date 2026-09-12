@@ -97,7 +97,7 @@ env:
     rollout_epoch: 1
     total_num_envs: 1
     override_cfg:
-      use_arm_ids: [1]  # Use single arm (0=left, 1=right)
+      roles: ["right"]  # Arms this run drives; every table has one row each
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE  # Should be set according to actual robot setup
       random_xy_range: 0.05
@@ -112,7 +112,7 @@ env:
     rollout_epoch: 1
     total_num_envs: 1
     override_cfg:
-      use_arm_ids: [1]  # Use single arm (0=left, 1=right)
+      roles: ["right"]  # Arms this run drives; every table has one row each
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE  # Should be set according to actual robot setup
 

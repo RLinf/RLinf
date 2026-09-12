@@ -278,10 +278,9 @@ Key fields to update:
     train:
       override_cfg:
         is_dummy: False
-        use_arm_ids: [1]          # 0=left arm, 1=right arm; use [0,1] for dual arm
+        roles: ["right"]          # arms this run drives; ["left", "right"] for both
         use_camera_ids: [2]       # camera IDs to use (0, 1, or 2)
-        target_ee_pose:           # [[left_arm_pose], [right_arm_pose]], Euler [x,y,z,rz,ry,rx]
-          - [0, 0, 0, 0, 0, 0]
+        target_ee_pose:           # one row per named role, Euler [x,y,z,rz,ry,rx]
           - [0.3, 0.0, 0.15, 0.0, 1.0, 0.0]
 
   actor:

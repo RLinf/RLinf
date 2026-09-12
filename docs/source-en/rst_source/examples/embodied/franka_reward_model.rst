@@ -257,7 +257,7 @@ in real-world systems with ``standalone_realworld`` enabled, the reward model do
 In other words, the reward model does **not** act as an additional reward source inside the env worker when constructing the final reward,
 because the system bypasses the weighted sum of ``env_reward`` and ``reward_model_output`` entirely.
 Therefore, ``reward_mode``, ``reward_weight``, and ``env_reward_weight`` all have no effect.
-The final reward is generated directly by FrankaEnv based on the reward model's success/failure determination.
+The final reward is generated directly by the task env (``TaskEnv``) from the reward model's score, in place of the task's own reward.
 
 From a system perspective, the actual behavior in the real-world system can be understood as:
 directly replacing the ``env_reward`` inside the env worker, re-using the original ``env_reward`` logic to assign rewards and trigger environment resets, thereby fundamentally integrating the reward model.

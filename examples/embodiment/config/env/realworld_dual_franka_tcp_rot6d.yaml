@@ -30,8 +30,6 @@ init_params:
 override_cfg:
   is_dummy: false
   task_description: "dual arm TCP-rot6d manipulation task"
-  # Only "rot6d" is currently implemented in DualFrankaTCPEnv.
-  rotation_repr: rot6d
   max_num_steps: 300
   # Only [2] (gripper channel) is consumed; [0] / [1] are Cartesian-only
   # and ignored by the rot6d env's step.

@@ -78,7 +78,11 @@ class ComposedTeleop(TeleopDevice):
 
     @classmethod
     def context_from(cls, env: gym.Env) -> dict[str, Any]:
-        """Collect the context an environment exposes to its devices."""
+        """Collect the context an environment exposes to its devices.
+
+        A getter the env lacks, or one that returns ``None`` because the env
+        has no such thing, leaves its key out.
+        """
         context: dict[str, Any] = {}
         for key, getter in cls.CONTEXT_GETTERS:
             try:
@@ -86,7 +90,9 @@ class ComposedTeleop(TeleopDevice):
             except AttributeError:
                 continue
             if callable(value):
-                context[key] = value()
+                value = value()
+                if value is not None:
+                    context[key] = value
         return context
 
     def before_reset(self, env: gym.Env, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -143,7 +149,13 @@ class ComposedTeleop(TeleopDevice):
             apply_when_inactive = bool(parts)
             if not parts:
                 return TeleopSample(action=None, active=False, info=info)
-        if self.streamer is not None and self.streamer.streaming:
+        streaming = self.streamer is not None and self.streamer.streaming
+        # The step must not command a part the stream is already driving, or
+        # the two fight over one controller at different rates.
+        layout = getattr(env.unwrapped, "action", None)
+        if layout is not None and hasattr(layout, "suspend"):
+            layout.suspend(self.streamer.DELIVERS if streaming else ())
+        if streaming:
             # Record parts delivered outside env.step for dataset consumers.
             info = {**info, "streamed_parts": list(self.streamer.DELIVERS)}
         return TeleopSample(

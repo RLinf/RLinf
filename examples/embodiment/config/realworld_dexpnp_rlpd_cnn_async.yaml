@@ -125,7 +125,6 @@ env:
     # fit the model this run trains.
     override_cfg:
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
-      hand_target_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_action_scale: 1.0
       joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
@@ -148,7 +147,6 @@ env:
       # camera_crop_regions:
       #   "SERIAL1": [0.4, 0.3, 0.85, 0.7]
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
-      hand_target_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
       hand_action_scale: 1.0
       joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
