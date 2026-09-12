@@ -23,6 +23,7 @@ Contents
 - BEHAVIOR streaming-loader fields and norm-stat/tokenizer handling
 - Launching training and converting checkpoints for evaluation
 - The official OpenPI/LeRobot data path, training, and evaluation for Pi0 RoboTwin
+- Network ``action_horizon`` vs env ``num_action_chunks``
 
 
 What it is
@@ -39,6 +40,24 @@ for BEHAVIOR-1K out of the box. During SFT, the policy predicts 32-step,
 23-dimensional action chunks for the dual-arm R1 Pro robot from BEHAVIOR
 demonstrations using the flow-matching denoising objective.
 
+Action horizon vs env chunk
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``openpi_rlinf`` implementation does not use ``num_action_chunks`` as the
+network horizon. ``num_action_chunks`` / ``openpi.action_chunk`` is the
+**env-executed** (and SFT dataset-window) length. The **network**
+``action_horizon`` is ``openpi.action_horizon`` when set; otherwise the
+official OpenPI ``TrainConfig.model.action_horizon`` for
+``openpi.config_name``. The existing ``model_type: openpi`` implementation does the
+same: it copies ``action_horizon`` from ``TrainConfig.model`` and only
+interpolates ``num_action_chunks`` into ``action_chunk``.
+
+BEHAVIOR ``pi05_behavior`` official horizon is **32**, matching
+``num_action_chunks: 32``. RoboTwin ``pi0_aloha_robotwin`` official horizon
+is **50** (``Pi0Config()`` default), matching ``num_action_chunks: 50``. Pin
+``openpi.action_horizon`` in the experiment YAML only when the checkpoint
+horizon differs from that ``TrainConfig``.
+
 
 Pi0.5 + BEHAVIOR-1K
 -------------------
@@ -49,7 +68,7 @@ Configuration
 The example is split into a reusable, path-free **model template** and an
 **experiment config** that supplies filesystem paths:
 
-- Experiment config: ``examples/sft/config/behavior_pi05_vla.yaml``
+- Experiment config: ``examples/sft/config/behavior_sft_openpi_pi05_rlinf.yaml``
 - Model template: ``examples/sft/config/model/pi0_5_rlinf.yaml``
 
 The experiment config imports the model template through Hydra ``defaults``:
@@ -64,14 +83,13 @@ The experiment config imports the model template through Hydra ``defaults``:
 Precision contract
 ~~~~~~~~~~~~~~~~~~
 
-The OpenPI_RLinf SFT configuration deliberately separates the **load dtype**
-from the **compute dtype**:
+openpi_rlinf does not support FSDP mixed precision (``param_dtype`` must be
+``null`` or ``fp32``, matching ``actor.model.precision``):
 
-- The model template sets ``actor.model.precision`` to ``fp32`` (in
-  ``pi0_5_rlinf.yaml``). fp32 weights are loaded as the **FSDP optimizer
-  master**, preventing small warmup-LR updates from being lost to bf16 rounding.
-- FSDP ``MixedPrecision`` computes in bf16 while keeping gradient all-reduce
-  and buffers in fp32:
+- The SFT model template sets ``actor.model.precision`` to ``null`` (in
+  ``pi0_5_rlinf.yaml`` / ``pi0_rlinf.yaml``), the OpenPI default: Gemma /
+  SigLIP in bf16, action heads in fp32.
+- Bind FSDP dtypes to the model precision so they cannot drift:
 
   .. code:: yaml
 
@@ -79,13 +97,9 @@ from the **compute dtype**:
        fsdp_config:
          gradient_checkpointing: True
          mixed_precision:
-           param_dtype: bf16     # FSDP compute dtype
-           reduce_dtype: fp32    # gradient all-reduce stays fp32
-
-  ``param_dtype`` is the FSDP **compute** dtype and is explicitly set to bf16,
-  rather than interpolated from ``actor.model.precision``. The load-dtype
-  selector and compute dtype are independent, so an fp32-master load still
-  computes in bf16.
+           param_dtype: ${actor.model.precision}
+           reduce_dtype: ${actor.model.precision}
+           buffer_dtype: ${actor.model.precision}
 - Gradient checkpointing is enabled on the dual-expert Gemma + SigLIP backbone
   through ``actor.fsdp_config.gradient_checkpointing: True`` to reduce
   activation memory.
@@ -162,7 +176,7 @@ Filesystem paths
 ~~~~~~~~~~~~~~~~
 
 All filesystem paths are written as ``/path/to/...`` placeholders in
-``examples/sft/config/behavior_pi05_vla.yaml``. Replace them with your staged
+``examples/sft/config/behavior_sft_openpi_pi05_rlinf.yaml``. Replace them with your staged
 resources:
 
 - ``data.train_data_paths`` / ``data.behavior_dataset_root``: root of the
@@ -210,6 +224,9 @@ actions to the 32-dimensional model action space. Set ``asset_id`` to the
 statistics directory for the selected task, such as ``adjust_bottle`` above.
 ``openpi_data.norm_stats_path`` explicitly selects that task's
 ``norm_stats.json``, ensuring SFT and evaluation use the same statistics.
+``num_action_chunks: 50`` is the env / dataset window; the network horizon is
+the official ``pi0_aloha_robotwin`` ``TrainConfig`` value of **50**, not this
+field by itself.
 
 The Pi0 RoboTwin recipe also uses fp32 master weights, bf16 FSDP computation,
 and fp32 gradient reduction. Its experiment YAML defaults to
@@ -226,7 +243,7 @@ Run the SFT helper from the repository root:
 .. code:: bash
 
    # Pi0.5 + BEHAVIOR-1K
-   bash examples/sft/run_vla_sft.sh behavior_pi05_vla
+   bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05_rlinf
 
    # Pi0 + RoboTwin
    bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_rlinf

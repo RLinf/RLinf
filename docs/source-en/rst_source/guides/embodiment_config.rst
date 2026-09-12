@@ -353,7 +353,10 @@ actor
    * - ``actor.model.action_dim``
      - Action-space dimensionality.
    * - ``actor.model.num_action_chunks``
-     - Number of action chunks per sequence.
+     - Env-executed action-chunk length. For ``openpi_rlinf``, this is **not**
+       the network horizon: that comes from ``openpi.action_horizon`` when set,
+       otherwise the official OpenPI ``TrainConfig.model.action_horizon`` for
+       ``openpi.config_name``. See :doc:`../examples/embodied/pi0`.
    * - ``actor.model.use_proprio``
      - Whether to feed proprioceptive state to the model.
    * - ``actor.model.use_film``

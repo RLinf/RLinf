@@ -105,17 +105,18 @@ RLinf SFT-trained checkpoint -> OpenPI_RLinf bare `Pi0` layout.
 
 ### Behavior and RoboTwin precision
 
-The two SFT configurations use the same mixed-precision policy for training:
+The two SFT configurations keep FSDP dtypes aligned with
+`actor.model.precision` (`null`; openpi_rlinf does not use mixed precision):
 
-| Configuration | Base/model checkpoint | FSDP `param_dtype` | FSDP reduction and buffer dtype |
+| Configuration | `actor.model.precision` | FSDP `param_dtype` | FSDP reduction and buffer dtype |
 | --- | --- | --- | --- |
-| `behavior_pi05_vla.yaml` | fp32 | bf16 | fp32 |
-| `robotwin_sft_openpi_rlinf.yaml` | fp32 | bf16 | fp32 |
+| `behavior_sft_openpi_pi05_rlinf.yaml` | null | null | null |
+| `robotwin_sft_openpi_rlinf.yaml` | null | null | null |
 
-This training compute policy is separate from converter storage dtype. The
-BEHAVIOR recipe retains its existing bf16 artifact, while the RoboTwin recipe
-uses fp32 to preserve its full-precision SFT weights. Eval may still use bf16
-compute through its runtime `precision` setting.
+Converter `--dtype` is independent of training compute. The BEHAVIOR recipe
+can still emit a bf16 artifact; the RoboTwin recipe typically keeps fp32 to
+preserve full-precision SFT weights. Eval may still use bf16 compute through
+its runtime `precision` setting.
 
 ```bash
 # BEHAVIOR Pi0.5, retaining the existing bf16 artifact.

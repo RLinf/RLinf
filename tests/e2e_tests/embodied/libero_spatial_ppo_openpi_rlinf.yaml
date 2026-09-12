@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -15,13 +15,25 @@ hydra:
 
 cluster:
   num_nodes: 1
+  collective:
+    tensor_buffer_pool:
+      max_bytes: 2147483648
+    tensor_compression:
+      enabled: true
+      codec: lz4
+      min_bytes: 16384
+      excluded_dtypes: [float32]
+      acceleration: 1
   component_placement:
     actor,env,rollout: 0-1
+  tracer:
+    enable: true
+    output_file: null # defaults to <log_path>/<experiment_name>/trace/trace_events.jsonl
 
 runner:
   task_type: embodied
   logger:
-    log_path: "../results/libero_spatial_ppo_openpi05_rlinf"
+    log_path: "../results/libero_spatial_ppo_openpi_rlinf"
     project_name: rlinf
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
@@ -66,14 +78,13 @@ env:
 
   # Override the default values in env/libero_spatial
   train:
-    rollout_epoch: 1
-    total_num_envs: 16
-    max_episode_steps: 10
-    max_steps_per_rollout_epoch: 10
-    skip_intermediate_renders: True
+    rollout_epoch: 2
+    total_num_envs: 8
+    max_episode_steps: 5
+    max_steps_per_rollout_epoch: 5
   eval:
     rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
-    total_num_envs: 8
+    total_num_envs: 1
     max_episode_steps: 10
     auto_reset: True
     ignore_terminations: True
@@ -89,32 +100,30 @@ rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
   recompute_logprobs: False
+  unnorm_key: libero_10
   enable_offload: False
   pipeline_stage_num: 1
-  enable_torch_compile: True
-  torch_compile_mode: "max-autotune"
 
   model:
-    model_path: "/workspace/dataset/RLinf-Pi05-SFT"
+    model_path: "/workspace/dataset/pi0_libero"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 8
-  global_batch_size: 16
+  micro_batch_size: 2
+  global_batch_size: 8 # maximum : global batch size = micro batch size * actor num_processes.
   seed: 42
   enable_offload: False
 
-  # Override the default values in model/pi0_5
+  # Override the default values in model/pi0_rlinf
   model:
-    model_path: "/workspace/dataset/RLinf-Pi05-SFT"
-    model_type: "openpi"
+    model_path: "/workspace/dataset/pi0_libero"
     num_action_chunks: 5 # interface for the env
-    num_steps: 3
     add_value_head: True
     openpi:
-      value_after_vlm: True
+      task: rl
+      detach_critic_input: True
 
   optim:
     lr: 5.0e-6
@@ -130,6 +139,13 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
+    # Dual-expert Gemma packs frozen VLM (expert-0) and trainable action
+    # expert (expert-1) in the same Block. FSDP FlatParameter then mixes
+    # requires_grad and rejects wrap unless use_orig_params=True.
+    # OpenPI can keep False because paligemma vs gemma_expert are separate
+    # modules (uniform requires_grad per GemmaDecoderLayer). This flag does
+    # not change TF32 / selective-bf16 numerics.
+    use_orig_params: True
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
       param_dtype: ${actor.model.precision}
