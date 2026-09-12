@@ -23,7 +23,7 @@ import torch
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
-from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import PriorityStore
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
@@ -101,7 +101,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             trajectory: Trajectory = input_channel.get()
             self.log_info(
                 f"recv trajectory versions.shape={trajectory.versions.shape} "
-                f"input_channel.qsize={input_channel.qsize()}"
+                "from trajectory channel"
             )
             if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
                 "staleness_threshold", None
@@ -176,7 +176,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             diff = int(self.version) - int(version_val)
             staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
 
-        self.rollout_batch = convert_trajectories_to_batch(rollout_batch)
+        self.rollout_batch = Trajectory.to_batch(rollout_batch)
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics

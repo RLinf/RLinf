@@ -19,6 +19,8 @@
      - 集群抽象与资源模型。
    * - :doc:`Channel <../channel>`
      - 用于 worker 间数据交换的异步通道。
+   * - :doc:`Trajectory Collector <../trajectory_collector>`
+     - 具身算法中的 chunk 所有权、累积和 Actor 输出。
    * - :doc:`集合通信 <../collective>`
      - 集合通信操作与异步工作句柄。
 
@@ -30,4 +32,5 @@
    Worker 与 WorkerGroup <../worker>
    Cluster <../cluster>
    Channel <../channel>
+   Trajectory Collector <../trajectory_collector>
    集合通信 <../collective>

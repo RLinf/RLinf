@@ -63,24 +63,23 @@ class OfflineRunner:
         )
 
         # Async logging setup
-        self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
 
     def _log_worker(self):
         """Background thread for processing log messages."""
-        while not self.stop_logging:
+        while True:
+            task = self.log_queue.get()
             try:
-                # Wait for log message with timeout
-                log_func, args = self.log_queue.get(timeout=0.1)
+                if task is None:
+                    return
+                log_func, args = task
                 log_func(*args)
+            except Exception:
+                self.logger.exception("Logging callback failed.")
+            finally:
                 self.log_queue.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                self.logger.error("Logging error: %s", e)
-                continue
 
     def print_metrics_table_async(
         self,
@@ -349,11 +348,13 @@ class OfflineRunner:
                     _step - 1, self.max_steps, start_time, logging_metrics, start_step
                 )
 
+        self._finish_run()
+
+    def _finish_run(self) -> None:
         self.metric_logger.finish()
 
-        # Stop logging thread
-        self.stop_logging = True
-        self.log_queue.join()  # Wait for all queued logs to be processed
+        self.log_queue.put(None)
+        self.log_queue.join()
         self.log_thread.join(timeout=1.0)
 
     def _save_checkpoint(self):

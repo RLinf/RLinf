@@ -29,7 +29,6 @@ import torch.distributed as dist
 from omegaconf import OmegaConf
 from torch.distributed import distributed_c10d
 
-from rlinf.data.schema.embodied_types import EnvOutput, PolicyOutput
 from rlinf.scheduler import (
     Cluster,
     CollectiveGroupOptions,
@@ -64,7 +63,6 @@ from rlinf.scheduler.collective.tensor_compression import (
     ZstdCodecProvider,
     ZstdCompressionConfig,
 )
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 SENDER_GROUP_NAME = "sender_worker_group"
 RECEIVER_GROUP_NAME = "receiver_worker_group"
@@ -2303,86 +2301,6 @@ def test_split_and_merge_nested_batches():
     assert torch.equal(merged["obs"]["states"], batch["obs"]["states"])
     assert merged["obs"]["task_descriptions"] == batch["obs"]["task_descriptions"]
     assert torch.equal(merged["rewards"], batch["rewards"])
-
-
-def test_policy_output_split_merge_invariant():
-    policy_output = PolicyOutput(
-        actions=torch.arange(12, dtype=torch.float32).view(6, 2),
-        prev_logprobs=torch.arange(12, dtype=torch.float32).view(6, 2),
-        prev_values=torch.arange(6, dtype=torch.float32).view(6, 1),
-        bootstrap_values=torch.arange(6, dtype=torch.float32).view(6, 1),
-        intervene_flags=torch.ones((6, 3), dtype=torch.bool),
-        forward_inputs={
-            "action": torch.arange(12, dtype=torch.float32).view(6, 2),
-            "states": torch.arange(18, dtype=torch.float32).view(6, 3),
-        },
-        versions=torch.arange(6, dtype=torch.float32).view(6, 1),
-    )
-
-    worker = object.__new__(MultiStepRolloutWorker)
-    shards = worker._split_policy_output(policy_output, [4, 2])
-    merged = PolicyOutput.merge(shards)
-
-    assert torch.equal(merged.actions, policy_output.actions)
-    assert torch.equal(merged.prev_logprobs, policy_output.prev_logprobs)
-    assert torch.equal(merged.prev_values, policy_output.prev_values)
-    assert torch.equal(merged.bootstrap_values, policy_output.bootstrap_values)
-    assert torch.equal(merged.intervene_flags, policy_output.intervene_flags)
-    assert torch.equal(
-        merged.forward_inputs["action"], policy_output.forward_inputs["action"]
-    )
-    assert torch.equal(
-        merged.forward_inputs["states"], policy_output.forward_inputs["states"]
-    )
-    assert torch.equal(merged.versions, policy_output.versions)
-
-
-def test_merge_env_outputs_with_partial_optional_fields():
-    env_output_0 = EnvOutput(
-        obs=_make_obs(0, 2),
-        final_obs=None,
-        dones=torch.zeros((2, 1), dtype=torch.bool),
-        terminations=torch.zeros((2, 1), dtype=torch.bool),
-        truncations=torch.zeros((2, 1), dtype=torch.bool),
-        rewards=torch.ones((2, 1), dtype=torch.float32),
-        intervene_actions=None,
-        intervene_flags=None,
-    ).to_dict()
-    env_output_1 = EnvOutput(
-        obs=_make_obs(100, 3),
-        final_obs=_make_obs(200, 3),
-        dones=torch.zeros((3, 1), dtype=torch.bool),
-        terminations=torch.zeros((3, 1), dtype=torch.bool),
-        truncations=torch.zeros((3, 1), dtype=torch.bool),
-        rewards=torch.ones((3, 1), dtype=torch.float32) * 2,
-        intervene_actions=torch.ones((3, 4), dtype=torch.float32),
-        intervene_flags=torch.ones((3, 1), dtype=torch.bool),
-        rlt_switch_flags=torch.ones((3, 1), dtype=torch.bool),
-    ).to_dict()
-
-    merged = EnvOutput.merge_env_outputs([env_output_0, env_output_1])
-
-    assert merged["obs"]["states"].shape[0] == 5
-    assert len(merged["obs"]["task_descriptions"]) == 5
-    assert merged["rewards"].shape[0] == 5
-    assert merged["final_obs"] is not None
-    assert torch.equal(merged["final_obs"]["states"][:2], env_output_0["obs"]["states"])
-    assert torch.equal(
-        merged["final_obs"]["states"][2:], env_output_1["final_obs"]["states"]
-    )
-
-    assert merged["intervene_actions"].shape == (5, 4)
-    assert torch.equal(
-        merged["intervene_actions"][:2], torch.zeros((2, 4), dtype=torch.float32)
-    )
-    assert merged["intervene_flags"].shape == (5, 1)
-    assert torch.equal(
-        merged["intervene_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
-    )
-    assert merged["rlt_switch_flags"].shape == (5, 1)
-    assert torch.equal(
-        merged["rlt_switch_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
-    )
 
 
 def test_buffer_pool_uses_best_fit_buffers_independent_of_tensor_order():

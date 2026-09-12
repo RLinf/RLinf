@@ -64,25 +64,24 @@ This design reduces repeated loads while keeping the sampling distribution smoot
 Data Flow Overview
 ------------------
 
-Multi-round interactions between the model and environment are collected by the
-Rollout Worker, converted into `Trajectory`, and sent through the Channel to the
-Actor Worker. The Actor Worker stores the trajectories in `TrajectoryReplayBuffer`
-and samples batches for training.
+Multi-round interactions between the model and environment are published by the
+Rollout Worker as trajectory parts. The Actor Channel collector converts them
+into `Trajectory` values. The Actor Worker stores those trajectories in
+`TrajectoryReplayBuffer` and samples batches for training.
 
-Rollout Worker: Trajectory Collection
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Actor Channel: Trajectory Collection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The rollout worker accumulates step results over time. Here, `[obs_0, obs_1]`
-represents a transition, and `[act_0, r_0, dones, ...]` represents a
-**ChunkStepResult**.
+The collector accumulates joined chunks over time. Here, `[obs_0, obs_1]`
+represents a transition, and `[act_0, r_0, dones, ...]` represents one chunk.
 
 .. code-block:: text
 
    time ->
    [ obs_0, obs_1, act_0, r_0, dones_0, ... ] --┐
-   [ obs_1, obs_2, act_1, r_1, dones_1, ... ] --┼-- EmbodiedTrajectoryBuilder -- Trajectory
-   [ obs_2, obs_3, act_2, r_2, dones_2, ... ] --┤                                |
-   [ obs_3, obs_4, act_3, r_3, dones_3, ... ] --┘                           Channel(put)
+   [ obs_1, obs_2, act_1, r_1, dones_1, ... ] --┼-- TrajectoryCollector -- Trajectory
+   [ obs_2, obs_3, act_2, r_2, dones_2, ... ] --┤                         |
+   [ obs_3, obs_4, act_3, r_3, dones_3, ... ] --┘                    Channel(put)
 
 Actor Worker: Trajectory Storage
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

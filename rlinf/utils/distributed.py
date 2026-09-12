@@ -19,16 +19,36 @@ from typing import Any, Callable, Optional, Sequence, Union
 import numpy as np
 import torch
 import torch.distributed
-
-try:
-    from megatron.core import parallel_state
-except ImportError:
-    parallel_state = None  # type: ignore
 from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
 from rlinf.scheduler import Tracer, Worker
 from rlinf.utils.timers import NamedTimer
+
+
+class _LazyParallelState:
+    """Resolve ``megatron.core.parallel_state`` on first use.
+
+    Importing ``megatron.core`` initializes CUDA, so importing it here would
+    create a CUDA context in every process that merely imports this module --
+    including CPU-only workers, which afterwards cannot safely fork a child
+    (the child inherits an unusable context and aborts when it frees any
+    ``torch.cuda`` object). Both the embodied and reasoning stacks import this
+    module, so the deferral keeps Megatron out of processes that never train.
+    """
+
+    _module: Optional[Any] = None
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward attribute access to the real module, importing it once."""
+        if _LazyParallelState._module is None:
+            from megatron.core import parallel_state as megatron_parallel_state
+
+            _LazyParallelState._module = megatron_parallel_state
+        return getattr(_LazyParallelState._module, name)
+
+
+parallel_state = _LazyParallelState()
 
 
 def compute_rollout_metrics_dynamic(

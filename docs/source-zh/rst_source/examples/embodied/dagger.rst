@@ -98,8 +98,8 @@ DAgger 工作原理
 ----------------------------------------
 
 上面三份经典配置将 expert 标注轨迹存入内存 **replay buffer**。
-``libero_spatial_dagger_openpi_lerobot.yaml`` 提供 **在线 LeRobot** 路径：env worker
-以 LeRobot 格式收集完整 episode，经内存发送给 actor，actor 通过
+``libero_spatial_dagger_openpi_lerobot.yaml`` 提供 **在线 LeRobot** 路径：Actor
+channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 actor，actor 通过
 :class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset` 滑动窗口训练。
 
 **经典 replay buffer vs 在线 LeRobot**
@@ -118,8 +118,8 @@ DAgger 工作原理
 
 1. **混合 rollout 与专家重标注** — 与经典 DAgger 相同的 ``beta`` 调度与专家重标注。
 2. **Episode 收集** — 当 ``algorithm.dagger.online_lerobot.enabled`` 为 ``True`` 时，
-   EnvWorker 使用 :class:`~rlinf.data.schema.embodied_trajectory_builder.EmbodiedLerobotTrajectoryBuilder`
-   累积各 env 的帧并导出完整 episode。
+   :class:`~rlinf.data.schema.embodied_trajectory.TrajectoryCollector` 累积各 env
+   的帧并导出完整 episode。
 3. **Actor 接收** — 完成的 episode 经 ``recv_lerobot_rollout_trajectories`` 写入 rolling dataset。
 4. **滑动窗口训练** — actor 从 ``RollingLeRobotDataset`` 采样（可选 decoded cache），
    优化 ``embodied_dagger`` 损失。

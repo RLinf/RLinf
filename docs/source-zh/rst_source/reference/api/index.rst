@@ -33,8 +33,8 @@ API手册
      - 基于 Hugging Face 与 SGLang 的 Rollout 封装。
    * - :doc:`Env <env>`
      - 面向具身智能场景的环境封装。
-   * - :doc:`Data <data>`
-     - 不同 Worker 间传输的数据结构。
+   * - :doc:`Agentic 数据 <data>`
+     - Agentic Rollout 请求与结果数据结构。
    * - :doc:`Embodied Data <embodied_data>`
      - 具身场景的 Env/Rollout 数据结构。
    * - :doc:`Replay Buffer <replay_buffer>`

@@ -1,14 +1,39 @@
-Channel 接口
-======================
+Channel API
+===========
 
-本节详细介绍 RLinf 中的 **Channel**，  
-它是一种用于异步通信的高层抽象，实现形式为生产者–消费者队列。  
+使用这些接口创建队列，并定制入队转换和消费者路由行为。执行模型和最小注册 hook
+案例参见 :doc:`../../concepts/channel`。
 
 Channel
---------
+-------
 
 .. autoclass:: rlinf.scheduler.Channel
    :members:
-   :no-index:
    :member-order: bysource
-   :class-doc-from: class  
+   :no-index:
+   :class-doc-from: class
+
+Hook Context
+------------
+
+.. autoclass:: rlinf.scheduler.ChannelContext
+   :members:
+   :member-order: bysource
+
+Collector
+---------
+
+.. autoclass:: rlinf.scheduler.Collector
+   :members:
+   :member-order: bysource
+
+.. autofunction:: rlinf.scheduler.register_collector
+
+Dispatcher
+----------
+
+.. autoclass:: rlinf.scheduler.Dispatcher
+   :members:
+   :member-order: bysource
+
+.. autofunction:: rlinf.scheduler.register_dispatcher

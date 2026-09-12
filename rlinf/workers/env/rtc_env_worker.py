@@ -29,6 +29,7 @@ from omegaconf.omegaconf import DictConfig
 
 from rlinf.data.schema.embodied_types import (
     EnvOutput,
+    EnvTransition,
     RTCActionResponse,
     RTCRequest,
 )
@@ -183,10 +184,12 @@ class RTCEnvWorker(EnvWorker):
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=final_obs,
-            rewards=step_reward,
-            dones=dones,
-            terminations=terminations,
-            truncations=truncations,
+            transition=EnvTransition(
+                rewards=step_reward,
+                dones=dones,
+                terminations=terminations,
+                truncations=truncations,
+            ),
         )
         return env_output, env_info
 
