@@ -171,7 +171,7 @@ class FSDP2Strategy(FSDPStrategyBase):
         """
         grad_norm = get_grad_norm(
             model.parameters(),
-            dp_group=self._dp_group,
+            shard_group=self._shard_group,
             norm_type=norm_type,
         )
         clip_grad_by_total_norm_(

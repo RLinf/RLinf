@@ -95,6 +95,23 @@ The following examples include math reasoning RL and agentic AI workflows, such 
 
    </div>
 
+Scale Agentic RL
+----------------
+
+Use these guides to scale the training system behind agentic and reasoning
+workloads.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - Guide
+     - What you get
+   * - :doc:`Dynamic Scheduling <dynamic_scheduling>`
+     - Reallocate actor, rollout, and inference resources while training continues.
+   * - :doc:`5D Parallelism <5D>`
+     - Combine Megatron-LM parallelism dimensions for large-model training.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -106,3 +123,5 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    rStar2 <rstar2>
    Math Reasoning <math_reasoning/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>
+   Dynamic Scheduling <dynamic_scheduling>
+   5D Parallelism <5D>

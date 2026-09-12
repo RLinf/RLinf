@@ -25,7 +25,7 @@ scheduling and fine-grained migration.
 
 DynaRL is implemented atop RLinf and integrates with existing inference engines
 (e.g., SGLang) and training backends (e.g., Megatron-LM). It is the system behind
-RLinf's :doc:`dynamic scheduling <../../guides/dynamic_scheduling>` feature.
+RLinf's :doc:`dynamic scheduling <../../examples/agentic/dynamic_scheduling>` feature.
 
 Results
 -------
@@ -171,7 +171,7 @@ finish within **200 ms**; total scheduling overhead per iteration is below
 Quick Start
 -----------
 
-- **Instruction:** :doc:`../../guides/dynamic_scheduling`
+- **Instruction:** :doc:`../../examples/agentic/dynamic_scheduling`
 
 Citation
 --------

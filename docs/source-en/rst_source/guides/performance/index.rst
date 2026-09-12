@@ -1,8 +1,8 @@
 Performance
 ===========
 
-Use these guides when latency, throughput, memory, placement, or large-model
-training efficiency becomes the bottleneck.
+Use these guides to improve latency, throughput, memory use, and placement for
+embodied RL and SFT workloads.
 
 .. list-table::
    :header-rows: 1
@@ -18,14 +18,12 @@ training efficiency becomes the bottleneck.
      - Losslessly compress image observations on the Env to Rollout channel to save bandwidth.
    * - :doc:`LoRA <../lora>`
      - Train with LoRA adapters.
+   * - :doc:`FSDP Practical Tips <../fsdp_tips>`
+     - Configure hybrid sharding for multi-node embodied training.
    * - :doc:`Auto Placement <../auto_placement>`
      - Auto-select the best placement for a workload.
-   * - :doc:`Dynamic Scheduling <../dynamic_scheduling>`
-     - Dynamically schedule resources during training.
    * - :doc:`Profiling <../profile>`
      - System-level profiling of Ray worker processes.
-   * - :doc:`5D Parallelism <../5D>`
-     - Configure 5D parallelism for large models.
 
 .. toctree::
    :hidden:
@@ -34,7 +32,6 @@ training efficiency becomes the bottleneck.
    Env Decoupled Mode <../env_decoupled_mode>
    Observation Compression <../obs_compression>
    LoRA <../lora>
+   FSDP Practical Tips <../fsdp_tips>
    Auto Placement <../auto_placement>
-   Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
-   5D Parallelism <../5D>

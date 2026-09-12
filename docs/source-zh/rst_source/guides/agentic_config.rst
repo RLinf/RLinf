@@ -132,9 +132,9 @@ rollout
    * - ``rollout.eos``
      - EOS token id 覆盖；``null`` 时使用 ``tokenizer.eos_token_id``。
    * - ``rollout.tensor_parallel_size``
-     - 生成后端内部的 TP 并行度。见 :doc:`5D`。
+     - 生成后端内部的 TP 并行度。见 :doc:`5D 并行 <../examples/agentic/5D>`。
    * - ``rollout.pipeline_parallel_size``
-     - 生成后端内部的 PP 并行度。见 :doc:`5D`。
+     - 生成后端内部的 PP 并行度。见 :doc:`5D 并行 <../examples/agentic/5D>`。
    * - ``rollout.return_logprobs``
      - 引擎是否返回对数概率；默认为 ``algorithm.recompute_logprobs`` 的取反。
    * - ``rollout.validate_weight``

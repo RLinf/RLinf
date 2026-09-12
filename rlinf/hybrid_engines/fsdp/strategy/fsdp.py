@@ -440,12 +440,12 @@ class FSDPStrategy(FSDPStrategyBase):
                 else local_sharded_norm
             )
             torch.distributed.all_reduce(
-                total_norm, op=torch.distributed.ReduceOp.MAX, group=self._dp_group
+                total_norm, op=torch.distributed.ReduceOp.MAX, group=self._shard_group
             )
         else:
             total_norm = local_sharded_norm**norm_type
             torch.distributed.all_reduce(
-                total_norm, op=torch.distributed.ReduceOp.SUM, group=self._dp_group
+                total_norm, op=torch.distributed.ReduceOp.SUM, group=self._shard_group
             )
             if local_nonsharded_norm is not None:
                 total_norm += local_nonsharded_norm**norm_type
