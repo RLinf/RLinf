@@ -234,15 +234,12 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
     def output_transform(self, outputs: dict) -> dict:
         """Apply the openpi output pipeline per-sample then recombine."""
         self._ensure_wrappers()
-        batch_size = outputs["actions"].shape[0]
-        transformed = []
-        for i in range(batch_size):
-            sample = tree_map(
-                lambda x: _to_numpy(x[i]) if torch.is_tensor(x) else x[i],
-                outputs,
-            )
-            sample = self._output_transform_fn(sample)
-            transformed.append(sample)
+        host_outputs = tree_map(_to_numpy, outputs)
+        batch_size = host_outputs["actions"].shape[0]
+        transformed = [
+            self._output_transform_fn(tree_map(lambda x: x[index], host_outputs))
+            for index in range(batch_size)
+        ]
         recombined = tree_map(
             lambda *xs: torch.from_numpy(np.asarray(xs).copy()),
             *transformed,
@@ -342,7 +339,7 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         # openpi Unnormalize runs in float64; cast env actions back to float32 to
         # match the legacy eval processor's ``.astype(np.float32)`` contract (and
         # the action dtype the env/rollout worker expects).
-        actions = env_outputs["actions"].to(device=self.device, dtype=torch.float32)
+        actions = env_outputs["actions"].to(dtype=torch.float32)
         B = actions.shape[0]
         result = {
             "prev_logprobs": None,
