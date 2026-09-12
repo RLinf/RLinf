@@ -12,15 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the collective timeout of the FSDP device mesh.
+"""Tests for the FSDP device mesh and the process groups derived from it.
 
-``init_device_mesh`` creates the default process group itself when none exists,
-using whatever watchdog timeout the backend ships with — 30 minutes for
-NCCL/Gloo, about 60 for HCCL, in every case below the 180 minutes RLinf gives
-its own groups. A mesh dimension that spans the whole world reuses that group,
-so every FSDP collective inherits that timeout, and no environment variable can
-raise it. ``create_device_mesh`` therefore creates the group first, with the
-same ``RLINF_TIMEOUT`` that RLinf applies to its own inter-worker groups.
+Two properties of that mesh are easy to get wrong and silent when they are, so
+they are pinned here: the timeout its collectives run under, and which of its
+dimensions a gradient norm reduces over.
+
+The timeout. ``init_device_mesh`` creates the default process group itself when
+none exists, using whatever watchdog timeout the backend ships with — 30 minutes
+for NCCL/Gloo, about 60 for HCCL, in every case below the 180 minutes RLinf
+gives its own groups. A mesh dimension that spans the whole world reuses that
+group, so every FSDP collective inherits that timeout, and no environment
+variable can raise it. ``create_device_mesh`` therefore creates the group first,
+with the same ``RLINF_TIMEOUT`` that RLinf applies to its own inter-worker
+groups.
+
+The reduction group. FSDP leaves each rank only its slice of every gradient, so
+a norm over one of them is not the gradient's norm. ``gradient_reduction_group``
+picks the dimension the shards are spread over, which stays ``fsdp`` even once a
+replicated ``ddp`` dimension exists beside it.
 """
 
 import logging
@@ -216,3 +226,28 @@ def test_mesh_dimension_reuses_the_default_group(single_rank_env):
     """
     mesh = create_device_mesh(1)
     assert mesh["fsdp"].get_group() is dist.distributed_c10d._get_default_group()
+
+
+def test_gradients_reduce_over_the_sharding_dimension(single_rank_env):
+    """The norm's process group is the one gradients are sharded over.
+
+    FSDP leaves each rank only its slice of every gradient, so the group has to
+    span the sharding dimension. Reducing over nothing reports one rank's shard
+    norm rather than the gradient's, and gradient clipping then loosens as the
+    job grows; reducing over a replicated dimension counts each shard once per
+    replica. Both are silent, so the lookup fails loudly instead of falling back
+    when no sharding dimension is present.
+    """
+    from torch.distributed.device_mesh import init_device_mesh
+
+    from rlinf.hybrid_engines.fsdp.utils import gradient_reduction_group
+
+    sharded = create_device_mesh(1)
+    assert gradient_reduction_group(sharded) is sharded["fsdp"].get_group()
+
+    hybrid = init_device_mesh("cpu", (1, 1), mesh_dim_names=["ddp", "fsdp"])
+    assert gradient_reduction_group(hybrid) is hybrid["fsdp"].get_group()
+
+    replicated_only = init_device_mesh("cpu", (1,), mesh_dim_names=["ddp"])
+    with pytest.raises(KeyError):
+        gradient_reduction_group(replicated_only)

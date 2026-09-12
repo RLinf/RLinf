@@ -43,6 +43,7 @@ from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
+    gradient_reduction_group,
 )
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
@@ -97,11 +98,7 @@ class FSDPModelManager:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
         self._device_mesh = create_device_mesh(world_size)
-        self._dp_group = (
-            self._device_mesh["ddp"].get_group()
-            if "ddp" in self._device_mesh.mesh_dim_names
-            else None
-        )
+        self._dp_group = gradient_reduction_group(self._device_mesh)
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger

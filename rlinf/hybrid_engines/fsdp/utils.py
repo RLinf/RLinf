@@ -97,6 +97,23 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
     )
 
 
+def gradient_reduction_group(device_mesh: DeviceMesh) -> torch.distributed.ProcessGroup:
+    """Return the group a gradient's shards are spread over.
+
+    :func:`get_grad_norm` sums per-rank shard norms over this group, so it has
+    to span the sharding dimension and nothing else. Passing ``None`` yields one
+    rank's shard norm instead of the gradient's, and under hybrid sharding the
+    ``ddp`` dimension holds replicas whose norms would be counted once each.
+
+    Args:
+        device_mesh (DeviceMesh): The mesh FSDP was built over.
+
+    Returns:
+        torch.distributed.ProcessGroup: The group behind the ``fsdp`` dimension.
+    """
+    return device_mesh["fsdp"].get_group()
+
+
 def init_fn(x: torch.nn.Module):
     if not torch.distributed.get_rank() == 0:
         x = x.to_empty(device=Worker.torch_platform.current_device(), recurse=False)
