@@ -282,16 +282,11 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 assert self.actor_tp_size % self.rollout_tp_size == 0, (
                     f"Actor TP size ({self.actor_tp_size}) must be divisible by Rollout TP size ({self.rollout_tp_size})"
                 )
-            stride = (
-                self.actor_tp_size // self.rollout_tp_size
-                if self.actor_tp_size > self.rollout_tp_size
-                else 1
-            )
+            # Dense placement: rollout ranks are packed contiguously
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
                 self._rollout_gpus[-1],
                 num_hardware_per_process=self.rollout_tp_size,
-                stride=stride,
             )
             if self._reward_gpus:
                 self._placements["reward"] = PackedPlacementStrategy(
@@ -539,6 +534,33 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def rollout_tp_size(self) -> int:
         return self._config.rollout.get("tensor_parallel_size", 1)
+
+    @property
+    def rollout_attn_tp_size(self) -> int:
+        # for sglang DP-attention the engine's tensor_parallel_size is the world size (e.g. 8)
+        # while attention is sharded by attn_tp = tp // dp (e.g. 4).
+        tp = self._config.rollout.get("tensor_parallel_size", 1)
+        sglang = self._config.rollout.get("sglang", {})
+        if sglang.get("enable_dp_attention", False):
+            dp = sglang.get("dp_size", 1)
+            assert tp % dp == 0, (
+                f"rollout tensor_parallel_size ({tp}) must be divisible by "
+                f"sglang dp_size ({dp}) when enable_dp_attention is on"
+            )
+            return tp // dp
+        return tp
+
+    @property
+    def rollout_ep_size(self) -> int:
+        # Rollout MoE expert-parallel size (ep_size).
+        # sglang derives moe_tp = tp // ep // moe_dp internally;
+        # each rollout rank holds num_moe_experts//ep_size experts (EP-distributed).
+        sglang = self._config.rollout.get("sglang", {})
+        if "ep_size" in sglang:
+            return sglang["ep_size"]
+        if sglang.get("enable_ep_moe", False):
+            return self._config.rollout.get("tensor_parallel_size", 1)
+        return 1
 
     @property
     def rollout_world_size(self) -> int:

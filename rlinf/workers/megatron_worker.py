@@ -1110,6 +1110,13 @@ class MegatronWorker(MegatronModelManager, Worker):
             self.inference_cfg.model.tensor_model_parallel_size,
             self.inference_cfg.model.pipeline_model_parallel_size,
         )
+        # Map the actor's TP rank into the inference TP group (1:1 when equal,
+        # else folds multiple actor ranks onto one shard) to avoid narrow()
+        # going out of bounds when actor_tp > inference_tp.
+        inference_tp_size = self.inference_cfg.model.tensor_model_parallel_size
+        self.inference_dst_tp_rank = (
+            parallel_state.get_tensor_model_parallel_rank() % inference_tp_size
+        )
 
     def get_inference_weight_dst_ranks(self, inference_tp, inference_pp):
         """
@@ -1132,8 +1139,15 @@ class MegatronWorker(MegatronModelManager, Worker):
             if "_extra_state" in key:
                 continue
             model_state_dict[key] = val
+        if (
+            self.role_cfg.model.tensor_model_parallel_size
+            == self.inference_cfg.model.tensor_model_parallel_size
+            and self.role_cfg.model.pipeline_model_parallel_size
+            == self.inference_cfg.model.pipeline_model_parallel_size
+        ):
+            return model_state_dict
         return self.inference_weights_reshard.gather_and_reshard_model(
-            model_state_dict, self.dst_tp_rank
+            model_state_dict, self.inference_dst_tp_rank
         )
 
     def sync_model_to_inference(self):
@@ -1323,7 +1337,10 @@ class MegatronWorker(MegatronModelManager, Worker):
                     normalize_advantages=False,
                 )
                 batch["advantages"] = advantages
-                batch["returns"] = returns
+                if returns is not None:
+                    # grpo returns None; merge_batches() has no branch for
+                    # None-typed values and would raise ValueError.
+                    batch["returns"] = returns
 
         return batch
 

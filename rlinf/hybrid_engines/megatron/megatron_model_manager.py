@@ -306,7 +306,7 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3",):
+        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -818,22 +818,25 @@ class MegatronModelManager:
         ):
             return
 
-        for model_idx, model_chunk in enumerate(self.model):
+        for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
-                for buffer_idx, buffer in enumerate(model_chunk.buffers):
+                # All model bf16 weights live in two flat _ParamAndGradBuffer groups:
+                #   model_chunk.buffers                (dense/embed/attn, param_data)
+                #   model_chunk.expert_parallel_buffers (experts, param_data)
+                param_grad_buffers = list(model_chunk.buffers) + list(
+                    getattr(model_chunk, "expert_parallel_buffers", [])
+                )
+                for buffer in param_grad_buffers:
                     if (
                         offload_weight
                         and not self.is_weight_offloaded
                         and buffer.param_data.untyped_storage().size() > 0
                     ):
                         param_size = buffer.param_data.untyped_storage().size()
-
                         cpu_data = self._get_pinned_buffer(buffer.param_data)
                         cpu_data.copy_(buffer.param_data, non_blocking=True)
                         buffer.param_data_size = param_size
-
                         buffer.param_data.untyped_storage().resize_(0)
-
                         assert (
                             buffer.param_data_size == cpu_data.untyped_storage().size()
                         )
@@ -843,8 +846,11 @@ class MegatronModelManager:
                         and not self.is_grad_offloaded
                         and buffer.grad_data.untyped_storage().size() > 0
                     ):
-                        grad_size = buffer.grad_data.untyped_storage().size()
-                        buffer.grad_data_size = grad_size
+                        # Gradients are discarded (recomputed after onload); only the
+                        # storage is freed. Onload resizes back and zero-fills.
+                        buffer.grad_data_size = (
+                            buffer.grad_data.untyped_storage().size()
+                        )
                         buffer.grad_data.untyped_storage().resize_(0)
 
             else:
@@ -882,7 +888,12 @@ class MegatronModelManager:
         Worker.torch_platform.empty_cache()
         for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
-                for buffer in model_chunk.buffers:
+                # Restore the two flat param_data groups (dense + expert) freed in
+                # offload. Symmetric to offload_model_weights_and_grad.
+                param_grad_buffers = list(model_chunk.buffers) + list(
+                    getattr(model_chunk, "expert_parallel_buffers", [])
+                )
+                for buffer in param_grad_buffers:
                     # sometimes, we don't want to load grad for pure inference
                     if load_grad and self.is_grad_offloaded:
                         if hasattr(buffer, "grad_data_size"):
@@ -992,29 +1003,47 @@ class MegatronModelManager:
             if hasattr(_opt, "shard_fp32_from_float16_groups"):
                 load_group_to_gpu(_opt.shard_fp32_from_float16_groups)
 
+    def optimizer_states_to_cycle(self, inner_optimizer):
+        """Per-param state dicts that RLinf cycles between GPU and CPU.
+
+        With mcore optimizer_cpu_offload, inner_optimizer is a
+        HybridDeviceOptimizer that splits state by offload_fraction into
+        gpu_optimizer (resident on GPU) and cpu_optimizers (resident on CPU).
+        Only the gpu_optimizer portion needs cycling; the cpu_optimizers
+        portion must stay on CPU.
+        """
+        is_hdo = inner_optimizer.__class__.__name__ == "HybridDeviceOptimizer"
+        if not is_hdo:
+            return list(inner_optimizer.state.values())
+        gpu_opt = getattr(inner_optimizer, "gpu_optimizer", None)
+        if gpu_opt is None:
+            # offload_fraction == 1.0: all state is CPU-resident.
+            return []
+        return list(gpu_opt.state.values())
+
     def offload_megatron_optimizer(self):
         if self.is_optimizer_offloaded:
             return
 
-        def _iter_opts(opt):
+        def iter_opts(opt):
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
             return [opt]
 
-        for _opt in _iter_opts(self.optimizer):
-            self.offload_megatron_copy_params(_opt)
-            for v in _opt.optimizer.state.values():
+        for opt in iter_opts(self.optimizer):
+            self.offload_megatron_copy_params(opt)
+            for v in self.optimizer_states_to_cycle(opt.optimizer):
                 # Offloading through resetting the storage size can ensure that
                 # the tensor can be offloaded correctly even when it has tensor
                 # views. Mirrors the onload path: same three keys.
-                for _k in ("exp_avg", "exp_avg_sq", "master_param"):
-                    if _k not in v:
+                for k in ("exp_avg", "exp_avg_sq", "master_param"):
+                    if k not in v:
                         continue
-                    _t = v[_k]
-                    if torch.is_tensor(_t) and _t.is_cuda:
-                        cpu_data = self._get_pinned_buffer(_t)
-                        cpu_data.copy_(_t.data, non_blocking=True)
-                        _t.storage().resize_(0)
+                    t = v[k]
+                    if torch.is_tensor(t) and t.is_cuda:
+                        cpu_data = self._get_pinned_buffer(t)
+                        cpu_data.copy_(t.data, non_blocking=True)
+                        t.storage().resize_(0)
         clear_memory()
 
         self.is_optimizer_offloaded = True
@@ -1023,25 +1052,25 @@ class MegatronModelManager:
         if not self.is_optimizer_offloaded:
             return
 
-        def _iter_opts(opt):
+        def iter_opts(opt):
             if isinstance(opt, ChainedOptimizer):
                 return opt.chained_optimizers
             return [opt]
 
-        for _opt in _iter_opts(self.optimizer):
-            self.load_megatron_copy_params(_opt)
-            for v in _opt.optimizer.state.values():
+        for opt in iter_opts(self.optimizer):
+            self.load_megatron_copy_params(opt)
+            for v in self.optimizer_states_to_cycle(opt.optimizer):
                 # support resuming training w/o precision aware optimizer
-                _dev = Worker.torch_platform.current_device()
-                for _k in ("exp_avg", "exp_avg_sq", "master_param"):
-                    if _k not in v:
+                dev = Worker.torch_platform.current_device()
+                for k in ("exp_avg", "exp_avg_sq", "master_param"):
+                    if k not in v:
                         continue
-                    _t = v[_k]
-                    _has_cd = hasattr(_t, "cpu_data")
-                    if _has_cd:
-                        _t.data = _t.cpu_data.to(_dev, non_blocking=True)
-                    elif not _t.is_cuda:
-                        _t.data = _t.to(_dev)
+                    t = v[k]
+                    has_cd = hasattr(t, "cpu_data")
+                    if has_cd:
+                        t.data = t.cpu_data.to(dev, non_blocking=True)
+                    elif not t.is_cuda:
+                        t.data = t.to(dev)
         clear_memory()
         self.is_optimizer_offloaded = False
 
