@@ -76,6 +76,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_evo1_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
+        elif model_type == SupportedModel.FASTWAM:
+            from rlinf.data.datasets.fastwam import build_fastwam_sft_dataloader
+
+            return build_fastwam_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."

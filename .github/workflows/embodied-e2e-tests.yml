@@ -548,6 +548,40 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-fastwam-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create FastWAM LIBERO environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model fastwam --env libero
+
+      - name: FastWAM LIBERO batch evaluation
+        timeout-minutes: 45
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/FastWAM/models
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_eval.sh libero_spatial_fastwam_eval
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvlaoft-maniskill-libero-test:
     runs-on: embodied
     steps:
