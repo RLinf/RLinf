@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import torch
 from omegaconf import OmegaConf
+from torch.distributed.tensor.placement_types import Partial, Replicate, Shard
 
 from rlinf.config import validate_weight_sync_overlap_cfg
 from rlinf.data.schema.embodied_types import EnvOutput
@@ -40,6 +41,8 @@ from rlinf.hybrid_engines.weight_syncer.patch_syncer import (
     EmptyWeightPatch,
     GPUSnapshotPatchBuilder,
     WeightPatch,
+    _dtensor_requires_collective,
+    _init_sync_requires_sender_lockstep,
     as_coo_2d_view,
     downscale_nonnegative_indices,
 )
@@ -810,8 +813,56 @@ def test_patch_weight_syncer_init_sync_bootstraps_selected_prefixes():
         )
 
 
-def test_patch_weight_syncer_init_sync_barriers_after_every_bucket(monkeypatch):
-    # Runs on CPU on purpose: the invariant is rank bookkeeping, and CI has no accelerator.
+class _FakeDTensor:
+    """Stand-in for ``DTensor`` so placement checks stay CPU-only."""
+
+    def __init__(self, placements):
+        self.placements = placements
+
+
+def test_dtensor_requires_collective_placements(monkeypatch):
+    monkeypatch.setattr(
+        "rlinf.hybrid_engines.weight_syncer.patch_syncer.DTensor",
+        _FakeDTensor,
+    )
+    assert not _dtensor_requires_collective(torch.zeros(2))
+    assert not _dtensor_requires_collective(_FakeDTensor((Replicate(),)))
+    assert not _dtensor_requires_collective(_FakeDTensor((Replicate(), Replicate())))
+    assert _dtensor_requires_collective(_FakeDTensor((Shard(0),)))
+    assert _dtensor_requires_collective(_FakeDTensor((Partial(),)))
+    assert _dtensor_requires_collective(_FakeDTensor((Shard(0), Replicate())))
+    assert _dtensor_requires_collective(_FakeDTensor((Replicate(), Partial())))
+
+
+def test_init_sync_requires_sender_lockstep_decision(monkeypatch):
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    assert not _init_sync_requires_sender_lockstep([torch.zeros(1)])
+    assert not _dtensor_requires_collective(torch.zeros(2))
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
+    monkeypatch.setattr(
+        "rlinf.hybrid_engines.weight_syncer.patch_syncer.DTensor",
+        _FakeDTensor,
+    )
+    sharded = _FakeDTensor((Shard(0),))
+    assert not _init_sync_requires_sender_lockstep([sharded])
+
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 8)
+    assert _init_sync_requires_sender_lockstep([sharded])
+    assert _init_sync_requires_sender_lockstep([torch.zeros(1), sharded])
+    assert not _init_sync_requires_sender_lockstep(
+        [torch.zeros(1), _FakeDTensor((Replicate(),))]
+    )
+
+
+def _run_init_sync_with_lockstep(
+    monkeypatch,
+    *,
+    lockstep: bool,
+    active_sender: bool,
+    torch_device_type: str,
+) -> tuple[list[str], list[object], object]:
     model = _make_value_head_model(torch.device("cpu"))
     syncer = PatchWeightSyncer(
         snapshot_device="cpu",
@@ -822,65 +873,199 @@ def test_patch_weight_syncer_init_sync_barriers_after_every_bucket(monkeypatch):
         init_sync_prefixes=["value_head"],
         init_sync_bucket_size=32,
     )
-
-    state_dict = model.state_dict()
-    receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
-    events = []
+    syncer._active_sender = active_sender
+    cpu_group = object()
+    events: list[str] = []
+    barrier_groups: list[object] = []
 
     async def _send(_bucket):
         events.append("send")
 
-    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-    monkeypatch.setattr(torch.distributed, "barrier", lambda: events.append("barrier"))
-    monkeypatch.setattr(Worker, "torch_device_type", "cpu", raising=False)
+    def _barrier(group=None):
+        events.append("barrier")
+        barrier_groups.append(group)
+
+    monkeypatch.setattr(
+        "rlinf.hybrid_engines.weight_syncer.patch_syncer._init_sync_requires_sender_lockstep",
+        lambda _values: lockstep,
+    )
+    monkeypatch.setattr(
+        PatchWeightSyncer, "_ensure_sender_cpu_group", lambda _self: cpu_group
+    )
+    monkeypatch.setattr(torch.distributed, "barrier", _barrier)
+    monkeypatch.setattr(Worker, "torch_device_type", torch_device_type, raising=False)
     stream = MagicMock()
     stream.synchronize.side_effect = lambda: events.append("drain")
     platform = MagicMock()
     platform.current_stream.return_value = stream
     monkeypatch.setattr(Worker, "torch_platform", platform, raising=False)
 
+    state_dict = model.state_dict()
+    receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
+    asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
+    return events, barrier_groups, cpu_group
+
+
+def test_patch_weight_syncer_init_sync_skips_lockstep_for_dense_tensors(monkeypatch):
+    events, barrier_groups, _cpu_group = _run_init_sync_with_lockstep(
+        monkeypatch,
+        lockstep=False,
+        active_sender=True,
+        torch_device_type="cpu",
+    )
+    assert events.count("send") > 1
+    assert "barrier" not in events
+    assert "drain" not in events
+    assert barrier_groups == []
+
+
+def test_patch_weight_syncer_init_sync_skips_lockstep_when_state_dict_is_dense(
+    monkeypatch,
+):
+    # no_shard / dense tensors must not create a Gloo group or hit a GPU barrier.
+    # This is the MUSA 2-rank collocated CI path.
+    model = _make_value_head_model(torch.device("cpu"))
+    syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+        init_sync_enabled=True,
+        init_sync_prefixes=["value_head"],
+        init_sync_bucket_size=32,
+    )
+    events: list[str] = []
+
+    async def _send(_bucket):
+        events.append("send")
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 8)
+    monkeypatch.setattr(
+        torch.distributed, "barrier", lambda **_kwargs: events.append("barrier")
+    )
+    monkeypatch.setattr(
+        torch.distributed,
+        "new_group",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("new_group")),
+    )
+
+    state_dict = model.state_dict()
+    receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
     asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
 
-    # Only the source rank enters the send, so every bucket needs a barrier to keep the other
-    # ranks from starting the next bucket's all-gather. The barrier runs on the sender's own
-    # group and cannot order the broadcast communicator, so the send must be drained first.
+    assert events.count("send") > 1
+    assert "barrier" not in events
+
+
+def test_patch_weight_syncer_init_sync_lockstep_uses_full_state_dict(monkeypatch):
+    # Prefix init-sync may select only dense tensors. Snapshot build after the
+    # loop still materializes the unselected sharded parameters, so lockstep
+    # must look at the whole state_dict.
+    model = _make_value_head_model(torch.device("cpu"))
+    syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+        init_sync_enabled=True,
+        init_sync_prefixes=["value_head"],
+        init_sync_bucket_size=32,
+    )
+    cpu_group = object()
+    events: list[str] = []
+    barrier_groups: list[object] = []
+
+    async def _send(_bucket):
+        events.append("send")
+
+    def _barrier(group=None):
+        events.append("barrier")
+        barrier_groups.append(group)
+
+    monkeypatch.setattr(
+        "rlinf.hybrid_engines.weight_syncer.patch_syncer.DTensor",
+        _FakeDTensor,
+    )
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 8)
+    monkeypatch.setattr(
+        PatchWeightSyncer, "_ensure_sender_cpu_group", lambda _self: cpu_group
+    )
+    monkeypatch.setattr(torch.distributed, "barrier", _barrier)
+    monkeypatch.setattr(Worker, "torch_device_type", "musa", raising=False)
+
+    state_dict = model.state_dict()
+    state_dict["backbone.weight"] = _FakeDTensor((Shard(0),))
+    receiver_dtypes = {
+        key: value.dtype
+        for key, value in state_dict.items()
+        if not isinstance(value, _FakeDTensor)
+    }
+    asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
+
+    assert events.count("send") > 1
+    assert events == ["send", "barrier"] * events.count("send")
+    assert barrier_groups == [cpu_group] * events.count("send")
+
+
+def test_patch_weight_syncer_ensure_sender_cpu_group_uses_gloo(monkeypatch):
+    created = {}
+
+    def _new_group(**kwargs):
+        created.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(torch.distributed, "new_group", _new_group)
+    monkeypatch.setattr(
+        "rlinf.hybrid_engines.weight_syncer.patch_syncer.Cluster.get_collective_timeout",
+        lambda: "timeout",
+    )
+    syncer = PatchWeightSyncer()
+    group = syncer._ensure_sender_cpu_group()
+    assert created["backend"] == "gloo"
+    assert created["timeout"] == "timeout"
+    assert syncer._ensure_sender_cpu_group() is group
+
+
+def test_patch_weight_syncer_init_sync_cpu_lockstep_after_every_bucket(monkeypatch):
+    events, barrier_groups, cpu_group = _run_init_sync_with_lockstep(
+        monkeypatch,
+        lockstep=True,
+        active_sender=True,
+        # Transport stays CPU, so the source rank must not drain an accelerator stream.
+        torch_device_type="musa",
+    )
+    # The wait itself must still be a Gloo group, not the default NCCL/MCCL/HCCL group.
+    assert events.count("send") > 1
+    assert events == ["send", "barrier"] * events.count("send")
+    assert barrier_groups == [cpu_group] * events.count("send")
+
+
+def test_patch_weight_syncer_init_sync_drains_when_transport_matches_device(
+    monkeypatch,
+):
+    events, barrier_groups, cpu_group = _run_init_sync_with_lockstep(
+        monkeypatch,
+        lockstep=True,
+        active_sender=True,
+        torch_device_type="cpu",
+    )
     assert events.count("send") > 1
     assert events == ["send", "drain", "barrier"] * events.count("send")
+    assert barrier_groups == [cpu_group] * events.count("send")
 
 
 def test_patch_weight_syncer_init_sync_does_not_drain_on_inactive_sender(monkeypatch):
-    model = _make_value_head_model(torch.device("cpu"))
-    syncer = PatchWeightSyncer(
-        snapshot_device="cpu",
-        transport_device="cpu",
-        delta_encoding=True,
-        compression_algorithm="none",
-        init_sync_enabled=True,
-        init_sync_prefixes=["value_head"],
-        init_sync_bucket_size=32,
+    events, barrier_groups, cpu_group = _run_init_sync_with_lockstep(
+        monkeypatch,
+        lockstep=True,
+        active_sender=False,
+        torch_device_type="cpu",
     )
-    syncer._active_sender = False
-
-    state_dict = model.state_dict()
-    receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
-    events = []
-
-    async def _send(_bucket):
-        events.append("send")
-
-    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
-    monkeypatch.setattr(torch.distributed, "barrier", lambda: events.append("barrier"))
-    monkeypatch.setattr(Worker, "torch_device_type", "cpu", raising=False)
-    stream = MagicMock()
-    stream.synchronize.side_effect = lambda: events.append("drain")
-    platform = MagicMock()
-    platform.current_stream.return_value = stream
-    monkeypatch.setattr(Worker, "torch_platform", platform, raising=False)
-
-    asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
-
     assert "drain" not in events
     assert events.count("barrier") == events.count("send")
+    assert barrier_groups == [cpu_group] * events.count("send")
 
 
 def test_patch_weight_syncer_init_sync_bootstraps_full_state_dict():
