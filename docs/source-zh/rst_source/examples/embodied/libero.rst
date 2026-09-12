@@ -22,8 +22,7 @@ MuJoCo 中完成语言条件下的操作任务——抓取放置、叠放、开�
 - :ref:`原版 LIBERO 套件 <zh-libero-benchmark>`：训练 OpenVLA-OFT 等 VLA + PPO/GRPO。
 - :ref:`LIBERO-Pro / LIBERO-Plus <zh-liberopro-plus-benchmark>`：更具挑战性的套件，通过反记忆扰动加强泛化能力评测。
 
-如需在 **AMD ROCm** 或 **Ascend CANN** 加速器上运行 LIBERO，请参阅
-:doc:`支持的加速器 <../../guides/index>` 教程。
+硬件运行步骤按模型组织：:ref:`AMD／昇腾上的 OpenVLA-OFT <openvla-oft-hardware>`、:ref:`昇腾上的 GR00T N1.5 <gr00t-hardware>` 和 :ref:`摩尔线程 MUSA 上的 π₀.₅ <pi0-hardware>`。这些组合覆盖标准 LIBERO 套件；LIBERO-Pro 和 LIBERO-Plus 需要单独验证。
 
 概览
 ----------------------------------------
@@ -51,7 +50,7 @@ MuJoCo 中完成语言条件下的操作任务——抓取放置、叠放、开�
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1–2 节点 · 8–16 张 GPU
+      NVIDIA CUDA · AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA
 
 | **你将完成：** 安装依赖 → 下载基座模型 → 运行 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 已下载的基座检查点（见下文步骤）。
@@ -172,7 +171,6 @@ LIBERO 提供五个任务套件，共 130 个任务，从单步抓取放置到�
 
 每个方案对应 ``examples/embodiment/config/`` 下的一个 YAML 配置。OpenVLA-OFT 在 LIBERO 上：
 
-- **OpenVLA-OFT + PPO** —— ``libero_10_ppo_openvlaoft.yaml``
 - **OpenVLA-OFT + GRPO** —— ``libero_10_grpo_openvlaoft.yaml``
 
 使用 ``run_embodiment.sh`` 启动某个配置：

@@ -27,7 +27,7 @@
    .. grid-item-card:: 模型
       :text-align: center
 
-      OpenVLA · OpenVLA-OFT · π₀ / π₀.₅ · MLP · ResNet
+      OpenVLA · OpenVLA-OFT · GR00T N1.5 · π₀ / π₀.₅ · MLP · ResNet
 
    .. grid-item-card:: 算法
       :text-align: center
@@ -42,7 +42,7 @@
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1–2 节点 · 8–16 张 GPU
+      NVIDIA CUDA · AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA（取决于模型）
 
 | **你将完成：** 安装依赖 → 下载资产与基座模型 → 运行 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · ManiSkill 资产与基座检查点（见下文步骤）。
@@ -90,7 +90,7 @@
 
 .. seealso::
 
-   若要在 ManiSkill 上运行 **OpenPI**\ （π\ :sub:`0`\  / π\ :sub:`0.5`\ ），请参阅 :doc:`在 π₀ 与 π₀.₅ 模型上进行强化学习 <pi0>`。
+   各模型在 ManiSkill 上的后端配置见 :ref:`OpenVLA-OFT <openvla-oft-hardware>`、:ref:`GR00T N1.5 <gr00t-hardware>` 与 :ref:`OpenPI π₀ / π₀.₅ <pi0-hardware>`。AMD、昇腾和 MUSA 使用 CPU PhysX simulation，模型仍在所选 accelerator 上运行。GR00T 需要带有 ``maniskill_widowx`` embodiment head 的兼容 checkpoint；MUSA 需要厂商模拟器包。
 
 安装
 ----------------------------------------
