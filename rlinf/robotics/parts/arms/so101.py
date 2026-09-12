@@ -28,6 +28,7 @@ Two things differ from the lerobot API and are converted here:
   vector ordered by :pyattr:`SO101Arm.MOTORS`.
 """
 
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Sequence
@@ -95,10 +96,10 @@ class SO101Arm(BaseArm):
     #: Bus rate the STS3215 servos run at, matching lerobot's default.
     BAUDRATE: int = 1_000_000
 
-    #: Gripper travel, on that scale, below which the jaws count as stopped.
+    #: Target arrival and stall-release margin, on the gripper's 0..100 scale.
     GRIPPER_TOLERANCE: float = 2.0
 
-    #: Seconds to watch the jaws before giving up on them reaching a target.
+    #: Maximum seconds without progress before relieving a pending target.
     GRIPPER_SETTLE_TIMEOUT: float = 3.0
 
     #: Consecutive still polls that mean the jaws have stopped rather than
@@ -124,6 +125,13 @@ class SO101Arm(BaseArm):
         self._max_relative_target = max_relative_target
         self._cameras = dict(cameras or {})
         self._robot: "Optional[SO101Follower]" = None
+        self._gripper_condition = threading.Condition(threading.RLock())
+        self._gripper_stop = threading.Event()
+        self._gripper_thread: Optional[threading.Thread] = None
+        self._gripper_target: Optional[float] = None
+        self._gripper_requested: Optional[float] = None
+        self._gripper_limit: Optional[tuple[float, float]] = None
+        self._gripper_error: Optional[Exception] = None
 
     @classmethod
     def declare(
@@ -262,6 +270,27 @@ class SO101Arm(BaseArm):
         finally:
             port.closePort()
 
+    def _opened(self) -> None:
+        """Start gripper monitoring on this connection's node."""
+        self._gripper_target = self._gripper_requested = None
+        self._gripper_limit = None
+        self._gripper_error = None
+        self._gripper_stop.clear()
+        self._gripper_thread = threading.Thread(
+            target=self._watch_gripper, name="so101-gripper", daemon=True
+        )
+        self._gripper_thread.start()
+
+    def _closing(self) -> None:
+        """Stop the monitor before releasing its shared servo bus."""
+        self._gripper_stop.set()
+        if self._gripper_thread is not None:
+            self._gripper_thread.join()
+            self._gripper_thread = None
+        with self._gripper_condition:
+            self._gripper_target = None
+            self._gripper_condition.notify_all()
+
     def _release(self, device: "SO101Follower") -> None:
         """Close the servo bus, letting the gripper go slack first.
 
@@ -280,7 +309,9 @@ class SO101Arm(BaseArm):
 
     def get_state(self) -> SO101RobotState:
         """Read every servo and convert it to canonical units."""
-        reading = self._robot.get_observation()
+        with self._gripper_condition:
+            self._check_gripper_monitor()
+            reading = self._robot.get_observation()
         joints = [reading[f"{motor}.pos"] for motor in self.MOTORS]
         grip = reading[f"{self.GRIPPER}.pos"] / self.GRIPPER_SCALE
         return SO101RobotState(
@@ -312,76 +343,157 @@ class SO101Arm(BaseArm):
                 f"got shape {target.shape}."
             )
         degrees = np.rad2deg(target)
-        sent = self._robot.send_action(
-            {f"{motor}.pos": float(value) for motor, value in zip(self.MOTORS, degrees)}
-        )
+        with self._gripper_condition:
+            self._check_gripper_monitor()
+            sent = self._robot.send_action(
+                {
+                    f"{motor}.pos": float(value)
+                    for motor, value in zip(self.MOTORS, degrees)
+                }
+            )
         return np.deg2rad(
             np.asarray([sent[f"{motor}.pos"] for motor in self.MOTORS], dtype=float)
         )
 
     def move_gripper(self, target: "Sequence[float]") -> None:
-        """Command the gripper to an opening fraction in ``0..1``."""
+        """Command an opening fraction in ``0..1`` without waiting for travel.
+
+        A background monitor relieves stalled jaws. After a stall, command
+        away from the obstruction before trying to move through it again.
+        """
         value = float(np.asarray(target, dtype=float).reshape(-1)[0])
         opening = float(np.clip(value, 0.0, 1.0)) * self.GRIPPER_SCALE
-        self._robot.send_action({f"{self.GRIPPER}.pos": opening})
-        self._relieve_gripper(opening)
-
-    def _gripper_reading(self) -> float:
-        """The jaws' present opening, on lerobot's scale."""
-        return float(self._robot.get_observation()[f"{self.GRIPPER}.pos"])
-
-    def _relieve_gripper(self, opening: float) -> None:
-        """Stop pushing once the jaws stop moving short of ``opening``.
-
-        Jaws that close on an object, or on each other, never reach the
-        commanded opening, and a position servo answers that by pushing for
-        as long as the command stands. lerobot gives this motor a low
-        overload threshold, so a held stall latches a fault that outlives the
-        connection and clears only when the supply is cycled. Re-commanding
-        where the jaws actually came to rest ends the strain and leaves them
-        closed on whatever they hold.
-
-        Returns at once unless a move was actually asked for, so a control
-        loop commanding small changes never waits.
-        """
-        previous = self._gripper_reading()
-        if abs(previous - opening) <= self.GRIPPER_TOLERANCE:
-            return
-
-        deadline = time.monotonic() + self.GRIPPER_SETTLE_TIMEOUT
-        still = 0
-        while time.monotonic() < deadline:
-            time.sleep(self.SETTLE_POLL_INTERVAL)
-            current = self._gripper_reading()
-            if abs(current - opening) <= self.GRIPPER_TOLERANCE:
+        with self._gripper_condition:
+            self._check_gripper_monitor()
+            if self._gripper_limit is not None:
+                direction, held = self._gripper_limit
+                if (opening - held) * direction >= -self.GRIPPER_TOLERANCE:
+                    return
+                self._gripper_limit = None
+            if opening == self._gripper_requested and self._max_relative_target is None:
                 return
-            if abs(current - previous) < self.GRIPPER_TOLERANCE:
-                still += 1
-                if still >= self.GRIPPER_STALL_POLLS:
-                    break
-            else:
-                still = 0
-            previous = current
-        self._robot.send_action({f"{self.GRIPPER}.pos": self._gripper_reading()})
+            sent = self._robot.send_action({f"{self.GRIPPER}.pos": opening})
+            self._gripper_requested = opening
+            self._gripper_target = float(sent[f"{self.GRIPPER}.pos"])
+
+    def _check_gripper_monitor(self) -> None:
+        """Surface a failed monitor before further reads or commands."""
+        if self._gripper_error is not None:
+            raise RuntimeError(
+                "SO-101 gripper monitoring failed; reconnect the arm."
+            ) from self._gripper_error
+
+    def _watch_gripper(self) -> None:
+        """Relieve stalled targets while serializing access to the servo bus."""
+        previous = None
+        direction = 0.0
+        still = 0
+        deadline = 0.0
+        try:
+            while not self._gripper_stop.wait(self.SETTLE_POLL_INTERVAL):
+                with self._gripper_condition:
+                    target = self._gripper_target
+                    if target is None:
+                        previous = None
+                        continue
+                    current = float(
+                        self._robot.get_observation()[f"{self.GRIPPER}.pos"]
+                    )
+                    if abs(current - target) <= self.GRIPPER_TOLERANCE:
+                        self._gripper_target = None
+                        previous = None
+                        self._gripper_condition.notify_all()
+                        continue
+                    next_direction = float(np.sign(target - current))
+                    if previous is None or next_direction != direction:
+                        previous = current
+                        still = 0
+                        direction = next_direction
+                        deadline = time.monotonic() + self.GRIPPER_SETTLE_TIMEOUT
+                        continue
+                    # Track the furthest measured position toward the target.
+                    # Small advances count; jitter around one position does not.
+                    if (current - previous) * direction > 0:
+                        previous = current
+                        still = 0
+                        deadline = time.monotonic() + self.GRIPPER_SETTLE_TIMEOUT
+                    else:
+                        still += 1
+                    if (
+                        still >= self.GRIPPER_STALL_POLLS
+                        or time.monotonic() >= deadline
+                    ):
+                        self._robot.send_action({f"{self.GRIPPER}.pos": current})
+                        self._gripper_limit = (direction, current)
+                        self._gripper_target = None
+                        previous = None
+                        self._gripper_condition.notify_all()
+        except Exception as error:
+            with self._gripper_condition:
+                self._gripper_error = error
+                self._gripper_condition.notify_all()
+
+    def _wait_for_gripper(self) -> None:
+        """Wait for a discrete open or close to finish or relieve a stall."""
+        with self._gripper_condition:
+            while self._gripper_target is not None:
+                self._check_gripper_monitor()
+                self._gripper_condition.wait()
+            self._check_gripper_monitor()
 
     def open_gripper(self) -> None:
         """Open the gripper fully."""
         self.move_gripper([1.0])
+        self._wait_for_gripper()
 
     def close_gripper(self) -> None:
         """Close the gripper fully."""
         self.move_gripper([0.0])
+        self._wait_for_gripper()
 
-    def reset_joint(self, positions: "Sequence[float]", duration: float = 3.0) -> None:
-        """Move to a rest pose in radians, returning once the arm has stopped.
+    def reset_joint(
+        self,
+        positions: "Sequence[float]",
+        duration: float = 3.0,
+        *,
+        max_velocity: float = np.deg2rad(30.0),
+    ) -> None:
+        """Follow a smooth joint trajectory from the measured pose, then settle.
 
-        lerobot's bus writes a goal position and returns while the servos are
-        still travelling, so this waits for them, as the other arm backends
-        do. Without it a state read taken straight after a reset reports the
-        pose the arm is leaving. Gives up after ``duration`` seconds.
+        Args:
+            positions: Five target joint angles in radians.
+            duration: Minimum trajectory duration in seconds. Longer moves
+                take more time to respect ``max_velocity``.
+            max_velocity: Maximum commanded speed of any joint, in radians
+                per second. Defaults to 30 degrees per second.
         """
-        self.move_joints(positions)
-        self.wait_until_still(duration)
+        target = np.asarray(positions, dtype=float).reshape(-1)
+        if target.shape != (len(self.MOTORS),) or not np.all(np.isfinite(target)):
+            raise ValueError("An SO-101 reset needs five finite joint targets.")
+        if not np.isfinite(duration) or duration <= 0:
+            raise ValueError("Reset duration must be finite and positive.")
+        if not np.isfinite(max_velocity) or max_velocity <= 0:
+            raise ValueError("Reset max_velocity must be finite and positive.")
+        start = self.get_state().arm_joint_position
+        if not np.all(np.isfinite(start)):
+            raise RuntimeError("Cannot reset an SO-101 with non-finite joint feedback.")
+        delta = target - start
+        distance = float(np.max(np.abs(delta)))
+        if distance > 1e-8:
+            # The quintic blend has peak slope 15/8 and zero endpoint velocity
+            # and acceleration. Stretch its duration to bound every joint's speed.
+            travel_time = max(duration, 1.875 * distance / max_velocity)
+            period = 1.0 / 30.0
+            steps = max(2, int(np.ceil(travel_time / period)))
+            for index in range(1, steps + 1):
+                # Never catch up with a burst of writes after a slow bus call.
+                time.sleep(period)
+                phase = index / steps
+                blend = phase**3 * (10 + phase * (-15 + 6 * phase))
+                self.move_joints(start + blend * delta)
+        else:
+            self.move_joints(target)
+        self.wait_until_still()
 
     def is_robot_up(self) -> bool:
         """Report whether the servo bus and any lerobot cameras are live."""

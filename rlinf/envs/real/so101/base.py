@@ -40,6 +40,7 @@ from rlinf.robotics import (
 )
 from rlinf.robotics.actions import ActionKind, ActionPart
 from rlinf.robotics.parts.arms.so101 import SO101Arm
+from rlinf.robotics.parts.base import PartGroup
 from rlinf.robotics.parts.cameras import BaseCamera, CameraInfo
 from rlinf.scheduler import WorkerInfo
 from rlinf.utils.logging import get_logger
@@ -66,8 +67,20 @@ class SO101EnvConfig:
     step_frequency: float = 10.0
     """Control rate in Hz. A step sleeps for the remainder of its period."""
 
+    camera_max_age: float = 0.5
+    """Maximum age in seconds of a camera frame reused between control steps."""
+
     reset_joint_qpos: list[float] = field(default_factory=lambda: [0.0] * _DOF)
     """Rest configuration, in radians."""
+
+    reset_duration: float = 3.0
+    """Minimum reset trajectory duration in seconds."""
+
+    reset_joint_speed: float = np.deg2rad(30.0)
+    """Maximum commanded joint speed during reset, in radians per second."""
+
+    reset_on_init: bool = True
+    """Whether construction moves the arm to its reset pose."""
 
     joint_limit_low: np.ndarray = field(
         default_factory=lambda: _DEFAULT_JOINT_LIMIT_LOW.copy()
@@ -130,6 +143,14 @@ class SO101Env(gym.Env):
     ) -> None:
         self._logger = get_logger()
         self.config = config
+        if not np.isfinite(config.step_frequency) or config.step_frequency <= 0:
+            raise ValueError("step_frequency must be finite and positive.")
+        if not np.isfinite(config.camera_max_age) or config.camera_max_age < 0:
+            raise ValueError("camera_max_age must be finite and nonnegative.")
+        for name in ("reset_duration", "reset_joint_speed"):
+            value = getattr(config, name)
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive.")
         self.hardware = get_hardware_config(
             SO101Config, robot_info, is_dummy=config.is_dummy
         )
@@ -149,6 +170,8 @@ class SO101Env(gym.Env):
 
         if not self.config.is_dummy:
             self._setup_hardware()
+            # This view borrows the arm; self.robot owns its connection.
+            self._state_parts = PartGroup(arm=self._arm)
 
         if not self.hardware.camera_serials:
             self._logger.info(
@@ -161,7 +184,8 @@ class SO101Env(gym.Env):
         if self.config.is_dummy:
             return
 
-        self._arm.reset_joint(self.config.reset_joint_qpos)
+        if self.config.reset_on_init:
+            self.go_to_rest()
         self._open_cameras()
         self.camera_player = VideoPlayer(self.config.enable_camera_player)
 
@@ -247,7 +271,7 @@ class SO101Env(gym.Env):
         Returns:
             Tuple of ``(observation, reward, terminated, truncated, info)``.
         """
-        start_time = time.time()
+        start_time = time.monotonic()
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
         gripper_moved = False
@@ -272,9 +296,6 @@ class SO101Env(gym.Env):
             )
 
         self._num_steps += 1
-        step_time = time.time() - start_time
-        time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
-
         observation = self._get_observation()
         reward = self._calc_step_reward(observation, gripper_moved)
 
@@ -283,6 +304,8 @@ class SO101Env(gym.Env):
             and self._success_hold_counter >= self.config.success_hold_steps
         )
         truncated = self._num_steps >= self.config.max_num_steps
+        step_time = time.monotonic() - start_time
+        time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
         return observation, reward, terminated, truncated, {}
 
     def get_joint_positions(self) -> np.ndarray:
@@ -314,7 +337,11 @@ class SO101Env(gym.Env):
 
     def go_to_rest(self) -> None:
         """Move to :pyattr:`SO101EnvConfig.reset_joint_qpos`."""
-        self._arm.reset_joint(self.config.reset_joint_qpos)
+        self._arm.reset_joint(
+            self.config.reset_joint_qpos,
+            duration=self.config.reset_duration,
+            max_velocity=self.config.reset_joint_speed,
+        )
 
     # Reward.
 
@@ -343,9 +370,7 @@ class SO101Env(gym.Env):
         """Return the joint state and any camera frames."""
         if self.config.is_dummy:
             return self._base_observation_space.sample()
-        # One read of the whole robot. The arm reports its joints and the
-        # gripper it carries, so nothing here reaches past the part tree.
-        reading = self.robot.get_observation()["arm"]
+        reading = self._state_parts.get_observation()["arm"]
 
         # The driver works in float64; the declared space is float32, and an
         # observation outside its own space fails Gymnasium's env checker.
@@ -409,7 +434,9 @@ class SO101Env(gym.Env):
             try:
                 # Cameras deliver their native resolution; the space fixes one.
                 size = declared[name].shape[:2][::-1]
-                frames[name] = self._crop_frame(camera.get_frame(), size)
+                frames[name] = self._crop_frame(
+                    camera.get_frame(max_age=self.config.camera_max_age), size
+                )
             except queue.Empty:
                 self._logger.warning(
                     f"Camera {name} is not producing frames. Waiting 5s and retrying."

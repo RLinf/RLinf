@@ -103,6 +103,18 @@ def main() -> None:
         "--step", type=float, default=5.0, help="degrees per move (default 5)"
     )
     parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="control updates per second (default 30)",
+    )
+    parser.add_argument(
+        "--reset-speed",
+        type=float,
+        default=30.0,
+        help="maximum reset joint speed in degrees per second (default 30)",
+    )
+    parser.add_argument(
         "--invert", action="store_true", help="flip every direction's sign"
     )
     parser.add_argument(
@@ -120,6 +132,10 @@ def main() -> None:
         help="enable the camera preview window (disabled by default)",
     )
     args = parser.parse_args()
+    if not np.isfinite(args.fps) or args.fps <= 0:
+        parser.error("--fps must be finite and positive")
+    if not np.isfinite(args.reset_speed) or args.reset_speed <= 0:
+        parser.error("--reset-speed must be finite and positive")
 
     if args.mock:
         import sys
@@ -162,7 +178,10 @@ def main() -> None:
         env = SO101ReachEnv(
             {
                 "enable_camera_player": args.enable_camera_player,
+                "step_frequency": args.fps,
                 "reset_joint_qpos": list(np.deg2rad(WRAP_POSE_DEG)),
+                "reset_joint_speed": float(np.deg2rad(args.reset_speed)),
+                "reset_on_init": False,
             },
             robot_info=resources.infos[0],
         )
@@ -193,12 +212,7 @@ def _deferred_interrupts():
 
 
 def teleop(env, port: str, calibration_id) -> None:
-    """Let an SO-101 leader arm drive the follower until Ctrl-C.
-
-    The leader is the same five joints and gripper, so its reading is the
-    follower's target with no conversion. It reports a pose whether or not
-    anyone is holding it, and only takes over once it has actually moved.
-    """
+    """Continuously follow the leader's joints and gripper until Ctrl-C."""
     from rlinf.robotics.parts.teleop import SO101Leader
 
     leader = SO101Leader(port=port, calibration_id=calibration_id)
@@ -212,10 +226,8 @@ def teleop(env, port: str, calibration_id) -> None:
     print("Following the leader arm. Ctrl-C to stop.")
     try:
         while True:
-            action = leader.drive({"joint_positions": env.get_joint_positions()})
-            if not action.driving:
-                continue
-            command = np.append(action.parts["arm"], action.parts["end_effector"])
+            reading = leader.get_observation()
+            command = np.append(reading["joint_position"], reading["grip"])
             env.step(command.astype(np.float32))
     except KeyboardInterrupt:
         pass
@@ -291,9 +303,10 @@ def drive(
             print("  joints:", np.round(np.rad2deg(target), 1), "deg")
             continue
         if name == "home":
-            # The pose the session started from, not all zeros, which stands
-            # the arm straight up.
-            target = np.asarray(env.config.reset_joint_qpos, dtype=float)
+            env.reset()
+            target, grip = _read_pose(env)
+            print("  joints:", np.round(np.rad2deg(target), 1), "deg")
+            continue
         elif name == "open":
             grip = 1.0
         elif name == "close":

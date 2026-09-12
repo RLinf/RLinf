@@ -109,7 +109,7 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 
 .. warning::
 
-   在硬件模式下，环境构造函数会将机械臂移至折叠姿态，关节角为 ``[0, -99, 95, 65, 0]`` 度。启动前请清空这条运动路径。``--no-reset`` 只跳过后续的一次复位，无法跳过构造时的运动。
+   在硬件模式下，启动时会通过限速的关节轨迹，将机械臂移至关节角为 ``[0, -99, 95, 65, 0]`` 度的折叠姿态。启动前请清空这条运动路径。添加 ``--no-reset`` 可仅建立连接，不发送启动运动命令。
 
 确认 follower 已标定，且初始折叠动作的路径无遮挡后，运行：
 
@@ -118,7 +118,11 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
    CAMERA_SERIALS='' python -m toolkits.realworld_check.test_so101_env \
      --port /dev/ttyACM0 --id rlinf_follower --step 2
 
-将串口替换为实际设备，ID 使用标定时的值。``CAMERA_SERIALS=''`` 关闭相机发现，使测试只使用机械臂。逐条输入以下指令，每次运动完成后再继续：
+将串口替换为实际设备，ID 使用标定时的值。``CAMERA_SERIALS=''`` 关闭相机发现，使测试只使用机械臂。
+
+启动复位和 ``home`` 命令均从实测关节位置生成平滑轨迹，默认将目标关节速度限制为每秒 30 度。使用 ``--reset-speed 10`` 可降低复位速度。移动幅度较大时，驱动会延长轨迹时间；写入延迟后也不会连续补发命令。在环境配置中，``reset_joint_speed`` 的单位为弧度每秒，``reset_duration`` 设置轨迹的最短时间，默认为 3 秒。
+
+逐条输入以下指令，每次运动完成后再继续：
 
 .. code-block:: text
 
@@ -132,6 +136,31 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 ``up`` 和 ``down`` 分别将肩关节角度增加或减少 2 度，并非让末端沿竖直方向移动。每次关节运动后会打印反馈；``open`` 与 ``close`` 用于测试夹爪。``quit`` 关闭环境及其机械臂 worker。输入 ``help`` 可查看其他关节方向。
 
 在自己的程序中控制机械臂或接入相机，请参考 :doc:`机器人接口 </rst_source/concepts/robotics>`。
+
+使用 Leader 控制机械臂
+-----------------------
+
+要通过手动操作控制 follower，请连接 SO101 leader，并使用它自己的端口和 calibration ID 完成校准：
+
+.. code-block:: bash
+
+   lerobot-calibrate \
+     --teleop.type=so101_leader \
+     --teleop.port=/dev/ttyACM1 \
+     --teleop.id=rlinf_leader
+
+为两台机械臂配置端口后启动检查。未设置 ``CAMERA_SERIALS`` 时会自动发现相机；添加 ``--enable-camera-player`` 可显示图像：
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_so101_env \
+     --port /dev/ttyACM0 --id rlinf_follower \
+     --leader /dev/ttyACM1 --leader-id rlinf_leader \
+     --fps 30 --enable-camera-player
+
+follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``teleop``。follower 会持续跟随关节和夹爪运动。按一次 Ctrl-C 返回命令提示符，再输入 ``quit`` 断开连接。
+
+``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），无需每步等待新图像。连续夹爪命令不等待运动完成。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
 
 新增真机任务
 ------------

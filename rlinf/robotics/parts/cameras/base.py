@@ -87,6 +87,7 @@ class BaseCamera(Camera, ABC):
         self._frame_capturing_thread: Optional[threading.Thread] = None
         self._frame_capturing_start = False
         self._depth_scale = 1.0
+        self._latest_frame: Optional[tuple[float, np.ndarray]] = None
 
     @property
     def name(self) -> str:
@@ -131,6 +132,7 @@ class BaseCamera(Camera, ABC):
         if self._frame_capturing_start:
             return
         self._frame_queue = queue.Queue()
+        self._latest_frame = None
         self._frame_capturing_thread = threading.Thread(
             target=self._capture_frames, daemon=True
         )
@@ -144,6 +146,7 @@ class BaseCamera(Camera, ABC):
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
         self._frame_capturing_thread = None
+        self._latest_frame = None
 
     def reopen(self) -> None:
         """Reconnect the camera on the node that owns it."""
@@ -161,7 +164,12 @@ class BaseCamera(Camera, ABC):
         return True
 
     def get_observation(
-        self, timeout: float = 5, attempts: int = 1, wait: float = 0.0
+        self,
+        timeout: float = 5,
+        attempts: int = 1,
+        wait: float = 0.0,
+        *,
+        max_age: Optional[float] = None,
     ) -> Observation:
         """Return the latest frame, and its depth map in metres if captured.
 
@@ -174,7 +182,9 @@ class BaseCamera(Camera, ABC):
         fixed control period that would rather reuse its last observation than
         wait out the default timeout.
         """
-        frame = self.get_frame(timeout=timeout, attempts=attempts, wait=wait)
+        frame = self.get_frame(
+            timeout=timeout, attempts=attempts, wait=wait, max_age=max_age
+        )
         if not self._camera_info.enable_depth:
             return {"frame": frame}
         return {
@@ -183,7 +193,12 @@ class BaseCamera(Camera, ABC):
         }
 
     def get_frame(
-        self, timeout: float = 5, attempts: int = 1, wait: float = 0.0
+        self,
+        timeout: float = 5,
+        attempts: int = 1,
+        wait: float = 0.0,
+        *,
+        max_age: Optional[float] = None,
     ) -> np.ndarray:
         """Return the most recent frame (blocks up to *timeout* seconds).
 
@@ -197,6 +212,9 @@ class BaseCamera(Camera, ABC):
             timeout: Maximum seconds to wait for a frame, per attempt.
             attempts: How many times to ask before giving up.
             wait: Seconds to settle after reopening, before the next attempt.
+            max_age: Reuse a captured frame up to this age in seconds. ``None``
+                or zero consumes the next queued frame. A missing or stale cached
+                frame follows the normal timeout and reconnect behavior.
 
         Raises:
             queue.Empty: If no attempt produced a frame.
@@ -204,9 +222,27 @@ class BaseCamera(Camera, ABC):
         assert self._frame_capturing_start, (
             "Frame capturing is not started. Call connect() first."
         )
+        if max_age is not None:
+            if not np.isfinite(max_age) or max_age < 0:
+                raise ValueError("max_age must be finite and nonnegative.")
+            if max_age == 0:
+                max_age = None
+            latest = self._latest_frame
+            if (
+                max_age is not None
+                and latest is not None
+                and time.monotonic() - latest[0] <= max_age
+            ):
+                return latest[1].copy()
         for attempt in range(1, max(attempts, 1) + 1):
             try:
-                return self._frame_queue.get(timeout=timeout)
+                deadline = time.monotonic() + timeout
+                while True:
+                    captured_at, frame = self._frame_queue.get(
+                        timeout=max(0.0, deadline - time.monotonic())
+                    )
+                    if max_age is None or time.monotonic() - captured_at <= max_age:
+                        return frame
             except queue.Empty:
                 get_logger().warning(
                     "Camera %s produced no frame within %.2fs "
@@ -245,12 +281,14 @@ class BaseCamera(Camera, ABC):
                     self._camera_info.name,
                 )
                 break
+            captured_at = time.monotonic()
+            self._latest_frame = (captured_at, frame.copy())
             if not self._frame_queue.empty():
                 try:
                     self._frame_queue.get_nowait()
                 except queue.Empty:
                     pass
-            self._frame_queue.put(frame)
+            self._frame_queue.put((captured_at, frame))
 
     @abstractmethod
     def _open(self) -> Any:
