@@ -5,6 +5,8 @@ transformers==4.49.0
 protobuf==3.20.3
 numpy==1.26.4
 opencv-python==4.11.0.86
-paddlepaddle==2.6.2
+# paddlepaddle is installed separately by install_diffusion_model() so the
+# correct GPU/CPU build matching the system CUDA version is selected.
+# paddlepaddle-gpu==2.6.2 (CUDA 12) or paddlepaddle==2.6.2 (CPU fallback)
 paddleocr==2.9.1
 Levenshtein==0.27.3
