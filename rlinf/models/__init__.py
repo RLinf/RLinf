@@ -79,6 +79,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_streamingvla(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.streamingvla import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_dexbotic_pi(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.dexbotic_pi import get_model
 
@@ -211,6 +216,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.OPENPI_RLINF.value,
         _build_openpi_rlinf,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.STREAMINGVLA.value,
+        _build_streamingvla,
         category="embodied",
         force=True,
     )

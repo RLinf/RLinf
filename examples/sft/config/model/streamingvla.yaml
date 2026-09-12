@@ -1,0 +1,27 @@
+model_type: "streamingvla"
+model_path: "/path/to/pi05_libero_pytorch"
+precision: "bf16"
+is_lora: false
+load_to_device: true
+
+# RLinf compatibility fields. Inference is intentionally unsupported.
+action_dim: 7
+num_action_chunks: 10
+num_steps: 10
+add_value_head: false
+
+streamingvla:
+  config_name: "pi05_libero_sfp"
+  use_sfp: true
+  use_action_states: true
+  action_horizon: 10
+  model_action_dim: 32
+  sigma: 0.16
+  noise_decay: 4.0
+  data:
+    repo_id: "/path/to/libero_lerobot_dataset"
+    assets:
+      assets_dir: "/path/to/dataset-parent"
+      asset_id: "libero_lerobot_dataset"
+    extra_delta_transform: false
+    action_env_dim: 7
