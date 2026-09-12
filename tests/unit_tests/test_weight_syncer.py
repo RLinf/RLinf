@@ -1021,7 +1021,7 @@ def test_patch_weight_syncer_ensure_sender_cpu_group_uses_gloo(monkeypatch):
         "rlinf.hybrid_engines.weight_syncer.patch_syncer.Cluster.get_collective_timeout",
         lambda: "timeout",
     )
-    syncer = PatchWeightSyncer()
+    syncer = PatchWeightSyncer(snapshot_device="cpu", transport_device="cpu")
     group = syncer._ensure_sender_cpu_group()
     assert created["backend"] == "gloo"
     assert created["timeout"] == "timeout"
