@@ -37,10 +37,13 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
     """Fetch an attribute from a (possibly wrapped) gym/gymnasium env.
 
     Walks the wrapper stack so the attribute is found even when ``env`` is
-    nested, e.g. ``CollectEpisode(RecordVideo(base_env))``. This stays
-    compatible across versions: gymnasium >= 1.0 exposes ``get_wrapper_attr``
-    while older gymnasium/gym and custom wrappers rely on ``__getattr__``
-    delegation through plain ``getattr``.
+    nested, e.g. ``CollectEpisode(RecordVideo(base_env))``.
+
+    ``get_wrapper_attr`` is tried first, then the ``env`` chain is walked
+    directly. The fallback is what handles wrappers over an env that is not a
+    ``gymnasium.Env`` (world-model envs, for instance): ``get_wrapper_attr``
+    recurses into the wrapped env and raises there because the base env does not
+    define it.
 
     Args:
         env: The (possibly wrapped) environment.
@@ -54,8 +57,15 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
         try:
             return env.get_wrapper_attr(name)
         except AttributeError:
-            return default
-    return getattr(env, name, default)
+            pass
+
+    inner = env
+    while inner is not None:
+        try:
+            return getattr(inner, name)
+        except AttributeError:
+            inner = getattr(inner, "env", None)
+    return default
 
 
 def to_tensor(
