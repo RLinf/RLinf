@@ -52,7 +52,7 @@ algorithm:
     # LeRobot dataset reconstructs action chunks for OpenPI training.
     online_lerobot:
       enabled: True
-      only_success: False
+      only_success: True
       robot_type: "aloha"
       fps: 10
       finalize_interval: 8
