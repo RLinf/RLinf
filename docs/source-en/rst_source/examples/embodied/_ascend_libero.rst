@@ -51,3 +51,15 @@ To build the image from your checkout, run this on the host and substitute
 ``CANN_VER`` includes the hardware suffix in the Ascend base-image tag.
 The Dockerfile also accepts ``ASCEND_BASE_IMAGE`` to select a different full
 base-image reference.
+
+Ascend 950 needs CANN 9.1; the image above targets Atlas 800T A2 (910B) with
+CANN 9.0. ``requirements/install.sh`` reads the chip from ``npu-smi`` and
+installs the matching stack: torch 2.10 with ``torch-npu`` 2.10.0.post4 on
+Ascend 950, and torch 2.6 on 910B. On a host without the NPU driver, such as an
+image build, name the chip with ``ASCEND_CHIP``:
+
+.. code-block:: bash
+
+   ASCEND_CHIP=Ascend950PR bash requirements/install.sh --platform ascend embodied --model openpi --env libero
+
+Pass ``--torch <version>`` to override the pinned version.
