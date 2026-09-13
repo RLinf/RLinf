@@ -482,6 +482,63 @@ class EnvWorker(Worker):
             return
         await env.wait_delay()
 
+    @staticmethod
+    def _valid_action_mask_from_infos(
+        infos: Any,
+        *,
+        num_envs: int,
+        chunk_size: int,
+    ) -> torch.Tensor | None:
+        """Consume optional action-execution counts and build prefix masks.
+
+        Chunked environments may report ``executed_action_count`` when they
+        stop before executing the full action chunk. Keeping this conversion
+        here makes the protocol available to every simulator while leaving
+        environments that always execute the full chunk unchanged.
+        """
+        if not isinstance(infos, dict):
+            return None
+
+        executed_counts = infos.pop("executed_action_count", None)
+        final_info = infos.get("final_info")
+        if isinstance(final_info, dict):
+            final_counts = final_info.pop("executed_action_count", None)
+            if executed_counts is None:
+                executed_counts = final_counts
+        if executed_counts is None:
+            return None
+
+        try:
+            if isinstance(executed_counts, torch.Tensor):
+                raw_counts = executed_counts.detach().cpu()
+            else:
+                raw_counts = torch.as_tensor(np.asarray(executed_counts))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "executed_action_count must contain one numeric value per "
+                "environment."
+            ) from exc
+
+        raw_counts = raw_counts.reshape(-1)
+        if raw_counts.numel() != num_envs:
+            raise RuntimeError(
+                "executed_action_count must contain one value per environment; "
+                f"expected {num_envs}, got {raw_counts.numel()}."
+            )
+        if raw_counts.is_floating_point() and not torch.equal(
+            raw_counts, raw_counts.round()
+        ):
+            raise RuntimeError("executed_action_count values must be integers.")
+
+        counts = raw_counts.to(dtype=torch.long)
+        if ((counts < 0) | (counts > chunk_size)).any():
+            raise RuntimeError(
+                "executed_action_count values must be in "
+                f"[0, {chunk_size}], got {counts.tolist()}."
+            )
+        action_indices = torch.arange(chunk_size, dtype=torch.long).unsqueeze(0)
+        return action_indices < counts.unsqueeze(1)
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
         self,
@@ -514,13 +571,16 @@ class EnvWorker(Worker):
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
-        valid_action_mask = None
-        if isinstance(infos_list, (list, tuple)):
-            infos = infos_list[-1] if infos_list else None
-            if isinstance(infos, dict):
-                valid_action_mask = infos.pop(
-                    "_robotwin_valid_action_mask", None
-                )
+        infos = (
+            infos_list[-1]
+            if isinstance(infos_list, (list, tuple)) and infos_list
+            else infos_list
+        )
+        valid_action_mask = self._valid_action_mask_from_infos(
+            infos,
+            num_envs=chunk_terminations.shape[0],
+            chunk_size=len(obs_list) if isinstance(obs_list, (list, tuple)) else 1,
+        )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -605,10 +665,16 @@ class EnvWorker(Worker):
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
-        if isinstance(infos_list, (list, tuple)):
-            infos = infos_list[-1] if infos_list else None
-            if isinstance(infos, dict):
-                infos.pop("_robotwin_valid_action_mask", None)
+        infos = (
+            infos_list[-1]
+            if isinstance(infos_list, (list, tuple)) and infos_list
+            else infos_list
+        )
+        self._valid_action_mask_from_infos(
+            infos,
+            num_envs=chunk_terminations.shape[0],
+            chunk_size=len(obs_list) if isinstance(obs_list, (list, tuple)) else 1,
+        )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -1239,8 +1305,13 @@ class EnvWorker(Worker):
                     stage_builder = self.trajectory_builders[stage_id]
                     if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
                         chunk_episode_payload = chunk_step_payload
-                        if self.cfg.env.train.env_type == "robotwin":
+                        if chunk_step_payload["valid_action_mask"] is not None:
                             obs_list = chunk_step_payload["obs_list"]
+                            if not isinstance(obs_list, (list, tuple)) or not obs_list:
+                                raise RuntimeError(
+                                    "executed_action_count requires a non-empty "
+                                    "per-action observation list."
+                                )
                             chunk_episode_payload = {
                                 **chunk_step_payload,
                                 "obs_list": [curr_obs, *obs_list[:-1]],
