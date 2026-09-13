@@ -17,7 +17,7 @@ EnvWorker
 Environment
 -----------------------
 
-.. autoclass:: rlinf.envs.libero.libero_env.LiberoEnv
+.. autoclass:: rlinf.envs.sim.libero.libero_env.LiberoEnv
    :members: 
    :member-order: bysource
 

@@ -103,7 +103,7 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
 评测协议概述
 ~~~~~~~~~~~~
 
-BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
+BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
 
 每条评测轨迹由以下配置唯一确定：
 
@@ -229,5 +229,5 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
 - **启动极慢：** 首次加载大场景耗时较长；保持 ``partial_scene_load: true`` 可只加载任务相关房间。
 - **视频帧数少于预期：** ``skip_intermediate_obs_in_chunk: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
-- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/behavior/instance_loader.py``。
+- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/sim/behavior/instance_loader.py``。
 - **步数校验失败：** ``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除。

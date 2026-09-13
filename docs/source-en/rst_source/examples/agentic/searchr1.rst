@@ -124,7 +124,7 @@ Download the `e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ embeddi
 
 Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ binary file and build a qdrant collection with follwing steps. First, Create a new folder and put the qdrant binary into this folder, to facilitate the subsequent storage of qdrant binary and constructed collection files.
 
-In `examples/agent/tools/search_local_server_qdrant/build_index_qdrant.sh` and `examples/agent/tools/search_local_server_qdrant/launch_local_server_qdrant.sh`, update the file paths for `WIKI2018_DIR`, `retriever_path`, and `qdrant_path` according to your downloaded wiki corpus, e5-base-v2, and qdrant paths.
+In `examples/agent/tools/search_local_server_qdrant/build_index.sh` and `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`, update the file paths for `WIKI2018_DIR`, `retriever_path`, and `qdrant_path` according to your downloaded wiki corpus, e5-base-v2, and qdrant paths.
 
 Use the following commands to build the qdrant wiki server collection:
 
@@ -139,9 +139,9 @@ Use the following commands to build the qdrant wiki server collection:
    /path/to/qdrant/qdrant &
 
    # Build qdrant collection
-   bash examples/agent/tools/search_local_server_qdrant/build_index_qdrant.sh
+   bash examples/agent/tools/search_local_server_qdrant/build_index.sh
 
-Run launch_local_server_qdrant.sh to start the Local Qdrant Wiki Server. Wait until server IP information is printed — indicating successful startup.
+Run launch_local_server.sh to start the Local Qdrant Wiki Server. Wait until server IP information is printed — indicating successful startup.
 
 .. code-block:: bash
 
@@ -149,7 +149,7 @@ Run launch_local_server_qdrant.sh to start the Local Qdrant Wiki Server. Wait un
    /path/to/qdrant/qdrant &
 
    # Launch qdrant-based wiki server
-   bash examples/agent/tools/search_local_server_qdrant/launch_local_server_qdrant.sh
+   bash examples/agent/tools/search_local_server_qdrant/launch_local_server.sh
 
 Qdrant uses the HNSW graph index algorithm by default. For details on optimizing the HNSW graph index, please refer to the `Qdrant documentation <https://qdrant.tech/documentation/guides/optimize/>`__.
 

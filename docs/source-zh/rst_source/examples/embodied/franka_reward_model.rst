@@ -129,7 +129,7 @@ Reward Model 数据集采集
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段失败帧下采样比例。
 - ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage`` 以启用键盘标注界面。
-- ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作。
+- ``env.eval.teleop`` — 由哪种设备接管策略。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 
 **启动命令：**

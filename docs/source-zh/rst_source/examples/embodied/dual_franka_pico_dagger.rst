@@ -281,8 +281,7 @@ PICO 手柄才会分别绑定到左 / 右机械臂。
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
          hand: "dual"
@@ -321,6 +320,69 @@ PICO 手柄才会分别绑定到左 / 右机械臂。
 都未接管时才不会产生 intervention 记录。完整成功 episode 仍会由 online LeRobot
 collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
 ``intervene_flag``，只暴露所有非 padding 帧均为人工纠正的 action chunk。
+
+
+机械臂柔顺性参数
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+默认的 Cartesian 增益面向 policy rollout，此时目标位姿按小步变化。而在 PICO 遥操作中目标跟随人手移动，这组默认增益会让末端落后于手部，操作者往往用过冲来补偿。下面是 Franka Panda 上 PICO 采集实际使用的取值。它们属于机械臂本身而非某个任务，因此写在 ``DualFranka`` 硬件配置中，与机械臂 IP 并列：
+
+.. code-block:: yaml
+
+   cluster:
+     node_groups:
+       - label: franka
+         node_ranks: 0
+         hardware:
+           type: DualFranka
+           configs:
+             - left_robot_ip: LEFT_ROBOT_IP
+               right_robot_ip: RIGHT_ROBOT_IP
+               node_rank: 0
+               compliance:
+                 translational_stiffness: 1000
+                 rotational_stiffness: 50
+                 translational_clip: 0.008
+                 rotational_clip: 0.04
+                 max_step: 0.03
+                 max_step_rad: 0.10
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 11 11 50
+
+   * - 参数
+     - 默认值
+     - PICO
+     - 调整原因
+   * - ``translational_stiffness``
+     - 500
+     - 1000
+     - N/m。加倍后末端能跟上手部，而不是持续落后。
+   * - ``rotational_stiffness``
+     - 40
+     - 50
+     - Nm/rad。姿态方向出于同样原因调高。
+   * - ``translational_clip``
+     - 0.05
+     - 0.008
+     - m，控制器实际响应的最大位置误差。调小以避免更高的刚度在目标较远时产生猛冲。
+   * - ``rotational_clip``
+     - 0.3
+     - 0.04
+     - rad，姿态误差上的同类限制。
+   * - ``max_step``
+     - 0.10
+     - 0.03
+     - m，单次下发目标相对上一个目标的最大距离。调小以避免手部抖动变成快速运动。
+   * - ``max_step_rad``
+     - 0.30
+     - 0.10
+     - rad，姿态方向上的同类限制。
+
+只需写出与默认值不同的项，未写出的项保持默认；参数名拼写错误会在构建配置时直接报错。若要让两条机械臂使用不同增益，可另外设置 ``left_compliance`` 或 ``right_compliance``，未设置时各自回落到 ``compliance``。
+
+这些参数通过 ``franky`` backend 生效，作用于该机械臂的每一次 Cartesian 运动，因此 DAgger 中的 policy rollout 与操作者遵循同一组增益。``franka_ros`` backend 会忽略它们，因为其增益由该 backend 自己的控制器持有；GELLO 关节遥操作同样不受影响，因为它下发的是关节目标而非 Cartesian 目标。
 
 
 启动 PICO 数据流
@@ -449,20 +511,18 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        keyboard_reward_wrapper: eval_control
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
          hand: "dual"
          hold_current_when_inactive: False
      eval:
-       use_spacemouse: False
-       use_pico: False
+       teleop: none
 
 ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
 
-``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式仅支持 PICO（``use_pico: True``，``use_spacemouse: False``），且当前要求每个 env worker pipeline stage 只运行一个环境。
+``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式仅支持 PICO（``teleop: pico``），且当前要求每个 env worker pipeline stage 只运行一个环境。
 
 ``only_success: True`` 表示失败 rollout 会被丢弃，只保存成功 episode；
 ``only_save_expert: True`` 仍会归档完整的成功 episode，但训练只采样 action chunk
@@ -470,7 +530,7 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
 该帧就会标记为接管，因此这样的 chunk 可能由一侧 PICO action 与另一侧 rollout
 action 共同组成。每个成功 episode 会立即归档到
 ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``。
-``env.eval.use_pico: False`` 表示评测阶段只看策略本身，不混入人工接管。
+``env.eval.teleop: none`` 表示评测阶段只看策略本身，不混入人工接管。
 
 真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；这里的人工接管由 PICO intervention wrapper 决定。
 

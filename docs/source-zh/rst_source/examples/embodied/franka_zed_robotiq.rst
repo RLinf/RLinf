@@ -193,13 +193,14 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 .. code-block:: bash
 
    python -c "
-   from rlinf.envs.realworld.common.gripper.robotiq_gripper import RobotiqGripper
+   from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
    g = RobotiqGripper(port='/dev/ttyUSB0')
-   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready}')
+   g.connect()
+   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
    g.open()
    import time; time.sleep(1)
    g.close()
-   g.cleanup()
+   g.disconnect()
    "
 
 
@@ -241,7 +242,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
                camera_type: zed            # "realsense" 或 "zed"
                gripper_type: robotiq       # "franka" 或 "robotiq"
                gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1     # FrankaController 运行在 NUC 上
+               controller_node_rank: 1     # 机械臂控制连接运行在 NUC 上
                disable_validate: false
 
 .. list-table:: 新增硬件配置字段
@@ -263,7 +264,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
        为 ``"franka"`` 时忽略。
    * - ``controller_node_rank``
      - ``null``
-     - ``FrankaController`` 运行的节点 rank。为 ``null`` 时与 env worker
+     - 机械臂控制连接运行的节点 rank。为 ``null`` 时与 env worker
        共同部署。当机械臂和相机在不同机器上时需要设置。
 
 
@@ -316,9 +317,9 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    * - ``runner.num_data_episodes``
      - ``20``
      - 采集的 episode 数量，达到后脚本自动退出。
-   * - ``env.eval.use_spacemouse``
-     - ``True``
-     - 在采集过程中启用 SpaceMouse 遥操作。
+   * - ``env.eval.teleop``
+     - ``spacemouse``
+     - 采集过程中由哪种设备驱动机械臂。
    * - ``env.eval.data_collection.save_dir``
      - ``${runner.logger.log_path}/collected_data``
      - 采集数据的保存目录。
