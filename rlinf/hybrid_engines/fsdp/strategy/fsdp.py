@@ -26,7 +26,7 @@ from torch.distributed.fsdp import (
 from torch.optim import Optimizer
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.hybrid_engines.fsdp import FSDP, CPUOffload
+from rlinf.hybrid_engines.fsdp import FSDP, CPUOffload, ShardingStrategy
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
@@ -156,6 +156,16 @@ class FSDPStrategy(FSDPStrategyBase):
         sharding_strategy = get_sharding_strategy(
             self.cfg.fsdp_config.sharding_strategy
         )
+        if (
+            sharding_strategy == ShardingStrategy.HYBRID_SHARD
+            and device_mesh["fsdp"].size() == 1
+        ):
+            # With one rank per node, the shard group is empty of peers. FSDP1
+            # otherwise downgrades only that group to NO_SHARD and skips the
+            # replica-group gradient reduction. Use the replica dimension as a
+            # regular replicated FSDP group instead.
+            sharding_strategy = ShardingStrategy.NO_SHARD
+            device_mesh = device_mesh["ddp"]
 
         auto_wrap_policy = get_fsdp_wrap_policy(
             module=model,

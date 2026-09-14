@@ -36,6 +36,6 @@ and set ``RLINF_NODE_RANK`` before starting Ray on each node.
 
 .. note::
 
-   Hybrid sharding pays off from two ranks per node upwards. With a single rank
-   per node the intra-node shard group holds one rank, nothing is sharded, and
-   RLinf logs a warning at startup — use ``full_shard`` for that topology.
+   With a single rank per node, hybrid sharding becomes replicated data
+   parallelism across nodes. RLinf logs a warning because each GPU holds the
+   full model; use ``full_shard`` instead when the model does not fit on one GPU.

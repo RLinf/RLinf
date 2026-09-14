@@ -26,4 +26,4 @@ RLinf 根据该组件在每个节点上的 rank 数量决定节点内 shard grou
 
 .. note::
 
-   Hybrid sharding 从每节点两个 rank 起才有收益。若每个节点只有一个 rank，节点内 shard group 的大小为 1，实际不会发生任何分片，RLinf 会在启动时输出警告；此时请使用 ``full_shard``。
+   若每个节点只有一个 rank，hybrid sharding 会退化为跨节点的复制式数据并行。此时每张 GPU 都保存完整模型，RLinf 会在启动时输出警告；若模型无法放入单张 GPU，请改用 ``full_shard``。

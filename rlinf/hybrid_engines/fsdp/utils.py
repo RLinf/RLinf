@@ -140,9 +140,8 @@ def _resolve_hybrid_shard_size(world_size: int) -> int:
     if shard_size == 1:
         get_logger().warning(
             "hybrid_shard was requested but this component has a single rank per "
-            "node, so the intra-node shard group holds one rank and nothing is "
-            "sharded. Use full_shard for this topology, or place at least two "
-            "ranks on each node."
+            "node. Nothing is sharded in this topology; ranks are replicated "
+            "across nodes."
         )
     return shard_size
 
