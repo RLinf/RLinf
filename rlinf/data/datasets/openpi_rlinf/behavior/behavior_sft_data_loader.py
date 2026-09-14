@@ -22,6 +22,8 @@ import typing
 import numpy as np
 import torch
 from openpi.transforms import DataTransformFn, compose
+from torch.utils.data import DistributedSampler
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.data.datasets.openpi_rlinf.behavior.behavior_sft_dataset import (
     BehaviorSftDataset,
@@ -46,7 +48,7 @@ __all__ = [
 # Camera views resolved by the BEHAVIOR pi05 transform.
 _IMAGE_KEYS = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
 
-# Raw LeRobot frame keys the streaming dataset yields.
+# Raw LeRobot frame keys the dataset yields.
 _LEROBOT_IMAGE_KEY = "observation.images.rgb.head"
 _LEROBOT_LEFT_WRIST_KEY = "observation.images.rgb.left_wrist"
 _LEROBOT_RIGHT_WRIST_KEY = "observation.images.rgb.right_wrist"
@@ -91,13 +93,11 @@ class _Repack(DataTransformFn):
         return data
 
 
-class _TransformedStreamingDataset(torch.utils.data.Dataset):
-    """Apply the composed openpi input transform to each streamed frame.
+class _TransformedDataset(torch.utils.data.Dataset):
+    """Apply the composed openpi input transform to each frame.
 
     The transform (``compose([_Repack(), *input_transforms])``) is built once in
     the main process and picklable, so ``spawn`` workers receive it directly.
-    ``__len__`` only drives torch's default index sampler so iteration proceeds;
-    the streaming dataset ignores ``idx`` and partitions chunks internally.
     """
 
     def __init__(self, dataset: BehaviorSftDataset, transform):
@@ -189,6 +189,7 @@ def create_behavior_sft_data_loader(
     num_workers: int,
     fine_grained_level: int,
     tolerance_s: float,
+    chunk_streaming_using_keyframe: bool,
     shuffle: bool,
     seed: int,
     skill_labels: dict[int, str] | None,
@@ -221,16 +222,18 @@ def create_behavior_sft_data_loader(
         num_workers: Number of ``DataLoader`` workers (``> 0`` uses ``spawn``).
         fine_grained_level: Orchestrator level for the prompt task text.
         tolerance_s: Frame-timestamp sync tolerance.
-        shuffle: Whether the streaming dataset shuffles its chunk order.
-        seed: Base seed for the streaming chunk partition.
+        chunk_streaming_using_keyframe: Whether to stream contiguous keyframe
+            chunks instead of sampling frames by index.
+        shuffle: Whether to shuffle chunks or indexed samples.
+        seed: Base seed for the selected sampling mode.
         skill_labels: Optional per-skill labels enabling skill mode.
         use_skill: Train on per-frame SKILL text (window-resolved) instead of the
             main-task text; requires explicit ``skill_labels``.
         enable_gap: Skill mode — absorb a true gap into both adjacent skills.
         allow_left: Skill mode — frames to extend a contiguous skill start left.
         allow_right: Skill mode — frames to extend a contiguous skill end right.
-        dist_rank: This rank's id, threaded into the per-rank chunk partition.
-        dist_world_size: Total ranks, threaded into the per-rank chunk partition.
+        dist_rank: This rank's id for distributed sampling.
+        dist_world_size: Total ranks for distributed sampling.
         data_kwargs: Optional ``openpi_data`` overrides forwarded to the pipeline.
 
     Returns:
@@ -244,7 +247,7 @@ def create_behavior_sft_data_loader(
         modalities=modalities or ["rgb"],
         local_only=True,
         delta_timestamps={"action": [t / 30.0 for t in range(action_horizon)]},
-        chunk_streaming_using_keyframe=True,
+        chunk_streaming_using_keyframe=chunk_streaming_using_keyframe,
         shuffle=shuffle,
         seed=seed,
         fine_grained_level=fine_grained_level,
@@ -269,12 +272,18 @@ def create_behavior_sft_data_loader(
         norm_stats_dir=assets_dir,
         norm_stats_asset_id=asset_id,
     )
-    source = _TransformedStreamingDataset(
-        dataset, compose([_Repack(), *input_transforms])
-    )
+    source = _TransformedDataset(dataset, compose([_Repack(), *input_transforms]))
 
-    # The streaming dataset partitions chunks per (rank, worker) on its own, so a
-    # DistributedSampler is intentionally omitted (see module docstring).
+    sampler = None
+    if not chunk_streaming_using_keyframe:
+        sampler = DistributedSampler(
+            source,
+            num_replicas=dist_world_size,
+            rank=dist_rank,
+            shuffle=shuffle,
+            seed=seed,
+            drop_last=True,
+        )
     mp_context = multiprocessing.get_context("spawn") if num_workers > 0 else None
 
     generator = torch.Generator()
@@ -282,19 +291,25 @@ def create_behavior_sft_data_loader(
 
     logger.info(
         "BEHAVIOR SFT data loader: batch_size=%d, num_workers=%d, action_horizon=%d, "
-        "norm_stats=%s/%s",
+        "chunk_streaming_using_keyframe=%s, norm_stats=%s/%s",
         batch_size,
         num_workers,
         action_horizon,
+        chunk_streaming_using_keyframe,
         assets_dir,
         asset_id,
     )
 
-    torch_loader = torch.utils.data.DataLoader(
+    loader_cls = (
+        torch.utils.data.DataLoader
+        if chunk_streaming_using_keyframe
+        else StatefulDataLoader
+    )
+    torch_loader = loader_cls(
         typing.cast(torch.utils.data.Dataset, source),
         batch_size=batch_size,
-        shuffle=shuffle,
-        sampler=None,
+        shuffle=shuffle if sampler is None else False,
+        sampler=sampler,
         num_workers=num_workers,
         multiprocessing_context=mp_context,
         persistent_workers=num_workers > 0,
@@ -310,15 +325,19 @@ def create_behavior_sft_data_loader(
         action_horizon=action_horizon,
         max_token_len=max_token_len,
     )
-    return BehaviorSftDataLoader(torch_loader, data_config)
+    wrapper_cls = (
+        BehaviorSftDataLoader
+        if chunk_streaming_using_keyframe
+        else _StatefulBehaviorSftDataLoader
+    )
+    return wrapper_cls(torch_loader, data_config)
 
 
 class BehaviorSftDataLoader:
-    """Infinite ``(Observation, actions)`` loop over the BEHAVIOR SFT dataset.
+    """Yield ``(Observation, actions)`` batches from the BEHAVIOR SFT dataset.
 
-    Re-iterates the underlying ``torch`` ``DataLoader`` forever. Each batch is
-    already collated into an :class:`Observation` plus an actions tensor of shape
-    ``[batch, action_horizon, action_dim]`` by :func:`_sft_collate`.
+    Each batch is collated into an :class:`Observation` plus an actions tensor of
+    shape ``[batch, action_horizon, action_dim]`` by :func:`_sft_collate`.
     """
 
     def __init__(
@@ -339,11 +358,27 @@ class BehaviorSftDataLoader:
         return self._torch_loader
 
     def __iter__(self):
-        while True:
-            yield from self._torch_loader
+        return iter(self._torch_loader)
+
+    @property
+    def sampler(self):
+        """Expose the sampler so the SFT worker can advance its epoch."""
+        return self._torch_loader.sampler
 
     def __len__(self) -> int:
         return len(self._torch_loader)
+
+
+class _StatefulBehaviorSftDataLoader(BehaviorSftDataLoader):
+    """Behavior loader with resumable indexed-sampling state."""
+
+    def state_dict(self) -> dict:
+        """Return the underlying dataloader state."""
+        return self._torch_loader.state_dict()
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        """Restore the underlying dataloader state."""
+        self._torch_loader.load_state_dict(state_dict)
 
 
 def build_behavior_sft_dataloader(
@@ -351,13 +386,10 @@ def build_behavior_sft_dataloader(
 ):
     """Build the BEHAVIOR SFT data loader for the SFT worker.
 
-    The streaming dataset partitions chunks per ``(rank, worker)``; ``rank`` /
-    ``world_size`` are captured here (in the main process) and threaded into the
-    dataset so that SPAWNED DataLoader workers -- which cannot read
-    ``torch.distributed`` -- still partition by the correct per-rank id (otherwise
-    every rank replicates rank 0's chunks, collapsing the effective batch to one
-    rank's micro-batch). Every parameter is read directly from YAML (no hidden
-    defaults). Returns ``(loader, loader.data_config())``.
+    Indexed sampling uses a distributed sampler; keyframe streaming instead lets
+    the dataset partition chunks across ranks and workers. Every parameter is read
+    directly from YAML (no hidden defaults). Returns
+    ``(loader, loader.data_config())``.
     """
     from omegaconf import OmegaConf
 
@@ -423,6 +455,7 @@ def build_behavior_sft_dataloader(
         num_workers=int(data_cfg.num_workers),
         fine_grained_level=int(data_cfg.fine_grained_level),
         tolerance_s=float(data_cfg.tolerance_s),
+        chunk_streaming_using_keyframe=bool(data_cfg.chunk_streaming_using_keyframe),
         shuffle=not eval_dataset,
         seed=int(cfg.actor.seed),
         skill_labels=skill_labels,

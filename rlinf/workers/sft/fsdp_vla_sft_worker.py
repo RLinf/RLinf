@@ -16,9 +16,10 @@ from typing import Any
 
 import torch
 from omegaconf import DictConfig
-from torchdata.stateful_dataloader import StatefulDataLoader
+from torchdata.stateful_dataloader import Stateful
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -109,8 +110,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
 
-        if isinstance(self.data_loader, StatefulDataLoader):
-            state = self.data_loader.state_dict()
+        if isinstance(self.data_loader, Stateful):
+            state = {
+                "dataloader": self.data_loader.state_dict(),
+                "epoch": self._data_epoch,
+                "offset": self._data_iter_offset,
+            }
 
             all_states = [None] * self._world_size
             torch.distributed.all_gather_object(all_states, state)
@@ -131,11 +136,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
 
-        if isinstance(self.data_loader, StatefulDataLoader):
-            all_states = torch.load(
-                os.path.join(load_path, "data.pt"), weights_only=False
-            )
+        if isinstance(self.data_loader, Stateful):
+            data_path = os.path.join(load_path, "data.pt")
+            if not os.path.exists(data_path):
+                return
+            all_states = torch.load(data_path, weights_only=False)
             state = all_states[self._rank]
+            if "dataloader" in state:
+                self._data_epoch = state["epoch"]
+                self._data_iter_offset = state["offset"]
+                forward_set_epoch(self.data_loader, self._data_epoch)
+                state = state["dataloader"]
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)
 

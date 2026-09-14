@@ -38,6 +38,7 @@ data:
   num_workers: 1
   fine_grained_level: 0
   tolerance_s: 1.0e-4
+  chunk_streaming_using_keyframe: true
   tasks: ["turning_on_radio"]
   use_skill: false
   task_subtasks:
