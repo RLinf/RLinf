@@ -694,8 +694,7 @@ class PairDataset(_BasePairDataset):
         self.boundary_mode = str(boundary_mode)
         if self.boundary_mode not in ("clamp", "drop"):
             raise ValueError(
-                "boundary_mode must be 'clamp' or 'drop', got "
-                f"{self.boundary_mode!r}"
+                f"boundary_mode must be 'clamp' or 'drop', got {self.boundary_mode!r}"
             )
         self.prompt = prompt
         # Mode switch. num_bins == 2 → legacy binary mode: fixed-stride k.
@@ -981,9 +980,7 @@ class PairDataset(_BasePairDataset):
                 # (bin width 2K/num_bins, same resolution as the unscaled path),
                 # with |scaled| > K saturating into the extreme bin. An episode
                 # of length L_max reproduces the unscaled layout (scale == 1).
-                episode_length_units = (
-                    episode_length - 1
-                ) // self.temporal_stride + 1
+                episode_length_units = (episode_length - 1) // self.temporal_stride + 1
                 scale = max(
                     1.0,
                     self._length_scale_reference / float(episode_length_units),
@@ -1170,9 +1167,7 @@ ValueDataCollator`. Runs the :class:`SteamProcessor` **twice**
                 raise RuntimeError(f"Unexpected batch shape for cam={cam}: {t.shape}")
         return images_out, masks_out
 
-    def collate_observations(
-        self, examples: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def collate_observations(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
         """Collate raw image pairs and prompts into a model observation."""
         if not examples:
             raise ValueError("BinaryPairDataCollator received an empty batch")

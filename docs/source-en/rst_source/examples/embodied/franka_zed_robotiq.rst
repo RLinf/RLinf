@@ -198,13 +198,14 @@ A quick sanity check (run on the NUC):
 .. code-block:: bash
 
    python -c "
-   from rlinf.envs.realworld.common.gripper.robotiq_gripper import RobotiqGripper
+   from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
    g = RobotiqGripper(port='/dev/ttyUSB0')
-   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready}')
+   g.connect()
+   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
    g.open()
    import time; time.sleep(1)
    g.close()
-   g.cleanup()
+   g.disconnect()
    "
 
 
@@ -246,7 +247,7 @@ the new ``camera_type``, ``gripper_type``, ``gripper_connection``, and
                camera_type: zed            # "realsense" or "zed"
                gripper_type: robotiq       # "franka" or "robotiq"
                gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1     # FrankaController runs on the NUC
+               controller_node_rank: 1     # the arm part runs on the NUC
                disable_validate: false
 
 .. list-table:: New hardware config fields
@@ -268,7 +269,7 @@ the new ``camera_type``, ``gripper_type``, ``gripper_connection``, and
        ``gripper_type`` is ``"franka"``.
    * - ``controller_node_rank``
      - ``null``
-     - Node rank where ``FrankaController`` runs.  When ``null``, it
+     - Node rank where the arm part runs.  When ``null``, it
        co-locates with the env worker.  Set this when the arm and cameras
        are on different machines.
 
@@ -324,9 +325,9 @@ Key data-collection settings in the same file:
    * - ``runner.num_data_episodes``
      - ``20``
      - Number of episodes to collect before the script exits.
-   * - ``env.eval.use_spacemouse``
-     - ``True``
-     - Enable SpaceMouse teleoperation during collection.
+   * - ``env.eval.teleop``
+     - ``spacemouse``
+     - Which device drives the arm during collection.
    * - ``env.eval.data_collection.save_dir``
      - ``${runner.logger.log_path}/collected_data``
      - Directory where collected trajectories are saved.

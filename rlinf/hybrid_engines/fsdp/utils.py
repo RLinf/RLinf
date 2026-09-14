@@ -55,6 +55,8 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
+from rlinf.scheduler.cluster import Cluster, ClusterEnvVar
+from rlinf.utils.logging import get_logger
 
 
 class FSDPVersion(str, Enum):
@@ -62,7 +64,34 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size):
+def create_device_mesh(world_size: int) -> DeviceMesh:
+    """Build the 1-D device mesh that FSDP shards over.
+
+    The default process group is created here rather than left to
+    ``init_device_mesh``. When no default group exists, ``init_device_mesh``
+    falls back to a bare ``init_process_group()``, which pins the group -- and
+    therefore every FSDP collective, since a mesh dimension that spans the whole
+    world reuses the default group -- to whatever watchdog timeout the backend
+    ships with: 30 minutes for NCCL and Gloo, around 60 for HCCL. All of them are
+    shorter than the timeout RLinf applies to its own inter-worker groups, and
+    none can be raised from the outside.
+
+    Args:
+        world_size (int): Number of ranks participating in FSDP.
+
+    Returns:
+        DeviceMesh: A 1-D mesh over ``world_size`` ranks named ``fsdp``.
+    """
+    if torch.distributed.is_initialized():
+        get_logger().warning(
+            "The default process group already exists, so FSDP collectives keep "
+            f"the timeout it was created with rather than "
+            f"{Cluster.get_full_env_var_name(ClusterEnvVar.TIMEOUT)}."
+        )
+    else:
+        # No backend is passed, so torch still resolves the per-device backend
+        # it would have picked on its own; only the timeout changes.
+        torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )

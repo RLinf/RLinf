@@ -72,7 +72,6 @@ env:
     total_num_envs: 1
     override_cfg:
       is_dummy: true
-      camera_serials: []
       use_dense_reward: True
       max_num_steps: 10
     auto_reset: True
@@ -86,7 +85,6 @@ env:
     total_num_envs: 1
     override_cfg:
       is_dummy: true
-      camera_serials: []
 
 rollout:
   group_name: "RolloutGroup"

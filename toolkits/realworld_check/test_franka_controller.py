@@ -14,13 +14,15 @@
 
 
 import argparse
+import json
 import os
 import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.franka.franka_controller import FrankaController
+from rlinf.robotics.parts.arms.franka_ros import FrankaROSArm
+from rlinf.robotics.parts.end_effectors import EndEffector
 
 
 def _parse_args():
@@ -33,28 +35,37 @@ def _parse_args():
     parser.add_argument(
         "--end-effector-type",
         default="franka_gripper",
-        choices=["franka_gripper", "robotiq_gripper", "ruiyan_hand"],
+        choices=sorted(EndEffector.backends()),
         help="Mounted end-effector type.",
     )
     parser.add_argument(
         "--hand-port",
         default=None,
-        help="Serial port for Ruiyan hand, e.g. /dev/ttyUSB0.",
+        help="End-effector serial port, e.g. /dev/ttyUSB0.",
     )
     parser.add_argument(
         "--hand-baudrate",
         type=int,
-        default=460800,
-        help="Serial baudrate for Ruiyan hand.",
+        default=None,
+        help="End-effector serial baudrate; defaults to the driver setting.",
     )
     parser.add_argument(
         "--hand-motor-ids",
         type=int,
         nargs="+",
-        default=[1, 2, 3, 4, 5, 6],
-        help="Motor IDs for Ruiyan hand.",
+        default=None,
+        help="End-effector motor IDs; defaults to the driver setting.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--end-effector-config",
+        type=json.loads,
+        default={},
+        help='Driver settings as a JSON object, e.g. {"port": "/dev/ttyUSB0"}.',
+    )
+    args = parser.parse_args()
+    if not isinstance(args.end_effector_config, dict):
+        parser.error("--end-effector-config must be a JSON object")
+    return args
 
 
 def main():
@@ -62,24 +73,32 @@ def main():
     robot_ip = args.robot_ip
     assert robot_ip is not None, "Please set the FRANKA_ROBOT_IP environment variable."
 
-    end_effector_config = {}
-    if args.end_effector_type == "ruiyan_hand":
-        if args.hand_port is None:
-            raise ValueError("--hand-port is required when using ruiyan_hand.")
-        end_effector_config = {
-            "port": args.hand_port,
-            "baudrate": args.hand_baudrate,
-            "motor_ids": tuple(args.hand_motor_ids),
-        }
+    end_effector_config = dict(args.end_effector_config)
+    for key, value in (
+        ("port", args.hand_port),
+        ("baudrate", args.hand_baudrate),
+        (
+            "motor_ids",
+            tuple(args.hand_motor_ids) if args.hand_motor_ids is not None else None,
+        ),
+    ):
+        if value is not None:
+            end_effector_config[key] = value
 
-    controller = FrankaController.launch_controller(
+    # The arm and the end effector open their own connections, so build and
+    # connect each one.
+    controller = FrankaROSArm(robot_ip=robot_ip, node_rank=0)
+    end_effector = EndEffector.of(
+        args.end_effector_type,
         robot_ip=robot_ip,
-        end_effector_type=args.end_effector_type,
-        end_effector_config=end_effector_config,
+        node_rank=0,
+        **end_effector_config,
     )
+    controller.connect()
+    end_effector.connect()
 
     start_time = time.time()
-    while not controller.is_robot_up().wait()[0]:
+    while not controller.is_robot_up():
         time.sleep(0.5)
         if time.time() - start_time > 30:
             print(
@@ -91,17 +110,17 @@ def main():
             if cmd_str == "q":
                 break
             elif cmd_str == "getpos":
-                print(controller.get_state().wait()[0].tcp_pose)
+                print(controller.get_state().tcp_pose)
             elif cmd_str == "getpos_euler":
-                tcp_pose = controller.get_state().wait()[0].tcp_pose
+                tcp_pose = controller.get_state().tcp_pose
                 r = R.from_quat(tcp_pose[3:].copy())
                 euler = r.as_euler("xyz")
                 print(np.concatenate([tcp_pose[:3], euler]))
             elif cmd_str == "getstate":
-                state = controller.get_state().wait()[0]
+                state = controller.get_state()
                 print(state.to_dict())
             elif cmd_str == "gethand":
-                print(controller.get_hand_detailed_state().wait()[0])
+                print(end_effector.get_observation())
             else:
                 print(f"Unknown cmd: {cmd_str}")
         except KeyboardInterrupt:

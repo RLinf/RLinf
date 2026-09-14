@@ -94,9 +94,7 @@ def _required_trace_tensor(
 ) -> torch.Tensor:
     value = trace.get(key)
     if not isinstance(value, torch.Tensor) or value.ndim != 2:
-        raise ValueError(
-            f"Trace key {key!r} in {trace_path} must be a rank-2 tensor"
-        )
+        raise ValueError(f"Trace key {key!r} in {trace_path} must be a rank-2 tensor")
     if tuple(value.shape) != shape:
         raise ValueError(
             f"Trace key {key!r} in {trace_path} must have shape {shape}, "
@@ -266,15 +264,11 @@ def _load_episode_data(
     trace = torch.load(ref.trace_path, map_location="cpu", weights_only=False)
     score = _as_time_batch(trace, "rlt_gate_score_min", dtype=torch.float32)
     score_ready = _as_time_batch(trace, "rlt_gate_score_ready", dtype=torch.bool)
-    actor_active = _as_time_batch(
-        trace, "rlt_gate_actor_active", dtype=torch.bool
-    )
+    actor_active = _as_time_batch(trace, "rlt_gate_actor_active", dtype=torch.bool)
     geometry_active = _as_time_batch(
         trace, "geometry_critical_active", dtype=torch.bool
     )
-    oracle_active = _as_time_batch(
-        trace, "rlt_oracle_expert_active", dtype=torch.bool
-    )
+    oracle_active = _as_time_batch(trace, "rlt_oracle_expert_active", dtype=torch.bool)
     success_signal, success_label_source = _success_time_batch(
         trace,
         like=score,
@@ -485,9 +479,7 @@ def train_phase_head(
             features = features.to(device=device, non_blocking=True)
             labels = labels.to(device=device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            loss, _ = _batch_loss(
-                model, features, labels, pos_weight=pos_weight
-            )
+            loss, _ = _batch_loss(model, features, labels, pos_weight=pos_weight)
             loss.backward()
             optimizer.step()
             count = int(labels.numel())

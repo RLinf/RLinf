@@ -108,9 +108,7 @@ class SteamCriticalPhaseGate:
             0.0 if configured_threshold is None else configured_threshold
         )
         self.latch_until_done = bool(cfg.get("latch_until_done", True))
-        self.emit_phase_features = bool(
-            actor_cfg.get("collect_phase_features", False)
-        )
+        self.emit_phase_features = bool(actor_cfg.get("collect_phase_features", False))
         self.phase_head = None
         self.phase_head_metadata: dict[str, Any] = {}
         phase_head_path = actor_cfg.get("phase_head_path", None)
@@ -602,9 +600,7 @@ class SteamCriticalPhaseGate:
         # execution until the warmup updates are complete.
         route_flags = critical_phase_active
         route_expert_flags = (
-            state.expert_latched
-            & actor_active
-            & (self.expert_mode == "active")
+            state.expert_latched & actor_active & (self.expert_mode == "active")
         )
 
         route_expert_active = route_expert_flags & bool(expert_routing_enabled)

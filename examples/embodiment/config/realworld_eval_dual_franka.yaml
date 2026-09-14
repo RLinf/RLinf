@@ -87,9 +87,7 @@ env:
   group_name: "EnvGroup"
   enable_offload: False
   eval:
-    use_gello_joint: False
-    use_gello: False
-    use_spacemouse: False
+    teleop: none
     keyboard_reward_wrapper: eval_control
     max_episode_steps: 10000
     max_steps_per_rollout_epoch: 10000

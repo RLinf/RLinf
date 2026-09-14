@@ -881,8 +881,7 @@ class MultiStepRolloutWorker(Worker):
                 disable=(self._rank != 0),
             ):
                 if self.rlt_critical_phase_gate is not None and (
-                    not bool(self.cfg.env.eval.get("auto_reset", False))
-                    or _ == 0
+                    not bool(self.cfg.env.eval.get("auto_reset", False)) or _ == 0
                 ):
                     self.rlt_critical_phase_gate.reset(mode="eval")
                 for _ in range(self.n_eval_chunk_steps):

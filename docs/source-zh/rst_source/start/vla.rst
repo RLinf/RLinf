@@ -49,7 +49,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 .. code-block:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/maniskill
+   cd <path_to_RLinf>/rlinf/envs/sim/maniskill
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets

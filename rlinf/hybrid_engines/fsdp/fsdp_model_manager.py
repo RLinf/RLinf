@@ -339,6 +339,20 @@ class FSDPModelManager:
         )
         return state_dict
 
+    def load_model_with_state_dict(
+        self,
+        state_dict: dict,
+        cpu_offload: bool,
+        full_state_dict: bool,
+    ) -> None:
+        """Load a state dict into the managed FSDP model through its strategy."""
+        self._strategy.load_model_with_state_dict(
+            self.model,
+            state_dict,
+            cpu_offload,
+            full_state_dict,
+        )
+
     def load_checkpoint(self, load_path: str) -> None:
         """
         Load checkpoint from local path.

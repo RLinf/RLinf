@@ -81,7 +81,6 @@ env:
     override_cfg:
       is_dummy: True
       use_arm_ids: [1]  # Use single arm for dummy test (0=left, 1=right)
-      use_camera_ids: [2]  # Use single camera for dummy test
       target_ee_pose: [[0, 0, 0, 0, 0, 0], [0.0, 0.0, 0.15, 0.0, 1, 0.0]]
   
   eval:
@@ -90,7 +89,6 @@ env:
     override_cfg:
       is_dummy: True
       use_arm_ids: [1]  # Use single arm for dummy test (0=left, 1=right)
-      use_camera_ids: [2]  # Use single camera for dummy test
       target_ee_pose: [[0, 0, 0, 0, 0, 0], [0.0, 0.0, 0.15, 0.0, 1, 0.0]]
 
 rollout:

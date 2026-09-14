@@ -24,6 +24,7 @@ from omegaconf import DictConfig
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+from rlinf.models.embodiment.reward.rocm_patches import patch_vision_patch_embed
 from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
     apply_gt_success_bonus,
     load_vlm_processor,
@@ -122,6 +123,7 @@ class VLMRewardModel(BaseRewardModel):
             trust_remote_code=True,
             torch_dtype=self.dtype,
         )
+        patch_vision_patch_embed(self._model)
 
         if self.lora_path:
             full_weights_path = os.path.join(
