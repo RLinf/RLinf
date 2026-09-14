@@ -261,7 +261,7 @@ rollout:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
-      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"
+      norm_stats_path: "/path/to/maniskill_peginsertionside_joint/norm_stats.json"
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
