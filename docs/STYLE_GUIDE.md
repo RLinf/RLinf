@@ -185,7 +185,7 @@ question, not by the team that owns the feature.
 | **Get Started** | Install, quickstarts, requirements, cheat sheet. |
 | **Examples** | The recipe galleries (simulators, robots, models, SFT, algorithms, agents, systems). |
 | **Evaluation** | Eval onboarding, benchmark eval guides, eval CLI / config / results reference. |
-| **Guides** | Operational how-tos: configure, launch & scale, data & checkpoints, performance, hardware backends, agent workflows. |
+| **Guides** | Operational how-tos: configure, launch & scale, data & checkpoints, performance, agent workflows. |
 | **Concepts** | The mental model: execution flow, workers, channels, cluster, placement, execution modes, replay buffer. |
 | **Reference** | Exact specs: APIs, algorithm specs, configuration keys & metrics, evaluation reference. |
 | **Extending** | Contributor how-tos: new env / model / SFT, advanced integrations. |
@@ -203,6 +203,15 @@ simulators / benchmarks → `simulators_index`; physical hardware →
 policies such as ``MLP``) → `vla_wam_index` (Models); training recipes /
 algorithms → `methods_index`; SFT-only workflows → `sft_index`. Do not duplicate
 the same page in multiple gallery indexes.
+
+**Hardware setup ownership.** Model example pages own backend-specific
+installation and launch steps under `Run on Different Hardware Backends`. List
+supported backends and model/environment limits in the `Hardware` card. Route
+readers from the README support matrix, Models gallery, installation guide, and
+simulator pages directly to those sections. Shared setup commands belong in
+underscore-prefixed includes. Distinguish hardware e2e coverage from installer
+options or compatibility patches; support applies to a specific model,
+environment, and backend combination.
 
 **Evaluation ownership.** Evaluation is a first-class top-level section, not an
 Examples subsection. `rst_source/evaluations/get_started/` owns eval onboarding,
@@ -230,7 +239,7 @@ cards or `list-table`s (not prose). Preserve page filenames when regrouping to
 avoid link churn, and update both EN and ZH toctrees in the same change. The
 established groupings:
 
-- **Guides:** Configure · Launch & Scale · Data & Checkpoints · Performance · Hardware Backends · Agent Workflows.
+- **Guides:** Configure · Launch & Scale · Data & Checkpoints · Performance · Agent Workflows.
 - **Reference:** API · Algorithms · Configuration · Evaluation Reference.
 - **Concepts:** Execution · Scheduling.
 - **Extending:** keep the primary add-component pages (New Environment, New Model with FSDP, New Model with Megatron, New SFT Model) as immediate children; group only advanced topics under Advanced Integrations (Megatron-Bridge, weight synchronization, reward-model workflow).
