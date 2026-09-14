@@ -20,11 +20,11 @@ import dataclasses
 
 import torch
 
-from . import gemma, model, pointnet
+from rlinf.models.embodiment.openpi_rlinf.modules import gemma, model, pointnet
 
 
 @dataclasses.dataclass
-class Pi0Config(model.BaseModelConfig):
+class Pi0Config:
     dtype: str = "bfloat16"
     paligemma_variant: gemma.Variant = "gemma_2b"
     action_expert_variant: gemma.Variant = "gemma_300m"
@@ -43,11 +43,6 @@ class Pi0Config(model.BaseModelConfig):
             object.__setattr__(self, "max_token_len", 200)
         if self.discrete_state_input is None:
             object.__setattr__(self, "discrete_state_input", self.pi05)
-
-    def create(self, **kwargs) -> model.BaseModel:
-        from .pi0 import Pi0
-
-        return Pi0(self)
 
     def fake_obs(self, batch_size: int = 1) -> model.Observation:
         image = torch.ones(batch_size, *model.IMAGE_RESOLUTION, 3)

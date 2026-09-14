@@ -1,9 +1,9 @@
 model_type: "openpi_rlinf"
 
-# Default Pi0.5 shape. Env-specific fields (config_name, action_dim,
+# Default Pi0 shape. Env-specific fields (config_name, action_dim,
 # num_action_chunks, task, …) are overridden in the experiment YAML.
 precision: null
-pi05: True
+pi05: False
 
 is_lora: False
 lora_rank: 32
@@ -11,14 +11,12 @@ lora_rank: 32
 num_action_chunks: 10
 action_dim: 7
 use_proprio: True
-num_steps: 5
+num_steps: 4
 add_value_head: False
 
 openpi:
-  # Factory selector: sft | eval | rl | dagger | dsrl. Embodiment default is rl;
-  # eval / sft / dagger / dsrl experiments override this in the main YAML.
   task: rl
-  config_name: "pi05_libero"
+  config_name: "pi0_libero"
   num_images_in_input: 2
   noise_level: 0.5
   action_chunk: ${..num_action_chunks}
@@ -27,10 +25,9 @@ openpi:
   action_env_dim: ${..action_dim}
   noise_method: "flow_sde"
   add_value_head: ${..add_value_head}
-  value_after_vlm: False
-  value_vlm_mode: "mean_token"
   detach_critic_input: False
   model_action_dim: 32
   paligemma_variant: "gemma_2b"
   action_expert_variant: "gemma_300m"
-  max_token_len: 200
+  max_token_len: 48
+  discrete_state_input: False
