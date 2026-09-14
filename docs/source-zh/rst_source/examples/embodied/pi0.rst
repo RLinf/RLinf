@@ -278,27 +278,43 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 **2.1 模型参数**
 
+本文同时覆盖 π\ :sub:`0`\ / π\ :sub:`0.5`\  的两套实现：上方配方使用的 ``model_type: openpi``（模板 ``model/pi0``、``model/pi0_5``），以及 ``model_type: openpi_rlinf``（模板 ``model/pi0_rlinf``、``model/pi0_5_rlinf``）。两者都把网络 action horizon 和环境实际执行的 chunk 分开：
+
+- ``num_action_chunks`` / ``openpi.action_chunk`` 是 **环境实际执行** 的 chunk（RLinf 发给模拟器的步数）。
+- **网络** ``action_horizon`` 优先用 YAML 里的 ``openpi.action_horizon``；未设置时用 ``openpi.config_name`` 对应官方 OpenPI ``TrainConfig.model.action_horizon``；再没有才回退到 ``num_action_chunks``。
+
+``openpi`` 实现从官方 ``TrainConfig.model`` 拷出 ``action_horizon``，再用 ``cfg.openpi`` 整表覆盖。默认模板只把 ``num_action_chunks`` 插值到 ``action_chunk``，**不会** 把 ``num_action_chunks`` 写成网络 horizon。
+
+LIBERO PPO 常见写法是 ``num_action_chunks: 5``，而 ``pi0_libero`` 官方 horizon 仍是 **50**，``pi05_libero`` 官方 horizon 是 **10**。只有 checkpoint 的 horizon 和该 ``TrainConfig`` 不一致时，才在实验 YAML 里覆写 ``openpi.action_horizon``。
+
+下面是 ``openpi_rlinf`` 示例，启动命令为 ``bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_rlinf``。
+
 .. code:: yaml
 
-   openpi:
-     noise_level: 0.5 # flow_sde 的默认噪声强度
-     noise_logvar_range: [0.08, 0.16] # flow_noise 的默认可学习噪声范围
-     action_chunk: ${actor.model.num_action_chunks}
-     num_steps: ${actor.model.num_steps}
-     train_expert_only: True
-     action_env_dim: ${actor.model.action_dim}
-     noise_method: "flow_sde" # flow_sde, flow_noise
-     add_value_head: False
-     pi05: False
-     value_after_vlm: False
+   actor:
+     model:
+       pi05: False                 # π0.5 设为 True；写在 actor.model 下，不在 openpi 里
+       num_action_chunks: 5        # 环境接口，不是网络 horizon
+       openpi:
+         task: rl                  # sft | eval | rl | dagger | dsrl
+         config_name: "pi0_libero" # 官方 TrainConfig（网络 action_horizon 来自这里）
+         noise_level: 0.5 # flow_sde 的默认噪声强度
+         noise_logvar_range: [0.08, 0.16] # flow_noise 的默认可学习噪声范围
+         action_chunk: ${..num_action_chunks}
+         num_steps: ${..num_steps}
+         train_expert_only: True
+         action_env_dim: ${..action_dim}
+         noise_method: "flow_sde" # flow_sde, flow_noise
+         add_value_head: ${..add_value_head}
+         value_after_vlm: False
 
 - 通过 ``num_steps`` 设置不同的流匹配步数。
 
 - 通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `flow_noise <https://arxiv.org/abs/2505.22094>`__\ 两种方式。其中 ``noise_level`` 用于控制 ``flow_sde`` 的加噪强度，``noise_logvar_range`` 用于控制 ``flow_noise`` 的可学习噪声范围。
 
-- 通过设置 ``pi05: True`` 启用 π\ :sub:`0.5`\ 模型。
+- 通过 ``openpi.config_name`` 选择 π\ :sub:`0.5`\ （例如 ``pi05_libero``）。``openpi_rlinf`` 还需设置 ``actor.model.pi05: True``；省略时默认为 True，``model/pi0_rlinf`` 会显式设为 False。
 
-- 通过 ``value_after_vlm`` 控制 critic 的位置：当该参数为 True 时，critic 接入到 VLM 模块的输出后；为 False 时，critic 的输入为 action expert 模块的输出。
+- 通过 ``value_after_vlm`` 控制 critic 的位置：当该参数为 True 时，critic 接入到 VLM 模块的输出后；为 False 时，critic 的输入为 action expert 模块的输出。π\ :sub:`0.5`\  PPO 应设 ``value_after_vlm: True``。
 
 **2.2 算法配置**
 
@@ -314,7 +330,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
      noise_logvar_range: [0.08, 0.16] # 针对 flow-noise 的可学习噪声范围
      joint_logprob: False # 是否优化联合概率密度函数，对于flow-sde，请设置为False，对于flow-noise，请设置为True
 
-例如，针对 flow-sde 的完整参数设置，可以参考 ``libero_spatial_ppo_openpi.yaml``；针对 flow-noise 的完整参数设置，可以参考 ``maniskill_ppo_openpi.yaml``。
+例如，``openpi_rlinf`` 上完整的 flow-sde 设置见 ``libero_spatial_ppo_openpi_rlinf.yaml``。legacy ``openpi`` 配方为 ``libero_spatial_ppo_openpi.yaml``\ （flow-sde）和 ``maniskill_ppo_openpi.yaml``\ （flow-noise）。
 
 **2.3 LoRA设置**
 

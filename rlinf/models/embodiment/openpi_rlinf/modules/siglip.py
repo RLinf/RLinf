@@ -46,7 +46,12 @@ def posemb_sincos_2d(
 class MlpBlock(nn.Module):
     """Transformer MLP / feed-forward block."""
 
-    def __init__(self, dim: int, mlp_dim: int | None = None, dropout: float = 0.0):
+    def __init__(
+        self,
+        dim: int,
+        mlp_dim: int | None = None,
+        dropout: float = 0.0,
+    ):
         super().__init__()
         mlp_dim = mlp_dim or 4 * dim
         self.fc1 = nn.Linear(dim, mlp_dim)
@@ -70,7 +75,11 @@ class Encoder1DBlock(nn.Module):
     """Single transformer encoder block (MHSA + MLP)."""
 
     def __init__(
-        self, dim: int, num_heads: int, mlp_dim: int | None = None, dropout: float = 0.0
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_dim: int | None = None,
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, eps=1e-6)
@@ -83,7 +92,7 @@ class Encoder1DBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Cast to norm weight dtype for FSDP1 mixed precision compatibility
+        # Cast only the LayerNorm input. Keep residual dtype (OpenPI mixed precision).
         norm_dtype = self.norm1.weight.dtype
         y = self.norm1(x.to(norm_dtype))
         y, _ = self.attn(y, y, y)
@@ -111,7 +120,15 @@ class Encoder(nn.Module):
     ):
         super().__init__()
         self.layers = nn.ModuleList(
-            [Encoder1DBlock(dim, num_heads, mlp_dim, dropout) for _ in range(depth)]
+            [
+                Encoder1DBlock(
+                    dim,
+                    num_heads,
+                    mlp_dim,
+                    dropout,
+                )
+                for _ in range(depth)
+            ]
         )
         self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.gradient_checkpointing = use_gradient_checkpointing
@@ -159,7 +176,6 @@ class SigLIPViT(nn.Module):
             _str_to_dtype(dtype_mm) if isinstance(dtype_mm, str) else dtype_mm
         )
 
-        # Patch embedding (Conv2d)
         self.stem = nn.Conv2d(
             3,
             self.width,
@@ -232,18 +248,15 @@ class SigLIPViT(nn.Module):
             _: placeholder for compatibility (None)
         """
         # --- Stem + pos_embed in float32 (matching JAX) ---
-        # image is (B, H, W, C) -> (B, C, H, W) for Conv2d
-        x = image.permute(0, 3, 1, 2).float()
-
-        # Patch extraction in float32 — use explicit F.conv2d because FSDP2 may
-        # cast stem parameters to bfloat16, but JAX stem always runs in float32.
+        # image is (B, H, W, C) -> (B, C, H, W)
+        x = image.permute(0, 3, 1, 2)
         x = F.conv2d(
-            x,
+            x.float(),
             self.stem.weight.float(),
-            self.stem.bias.float() if self.stem.bias is not None else None,
+            None if self.stem.bias is None else self.stem.bias.float(),
             stride=self.stem.stride,
             padding=self.stem.padding,
-        )  # (B, width, h, w)
+        )
         B, C, h, w = x.shape
         x = x.reshape(B, C, h * w).permute(0, 2, 1)  # (B, h*w, width)
 
