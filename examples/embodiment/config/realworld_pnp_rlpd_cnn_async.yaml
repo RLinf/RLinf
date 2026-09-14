@@ -109,14 +109,13 @@ env:
     no_gripper: False
     total_num_envs: 1
     keyboard_reward_wrapper: single_stage
-    use_spacemouse: True
+    teleop: spacemouse
 
     max_steps_per_rollout_epoch: 150
     max_episode_steps: 150
 
     override_cfg:
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       use_dense_reward: False
       is_dummy: false
       max_num_steps: 150

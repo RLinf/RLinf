@@ -42,7 +42,7 @@
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · GPU
+      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>` （π₀ / π₀.₅，LIBERO · ManiSkill）
 
 | **你将完成：** 安装 → 下载 SFT checkpoint → 选择配置 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint（见下文）。
@@ -99,6 +99,8 @@
 
 安装
 ----------------------------------------
+
+下方为 NVIDIA 安装步骤；其他硬件请按 :ref:`对应后端的步骤 <pi0-hardware>` 准备环境。
 
 .. include:: _setup_common.rst
 
@@ -403,6 +405,107 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
+
+.. _pi0-hardware:
+
+在不同硬件后端上运行
+--------------------
+
+NVIDIA 使用上面的安装与启动流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都通过共用平台安装器与 scheduler 设备 API 支持 OpenPI π₀ / π₀.₅ 系列在 LIBERO 和 ManiSkill 上运行。非 CUDA 后端上的 ManiSkill 使用 CPU simulation；MUSA 还需要厂商模拟器包。
+
+AMD ROCm
+~~~~~~~~
+
+ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的 AMD accelerator 与安装路径。
+
+.. include:: _amd_libero.rst
+
+进入容器后，或直接在已安装 ROCm 的宿主机上，创建 OpenPI LIBERO 环境：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero
+   source .venv/bin/activate
+
+省略 ``--rocm`` 可自动检测已安装的版本；中国大陆用户可添加 ``--use-mirror``。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~
+
+使用昇腾 LIBERO 容器，或在已安装 CANN 和 NPU 驱动的宿主机上运行。
+
+.. include:: _ascend_libero.rst
+
+已发布的 LIBERO 镜像不包含 OpenPI 环境。可以在容器内创建，也可以直接在昇腾宿主机上运行相同命令：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model openpi --env libero
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，OpenPI 随后使用共用的 NPU worker 与 collective 路径。
+
+摩尔线程 MUSA
+~~~~~~~~~~~~~
+
+MUSA 通过启用 system site-packages 的虚拟环境复用镜像中的 Python、PyTorch 与 ``torch_musa``。安装器会保留这些厂商包，并跳过仅支持 CUDA 的依赖。
+
+.. include:: _musa_libero.rst
+
+进入容器后，创建 OpenPI LIBERO 环境：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform musa embodied --model openpi --env libero
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。若 Transformers 模型路径指定 ``attn_implementation: flash_attention_2``，但 Transformers 无法检测厂商包，请改用 ``sdpa``。
+
+在 AMD、昇腾或 MUSA 上运行 LIBERO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+从前面的模型列表选择 LIBERO checkpoint 与匹配配置。下面以 π₀.₅ + LIBERO-10 + PPO 为例：在 ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` 中设置 actor 与 rollout 的模型路径，并在已激活的环境中启用软件渲染。
+
+.. include:: _libero_osmesa.rst
+
+启动 LIBERO PPO 训练：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+在 AMD、昇腾或 MUSA 上运行 ManiSkill
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+AMD 与昇腾使用 OpenPI 的 ManiSkill + LIBERO 组合环境。根据所选模型 accelerator 执行对应命令：
+
+.. code-block:: bash
+
+   # AMD ROCm
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero
+
+   # 华为昇腾 CANN
+   bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero
+
+   source .venv/bin/activate
+
+MUSA 使用厂商模拟器镜像及其中已有的 OpenPI 环境：
+
+.. include:: _musa_maniskill.rst
+
+.. code-block:: bash
+
+   source switch_env openpi
+
+三种非 CUDA 后端均使用以下 CPU simulation 配置：
+
+.. include:: _maniskill_non_cuda.rst
+
+π₀.₅ 需要下载 ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT``，并在 ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml`` 中设置两个模型路径；π₀ 改用 ``maniskill_ppo_openpi.yaml``。根据可用设备调整 placement 与 batch size 后启动所选方案，例如：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
 
 可视化与结果
 ----------------------------------------

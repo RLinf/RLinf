@@ -1,0 +1,69 @@
+# Reward-dataset labelling against faked vendor SDKs.
+#
+# Covers examples/reward/realworld_collect_process_dataset.py, the step the
+# reward-model guide runs between data collection and training. An operator
+# normally labels each frame with 'c' or 'a'; here the fake keyboard types
+# them, driven by RLINF_FAKE_KEYS, so the ratio sampling, train/val split and
+# save all run unattended.
+defaults:
+  - env/realworld_peg_insertion@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 0.0.0.0
+            node_rank: 0
+            backend: franky
+            camera_serials: ["MOCK0001", "MOCK0002"]
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/results/realworld_collect_dataset_mock
+    project_name: rlinf
+    experiment_name: "ci-test"
+    logger_backends: ["tensorboard"]
+  # Small enough to reach quickly, large enough that the ratio sampling and
+  # the train/val split both have something to do.
+  num_success_frames: 2
+  num_fail_frames: 4
+  val_split: 0.5
+  fail_success_ratio: 2.0
+  random_seed: 42
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    no_gripper: False
+    ignore_terminations: False
+    auto_reset: False
+    # The operator device is not what this step exercises.
+    teleop: none
+    keyboard_reward_wrapper: single_stage
+    # A ceiling, so a run that never reaches its targets still ends.
+    max_episode_steps: 400
+    override_cfg:
+      # Deliberately out of reach: the episode must keep running for frames to
+      # accumulate, so it must not succeed and terminate.
+      target_ee_pose: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0]
+      reward_threshold: [0.05, 0.05, 0.05, 0.1, 0.1, 0.1]
+      success_hold_steps: 1
+      max_num_steps: 400
+      enable_camera_player: False

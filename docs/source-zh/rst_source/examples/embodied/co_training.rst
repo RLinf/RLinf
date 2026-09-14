@@ -114,7 +114,7 @@ Maniskill 资源下载
 
 .. code:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/maniskill/assets
+   cd <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .

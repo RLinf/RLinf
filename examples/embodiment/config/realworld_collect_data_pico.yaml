@@ -23,6 +23,9 @@ cluster:
         configs:
           - robot_ip: ROBOT_IP    # Replace with your Franka IP
             node_rank: 0
+            # "franka_ros" needs a ROS stack; "franky" talks libfranka.
+            backend: franka_ros
+            camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
 
 runner:
   task_type: embodied
@@ -39,8 +42,7 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: False
-    use_pico: True
+    teleop: pico
     no_gripper: False
     pico:
       zmq_addr: "ipc:///tmp/vr_data.ipc"

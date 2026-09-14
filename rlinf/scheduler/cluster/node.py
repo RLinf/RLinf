@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import os
 import sys
 import warnings
@@ -294,6 +295,9 @@ class NodeProbe:
 
         node_infos = Cluster.get_alive_nodes()
         num_nodes = len(node_infos)
+        hardware_policy_modules = list(
+            dict.fromkeys(policy.__module__ for policy in Hardware.policy_registry)
+        )
         for node_info in node_infos:
             node_ray_id = node_info["NodeID"]
             try:
@@ -302,7 +306,13 @@ class NodeProbe:
                         node_id=node_ray_id, soft=False
                     ),
                     name=f"NodeProbe_{node_ray_id}",
-                ).remote(node_info, num_nodes, cluster_cfg, sys.executable)
+                ).remote(
+                    node_info,
+                    num_nodes,
+                    cluster_cfg,
+                    sys.executable,
+                    hardware_policy_modules,
+                )
             except ValueError:
                 raise Cluster.NamespaceConflictError
             self._probes.append(probe)
@@ -496,6 +506,7 @@ class _RemoteNodeProbe:
         num_nodes: int,
         cluster_cfg: Optional[ClusterConfig],
         head_python_interpreter: str,
+        hardware_policy_modules: list[str],
     ):
         from .cluster import Cluster, ClusterEnvVar
 
@@ -516,6 +527,11 @@ class _RemoteNodeProbe:
                 f"{Cluster.get_full_env_var_name(ClusterEnvVar.NODE_RANK)} must be set when there are more than one nodes are connected in Ray and cluster's nodes configuration is provided."
             )
             node_labels = cluster_cfg.get_node_labels_by_rank(node_rank)
+
+        # Import the same registered policies on each node without coupling the
+        # scheduler to extension packages such as rlinf.robotics.
+        for module_name in hardware_policy_modules:
+            importlib.import_module(module_name)
 
         # Node hardware resources
         node_hw_configs = []
