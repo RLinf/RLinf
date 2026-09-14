@@ -16,8 +16,6 @@ stores trajectory data.
      - Collocated, disaggregated, and hybrid placement trade-offs.
    * - :doc:`Replay Buffer <../replay_buffer>`
      - Trajectory replay buffer design and sampling.
-   * - :doc:`STEAM Progress Estimation <../steam_progress_estimation>`
-     - Automatic progress estimation and RLT actor/expert routing.
 
 .. toctree::
    :hidden:
@@ -25,4 +23,3 @@ stores trajectory data.
    Placement <../placement>
    Execution Modes <../execution_modes>
    Replay Buffer <../replay_buffer>
-   STEAM Progress Estimation <../steam_progress_estimation>

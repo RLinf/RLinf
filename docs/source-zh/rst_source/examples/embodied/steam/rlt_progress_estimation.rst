@@ -21,6 +21,40 @@ RLT STEAM 使用两个职责不同但相互关联的 head：
    phase probability + patience -> actor switch
    actor switch + low progress score + patience -> expert takeover
 
+数据与检查点
+------------
+
+校准前先准备公开的示范数据集。Stage 1 的 feature model 和 expert 权重由本地 Stage 1 训练生成，不需要单独下载。
+
+下载 ManiSkill joint-control 数据集：
+
+.. code-block:: bash
+
+   export RLT_DATASET_DIR=/path/to/maniskill_peginsertionside_joint
+   hf download --repo-type dataset \
+       RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
+       --local-dir "${RLT_DATASET_DIR}"
+
+将 ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml`` 和 ``examples/offline_rl/config/rlt_steam_value_model_sft.yaml`` 中的 ``data.train_data_paths[0].dataset_path`` 都设置为刚下载的数据集目录，并让两个配置使用同一个 ``repo_id`` 和 ``norm_stats.json``。Stage 1 还需要 OpenPI pi0.5 基座 checkpoint；从 `lerobot/pi05_base <https://huggingface.co/lerobot/pi05_base>`__ 下载后，将路径填入 ``actor.model.model_path``。STEAM value model 的 backbone 下载方式见 :doc:`STEAM 主文档 <../steam>`。
+
+Stage 1 训练到 3000 步。启动前编辑 ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``，将 ``runner.max_steps`` 设为 ``3000``；配置中已有的 ``save_interval: 250`` 会同时保存所需的两个检查点：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
+
+将生成的 FSDP ``actor`` 目录填入 STEAM Stage 2 配置：
+
+.. code-block:: yaml
+
+   rollout:
+     rlt_feature_model:
+       model_path: /path/to/stage1/checkpoints/global_step_1000/actor
+     expert_model:
+       model_path: /path/to/stage1/checkpoints/global_step_3000/actor
+
+1000 步检查点作为冻结的 RLT feature model，3000 步检查点作为更强的 OpenPI expert；按照现有 Stage 2 配置将 ``expert_model.openpi.use_rlt`` 保持为 ``False``。两个路径必须来自同一次 Stage 1 训练，并与 Stage 2 环境使用相同的 OpenPI dataconfig 和 normalization statistics。
+
 运行校准
 --------
 
@@ -31,7 +65,7 @@ RLT STEAM 使用两个职责不同但相互关联的 head：
       bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh \
           rlt_steam_value_model_sft
 
-   运行前在 ``examples/offline_rl/config/rlt_steam_value_model_sft.yaml`` 中设置数据集和模型路径。
+   运行前在 ``examples/offline_rl/config/rlt_steam_value_model_sft.yaml`` 中设置 ``data.train_data_paths[0].dataset_path`` 和 STEAM backbone 路径；backbone 的下载方式见 :doc:`STEAM 主文档 <../steam>`。
 
 2. 在 STEAM Stage 2 配置中启用 ``algorithm.rlt_gate_calibration`` 和
    ``rollout.rlt_critical_phase_gate.actor_switch.collect_phase_features`` 。首次收集时关闭 learned actor gate 和 expert gate，并使用环境 geometry route，以便 trace 同时包含 geometry labels 和 expert-oracle labels。

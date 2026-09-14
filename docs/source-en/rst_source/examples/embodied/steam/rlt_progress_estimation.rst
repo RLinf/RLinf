@@ -35,6 +35,56 @@ At runtime, the flow is:
    phase probability + patience -> actor switch
    actor switch + low progress score + patience -> expert takeover
 
+Required Data and Checkpoints
+-----------------------------
+
+Prepare the public demonstration dataset before calibration. The Stage 1
+feature and expert weights are produced by the local Stage 1 run; they are not
+separate downloadable artifacts.
+
+Download the ManiSkill joint-control dataset:
+
+.. code-block:: bash
+
+   export RLT_DATASET_DIR=/path/to/maniskill_peginsertionside_joint
+   hf download --repo-type dataset \
+       RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
+       --local-dir "${RLT_DATASET_DIR}"
+
+Set ``data.train_data_paths[0].dataset_path`` to the downloaded dataset
+directory in ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
+and ``examples/offline_rl/config/rlt_steam_value_model_sft.yaml``. Keep the same
+``repo_id`` and ``norm_stats.json`` for both configurations. The Stage 1 run
+also needs the OpenPI pi0.5 base checkpoint; download it from
+`lerobot/pi05_base <https://huggingface.co/lerobot/pi05_base>`__ and set
+``actor.model.model_path`` accordingly. The STEAM value-model backbone download
+commands are in :doc:`the parent STEAM guide <../steam>`.
+
+Run Stage 1 once through step 3000. Edit
+``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml`` before
+launching so that ``runner.max_steps`` is ``3000`` (the checked-in
+``save_interval`` of ``250`` saves both requested checkpoints), then run:
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
+
+Use the resulting FSDP ``actor`` directories in the STEAM Stage 2 config:
+
+.. code-block:: yaml
+
+   rollout:
+     rlt_feature_model:
+       model_path: /path/to/stage1/checkpoints/global_step_1000/actor
+     expert_model:
+       model_path: /path/to/stage1/checkpoints/global_step_3000/actor
+
+The 1000-step checkpoint is the frozen RLT feature model. The 3000-step
+checkpoint is the stronger OpenPI expert; keep ``expert_model.openpi.use_rlt``
+set to ``False`` as in the provided Stage 2 config. Both paths must point to
+the same Stage 1 run and use the same OpenPI dataconfig and normalization
+statistics as the Stage 2 environment.
+
 Run the Calibration
 -------------------
 
@@ -45,9 +95,10 @@ Run the Calibration
       bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh \
           rlt_steam_value_model_sft
 
-   Set the dataset and model paths in
-   ``examples/offline_rl/config/rlt_steam_value_model_sft.yaml`` before running
-   the command.
+   Set ``data.train_data_paths[0].dataset_path`` and the STEAM backbone paths
+   in ``examples/offline_rl/config/rlt_steam_value_model_sft.yaml`` before
+   running the command. The backbone download instructions are in
+   :doc:`the parent STEAM guide <../steam>`.
 
 2. Enable ``algorithm.rlt_gate_calibration`` and
    ``rollout.rlt_critical_phase_gate.actor_switch.collect_phase_features`` in
