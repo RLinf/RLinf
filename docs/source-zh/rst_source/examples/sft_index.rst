@@ -26,9 +26,9 @@ VLA / WAM 模型监督微调
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_openpi_rlinf.html" style="text-decoration: underline; color: blue;">
-           <b>OpenPI 混合精度监督微调</b>
+           <b>OpenPI_RLinf 监督微调</b>
          </a><br>
-         使用 OpenPI_RLinf 进行混合精度监督微调
+         使用与 JAX 对齐的 OpenPI_RLinf 实现进行监督微调
        </p>
      </div>
 
@@ -40,6 +40,17 @@ VLA / WAM 模型监督微调
            <b>DreamZero 监督微调</b>
          </a><br>
          面向 DreamZero 的全量与 mixture SFT（WAN2.1 / WAN2.2 主干）
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_cosmos3.html" style="display: block;"><img src="https://raw.githubusercontent.com/NVIDIA/cosmos/main/cookbooks/cosmos3/cosmos3-model-architecture.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_cosmos3.html" style="text-decoration: underline; color: blue;">
+           <b>Cosmos3 监督微调</b>
+         </a><br>
+         基于 NVIDIA Cosmos3-Nano（OmniMoT）的 LIBERO 动作策略 SFT
        </p>
      </div>
 
@@ -74,5 +85,6 @@ VLA / WAM 模型监督微调
    OpenPI <embodied/sft_openpi>
    OpenPI_RLinf <embodied/sft_openpi_rlinf>
    DreamZero <embodied/sft_dreamzero>
+   Cosmos3 <embodied/sft_cosmos3>
    Qwen-VL <embodied/sft_vlm>
    DAgger <embodied/dagger>

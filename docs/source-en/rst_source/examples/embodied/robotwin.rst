@@ -266,7 +266,7 @@ and result interpretation.
 
 .. note::
 
-   The provided configs use train/eval seed files under ``rlinf/envs/robotwin/seeds/``.
+   The provided configs use train/eval seed files under ``rlinf/envs/sim/robotwin/seeds/``.
 
 Visualization and Results
 -------------------------

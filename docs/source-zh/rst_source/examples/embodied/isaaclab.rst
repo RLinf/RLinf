@@ -10,9 +10,9 @@
    :align: center
    :width: 90%
 
-   IsaacLab（图片来源：`IsaacLab <https://developer.nvidia.com/isaac/lab>`__）。
+   IsaacLab（图片来源：`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__）。
 
-`IsaacLab <https://developer.nvidia.com/isaac/lab>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。
+`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。
 你将使用 RLinf 在自定义 Franka 方块堆叠任务上，通过 PPO 微调 GR00T N1.5 或 OpenPI π₀.₅。
 
 概览
@@ -224,8 +224,8 @@
 
 .. note::
 
-   如需添加自定义 IsaacLab 任务，请在 ``rlinf/envs/isaaclab/tasks/`` 下实现任务，
-   在 ``rlinf/envs/isaaclab/__init__.py`` 中注册任务，然后在
+   如需添加自定义 IsaacLab 任务，请在 ``rlinf/envs/sim/isaaclab/tasks/`` 下实现任务，
+   在 ``rlinf/envs/sim/isaaclab/__init__.py`` 中注册任务，然后在
    ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` 等环境配置中，将
    ``init_params.id`` 指向新的 task id。
 

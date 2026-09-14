@@ -42,7 +42,7 @@
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · GPU
+      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>` （π₀ / π₀.₅，LIBERO · ManiSkill）
 
 | **你将完成：** 安装 → 下载 SFT checkpoint → 选择配置 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 π\ :sub:`0`\  / π\ :sub:`0.5`\  SFT checkpoint（见下文）。
@@ -99,6 +99,8 @@
 
 安装
 ----------------------------------------
+
+下方为 NVIDIA 安装步骤；其他硬件请按 :ref:`对应后端的步骤 <pi0-hardware>` 准备环境。
 
 .. include:: _setup_common.rst
 
@@ -276,27 +278,43 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 **2.1 模型参数**
 
+本文同时覆盖 π\ :sub:`0`\ / π\ :sub:`0.5`\  的两套实现：上方配方使用的 ``model_type: openpi``（模板 ``model/pi0``、``model/pi0_5``），以及 ``model_type: openpi_rlinf``（模板 ``model/pi0_rlinf``、``model/pi0_5_rlinf``）。两者都把网络 action horizon 和环境实际执行的 chunk 分开：
+
+- ``num_action_chunks`` / ``openpi.action_chunk`` 是 **环境实际执行** 的 chunk（RLinf 发给模拟器的步数）。
+- **网络** ``action_horizon`` 优先用 YAML 里的 ``openpi.action_horizon``；未设置时用 ``openpi.config_name`` 对应官方 OpenPI ``TrainConfig.model.action_horizon``；再没有才回退到 ``num_action_chunks``。
+
+``openpi`` 实现从官方 ``TrainConfig.model`` 拷出 ``action_horizon``，再用 ``cfg.openpi`` 整表覆盖。默认模板只把 ``num_action_chunks`` 插值到 ``action_chunk``，**不会** 把 ``num_action_chunks`` 写成网络 horizon。
+
+LIBERO PPO 常见写法是 ``num_action_chunks: 5``，而 ``pi0_libero`` 官方 horizon 仍是 **50**，``pi05_libero`` 官方 horizon 是 **10**。只有 checkpoint 的 horizon 和该 ``TrainConfig`` 不一致时，才在实验 YAML 里覆写 ``openpi.action_horizon``。
+
+下面是 ``openpi_rlinf`` 示例，启动命令为 ``bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_rlinf``。
+
 .. code:: yaml
 
-   openpi:
-     noise_level: 0.5 # flow_sde 的默认噪声强度
-     noise_logvar_range: [0.08, 0.16] # flow_noise 的默认可学习噪声范围
-     action_chunk: ${actor.model.num_action_chunks}
-     num_steps: ${actor.model.num_steps}
-     train_expert_only: True
-     action_env_dim: ${actor.model.action_dim}
-     noise_method: "flow_sde" # flow_sde, flow_noise
-     add_value_head: False
-     pi05: False
-     value_after_vlm: False
+   actor:
+     model:
+       pi05: False                 # π0.5 设为 True；写在 actor.model 下，不在 openpi 里
+       num_action_chunks: 5        # 环境接口，不是网络 horizon
+       openpi:
+         task: rl                  # sft | eval | rl | dagger | dsrl
+         config_name: "pi0_libero" # 官方 TrainConfig（网络 action_horizon 来自这里）
+         noise_level: 0.5 # flow_sde 的默认噪声强度
+         noise_logvar_range: [0.08, 0.16] # flow_noise 的默认可学习噪声范围
+         action_chunk: ${..num_action_chunks}
+         num_steps: ${..num_steps}
+         train_expert_only: True
+         action_env_dim: ${..action_dim}
+         noise_method: "flow_sde" # flow_sde, flow_noise
+         add_value_head: ${..add_value_head}
+         value_after_vlm: False
 
 - 通过 ``num_steps`` 设置不同的流匹配步数。
 
 - 通过修改 ``noise_method`` 使用不同的加噪方式。我们提供\ `flow_sde <https://arxiv.org/abs/2505.05470>`__\ 和\ `flow_noise <https://arxiv.org/abs/2505.22094>`__\ 两种方式。其中 ``noise_level`` 用于控制 ``flow_sde`` 的加噪强度，``noise_logvar_range`` 用于控制 ``flow_noise`` 的可学习噪声范围。
 
-- 通过设置 ``pi05: True`` 启用 π\ :sub:`0.5`\ 模型。
+- 通过 ``openpi.config_name`` 选择 π\ :sub:`0.5`\ （例如 ``pi05_libero``）。``openpi_rlinf`` 还需设置 ``actor.model.pi05: True``；省略时默认为 True，``model/pi0_rlinf`` 会显式设为 False。
 
-- 通过 ``value_after_vlm`` 控制 critic 的位置：当该参数为 True 时，critic 接入到 VLM 模块的输出后；为 False 时，critic 的输入为 action expert 模块的输出。
+- 通过 ``value_after_vlm`` 控制 critic 的位置：当该参数为 True 时，critic 接入到 VLM 模块的输出后；为 False 时，critic 的输入为 action expert 模块的输出。π\ :sub:`0.5`\  PPO 应设 ``value_after_vlm: True``。
 
 **2.2 算法配置**
 
@@ -312,7 +330,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
      noise_logvar_range: [0.08, 0.16] # 针对 flow-noise 的可学习噪声范围
      joint_logprob: False # 是否优化联合概率密度函数，对于flow-sde，请设置为False，对于flow-noise，请设置为True
 
-例如，针对 flow-sde 的完整参数设置，可以参考 ``libero_spatial_ppo_openpi.yaml``；针对 flow-noise 的完整参数设置，可以参考 ``maniskill_ppo_openpi.yaml``。
+例如，``openpi_rlinf`` 上完整的 flow-sde 设置见 ``libero_spatial_ppo_openpi_rlinf.yaml``。legacy ``openpi`` 配方为 ``libero_spatial_ppo_openpi.yaml``\ （flow-sde）和 ``maniskill_ppo_openpi.yaml``\ （flow-noise）。
 
 **2.3 LoRA设置**
 
@@ -403,6 +421,107 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
+
+.. _pi0-hardware:
+
+在不同硬件后端上运行
+--------------------
+
+NVIDIA 使用上面的安装与启动流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都通过共用平台安装器与 scheduler 设备 API 支持 OpenPI π₀ / π₀.₅ 系列在 LIBERO 和 ManiSkill 上运行。非 CUDA 后端上的 ManiSkill 使用 CPU simulation；MUSA 还需要厂商模拟器包。
+
+AMD ROCm
+~~~~~~~~
+
+ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的 AMD accelerator 与安装路径。
+
+.. include:: _amd_libero.rst
+
+进入容器后，或直接在已安装 ROCm 的宿主机上，创建 OpenPI LIBERO 环境：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero
+   source .venv/bin/activate
+
+省略 ``--rocm`` 可自动检测已安装的版本；中国大陆用户可添加 ``--use-mirror``。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~
+
+使用昇腾 LIBERO 容器，或在已安装 CANN 和 NPU 驱动的宿主机上运行。
+
+.. include:: _ascend_libero.rst
+
+已发布的 LIBERO 镜像不包含 OpenPI 环境。可以在容器内创建，也可以直接在昇腾宿主机上运行相同命令：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model openpi --env libero
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，OpenPI 随后使用共用的 NPU worker 与 collective 路径。
+
+摩尔线程 MUSA
+~~~~~~~~~~~~~
+
+MUSA 通过启用 system site-packages 的虚拟环境复用镜像中的 Python、PyTorch 与 ``torch_musa``。安装器会保留这些厂商包，并跳过仅支持 CUDA 的依赖。
+
+.. include:: _musa_libero.rst
+
+进入容器后，创建 OpenPI LIBERO 环境：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform musa embodied --model openpi --env libero
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。若 Transformers 模型路径指定 ``attn_implementation: flash_attention_2``，但 Transformers 无法检测厂商包，请改用 ``sdpa``。
+
+在 AMD、昇腾或 MUSA 上运行 LIBERO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+从前面的模型列表选择 LIBERO checkpoint 与匹配配置。下面以 π₀.₅ + LIBERO-10 + PPO 为例：在 ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml`` 中设置 actor 与 rollout 的模型路径，并在已激活的环境中启用软件渲染。
+
+.. include:: _libero_osmesa.rst
+
+启动 LIBERO PPO 训练：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+
+在 AMD、昇腾或 MUSA 上运行 ManiSkill
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+AMD 与昇腾使用 OpenPI 的 ManiSkill + LIBERO 组合环境。根据所选模型 accelerator 执行对应命令：
+
+.. code-block:: bash
+
+   # AMD ROCm
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env maniskill_libero
+
+   # 华为昇腾 CANN
+   bash requirements/install.sh --platform ascend embodied --model openpi --env maniskill_libero
+
+   source .venv/bin/activate
+
+MUSA 使用厂商模拟器镜像及其中已有的 OpenPI 环境：
+
+.. include:: _musa_maniskill.rst
+
+.. code-block:: bash
+
+   source switch_env openpi
+
+三种非 CUDA 后端均使用以下 CPU simulation 配置：
+
+.. include:: _maniskill_non_cuda.rst
+
+π₀.₅ 需要下载 ``RLinf/RLinf-Pi05-ManiSkill-25Main-SFT``，并在 ``examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml`` 中设置两个模型路径；π₀ 改用 ``maniskill_ppo_openpi.yaml``。根据可用设备调整 placement 与 batch size 后启动所选方案，例如：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
 
 可视化与结果
 ----------------------------------------

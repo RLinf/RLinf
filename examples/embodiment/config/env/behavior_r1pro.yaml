@@ -119,7 +119,7 @@ omni_config:
     # activity_instance_dir should point to a directory of cached task instance JSON files.
     # RLinf scans filenames directly and supports official *_template.json and
     # *_template-tro_state.json instances.
-    # Use rlinf/envs/behavior/instance_generator.py to generate compatible files.
+    # Use rlinf/envs/sim/behavior/instance_generator.py to generate compatible files.
     # If set and instance_resample_mode is disabled, RLinf loads activity_instance_id from this directory.
     # This directory must match scene.scene_model.
     activity_instance_dir: null

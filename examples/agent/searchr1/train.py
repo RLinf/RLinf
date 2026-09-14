@@ -27,13 +27,25 @@ from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
+from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
+
+
+def get_ma_actor_worker(cfg):
+    """Select the multi-agent actor worker based on training backend."""
+    if cfg.actor.training_backend == "fsdp":
+        return MAFSDPActor
+    if cfg.actor.training_backend == "megatron":
+        return MAMegatronActor
+    raise ValueError(
+        f"Unsupported training backend for Search-R1 actor: {cfg.actor.training_backend}"
+    )
 
 
 @hydra.main(version_base="1.1")
@@ -80,7 +92,8 @@ def main(cfg) -> None:
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")
-        inference_group = MegatronInference.create_group(
+        inference_worker_cls = get_inference_backend_worker(cfg, "actor")
+        inference_group = inference_worker_cls.create_group(
             cfg, component_placement
         ).launch(
             cluster,
@@ -90,7 +103,8 @@ def main(cfg) -> None:
 
     # GRPO Actor group
     actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_group = MAMegatronActor.create_group(cfg, component_placement).launch(
+    actor_worker_cls = get_ma_actor_worker(cfg)
+    actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
 

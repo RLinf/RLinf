@@ -55,12 +55,11 @@ algorithm:
   nft_beta: 1.0              # velocity scaling coefficient
   adv_clip_max: 0.5          # advantage clipping bound for DPO preference signal
   dpo_beta: 1.0             # DPO loss temperature
-  max_drift: 0.3            # max velocity drift norm for clipping
   nft_weight_mode: "auto"  # energy weight mode: "constant", "t", "sigma", "adaptive", "auto" (auto = adaptive for ODE, sigma for SDE)
   nft_weight_scale: [1.0, 0.2]   # weight scale 
   nft_target_space: "x0"  # xnext or x0
   nft_xcur_source: "resample"  # rollout or resample
-  nft_tau: 1.0          # rollout lag policy EMA; 1.0 means on-policy
+  nft_tau: [1.0, 0.01, 20, 100]  # rollout policy EMA schedule
   recompute_v: False
 
 env:

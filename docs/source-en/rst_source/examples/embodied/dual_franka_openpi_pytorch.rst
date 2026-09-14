@@ -243,7 +243,7 @@ Verify each leader streams smooth joint values:
 
    cd /path/to/RLinf
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.envs.realworld.common.gello.gello_joint_expert \
+   python -m rlinf.robotics.parts.teleop.gello_joint \
        --port /dev/serial/by-id/usb-FTDI_..._<LEFT_ID>-if00-port0
 
 The command continuously refreshes output, for example:
@@ -520,7 +520,7 @@ Troubleshooting
 
 **GELLO stops streaming**
    Power-cycle the leader, replug the FTDI adapter, and verify it with
-   ``python -m rlinf.envs.realworld.common.gello.gello_joint_expert --port ...``.
+   ``python -m rlinf.robotics.parts.teleop.gello_joint --port ...``.
 
 **One arm does not respond during reset**
    On that controller node, run ``ping -c 100 <robot_ip>``. If packets drop,

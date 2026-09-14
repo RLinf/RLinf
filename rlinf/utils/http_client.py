@@ -232,10 +232,19 @@ class InferenceHTTPClient:
         retries = max(0, int(max_retries))
         retry_statuses = {500, 502, 503, 504}
         if msgpack:
-            from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-                pack_msgpack,
-                unpack_msgpack,
-            )
+            # 0.5.17+: sglang renamed vla/ -> action/; support both for
+            # compatibility with older sglang forks.
+
+            try:
+                from sglang.multimodal_gen.runtime.entrypoints.action.protocol import (
+                    pack_msgpack,
+                    unpack_msgpack,
+                )
+            except ImportError:
+                from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
+                    pack_msgpack,
+                    unpack_msgpack,
+                )
 
             ct = "application/msgpack"
             request_kwargs = {

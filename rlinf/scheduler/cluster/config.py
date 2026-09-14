@@ -13,10 +13,13 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, ClassVar, Optional
 
 import yaml
 from omegaconf import DictConfig, ListConfig
+
+if TYPE_CHECKING:
+    from ..collective.tensor_compression import TensorCodecProvider
 
 from ..hardware import HardwareConfig, NodeHardwareConfig
 from ..hardware.accelerators.accelerator import AcceleratorManager, ProfileConfig
@@ -161,6 +164,224 @@ class NodeGroupConfig:
 
 
 @dataclass
+class TensorBufferPoolConfig:
+    """Configuration for the Worker-wide collective tensor buffer pool.
+
+    The pool owns the reusable CPU byte buffers that collective payload
+    processing (currently tensor compression) borrows from. It is independent of
+    whether compression is configured.
+    """
+
+    max_bytes: int = 2 * 1024**3
+    """Combined active and cached CPU buffer capacity per Worker, in bytes."""
+
+    def __post_init__(self):
+        """Validate the buffer budget."""
+        if type(self.max_bytes) is not int:
+            raise ValueError(
+                "cluster.collective.tensor_buffer_pool.max_bytes must be an integer. "
+                f"But got {type(self.max_bytes)}: {self.max_bytes}"
+            )
+        if self.max_bytes < 1:
+            raise ValueError(
+                "cluster.collective.tensor_buffer_pool.max_bytes must be >= 1, "
+                f"got {self.max_bytes}."
+            )
+
+
+class TensorCompressionManager:
+    """Base manager for collective tensor compression codecs."""
+
+    codec_config_register: dict[str, type["TensorCompressionConfig"]] = {}
+
+    @staticmethod
+    def register_codec_config(cls):
+        """Register a compression config class under its ``CODEC_TYPE``.
+
+        Apply it above ``@dataclass`` so the registry holds the finished
+        dataclass, and give the class a non-empty ``CODEC_TYPE``, which becomes
+        the ``cluster.collective.tensor_compression.codec`` value selecting it.
+        """
+        assert cls.CODEC_TYPE, (
+            f"Tensor compression config '{cls.__name__}' must define a non-empty "
+            "CODEC_TYPE to be registered."
+        )
+        TensorCompressionManager.codec_config_register[cls.CODEC_TYPE] = cls
+        return cls
+
+
+@dataclass
+class TensorCompressionConfig:
+    """Base configuration for lossless CPU tensor compression on collectives.
+
+    Concrete codecs subclass this and set ``CODEC_TYPE`` to their codec name
+    string (e.g. ``"lz4"``), declaring their codec-specific parameters as
+    ordinary fields, and register with
+    :meth:`TensorCompressionManager.register_codec_config` so that
+    ``cluster.collective.tensor_compression.codec`` selects one.
+    """
+
+    CODEC_TYPE: ClassVar[str] = ""
+    """Codec identifier. Subclasses override this with their codec name."""
+
+    codec: str = ""
+    """Codec name matching the subclass's ``CODEC_TYPE``."""
+
+    enabled: bool = True
+    """Whether eligible CPU tensors are compressed before they go on the wire."""
+
+    min_bytes: int = 16 * 1024
+    """Skip tensors whose raw byte count is below this threshold."""
+
+    excluded_dtypes: Optional[list[str]] = None
+    """Torch dtype names to skip, e.g. ``[float32]``. ``None`` means the default.
+
+    Defaults to ``["float32"]``, since dense floating-point tensors rarely
+    compress well enough to pay for the codec pass. Set it to ``[]`` to make
+    every dtype eligible.
+    """
+
+    def __post_init__(self):
+        """Normalize and validate the codec-independent compression fields."""
+        if not isinstance(self.enabled, bool):
+            raise ValueError(
+                "cluster.collective.tensor_compression.enabled must be a boolean. "
+                f"But got {type(self.enabled)}: {self.enabled}"
+            )
+        if type(self.min_bytes) is not int:
+            raise ValueError(
+                "cluster.collective.tensor_compression.min_bytes must be an integer. "
+                f"But got {type(self.min_bytes)}: {self.min_bytes}"
+            )
+        if self.min_bytes < 1:
+            raise ValueError(
+                "cluster.collective.tensor_compression.min_bytes must be >= 1, "
+                f"got {self.min_bytes}."
+            )
+
+        dtype_names = (
+            ["float32"] if self.excluded_dtypes is None else self.excluded_dtypes
+        )
+        if isinstance(dtype_names, str) or not isinstance(
+            dtype_names, (list, tuple, ListConfig)
+        ):
+            raise ValueError(
+                "cluster.collective.tensor_compression.excluded_dtypes must be a list "
+                f"of torch dtype names. But got {type(dtype_names)}: {dtype_names}"
+            )
+        dtype_names = [str(name) for name in dtype_names]
+        if len(set(dtype_names)) != len(dtype_names):
+            raise ValueError(
+                "cluster.collective.tensor_compression.excluded_dtypes must not "
+                f"contain duplicates, got {dtype_names}."
+            )
+
+        import torch
+
+        dtype_values = []
+        for name in dtype_names:
+            dtype = getattr(torch, name, None)
+            if not isinstance(dtype, torch.dtype) or str(dtype) != f"torch.{name}":
+                raise ValueError(
+                    f"Unknown torch dtype '{name}' in "
+                    "cluster.collective.tensor_compression.excluded_dtypes."
+                )
+            dtype_values.append(dtype)
+        self.excluded_dtypes = dtype_names
+        self._excluded_dtype_values = frozenset(dtype_values)
+
+        self.codec = self.CODEC_TYPE
+
+    def should_compress(self, tensor) -> bool:
+        """Return whether a tensor is eligible for a codec attempt.
+
+        Args:
+            tensor (torch.Tensor): The tensor about to be sent.
+
+        Returns:
+            bool: True when compression is enabled and the tensor is a CPU
+            tensor that passes the ``min_bytes`` and ``excluded_dtypes`` filters.
+        """
+        return (
+            self.enabled
+            and tensor.is_cpu
+            and tensor.dtype not in self._excluded_dtype_values
+            and tensor.numel() * tensor.element_size() >= self.min_bytes
+        )
+
+    def create_codec_provider(self) -> "TensorCodecProvider":
+        """Create the Worker-wide codec provider implementing this codec.
+
+        Returns:
+            TensorCodecProvider: The runtime object owning this codec's
+            resources and their concurrent acquisition policy.
+        """
+        raise NotImplementedError
+
+
+@dataclass
+class CollectiveConfig:
+    """Configuration for job-wide collective communication behavior.
+
+    Both ends of a transfer must agree on these settings, so they are resolved
+    once from ``cluster.collective`` and shared by every Worker in the job.
+    """
+
+    tensor_compression: Optional[TensorCompressionConfig] = None
+    """Optional CPU tensor compression. ``None`` keeps the raw wire path."""
+
+    tensor_buffer_pool: Optional[TensorBufferPoolConfig] = None
+    """Reusable CPU buffer budget. ``None`` uses the defaults."""
+
+    def __post_init__(self):
+        """Post-initialization to convert the sub-config dicts to dataclasses."""
+        if isinstance(self.tensor_compression, TensorCompressionConfig):
+            pass
+        elif self.tensor_compression is not None:
+            assert hasattr(self.tensor_compression, "keys"), (
+                "cluster.collective.tensor_compression must be a dictionary. "
+                f"But got {type(self.tensor_compression)}: {self.tensor_compression}"
+            )
+            # Import the concrete codec configs for their registrations.
+            from ..collective import tensor_compression  # noqa: F401
+
+            codec = str(self.tensor_compression.get("codec", ""))
+            if not codec:
+                raise ValueError(
+                    "cluster.collective.tensor_compression.codec must be specified "
+                    f"(known codecs: {sorted(TensorCompressionManager.codec_config_register.keys())})"
+                )
+            if codec not in TensorCompressionManager.codec_config_register:
+                raise ValueError(
+                    f"Unknown tensor compression codec '{codec}'. "
+                    f"Known codecs: {sorted(TensorCompressionManager.codec_config_register.keys())}"
+                )
+            config_cls = TensorCompressionManager.codec_config_register[codec]
+            dataclass_arg_check(
+                config_cls,
+                self.tensor_compression,
+                error_suffix="in cluster collective tensor_compression yaml config",
+            )
+            self.tensor_compression = config_cls(**self.tensor_compression)
+
+        if isinstance(self.tensor_buffer_pool, TensorBufferPoolConfig):
+            pass
+        elif self.tensor_buffer_pool is not None:
+            assert hasattr(self.tensor_buffer_pool, "keys"), (
+                "cluster.collective.tensor_buffer_pool must be a dictionary. "
+                f"But got {type(self.tensor_buffer_pool)}: {self.tensor_buffer_pool}"
+            )
+            dataclass_arg_check(
+                TensorBufferPoolConfig,
+                self.tensor_buffer_pool,
+                error_suffix="in cluster collective tensor_buffer_pool yaml config",
+            )
+            self.tensor_buffer_pool = TensorBufferPoolConfig(**self.tensor_buffer_pool)
+        else:
+            self.tensor_buffer_pool = TensorBufferPoolConfig()
+
+
+@dataclass
 class ClusterConfig:
     """Configuration for the entire cluster.
 
@@ -180,6 +401,12 @@ class ClusterConfig:
           sample: none
           capture-range: nvtx
           capture-range-end: stop
+      collective:
+        tensor_compression:
+          codec: lz4
+          min_bytes: 16384
+          excluded_dtypes: [float32]
+          acceleration: 1
       component_placement:
         actor:
           node_group: a800
@@ -228,6 +455,7 @@ class ClusterConfig:
 
         The above configuration specifies:
         - num_nodes: Total of 18 nodes in the cluster.
+        - collective: Job-wide collective communication settings. Here CPU tensors of at least 16 KiB are LZ4-compressed before they go on the wire, except float32 ones. `codec` selects the codec config class, whose codec-specific parameters (`acceleration` for lz4; `level` and `max_inflight` for zstd) are given in the same block. An optional `tensor_buffer_pool.max_bytes` bounds the reusable CPU buffers the codec borrows. Omit `collective` entirely to keep the raw wire path.
         - component_placement: Placement of different components (actor, rollout, env, agent) across node groups.
         - node_groups: Three node groups defined:
             - a800: Node ranks 0-7 with A800 GPUs for training (labeled with "a800"). Per-node software environments (python interpreter and env vars) are configured via `env_configs`.
@@ -294,6 +522,9 @@ class ClusterConfig:
 
     profiling: Optional[ProfileConfig] = None
     """Optional profiling configuration for worker processes."""
+
+    collective: Optional[CollectiveConfig] = None
+    """Optional job-wide configuration for collective communication."""
 
     @staticmethod
     def from_dict_cfg(cfg_dict: DictConfig) -> "ClusterConfig":
@@ -400,6 +631,20 @@ class ClusterConfig:
                 error_suffix="in cluster profiling yaml config",
             )
             self.profiling = config_cls(**self.profiling)
+
+        if isinstance(self.collective, CollectiveConfig):
+            pass
+        elif self.collective is not None:
+            assert hasattr(self.collective, "keys"), (
+                "cluster.collective must be a dictionary. "
+                f"But got {type(self.collective)}: {self.collective}"
+            )
+            dataclass_arg_check(
+                CollectiveConfig,
+                self.collective,
+                error_suffix="in cluster collective yaml config",
+            )
+            self.collective = CollectiveConfig(**self.collective)
 
         if self.node_groups is not None:
             # Arg check

@@ -16,7 +16,7 @@ GR00T模型强化学习训练
 
 .. note::
 
-   RLinf 同时支持 GR00T-N1.5、GR00T-N1.6 和 GR00T-N1.7。N1.6 引入了流匹配动作头、FSDP 训练和更强的跨具身支持；N1.7 则进一步将官方 backbone 升级到 Cosmos-Reason2-2B / Qwen3-VL，并显著扩展了官方通用 state/action 空间。版本差异以 **N1.5** / **N1.6** / **N1.7** 标注区分。
+   RLinf 同时支持 GR00T-N1.5、GR00T-N1.6 和 GR00T-N1.7。N1.6 引入了流匹配动作头、FSDP 训练和更强的跨具身支持；N1.7 则进一步将官方 backbone 升级到 Cosmos-Reason2-2B / Qwen3-VL，并显著扩展了官方通用 state/action 空间。版本差异以 **N1.5** / **N1.6** / **N1.7** 标注区分。本页的 AMD、昇腾与 MUSA 步骤适用于 N1.5 + LIBERO 或 ManiSkill；这些后端上的 N1.6、N1.7 与 IsaacLab 需要分别验证。
 
 概览
 ----------------------------------------
@@ -29,7 +29,7 @@ GR00T模型强化学习训练
    .. grid-item-card:: 环境
       :text-align: center
 
-      LIBERO · IsaacLab
+      LIBERO · ManiSkill · IsaacLab
 
    .. grid-item-card:: 算法
       :text-align: center
@@ -44,7 +44,7 @@ GR00T模型强化学习训练
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · GPU
+      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <gr00t-hardware>` （N1.5，LIBERO · ManiSkill）
 
 | **你将完成：** 安装目标 GR00T 版本 → 下载 SFT / 任务 checkpoint → 选择配置 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 GR00T LIBERO checkpoint（见下文）。
@@ -99,6 +99,8 @@ GR00T模型强化学习训练
 
 安装
 ----------------------------------------
+
+下方为 NVIDIA 安装步骤；其他硬件请按 :ref:`对应后端的步骤 <gr00t-hardware>` 准备环境。
 
 .. include:: _setup_common.rst
 
@@ -275,7 +277,7 @@ GR00T-N1.5引入了DataConfig类，用于描述模型训练所需的所有信息
 基于上述设计，除LIBERO外，在新环境中部署GR00T-N1.5之前，用户需要对其进行微调。
 微调指南可在 `GR00T-N1.5官方仓库的getting_started/finetune_new_embodiment.md <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/finetune_new_embodiment.md>`_ 中找到。
 
-微调后，GR00T-N1.5会生成一个``experiment_cfg/metadata.json``文件，其中包含所有模态配置和微调数据集的统计信息。
+微调后，GR00T-N1.5会生成一个 ``experiment_cfg/metadata.json`` 文件，其中包含所有模态配置和微调数据集的统计信息。
 该文件对于GR00T-N1.5的推理和强化学习后训练至关重要。
 更多细节请参考 `GR00T-N1.5官方仓库的getting_started/GR00T_inference.ipynb <https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/GR00T_inference.ipynb>`__。
 
@@ -285,7 +287,7 @@ GR00T-N1.5引入了DataConfig类，用于描述模型训练所需的所有信息
 
 RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
 
-- **第一阶段（纯 SFT 预热）**：采用``Pure SFT Model``模式。模型完全脱离物理仿真环境，仅依赖离线专家数据集进行监督微调，专注拟合目标动作轨迹。
+- **第一阶段（纯 SFT 预热）**：采用 ``Pure SFT Model`` 模式。模型完全脱离物理仿真环境，仅依赖离线专家数据集进行监督微调，专注拟合目标动作轨迹。
 - **第二阶段（PPO 强化对齐）**：在SFT收敛的基础上，将模型载入基于FSDP的分布式Actor中，与仿真环境进行实时交互。
 
 **2. 极简的局部微调策略**
@@ -302,14 +304,14 @@ RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
 
 **4. 跨具身泛化（Cross-Embodiment）**
 
-- **具身标签（Embodiment Tag）**：依靠传入的配置标签（如``ROBOCASA_PANDA_OMRON``），系统能动态适配对应的状态编码器与动作空间。无论是单臂机械臂，还是四足机器人形态均可复用。
+- **具身标签（Embodiment Tag）**：依靠传入的配置标签（如 ``ROBOCASA_PANDA_OMRON``），系统能动态适配对应的状态编码器与动作空间。无论是单臂机械臂，还是四足机器人形态均可复用。
 
 **5. FSDP 分布式并行架构**
 
 - 底层系统针对Actor节点进行了重构（``EmbodiedFSDPActor``），能够跨GPU节点对模型权重、梯度与优化器状态进行分片切分（Sharding）。
 - 鉴于GR00T-N1.6参数规模的显著增长，RLinf的Actor节点已全面重构，打破了传统DDP的单卡显存瓶颈，极大提升了吞吐量。
 
-微调完成后，系统将在输出目录生成``metadata.json``等统计文件，保留推理和后续部署所需的关键模态信息。
+微调完成后，系统将在输出目录生成 ``metadata.json`` 等统计文件，保留推理和后续部署所需的关键模态信息。
 
 **N1.7:**
 
@@ -375,7 +377,7 @@ RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
    rollout:
       pipeline_stage_num: 2
 
-您也可以灵活配置env、rollout和actor组件的GPU数量，并通过``pipeline_stage_num``实现rollout与env之间的流水线重叠。
+你可以调整 env、rollout 和 actor 的 GPU 数量，并通过 ``pipeline_stage_num`` 配置 rollout 与 env 之间的流水线重叠。
 
 .. code:: yaml
 
@@ -535,6 +537,131 @@ GR00T-N1.5的动作头包含dropout层，这会干扰对数概率的计算，因
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d7
 
 --------------
+
+.. _gr00t-hardware:
+
+在不同硬件后端上运行
+--------------------
+
+NVIDIA 使用上面各版本对应的安装流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行。非 NVIDIA 的说明不包含 N1.6、N1.7 与 IsaacLab。
+
+AMD ROCm
+~~~~~~~~
+
+ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 GR00T N1.5 可直接使用共用的 AMD accelerator 与安装路径，无需模型专用补丁。
+
+.. include:: _amd_libero.rst
+
+发布镜像已经包含 N1.5 环境：
+
+.. code-block:: bash
+
+   source switch_env gr00t
+
+若在 ROCm 宿主机上直接安装：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
+   source .venv/bin/activate
+
+省略 ``--rocm`` 可自动检测已安装的版本；中国大陆用户可添加 ``--use-mirror``。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~
+
+使用昇腾 LIBERO 容器，或在已安装 CANN 和 NPU 驱动的宿主机上运行。
+
+.. include:: _ascend_libero.rst
+
+进入已发布的 RLinf 容器后，激活 N1.5 环境：
+
+.. code-block:: bash
+
+   source switch_env gr00t
+
+本地安装时，明确选择 N1.5 和 LIBERO：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用 N1.5 的 NPU 补丁。
+
+摩尔线程 MUSA
+~~~~~~~~~~~~~
+
+MUSA 使用共用设备与安装路径，并为 RADIO backbone 中的 CUDA capability 检查应用 N1.5 兼容补丁。厂商镜像提供可用的 MUSA flash-attention。
+
+.. include:: _musa_libero.rst
+
+进入容器后，安装 GR00T N1.5 与 LIBERO：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform musa embodied --model gr00t --env libero
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。worker 检测到 MUSA accelerator 后，模型加载会自动应用对应补丁。
+
+在 AMD、昇腾或 MUSA 上启动 LIBERO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+按前面的模型下载步骤获取 N1.5 Spatial checkpoint，并在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径。
+
+.. include:: _model_path.rst
+
+在已激活的 N1.5 环境中启用软件渲染：
+
+.. include:: _libero_osmesa.rst
+
+启动已配置的 PPO 训练：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+在 AMD、昇腾或 MUSA 上运行 ManiSkill
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+AMD 与昇腾使用 GR00T N1.5 的 ManiSkill + LIBERO 组合环境。根据所选模型 accelerator 执行对应命令：
+
+.. code-block:: bash
+
+   # AMD ROCm
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
+
+   # 华为昇腾 CANN
+   bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+
+   source .venv/bin/activate
+
+MUSA 需要保留厂商模拟器包，并在厂商镜像中添加 GR00T N1.5 模型环境：
+
+.. include:: _musa_maniskill.rst
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
+   source gr00t/bin/activate
+
+三种非 CUDA 后端均使用以下 CPU simulation 配置：
+
+.. include:: _maniskill_non_cuda.rst
+
+RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没有随仓库提供 ManiSkill GR00T 任务配置或 checkpoint。请从一个 ManiSkill 任务配置开始，并选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint。actor 模型配置需要包含：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_type: gr00t
+       model_path: /path/to/maniskill-gr00t-checkpoint
+       obs_converter_type: maniskill
+       embodiment_tag: maniskill_widowx
+
+将 ``rollout.model.model_path`` 指向同一 checkpoint，再通过 ``run_embodiment.sh`` 启动保存后的配置。环境的 action shape 与 normalization statistics 必须和 checkpoint metadata 一致。
 
 可视化与结果
 ----------------------------------------

@@ -53,8 +53,14 @@
 
 具身之外：
 
-.. grid:: 1 2 2 2
+.. grid:: 1 2 3 3
    :gutter: 3
+
+   .. grid-item-card:: 视频生成模型
+      :link: video_models
+      :link-type: doc
+
+      使用 Diffusion-NFT 对 SD3 和 Wan2.2 图像/视频生成模型进行强化学习微调。
 
    .. grid-item-card:: 智能体
       :link: agentic/index
@@ -79,5 +85,6 @@
    奖励模型 <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
+   视频生成模型 <video_models>
    智能体 <agentic/index>
    系统 <system/index>

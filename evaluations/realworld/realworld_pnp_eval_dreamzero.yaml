@@ -56,7 +56,7 @@ env:
     ignore_terminations: False
     keyboard_reward_wrapper: null
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
 
@@ -68,7 +68,6 @@ env:
     override_cfg:
       task_description: null  # e.g. "pick up the object and place it into the container"
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["SERIAL1", "SERIAL2"]
       is_dummy: False
       use_dense_reward: False
       max_num_steps: ${env.eval.max_episode_steps}
