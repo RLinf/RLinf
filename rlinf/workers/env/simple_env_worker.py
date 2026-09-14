@@ -24,9 +24,7 @@ from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
 
 
-def _mask_psi0_execution_record(
-    builder: Any, executed_mask: torch.Tensor
-) -> None:
+def _mask_psi0_execution_record(builder: Any, executed_mask: torch.Tensor) -> None:
     """Exclude unexecuted SIMPLE actions from Psi0 policy statistics."""
     if not builder.prev_logprobs or not builder.forward_inputs:
         raise RuntimeError("Psi0 SIMPLE execution has no pending policy statistic.")
@@ -42,7 +40,11 @@ def _mask_psi0_execution_record(
 
 
 class SimpleEnvWorker(EnvWorker):
-    """Keep SIMPLE environment startup and interaction on Ray's main thread."""
+    """Keep SIMPLE environment startup and interaction on Ray's main thread.
+
+    Synchronous wrappers hide inherited async methods from Ray's actor detection.
+    They return the original coroutines for the inline interaction loop to await.
+    """
 
     def env_interact_step(self, chunk_actions: torch.Tensor, stage_id: int) -> Any:
         """Execute one chunk and apply SIMPLE's execution mask locally."""

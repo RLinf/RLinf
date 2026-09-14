@@ -901,8 +901,8 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
-    """Validate the eval-only Psi0 + SIMPLE contract shipped in P3."""
-    assert only_eval, "model_type='psi0' is eval-only in P3."
+    """Validate Psi0 + SIMPLE standalone evaluation settings."""
+    assert only_eval, "Psi0 evaluation config requires an evaluation runner."
     assert cfg.rollout.get("generation_backend", "huggingface") == "huggingface", (
         "Psi0 requires rollout.generation_backend='huggingface'."
     )
@@ -915,7 +915,7 @@ def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
     assert not (
         cfg.rollout.get("recompute_logprobs", False)
         or cfg.rollout.get("collect_prev_infos", False)
-    ), "Psi0 RL statistics and recompute are not implemented in P3."
+    ), "Psi0 evaluation requires collect_prev_infos=false and recompute_logprobs=false."
 
     psi0_cfg = model_cfg.get("psi0", {})
     plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
@@ -942,8 +942,13 @@ def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
 
 
 def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
-    """Validate the narrow Psi0 + SIMPLE PPO training contract."""
+    """Validate Psi0 + SIMPLE PPO training settings."""
     assert not only_eval, "Psi0 training config cannot use an Eval runner."
+    assert cfg.runner.get("val_check_interval", -1) <= 0, (
+        "Psi0 SIMPLE requires runner.val_check_interval <= 0: training and "
+        "evaluation would create two Isaac runtimes in one EnvWorker. "
+        "Use standalone evaluation for saved checkpoints."
+    )
     assert cfg.rollout.get("generation_backend", "huggingface") == "huggingface", (
         "Psi0 requires rollout.generation_backend='huggingface'."
     )
@@ -985,9 +990,7 @@ def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
         "actor_critic"
-    ), (
-        "Psi0 supports PPO with GAE and actor_critic loss only."
-    )
+    ), "Psi0 supports PPO with GAE and actor_critic loss only."
     assert model_cfg.get("add_value_head", False), (
         "Psi0 PPO requires actor.model.add_value_head=true."
     )
@@ -1012,6 +1015,10 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
     if model_type == SupportedModel.PSI0:
+        assert cfg.rollout.pipeline_stage_num == 1, (
+            "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
+            "each EnvWorker can own only one Isaac runtime."
+        )
         if only_eval:
             _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
         else:
@@ -1126,10 +1133,16 @@ def validate_embodied_cfg(cfg):
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
     if model_type == SupportedModel.PSI0:
+        assert component_placement.get_world_size("rollout") == env_world_size, (
+            "Psi0 SIMPLE requires equal env and rollout worker counts: "
+            "each rollout worker maintains RTC state for one environment."
+        )
         psi0_env_cfg = cfg.env.eval if only_eval else cfg.env.train
-        assert (
-            int(psi0_env_cfg.total_num_envs) // env_world_size // stage_num == 1
-        ), "Psi0 SIMPLE requires exactly one environment per EnvWorker."
+        assert psi0_env_cfg.total_num_envs == env_world_size, (
+            "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
+            f"total_num_envs must equal the environment worker count ({env_world_size}), "
+            f"got {psi0_env_cfg.total_num_envs}."
+        )
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)

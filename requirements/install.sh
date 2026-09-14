@@ -2550,6 +2550,10 @@ install_simple_env() {
     # Checkout the fixed parent revision before initializing its gitlink-pinned
     # submodules; this avoids ever resolving submodules from a moving default branch.
     simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
     ensure_psi0_simple_repo_revision SIMPLE_PATH "$simple_dir" 5e3d6f84e85343e34e9bca8d157f0d7813231185
     git -C "$simple_dir" submodule update --init --recursive
 

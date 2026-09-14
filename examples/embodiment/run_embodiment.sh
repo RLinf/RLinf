@@ -33,6 +33,8 @@ else
 fi
 
 if [[ "$CONFIG_NAME" == simple_* || "$CONFIG_NAME" == simple-* ]]; then
+    # Preserve Python failures when SIMPLE training output is piped through tee.
+    set -o pipefail
     export ACCEPT_EULA="${ACCEPT_EULA:-Y}"
     export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"
     [ "$ISAAC_PATH" = "/path/to/isaac-sim" ] && unset ISAAC_PATH

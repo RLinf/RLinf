@@ -31,7 +31,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "simple_openfaucet_ppo_psi0"
+    experiment_name: "simple_openoven_ppo_psi0"
     logger_backends: ["tensorboard"]
 
 algorithm:
@@ -63,16 +63,16 @@ env:
     seed: 0
     group_size: ${algorithm.group_size}
     rollout_epoch: 8
-    max_episode_steps: 700
-    max_steps_per_rollout_epoch: 720
+    max_episode_steps: 600
+    max_steps_per_rollout_epoch: 600
     reset_dataset:
-      path: ${oc.env:SIMPLE_OPENFAUCET_RESET_DIR,/path/to/G1WholebodyOpenFaucetTeleop-v0-reset-states}
+      path: ${oc.env:SIMPLE_RESET_DIR,/path/to/G1WholebodyOpenOvenTeleop-v0-reset-states}
       format: lerobot
       dr_level: 0
       episode_start: 0
       num_episodes: 10
     init_params:
-      task_id: simple/G1WholebodyOpenFaucetTeleop-v0
+      task_id: simple/G1WholebodyOpenOvenTeleop-v0
       sim_mode: mujoco_isaac
       headless: true
       render_hz: 50
@@ -91,18 +91,18 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model:
-    model_path: ${oc.env:PSI0_OPENFAUCET_RUN_DIR,/path/to/Psi0-SIMPLE-OpenFaucet}
+    model_path: ${oc.env:PSI0_RUN_DIR,/path/to/Psi0-SIMPLE-OpenOven}
     precision: ${actor.model.precision}
 
 actor:
   group_name: ActorGroup
   training_backend: fsdp
   micro_batch_size: 1
-  global_batch_size: 240
+  global_batch_size: 200
   seed: 42
   enable_offload: true
   model:
-    model_path: ${oc.env:PSI0_OPENFAUCET_RUN_DIR,/path/to/Psi0-SIMPLE-OpenFaucet}
+    model_path: ${oc.env:PSI0_RUN_DIR,/path/to/Psi0-SIMPLE-OpenOven}
     precision: fp32
     add_value_head: true
     psi0:
