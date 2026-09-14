@@ -18,13 +18,15 @@ jobs:
           uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
-              pytest "$file"
+              code=0
+              pytest "$file" || code=$?
               ray stop
+              [ $code -eq 0 ] || exit $code
           done
 
       - name: Run doctest
@@ -50,17 +52,19 @@ jobs:
           uv venv
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
-          uv pip install gymnasium imageio
+          uv pip install gymnasium imageio opencv-python
           uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH 
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
-              pytest "$file"
+              code=0
+              pytest "$file" || code=$?
               ray stop
+              [ $code -eq 0 ] || exit $code
           done
 
   unit-tests-rocm:
@@ -80,13 +84,15 @@ jobs:
           uv pip install "transformers<=5.9.0"
 
       - name: Run unit tests
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
-              pytest "$file"
+              code=0
+              pytest "$file" || code=$?
               ray stop
+              [ $code -eq 0 ] || exit $code
           done
 
       - name: Clean up
@@ -116,8 +122,10 @@ jobs:
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
-              pytest "$file"
+              code=0
+              pytest "$file" || code=$?
               ray stop
+              [ $code -eq 0 ] || exit $code
           done
 
       - name: Clean up
@@ -145,10 +153,35 @@ jobs:
         timeout-minutes: 60
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
+          # This runner reports 255 CPUs, and the image's BLAS sizes its thread
+          # pool from that. Left alone it segfaults inside numpy.linalg, so the
+          # tests are pinned to one thread each: they do small matrix work, and
+          # pinning also makes the run faster.
+          export OPENBLAS_NUM_THREADS=1
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
-              pytest "$file"
+              code=0
+              pytest "$file" -m "not placement" || code=$?
               ray stop
+              [ $code -eq 0 ] || exit $code
+          done
+          # A placement test hosts parts in real workers. The MUSA image
+          # reserves a very large address space in every process, so placing
+          # parts over and over in one process leaves it unable to allocate
+          # thread-local storage for the next worker, and the run dies rather
+          # than reporting a test. Give each of them a fresh process.
+          placement_tests=$(pytest --collect-only -qq -m placement tests/unit_tests | grep '::')
+          if [ -z "$placement_tests" ]; then
+              echo "No placement tests were collected; the marker or the path is wrong."
+              exit 1
+          fi
+          for test in $placement_tests; do
+              code=0
+              pytest "tests/unit_tests/$test" || code=$?
+              ray stop
+              [ $code -eq 0 ] || exit $code
           done
 
       - name: Clean up

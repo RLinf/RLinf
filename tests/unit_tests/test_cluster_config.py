@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 import ray
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.robotics import FrankaConfig
 from rlinf.scheduler import (
     AcceleratorType,
     Cluster,
@@ -32,7 +35,6 @@ from rlinf.scheduler.cluster.cluster import ClusterEnvVar, PathEnvMergeMode
 from rlinf.scheduler.cluster.config import ClusterConfig
 from rlinf.scheduler.hardware.accelerators.amd_gpu import RocprofSysConfig
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NsightConfig
-from rlinf.scheduler.hardware.robots.franka import FrankaConfig
 
 
 def accelerator_device_count() -> int:
@@ -856,6 +858,34 @@ def test_rocprof_sys_modify_profiling_context_prepends_command():
     assert tokens[-1] == sys.executable
 
 
+def test_modify_profile_context_warns_on_the_cluster_logger():
+    """A missing output_dir falls back to a temp dir and says so on RLinf's logger."""
+    cfg = RocprofSysConfig(worker_groups=["actor"], output_dir=None)
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    # Attach directly: Cluster._setup_logger disables propagation, so caplog
+    # would miss the record once a Cluster has been constructed in this process.
+    logger = logging.getLogger(Cluster.SYS_NAME)
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        result = Cluster.modify_profile_context(
+            python_interpreter_path=sys.executable,
+            worker_name="actor:0",
+            profiling_cfg=cfg,
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    assert [r.levelno for r in records] == [logging.WARNING]
+    assert tempfile.gettempdir() in records[0].getMessage()
+    assert shlex.split(result)[0] == "rocprof-sys-python"
+
+
 def test_rocprof_sys_get_profiling_env_vars_derives_output_path():
     cfg = RocprofSysConfig(worker_groups=["actor"], output_dir="/tmp/traces")
     env_vars = Cluster.get_profiling_env_vars_for_worker(
@@ -1008,6 +1038,35 @@ def test_cluster_env_configs_applied_in_worker_launch():
     assert env_values == [env_value]
     assert pythonpath_values[0] is not None
     assert pythonpath_values[0].split(os.pathsep)[0] == str(tests_root)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-specific argv limit")
+def test_worker_launch_with_large_inherited_environment(monkeypatch):
+    inherited_env = {
+        f"RLINF_TEST_INHERITED_{index:04d}": "x" * 64 for index in range(3000)
+    }
+    for key, value in inherited_env.items():
+        monkeypatch.setenv(key, value)
+
+    _reset_cluster_singleton()
+    cluster = Cluster(num_nodes=1)
+    placement = NodePlacementStrategy([0])
+    worker_group = EnvConfigCheckWorker.create_group().launch(
+        cluster=cluster,
+        placement_strategy=placement,
+        name="large_inherited_env_launch",
+    )
+
+    try:
+        first_key = next(iter(inherited_env))
+        last_key = next(reversed(inherited_env))
+        assert worker_group.get_env_marker(first_key).wait() == [
+            inherited_env[first_key]
+        ]
+        assert worker_group.get_env_marker(last_key).wait() == [inherited_env[last_key]]
+    finally:
+        worker_group._close()
+        _reset_cluster_singleton()
 
 
 def test_cluster_env_configs_path_append_mode_in_worker_launch():

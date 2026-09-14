@@ -64,6 +64,19 @@ def _register_builtin_sglang_adapters():
         force=True,
     )
 
+    def _build_cosmos3_sglang_adapter():
+        from rlinf.models.embodiment.cosmos3.sglang_adapter import (
+            Cosmos3SGLangAdapter,
+        )
+
+        return Cosmos3SGLangAdapter
+
+    register_sglang_adapter(
+        SupportedModel.COSMOS3.value,
+        _build_cosmos3_sglang_adapter,
+        force=True,
+    )
+
 
 _register_builtin_sglang_adapters()
 

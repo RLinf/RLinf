@@ -29,7 +29,7 @@ ZeroMQ 发布，RLinf 中的 PICO intervention wrapper 订阅该数据流，并�
      - Actor、rollout、可选相机采集
      - NVIDIA GPU、RLinf
    * - **Franka 控制节点** (node 1 或单节点)
-     - FrankaController、env worker、VR 数据订阅
+     - Franka 机械臂、env worker、VR 数据订阅
      - Franka、ROS Noetic、serl_franka_controllers、pyzmq
    * - **VR / PICO PC**
      - 运行 XRoboToolkit 和 VR 数据发布进程
@@ -146,13 +146,13 @@ publisher 侧的 ZeroMQ 地址。
 
    Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。若 ``pyzmq``、
    ROS 环境或 ``PYTHONPATH`` 在 ``ray start`` 之后才配置，worker 进程可能无法导入
-   ``PicoIntervention`` 或无法连接 ZeroMQ。
+   控制器读数或无法连接 ZeroMQ。
 
 
 3. 验证 PICO 数据流
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-启动 VR 数据 publisher 后，可以在运行 ``PicoIntervention`` 的节点上先执行
+启动 VR 数据 publisher 后，可以在读取控制器的节点上先执行
 RLinf 内置检查脚本，确认已经能收到 PICO / ZeroMQ 数据：
 
 .. code-block:: bash
@@ -195,8 +195,7 @@ consumer 连接地址。
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
 
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
@@ -237,7 +236,7 @@ consumer 连接地址。
 
 集群配置步骤与 :doc:`franka` 中描述的相同，主要额外要求如下：
 
-- 运行 ``PicoIntervention`` 的节点必须能访问 VR publisher 的 ZeroMQ 地址。
+- 读取控制器的节点必须能访问 VR publisher 的 ZeroMQ 地址。
 - 如果 VR publisher 使用 TCP，确认防火墙和网卡路由允许访问对应端口。
 - 如果 VR publisher 使用 IPC，publisher 和 RLinf env worker 必须在同一台机器上。
 - ``RLINF_NODE_RANK``、YAML 中的 ``cluster.node_groups[*].node_ranks`` 和
@@ -261,7 +260,7 @@ consumer 连接地址。
 4. 启动 PICO / XRoboToolkit PC Service，并确认头显和手柄已连接。
 5. 启动 VR 数据 publisher。
 6. 首次运行或修改 ZeroMQ 地址后，运行 ``test_pico_data.py`` 确认 PICO 数据可达。
-7. 在 Ray head 节点启动采集脚本，并确认采集脚本已经接入 ``PicoIntervention``。
+7. 在 Ray head 节点启动采集脚本，并确认采集脚本已设置 ``teleop: pico``。
 
 .. code-block:: bash
 
@@ -316,8 +315,8 @@ VR 操作步骤
 
 **按住 grip 机械臂不动**
 
-- 确认 ``use_spacemouse: False`` 且 ``use_pico: True``。
-- 确认当前代码已经在 ``apply.py`` 中接入 ``PicoIntervention``。
+- 确认 ``teleop: pico``。
+- 确认环境配置中已设置 ``teleop: pico``。
 - 确认 ``grip`` 数值超过 ``control_threshold``。
 - 确认已经完成标定；若 ``calibration.required=True`` 且未标定，PICO 不会接管。
 - 检查是否被 Franka 安全盒或 ``action_scale`` 限制。

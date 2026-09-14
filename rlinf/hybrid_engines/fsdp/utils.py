@@ -55,6 +55,8 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
+from rlinf.scheduler.cluster import Cluster, ClusterEnvVar
+from rlinf.utils.logging import get_logger
 
 
 class FSDPVersion(str, Enum):
@@ -62,7 +64,34 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size):
+def create_device_mesh(world_size: int) -> DeviceMesh:
+    """Build the 1-D device mesh that FSDP shards over.
+
+    The default process group is created here rather than left to
+    ``init_device_mesh``. When no default group exists, ``init_device_mesh``
+    falls back to a bare ``init_process_group()``, which pins the group -- and
+    therefore every FSDP collective, since a mesh dimension that spans the whole
+    world reuses the default group -- to whatever watchdog timeout the backend
+    ships with: 30 minutes for NCCL and Gloo, around 60 for HCCL. All of them are
+    shorter than the timeout RLinf applies to its own inter-worker groups, and
+    none can be raised from the outside.
+
+    Args:
+        world_size (int): Number of ranks participating in FSDP.
+
+    Returns:
+        DeviceMesh: A 1-D mesh over ``world_size`` ranks named ``fsdp``.
+    """
+    if torch.distributed.is_initialized():
+        get_logger().warning(
+            "The default process group already exists, so FSDP collectives keep "
+            f"the timeout it was created with rather than "
+            f"{Cluster.get_full_env_var_name(ClusterEnvVar.TIMEOUT)}."
+        )
+    else:
+        # No backend is passed, so torch still resolves the per-device backend
+        # it would have picked on its own; only the timeout changes.
+        torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )
@@ -600,6 +629,31 @@ def get_lr_scheduler(
             T_max=num_training_steps,
             eta_min=1e-6,
         )
+    elif lr_scheduler == "lambda_linear":
+        # The cosmos-framework LambdaLinearScheduler used by the
+        # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/utils/functional/lr_scheduler.py
+        # Linear warmup from ``f_start`` to the peak ``f_max`` at
+        # ``num_warmup_steps``, then linear decay to ``f_min`` over the remaining
+        from torch.optim.lr_scheduler import LambdaLR
+
+        f_start, f_max = 1.0e-6, 1.0
+        if min_lr_rate is not None:
+            f_min = min_lr_rate
+        else:
+            f_min = 0.0
+
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return (f_max - f_start) * current_step / max(
+                    1, num_warmup_steps
+                ) + f_start
+            progress = (current_step - num_warmup_steps) / max(
+                1, num_training_steps - num_warmup_steps
+            )
+            progress = min(1.0, progress)
+            return f_min + (f_max - f_min) * (1.0 - progress)
+
+        return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
     else:
         raise NotImplementedError(f"Scheduler type {lr_scheduler} is not supported")
 

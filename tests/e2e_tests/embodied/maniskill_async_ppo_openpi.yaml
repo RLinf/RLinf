@@ -103,6 +103,7 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
+  sync_weight_no_wait: True
   micro_batch_size: 4
   global_batch_size: 8
   seed: 0

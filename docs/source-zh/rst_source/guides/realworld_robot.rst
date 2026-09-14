@@ -29,7 +29,7 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
      - 运行 ``actor`` 、``rollout`` （及可选 ``reward``）；仅在此节点提交训练入口脚本
    * - rank 1 至 N
      - 机器人控制
-     - 运行 ``env`` worker 与 ``FrankaController``；每台机械臂对应一个控制节点 rank（或多机共用一台控制节点时需单独配置，见示例文档）
+     - 运行 ``env`` worker 和 Franka 机械臂；每台机械臂对应一个控制节点 rank（多台机械臂共用一个控制节点时，需参照示例文档单独配置）
 
 所有节点须处于 **同一局域网** （或 overlay 网络，见 :doc:`cloud_edge`），且 ``cluster.num_nodes`` 等于实际加入 Ray 的节点总数。
 
@@ -168,7 +168,10 @@ YAML 配置
 当 **相机在 GPU 服务器**、**机械臂与夹爪在 NUC** 时，需在 ``hardware.configs`` 中指定相机/夹爪类型及控制器所在节点。
 字段说明与采集配置示例见 :doc:`../examples/embodied/franka_zed_robotiq`。
 
-训练时可将 ``env`` 放在 GPU 节点组（负责相机采集），并通过 ``controller_node_rank`` 将 ``FrankaController`` 固定到 NUC：
+训练时需将 ``env`` 放在 Franka 节点组，以便获得 Franka 硬件配置。
+硬件配置中的 ``node_rank: 0`` 会让 env worker 继续在 GPU 节点采集相机数据，
+而 ``controller_node_rank: 1`` 会将机械臂及其末端执行器部署到 NUC。
+二者是各自持有连接的独立零部件；由于接在同一台机器上，它们遵循同一个 rank：
 
 .. code-block:: yaml
 
@@ -179,7 +182,7 @@ YAML 配置
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu

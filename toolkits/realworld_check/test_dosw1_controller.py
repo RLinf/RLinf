@@ -18,19 +18,21 @@ import time
 
 import numpy as np
 
-from rlinf.envs.realworld.dosw1.dosw1_env import DOSW1Config
-from rlinf.envs.realworld.dosw1.dosw1_sdk import DOSW1SDKAdapter
+from rlinf.envs.real.dosw1.base import DOSW1EnvConfig
+from rlinf.robotics import DOSW1RobotConfig
+from rlinf.robotics.discovery import RobotAutoConfig, RobotDiscovery
+from rlinf.robotics.parts.arms import DOSW1Connection
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Teleoperate DOSW1 follower arms with leader arms and stream states."
     )
-    parser.add_argument("--robot-url", type=str, default="localhost")
-    parser.add_argument("--left-arm-port", type=int, default=50051)
-    parser.add_argument("--right-arm-port", type=int, default=50053)
-    parser.add_argument("--left-lead-port", type=int, default=50050)
-    parser.add_argument("--right-lead-port", type=int, default=50052)
+    parser.add_argument("--robot-url", type=str, default=None)
+    parser.add_argument("--left-arm-port", type=int, default=None)
+    parser.add_argument("--right-arm-port", type=int, default=None)
+    parser.add_argument("--left-lead-port", type=int, default=None)
+    parser.add_argument("--right-lead-port", type=int, default=None)
     parser.add_argument("--control-hz", type=float, default=30.0)
     parser.add_argument("--print-hz", type=float, default=30.0)
     parser.add_argument("--joint-limit-min", type=float, default=-3.14)
@@ -41,16 +43,29 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _build_config(args: argparse.Namespace) -> DOSW1Config:
-    return DOSW1Config(
-        robot_url=args.robot_url,
-        left_arm_port=args.left_arm_port,
-        right_arm_port=args.right_arm_port,
-        left_lead_port=args.left_lead_port,
-        right_lead_port=args.right_lead_port,
-        is_dummy=False,
-        enable_human_in_loop=True,
+def _build_config(args: argparse.Namespace) -> DOSW1RobotConfig:
+    """Enumerate one controller using node settings and explicit CLI overrides."""
+    configs = RobotAutoConfig.resolve([], DOSW1RobotConfig, node_rank=0)
+    if not configs:
+        configs = [DOSW1RobotConfig(node_rank=0)]
+    if len(configs) != 1:
+        raise ValueError("Configure one DOSW1 robot for this controller check.")
+    for name in (
+        "robot_url",
+        "left_arm_port",
+        "right_arm_port",
+        "left_lead_port",
+        "right_lead_port",
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            setattr(configs[0], name, value)
+    # This check opens only the arms; it does not use cameras.
+    configs[0].camera_serials = []
+    resources = RobotDiscovery.registry["DOSW1"].discovery_cls.enumerate(
+        node_rank=0, configs=configs
     )
+    return resources.infos[0].config
 
 
 def _compute_teleop_targets(
@@ -112,8 +127,18 @@ def _fmt(arr: np.ndarray) -> str:
 
 def main() -> None:
     args = _parse_args()
-    cfg = _build_config(args)
-    sdk = DOSW1SDKAdapter(cfg)
+    hardware = _build_config(args)
+    cfg = DOSW1EnvConfig(is_dummy=False, enable_human_in_loop=True)
+    sdk = DOSW1Connection(
+        robot_url=hardware.robot_url,
+        left_arm_port=hardware.left_arm_port,
+        right_arm_port=hardware.right_arm_port,
+        left_lead_port=hardware.left_lead_port,
+        right_lead_port=hardware.right_lead_port,
+        enable_human_in_loop=cfg.enable_human_in_loop,
+        gripper_width_max=cfg.gripper_width_max,
+        is_dummy=cfg.is_dummy,
+    )
 
     control_dt = 1.0 / max(args.control_hz, 1e-6)
     print_dt = 1.0 / max(args.print_hz, 1e-6)

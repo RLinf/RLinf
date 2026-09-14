@@ -1,0 +1,88 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/cosmos3@actor.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_cosmos3"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 5000
+  val_check_interval: -1
+  save_interval: 500
+  log_interval: 50
+  resume_dir: null
+
+data:
+  train_data_paths: path/to/LIBERO_LeRobot_v3
+  data_type: "libero_all"
+  num_workers: 4
+  prefetch_factor: 4
+  val_ratio: 0.01
+  seed: 0
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 2048
+  seed: 42
+
+  model:
+    precision: bf16
+    is_lora: false
+    # Keep model on CPU after build; FSDP2's fully_shard will shard it to GPU.
+    # OmniMoTModel builds net(bf16 ~27GB) + net_ema(fp32 ~54GB) = ~81GB; an
+    # eager model.to(device) would OOM a single 80GB GPU before fully_shard runs.
+    load_to_device: false
+    # Cosmos3 power-EMA (rate=0.1); RLinf updates net_ema each optimizer step.
+    ema_enabled: true
+    model_path: path/to/Cosmos3-Nano-DCP
+    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    max_samples_per_batch: 32
+
+  optim:
+    lr: 5.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.99
+    adam_eps: 1.0e-08
+    weight_decay: 0.05
+    clip_grad: 1.0
+    lr_scheduler: "lambda_linear"
+    lr_warmup_steps: 500
+    total_training_steps: 16000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    use_orig_params: True
+    gradient_checkpointing: False
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: False
+    save_full_model_weights: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+      cast_forward_inputs: false
+    amp_autocast:
+      enabled: False
+      precision: "bf16"

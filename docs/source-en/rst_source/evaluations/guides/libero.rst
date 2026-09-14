@@ -70,7 +70,7 @@ Available under ``evaluations/libero/``:
      - Long (libero_10)
      - MolmoAct2
 
-For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`.
+For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`. For the Cosmos3 SGLang backend, see :doc:`cosmos3_sglang`.
 
 To hide inference latency by overlapping it with action-chunk execution, see :doc:`RTC <../../guides/rtc>`.
 
@@ -246,3 +246,4 @@ FAQ
    :maxdepth: 1
 
    dreamzero_sglang
+   cosmos3_sglang

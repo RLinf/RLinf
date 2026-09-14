@@ -67,7 +67,9 @@ algorithm:
   clip_ratio_low: null # if null or not set, will use ratio_clip_eps
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
-  adv_type: grpo
+  adv_type: grpo_dynamic
+  loss_scales: ["group_level", "agent_level", "turn_level"]
+  advantage_mode: trajectory
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
@@ -107,6 +109,7 @@ agentloop:
   max_tool_response_length: 500
   tool_response_truncate_side: "right"
   print_outputs: False
+  is_dynamic_rollout_batch: True
 
 
 # Tools configuration for AgentLoop
@@ -174,9 +177,11 @@ reward:
 actor:
   group_name: "ActorGroup"
   training_backend: fsdp
-  enable_dp_load_balance: False
+  enable_dp_load_balance: True
   calculate_flops: False
   seed: 1234
+
+  pack_traj: True
 
   # fsdp config
   enable_offload: True
@@ -196,6 +201,7 @@ actor:
   optim:
     optimizer: adam
     lr: 1.0e-06
+    lr_scheduler: constant
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
@@ -232,11 +238,11 @@ actor:
     limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
     backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
     use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
-    use_liger_kernel: True              # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
+    use_liger_kernel: True               # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
 
     mixed_precision:                    # mixed precision settings for fsdp/fsdp2
       param_dtype: "fp16"
-      reduce_dtype: "fp32"
+      reduce_dtype: "fp16"
       buffer_dtype: "fp32"
 
     amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.         
@@ -251,6 +257,7 @@ inference:
   model_type: ${rollout.model.model_type}
   group_name: "InferenceGroup"
   load_from_actor: True
+  fsdp_config: ${actor.fsdp_config}
   model:
     tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1

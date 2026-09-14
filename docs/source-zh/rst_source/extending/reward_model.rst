@@ -558,7 +558,7 @@ SGLang 路径额外说明：
      group_name: "EnvGroup"
      eval:
        no_gripper: False
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        keyboard_reward_wrapper: single_stage
        override_cfg:
@@ -570,7 +570,7 @@ SGLang 路径额外说明：
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段，失败帧会被下采样，使 ``num_fail = num_success * fail_success_ratio``。设为 ``0`` 可禁用下采样。
 - ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 ``stage``）以启用键盘标注界面。
-- ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
+- ``env.eval.teleop`` — 由哪种设备接管策略（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 
 **启动命令：**
@@ -824,7 +824,7 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
      group_name: "EnvGroup"
      eval:
        no_gripper: True
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        override_cfg:
          target_ee_pose: TARGET_EE_POSE
@@ -889,7 +889,7 @@ SpaceMouse 控制说明：
 
 ``TeleopWorker`` 内部流程：
 
-1. ``RealWorldEnv`` 以 ``use_spacemouse=True`` 初始化，包装了 ``SpacemouseIntervention``。
+1. ``RealWorldEnv`` 以 ``teleop: spacemouse`` 初始化，并套上 SpaceMouse 遥操作 wrapper。
    当 SpaceMouse 输入非零（或按下按钮）时，用 SpaceMouse 动作覆盖零 dummy 动作，持续 0.5 秒。
 2. ``EmbodiedRewardWorker`` 通过 ``EmbodiedRewardWorker.launch_for_realworld(...)``
    在 GPU 节点上启动，在启动时一次性完成初始化。

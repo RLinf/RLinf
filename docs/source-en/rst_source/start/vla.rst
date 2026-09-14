@@ -48,7 +48,7 @@ This step is required for both **OpenVLA** and **OpenVLA-OFT** on ManiSkill3.
 
 .. code-block:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/maniskill
+   cd <path_to_RLinf>/rlinf/envs/sim/maniskill
    # For mainland China users, you can use the following for better download speed:
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets

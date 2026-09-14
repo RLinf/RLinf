@@ -1,0 +1,26 @@
+model_type: "sd3"
+# Download from https://huggingface.co/stabilityai/stable-diffusion-3.5-medium.
+model_path: /path/to/stable-diffusion-3.5-medium
+precision: "bf16"
+load_to_device: True
+num_action_chunks: 1
+action_dim: 1
+
+is_lora: False
+lora_rank: 32
+
+sd3:
+  resolution: 512
+  num_steps: 10
+  timestep_fraction: 0.99
+  guidance_scale: 4.5
+  cfg: True
+  noise_level: 0.7
+  eval_noise_level: 0.0
+  max_sequence_length: 128
+  output_type: "pt"
+  use_lora: True
+  lora_rank: 32
+  lora_alpha: 64
+  lora_path: null
+  offload_auxiliary_modules: True
