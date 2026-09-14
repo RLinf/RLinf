@@ -310,8 +310,8 @@ for RL training.
 
 When the robot arm reaches the target pose and holds it (``terminated=True``),
 ``RealWorldEnv`` records ``success_once`` in the episode metrics passed to the
-reward model. ``gt_success_bonus`` (default +20.0) adds a large bonus on top,
-helping the RL agent strongly associate the success state with high reward.
+reward model. The example config sets ``gt_success_bonus`` to +20.0, adding a
+large bonus that helps the RL agent associate the success state with high reward.
 
 Workflow
 ~~~~~~~~
@@ -349,7 +349,8 @@ Collection Tips
 .. code-block:: yaml
 
    env:
-     train:
+     eval:
+       use_relative_frame: False  # Store TCP positions in the absolute base frame
        override_cfg:
          camera_names:
            "SERIAL1": "global"    # Replace with your global camera serial
@@ -406,11 +407,16 @@ TCP-to-target distance instead of rewards as the trend signal:
        --raw-data-path /path/to/collected_data \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
-       --target-ee-pose "X,Y,Z,RX,RY,RZ"
+       --target-ee-pose "X,Y,Z,RX,RY,RZ" \
+       --delta-threshold 0.005
 
-Replace ``X,Y,Z,RX,RY,RZ`` with your task target pose. To obtain it, follow
+Replace ``X,Y,Z,RX,RY,RZ`` with your task target pose in the absolute robot base
+frame. To obtain it, follow
 :doc:`Prerequisites on the Franka Real-World RL page <franka>`. If you only need
-position values, pass ``X,Y,Z`` (3 values); orientation is ignored.
+position values, pass ``X,Y,Z`` (3 values); orientation is ignored. TCP distance
+scores are measured in metres, so ``--delta-threshold`` is also in metres;
+``0.005`` (5 mm) is an example starting point and should be tuned for the robot
+motion and window size.
 
 Output directory structure:
 
@@ -446,10 +452,13 @@ Update paths in the SFT config ``examples/sft/config/qwen3vl_sft_vlm_trend_rewar
        is_lora: true
        lora_rank: 16
        attn_implementation: flash_attention_2
+     fsdp_config:
+       gradient_checkpointing: false  # matches the shipped SFT config
+       sharding_strategy: no_shard    # for RTX 4090 single-GPU
 
-   fsdp_config:
-     gradient_checkpointing: true     # save GPU memory
-     sharding_strategy: no_shard      # for RTX 4090 single-GPU
+The shipped SFT config leaves gradient checkpointing disabled. To reduce GPU
+memory use, you can enable it by setting ``gradient_checkpointing: true``; this
+is an optional adjustment, not the value used by the example config.
 
 Set the environment variable and start training:
 
@@ -468,7 +477,8 @@ Configuration File
 ^^^^^^^^^^^^^^^^^^
 
 Use ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_vlm_reward.yaml``
-as the RL training config. The core reward section:
+as the RL training config. It is based on the RLPD CNN async training template, with
+the core reward settings shown below:
 
 .. code-block:: yaml
 
@@ -486,7 +496,7 @@ as the RL training config. The core reward section:
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "buffered_vlm"
-       lora_path: "/path/to/sft_output/checkpoints"
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
        gt_success_bonus: 20.0
        precision: "bf16"
 
@@ -569,7 +579,8 @@ At each RL training step, the final reward is composed through the following pip
      -> reward worker receives reward_input
           |
           v
-   EmbodiedRewardWorker.compute_image_rewards()
+   EmbodiedRewardWorker.compute_rewards()
+     -> EmbodiedRewardWorker.compute_reward()
      -> BufferedVLMRewardModel.compute_reward()
         -> incomplete history: 0.0
         -> complete history: Qwen3-VL parses to 1.0 / -0.2 / 0.0

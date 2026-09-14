@@ -32,21 +32,21 @@ cluster:
   component_placement:
     actor:
       node_group: "4090"
-      placement: 0
+      placement: 0 # Local GPU rank in the 4090 node group (0 means the first GPU)
     env:
       node_group: franka
-      placement: 0
+      placement: 0 # Local robot rank in the franka node group (0 means the first robot)
     rollout:
       node_group: "4090"
-      placement: 0
+      placement: 0 # Local GPU rank in the 4090 node group (0 means the first GPU)
     reward:
       node_group: "4090"
-      placement: 0
+      placement: 0 # Local GPU rank in the 4090 node group (0 means the first GPU)
   node_groups:
-    - label: "4090"
-      node_ranks: 0
+    - label: "4090" # GPU node group
+      node_ranks: 0 # Set this to the rank of the training GPU node
     - label: franka
-      node_ranks: 1
+      node_ranks: 1 # Set this to the rank of the robot node
       hardware:
         type: Franka
         configs:
@@ -98,18 +98,19 @@ algorithm:
       clip_grad: 10.0
 
   critic_actor_ratio: 4
+  # Replay buffer settings. Larger caches retain more trajectories but use more host memory.
   replay_buffer:
     enable_cache: True
-    cache_size: 200
-    min_buffer_size: 2
-    sample_window_size: 200
+    cache_size: 200 # Maximum trajectories kept in memory
+    min_buffer_size: 2 # Start updates after this many trajectories are available
+    sample_window_size: 200 # Number of recent trajectories eligible for sampling
     auto_save: False
 
   demo_buffer:
     enable_cache: True
-    cache_size: 200
-    min_buffer_size: 1
-    sample_window_size: 200
+    cache_size: 200 # Maximum demo trajectories kept in memory
+    min_buffer_size: 1 # At least one trajectory is needed before sampling
+    sample_window_size: 200 # Number of recent trajectories eligible for sampling
     load_path: "/path/to/your/demo/data"
     auto_save: False
 
@@ -125,6 +126,8 @@ env:
       is_dummy: False
       use_dense_reward: False
       reward_scale: 1.0
+      # Cap episodes at 50 steps to bound hardware collection for the 5-frame reward model.
+      # This inner env limit is reached before the outer max_episode_steps: 100.
       max_num_steps: 50
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       camera_names:
@@ -136,6 +139,8 @@ env:
     total_num_envs: 1
     override_cfg:
       is_dummy: False
+      # Match the training episode cap so train/eval use the same rollout horizon.
+      max_num_steps: 50
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       camera_names:
         "SERIAL1": global
@@ -196,6 +201,8 @@ reward:
   worker_type: model
   group_name: "RewardGroup"
 
+  # Keep False: EnvWorker builds the history_buffer input and sends it to this
+  # RewardGroup. The standalone real-world path does not use that history pipeline.
   standalone_realworld: False
   reward_mode: history_buffer
   history_reward_assign: true

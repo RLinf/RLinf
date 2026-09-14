@@ -282,7 +282,7 @@ Rollout 阶段的 worker 交互
 Qwen VLM Reward Model（动作趋势判断）
 --------------------------------------------------------
 
-与上述 ResNet reward model 直接判断单帧图像"成功/失败"不同，Qwen VLM reward model
+与上述 ResNet reward model 直接判断单帧图像“成功/失败”不同，Qwen VLM reward model
 通过\ **动作趋势判断**\ 来引导机械臂学习。每 5 帧构成一个滑动历史窗口，Qwen3-VL 模型
 判断窗口内机械臂的运动趋势，并将趋势标签转换为标量 reward 参与 RL 训练。
 
@@ -297,7 +297,7 @@ Qwen VLM Reward Model（动作趋势判断）
 
 当机械臂到达目标位姿并保持足够步数后（ ``terminated=True`` ），
 ``RealWorldEnv`` 会在传给 reward model 的 episode 指标中记录 ``success_once``。
-``gt_success_bonus`` （默认 +20.0）据此追加奖励，帮助 Agent 识别成功状态。
+示例配置将 ``gt_success_bonus``\ 设为 +20.0，并据此追加奖励，帮助 Agent 识别成功状态。
 
 工作流程
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -336,7 +336,8 @@ Qwen VLM Reward Model（动作趋势判断）
 .. code-block:: yaml
 
    env:
-     train:
+     eval:
+       use_relative_frame: False  # 让 TCP 位置保持为 base frame 下的绝对坐标
        override_cfg:
          camera_names:
            "SERIAL1": "global"    # 替换为全局相机序列号
@@ -389,11 +390,10 @@ Qwen VLM Reward Model（动作趋势判断）
        --raw-data-path /path/to/collected_data \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
-       --target-ee-pose "X,Y,Z,RX,RY,RZ"
+       --target-ee-pose "X,Y,Z,RX,RY,RZ" \
+       --delta-threshold 0.005
 
-将 ``X,Y,Z,RX,RY,RZ`` 替换为你的任务目标位姿。获取目标位姿的方法请参见
-:doc:`Franka Real-World RL 页面的“前置准备” <franka>`。只需位置时可填入
-``X,Y,Z``\ （3 个值），方向将被忽略。
+将 ``X,Y,Z,RX,RY,RZ`` 替换为机器人 base frame 下的绝对目标位姿。获取目标位姿的方法请参见 :doc:`Franka Real-World RL 页面的“前置准备” <franka>`。只需位置时可填入 ``X,Y,Z``\ （3 个值），方向将被忽略。TCP 距离分数和 ``--delta-threshold`` 的单位都是米；命令中的 ``0.005`` 对应 5 mm，可作为起始值，并应按机器人的运动和 window size 调整。
 
 输出目录结构：
 
@@ -429,10 +429,11 @@ Qwen VLM Reward Model（动作趋势判断）
        is_lora: true
        lora_rank: 16
        attn_implementation: flash_attention_2
+     fsdp_config:
+       gradient_checkpointing: false  # 与仓库提供的 SFT 配置一致
+       sharding_strategy: no_shard    # RTX 4090 使用 no_shard
 
-   fsdp_config:
-     gradient_checkpointing: true     # 使用 gradient checkpointing 节省显存
-     sharding_strategy: no_shard      # RTX 4090 使用 no_shard
+仓库提供的 SFT 配置默认关闭 gradient checkpointing。若需降低显存占用，可将 ``gradient_checkpointing``\ 设为 ``true``；这是可选调整，不是示例配置中的值。
 
 设置环境变量并启动训练：
 
@@ -459,7 +460,7 @@ Qwen VLM Reward Model（动作趋势判断）
      use_reward_model: true            # 启用 reward model
      worker_type: model                # 本地 HuggingFace 推理
      group_name: "RewardGroup"
-     standalone_realworld: False  
+     standalone_realworld: False
      reward_mode: history_buffer       # 历史窗口趋势判断
      history_reward_assign: true       # 将 VLM 奖励反向分配给历史步
      reward_weight: 1.0                # VLM 奖励权重
@@ -469,7 +470,7 @@ Qwen VLM Reward Model（动作趋势判断）
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "buffered_vlm"
-       lora_path: "/path/to/sft_output/checkpoints"
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
        gt_success_bonus: 20.0
        precision: "bf16"
 
@@ -553,7 +554,8 @@ Qwen VLM Reward Model（动作趋势判断）
      -> reward worker 接收 reward_input
           |
           v
-   EmbodiedRewardWorker.compute_image_rewards()
+   EmbodiedRewardWorker.compute_rewards()
+     -> EmbodiedRewardWorker.compute_reward()
      -> BufferedVLMRewardModel.compute_reward()
         -> 历史不足：返回 0.0
         -> 历史满足：Qwen3-VL 推理并解析为 1.0 / -0.2 / 0.0

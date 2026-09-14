@@ -42,6 +42,8 @@ from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
+_FRANKA_GRIPPER_STATE_DIM = 19
+
 
 def _compute_sample_indices(
     n: int, num_samples_per_episode: int, keep_last_window: bool
@@ -174,25 +176,40 @@ def compute_tcp_distance_scores(
     when the robot is moving towards the hole and negative when moving away,
     which matches the label expectations of ``load_episodes_with_labels``.
 
-    The *observations* are real-world env outputs where ``"states"`` is a
-    19-dim vector whose indices 4–6 hold the TCP (x, y, z) position.
+    The fallback supports only the 19-dimensional single-Franka gripper state
+    layout, whose indices 4–6 hold the TCP (x, y, z) position. Those
+    coordinates must be absolute positions in the robot base frame, matching
+    ``target_ee_pose[:3]``. Raw data must therefore be collected with
+    ``use_relative_frame: False``. It does not support dexterous-hand states,
+    whose variable hand-position dimension changes the TCP offset.
     """
     target_xyz = np.asarray(target_ee_pose[:3], dtype=np.float64)
     scores = []
+    usable_state_count = 0
     for obs in observations:
         states = obs.get("states")
+        if states is None:
+            states = obs.get("state")
         if states is None:
             scores.append(0.0)
             continue
         if hasattr(states, "detach"):
             states = states.detach().cpu().numpy()
         states = np.asarray(states, dtype=np.float64).reshape(-1)
-        if len(states) < 7:
+        if len(states) != _FRANKA_GRIPPER_STATE_DIM:
             scores.append(0.0)
             continue
         tcp_xyz = states[4:7]
-        dist_cm = float(np.linalg.norm(tcp_xyz - target_xyz)) * 100.0
-        scores.append(-dist_cm)  # negative cm so delta > 0 when moving closer
+        dist_m = float(np.linalg.norm(tcp_xyz - target_xyz))
+        scores.append(-dist_m)  # negative metres so delta > 0 when moving closer
+        usable_state_count += 1
+
+    if usable_state_count == 0:
+        raise ValueError(
+            "TCP-distance fallback requires observation key 'states' or 'state' "
+            "with the 19-value single-Franka gripper state layout, but none were "
+            "found."
+        )
     return scores
 
 
@@ -281,8 +298,8 @@ def load_episodes_with_labels(
                         "prompt": prompt,
                         "label": label,
                         "score": score,
-                        "start_gae": start_score,
-                        "end_gae": end_score,
+                        "start_score": start_score,
+                        "end_score": end_score,
                         "score_source": score_source,
                         "start_idx": start_idx,
                         "end_idx": end_idx,
@@ -554,11 +571,11 @@ def preprocess_and_save_reward_datasets(
                 "supervision": {
                     "label": sample["label"],
                     "score": sample["score"],
-                    "score_name": "gae_delta_window",
+                    "score_name": "score_delta_window",
                     "score_source": sample["score_source"],
                     "delta_threshold": delta_threshold,
-                    "start_gae": sample["start_gae"],
-                    "end_gae": sample["end_gae"],
+                    "start_score": sample["start_score"],
+                    "end_score": sample["end_score"],
                 },
             }
 
@@ -668,7 +685,11 @@ def parse_args() -> argparse.Namespace:
         "--delta-threshold",
         type=float,
         default=0.05,
-        help="Absolute GAE-delta threshold used to label windows as unclear.",
+        help=(
+            "Absolute window-score delta threshold used to label windows as "
+            "unclear. For TCP-distance scores, the unit is metres; for GAE or "
+            "rewards, it uses their original score unit."
+        ),
     )
     parser.add_argument(
         "--tail-unclear-ratio",
@@ -780,6 +801,10 @@ def parse_args() -> argparse.Namespace:
             "Target end-effector pose as comma-separated floats: either 3 values "
             '"x,y,z" for position only, or 6 values "x,y,z,rx,ry,rz" with '
             "orientation (which is ignored by the TCP-distance scorer). "
+            "The pose must be in the absolute robot base frame, and raw data "
+            "must be collected with use_relative_frame=False so states[4:7] "
+            "use the same frame. TCP-distance scoring supports only the 19-value "
+            "single-Franka gripper state layout, not dexterous-hand states. "
             "When GAE is absent, TCP-to-target distance is used as the progress "
             "signal instead of rewards."
         ),
@@ -790,8 +815,8 @@ def parse_args() -> argparse.Namespace:
         parts = [x.strip() for x in args.target_ee_pose.split(",")]
         if len(parts) not in (3, 6):
             parser.error(
-                "--target-ee-pose expects 3 (x,y,z) or 6 (x,y,z,rx,ry,rz) "
-                "comma-separated floats, got %d: %s" % (len(parts), parts)
+                f"--target-ee-pose expects 3 (x,y,z) or 6 (x,y,z,rx,ry,rz) "
+                f"comma-separated floats, got {len(parts)}: {parts}"
             )
         try:
             args.target_ee_pose = [float(x) for x in parts]
