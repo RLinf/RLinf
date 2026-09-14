@@ -17,13 +17,18 @@
 from __future__ import annotations
 
 import json
+import logging
+import sys
+import tempfile
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
 import torch
+from filelock import FileLock
 from gymnasium.wrappers import TimeLimit
 
 from rlinf.envs.simple.controllers import (
@@ -34,10 +39,93 @@ from rlinf.envs.simple.controllers import (
 
 _SUPPORTED_TASK_IDS = frozenset(
     {
+        "simple/G1WholebodyXMovePickTeleop-v0",
+        "simple/G1WholebodyHandoverTeleop-v0",
+        "simple/G1WholebodyLocomotionPickBetweenTablesTeleop-v0",
+        "simple/G1WholebodyXMoveBendPickTeleop-v0",
         "simple/G1WholebodyCloseDoorTeleop-v0",
+        "simple/G1WholebodyOpenOvenTeleop-v0",
         "simple/G1WholebodyOpenFaucetTeleop-v0",
+        "simple/G1WholebodyPickAndPlaceAndHugContainerTeleop-v0",
     }
 )
+
+
+def _install_data_path_lock() -> None:
+    """Guard the upstream resolver before importing SIMPLE runtime modules.
+
+    Hugging Face locks only the download. SIMPLE subsequently extracts and
+    deletes the archive, so callers must share a lock for the whole operation.
+    Even an existing target must be checked under the lock: another worker may
+    have created that directory without finishing extraction yet.
+
+    This changes only the SIMPLE resolver in the current worker process. All
+    RLinf SIMPLE workers sharing its data directory use the same lock file.
+    """
+    import simple.utils as simple_utils
+
+    original = simple_utils.resolve_data_path
+    if getattr(original, "_rlinf_data_path_lock", False):
+        return
+
+    lock_path = str(
+        Path(simple_utils.get_data_dir()) / ".cache" / "rlinf" / "resolve-data.lock"
+    )
+
+    def keep_log(record: logging.LogRecord) -> bool:
+        # Suppress only this lock's DEBUG chatter, not other locks or warnings.
+        return not (
+            record.levelno == logging.DEBUG
+            and isinstance(record.args, tuple)
+            and lock_path in record.args
+        )
+
+    logging.getLogger("filelock").addFilter(keep_log)
+
+    @wraps(original)
+    def resolve_data_path(
+        rel_path: str | None = None,
+        create_if_not_exist: bool = False,
+        auto_download: bool = False,
+    ) -> str:
+        if not rel_path:
+            return original(rel_path, create_if_not_exist, auto_download)
+
+        Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+        # Separate from HF's download lock to avoid recursively acquiring it.
+        # Never unlink this file: waiters must keep locking the same inode.
+        with FileLock(lock_path).acquire(poll_interval=0.5):
+            resolved = original(rel_path, create_if_not_exist, auto_download)
+            if not Path(resolved).exists():
+                raise FileNotFoundError(
+                    f"SIMPLE asset preparation did not create {resolved}."
+                )
+            return resolved
+
+    resolve_data_path._rlinf_data_path_lock = True
+    simple_utils.resolve_data_path = resolve_data_path
+
+
+def _install_articulation_reuse_guard(native_env: Any) -> None:
+    """Keep SIMPLE from rebuilding an unchanged Isaac articulation on reset."""
+    isaac = native_env.isaac
+    original_add = isaac.add_articulated_object
+    asset_keys: dict[str, tuple[str, str]] = {}
+
+    def add_articulated_object_once(obj_name: str, obj_info: Any) -> None:
+        asset_name = str(obj_info.asset.name)
+        asset_key = (str(obj_info.asset.uid), str(obj_info.asset.usd_path))
+        if asset_name in isaac.articulated_objects:
+            if asset_keys.get(asset_name) != asset_key:
+                raise RuntimeError(
+                    f"Cannot replace SIMPLE articulated object {asset_name!r} "
+                    "without rebuilding its Isaac physics views."
+                )
+            return
+        original_add(obj_name, obj_info)
+        asset_keys[asset_name] = asset_key
+
+    isaac.add_articulated_object = add_articulated_object_once
 
 
 def _resolve_hssd_scene_dir(state: dict[str, Any]) -> Path | None:
@@ -163,9 +251,7 @@ class SimpleEnv(gym.Env):
             raise ValueError("total_num_processes must be positive.")
         task_id = str(cfg.init_params.task_id)
         if task_id not in _SUPPORTED_TASK_IDS:
-            raise ValueError(f"Unsupported Psi0 SIMPLE Teleop task: {task_id}.")
-        if cfg.init_params.controller_mode != "decoupled_wbc":
-            raise ValueError("Psi0 SIMPLE Teleop requires decoupled_wbc.")
+            raise ValueError(f"Unsupported Psi0 SIMPLE task: {task_id}.")
         if cfg.auto_reset:
             raise ValueError(
                 "Psi0 SIMPLE requires auto_reset=false to preserve one episode "
@@ -193,6 +279,8 @@ class SimpleEnv(gym.Env):
         initial_dataset_index = int(seed_offset) % len(self._dataset)
         self._dataset_index = initial_dataset_index - 1
         initial_state, _ = self._dataset.load(initial_dataset_index)
+        # Install before any SIMPLE asset modules capture the resolver by import.
+        _install_data_path_lock()
         self._hssd_scene_dir = _resolve_hssd_scene_dir(initial_state)
         self._hssd_scene_layer = None
         self._raw_env, self._native_env, self._controller = self._create_runtime()
@@ -221,25 +309,35 @@ class SimpleEnv(gym.Env):
 
         sonic_config = self._make_sonic_config()
         sim_mode = str(self.cfg.init_params.sim_mode)
-        raw_env = gym.make(
-            str(self.cfg.init_params.task_id),
-            sim_mode=sim_mode,
-            headless=bool(self.cfg.init_params.headless),
-            sonic_config=sonic_config,
-            render_hz=int(self.cfg.init_params.render_hz),
-            dr_level=int(self.cfg.reset_dataset.dr_level),
-        )
+        original_argv = sys.argv
+        try:
+            if "isaac" in sim_mode:
+                # SimulationApp reads Kit CLI options during gym.make(). Give
+                # each process its own writable caches/config/logs; keep SIMPLE
+                # source assets shared. Preserve logs after a crash for diagnosis.
+                runtime_dir = tempfile.mkdtemp(prefix="rlinf-simple-isaac-")
+                sys.argv = [*original_argv, "--portable-root", runtime_dir]
+            raw_env = gym.make(
+                str(self.cfg.init_params.task_id),
+                sim_mode=sim_mode,
+                headless=bool(self.cfg.init_params.headless),
+                sonic_config=sonic_config,
+                render_hz=int(self.cfg.init_params.render_hz),
+                dr_level=int(self.cfg.reset_dataset.dr_level),
+            )
+        finally:
+            sys.argv = original_argv
         native_env = raw_env.unwrapped
-        if sim_mode == "mujoco_isaac" and not native_env.task.metadata.get(
-            "debug", False
-        ):
-            # SIMPLE otherwise renders and discards the MuJoCo camera frames.
-            native_env._render_frame = native_env.isaac.render
+        if sim_mode == "mujoco_isaac":
+            _install_articulation_reuse_guard(native_env)
+            if not native_env.task.metadata.get("debug", False):
+                # SIMPLE otherwise renders and discards the MuJoCo camera frames.
+                native_env._render_frame = native_env.isaac.render
         task_horizon = int(native_env.task.metadata["max_episode_steps"])
         configured_horizon = int(self.cfg.max_episode_steps)
-        if configured_horizon != task_horizon:
+        if configured_horizon <= 0 or configured_horizon > task_horizon:
             raise ValueError(
-                "SIMPLE Teleop horizon differs from the fixed task metadata: "
+                "SIMPLE Teleop horizon must not exceed the task metadata: "
                 f"config={configured_horizon}, task={task_horizon}."
             )
         raw_env = TimeLimit(raw_env, max_episode_steps=configured_horizon)
@@ -286,7 +384,7 @@ class SimpleEnv(gym.Env):
         scene_dir = _resolve_hssd_scene_dir(state)
         if scene_dir != self._hssd_scene_dir:
             raise ValueError(
-                "A SIMPLE Eval worker cannot switch HSSD scenes after USD startup: "
+                "A SIMPLE worker cannot switch HSSD scenes after USD startup: "
                 f"initial={self._hssd_scene_dir}, requested={scene_dir}."
             )
         if scene_dir is not None and self._hssd_scene_layer is None:

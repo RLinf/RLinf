@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "simple_closedoor_psi0_eval"
+    experiment_name: "simple_openoven_psi0_eval"
     logger_backends: null
 
 env:
@@ -37,22 +37,19 @@ env:
     seed: 0
     group_size: 1
 
-    # The official task horizon is 1000. RLinf schedules complete 24-action
-    # chunks; the adapter stops at the task boundary and masks the unused final
-    # 8 slots.
     max_episode_steps: 1000
     max_steps_per_rollout_epoch: 1008
     rollout_epoch: 1
 
     reset_dataset:
-      path: "/path/to/G1WholebodyCloseDoorTeleop-v0-reset-states"
+      path: "/path/to/G1WholebodyOpenOvenTeleop-v0-reset-states"
       format: "lerobot"
       dr_level: 0
       episode_start: 0
       num_episodes: 1
 
     init_params:
-      task_id: "simple/G1WholebodyCloseDoorTeleop-v0"
+      task_id: "simple/G1WholebodyOpenOvenTeleop-v0"
       sim_mode: "mujoco_isaac"
       headless: true
       render_hz: 50

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import numpy as np
 import torch
@@ -86,14 +86,43 @@ class SimpleController(Protocol):
     ) -> Any: ...
 
 
+def _load_wbc_onnx_policy(
+    _policy: Any, model_path: str
+) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Load a WBC policy without ORT's automatic CPU affinity or thread pools."""
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    # Small control policies run per EnvWorker. One thread avoids competing
+    # pools and affinity assignments outside a container's allowed CPU set.
+    options.intra_op_num_threads = 1
+    model = ort.InferenceSession(model_path, sess_options=options)
+
+    def run_inference(input_tensor: torch.Tensor) -> torch.Tensor:
+        ort_inputs = {model.get_inputs()[0].name: input_tensor.cpu().numpy()}
+        ort_outs = model.run(None, ort_inputs)
+        return torch.tensor(ort_outs[0], device="cpu")
+
+    return run_inference
+
+
 class SimpleTeleopController:
     """Drive the fixed SIMPLE decoupled-WBC runtime without an HTTP agent."""
 
     def __init__(self, robot: Any, sonic_config: dict[str, Any]) -> None:
+        from decoupled_wbc.control.policy.g1_gear_wbc_policy import G1GearWbcPolicy
         from simple.agents.sonic_decoupled_wbc_agent import SonicDecoupledWbcAgent
 
         self.robot = robot
-        self._agent = SonicDecoupledWbcAgent(robot, sonic_config=sonic_config)
+        # The pinned upstream factory has no session-options argument. Override
+        # only its WBC loader during this synchronous construction, then restore
+        # it even on failure. ONNX Runtime's global API remains unchanged.
+        original_loader = G1GearWbcPolicy.load_onnx_policy
+        try:
+            G1GearWbcPolicy.load_onnx_policy = _load_wbc_onnx_policy
+            self._agent = SonicDecoupledWbcAgent(robot, sonic_config=sonic_config)
+        finally:
+            G1GearWbcPolicy.load_onnx_policy = original_loader
         indices = self._agent._dwbc_robot_model.get_joint_group_indices("upper_body")
         self._upper_joint_names = [
             name

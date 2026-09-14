@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -45,7 +46,14 @@ class _Psi0PlanRecord:
 
 
 class _Psi0ValueHead(ValueHead):
-    """Value head that follows FSDP's mixed-precision parameter dtype."""
+    """Psi0 value head with a neutral initial prediction."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        output_layer = self.mlp[-1]
+        torch.nn.init.zeros_(output_layer.weight)
+        if output_layer.bias is not None:
+            torch.nn.init.zeros_(output_layer.bias)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         head_dtype = next(self.parameters()).dtype
@@ -86,12 +94,15 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
         self._train_sampler = Psi0StochasticTransitionSampler(
             noise_scale=stochastic_noise_scale
         )
+        # Separate training streams without changing the official Eval RNG.
+        self._train_seed = torch.initial_seed() + int(os.environ.get("RANK", "0"))
+        self._train_generator: torch.Generator | None = None
         if add_value_head:
             if value_input_dim is None:
                 text_config = getattr(model.vlm_model.config, "text_config", None)
                 value_input_dim = int(text_config.hidden_size)
             self.value_head = _Psi0ValueHead(
-                input_dim=value_input_dim,
+                input_dim=value_input_dim + processor.state_dim,
                 hidden_sizes=(1024, 512, 256),
                 output_dim=1,
                 activation="relu",
@@ -176,7 +187,7 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
             return False
         reset_mask = torch.as_tensor(reset_mask, dtype=torch.bool).reshape(-1)
         if reset_mask.numel() != 1:
-            raise ValueError("Psi0 SIMPLE currently supports exactly one environment.")
+            raise ValueError("Psi0 requires one environment per rollout worker.")
         return bool(reset_mask[0])
 
     def predict_action_batch(
@@ -189,7 +200,7 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
         del kwargs
         processed = self.processor.process(env_obs)
         if len(processed.instructions) != 1:
-            raise ValueError("Psi0 SIMPLE currently supports exactly one environment.")
+            raise ValueError("Psi0 requires one environment per rollout worker.")
         if self._reset_requested(env_obs):
             self._previous_plan = None
             self._previous_plan_record = None
@@ -314,9 +325,28 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
                 return_dict=True,
             ).action
 
-    def _value_features(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Pool frozen System-2 tokens for the Psi0-local PPO critic."""
-        return hidden_states[:, 0].mean(dim=1).to(torch.float32)
+    def _value_features(
+        self, hidden_states: torch.Tensor, states: torch.Tensor
+    ) -> torch.Tensor:
+        """Build a scale-stable observation feature for the local critic."""
+        if hidden_states.ndim != 4 or hidden_states.shape[1] != 1:
+            raise ValueError(
+                "Psi0 critic expects hidden states shaped [B, 1, tokens, hidden]."
+            )
+        if states.ndim != 3 or states.shape[-1] != self.processor.state_dim:
+            raise ValueError(
+                "Psi0 critic expects states shaped "
+                f"[B, time, {self.processor.state_dim}]."
+            )
+        if hidden_states.shape[0] != states.shape[0]:
+            raise ValueError("Psi0 critic feature batch sizes do not match.")
+
+        semantic_features = hidden_states[:, 0].mean(dim=1).to(torch.float32)
+        semantic_features = torch.nn.functional.layer_norm(
+            semantic_features, (semantic_features.shape[-1],)
+        )
+        state_features = states[:, -1].to(torch.float32)
+        return torch.cat((semantic_features, state_features), dim=-1).contiguous()
 
     def _predict_value(self, features: torch.Tensor) -> torch.Tensor:
         if not hasattr(self, "value_head"):
@@ -394,7 +424,9 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
             "psi0_slot_sigma": stack_slots("sigma"),
             "psi0_slot_sigma_next": stack_slots("sigma_next"),
             "psi0_slot_sample_mask": stack_slots("sample_mask"),
-            "psi0_value_features": self._value_features(current.hidden_states),
+            "psi0_value_features": self._value_features(
+                current.hidden_states, current.states
+            ),
             "psi0_execution_source_slots": source_slots,
             "psi0_execution_source_indices": source_indices,
             "psi0_execution_mask": torch.ones(
@@ -408,10 +440,14 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
     def _predict_train(self, processed) -> tuple[torch.Tensor, dict[str, Any]]:
         hidden_states, states = self._encode_system2(processed)
         batch_size = states.shape[0]
+        if self._train_generator is None:
+            self._train_generator = torch.Generator(device=self.psi0_model.device)
+            self._train_generator.manual_seed(self._train_seed)
         initial_noise = torch.randn(
             (batch_size, self.plan_horizon, self.processor.action_dim),
             device=self.psi0_model.device,
             dtype=torch.float32,
+            generator=self._train_generator,
         )
         condition_actions = None
         condition_mask = torch.zeros(
@@ -436,6 +472,7 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
             ),
             condition_actions=condition_actions,
             condition_mask=condition_mask,
+            generator=self._train_generator,
         )
         record = _Psi0PlanRecord(
             hidden_states=hidden_states,
@@ -495,7 +532,20 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
         sigma = valid_rows("psi0_slot_sigma")
         sigma_next = valid_rows("psi0_slot_sigma_next")
         sample_mask = valid_rows("psi0_slot_sample_mask")
-        velocity = self._predict_velocity(hidden_states, states, transition_x, timestep)
+        # Rollout evaluates one plan at a time. Batching RTC sources together
+        # changes BF16 kernels and can shift logprobs even before any update.
+        velocity = torch.cat(
+            [
+                self._predict_velocity(
+                    hidden_states[index : index + 1],
+                    states[index : index + 1],
+                    transition_x[index : index + 1],
+                    timestep[index : index + 1],
+                )
+                for index in range(hidden_states.shape[0])
+            ],
+            dim=0,
+        )
         valid_logprobs, valid_entropy = self._train_sampler.recompute(
             transition_x=transition_x,
             transition_next=transition_next,
