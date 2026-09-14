@@ -34,7 +34,7 @@ from examples.reward.vlm_trend.data import (
     transition_observations,
 )
 from rlinf.models.embodiment.modules.utils import make_mlp
-from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+from rlinf.models.embodiment.reward.vlm_reward_utils.potential import (
     ScalarPotentialHead,
 )
 from rlinf.utils.logging import get_logger

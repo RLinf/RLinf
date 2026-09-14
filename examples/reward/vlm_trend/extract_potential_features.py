@@ -51,7 +51,7 @@ def encode_feature_batch(
 ) -> torch.Tensor:
     """Pool Qwen features using the same processor path as VLM Trend SFT."""
     from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
-    from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+    from rlinf.models.embodiment.reward.vlm_reward_utils.potential import (
         extract_prompt_features,
     )
 
@@ -164,9 +164,7 @@ def extract_features(
 def load_model(cfg: DictConfig) -> Any:
     """Load the frozen VLM and selected Potential adapter on this worker."""
     from rlinf.models.embodiment.reward.vlm_reward_model import VLMRewardModel
-    from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
-        load_lora_adapter,
-    )
+    from rlinf.models.embodiment.reward.vlm_reward_utils.lora import load_lora_adapter
 
     model_cfg = OmegaConf.create(
         {

@@ -4,7 +4,8 @@ Reward Model Guide
 Use reward models in RLinf — both image-classification rewards such as
 ``ResNetRewardModel`` and VLM rewards based on ``VLMRewardModel``.
 ``BufferedVLMRewardModel`` extends ``VLMRewardModel`` to process history windows
-maintained by the env worker.
+maintained by the env worker. ``ShapedVLMRewardModel`` adds potential-based
+shaping and a one-shot success bonus on that history path.
 
 Simulation Reward Model
 -----------------------
@@ -148,7 +149,7 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
        "resnet": ResNetRewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
-       "vlm_trend_success_potential": VLMTrendSuccessPotentialRewardModel,
+       "shaped_vlm": ShapedVLMRewardModel,
    }
 
 Where:
@@ -159,8 +160,8 @@ Where:
   layout, and scalar mapping come from ``input_builder_name`` / ``reward_parser_name``.
   Standard VLM Trend reward is ``buffered_vlm`` plus the
   ``vlm_trend_reward_*`` plugins.
-- ``vlm_trend_success_potential``: loads separate Potential and Success LoRA
-  adapters, applies the scalar potential head, and keeps episode-local shaping state.
+- ``shaped_vlm``: loads separate Potential and Success LoRA adapters, applies the
+  scalar potential head, and keeps episode-local shaping state.
 
 2.2 Fine-Tune the ResNet Reward Model
 """""""""""""""""""""""""""""""""""""
@@ -336,6 +337,7 @@ RLinf provides several example configs for integrating a reward model into RL:
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` (VLM Trend reward, local Hugging Face)
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` (VLM Trend reward, SGLang API)
+- ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml`` (Success + Potential VLM reward, local Hugging Face)
 
 These configs show how to enable a reward worker in RL training while keeping the policy on state observations
 and the reward model on image or VLM observations.
@@ -357,15 +359,16 @@ Reward-model-related settings live under the ``reward`` section:
 
      model:
        model_path: /path/to/reward_model_checkpoint
-       model_type: "resnet"    # or "vlm" / "buffered_vlm"
+       model_type: "resnet"    # or "vlm" / "buffered_vlm" / "shaped_vlm"
 
 Where:
 
 - ``reward_mode`` accepts ``"per_step"``, ``"terminal"``, or ``"history_buffer"``: run inference every step, only on terminal frames, or on history windows.
 - ``reward_weight`` and ``env_reward_weight`` control how learned reward and environment reward are combined.
 - ``reward_threshold`` applies only to ``model_type: resnet``: sigmoid probabilities below the threshold are set to ``0``.
-  For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``;
-  the top-level ``reward_threshold`` is not read by the VLM path today.
+  For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``.
+  For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
+  The top-level ``reward_threshold`` is not read by either VLM path today.
 - ``model_path`` points to the reward model checkpoint used for online inference.
 
 3.2 Worker Interaction During Rollout
@@ -418,8 +421,8 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
 ``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
-Potential recipe uses the dedicated ``model_type: vlm_trend_success_potential`` for
-local inference. API inference continues to support only ``buffered_vlm``.
+Potential recipe uses ``model_type: shaped_vlm`` for local inference. API inference
+continues to support only ``buffered_vlm``.
 
 Both local VLM Trend paths use history-window reward inputs. The standard path uses:
 
@@ -506,7 +509,7 @@ reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
 and runs 160 steps by default:
 
 Set the five artifact fields under ``vlm_trend_paths`` in
-``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_success_potential.yaml``.
+``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``.
 The runtime fields reference this YAML section directly:
 
 .. code-block:: yaml
@@ -523,9 +526,9 @@ Then launch the configured recipe:
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh \
-     maniskill_ppo_mlp_vlm_trend_success_potential
+     maniskill_ppo_mlp_shaped_vlm
 
-The dedicated ``VLMTrendSuccessPotentialRewardModel`` computes
+``ShapedVLMRewardModel`` computes
 ``scale * (gamma * potential_t - potential_{t-1})`` and adds
 ``success_bonus`` once per episode after the configured confirmation windows.
 Both state machines reset on ``done``.

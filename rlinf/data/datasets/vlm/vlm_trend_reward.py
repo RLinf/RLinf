@@ -20,15 +20,22 @@ from typing import Any, Optional, Union
 import torch
 from omegaconf import DictConfig
 from transformers import AutoProcessor, AutoTokenizer
-from transformers.video_utils import VideoMetadata
 
 from rlinf.data.datasets.common.item import SftDatasetItem
 from rlinf.data.datasets.vlm.base import VLMBaseDataset
 from rlinf.data.datasets.vlm.registry import VLMDatasetRegistry
 
 
-def _video_metadata(video: Any, fps: float) -> VideoMetadata:
+def _video_metadata(video: Any, fps: float) -> Any:
     """Describe an in-memory video without resampling its frames."""
+    try:
+        from transformers.video_utils import VideoMetadata
+    except ImportError as exc:
+        raise ImportError(
+            "VLM Trend reward SFT requires transformers.video_utils.VideoMetadata. "
+            "Install transformers>=4.49 (the Qwen3-VL path uses 4.57.1)."
+        ) from exc
+
     frame_count = len(video)
     return VideoMetadata(
         total_num_frames=frame_count,
@@ -36,6 +43,11 @@ def _video_metadata(video: Any, fps: float) -> VideoMetadata:
         duration=frame_count / fps,
         frames_indices=list(range(frame_count)),
     )
+
+
+def _sample_video_metadata(videos: list[Any], fps: float) -> list[Any]:
+    """Build per-video metadata for one sample, matching nested ``videos`` layout."""
+    return [_video_metadata(video, fps) for video in videos]
 
 
 def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
@@ -168,8 +180,8 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
                 )
                 rendered_prompts.append(rendered_prompt_i)
                 rendered_labels.append(rendered_label_i)
-                videos_kwargs["video_metadata"].extend(
-                    _video_metadata(video, video_fps) for video in videos_i
+                videos_kwargs["video_metadata"].append(
+                    _sample_video_metadata(videos_i, video_fps)
                 )
 
             full_inputs = processor(
@@ -196,7 +208,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         prompt_text = prompt_texts[0]
         rendered_prompt, rendered_label = _render_prompt_text(prompt_text, answer_text)
         videos_kwargs = {
-            "video_metadata": [_video_metadata(video, video_fps) for video in videos],
+            "video_metadata": _sample_video_metadata(videos, video_fps),
         }
 
         full_inputs = processor(

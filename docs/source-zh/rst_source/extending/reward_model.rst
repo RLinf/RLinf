@@ -3,7 +3,8 @@ Reward Model 使用指南
 
 在 RLinf 中使用 reward model——包括 ``ResNetRewardModel`` 这类图像分类 reward，
 以及基于 ``VLMRewardModel`` 的 VLM reward。``BufferedVLMRewardModel`` 继承
-``VLMRewardModel``，用于处理 env worker 维护的历史窗口。
+``VLMRewardModel``，用于处理 env worker 维护的历史窗口。``ShapedVLMRewardModel``
+在此基础上叠加 potential shaping 与一次性 success bonus。
 
 仿真场景 Reward Model
 ---------------------
@@ -144,7 +145,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
        "resnet": ResNetRewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
-       "vlm_trend_success_potential": VLMTrendSuccessPotentialRewardModel,
+       "shaped_vlm": ShapedVLMRewardModel,
    }
 
 其中：
@@ -154,7 +155,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 - ``buffered_vlm``：对 env worker 维护的历史窗口运行 VLM；具体 prompt、视频格式与
   标量映射由 ``input_builder_name`` / ``reward_parser_name`` 决定。
   标准 VLM Trend reward 即 ``buffered_vlm`` + ``vlm_trend_reward_*`` 插件组合。
-- ``vlm_trend_success_potential``：加载独立的 Potential 和 Success LoRA adapter，
+- ``shaped_vlm``：加载独立的 Potential 和 Success LoRA adapter，
   执行 scalar potential head，并维护 episode 内的 shaping 状态。
 
 2.2 微调 ResNet Reward Model
@@ -329,6 +330,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` （VLM Trend reward，本地 Hugging Face）
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` （VLM Trend reward，SGLang API）
+- ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml`` （Success + Potential VLM reward，本地 Hugging Face）
 
 这些配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测或 VLM 观测。
@@ -350,7 +352,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
      model:
        model_path: /path/to/reward_model_checkpoint
-       model_type: "resnet"    # 或 "vlm" / "buffered_vlm"
+       model_type: "resnet"    # 或 "vlm" / "buffered_vlm" / "shaped_vlm"
 
 其中：
 
@@ -358,6 +360,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 - ``reward_weight`` 和 ``env_reward_weight`` 控制 learned reward 与环境 reward 的加权组合。
 - ``reward_threshold`` 仅对 ``model_type: resnet`` 生效：低于阈值的 sigmoid 概率会被置为 ``0``。
   对 ``buffered_vlm`` / VLM Trend reward，标量 reward 由 ``reward_parser_params`` 定义；
+  对 ``shaped_vlm``，标量来自 potential 差分和一次性 success bonus。
   配置里的 ``reward_threshold`` 当前不会被 VLM 路径读取。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
 
@@ -412,8 +415,8 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
-Success + Potential 配置的本地推理使用专用
-``model_type: vlm_trend_success_potential``。API 推理仍只支持 ``buffered_vlm``。
+Success + Potential 配置的本地推理使用 ``model_type: shaped_vlm``。
+API 推理仍只支持 ``buffered_vlm``。
 
 两条本地 VLM Trend 路径都使用历史窗口输入。标准路径使用：
 
@@ -498,7 +501,7 @@ Success + Potential 配置的本地推理使用专用
 关闭环境奖励，默认训练 160 个 step：
 
 在
-``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_success_potential.yaml``
+``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``
 的 ``vlm_trend_paths`` 中填写五个产物路径。运行字段会直接引用这段 YAML：
 
 .. code-block:: yaml
@@ -515,9 +518,9 @@ Success + Potential 配置的本地推理使用专用
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh \
-     maniskill_ppo_mlp_vlm_trend_success_potential
+     maniskill_ppo_mlp_shaped_vlm
 
-专用 ``VLMTrendSuccessPotentialRewardModel`` 计算
+``ShapedVLMRewardModel`` 计算
 ``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，
 每个 episode 仅添加一次 ``success_bonus``。两组状态都会在 ``done`` 时重置。
 

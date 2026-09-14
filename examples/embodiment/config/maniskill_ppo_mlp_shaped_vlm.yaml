@@ -45,7 +45,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: vlm_trend_success_potential_ppo
+    experiment_name: shaped_vlm_ppo
     logger_backends: ["tensorboard"]
   max_epochs: 160
   max_steps: 160
@@ -193,7 +193,7 @@ reward:
   env_reward_weight: 0.0
   model:
     model_path: ${vlm_trend_paths.model_path}
-    model_type: "vlm_trend_success_potential"
+    model_type: "shaped_vlm"
     lora_path: ${vlm_trend_paths.potential_checkpoint}  # full_weights.pt from VLM SFT, or PEFT adapter dir
     scalar_head_path: ${vlm_trend_paths.scalar_head}
     success_lora_path: ${vlm_trend_paths.success_checkpoint}  # full_weights.pt from VLM SFT, or PEFT adapter dir
