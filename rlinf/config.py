@@ -518,6 +518,19 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.sharding_strategy = cfg.fsdp_config.get(
             "sharding_strategy", "full_shard"
         )
+        model_type = OmegaConf.select(cfg, "model.model_type", default=None)
+        if (
+            model_type is not None
+            and str(model_type) == SupportedModel.OPENPI_RLINF.value
+        ):
+            sharding = (
+                str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
+            )
+            assert sharding == "no_shard", (
+                "openpi_rlinf only supports actor.fsdp_config.sharding_strategy="
+                f"'no_shard' (got {cfg.fsdp_config.sharding_strategy!r}). "
+                "Nested FSDP flattening (full_shard / shard_grad_op) is not supported."
+            )
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
             "forward_prefetch", False
@@ -565,6 +578,30 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "buffer_dtype", None
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
+
+        if (
+            model_type is not None
+            and str(model_type) == SupportedModel.OPENPI_RLINF.value
+        ):
+            mp = cfg.fsdp_config.mixed_precision
+            all_none = (
+                mp.param_dtype is None
+                and mp.reduce_dtype is None
+                and mp.buffer_dtype is None
+            )
+            all_fp32 = (
+                mp.param_dtype == "fp32"
+                and mp.reduce_dtype == "fp32"
+                and mp.buffer_dtype == "fp32"
+            )
+            assert all_none or all_fp32, (
+                "openpi_rlinf does not support FSDP mixed precision "
+                f"(got param_dtype={mp.param_dtype!r}, "
+                f"reduce_dtype={mp.reduce_dtype!r}, "
+                f"buffer_dtype={mp.buffer_dtype!r}). "
+                "Set mixed_precision param/reduce/buffer dtype to null "
+                "(OpenPI default) or fp32."
+            )
 
     return cfg
 
@@ -906,6 +943,44 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_only_eval_rollout_model(model_cfg) -> None:
+    """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
+
+    Eval YAMLs must put a full policy spec under ``rollout.model``.
+    """
+    missing: list[str] = []
+    if OmegaConf.select(model_cfg, "model_type", default=None) in (None, ""):
+        missing.append("rollout.model.model_type")
+    if OmegaConf.select(model_cfg, "num_action_chunks", default=None) is None:
+        missing.append("rollout.model.num_action_chunks")
+
+    model_type = str(OmegaConf.select(model_cfg, "model_type", default="") or "")
+    if model_type in (
+        SupportedModel.OPENPI.value,
+        SupportedModel.OPENPI_RLINF.value,
+    ):
+        if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
+            missing.append("rollout.model.openpi.config_name")
+        # ``task`` selects Pi0Eval / Pi0RL / … only in openpi_rlinf.
+        # Official OpenPI get_model ignores it and must not require it.
+        if model_type == SupportedModel.OPENPI_RLINF.value and OmegaConf.select(
+            model_cfg, "openpi.task", default=None
+        ) in (None, ""):
+            missing.append("rollout.model.openpi.task")
+        has_num_steps = (
+            OmegaConf.select(model_cfg, "num_steps", default=None) is not None
+            or OmegaConf.select(model_cfg, "openpi.num_steps", default=None) is not None
+        )
+        if not has_num_steps:
+            missing.append("rollout.model.num_steps")
+
+    if missing:
+        raise ValueError(
+            "runner.only_eval=True requires a complete rollout.model "
+            "(path/precision alone is not enough). Missing: " + ", ".join(missing)
+        )
+
+
 def validate_weight_sync_overlap_cfg(cfg):
     """Reject overlapping weight sync with a syncer that applies in pieces.
 
@@ -926,6 +1001,8 @@ def validate_embodied_cfg(cfg):
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
+    if only_eval:
+        validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)

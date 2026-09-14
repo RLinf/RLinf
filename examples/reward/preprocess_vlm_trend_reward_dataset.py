@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Preprocess VLM Trend reward data into split train/eval pkl datasets.
+"""Preprocess VLM trend reward data into split train/eval pkl datasets.
 
 Example:
     python examples/reward/preprocess_vlm_trend_reward_dataset.py \
@@ -41,6 +41,8 @@ from tqdm.auto import tqdm
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
+
+_FRANKA_GRIPPER_STATE_DIM = 19
 
 
 def _compute_sample_indices(
@@ -163,6 +165,54 @@ def _build_reversed_negative_sample(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def compute_tcp_distance_scores(
+    observations: list[dict[str, Any]],
+    target_ee_pose: list[float],
+) -> list[float]:
+    """Compute progress scores from TCP-to-target distance.
+
+    Returns negative distances so that *higher* values mean *closer* to the
+    target.  The per-window delta ``end_score - start_score`` is then positive
+    when the robot is moving towards the hole and negative when moving away,
+    which matches the label expectations of ``load_episodes_with_labels``.
+
+    The fallback supports only the 19-dimensional single-Franka gripper state
+    layout, whose indices 4–6 hold the TCP (x, y, z) position. Those
+    coordinates must be absolute positions in the robot base frame, matching
+    ``target_ee_pose[:3]``. Raw data must therefore be collected with
+    ``use_relative_frame: False``. It does not support dexterous-hand states,
+    whose variable hand-position dimension changes the TCP offset.
+    """
+    target_xyz = np.asarray(target_ee_pose[:3], dtype=np.float64)
+    scores = []
+    usable_state_count = 0
+    for obs in observations:
+        states = obs.get("states")
+        if states is None:
+            states = obs.get("state")
+        if states is None:
+            scores.append(0.0)
+            continue
+        if hasattr(states, "detach"):
+            states = states.detach().cpu().numpy()
+        states = np.asarray(states, dtype=np.float64).reshape(-1)
+        if len(states) != _FRANKA_GRIPPER_STATE_DIM:
+            scores.append(0.0)
+            continue
+        tcp_xyz = states[4:7]
+        dist_m = float(np.linalg.norm(tcp_xyz - target_xyz))
+        scores.append(-dist_m)  # negative metres so delta > 0 when moving closer
+        usable_state_count += 1
+
+    if usable_state_count == 0:
+        raise ValueError(
+            "TCP-distance fallback requires observation key 'states' or 'state' "
+            "with the 19-value single-Franka gripper state layout, but none were "
+            "found."
+        )
+    return scores
+
+
 def load_episodes_with_labels(
     data_path: str,
     window_size: int = 5,
@@ -173,6 +223,7 @@ def load_episodes_with_labels(
     keep_last_window: bool = True,
     task_description: Optional[str] = None,
     load_workers: int = 256,
+    target_ee_pose: Optional[list[float]] = None,
 ) -> list[dict]:
     """Load episodes with per-window labels from collected data."""
     pkl_files = sorted(glob(os.path.join(data_path, "*.pkl")))
@@ -190,8 +241,15 @@ def load_episodes_with_labels(
             score_values = episode.get("gae", None)
             score_source = "gae"
             if score_values is None or len(score_values) == 0:
-                score_values = episode.get("rewards", [])
-                score_source = "rewards"
+                # Fallback: when no GAE, prefer TCP distance if target is known
+                if target_ee_pose is not None and observations:
+                    score_values = compute_tcp_distance_scores(
+                        observations, target_ee_pose
+                    )
+                    score_source = "tcp_distance"
+                else:
+                    score_values = episode.get("rewards", [])
+                    score_source = "rewards"
             seq_len = min(len(observations), len(score_values))
             if seq_len < window_size:
                 return None
@@ -240,8 +298,8 @@ def load_episodes_with_labels(
                         "prompt": prompt,
                         "label": label,
                         "score": score,
-                        "start_gae": start_score,
-                        "end_gae": end_score,
+                        "start_score": start_score,
+                        "end_score": end_score,
                         "score_source": score_source,
                         "start_idx": start_idx,
                         "end_idx": end_idx,
@@ -430,11 +488,12 @@ def preprocess_and_save_reward_datasets(
     reverse_positive_as_negative: bool = True,
     fps: int = 2,
     task_description: Optional[str] = None,
+    target_ee_pose: Optional[list[float]] = None,
     random_seed: Optional[int] = None,
     load_workers: int = 256,
     write_workers: int = 512,
 ) -> dict:
-    """Build train/eval VLM Trend reward datasets from raw data."""
+    """Build train/eval VLM trend reward datasets from raw data."""
     episodes = load_episodes_with_labels(
         raw_data_path,
         window_size=window_size,
@@ -445,6 +504,7 @@ def preprocess_and_save_reward_datasets(
         keep_last_window=keep_last_window,
         task_description=task_description,
         load_workers=load_workers,
+        target_ee_pose=target_ee_pose,
     )
     if len(episodes) == 0:
         raise ValueError(f"No episodes loaded from raw data path: {raw_data_path}")
@@ -511,11 +571,11 @@ def preprocess_and_save_reward_datasets(
                 "supervision": {
                     "label": sample["label"],
                     "score": sample["score"],
-                    "score_name": "gae_delta_window",
+                    "score_name": "score_delta_window",
                     "score_source": sample["score_source"],
                     "delta_threshold": delta_threshold,
-                    "start_gae": sample["start_gae"],
-                    "end_gae": sample["end_gae"],
+                    "start_score": sample["start_score"],
+                    "end_score": sample["end_score"],
                 },
             }
 
@@ -550,7 +610,7 @@ def preprocess_and_save_reward_datasets(
 
         label_counts = dict(Counter(row["answer"] for row in rows))
         logger.info(
-            f"Saved processed VLM Trend reward {split_name} split to "
+            f"Saved processed VLM trend reward {split_name} split to "
             f"{manifest_path}: {len(rows)}"
         )
         return manifest_path, label_counts
@@ -595,7 +655,7 @@ def preprocess_and_save_reward_datasets(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
+        description="Preprocess VLM trend reward dataset from raw episode .pkl files."
     )
     parser.add_argument(
         "--raw-data-path",
@@ -625,7 +685,11 @@ def parse_args() -> argparse.Namespace:
         "--delta-threshold",
         type=float,
         default=0.05,
-        help="Absolute GAE-delta threshold used to label windows as unclear.",
+        help=(
+            "Absolute window-score delta threshold used to label windows as "
+            "unclear. For TCP-distance scores, the unit is metres; for GAE or "
+            "rewards, it uses their original score unit."
+        ),
     )
     parser.add_argument(
         "--tail-unclear-ratio",
@@ -729,7 +793,36 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed for deterministic split and sampling.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--target-ee-pose",
+        type=str,
+        default=None,
+        help=(
+            "Target end-effector pose as comma-separated floats: either 3 values "
+            '"x,y,z" for position only, or 6 values "x,y,z,rx,ry,rz" with '
+            "orientation (which is ignored by the TCP-distance scorer). "
+            "The pose must be in the absolute robot base frame, and raw data "
+            "must be collected with use_relative_frame=False so states[4:7] "
+            "use the same frame. TCP-distance scoring supports only the 19-value "
+            "single-Franka gripper state layout, not dexterous-hand states. "
+            "When GAE is absent, TCP-to-target distance is used as the progress "
+            "signal instead of rewards."
+        ),
+    )
+    args = parser.parse_args()
+    # Accepts 3 values (position only) or 6 values (position + orientation).
+    if args.target_ee_pose is not None:
+        parts = [x.strip() for x in args.target_ee_pose.split(",")]
+        if len(parts) not in (3, 6):
+            parser.error(
+                f"--target-ee-pose expects 3 (x,y,z) or 6 (x,y,z,rx,ry,rz) "
+                f"comma-separated floats, got {len(parts)}: {parts}"
+            )
+        try:
+            args.target_ee_pose = [float(x) for x in parts]
+        except ValueError as e:
+            parser.error(f"Invalid float in --target-ee-pose: {e}")
+    return args
 
 
 def main() -> None:
@@ -752,13 +845,14 @@ def main() -> None:
         reverse_positive_as_negative=args.reverse_positive_as_negative,
         fps=args.fps,
         task_description=args.task_description,
+        target_ee_pose=args.target_ee_pose,
         random_seed=args.seed,
         load_workers=args.load_workers,
         write_workers=args.write_workers,
     )
 
     print("=" * 80)
-    print("Dual-view trend reward dataset preprocessing complete")
+    print("VLM trend reward dataset preprocessing complete")
     print(
         f"Train split: {metadata['train_manifest']} "
         f"({metadata['num_train_samples']} samples)"
