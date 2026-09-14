@@ -34,12 +34,6 @@ Choose a Workflow
 
       Tune embodied latency, memory, placement, profiling, and FSDP.
 
-   .. grid-item-card:: Hardware Backends
-      :link: hardware/index
-      :link-type: doc
-
-      Run RLinf on AMD ROCm or Ascend CANN.
-
    .. grid-item-card:: Agent Workflows
       :link: agent-workflows/index
       :link-type: doc
@@ -59,6 +53,5 @@ Choose a Workflow
    Launch & Scale <launch-scale/index>
    Data & Checkpoints <data-checkpoints/index>
    Performance <performance/index>
-   Hardware Backends <hardware/index>
    Agent Workflows <agent-workflows/index>
    Rollout Engines <rollout-engines/index>
