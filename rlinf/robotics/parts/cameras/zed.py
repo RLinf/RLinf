@@ -63,6 +63,8 @@ class ZEDCamera(BaseCamera):
 
         if self._camera_info.enable_depth:
             init_params.depth_mode = sl.DEPTH_MODE.ULTRA
+            # The SDK measures in millimetres unless a unit is set.
+            self._depth_scale = 1e-3
         else:
             init_params.depth_mode = sl.DEPTH_MODE.NONE
 

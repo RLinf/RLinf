@@ -33,9 +33,7 @@ RLinf 提供两种安装方式：**选项 1（UV）** 在本地构建与机器�
 - 仅在依赖需要时使用 ``--python <version>``\ 。默认版本是 Python 3.11.14；部分环境
   如 ``behavior`` 和 ``d4rl`` 需要 Python 3.10。
 - 仅在需要不同 PyTorch wheel 时使用 ``--torch <version>``\ 。
-- 使用 ``--platform amd``\ 、``--platform ascend`` 或 ``--platform musa``
-  进行实验性的非 NVIDIA 安装。参见 :doc:`../guides/amd_rocm`\ 、
-  :doc:`../guides/ascend_cann` 和 :doc:`../guides/moore_threads_musa`\ 。
+- 使用 ``--platform amd``、``--platform ascend`` 或 ``--platform musa`` 选择对应硬件。在 :ref:`模型图库 <model-hardware-support>` 中确认模型与环境组合，再按对应示例准备运行环境。
 
 选项 2：Docker
 --------------

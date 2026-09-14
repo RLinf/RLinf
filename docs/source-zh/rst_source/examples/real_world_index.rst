@@ -1,9 +1,9 @@
 真实机器人强化学习
 ========================================
 
-当你的出发点是真实机器人硬件时，请使用本节。如果你使用 Franka 机械臂或 Franka-based rig，请从 Franka 开始；GimArm、XSquare Turtle2 和 Dexmal DOS-W1 请进入对应机器人页面。
+按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper 和 SO101 请进入对应页面。
 
-每个章节都给出遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 所需的配置路径。
+根据硬件检查、遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 的需求，选择相应指南。
 
 .. raw:: html
 
@@ -62,6 +62,26 @@
 
    </div>
 
+Piper 与 SO101 配置
+--------------------------------
+
+通过以下指南连接机械臂并运行硬件测试脚本。Piper 和 SO101 目前尚未提供真机任务或训练流程。
+
+.. grid:: 1 2 2 2
+   :gutter: 2
+
+   .. grid-item-card:: AgileX Piper
+      :link: embodied/piper
+      :link-type: doc
+
+      配置 CAN，运行 Piper 关节与夹爪测试脚本。
+
+   .. grid-item-card:: SO101
+      :link: embodied/so101
+      :link-type: doc
+
+      配置电机、标定 SO-101，并运行关节与夹爪测试脚本。
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -71,3 +91,5 @@
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
+   Piper <embodied/piper>
+   SO101 <embodied/so101>
