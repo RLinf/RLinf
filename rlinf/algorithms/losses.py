@@ -219,8 +219,8 @@ def compute_ppo_actor_loss(
             "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_mbs_mean": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
-            "actor/ratio": torch.tensor(1.0, device=logprobs.device),
-            "actor/clipped_ratio": torch.tensor(1.0, device=logprobs.device),
+            "actor/ratio": torch.tensor(0.0, device=logprobs.device),
+            "actor/clipped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/dual_cliped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),
             "actor/clip_fraction": torch.tensor(0.0, device=logprobs.device),
@@ -307,22 +307,14 @@ def compute_ppo_actor_loss(
     clipped_ratio_for_metrics = clipped_ratio.detach()
     dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
 
-    has_valid_metrics = loss_mask_for_metrics.any()
-
-    def _masked_mean_or(values: torch.Tensor, default: float) -> torch.Tensor:
-        mean = masked_mean(values, loss_mask_for_metrics)
-        return torch.where(
-            has_valid_metrics,
-            mean,
-            torch.as_tensor(default, device=values.device, dtype=values.dtype),
-        )
-
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
         "actor/policy_loss_abs": metric_policy_loss_abs.detach(),
-        "actor/ratio": _masked_mean_or(ratio_for_metrics, 1.0),
+        "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
         "actor/ratio_abs": masked_mean(ratio_abs_for_metrics, loss_mask_for_metrics),
-        "actor/clipped_ratio": _masked_mean_or(clipped_ratio_for_metrics, 1.0),
+        "actor/clipped_ratio": masked_mean(
+            clipped_ratio_for_metrics, loss_mask_for_metrics
+        ),
         "actor/dual_cliped_ratio": masked_mean(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
         ),

@@ -76,7 +76,24 @@ def test_finite_fraction_is_not_scaled_by_episode_loss_weight():
     assert torch.allclose(metrics["actor/logprob_finite_fraction"], torch.tensor(1.0))
 
 
-def test_empty_loss_mask_uses_neutral_ratio_metrics():
+def test_ppo_metrics_normalize_broadcast_action_mask():
+    old_logprobs = torch.full((1, 1, 7), -3.0)
+    log_ratio = torch.tensor([[[-0.4, -0.4, 0.3, 0.3, 0.0, 0.0, 0.0]]])
+    _, metrics = compute_ppo_actor_loss(
+        logprobs=old_logprobs + log_ratio,
+        old_logprobs=old_logprobs,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        advantages=torch.ones(1, 1, 1),
+        loss_mask=torch.ones(1, 1, 1, dtype=torch.bool),
+    )
+
+    torch.testing.assert_close(metrics["actor/clip_fraction"], torch.tensor(2.0 / 7))
+    torch.testing.assert_close(metrics["actor/approx_kl"], torch.tensor(0.2 / 7))
+    torch.testing.assert_close(metrics["actor/ratio"], log_ratio.exp().mean())
+
+
+def test_empty_loss_mask_returns_zero_ratio_metrics():
     logprobs = torch.zeros(1, 4, dtype=torch.float32, requires_grad=True)
     loss, metrics = compute_ppo_actor_loss(
         logprobs=logprobs,
@@ -92,15 +109,15 @@ def test_empty_loss_mask_uses_neutral_ratio_metrics():
 
     assert torch.equal(loss, torch.tensor(0.0))
     assert torch.equal(logprobs.grad, torch.zeros_like(logprobs))
-    assert torch.equal(metrics["actor/ratio"], torch.tensor(1.0))
-    assert torch.equal(metrics["actor/clipped_ratio"], torch.tensor(1.0))
+    assert torch.equal(metrics["actor/ratio"], torch.tensor(0.0))
+    assert torch.equal(metrics["actor/clipped_ratio"], torch.tensor(0.0))
     assert torch.equal(metrics["actor/ratio_abs"], torch.tensor(0.0))
     assert torch.equal(metrics["actor/approx_kl"], torch.tensor(0.0))
     assert torch.equal(metrics["actor/logprob_finite_fraction"], torch.tensor(1.0))
     assert "actor/nonempty_microbatch_fraction" not in metrics
 
 
-def test_empty_loss_mask_fast_path_uses_neutral_ratio_metrics():
+def test_empty_loss_mask_fast_path_returns_zero_ratio_metrics():
     _, metrics = compute_ppo_actor_loss(
         logprobs=torch.zeros(1, 4, dtype=torch.float32),
         old_logprobs=torch.zeros(1, 4, dtype=torch.float32),
@@ -111,8 +128,8 @@ def test_empty_loss_mask_fast_path_uses_neutral_ratio_metrics():
         fast_path_zero_loss_mask=True,
     )
 
-    assert torch.equal(metrics["actor/ratio"], torch.tensor(1.0))
-    assert torch.equal(metrics["actor/clipped_ratio"], torch.tensor(1.0))
+    assert torch.equal(metrics["actor/ratio"], torch.tensor(0.0))
+    assert torch.equal(metrics["actor/clipped_ratio"], torch.tensor(0.0))
     assert "actor/nonempty_microbatch_fraction" not in metrics
 
 
