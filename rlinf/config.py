@@ -948,8 +948,8 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
 def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
     """Validate Psi0 + SIMPLE standalone evaluation settings."""
     assert only_eval, "Psi0 evaluation config requires an evaluation runner."
-    assert cfg.rollout.get("generation_backend", "huggingface") == "huggingface", (
-        "Psi0 requires rollout.generation_backend='huggingface'."
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
     )
     assert not cfg.runner.get("rtc", {}).get("enabled", False), (
         "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
@@ -994,8 +994,8 @@ def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
         "evaluation would create two Isaac runtimes in one EnvWorker. "
         "Use standalone evaluation for saved checkpoints."
     )
-    assert cfg.rollout.get("generation_backend", "huggingface") == "huggingface", (
-        "Psi0 requires rollout.generation_backend='huggingface'."
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
     )
     assert not cfg.runner.get("rtc", {}).get("enabled", False), (
         "Psi0 uses model-side RTC; runner.rtc.enabled must be false."

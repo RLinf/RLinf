@@ -85,7 +85,7 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  generation_backend: huggingface
+  rollout_backend: huggingface
   recompute_logprobs: false
   collect_prev_infos: true
   enable_offload: false

@@ -14,6 +14,6 @@
 
 """SIMPLE benchmark integration."""
 
-from rlinf.envs.simple.simple_env import SimpleEnv
+from rlinf.envs.sim.simple.simple_env import SimpleEnv
 
 __all__ = ["SimpleEnv"]

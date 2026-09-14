@@ -83,7 +83,7 @@ Benchmark 指南
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
    * - :doc:`SIMPLE <guides/simple>`
-     - Psi0 全身 CloseDoor 评测。
+     - Psi0 人形机器人全身评测。
 
 参考
 ----

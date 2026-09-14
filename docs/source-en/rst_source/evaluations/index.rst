@@ -83,7 +83,7 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
    * - :doc:`SIMPLE <guides/simple>`
-     - Psi0 whole-body CloseDoor evaluation.
+     - Psi0 whole-body humanoid evaluation.
 
 Reference
 ---------

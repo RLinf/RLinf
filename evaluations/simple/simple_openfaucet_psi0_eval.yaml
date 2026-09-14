@@ -13,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env,rollout: 0 #all
+    env,rollout: 0
 
 runner:
   task_type: embodied_eval
@@ -63,7 +63,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: false
   collect_prev_infos: false
   enable_offload: false

@@ -31,7 +31,7 @@ import torch
 from filelock import FileLock
 from gymnasium.wrappers import TimeLimit
 
-from rlinf.envs.simple.controllers import (
+from rlinf.envs.sim.simple.utils import (
     SimpleController,
     SimpleTeleopController,
     extract_psi0_state,
@@ -200,7 +200,7 @@ class SimpleLeRobotResetDataset:
     ):
         dataset_path = Path(path).expanduser()
         if dataset_path.suffix == ".zip":
-            raise ValueError("Extract the SIMPLE reset-state zip before evaluation.")
+            raise ValueError("Extract the SIMPLE reset-state zip before loading it.")
         if episode_start < 0 or num_episodes <= 0:
             raise ValueError("episode_start must be >= 0 and num_episodes must be > 0.")
 
@@ -269,7 +269,7 @@ class SimpleEnv(gym.Env):
         self._last_observation: dict[str, Any] | None = None
         self._terminal_episode: dict[str, torch.Tensor] | None = None
         if cfg.reset_dataset.get("format", "lerobot") != "lerobot":
-            raise ValueError("The fixed SIMPLE Eval reset dataset uses LeRobot format.")
+            raise ValueError("The SIMPLE reset dataset uses LeRobot format.")
         self._dataset = SimpleLeRobotResetDataset(
             cfg.reset_dataset.path,
             dr_level=int(cfg.reset_dataset.dr_level),
