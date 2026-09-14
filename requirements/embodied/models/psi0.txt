@@ -1,4 +1,4 @@
-# Fixed Psi0 Eval runtime from upstream revision
+# Psi0 runtime dependencies for upstream revision
 # a32e57a3fabb8590c80677f9cd3d1fc3db60eb06.
 diffusers==0.37.0
 transformers==4.57.0

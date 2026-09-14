@@ -1639,10 +1639,8 @@ clone_or_reuse_repo() {
 }
 
 ensure_psi0_simple_repo_revision() {
-    # Integration-private revision guard. Do not route unrelated model or env
-    # installers through this helper; their revision policies remain unchanged.
-    # Keep user-managed checkouts immutable; installer-owned venv checkouts may
-    # move to the exact integration revision.
+    # Require pinned revisions for user checkouts; only move clean
+    # installer-owned checkouts to the requested revision.
     local env_var_name="$1"
     local repo_dir="$2"
     local revision="$3"
@@ -2737,10 +2735,8 @@ install_simple_env() {
     uv pip install -e "$simple_dir/third_party/decoupled_wbc[full]"
     uv pip install -e "$simple_dir" --no-deps
 
-    # cuRobo derives its version from Git metadata. On a repeated install, uv
-    # can otherwise reuse the wheel built before the submodule metadata was
-    # fully available (0.0.0) after resolving the source as a different version
-    # (for example, 0.0.post1.dev63), then rejects its own cached wheel.
+    # cuRobo's Git-derived version can change after submodule initialization.
+    # Bypass uv's wheel cache to avoid reusing a wheel with stale metadata.
     UV_NO_CACHE=1 \
         UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
         bash "$simple_dir/scripts/install_curobo.sh"

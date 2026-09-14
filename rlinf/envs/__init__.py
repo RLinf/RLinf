@@ -180,7 +180,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return PolarisEnv
     elif env_type == SupportedEnvType.SIMPLE:
-        from rlinf.envs.simple.simple_env import SimpleEnv
+        from rlinf.envs.sim.simple.simple_env import SimpleEnv
 
         return SimpleEnv
     else:

@@ -91,7 +91,7 @@ state、action 和 System-0 协议，暂不支持。
 .. code-block:: bash
 
    # Set once. Reuse for every SIMPLE task.
-   export PSI0_ARTIFACT_ROOT=/mnt/public2/yangtingyuan/RLinf_yty/checkpoint/psi0-simple-artifacts
+   export PSI0_ARTIFACT_ROOT=/path/to/psi0-simple-artifacts
    export HF_HOME="${PSI0_ARTIFACT_ROOT}/hf-cache"
 
    # Replace these two values together for each task.

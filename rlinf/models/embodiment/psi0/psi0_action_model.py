@@ -26,8 +26,8 @@ from omegaconf import DictConfig
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
-from rlinf.models.embodiment.psi0.processing import Psi0ProcessorAdapter
-from rlinf.models.embodiment.psi0.sampler import Psi0StochasticTransitionSampler
+from rlinf.models.embodiment.psi0.psi0_processing import Psi0ProcessorAdapter
+from rlinf.models.embodiment.psi0.psi0_sampler import Psi0StochasticTransitionSampler
 
 
 @dataclass(frozen=True)
