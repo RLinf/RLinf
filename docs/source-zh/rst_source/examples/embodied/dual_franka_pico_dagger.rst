@@ -95,7 +95,7 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 机器人节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，因此需要安装 ``franka-franky`` 环境。该环境会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
+在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
 
 .. code-block:: bash
 
@@ -103,10 +103,10 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
    cd RLinf
 
    export LIBFRANKA_VERSION=0.19.0       # 或 0.15.0，与固件匹配
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-``franka-franky`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
+``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
 
 推理节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -160,9 +160,7 @@ Ray 节点布局
 
 .. warning::
 
-   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成
-   ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK``、
-   ``RLINF_KEYBOARD_DEVICE`` 和 ROS / Franka 相关环境变量配置。
+   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成 ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK``、``RLINF_KEYBOARD_DEVICE`` 以及 Franka 专用环境变量的配置。
 
 集群设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

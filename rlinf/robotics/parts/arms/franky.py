@@ -16,8 +16,8 @@
 
 A PREEMPT_RT kernel, ``rtprio>=80``, and unlimited memory locking are
 recommended. The driver logs a warning if real-time hardening is unavailable.
-libfranka refuses a kernel without PREEMPT_RT unless the arm is declared with
-``realtime_config="ignore"``.
+By default libfranka also runs on a kernel without PREEMPT_RT and the driver
+warns; declare the arm with ``realtime_config="enforce"`` to refuse such a kernel.
 """
 
 import ctypes
@@ -115,16 +115,16 @@ class FrankyArm(BaseArm):
         Args:
             robot_ip: Address of the arm's control interface.
             compliance: Cartesian impedance gains and clips.
-            realtime_config: ``"enforce"`` (libfranka's default when ``None``)
-                refuses a kernel without PREEMPT_RT; ``"ignore"`` runs on one
-                and may then miss control deadlines under load.
+            realtime_config: ``"ignore"`` (the default when ``None``) runs
+                on a kernel without PREEMPT_RT, where control deadlines may be
+                missed under load; ``"enforce"`` refuses such a kernel.
 
         Raises:
             ValueError: If *realtime_config* names no libfranka mode.
         """
         self._logger = get_logger()
         self._robot_ip = validated_robot_ip(robot_ip, type(self).__name__)
-        self._realtime_config = realtime_config or "enforce"
+        self._realtime_config = realtime_config or "ignore"
         if self._realtime_config not in self.REALTIME_CONFIGS:
             raise ValueError(
                 f"realtime_config must be one of {sorted(self.REALTIME_CONFIGS)}, "
@@ -167,6 +167,11 @@ class FrankyArm(BaseArm):
 
         self._franky = franky
         mode = self.REALTIME_CONFIGS[self._realtime_config]
+        if self._realtime_config == "ignore" and not self._kernel_is_realtime():
+            self._logger.warning(
+                "The kernel is not PREEMPT_RT, so libfranka may miss control "
+                "deadlines under load. Set realtime_config: enforce to refuse it."
+            )
         self._robot = franky.Robot(
             self._robot_ip, realtime_config=getattr(franky.RealtimeConfig, mode)
         )
@@ -176,6 +181,15 @@ class FrankyArm(BaseArm):
         self._tracking_error = None
         self._logger.info(f"FrankyArm connected to robot at {self._robot_ip}")
         return self._robot
+
+    @staticmethod
+    def _kernel_is_realtime() -> bool:
+        """Return whether the running kernel reports PREEMPT_RT."""
+        try:
+            with open("/sys/kernel/realtime") as flag:
+                return flag.read().strip() == "1"
+        except OSError:
+            return False
 
     def reset(self) -> None:
         """Leave task-specific reset positions to the caller."""

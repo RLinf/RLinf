@@ -102,7 +102,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1771,6 +1771,11 @@ install_openvla_model() {
             install_common_embodied_deps
             install_frankasim_env
             ;;
+        franka)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_franka_franky_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA model." >&2
             exit 1
@@ -1783,6 +1788,13 @@ install_openvla_model() {
 
 install_openvla_oft_model() {
     case "$ENV_NAME" in
+        franka)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_franka_franky_env
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
+            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
@@ -1934,7 +1946,7 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
-        franka-franky)
+        franka)
             create_and_sync_venv
             install_common_embodied_deps
             install_franka_franky_env
@@ -2077,6 +2089,10 @@ install_gr00t_model() {
     maybe_build_decord_from_source
     uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
     case "$ENV_NAME" in
+        franka)
+            install_franka_franky_env
+            install_flash_attn
+            ;;
         maniskill_libero|libero)
             install_${ENV_NAME}_env
             install_flash_attn
@@ -2376,7 +2392,7 @@ install_lerobot() {
         "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
 }
 
-install_franka_realworld_env() {
+install_franka_ros_realworld_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
@@ -2397,7 +2413,7 @@ install_env_only() {
     # (transformers, peft, timm, ...) that model installs get from
     # install_common_embodied_deps, without its simulator packages.
     case "$ENV_NAME" in
-        franka|franka-dexhand|franka-franky)
+        franka|franka-dexhand|franka-ros)
             uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
@@ -2415,14 +2431,14 @@ install_env_only() {
             install_dummy_env
             ;;
         franka)
-            install_franka_realworld_env
+            install_franka_franky_env
             ;;
         franka-dexhand)
-            install_franka_realworld_env
+            install_franka_franky_env
             install_franka_dexhand_deps
             ;;
-        franka-franky)
-            install_franka_franky_env
+        franka-ros)
+            install_franka_ros_realworld_env
             ;;
         xsquare_turtle2)
             install_xsquare_turtle2_env
@@ -2821,7 +2837,7 @@ install_franka_franky_env() {
         case "$LIBFRANKA_VERSION" in
             0.15.0|0.19.0) ;;
             *)
-                echo "No prebuilt franky-control wheel for libfranka ${LIBFRANKA_VERSION} (available: 0.15.0, 0.19.0). Use --env franka for ROS, or set FRANKY_WHEEL." >&2
+                echo "No prebuilt franky-control wheel for libfranka ${LIBFRANKA_VERSION} (available: 0.15.0, 0.19.0). Use --env franka-ros for ROS, or set FRANKY_WHEEL." >&2
                 exit 1
                 ;;
         esac

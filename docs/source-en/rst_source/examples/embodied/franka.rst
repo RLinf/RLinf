@@ -2,12 +2,14 @@ Real-World RL with Franka
 ============================
 
 This page walks you through training a CNN policy on a Franka arm with RLinf,
-from demonstration collection to online RLPD training. The default setup uses a
-single Ubuntu 20.04 computer with an NVIDIA GPU. It runs ROS Noetic, the robot
-connection, rollout, and training. You first prepare that host (firmware check,
-NVIDIA driver, real-time kernel), install RLinf, then run the peg-insertion
-example. The later sections cover a separate controller node, the optional
-Franky backend without ROS, and other Franka workflows.
+from demonstration collection to online RLPD training. The default setup uses
+one x86-64 computer with an NVIDIA GPU running Ubuntu 20.04 or 22.04. Franky
+controls the arm through Python bindings to libfranka, so ROS is not required,
+and the same computer runs rollout and training. You first prepare that host
+(firmware check, NVIDIA driver, real-time kernel), install RLinf natively or
+with Docker, then run the peg-insertion example. The later sections cover a
+separate controller node, the legacy ROS backend for existing deployments, and
+other Franka workflows.
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center
@@ -96,14 +98,14 @@ layout; the multi-node layout reuses its steps and is described in
      - Machines
      - When to use it
    * - Single machine (default)
-     - One Ubuntu 20.04 GPU host runs ROS, the robot connection, rollout, and
-       training.
+     - One Ubuntu 20.04 or 22.04 GPU host runs Franky robot control, rollout,
+       and training.
      - Most setups. One computer to install and maintain.
-   * - Multi-node
-     - A controller computer without a GPU runs ROS and the robot connection;
-       a GPU server runs actor and rollout.
+   * - Multi-node (optional)
+     - A controller computer, which needs no GPU, runs Franky robot control; a
+       GPU server runs actor and rollout.
      - You want to isolate robot control from training load, or the GPU server
-       cannot run Ubuntu 20.04.
+       is not next to the robot.
 
 .. warning::
 
@@ -117,10 +119,10 @@ Prepare the Robot Host
 --------------------------
 
 Three decisions on the robot host come before any RLinf installation. The
-firmware decides which libfranka version you build. The NVIDIA driver decides
-whether the installer picks a CUDA build of PyTorch. The kernel decides whether
-libfranka can run its 1 kHz control loop in real time. Complete these steps on
-the Ubuntu 20.04 host in order.
+firmware decides which libfranka version you need, and with it whether Franky
+can drive the arm. The NVIDIA driver decides whether the installer picks a CUDA
+build of PyTorch. The kernel decides whether libfranka can run its 1 kHz
+control loop in real time. Complete these steps on the host in order.
 
 Check the Firmware and Choose libfranka
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -137,25 +139,28 @@ the version shown after ``Control`` on the dashboard:
 
 Look up that version in the
 `Franka compatibility table <https://frankarobotics.github.io/docs/compatibility.html>`_
-and choose a libfranka version. The installer builds libfranka 0.15.0 by
-default. You pass a different version through ``LIBFRANKA_VERSION`` during
-installation. RLinf has been tested with firmware 5.7.2 up to 5.9.0 using
-libfranka 0.15.0 on a real-time kernel, and with firmware 5.9.2 using libfranka
-0.19.0 on a standard Ubuntu 20.04 kernel with the real-time check disabled. Do not change robot
-firmware merely to match this example.
+and choose a libfranka version. Franky ships as prebuilt wheels that bundle
+libfranka, and wheels exist for libfranka 0.19.0 (the installer default) and
+0.15.0. If your firmware needs another libfranka version, use the
+`Legacy ROS Backend (Optional)`_, which builds libfranka from source.
 
-Install the NVIDIA Driver on Ubuntu 20.04
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+RLinf has been tested with firmware 5.9.2 using libfranka 0.19.0 on a standard
+kernel with the real-time check disabled, and with firmware 5.7.2 up to 5.9.0
+using libfranka 0.15.0 on a real-time kernel. Do not change robot firmware
+merely to match this example.
 
-Install the driver before RLinf. ``requirements/install.sh`` reads the CUDA
-version reported by ``nvidia-smi`` and installs the newest PyTorch CUDA build
-that driver supports: CUDA 12.6 wheels need driver 560 or newer, and CUDA 12.8
-wheels need 570 or newer. Without a driver, the installer falls back to
-CPU-only PyTorch, and training cannot use the GPU.
+Install the NVIDIA Driver
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Install the driver before RLinf. ``requirements/install.sh`` detects the driver
+and installs the matching CUDA build of PyTorch 2.11: CUDA 12.6 wheels need
+driver 560 or newer, and CUDA 12.8 wheels need 570 or newer. Without a driver,
+the installer falls back to CPU-only PyTorch, and training cannot use the GPU.
 
 If ``nvidia-smi`` already reports driver 570 or newer, keep it and skip this
-step. Otherwise, add NVIDIA's CUDA repository for Ubuntu 20.04 and install a
-driver from it:
+step. Otherwise, add NVIDIA's CUDA repository and install a driver from it. The
+commands below are for Ubuntu 20.04; on Ubuntu 22.04, replace ``ubuntu2004``
+with ``ubuntu2204`` in the URL:
 
 .. code:: bash
 
@@ -181,10 +186,12 @@ list your GPU. Do not mix this repository with a driver installed from a
 described in NVIDIA's
 `driver installation guide <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_.
 
-``cuda-drivers-575`` builds NVIDIA's proprietary kernel module; the Ubuntu 20.04
-repository ships no open-module packages. GPUs that require the open kernel
-module, such as the GeForce RTX 50 series, need a driver from NVIDIA's
-`driver downloads <https://www.nvidia.com/en-us/drivers/>`_ page instead.
+``cuda-drivers-575`` builds NVIDIA's proprietary kernel module. GPUs that
+require the open kernel module, such as the GeForce RTX 50 series, need an open
+driver instead. The Ubuntu 20.04 repository ships no open-module packages, so
+on 20.04 use a driver from NVIDIA's
+`driver downloads <https://www.nvidia.com/en-us/drivers/>`_ page; on 22.04,
+select the open module as described in the driver installation guide.
 
 The CUDA toolkit is not required for this example because PyTorch wheels
 bundle the CUDA runtime. Install it only if you need to compile CUDA
@@ -199,15 +206,16 @@ Install a Real-Time Kernel (Recommended)
 
 libfranka sends a command to the arm every millisecond. A PREEMPT_RT kernel
 keeps that loop on schedule while rollout and training load the CPU and GPU.
-By default, ``franka_control`` enforces this and refuses to start on a kernel
-without PREEMPT_RT.
+Franky also starts on a standard kernel, as described in
+`Run without a Real-Time Kernel`_, but the real-time kernel remains the
+recommended setup.
 
 Install the kernel on the host, not inside Docker: containers share the host
-kernel. For Ubuntu 20.04, follow Franka's
-`real-time kernel guide <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_,
-which builds a patched kernel and installs its ``linux-image`` and
-``linux-headers`` packages. Keep your current kernel as a GRUB fallback. After
-rebooting into the new kernel, check it:
+kernel. Follow Franka's
+`real-time kernel guide <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_
+for your Ubuntu release. It builds a patched kernel and installs its
+``linux-image`` and ``linux-headers`` packages. Keep your current kernel as a
+GRUB fallback. After rebooting into the new kernel, check it:
 
 .. code:: bash
 
@@ -246,8 +254,10 @@ Apply the override again whenever a driver or kernel update rebuilds the module.
 Allow Real-Time Scheduling
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A real-time kernel only helps if your account may raise thread priority and
-lock memory. Add your login account to a dedicated group:
+When RLinf starts Franky, it tries to lock the control process's memory, run
+it with ``SCHED_FIFO`` priority 80, and pin it to CPU cores. Each step needs
+permission, and RLinf logs a warning and continues when one is denied. Grant
+the permissions by adding your login account to a dedicated group:
 
 .. code:: bash
 
@@ -263,31 +273,42 @@ Add the following limits to that file, then log out and back in:
    @realtime - memlock unlimited
 
 In the new login shell, ``ulimit -r`` should print ``99`` and ``ulimit -l``
-should print ``unlimited``.
+should print ``unlimited``. These limits help on a standard kernel too.
 
 Run without a Real-Time Kernel
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If you cannot use a real-time kernel, install RLinf with
-``FRANKA_REALTIME_CONFIG=ignore`` (see `Installation`_). The installer writes
-this value to ``realtime_config`` in ``franka_control_node.yaml``, which
-``franka_control`` reads at every launch, so libfranka then runs on a standard
-kernel. To switch back, re-run the installer with
-``FRANKA_REALTIME_CONFIG=enforce``; no rebuild is needed.
+If you cannot use a real-time kernel, no extra step is needed. Franky reads
+libfranka's real-time mode from ``realtime_config`` in the robot's hardware
+config, and the default ``ignore`` lets libfranka run on a kernel without
+PREEMPT_RT. RLinf logs a warning when the running kernel is not real-time.
+
+To make sure the arm never runs on a standard kernel, set ``enforce`` in the
+hardware config described in `Run It`_; Franky then refuses to start on a
+kernel without PREEMPT_RT:
+
+.. code:: yaml
+
+   configs:
+     - robot_ip: ROBOT_IP
+       node_rank: 0
+       camera_serials: ["CAMERA_SERIAL"]
+       realtime_config: enforce
 
 .. warning::
 
    On a standard kernel, heavy training load can make libfranka miss control
    deadlines. The robot then stops with ``communication_constraints_violation``
-   reflexes. A real-time kernel remains the recommended setup. Before training,
-   verify control under your intended training load with an operator present.
+   reflexes. Before training, verify control under your intended training load
+   with an operator present.
 
 Installation
 ----------------
 
 With the driver and kernel in place, one installation on the GPU host provides
-both the ROS control stack and the training dependencies. Clone RLinf and run
-subsequent commands from its root directory:
+both Franky robot control and the training dependencies. You can install
+natively or use the Docker image described at the end of this section. Clone
+RLinf and run subsequent commands from its root directory:
 
 .. code:: bash
 
@@ -297,64 +318,47 @@ subsequent commands from its root directory:
 Install the Franka Environment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Run the installer with the libfranka version you chose. Add
-``FRANKA_REALTIME_CONFIG=ignore`` only if you run without a real-time kernel:
+Run the installer. Prefix the command with ``LIBFRANKA_VERSION=0.15.0`` only if
+your firmware requires libfranka 0.15.0:
 
 .. code:: bash
 
-   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka
+   bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
 What this does:
 
-1. Creates the ``.venv`` virtual environment with RLinf, the Franka
-   dependencies, and the embodied training dependencies, including the CUDA
-   build of PyTorch matched to your driver.
-2. Installs system packages and ROS Noetic through APT. This step needs
-   Ubuntu 20.04 and sudo.
-3. Builds libfranka, RLinf's ``franka_ros`` fork, and
-   ``serl_franka_controllers`` in the catkin workspace
-   ``.venv/franka_catkin_ws``, and sets its ``realtime_config``.
-4. Appends ``source /opt/ros/noetic/setup.bash`` and the workspace's
-   ``devel/setup.bash`` to ``.venv/bin/activate``, so activating the
-   environment also loads ROS.
+1. Creates the ``.venv`` virtual environment with RLinf and the embodied
+   training dependencies, including the PyTorch build matched to your driver.
+2. Installs system packages through APT, which needs sudo. Pass ``--no-root``
+   only if those packages are already installed.
+3. Installs the Franka dependencies, LeRobot, and a prebuilt
+   ``franky-control`` wheel that bundles libfranka. No ROS installation or
+   catkin build is involved.
 
-The installer reads these variables:
+The wheel targets manylinux 2.28, so the same environment works on Ubuntu
+20.04 and 22.04. The installer reads these variables:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 20 50
+   :widths: 25 15 60
 
    * - Variable
      - Default
      - Effect
    * - ``LIBFRANKA_VERSION``
-     - ``0.15.0``
-     - libfranka release to build. Must match the robot firmware.
-   * - ``FRANKA_ROS_VERSION``
-     - ``0.10.0``
-     - Branch of the ``franka_ros`` fork to build.
-   * - ``FRANKA_REALTIME_CONFIG``
-     - ``enforce``
-     - ``ignore`` lets libfranka run on a kernel without PREEMPT_RT.
-   * - ``SKIP_ROS``
-     - ``0``
-     - ``1`` skips ROS Noetic and the catkin build.
+     - ``0.19.0``
+     - libfranka version of the Franky wheel. Prebuilt wheels exist only for
+       ``0.15.0`` and ``0.19.0`` on x86-64; any other version or architecture
+       stops the installer early unless ``FRANKY_WHEEL`` is set.
+   * - ``FRANKY_WHEEL``
+     - unset
+     - URL or local path of a ``franky-control`` wheel to install instead of
+       the prebuilt one, for example when the host cannot download from
+       GitHub or you built a wheel for another libfranka version.
 
 Pass ``--venv <name>`` to install into another directory, and ``--use-mirror``
 for faster downloads from mainland China.
-
-.. warning::
-
-   With ``SKIP_ROS=1``, you provide ROS Noetic, libfranka, ``franka_ros``, and
-   ``serl_franka_controllers`` yourself. Source ``/opt/ros/noetic/setup.bash``
-   and your catkin workspace's ``devel/setup.bash``, and make sure libfranka is
-   on ``LD_LIBRARY_PATH``, in every shell before ``ray start``. Ray workers
-   inherit the environment of the shell that started Ray. For manual
-   installation, see the `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_,
-   `libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_,
-   and `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_
-   guides.
 
 Your account must be able to read the camera and SpaceMouse USB devices; see
 the `SpaceMouse setup <https://github.com/JakubAndrysek/PySpaceMouse#installation>`_
@@ -363,30 +367,29 @@ for its udev rule.
 Check the Environment
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In the activated environment, confirm that PyTorch sees the GPU and that ROS
-finds the controllers:
+In the activated environment, confirm that PyTorch sees the GPU and that Franky
+loads:
 
 .. code:: bash
 
    python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-   rospack find serl_franka_controllers
+   python -c "import franky"
 
 The first command must print ``True``. If it prints ``False``, check
 ``nvidia-smi`` and re-run the installer after fixing the driver. The second
-prints the controller package path inside ``.venv/franka_catkin_ws``.
+command prints nothing when Franky and its bundled libfranka load.
 
 Use the Docker Image
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 Instead of installing natively, you can run the
 ``rlinf/rlinf:agentic-rlinf0.4-franka`` image. It is built on CUDA 12.8 and
-Ubuntu 20.04 with ROS Noetic, and its environments carry CUDA PyTorch, so one
-container runs the actor, rollout, and robot control on the single-machine
-GPU host. The host still needs driver 570 or newer from
-`Install the NVIDIA Driver on Ubuntu 20.04`_ and the
+Ubuntu 20.04, and its environments carry CUDA PyTorch, so one container runs
+the actor, rollout, and robot control on the single-machine GPU host. The host
+still needs driver 570 or newer from `Install the NVIDIA Driver`_ and the
 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
-The image also serves as the controller of the multi-node layout. It contains
-these environments, switched with ``source switch_env <name>``:
+The image contains these environments, switched with
+``source switch_env <name>``:
 
 .. list-table::
    :header-rows: 1
@@ -394,18 +397,16 @@ these environments, switched with ``source switch_env <name>``:
 
    * - Environment
      - Contents
+   * - ``franky``
+     - Franky backend with libfranka 0.19.0. Active by default.
+   * - ``franka-dexhand``
+     - Franky backend with dexterous-hand dependencies.
    * - ``franka-0.10.0``, ``franka-0.13.3``, ``franka-0.14.1``,
        ``franka-0.15.0``, ``franka-0.18.0``, ``franka-0.19.0``
-     - ROS backend with that libfranka version. ``franka-0.15.0`` is active by
-       default.
-   * - ``franky``
-     - Optional Franky backend with libfranka 0.19.0; see
-       `Franky Backend (Optional)`_.
-   * - ``franka-dexhand``
-     - ROS backend with dexterous-hand dependencies.
+     - Legacy ROS backend with that libfranka version; see
+       `Legacy ROS Backend (Optional)`_.
 
-Start the container with access to the robot, camera, and SpaceMouse, then
-select the environment that matches your firmware:
+Start the container with access to the GPU, robot, camera, and SpaceMouse:
 
 .. code:: bash
 
@@ -414,11 +415,14 @@ select the environment that matches your firmware:
      --ulimit rtprio=99 --ulimit memlock=-1 \
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-franka bash
-   source switch_env franka-0.15.0
 
-The image's ROS environments keep ``realtime_config: enforce``, so run the
-container on a host with a real-time kernel. For another shell, run
-``docker exec -it rlinf-franka bash`` and select the same environment again.
+The container opens in the ``franky`` environment. The ``--ulimit`` flags grant
+the scheduling permissions from `Allow Real-Time Scheduling`_ inside the
+container; the kernel is still the host's. The image's Franky environment
+bundles libfranka 0.19.0, so firmware that needs 0.15.0 installs natively with
+``LIBFRANKA_VERSION=0.15.0``. For another shell, run
+``docker exec -it rlinf-franka bash``; if you switched environments, select the
+same one again.
 
 Download the Model
 ----------------------
@@ -468,17 +472,17 @@ the arm's address and ``CAMERA_SERIAL`` with the printed serial number:
            node_rank: 0
            camera_serials: ["CAMERA_SERIAL"]
 
-The config leaves ``backend`` unset, so the arm uses the default
-``franka_ros`` backend. Set ``cluster.num_nodes: 1`` in the training recipe as
-well; collection already uses one node. Keep the training recipe's ``4090``
-node group and component placement unchanged: the group names GPU node 0,
-regardless of the GPU model. Use one camera for this example; it is named
-``wrist_1`` automatically.
+The config needs no ``backend`` key: the arm uses the default Franky backend,
+with ``realtime_config: ignore`` unless you add ``enforce`` as shown in
+`Run without a Real-Time Kernel`_. Set ``cluster.num_nodes: 1`` in the training
+recipe as well; collection already uses one node. Keep the training recipe's
+``4090`` node group and component placement unchanged: the group names GPU
+node 0, regardless of the GPU model. Use one camera for this example; it is
+named ``wrist_1`` automatically.
 
 Use the robot's guiding mode to position the peg at the desired successful
 insertion pose, then unlock the arm and activate FCI in Franka Desk. Read the
-pose with the controller check tool, which launches the ROS controller for the
-arm:
+pose with the controller check tool, which connects to the arm through Franky:
 
 .. code:: bash
 
@@ -488,8 +492,9 @@ arm:
 At the prompt, enter ``getpos_euler``, then ``q`` to release the robot.
 The result is ``[x, y, z, roll, pitch, yaw]``, in metres and radians. The tool
 also accepts ``getpos``, ``getjoint``, ``getstate``, ``gethand``, ``clear``,
-``home``, ``open``, and ``close``. Save the six measured numbers as a
-comma-separated list in this shell:
+``home``, ``open``, and ``close``, and takes ``--robot-ip`` instead of the
+environment variable and ``--realtime-config enforce`` to require a real-time
+kernel. Save the six measured numbers as a comma-separated list in this shell:
 
 .. code:: bash
 
@@ -547,6 +552,11 @@ With these settings, actor, rollout, and reward run on GPU 0 and robot control
 on node 0. Keep supervising the arm and use the SpaceMouse when intervention
 is needed. To end a run, interrupt the launcher and wait for the robot to stop;
 after the run exits, ``ray stop`` stops this host's Ray processes.
+
+If a Franky impedance controller stops unexpectedly, RLinf reports the motion
+error rather than silently restarting it. Resolve the cause before restarting
+training. In direct Python use, call ``disconnect()`` and then ``connect()``
+before resuming commands; ``clear_errors()`` does not restart failed tracking.
 
 Label Rewards from a Keyboard (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -614,26 +624,25 @@ Multi-Node Setup
 --------------------
 
 Use a separate controller computer when you want to isolate robot control from
-training load, or when the GPU server cannot run Ubuntu 20.04. The arm, camera,
-and SpaceMouse connect to the controller, which runs ROS and robot control
-without a GPU. The GPU server runs actor and rollout and needs no ROS.
+training load, or when the GPU server is not next to the robot. The arm,
+camera, and SpaceMouse connect to the controller, which runs Franky robot
+control and needs no GPU. The GPU server runs actor and rollout.
 
 Prepare Both Computers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Prepare the controller as the robot host above, without the NVIDIA driver:
-check the firmware and set up the real-time kernel or its fallback. Then
-either start the Docker image from `Use the Docker Image`_ (omit
-``--gpus all`` on a computer without a GPU), or install natively with
-``bash requirements/install.sh embodied --env franka``. Without an NVIDIA
-driver, the native installer selects CPU-only PyTorch.
+check the firmware and set up the real-time kernel or run without one. Then
+either install natively with the command from `Installation`_, which selects
+CPU-only PyTorch when no NVIDIA driver is present, or start the Docker image
+from `Use the Docker Image`_ without ``--gpus all``.
 
-On the GPU server, clone the same RLinf revision and install the same
-environment without ROS, after its NVIDIA driver is installed:
+On the GPU server, install its NVIDIA driver, clone the same RLinf revision,
+and run the same installation:
 
 .. code:: bash
 
-   SKIP_ROS=1 bash requirements/install.sh embodied --env franka
+   bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
 Both computers must use the same RLinf revision, Python version, and Ray
@@ -655,7 +664,7 @@ Actor and rollout remain on GPU 0 of node 0.
    Ray records the Python interpreter and environment variables of the shell
    that runs ``ray start``, and every worker on that node inherits them. Export
    ``RLINF_NODE_RANK`` and activate the environment before ``ray start`` on each
-   computer; a rank or ROS setup missing at that moment cannot be fixed later
+   computer; a rank or environment missing at that moment cannot be fixed later
    without restarting Ray. ``ray_utils/realworld/setup_before_ray.sh`` is a
    template you can adapt for this.
 
@@ -688,33 +697,83 @@ demonstration files for training. Stop Ray on both nodes when finished. For
 several robots, see :doc:`/rst_source/guides/realworld_robot` and
 :doc:`/rst_source/guides/hetero`.
 
-Franky Backend (Optional)
------------------------------
+Legacy ROS Backend (Optional)
+---------------------------------
 
-`Franky <https://github.com/TimSchneider42/franky>`_ controls the arm through
-Python bindings to libfranka, without ROS. Consider it when the robot host
-cannot run Ubuntu 20.04 and ROS Noetic, or when you do not want to build a
-catkin workspace. The rest of this page applies unchanged once the backend is
-selected.
+RLinf can also drive the arm through ROS Noetic, ``franka_ros``, and
+``serl_franka_controllers`` instead of Franky. Use this backend for an existing
+ROS deployment, or when your firmware needs a libfranka version other than
+0.15.0 or 0.19.0. It requires Ubuntu 20.04, because ROS Noetic does not support
+later releases. Everything else on this page applies once the backend is
+installed and selected.
 
-The Franky environment installs a prebuilt ``franky-control`` wheel that
-bundles libfranka. Wheels exist only for x86-64 and for libfranka 0.15.0 and
-0.19.0 (the default), so your firmware must be compatible with one of them.
-Install into a separate environment so it does not replace the ROS one:
+Install the ROS Environment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Install into a separate environment so it does not replace the Franky one, and
+pass the libfranka version you chose:
 
 .. code:: bash
 
-   LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh embodied --env franka-franky --venv franky
-   source franky/bin/activate
+   LIBFRANKA_VERSION=0.15.0 bash requirements/install.sh embodied --env franka-ros --venv franka-ros
+   source franka-ros/bin/activate
 
-Set ``FRANKY_WHEEL`` to a wheel URL or local path if the host cannot download
-from GitHub. In the Docker image, run ``source switch_env franky`` instead;
-it bundles libfranka 0.19.0, so firmware that needs 0.15.0 installs natively.
+What this does:
 
-Select the backend in each Franka hardware config. Franky applies libfranka's
-real-time mode from the same config: ``enforce``, the default, refuses a kernel
-without PREEMPT_RT, and ``ignore`` runs on a standard kernel with the control
-risks described in `Run without a Real-Time Kernel`_:
+1. Installs the same RLinf and training dependencies as the Franky
+   environment, and ROS Noetic through APT.
+2. Builds libfranka, RLinf's ``franka_ros`` fork, and
+   ``serl_franka_controllers`` in the catkin workspace
+   ``franka-ros/franka_catkin_ws``, and writes ``realtime_config`` into its
+   ``franka_control_node.yaml``.
+3. Appends the ROS and catkin ``setup.bash`` scripts to the environment's
+   activate script, so activating the environment also loads ROS.
+
+The ROS environment reads these variables:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Variable
+     - Default
+     - Effect
+   * - ``LIBFRANKA_VERSION``
+     - ``0.15.0``
+     - libfranka release to build. Must match the robot firmware.
+   * - ``FRANKA_ROS_VERSION``
+     - ``0.10.0``
+     - Branch of the ``franka_ros`` fork to build.
+   * - ``FRANKA_REALTIME_CONFIG``
+     - ``enforce``
+     - ``ignore`` lets libfranka run on a kernel without PREEMPT_RT.
+   * - ``SKIP_ROS``
+     - ``0``
+     - ``1`` skips ROS Noetic and the catkin build.
+
+Check the build with ``rospack find serl_franka_controllers``, which prints the
+controller package path inside the catkin workspace.
+
+.. warning::
+
+   With ``SKIP_ROS=1``, you provide ROS Noetic, libfranka, ``franka_ros``, and
+   ``serl_franka_controllers`` yourself. Source ``/opt/ros/noetic/setup.bash``
+   and your catkin workspace's ``devel/setup.bash``, and make sure libfranka is
+   on ``LD_LIBRARY_PATH``, in every shell before ``ray start``. Ray workers
+   inherit the environment of the shell that started Ray. For manual
+   installation, see the `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_,
+   `libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_,
+   and `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_
+   guides.
+
+In the Docker image, run ``source switch_env franka-<version>`` with the
+libfranka version you need, for example ``source switch_env franka-0.15.0``,
+instead of installing.
+
+Select the Backend and Real-Time Mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Set ``backend: franka_ros`` in each Franka hardware config:
 
 .. code:: yaml
 
@@ -722,30 +781,38 @@ risks described in `Run without a Real-Time Kernel`_:
      - robot_ip: ROBOT_IP
        node_rank: 0
        camera_serials: ["CAMERA_SERIAL"]
-       backend: franky
-       realtime_config: ignore  # Omit on a real-time kernel.
+       backend: franka_ros
 
-``realtime_config`` is valid only with ``backend: franky``. The default
-``franka_ros`` backend rejects it and takes the mode from
-``FRANKA_REALTIME_CONFIG`` at installation instead. The controller check tool
-takes the same choices as flags:
+The ROS backend takes its real-time mode from ``FRANKA_REALTIME_CONFIG`` at
+installation, not from the hardware config. ``franka_control`` reads the
+installed value at every launch; the default ``enforce`` refuses a kernel
+without PREEMPT_RT. To change it, re-run the installer with
+``FRANKA_REALTIME_CONFIG=ignore`` or ``enforce``; no rebuild is needed. A
+``realtime_config`` key in a ``franka_ros`` hardware config raises an error
+that points to this variable. The Docker image's ROS environments keep
+``enforce``, so run them on a host with a real-time kernel.
+
+The controller check tool selects the backend with a flag:
 
 .. code:: bash
 
-   python -m toolkits.realworld_check.test_franka_controller \
-     --backend franky --realtime-config ignore
-
-Franky also tries to lock memory and raise its thread priority, so the limits in
-`Allow Real-Time Scheduling`_ apply. If a Franky impedance controller stops
-unexpectedly, RLinf reports the motion error rather than silently restarting
-it. Resolve the cause before restarting training. In direct Python use, call
-``disconnect()`` and then ``connect()`` before resuming commands;
-``clear_errors()`` does not restart failed tracking.
+   python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
 
 Other Franka Workflows
 --------------------------
 
-After completing the base example, use these guides for other setups:
+The installer combines the Franka dependencies with other models and end
+effectors. ``--env franka-dexhand`` adds dexterous-hand dependencies to the
+Franky environment. For a VLA policy, install the model and Franka together:
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model openpi --env franka --venv openpi
+   source openpi/bin/activate
+
+Replace ``openpi`` with ``openvla``, ``openvla-oft``, or ``gr00t`` as needed.
+These commands install dependencies; the guides below cover model weights,
+task configuration, and training:
 
 - :doc:`franka_gello` and :doc:`franka_vr` for GELLO or PICO teleoperation.
 - :doc:`franka_pi0_sft_deploy` and :doc:`hg-dagger` for OpenPI policies.

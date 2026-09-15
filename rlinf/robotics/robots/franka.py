@@ -29,12 +29,12 @@ class FrankaRobot(Robot):
     """Composable Franka robot.
 
     Single-arm by default. :class:`~..dual_franka.DualFrankaRobot` inherits the
-    declaration logic and only changes the backend and the arm count.
+    declaration logic and changes the arm count.
     """
 
     ROBOT_TYPE = "Franka"
 
-    BACKEND: str = "franka_ros"
+    BACKEND: str = "franky"
     """Registered arm backend used by this robot.
 
     Subclasses may select another backend while reusing the same composition.
@@ -221,9 +221,9 @@ class FrankaConfig(RobotConfig):
     ``None`` leaves the choice to the robot class's own :attr:`BACKEND`."""
 
     realtime_config: Optional[str] = None
-    """libfranka real-time mode for the ``franky`` backend: ``"enforce"``
-    (libfranka's default when ``None``) refuses a kernel without PREEMPT_RT;
-    ``"ignore"`` runs on one. ``franka_ros`` refuses this field because
+    """libfranka real-time mode for the ``franky`` backend: ``"ignore"`` (the
+    default when ``None``) runs on a kernel without PREEMPT_RT, and ``"enforce"``
+    refuses one. ``franka_ros`` refuses this field because
     franka_control reads the mode from its launch config, which
     ``FRANKA_REALTIME_CONFIG`` sets at install time."""
 

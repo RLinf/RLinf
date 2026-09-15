@@ -86,14 +86,15 @@ Robot Nodes
 ~~~~~~~~~~~
 
 Run the robot-node installation on both ``node 0`` and ``node 1``. Dual-arm
-Franka always drives the arms through Franky, so install the ``franka-franky``
-environment. It downloads a prebuilt Franky wheel with libfranka bundled; these
-wheels exist only for libfranka ``0.15.0`` and ``0.19.0`` (the default) on
-x86_64. Set ``LIBFRANKA_VERSION`` to the one that the official `Franka
-compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_
-lists for your firmware. For other firmware, build a Franky wheel against the
-matching libfranka and pass its path or URL in ``FRANKY_WHEEL``; the ROS backend
-covers other libfranka versions only for single-arm Franka.
+Franka always drives the arms through Franky, the backend that the default
+``franka`` environment installs. The installer downloads a prebuilt Franky wheel
+with libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
+``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to the one that the
+official `Franka compatibility
+matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for your
+firmware. For other firmware, build a Franky wheel against the matching libfranka
+and pass its path or URL in ``FRANKY_WHEEL``; the legacy ROS backend covers other
+libfranka versions only for single-arm Franka.
 
 .. code-block:: bash
 
@@ -101,7 +102,7 @@ covers other libfranka versions only for single-arm Franka.
    cd RLinf
 
    export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
 Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
@@ -111,16 +112,17 @@ The two GELLO leaders must stay local to ``node 0``; do not route their
 Real-time prerequisites
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``franka-franky`` uses franky/libfranka to communicate with each Franka at
-1 kHz. The RLinf installer installs runtime dependencies only; configure the
-PREEMPT_RT kernel and real-time permissions according to the official `Franka
-real-time kernel guide
+The ``franka`` environment uses franky/libfranka to communicate with each Franka
+at 1 kHz. A PREEMPT_RT kernel is recommended. The RLinf installer installs
+runtime dependencies only; configure the PREEMPT_RT kernel and real-time
+permissions according to the official `Franka real-time kernel guide
 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
 
-By default libfranka refuses to start on a kernel without PREEMPT_RT. Setting
-``realtime_config: ignore`` in the ``DualFranka`` hardware config lets both arms
-run on a standard kernel, but the 1 kHz control loop can then miss deadlines
-under load and trigger a robot reflex. Keep the default for regular runs.
+The ``DualFranka`` hardware config defaults to ``realtime_config: ignore``, so
+both arms also start on a kernel without PREEMPT_RT and RLinf logs a warning.
+On such a kernel the 1 kHz control loop can miss deadlines under load and
+trigger a robot reflex. Set ``realtime_config: enforce`` to refuse a kernel
+without PREEMPT_RT.
 
 Run this example on each workstation that directly communicates with a Franka
 before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and

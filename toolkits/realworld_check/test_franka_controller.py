@@ -45,14 +45,14 @@ def _parse_args() -> argparse.Namespace:
         "--backend",
         default=FrankaRobot.BACKEND,
         choices=sorted(Arm.backends()),
-        help="Arm backend (default: franka_ros). Use franky to reach libfranka "
-        "without ROS.",
+        help="Arm backend (default: franky). Use franka_ros for the legacy ROS "
+        "Noetic stack.",
     )
     parser.add_argument(
         "--realtime-config",
         default=None,
         choices=["enforce", "ignore"],
-        help="libfranka real-time mode for --backend franky (default: enforce). "
+        help="libfranka real-time mode for --backend franky (default: ignore). "
         "franka_ros takes it from FRANKA_REALTIME_CONFIG at install time.",
     )
     parser.add_argument(

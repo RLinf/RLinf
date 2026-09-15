@@ -133,9 +133,9 @@ class DualFrankaConfig(RobotConfig):
     """Impedance settings for the right arm. Falls back to :attr:`compliance`."""
 
     realtime_config: Optional[str] = None
-    """libfranka real-time mode for both arms: ``"enforce"`` (libfranka's
-    default when ``None``) refuses a kernel without PREEMPT_RT; ``"ignore"``
-    runs on one."""
+    """libfranka real-time mode for both arms: ``"ignore"`` (the default when
+    ``None``) runs on a kernel without PREEMPT_RT, and ``"enforce"`` refuses
+    one."""
 
     left_camera_serials: Optional[list[str]] = None
     """Camera serial numbers for the left arm's wrist camera(s)."""

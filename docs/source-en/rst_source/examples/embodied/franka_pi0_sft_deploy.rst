@@ -87,8 +87,8 @@ Hardware Requirements
 
 .. note::
 
-   For ROS, libfranka, and real-time kernel setup on the robot computer, see
-   the Installation section in :doc:`franka`.
+   For Franky installation, firmware compatibility, and real-time kernel setup
+   on the robot computer, see the Installation section in :doc:`franka`.
 
 Software Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -98,13 +98,14 @@ needs the Franka controller environment; follow the Installation section in
 :doc:`franka`.
 
 The **training / rollout node** (SFT training + deployment) needs the OpenPI
-model environment. When it is the same machine as the robot computer, install
-it into a separate directory with ``--venv``:
+model environment. Adding ``--env franka`` also installs the Franky dependencies,
+so when the robot computer is the GPU machine itself, this one environment serves
+both roles:
 
 .. code:: bash
 
    # For mainland China users, you can add `--use-mirror` to the install.sh command.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
 
 .. note::

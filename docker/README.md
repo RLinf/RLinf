@@ -35,10 +35,10 @@ docker build -f docker/Dockerfile \
 
 ### Building for Franka
 
-The `embodied-franka` target builds on CUDA and Ubuntu 20.04 with ROS Noetic. It holds one
-`franka-<libfranka-version>` venv per supported libfranka release
-(`franka-0.15.0` is active by default), a `franky` venv for the Franky backend
-(libfranka 0.19.0), and `franka-dexhand`. Its venvs carry CUDA PyTorch, so one
+The `embodied-franka` target builds on CUDA and Ubuntu 20.04. Its default `franky`
+venv runs the Franky backend (libfranka 0.19.0), the `franka-<libfranka-version>`
+venvs keep the legacy ROS Noetic backend, and `franka-dexhand` adds dexterous-hand
+dependencies. Its venvs carry CUDA PyTorch, so one
 container can run the actor, rollout, and robot control; run it with `--gpus all`
 on a host with the NVIDIA driver and NVIDIA Container Toolkit. See the
 [Franka example](../docs/source-en/rst_source/examples/embodied/franka.rst).
