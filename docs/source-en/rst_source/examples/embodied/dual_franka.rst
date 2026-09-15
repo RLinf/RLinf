@@ -86,7 +86,8 @@ Robot Nodes
 ~~~~~~~~~~~
 
 Run the robot-node installation on both ``node 0`` and ``node 1``.
-Choose ``LIBFRANKA_VERSION`` from the official `Franka compatibility
+The installer defaults to libfranka 0.19.0. Override ``LIBFRANKA_VERSION``
+only if your firmware requires another version from the official `Franka compatibility
 matrix <https://frankarobotics.github.io/docs/compatibility.html>`_; avoid
 libfranka ``0.18.0``.
 
@@ -95,7 +96,6 @@ libfranka ``0.18.0``.
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # replace with your compatible version
    bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 

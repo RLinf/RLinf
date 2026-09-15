@@ -357,7 +357,7 @@ RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-franka-image
 
 # Install all venvs in one layer to share cached wheels through hardlinks.
-RUN LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky-0.19.0 --env franka && \
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky-0.19.0 --env franka && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env franka && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env franka && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env franka && \

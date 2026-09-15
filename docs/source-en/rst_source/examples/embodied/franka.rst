@@ -71,10 +71,12 @@ Hardware Setup
 ------------------
 
 Connect the Franka arm to the computer through a wired network interface.
-Connect a RealSense camera and a SpaceMouse by USB. Install an NVIDIA driver
-and, for Docker, NVIDIA Container Toolkit as described in
-:doc:`/rst_source/start/installation`. The commands below assume an x86-64
-Ubuntu 22.04 host.
+Connect a RealSense camera and a SpaceMouse by USB. The commands below assume
+an x86-64 Ubuntu 22.04 host. Install an NVIDIA driver using the
+`Ubuntu driver guide <https://ubuntu.com/server/docs/how-to/graphics/install-nvidia-drivers/>`_,
+or follow the real-time kernel and CUDA steps below if you choose that kernel.
+For Docker, also complete NVIDIA's `Container Toolkit installation and Docker
+configuration <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
 
 .. warning::
 
@@ -91,8 +93,8 @@ The image bundles libfranka 0.19.0. If your firmware requires a different
 version, use the custom installation below.
 Do not change robot firmware merely to match this example.
 
-Real-Time Kernel (Optional)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Real-Time Kernel Installation (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A PREEMPT_RT kernel is recommended for Franky's time-sensitive control loop.
 It is optional in the RLinf workflow: the driver attempts real-time scheduling
@@ -100,12 +102,120 @@ and memory locking but can continue when they are unavailable. Without a
 real-time kernel, control can be less responsive under heavy CPU or GPU
 training load; missed control deadlines can also stop a motion.
 
-For more predictable control, follow Franka's
-`real-time kernel instructions <https://frankarobotics.github.io/docs/installation_linux.html#setting-up-the-real-time-kernel>`_
-on the host. Docker shares the host kernel, so installing a kernel inside the
-container does not enable real-time control. The Docker command below grants
-real-time priority and memory-locking permissions. Before training, verify
-control under your intended training load with an operator present.
+Install the kernel on the host, not inside Docker: containers share the host
+kernel. For Ubuntu 22.04, prefer the Ubuntu Pro method below. Without an Ubuntu
+Pro subscription, use Franka's `manual kernel installation guide
+<https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
+
+.. warning::
+
+   NVIDIA drivers are not officially supported on PREEMPT_RT kernels. The
+   ``IGNORE_PREEMPT_RT_PRESENCE=1`` workaround bypasses the driver's build-time
+   check; it does not guarantee compatibility. Keep your existing kernel as a
+   GRUB fallback, and check both the GPU and robot before training.
+
+Install the Ubuntu Pro Kernel
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+On the host, update the Pro client and attach an eligible Ubuntu Pro subscription.
+Skip ``pro attach`` if the machine is already attached. These commands follow
+the `Ubuntu Pro installation guide
+<https://ubuntu.com/pro-client/docs/en/docs/howtoguides/enable_realtime_kernel/>`_:
+
+.. code:: bash
+
+   sudo apt update
+   sudo apt install ubuntu-pro-client
+   sudo pro attach
+   sudo env IGNORE_PREEMPT_RT_PRESENCE=1 pro enable realtime-kernel
+
+Read and confirm the prompts, including disabling Livepatch if requested. The
+environment variable allows any existing NVIDIA DKMS driver to attempt a rebuild
+for the new kernel. After installation succeeds, save your work and reboot:
+
+.. code:: bash
+
+   sudo reboot
+
+Select the real-time kernel in GRUB if it is not selected automatically. After
+logging back in, check the running kernel:
+
+.. code:: bash
+
+   uname -r
+   cat /sys/kernel/realtime
+
+The second command must print ``1``. If it does not, select the installed
+real-time kernel under GRUB's advanced options before continuing.
+
+Use CUDA with the Real-Time Kernel
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The GPU host needs an NVIDIA driver built for the running real-time kernel.
+If ``nvidia-smi`` already lists your GPU after reboot, keep that driver. Otherwise,
+the following APT installation uses NVIDIA's open driver for Turing and newer
+GPUs. For older GPUs or an existing runfile installation, follow NVIDIA's
+`driver installation guide <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_
+to select a compatible driver without mixing installation methods.
+
+.. code:: bash
+
+   sudo apt install build-essential dkms wget "linux-headers-$(uname -r)"
+   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+   sudo dpkg -i cuda-keyring_1.1-1_all.deb
+   sudo apt update
+   sudo env IGNORE_PREEMPT_RT_PRESENCE=1 apt install nvidia-open
+   sudo reboot
+
+If Secure Boot requests Machine Owner Key (MOK) enrollment, complete it during
+reboot so the new driver can load. Check ``nvidia-smi`` again on the real-time
+kernel. Do not start training if the GPU is unavailable; use the previous kernel
+to recover. Apply the same real-time override when rebuilding the driver after
+kernel updates.
+
+For Docker, the Franka image already contains CUDA; only the driver and NVIDIA
+Container Toolkit are needed on the host, as described in Hardware Setup above.
+For a custom environment, also install CUDA 12.8 from NVIDIA's APT repository
+configured above. If you skipped the driver installation, first run its
+``wget``, ``dpkg``, and ``apt update`` commands to register the repository.
+Use the `toolkit-only package
+<https://docs.nvidia.com/cuda/archive/12.8.0/cuda-installation-guide-linux/#meta-packages>`_
+so this step does not replace the driver:
+
+.. code:: bash
+
+   sudo apt install cuda-toolkit-12-8
+   export CUDA_HOME=/usr/local/cuda-12.8
+   export PATH="$CUDA_HOME/bin:$PATH"
+   nvcc --version
+
+Keep these exports in each training shell, or add them to your shell startup
+file. ``nvcc`` should report CUDA 12.8. The environment check below verifies
+that PyTorch can also use the GPU.
+
+Allow Real-Time Scheduling
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The Docker command below grants real-time priority and memory-locking
+permissions. For a custom environment, add your login account to a dedicated
+group on the host:
+
+.. code:: bash
+
+   getent group realtime || sudo groupadd realtime
+   sudo usermod -aG realtime "$(id -un)"
+   sudoedit /etc/security/limits.d/99-rlinf-realtime.conf
+
+Add the following limits to that file, then log out and back in:
+
+.. code:: text
+
+   @realtime - rtprio 99
+   @realtime - memlock unlimited
+
+In the new login shell, ``ulimit -r`` should print ``99`` and ``ulimit -l``
+should print ``unlimited``. Before training, verify control under your intended
+training load with an operator present.
 
 Installation
 ----------------
@@ -123,19 +233,17 @@ for the CNN training example.
 Docker (Recommended)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Build the Franka image from this checkout, then start the container:
+Pull the Franka image and start the container:
 
 .. code:: bash
 
-   docker build -f docker/Dockerfile \
-     --build-arg BUILD_TARGET=embodied-franka \
-     --build-arg NO_MIRROR=1 -t rlinf:franka .
+   docker pull rlinf/rlinf:agentic-rlinf0.4-franka
 
    docker run -it --name rlinf-franka --gpus all \
      --network host --privileged --shm-size 20g \
      --ulimit rtprio=99 --ulimit memlock=-1 \
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
-     rlinf:franka bash
+     rlinf/rlinf:agentic-rlinf0.4-franka bash
 
 The image uses CUDA and Ubuntu 22.04. Inside it, activate the bundled Franky
 environment and keep using it for every step:
@@ -154,10 +262,12 @@ Install the dependencies without Docker:
 
 .. code:: bash
 
-   LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh embodied --env franka
+   bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
-Set ``LIBFRANKA_VERSION=0.15.0`` instead when required. The installer uses
+The installer defaults to libfranka 0.19.0. Set
+``LIBFRANKA_VERSION=0.15.0`` before the command only if your firmware requires it.
+The installer uses
 versioned Franky wheels with libfranka included; a separate libfranka or ROS
 installation is unnecessary. Outside Docker, your account must be able to read
 the camera and SpaceMouse USB devices; see the device-permission instructions in
@@ -340,8 +450,7 @@ the CPU-only environment from the repository root:
 
 .. code:: bash
 
-   UV_TORCH_BACKEND=cpu LIBFRANKA_VERSION=0.19.0 \
-     bash requirements/install.sh embodied --env franka
+   UV_TORCH_BACKEND=cpu bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
    python -c "import franky, torch; assert torch.version.cuda is None"
 
@@ -390,8 +499,8 @@ demonstration files for training. Stop Ray on both nodes when finished. See
 Legacy ROS Backend
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Existing ROS Noetic deployments can use the explicit
-``embodied-franka-ros`` Docker build target or
+Existing ROS Noetic deployments can use the
+``rlinf/rlinf:agentic-rlinf0.4-franka-ros`` Docker image or
 ``bash requirements/install.sh embodied --env franka-ros`` on Ubuntu 20.04.
 Set ``backend: franka_ros`` in each Franka hardware config and activate the
 matching ``franka-<libfranka-version>`` environment before starting Ray.
@@ -418,7 +527,7 @@ workflow for model weights, task configuration, and training.
 After completing the base example, use these guides for other setups:
 
 - :doc:`franka_gello` and :doc:`franka_vr` for GELLO or PICO teleoperation.
-- :doc:`franka_zed_robotiq` and :doc:`franka_dexhand` for other cameras and end effectors.
-- :doc:`franka_reward_model` for learned rewards.
 - :doc:`franka_pi0_sft_deploy` and :doc:`hg-dagger` for OpenPI policies.
+- :doc:`franka_reward_model` for learned rewards.
+- :doc:`franka_zed_robotiq` and :doc:`franka_dexhand` for other cameras and end effectors.
 - :doc:`dual_franka` for dual-arm control and :doc:`/rst_source/guides/rtc` for overlapping action execution with inference.

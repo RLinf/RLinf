@@ -91,7 +91,7 @@
 - 数据手套控制 6 维手指动作
 - SpaceMouse 左键用于启用相对手套控制
 
-Reward Model
+奖励模型
 ------------
 
 reward model 侧与 :doc:`franka_reward_model` 中的 Franka 真机流程一致。

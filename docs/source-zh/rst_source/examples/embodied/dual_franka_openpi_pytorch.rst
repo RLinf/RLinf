@@ -1,5 +1,5 @@
-使用 OpenPI PyTorch 完成双 Franka 策略微调与部署
-================================================
+使用 OpenPI PyTorch 完成双臂 Franka policy 微调与部署
+====================================================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center
@@ -85,16 +85,13 @@
 机器人节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 ``node 0`` 和 ``node 1`` 上分别执行机器人节点安装。根据 Franka 官方 `compatibility matrix
-<https://frankarobotics.github.io/docs/compatibility.html>`_ 选择
-``LIBFRANKA_VERSION``；避免使用 libfranka ``0.18.0``。
+在 ``node 0`` 和 ``node 1`` 上分别执行机器人节点安装。安装脚本默认使用 libfranka 0.19.0；仅当固件需要其他版本时，才根据 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 设置 ``LIBFRANKA_VERSION``。避免使用 libfranka ``0.18.0``。
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
    bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 

@@ -62,7 +62,7 @@ Policy 从相机图像和机器人状态中学习，成功演示用于提供初�
 硬件准备
 --------
 
-通过有线网络将 Franka 连接到计算机，并通过 USB 连接 RealSense 相机和 SpaceMouse。按照 :doc:`/rst_source/start/installation` 安装 NVIDIA 驱动；使用 Docker 时还需安装 NVIDIA Container Toolkit。下方命令以 x86-64 Ubuntu 22.04 主机为例。
+通过有线网络将 Franka 连接到计算机，并通过 USB 连接 RealSense 相机和 SpaceMouse。下方命令以 x86-64 Ubuntu 22.04 主机为例。按照 `Ubuntu 驱动安装指南 <https://ubuntu.com/server/docs/how-to/graphics/install-nvidia-drivers/>`_ 安装 NVIDIA 驱动；如果选择实时内核，则先完成下方的内核与 CUDA 安装步骤。使用 Docker 时，还需按照 NVIDIA 官方指南完成 `Container Toolkit 安装与 Docker 配置 <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_。
 
 .. warning::
 
@@ -70,12 +70,90 @@ Policy 从相机图像和机器人状态中学习，成功演示用于提供初�
 
 在机器人的地址打开 Franka Desk，记录 Control 固件版本，并根据 `Franka 兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择 libfranka 版本。镜像内置 libfranka 0.19.0；如果固件要求其他版本，请使用下方的自定义安装方式。不要仅为匹配示例而修改机器人固件。
 
-实时内核（可选）
-~~~~~~~~~~~~~~~~
+实时内核安装（可选）
+~~~~~~~~~~~~~~~~~~~~
 
 建议使用 PREEMPT_RT 内核，以满足 Franky 控制循环对时序的要求。在 RLinf 工作流中，实时内核是可选的：驱动会尝试设置实时调度和锁定内存，无法启用时仍可继续运行。没有实时内核时，较重的 CPU 或 GPU 训练负载可能使控制响应变慢；错过控制周期也可能导致运动停止。
 
-如需更稳定的控制时序，请在宿主机上按照 Franka 的 `实时内核安装说明 <https://frankarobotics.github.io/docs/installation_linux.html#setting-up-the-real-time-kernel>`_ 配置内核。Docker 与宿主机共享内核，在容器内安装内核不会启用实时控制。下方 Docker 命令已授予实时优先级和内存锁定权限。开始训练前，应在操作员监控下检查预期训练负载对控制的影响。
+在宿主机上安装内核，不要在 Docker 容器内安装，因为容器与宿主机共享内核。Ubuntu 22.04 优先使用下方的 Ubuntu Pro 安装方式。没有 Ubuntu Pro 订阅时，可按照 Franka 的 `手动内核安装指南 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_ 编译安装。
+
+.. warning::
+
+   NVIDIA 驱动未正式支持 PREEMPT_RT 内核。``IGNORE_PREEMPT_RT_PRESENCE=1`` 仅跳过驱动构建时的检查，不保证兼容性。请保留原内核作为 GRUB 回退选项，并在训练前检查 GPU 和机器人。
+
+安装 Ubuntu Pro 内核
+^^^^^^^^^^^^^^^^^^^^
+
+在宿主机上更新 Pro 客户端并关联符合条件的 Ubuntu Pro 订阅。已关联的机器可跳过 ``pro attach``。以下命令参考 `Ubuntu Pro 安装指南 <https://ubuntu.com/pro-client/docs/en/docs/howtoguides/enable_realtime_kernel/>`_：
+
+.. code:: bash
+
+   sudo apt update
+   sudo apt install ubuntu-pro-client
+   sudo pro attach
+   sudo env IGNORE_PREEMPT_RT_PRESENCE=1 pro enable realtime-kernel
+
+阅读并确认交互提示；如提示与 Livepatch 冲突，按提示停用 Livepatch。环境变量允许已有的 NVIDIA DKMS 驱动尝试为新内核重新构建。安装成功后，保存工作并重启：
+
+.. code:: bash
+
+   sudo reboot
+
+如果 GRUB 未自动选择实时内核，请手动选择。重新登录后检查当前内核：
+
+.. code:: bash
+
+   uname -r
+   cat /sys/kernel/realtime
+
+第二条命令必须输出 ``1``，否则请先从 GRUB 的高级选项中选择已安装的实时内核。
+
+在实时内核上使用 CUDA
+^^^^^^^^^^^^^^^^^^^^^^
+
+GPU 主机需要为当前实时内核构建的 NVIDIA 驱动。如果重启后 ``nvidia-smi`` 已能列出 GPU，可保留现有驱动；否则，使用下方 APT 命令安装适用于 Turing 及更新架构 GPU 的 NVIDIA 开放驱动。旧架构 GPU 或已有 runfile 安装请参考 NVIDIA 的 `驱动安装指南 <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_，选择兼容驱动，避免混用安装方式。
+
+.. code:: bash
+
+   sudo apt install build-essential dkms wget "linux-headers-$(uname -r)"
+   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+   sudo dpkg -i cuda-keyring_1.1-1_all.deb
+   sudo apt update
+   sudo env IGNORE_PREEMPT_RT_PRESENCE=1 apt install nvidia-open
+   sudo reboot
+
+如果 Secure Boot 要求注册 Machine Owner Key（MOK），请在重启时完成注册，以便加载新驱动。在实时内核下再次检查 ``nvidia-smi``；如果 GPU 不可用，不要开始训练，可先使用原内核恢复系统。后续内核更新需要重新构建驱动时，同样需要设置实时检查的覆盖变量。
+
+使用 Docker 时，Franka 镜像已包含 CUDA；宿主机只需按前文硬件准备中的说明安装驱动和 NVIDIA Container Toolkit。使用自定义环境时，还需从上方配置的 NVIDIA APT 源安装 CUDA 12.8。如果跳过了驱动安装，请先执行其中的 ``wget``、``dpkg`` 和 ``apt update`` 命令注册软件源。使用 `仅包含 toolkit 的安装包 <https://docs.nvidia.com/cuda/archive/12.8.0/cuda-installation-guide-linux/#meta-packages>`_，避免此步骤替换驱动：
+
+.. code:: bash
+
+   sudo apt install cuda-toolkit-12-8
+   export CUDA_HOME=/usr/local/cuda-12.8
+   export PATH="$CUDA_HOME/bin:$PATH"
+   nvcc --version
+
+在每个训练终端保留这两条环境变量设置，或将其加入 shell 启动文件。``nvcc`` 应显示 CUDA 12.8；下方的环境检查还会验证 PyTorch 能否使用 GPU。
+
+授予实时调度权限
+^^^^^^^^^^^^^^^^
+
+下方 Docker 命令已授予实时优先级和内存锁定权限。使用自定义环境时，在宿主机上将登录账户加入专用用户组：
+
+.. code:: bash
+
+   getent group realtime || sudo groupadd realtime
+   sudo usermod -aG realtime "$(id -un)"
+   sudoedit /etc/security/limits.d/99-rlinf-realtime.conf
+
+将以下内容写入该文件，然后退出并重新登录：
+
+.. code:: text
+
+   @realtime - rtprio 99
+   @realtime - memlock unlimited
+
+在新登录的终端中，``ulimit -r`` 应输出 ``99``，``ulimit -l`` 应输出 ``unlimited``。开始训练前，应在操作员监控下检查预期训练负载对控制的影响。
 
 安装
 ----
@@ -92,19 +170,17 @@ Policy 从相机图像和机器人状态中学习，成功演示用于提供初�
 Docker（推荐）
 ~~~~~~~~~~~~~~
 
-从当前代码构建 Franka 镜像，并启动容器：
+拉取 Franka 镜像并启动容器：
 
 .. code:: bash
 
-   docker build -f docker/Dockerfile \
-     --build-arg BUILD_TARGET=embodied-franka \
-     --build-arg NO_MIRROR=1 -t rlinf:franka .
+   docker pull rlinf/rlinf:agentic-rlinf0.4-franka
 
    docker run -it --name rlinf-franka --gpus all \
      --network host --privileged --shm-size 20g \
      --ulimit rtprio=99 --ulimit memlock=-1 \
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
-     rlinf:franka bash
+     rlinf/rlinf:agentic-rlinf0.4-franka bash
 
 镜像使用 CUDA 和 Ubuntu 22.04。在容器内激活已安装的 Franky 环境，并在后续步骤中保持一致：
 
@@ -121,10 +197,10 @@ Docker（推荐）
 
 .. code:: bash
 
-   LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh embodied --env franka
+   bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
-根据固件需要，可将版本改为 ``LIBFRANKA_VERSION=0.15.0``。安装脚本使用包含 libfranka 的版本化 Franky wheel，无需另行安装 libfranka 或 ROS。在 Docker 外运行时，当前用户必须具有相机和 SpaceMouse USB 设备的读取权限；参见 :doc:`/rst_source/start/installation` 和 `SpaceMouse 安装说明 <https://github.com/JakubAndrysek/PySpaceMouse#installation>`_。
+安装脚本默认使用 libfranka 0.19.0；仅当固件需要时，才在命令前设置 ``LIBFRANKA_VERSION=0.15.0``。安装脚本使用包含 libfranka 的版本化 Franky wheel，无需另行安装 libfranka 或 ROS。在 Docker 外运行时，当前用户必须具有相机和 SpaceMouse USB 设备的读取权限；参见 :doc:`/rst_source/start/installation` 和 `SpaceMouse 安装说明 <https://github.com/JakubAndrysek/PySpaceMouse#installation>`_。
 
 检查环境
 ~~~~~~~~
@@ -271,8 +347,7 @@ Docker（推荐）
 
 .. code:: bash
 
-   UV_TORCH_BACKEND=cpu LIBFRANKA_VERSION=0.19.0 \
-     bash requirements/install.sh embodied --env franka
+   UV_TORCH_BACKEND=cpu bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
    python -c "import franky, torch; assert torch.version.cuda is None"
 
@@ -307,7 +382,7 @@ libfranka 版本选择与前文一致，自定义环境的设备权限说明和�
 兼容已有 ROS 环境
 ~~~~~~~~~~~~~~~~~
 
-已有的 ROS Noetic 部署可使用显式的 ``embodied-franka-ros`` Docker 构建目标，或在 Ubuntu 20.04 上执行 ``bash requirements/install.sh embodied --env franka-ros``。在每个 Franka 硬件配置中设置 ``backend: franka_ros``，并在启动 Ray 前激活匹配的 ``franka-<libfranka-version>`` 环境。仍需遵守 ROS 控制器的固件与实时性要求；Franky 的可选实时调度行为不会改变 ROS 的要求。
+已有的 ROS Noetic 部署可使用 ``rlinf/rlinf:agentic-rlinf0.4-franka-ros`` Docker 镜像，或在 Ubuntu 20.04 上执行 ``bash requirements/install.sh embodied --env franka-ros``。在每个 Franka 硬件配置中设置 ``backend: franka_ros``，并在启动 Ray 前激活匹配的 ``franka-<libfranka-version>`` 环境。仍需遵守 ROS 控制器的固件与实时性要求；Franky 的可选实时调度行为不会改变 ROS 的要求。
 
 其他 Franka 工作流
 ------------------
@@ -324,7 +399,7 @@ libfranka 版本选择与前文一致，自定义环境的设备权限说明和�
 完成基础示例后，可按需要参考以下指南：
 
 - :doc:`franka_gello` 与 :doc:`franka_vr`：GELLO 或 PICO 遥操作。
-- :doc:`franka_zed_robotiq` 与 :doc:`franka_dexhand`：其他相机与末端执行器。
-- :doc:`franka_reward_model`：学习奖励模型。
 - :doc:`franka_pi0_sft_deploy` 与 :doc:`hg-dagger`：OpenPI policy。
+- :doc:`franka_reward_model`：学习奖励模型。
+- :doc:`franka_zed_robotiq` 与 :doc:`franka_dexhand`：其他相机与末端执行器。
 - :doc:`dual_franka`：双臂控制；:doc:`/rst_source/guides/rtc`：重叠执行动作与推理。

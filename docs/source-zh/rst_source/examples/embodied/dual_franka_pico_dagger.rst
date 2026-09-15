@@ -1,6 +1,6 @@
 .. _dual-franka-pico-dagger-zh:
 
-双 Franka 使用 PICO 采集与 DAgger
+双臂 Franka 的 PICO 数据采集与 DAgger
 ================================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
@@ -95,16 +95,13 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 机器人节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。根据 Franka 官方
-`compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_
-选择 ``LIBFRANKA_VERSION``；避免使用 libfranka ``0.18.0``。
+在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。安装脚本默认使用 libfranka 0.19.0；仅当固件需要其他版本时，才根据 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 设置 ``LIBFRANKA_VERSION``。避免使用 libfranka ``0.18.0``。
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
    bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
