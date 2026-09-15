@@ -381,7 +381,7 @@ Docker Image for a Controller Node
 The ``rlinf/rlinf:agentic-rlinf0.4-franka`` image is built on Ubuntu 20.04 with
 ROS Noetic and has no GPU stack: PyTorch in it is CPU-only. Use it for the
 controller computer of the multi-node layout, not for the single-machine GPU
-host. It contains one environment per libfranka version, switched with
+host. It contains these environments, switched with
 ``source switch_env <name>``:
 
 .. list-table::
@@ -394,8 +394,9 @@ host. It contains one environment per libfranka version, switched with
        ``franka-0.15.0``, ``franka-0.18.0``, ``franka-0.19.0``
      - ROS backend with that libfranka version. ``franka-0.15.0`` is active by
        default.
-   * - ``franky-0.15.0``, ``franky-0.19.0``
-     - Optional Franky backend; see `Franky Backend (Optional)`_.
+   * - ``franky``
+     - Optional Franky backend with libfranka 0.19.0; see
+       `Franky Backend (Optional)`_.
    * - ``franka-dexhand``
      - ROS backend with dexterous-hand dependencies.
 
@@ -703,8 +704,8 @@ Install into a separate environment so it does not replace the ROS one:
    source franky/bin/activate
 
 Set ``FRANKY_WHEEL`` to a wheel URL or local path if the host cannot download
-from GitHub. In the Docker image, select ``franky-0.15.0`` or
-``franky-0.19.0`` with ``switch_env`` instead.
+from GitHub. In the Docker image, run ``source switch_env franky`` instead;
+it bundles libfranka 0.19.0, so firmware that needs 0.15.0 installs natively.
 
 Select the backend in each Franka hardware config. Franky applies libfranka's
 real-time mode from the same config: ``enforce``, the default, refuses a kernel

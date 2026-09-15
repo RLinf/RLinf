@@ -275,7 +275,7 @@ NVIDIA 内核模块也必须针对实时内核重新编译，而它的编译过�
 用于控制节点的 Docker 镜像
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像基于 Ubuntu 20.04 和 ROS Noetic 构建，不含 GPU 软件栈，其中的 PyTorch 仅支持 CPU。它适合用作多节点方式中的控制计算机，不适合单机方式中的 GPU 主机。镜像为每个 libfranka 版本准备了一个环境，通过 ``source switch_env <name>`` 切换：
+``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像基于 Ubuntu 20.04 和 ROS Noetic 构建，不含 GPU 软件栈，其中的 PyTorch 仅支持 CPU。它适合用作多节点方式中的控制计算机，不适合单机方式中的 GPU 主机。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
 
 .. list-table::
    :header-rows: 1
@@ -285,8 +285,8 @@ NVIDIA 内核模块也必须针对实时内核重新编译，而它的编译过�
      - 内容
    * - ``franka-0.10.0``、``franka-0.13.3``、``franka-0.14.1``、``franka-0.15.0``、``franka-0.18.0``、``franka-0.19.0``
      - 使用对应 libfranka 版本的 ROS 后端，默认激活 ``franka-0.15.0``。
-   * - ``franky-0.15.0``、``franky-0.19.0``
-     - 可选的 Franky 后端，见 `Franky 后端（可选）`_。
+   * - ``franky``
+     - 可选的 Franky 后端，内置 libfranka 0.19.0，见 `Franky 后端（可选）`_。
    * - ``franka-dexhand``
      - ROS 后端及灵巧手依赖。
 
@@ -514,7 +514,7 @@ Franky 环境安装预编译的 ``franky-control`` wheel，其中已包含 libfr
    LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh embodied --env franka-franky --venv franky
    source franky/bin/activate
 
-如果主机无法从 GitHub 下载，可将 ``FRANKY_WHEEL`` 设为 wheel 的 URL 或本地路径。使用 Docker 镜像时，直接通过 ``switch_env`` 选择 ``franky-0.15.0`` 或 ``franky-0.19.0``。
+如果主机无法从 GitHub 下载，可将 ``FRANKY_WHEEL`` 设为 wheel 的 URL 或本地路径。使用 Docker 镜像时，直接执行 ``source switch_env franky``；该环境内置 libfranka 0.19.0，固件需要 0.15.0 时请在主机上直接安装。
 
 在每个 Franka 硬件配置中选择该后端。Franky 同样从这份配置读取 libfranka 的实时模式：默认的 ``enforce`` 会拒绝非 PREEMPT_RT 内核；``ignore`` 可在标准内核上运行，但存在 `不使用实时内核运行`_ 中所述的控制风险：
 

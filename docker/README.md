@@ -37,8 +37,8 @@ docker build -f docker/Dockerfile \
 
 The `embodied-franka` target builds on Ubuntu 20.04 with ROS Noetic. It holds one
 `franka-<libfranka-version>` venv per supported libfranka release
-(`franka-0.15.0` is active by default), `franky-0.15.0` and `franky-0.19.0` venvs
-for the Franky backend, and `franka-dexhand`. The image has no GPU stack, so its
+(`franka-0.15.0` is active by default), a `franky` venv for the Franky backend
+(libfranka 0.19.0), and `franka-dexhand`. The image has no GPU stack, so its
 venvs carry CPU torch; a host that trains beside the robot installs natively
 instead. See the [Franka example](../docs/source-en/rst_source/examples/embodied/franka.rst).
 
