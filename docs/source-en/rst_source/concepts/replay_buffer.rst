@@ -56,6 +56,35 @@ Sampling for Training
 
 Sampling draws transitions within the window and returns a rollout-aligned batch dict.
 
+To overlap replay sampling with SAC training, set
+``algorithm.replay_buffer.enable_preload: True``. The actor uses
+``PreloadReplayBufferDataset`` to prepare batches in a background thread. If
+sampling fails, for example because a trajectory file is missing, iteration raises
+``RuntimeError("Sampling thread failed")`` with the original exception as its cause.
+Inspect that cause to identify the trajectory or storage error.
+
+When using the dataset directly, close it after consuming batches:
+
+.. code-block:: python
+
+   from rlinf.data.storage.replay import PreloadReplayBufferDataset
+
+   dataset = PreloadReplayBufferDataset(
+       replay_buffer=buffer,
+       demo_buffer=None,
+       batch_size=256,
+       min_replay_buffer_size=1,
+       min_demo_buffer_size=0,
+   )
+   try:
+       batch = next(iter(dataset))
+   finally:
+       dataset.close()
+
+``close()`` stops prefetching and ends iteration normally. You can call it more
+than once or before iteration starts. Close the underlying buffers separately
+when you have finished using them.
+
 Save and Load
 -------------
 
