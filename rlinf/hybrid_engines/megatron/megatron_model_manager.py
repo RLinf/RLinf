@@ -817,9 +817,10 @@ class MegatronModelManager:
 
         for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
-                # All model bf16 weights live in two flat _ParamAndGradBuffer groups:
-                #   model_chunk.buffers                (dense/embed/attn, param_data)
-                #   model_chunk.expert_parallel_buffers (experts, param_data)
+                # All bf16 weights live in two flat _ParamAndGradBuffer groups,
+                # model_chunk.buffers and model_chunk.expert_parallel_buffers.
+                # Every parameter is a view into one of their param_data
+                # tensors, so offloading those frees the whole model weight.
                 param_grad_buffers = list(model_chunk.buffers) + list(
                     getattr(model_chunk, "expert_parallel_buffers", [])
                 )
@@ -908,6 +909,7 @@ class MegatronModelManager:
                             buffer.param_data.copy_(
                                 buffer.param_data.cpu_data, non_blocking=True
                             )
+
             else:
                 device_id = Worker.torch_platform.current_device()
                 for _, param in model_chunk.named_parameters():

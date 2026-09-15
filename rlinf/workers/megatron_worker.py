@@ -1110,9 +1110,8 @@ class MegatronWorker(MegatronModelManager, Worker):
             self.inference_cfg.model.tensor_model_parallel_size,
             self.inference_cfg.model.pipeline_model_parallel_size,
         )
-        # Map the actor's TP rank into the inference TP group (1:1 when equal,
-        # else folds multiple actor ranks onto one shard) to avoid narrow()
-        # going out of bounds when actor_tp > inference_tp.
+        # Map the actor's TP rank into the inference TP group, so that narrow()
+        # stays in bounds when actor_tp > inference_tp.
         inference_tp_size = self.inference_cfg.model.tensor_model_parallel_size
         self.inference_dst_tp_rank = (
             parallel_state.get_tensor_model_parallel_rank() % inference_tp_size
@@ -1139,6 +1138,11 @@ class MegatronWorker(MegatronModelManager, Worker):
             if "_extra_state" in key:
                 continue
             model_state_dict[key] = val
+        # Same parallel layout (actor tp/pp == inference tp/pp): each actor
+        # rank sends its local shard to the matching inference rank, and that
+        # shard is exactly what the receiver needs. Skip the redundant
+        # all_gather and narrow, which also avoids producing a non-contiguous
+        # row-parallel slice.
         if (
             self.role_cfg.model.tensor_model_parallel_size
             == self.inference_cfg.model.tensor_model_parallel_size

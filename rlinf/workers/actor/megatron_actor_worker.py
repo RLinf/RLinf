@@ -59,7 +59,9 @@ class MegatronActor(MegatronWorker):
         """
         super().__init__(cfg, placement, role)
 
-        # dst_tp_rank / dst_ep_rank are derived in _setup_rollout_weight_dst_ranks
+        # The sharding coordinates dst_tp_rank / dst_ep_rank are derived in
+        # _setup_rollout_weight_dst_ranks, not here: they follow the target
+        # rollout rank, which the rank map only knows later.
 
         # Algo configurations
         self.calculate_entropy = self.cfg.algorithm.calculate_entropy
@@ -97,16 +99,14 @@ class MegatronActor(MegatronWorker):
         self.rollout_weights_reshard = None
         _rollout_tp = self.cfg.rollout.tensor_parallel_size
         _sglang = self.cfg.rollout.get("sglang", {})
-        # Single source of truth, shared with _setup_rollout_weight_dst_ranks
-        # below — avoids the two diverging (e.g. when ep_size is set without
-        # enable_ep_moe).
+        # Shared with _setup_rollout_weight_dst_ranks so the two cannot
+        # diverge, e.g. when ep_size is set without enable_ep_moe.
         _rollout_attn_tp = self.component_placement.rollout_attn_tp_size
         _rollout_ep = self.component_placement.rollout_ep_size
         _rollout_moe_dense_tp = _sglang.get("moe_dense_tp_size", None)
-        # lm_head TP: sglang ParallelLMHead uses the full engine TP group when
-        # enable_dp_lm_head=False, else the attn_tp group. Either way the
-        # actor (ColumnParallel by actor TP) must gather-to-full + slice to
-        # (dst_lm_head_rank, rollout_lm_head_tp_size) — one path for both flags.
+        # sglang's ParallelLMHead uses the full engine TP group, or the attn_tp
+        # group when enable_dp_lm_head is on. Either way the actor gathers to
+        # full and slices to rollout_lm_head_tp_size, so one path covers both.
         _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
         _rollout_lm_head_tp = _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
         rollout_reshard_config = ReshardConfig(
@@ -322,27 +322,6 @@ class MegatronActor(MegatronWorker):
 
         return forward_output_and_loss_func
 
-    def _get_rollout_model_state_dict(
-        self,
-        bucket_weight,
-        dst_tp_rank,
-        dst_ep_rank,
-        dst_lm_head_rank,
-        dst_shared_rank,
-    ):
-        """Get the resharded state dictionary of the model for a rollout target.
-        All dst_* params are required: colocate callers pass self.dst_*
-        (scalars), disaggregate callers pass self.dst_*[target_idx]
-        (per-target values from the list).
-        """
-        return self.rollout_weights_reshard.gather_and_reshard_model(
-            bucket_weight,
-            dst_tp_rank,
-            dst_ep_rank,
-            dst_lm_head_rank=dst_lm_head_rank,
-            dst_shared_rank=dst_shared_rank,
-        )
-
     def _setup_rollout_weight_dst_ranks(self):
         """Setup destination ranks for token and weight communication.
 
@@ -405,6 +384,35 @@ class MegatronActor(MegatronWorker):
             f"dst_shared_rank={self.dst_shared_rank})"
         )
 
+        # When the only target wants exactly this rank's TP shard, the gather
+        # can clone local shards instead of all_gathering. The decision must be
+        # unanimous, or ranks would disagree about whether a collective runs,
+        # so a single no vote collapses the TP group back to the full gather.
+        # dst_tp_rank is a scalar when collocated, a list when disaggregated,
+        # and an empty list for an actor rank that has no target.
+        if isinstance(self.dst_tp_rank, list):
+            dst_tp_rank_scalar = self.dst_tp_rank[0] if self.dst_tp_rank else None
+        else:
+            dst_tp_rank_scalar = self.dst_tp_rank
+        local_ok = (
+            not self.rollout_weights_reshard.config.enable_dp_attention
+            and self.num_weight_targets == 1
+            and self.rollout_weights_reshard.config.reshard_tp_size
+            == parallel_state.get_tensor_model_parallel_world_size()
+            and dst_tp_rank_scalar == parallel_state.get_tensor_model_parallel_rank()
+        )
+        tp_gather_is_identity = torch.tensor(
+            [1 if local_ok else 0], device=torch.cuda.current_device()
+        )
+        torch.distributed.all_reduce(
+            tp_gather_is_identity,
+            op=torch.distributed.ReduceOp.MIN,
+            group=parallel_state.get_tensor_model_parallel_group(),
+        )
+        self.rollout_weights_reshard.set_tp_gather_is_identity(
+            bool(tp_gather_is_identity.item())
+        )
+
     def divide_model_to_bucket(self):
         model_bucket_list = self.rollout_weights_reshard.divide_model_to_bucket(
             self.model
@@ -415,6 +423,10 @@ class MegatronActor(MegatronWorker):
         """
         Sync the model's full state dict to the rollout worker.
         """
+        assert hasattr(self, "num_weight_targets"), (
+            "num_weight_targets missing — sync_model_to_rollout requires "
+            "init_worker_customize() to have run _setup_rollout_weight_dst_ranks()"
+        )
         if self.recreate_nccl_groups:
             nccl_group_recreate()
         if not self.is_running:
@@ -439,15 +451,21 @@ class MegatronActor(MegatronWorker):
 
         # send bucket size
         if self.num_weight_targets > 0:
+            # Bucket-outer, target-inner: gather once per bucket, then narrow
+            # locally per target. The sent buffers hold views into full_sd, so
+            # prev_full_sd keeps it alive until the next bucket's wait.
             send_handles = []
+            prev_full_sd = None
             for bucket_idx, bucket_weight in enumerate(model_bucket_list):
                 for send_handle in send_handles:
                     send_handle.wait()
                 send_handles = []
+                prev_full_sd = None
 
+                full_sd = self.rollout_weights_reshard.gather_full_model(bucket_weight)
                 if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
-                    buffer = self._get_rollout_model_state_dict(
-                        bucket_weight,
+                    buffer = self.rollout_weights_reshard.narrow_to_target(
+                        full_sd,
                         self.dst_tp_rank,
                         self.dst_ep_rank,
                         dst_lm_head_rank=self.dst_lm_head_rank,
@@ -468,10 +486,10 @@ class MegatronActor(MegatronWorker):
                     send_handles.append(send_handle)
                     del buffer
                 else:
-                    # Disaggregate: per-target reshard (each target may need a different weight slice) + send
+                    # Disaggregate: narrow and send per target.
                     for target_idx in range(self.num_weight_targets):
-                        buffer = self._get_rollout_model_state_dict(
-                            bucket_weight,
+                        buffer = self.rollout_weights_reshard.narrow_to_target(
+                            full_sd,
                             self.dst_tp_rank[target_idx],
                             self.dst_ep_rank[target_idx],
                             dst_lm_head_rank=self.dst_lm_head_rank[target_idx],
@@ -490,9 +508,16 @@ class MegatronActor(MegatronWorker):
                         )
                         send_handles.append(send_handle)
                         del buffer
+                # Keeping one bucket's full_sd alive into the next bucket
+                # overlaps communication with the next gather, at a peak of
+                # two full_sd that bucket_capacity budgets for.
+                prev_full_sd = full_sd
+                del full_sd
 
             for send_handle in send_handles:
                 send_handle.wait()
+            # Release the last bucket's full_sd, now that its sends are done.
+            del send_handles, prev_full_sd
 
         if (
             self.placement_mode == PlacementMode.COLLOCATED

@@ -82,7 +82,10 @@ class Scheduler(_Scheduler):
             self._request_dispatcher._mapping.extend(_extra_req_mapping)
 
         self.is_weight_offloaded = False
-        # Per-tag offload state: tag -> True if currently offloaded representing the partial state (weights onloaded, kv/cuda_graph)
+        # Per-tag offload state: tag -> True when currently offloaded. A single
+        # boolean cannot express the partial state that the OOM-safe split
+        # resume needs, where weights are onloaded but kv and cuda_graph are
+        # not. is_weight_offloaded above still gates the sync path.
         self.offloaded_tags: dict = dict.fromkeys(GPU_MEMORY_ALL_TYPES, False)
         self.weight_norm_dict = None
 
@@ -243,7 +246,10 @@ class Scheduler(_Scheduler):
             assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
-            # Only resume model weights here
+            # Resume model weights only. KV cache and cuda graph are deferred
+            # to onload_kv_cudagraph() in the runner, which runs after the
+            # actor offloads its model, so the two models are never both
+            # resident. Large MoE models OOM otherwise.
             self.resume_memory_occupation(
                 ResumeMemoryOccupationReqInput(tags=["weights"])
             )
@@ -331,9 +337,10 @@ class Scheduler(_Scheduler):
             self.placement_mode = placement.placement_mode
             self.rollout_sync_mode = placement._rollout_sync_mode
             rollout_rank_map = RankMapper.get_rollout_rank_to_actor_rank_map(placement)
-            # Rollout's transmission coordinates are (engine_id, rank_in_engine),
-            # engine_id = parent_rank (the SGLangWorker / engine index) and
-            # rank_in_engine = this tp worker's rank.
+            # Rollout's transmission coordinates are (engine_id,
+            # rank_in_engine), independent of sglang's internal attention
+            # sharding coordinates. Each tp rank receives from its source actor
+            # rank directly.
             rollout_key = (
                 self._rlinf_worker.get_parent_rank(),
                 self._rlinf_worker._rank,
@@ -397,17 +404,13 @@ class Scheduler(_Scheduler):
 
     # to return output_ids and response_text simaltaneously in sglang 0.4.x.
     # copied from srt/managers/scheduler.py (0.4.6) and only delete the condition outside the assignment of "output_ids"
-    def stream_output_generation(
-        self,
-        reqs,
-        return_logprob: bool,
-        skip_req=None,
-        is_idle_batch: bool = False,
-    ):
-        # for sglang 0.5.0 and later, we use the original _handle_batch_output
+    def stream_output_generation(self, reqs, return_logprob, skip_req=None, **kwargs):
+        # for sglang 0.5.0 and later, we use the original _handle_batch_output.
+        # Extra arguments differ by sglang version (0.5.12 adds is_idle_batch),
+        # so forward whatever arrives instead of naming them.
         if not self.patch_return_output_ids:
             return super().stream_output_generation(
-                reqs, return_logprob, skip_req, is_idle_batch=is_idle_batch
+                reqs, return_logprob, skip_req, **kwargs
             )
 
         from sglang.srt.managers.scheduler_output_processor_mixin import (

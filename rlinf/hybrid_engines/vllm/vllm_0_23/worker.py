@@ -70,6 +70,9 @@ class VLLMWorker(_VllmInnerWorker):
             self._rlinf_worker.get_parent_rank(), self.rank
         ]
         self.is_weight_offloaded = False
+        # Per-tag offload state, mirroring sgl_scheduler.offloaded_tags:
+        # sync_hf_weight wakes only weights, while KV cache stays offloaded
+        # until onload_kv_cudagraph. is_weight_offloaded gates the sync path.
         self.offloaded_tags = {"weights": False, "kv_cache": False}
 
     def initialize_from_config(self, kv_cache_config: KVCacheConfig) -> None:
@@ -130,11 +133,15 @@ class VLLMWorker(_VllmInnerWorker):
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
             if isinstance(bucket_length, torch.Tensor):
-                # The actor sends bucket_length as a GPU tensor
+                # The actor sends bucket_length as a GPU tensor to keep the
+                # bucket dict all-tensor, so that NCCL takes the TENSOR_DICT
+                # path rather than pickling. Extract the int here.
                 bucket_length = bucket_length.item()
 
         if self.is_weight_offloaded:
-            # Only wake weights here; KV cache + cudagraph stay offloaded until onload_kv_cudagraph
+            # Wake weights only; KV cache and cudagraph stay offloaded until
+            # onload_kv_cudagraph, so the two models are never both resident.
+            # Large MoE models OOM otherwise.
             super().wake_up(tags=["weights"])
             self.offloaded_tags["weights"] = False
             self.is_weight_offloaded = False
@@ -169,8 +176,12 @@ class VLLMWorker(_VllmInnerWorker):
 
     def onload_kv_cudagraph(self) -> None:
         """Onload KV cache + cuda graph deferred from sync_hf_weight.
-        sync_hf_weight only woke weights for load_weights;
-        KV cache + cudagraph are restored here, vLLM has no cuda_graph tag, so the
+
+        Mirrors sgl_scheduler.onload_kv_cudagraph (resume tags=["kv_cache",
+        "cuda_graph"]). sync_hf_weight only woke weights for load_weights;
+        KV cache + cudagraph are restored here, after the actor offloaded its
+        reshard state dict, to avoid both models + KV+cudagraph on HBM
+        simultaneously (OOM for large MoE). vLLM has no cuda_graph tag, so the
         cuda graph is re-captured via compile_or_warm_up_model.
         """
         assert self.offloaded_tags["kv_cache"], (

@@ -167,6 +167,9 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
+            # Expert parallel: pass ep_size and moe_dp_size explicitly. sglang
+            # derives moe_tp = tp // ep // moe_dp itself. ep_size defaults to
+            # tp when only enable_ep_moe is set, which is pure EP.
             ep_size=self._cfg_rollout.sglang.get(
                 "ep_size",
                 self._cfg_rollout.tensor_parallel_size
@@ -174,6 +177,11 @@ class SGLangWorker(Worker):
                 else 1,
             ),
             moe_dp_size=self._cfg_rollout.sglang.get("moe_dp_size", 1),
+            # DP-attention decouples attention TP from MoE TP: dp_size shards
+            # attention (attn_tp = tp // dp // attn_cp), while ep_size and
+            # moe_tp_size act on the experts, and moe_dense_tp_size on the
+            # dense MLP layers. All fall back to sglang's own defaults, so
+            # non-DPA configs are unaffected.
             dp_size=self._cfg_rollout.sglang.get("dp_size", 1),
             enable_dp_attention=self._cfg_rollout.sglang.get(
                 "enable_dp_attention", False
@@ -332,7 +340,11 @@ class SGLangWorker(Worker):
     async def onload_kv_cudagraph(self):
         """
         Onload only the KV cache and CUDA graph back to GPU, leaving model
-        weights on GPU (already resumed in sync_hf_weight).
+        weights on GPU (already resumed in sync_hf_weight). Used in collocated
+        'sync' mode where resume_memory_occupation is split: weights resumed
+        before load_weights (needs ~10GB), KV+cuda graph deferred until after
+        the actor has offloaded its model (avoids both models on GPU
+        simultaneously).
         """
         await self._engine.tokenizer_manager.resume_memory_occupation(
             obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])

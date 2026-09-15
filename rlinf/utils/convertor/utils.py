@@ -93,7 +93,6 @@ class TransformFunc:
         new_statedict[weight_names[2]] = v_full.clone()
 
     @staticmethod
-    @staticmethod
     def split_expert_fc1(
         linear_fc1: torch.Tensor, new_statedict: dict, weight_names: list[str], config
     ) -> None:
@@ -232,6 +231,7 @@ class Qwen25Convertor(BaseConvertor):
                 TransformType.SPLIT_NONE,
                 [r"model.layers.\g<i>.self_attn.o_proj.\g<wb>"],
             ),
+            # mlp gate/up (tp_gather_fn already split fused fc1)
             ConvertorRule(
                 re.compile(rf"decoder\.layers\.{LID}\.mlp\.gate_proj\.{WB}$"),
                 TransformType.SPLIT_NONE,
@@ -305,6 +305,7 @@ class Qwen25VLConvertor(BaseConvertor):
                 TransformType.SPLIT_NONE,
                 [f"{HF_V_DECODER_PREFIX}" + r".\g<i>.attn.proj.\g<wb>"],
             ),
+            # mlp gate/up (tp_gather_fn already split fused fc1)
             ConvertorRule(
                 re.compile(rf"^{MG_V_DECODER_PREFIX}\.{B}\.mlp\.gate_proj\.{WB}$"),
                 TransformType.SPLIT_NONE,
@@ -383,6 +384,7 @@ class Qwen25VLConvertor(BaseConvertor):
                 TransformType.SPLIT_NONE,
                 [f"{HF_LLM_PREFIX}" + r".decoder.layers.\g<i>.self_attn.o_proj.\g<wb>"],
             ),
+            # mlp gate/up (tp_gather_fn already split fused fc1)
             ConvertorRule(
                 re.compile(rf"^{MG_LLM_DECODER_PREFIX}\.{B}\.mlp\.gate_proj\.{WB}$"),
                 TransformType.SPLIT_NONE,
@@ -524,6 +526,7 @@ class Qwen3DenseConvertor(Qwen3BaseConvertor):
 
         return [
             *super().build_rules(),
+            # mlp gate/up (tp_gather_fn already split fused fc1)
             ConvertorRule(
                 re.compile(rf"decoder\.layers\.{LID}\.mlp\.gate_proj\.{WB}$"),
                 TransformType.SPLIT_NONE,
@@ -601,7 +604,7 @@ class DeepseekV3Convertor(BaseConvertor):
     Architecture: Multi-Latent Attention (MLA) + MoE with a shared expert and
     routed experts (TE grouped-gemm layout, converted to local_experts by
     moe_te_group_to_seq upstream). All MLA projections and norms map 1:1
-    (SPLIT_NONE); TP sharding for them is handled by tp_reshard_fn_deepseek_v3.
+    (SPLIT_NONE); TP sharding for them is handled by tp_gather_fn_deepseek_v3.
     Fused fc1 (dense / shared / routed-expert) is decomposed into gate+up.
     """
 
@@ -629,7 +632,7 @@ class DeepseekV3Convertor(BaseConvertor):
                 TransformType.SPLIT_NONE,
                 [r"lm_head.weight"],
             ),
-            # MLA attention (all SPLIT_NONE; TP handled by tp_reshard_fn)
+            # MLA attention (all SPLIT_NONE; TP handled by tp_gather_fn)
             # Moonlight (q_lora_rank=None): standard q_proj, no low-rank decomposition.
             # DeepSeek-V3 (q_lora_rank=1536) does NOT have linear_q_proj.
             ConvertorRule(
@@ -709,7 +712,7 @@ class DeepseekV3Convertor(BaseConvertor):
                 [r"model.layers.\g<i>.post_attention_layernorm.weight"],
             ),
             # ---- dense MLP (dense FFN layer) ----
-            # tp_reshard_fn already split fused linear_fc1 into gate_proj/up_proj
+            # tp_gather_fn already split fused linear_fc1 into gate_proj/up_proj
             # per-rank (unified fc1 branch), so these just need a rename.
             ConvertorRule(
                 re.compile(rf"decoder\.layers\.{LID}\.mlp\.gate_proj\.{WB}$"),
@@ -727,8 +730,9 @@ class DeepseekV3Convertor(BaseConvertor):
                 [r"model.layers.\g<i>.mlp.down_proj.\g<wb>"],
             ),
             # ---- shared expert MLP ----
-            # shared_experts.linear_fc1 is split by tp_reshard_fn (unified fc1
-            # branch) into gate_proj/up_proj; the SPLIT_NONE rules below handle them.
+            # shared_experts.linear_fc1 is split by tp_gather_fn (unified fc1
+            # branch) into gate_proj/up_proj; the SPLIT_NONE rules below handle
+            # them. linear_fc2 (down_proj) just renames.
             ConvertorRule(
                 re.compile(
                     rf"decoder\.layers\.{LID}\.mlp\.shared_experts\.linear_fc2\.{WB}$"
@@ -737,7 +741,8 @@ class DeepseekV3Convertor(BaseConvertor):
                 [r"model.layers.\g<i>.mlp.shared_experts.down_proj.\g<wb>"],
             ),
             # Pre-split shared_experts gate/up (DPA path: tp_reshard pre-splits
-            # fused fc1 into gate_proj/up_proj to avoid slice-before-split, no further split).
+            # fused fc1 into gate_proj/up_proj to avoid slice-before-split; these
+            # just need a rename, no further split).
             ConvertorRule(
                 re.compile(
                     rf"decoder\.layers\.{LID}\.mlp\.shared_experts\.gate_proj\.{WB}$"
@@ -782,6 +787,10 @@ class DeepseekV3Convertor(BaseConvertor):
                 [r"model.layers.\g<i>.mlp.gate.e_score_correction_bias"],
             ),
             # ---- MTP (mtp.layers.0): GLM-4.7-Flash ships MTP (num_nextn_predict_layers=1);
+            # DeepSeek-V3 ran with MTP off so these were absent. mtp_model_layer mirrors a
+            # regular MLA+MoE decoder layer (same internal names) -> model.layers.{NL}.*;
+            # sglang's nextn load_weights remaps model.layers.{NL} -> model/model.decoder.
+            # final_layernorm has no HF checkpoint slot; sglang skips it (no matching param).
             ConvertorRule(
                 re.compile(r"mtp\.layers\.0\.enorm\.weight$"),
                 TransformType.SPLIT_NONE,
@@ -937,6 +946,10 @@ _MG2HF_CONVERTOR_REGISTRY = {
     SupportedModel.QWEN3: Qwen3DenseConvertor,
     SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
     SupportedModel.DEEPSEEK_V3: DeepseekV3Convertor,
+    # GLM-4.7-Flash: same MLA+MoE HF weight layout as DeepSeek-V3 (MLA q_a/kv_a/
+    # kv_b projections, experts.E.{gate,up,down}_proj, shared_experts, router
+    # gate+e_score_correction_bias). MTP is off (mtp_num_layers=None). Reuse the
+    # DeepSeek-V3 convertor (verify mg<->hf at e2e weight dump).
     SupportedModel.GLM4_MOE_LITE: DeepseekV3Convertor,
 }
 
