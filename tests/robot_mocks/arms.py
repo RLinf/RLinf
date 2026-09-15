@@ -375,6 +375,8 @@ def lerobot() -> dict[str, types.ModuleType]:
             self.owner.teardown.append(("disable_torque", motors))
 
     class FakeSO101Follower:
+        instances: list[Any] = []
+
         #: Set false to model an arm whose calibration file is missing.
         calibrated = True
 
@@ -391,6 +393,7 @@ def lerobot() -> dict[str, types.ModuleType]:
         jaw_lag: int = 1
 
         def __init__(self, config: Any) -> None:
+            type(self).instances.append(self)
             self.config = config
             self.bus = FakeSO101Bus(self)
             # Ordered record of the shutdown, so a test can show the gripper

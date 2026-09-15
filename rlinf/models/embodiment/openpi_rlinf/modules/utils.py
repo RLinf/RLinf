@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import torch
 import torch.nn.functional as F
 
@@ -24,8 +26,6 @@ def gelu_glu(gate_input: torch.Tensor, value_input: torch.Tensor) -> torch.Tenso
 
 def _str_to_dtype(dtype_str: str) -> torch.dtype:
     """Convert string dtype to torch dtype."""
-    # if dtype_str == "mp_bfloat16":
-    #     assert False
     mapping = {
         "float32": torch.float32,
         "bfloat16": torch.bfloat16,
