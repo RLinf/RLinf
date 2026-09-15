@@ -26,8 +26,10 @@ from omegaconf import DictConfig
 
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
     _CODEC_KEY,
@@ -37,6 +39,48 @@ from rlinf.utils.obs_compression import (
     is_compressed_image,
     is_compression_enabled,
 )
+
+
+@pytest.mark.parametrize("enable_cache", [False, True])
+def test_replay_without_auto_save_keeps_trajectories(enable_cache, tmp_path):
+    """Memory-only replay retains the sampling window and can checkpoint it."""
+    buffer = TrajectoryReplayBuffer(
+        enable_cache=enable_cache,
+        cache_size=1,
+        sample_window_size=2,
+        auto_save=False,
+    )
+    restored = TrajectoryReplayBuffer(sample_window_size=2, auto_save=False)
+    try:
+        trajectories = []
+        for value in (7.0, 9.0):
+            rewards = torch.full((3, 2, 1), value)
+            trajectories.append(
+                Trajectory(
+                    max_episode_length=3,
+                    rewards=rewards,
+                    actions=rewards + 100,
+                )
+            )
+        buffer.add_trajectories(trajectories)
+
+        batch = buffer.sample(num_chunks=12)
+        assert batch["rewards"].shape == (12, 1)
+        assert torch.isin(batch["rewards"], torch.tensor([7.0, 9.0])).all()
+        torch.testing.assert_close(batch["actions"], batch["rewards"] + 100)
+
+        checkpoint_path = str(tmp_path / "checkpoint")
+        buffer.save_checkpoint(checkpoint_path)
+        restored.load_checkpoint(checkpoint_path)
+        restored_batch = restored.sample(num_chunks=12)
+        assert restored_batch["rewards"].shape == (12, 1)
+        assert torch.isin(restored_batch["rewards"], torch.tensor([7.0, 9.0])).all()
+        torch.testing.assert_close(
+            restored_batch["actions"], restored_batch["rewards"] + 100
+        )
+    finally:
+        buffer.close()
+        restored.close()
 
 
 class TestMathDatasetMultithread:
