@@ -21,7 +21,7 @@ import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
-from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -202,7 +202,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
             recv_list.append(trajectory)
 
-        self.rollout_batch = convert_trajectories_to_batch(recv_list)
+        self.rollout_batch = Trajectory.to_batch(recv_list)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
