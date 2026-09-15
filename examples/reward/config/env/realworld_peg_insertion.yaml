@@ -13,6 +13,9 @@ max_episode_steps: 10000
 keyboard_reward_wrapper: single_stage
 teleop: spacemouse
 main_image_key: wrist_1
+# Keep TCP observations in the absolute robot base frame so the reward-data
+# preprocessor can compare them with target_ee_pose.
+use_relative_frame: False
 
 video_cfg:
   save_video: False
@@ -22,4 +25,3 @@ video_cfg:
 init_params:
   id: "PegInsertionEnv-v1"
   num_envs: null
-

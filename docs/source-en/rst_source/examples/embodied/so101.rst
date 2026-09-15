@@ -136,10 +136,10 @@ gripper. The script may start a local Ray instance to communicate with the arm.
 
 .. warning::
 
-   On hardware, the environment constructor moves the arm to the folded rest
-   pose ``[0, -99, 95, 65, 0]`` degrees. Clear that motion path before launching
-   the toolkit. Its ``--no-reset`` flag skips a later reset but does not bypass
-   this initial movement.
+   On hardware, startup moves the arm to the folded rest pose
+   ``[0, -99, 95, 65, 0]`` degrees along a paced joint trajectory. Clear that
+   motion path before launching the toolkit. Pass ``--no-reset`` to connect
+   without commanding startup movement.
 
 With the follower calibrated and room for the initial fold, run:
 
@@ -150,6 +150,14 @@ With the follower calibrated and room for the initial fold, run:
 
 Replace the port with your device and use the ID from calibration.
 ``CAMERA_SERIALS=''`` disables camera discovery so the check uses only the arm.
+
+Startup reset and the ``home`` command use a smooth trajectory from the measured
+joint positions, with a default commanded speed limit of 30 degrees per second.
+Use ``--reset-speed 10`` for a slower reset. The driver extends the trajectory
+for large moves and does not issue catch-up commands after a delayed write.
+In an environment config, ``reset_joint_speed`` uses radians per second and
+``reset_duration`` sets the minimum trajectory duration (default 3 seconds).
+
 Enter these commands one at a time, allowing each move to finish:
 
 .. code-block:: text
@@ -168,6 +176,44 @@ Use ``help`` for the other joint directions.
 
 To use the arm in your own program or attach cameras, see
 :doc:`Robotics Interface </rst_source/concepts/robotics>`.
+
+Follow a Leader Arm
+-------------------
+
+To control the follower by hand, connect and calibrate an SO101 leader using
+its own port and calibration ID:
+
+.. code-block:: bash
+
+   lerobot-calibrate \
+     --teleop.type=so101_leader \
+     --teleop.port=/dev/ttyACM1 \
+     --teleop.id=rlinf_leader
+
+Start the check with both arms configured. Camera discovery is enabled when
+``CAMERA_SERIALS`` is unset; add ``--enable-camera-player`` to display images:
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_so101_env \
+     --port /dev/ttyACM0 --id rlinf_follower \
+     --leader /dev/ttyACM1 --leader-id rlinf_leader \
+     --fps 30 --enable-camera-player
+
+After the follower folds, place the leader in a matching pose and enter
+``teleop``. The follower tracks both the joints and gripper continuously.
+Press Ctrl-C once to return to the prompt, then enter ``quit`` to disconnect.
+
+``--fps`` sets the requested control rate and defaults to 30 Hz. Camera capture
+runs independently; the environment reuses frames up to ``camera_max_age``
+seconds old (default 0.5) instead of waiting for a new image at every step.
+Continuous gripper commands return without waiting for travel. The driver
+monitors stalled jaws and holds them at the measured opening to relieve
+pressure. Each measured advance toward the target restarts stall detection,
+so slow or sustained movement can continue while it makes progress.
+Move the leader's gripper away from that opening before retrying
+motion into the obstruction. The driver's ``open_gripper()`` and
+``close_gripper()`` methods still wait for travel or stall relief.
 
 New Real-World Tasks
 --------------------

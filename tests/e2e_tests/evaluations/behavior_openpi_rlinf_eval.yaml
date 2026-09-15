@@ -65,3 +65,10 @@ rollout:
     # Norm stats resolve checkpoint-relative; tokenizer from openpi's cache.
     model_path: /workspace/dataset/ci_behavior/model
     add_value_head: False
+    action_dim: 23
+    num_action_chunks: 32
+    num_steps: 5
+    openpi:
+      task: eval
+      config_name: "pi05_behavior"
+      num_images_in_input: 3

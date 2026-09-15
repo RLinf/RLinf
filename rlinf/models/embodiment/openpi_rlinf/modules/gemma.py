@@ -131,7 +131,11 @@ def get_config(variant: Variant) -> Config:
 class RMSNorm(nn.Module):
     """RMSNorm with optional adaptive mode (adaRMS)."""
 
-    def __init__(self, dim: int, adaptive: bool = False):
+    def __init__(
+        self,
+        dim: int,
+        adaptive: bool = False,
+    ):
         super().__init__()
         self.dim = dim
         self.adaptive = adaptive
@@ -187,6 +191,9 @@ class Embedder(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         nn.init.normal_(self.embedding.weight)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encode(x)
+
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         x = self.embedding(x)
         x = x * math.sqrt(self.embed_dim)
@@ -200,7 +207,10 @@ class Embedder(nn.Module):
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
 
-    def __init__(self, configs: Sequence[Config]):
+    def __init__(
+        self,
+        configs: Sequence[Config],
+    ):
         super().__init__()
         self.expert_configs = configs
         self.num_heads = configs[0].num_heads
@@ -536,7 +546,11 @@ class Module(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                Block(configs, adarms=self.adarms, dropout=dropout)
+                Block(
+                    configs,
+                    adarms=self.adarms,
+                    dropout=dropout,
+                )
                 for _ in range(configs[0].depth)
             ]
         )
@@ -552,7 +566,7 @@ class Module(nn.Module):
 
     def embed(self, tokens: torch.Tensor) -> torch.Tensor:
         """Embed token indices."""
-        return self.embedder.encode(tokens).to(self.embed_dtype)
+        return self.embedder(tokens).to(self.embed_dtype)
 
     def forward(
         self,

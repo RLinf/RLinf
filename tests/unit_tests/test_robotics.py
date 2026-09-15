@@ -4703,6 +4703,66 @@ def test_a_stalled_camera_is_reopened_before_the_caller_sees_the_error():
             camera.disconnect()
 
 
+@pytest.mark.parametrize("enable_depth", [False, True])
+def test_camera_can_reuse_recent_observations_without_waiting(enable_depth):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+    with mocked_sdks():
+        camera = Camera.of(
+            CameraInfo(
+                name="wrist", serial_number="MOCK0001", enable_depth=enable_depth
+            )
+        )
+        camera.connect()
+        try:
+            first = camera.get_observation()
+            for _ in range(10):
+                observation = camera.get_observation(timeout=0, max_age=0.5)
+                np.testing.assert_array_equal(observation["frame"], first["frame"])
+                if enable_depth:
+                    np.testing.assert_array_equal(observation["depth"], first["depth"])
+            observation["frame"][:] = 99
+            assert np.any(camera.get_frame(timeout=0, max_age=0.5) != 99)
+        finally:
+            camera.disconnect()
+
+
+def test_camera_rejects_expired_buffered_frames_and_reconnects(monkeypatch):
+    import queue
+    import threading
+
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+    with mocked_sdks() as made:
+        sdk = made["pyrealsense2"]
+        stopped = threading.Event()
+        original_read = sdk.pipeline.wait_for_frames
+
+        def one_frame(pipeline):
+            if getattr(pipeline, "delivered", False):
+                stopped.set()
+                raise RuntimeError("camera stopped delivering frames")
+            pipeline.delivered = True
+            return original_read(pipeline)
+
+        monkeypatch.setattr(sdk.pipeline, "wait_for_frames", one_frame)
+        camera = Camera.of(CameraInfo(name="wrist", serial_number="MOCK0001"))
+        camera.connect()
+        try:
+            assert stopped.wait(2)
+            assert camera.get_frame(timeout=0, max_age=1).shape[-1] == 3
+            with pytest.raises(queue.Empty):
+                camera.get_frame(timeout=0, max_age=1e-9)
+            assert camera.is_connected
+            assert camera.get_frame(timeout=1).shape[-1] == 3
+        finally:
+            camera.disconnect()
+
+
 @pytest.mark.placement
 def test_a_franka_env_commands_the_arm_through_the_robot():
     from robot_mocks import mocked_sdks
@@ -4969,6 +5029,139 @@ def test_so101_stops_pushing_jaws_that_cannot_close():
         arm.disconnect()
 
 
+def test_so101_continuous_gripper_commands_do_not_wait_for_travel():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        follower.jaw_step = 1.0
+        arm = SO101Arm("/dev/mock-so101")
+        robot = Robot(arm=arm)
+        robot.connect()
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(
+                    robot.send_action,
+                    {
+                        "arm": {
+                            "joint_position": np.zeros(5),
+                            "end_effector": {"target": [1.0]},
+                        }
+                    },
+                ).result(timeout=1)
+            state = robot.get_observation()["arm"]
+            assert state["end_effector"]["state"][0] < 0.5
+            robot.send_action({"arm": {"joint_position": np.ones(5) * 0.1}})
+        finally:
+            robot.disconnect()
+
+
+@pytest.mark.parametrize("opening", [0.0, 1.0])
+@pytest.mark.parametrize("travel_per_read,seconds_per_read", [(0.5, 0.05), (3.0, 1.0)])
+def test_so101_gripper_keeps_moving_while_feedback_progresses(
+    monkeypatch, opening, travel_per_read, seconds_per_read
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms import so101
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        follower.jaw_step = travel_per_read
+        follower.jaw_lag = 0
+        clock = [0.0]
+        original_read = follower.get_observation
+
+        def read(device):
+            clock[0] += seconds_per_read
+            return original_read(device)
+
+        monkeypatch.setattr(follower, "get_observation", read)
+        monkeypatch.setattr(so101, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        arm = so101.SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = follower.instances[-1]
+        device.positions["gripper.pos"] = 70.0 if opening else 30.0
+        try:
+            if opening:
+                arm.open_gripper()
+            else:
+                arm.close_gripper()
+            assert arm.get_state().gripper_position[0] == pytest.approx(
+                opening, abs=0.02
+            )
+            assert device.sent == [{"gripper.pos": opening * 100.0}]
+        finally:
+            arm.disconnect()
+
+
+def test_so101_repeated_targets_preserve_stall_relief_until_reversed():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        follower.jaw_limit = 30.0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = follower.instances[-1]
+        try:
+            arm.close_gripper()
+            assert device.sent[-1] == {"gripper.pos": 30.0}
+            sent = len(device.sent)
+            for target in (0.0, 0.01, 0.2, 0.0):
+                arm.children["end_effector"].command(np.array([target]))
+            assert len(device.sent) == sent
+            arm.open_gripper()
+            assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
+            arm.close_gripper()
+            assert device.sent[-1] == {"gripper.pos": 30.0}
+            assert len(device.sent) > sent
+        finally:
+            arm.disconnect()
+
+
+def test_so101_monitor_failures_surface_and_reconnect_clears_them(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        original_read = follower.get_observation
+
+        def failed_read(device):
+            raise OSError("servo read failed")
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        monkeypatch.setattr(follower, "get_observation", failed_read)
+        try:
+            with pytest.raises(
+                RuntimeError, match="gripper monitoring failed"
+            ) as error:
+                arm.open_gripper()
+            assert isinstance(error.value.__cause__, OSError)
+            with pytest.raises(RuntimeError, match="gripper monitoring failed"):
+                arm.get_state()
+            with pytest.raises(RuntimeError, match="gripper monitoring failed"):
+                arm.move_joints(np.zeros(5))
+        finally:
+            arm.disconnect()
+        monkeypatch.setattr(follower, "get_observation", original_read)
+        arm.connect()
+        try:
+            arm.open_gripper()
+            assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
+        finally:
+            arm.disconnect()
+
+
 def test_so101_frees_the_gripper_before_closing_the_bus():
     """lerobot releases the gripper last; this frees it first."""
     from robot_mocks import mocked_sdks
@@ -5015,6 +5208,92 @@ def test_so101_reset_waits_for_the_servos_to_stop_moving():
         assert len(seen) == 5
 
         arm.disconnect()
+
+
+@pytest.mark.parametrize("write_delay", [0.0, 0.2])
+def test_so101_reset_paces_joint_targets_from_measured_feedback(
+    monkeypatch, write_delay
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms import so101
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        arm = so101.SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = follower.instances[-1]
+        initial = np.array([15.0, -45.0, 60.0, -25.0, 10.0])
+        target = np.array([-20.0, -99.0, 95.0, 65.0, -30.0])
+        device.positions.update(
+            {f"{motor}.pos": value for motor, value in zip(arm.MOTORS, initial)}
+        )
+        clock = [0.0]
+        writes = [(0.0, initial)]
+        original_send = follower.send_action
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        def send(device, action):
+            writes.append(
+                (clock[0], np.array([action[f"{motor}.pos"] for motor in arm.MOTORS]))
+            )
+            if len(writes) % 10 == 0:
+                clock[0] += write_delay
+            return original_send(device, action)
+
+        monkeypatch.setattr(
+            so101, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep)
+        )
+        monkeypatch.setattr(follower, "send_action", send)
+        try:
+            arm.reset_joint(
+                np.deg2rad(target), duration=3.0, max_velocity=np.deg2rad(20.0)
+            )
+            times = np.array([entry[0] for entry in writes])
+            commanded = np.array([entry[1] for entry in writes])
+            assert len(writes) > 3
+            assert times[-1] >= 3.0
+            assert np.all(np.diff(times) > 0)
+            speeds = np.abs(np.diff(commanded, axis=0)) / np.diff(times)[:, None]
+            assert np.max(speeds) <= 20.0 + 1e-8
+            assert np.max(speeds[0]) < 0.1 * np.max(speeds)
+            assert np.max(speeds[-1]) < 0.1 * np.max(speeds)
+            assert np.all(commanded >= np.minimum(initial, target) - 1e-8)
+            assert np.all(commanded <= np.maximum(initial, target) + 1e-8)
+            np.testing.assert_allclose(commanded[-1], target)
+            np.testing.assert_allclose(
+                arm.get_state().arm_joint_position, np.deg2rad(target)
+            )
+        finally:
+            arm.disconnect()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"duration": 0.0},
+        {"duration": float("nan")},
+        {"max_velocity": -1.0},
+        {"max_velocity": float("inf")},
+    ],
+)
+def test_so101_reset_rejects_invalid_pacing_before_sending_targets(settings):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        try:
+            with pytest.raises(ValueError, match="finite and positive"):
+                arm.reset_joint(np.ones(5), **settings)
+            assert device.sent == []
+        finally:
+            arm.disconnect()
 
 
 def test_piper_reset_waits_for_the_arm_to_stop_moving():
