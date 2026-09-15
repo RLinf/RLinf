@@ -150,6 +150,59 @@ def _instantiate_fastwam_policy(
     )
 
 
+def _log_pretrained_resources(model_cfg: DictConfig) -> None:
+    """Report the upstream loader's local paths without changing download behavior."""
+    from fastwam.models.wan22.helpers.loader import _resolve_configs
+
+    dit, text, vae, tokenizer = _resolve_configs(
+        model_id=model_cfg.get("model_id", "Wan-AI/Wan2.2-TI2V-5B"),
+        tokenizer_model_id=model_cfg.get(
+            "tokenizer_model_id", "Wan-AI/Wan2.1-T2V-1.3B"
+        ),
+        redirect_common_files=bool(model_cfg.get("redirect_common_files", True)),
+    )
+    resources = [("VAE", vae)]
+    if model_cfg.get("load_text_encoder", True):
+        resources.extend([("T5 text encoder", text), ("tokenizer", tokenizer)])
+    if not model_cfg.get("skip_dit_load_from_pretrain", False):
+        resources.append(("Wan DiT", dit))
+
+    for name, resource in resources:
+        resource.reset_local_model_path()
+        root = Path(resource.local_model_path).absolute() / resource.model_id
+        pattern = resource.parse_original_file_pattern()
+        matches = list(root.glob(pattern))
+        logger.info("FastWAM %s: local_path=%s", name, root / pattern)
+        if not matches:
+            logger.warning(
+                "FastWAM %s has no local matches: %s; model_id=%s; "
+                "DIFFSYNTH_DOWNLOAD_SOURCE=%s; DIFFSYNTH_SKIP_DOWNLOAD=%s. "
+                "The upstream loader will attempt a download unless disabled. "
+                "Check DIFFSYNTH_MODEL_BASE_PATH and prepare this resource "
+                "locally if the download source is inaccessible.",
+                name,
+                root / pattern,
+                resource.model_id,
+                resource.parse_download_source(),
+                resource.parse_skip_download(),
+            )
+
+    action_path = model_cfg.get("action_dit_pretrained_path")
+    if action_path and not model_cfg.get("skip_dit_load_from_pretrain", False):
+        from fastwam.models.wan22 import action_dit
+
+        path = Path(action_path)
+        if not path.is_absolute():
+            path = Path(action_dit.__file__).resolve().parents[4] / path
+        logger.info("FastWAM model.action_dit_pretrained_path: %s", path)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"FastWAM ActionDiT weights not found: {path}. Check "
+                "model.action_dit_pretrained_path in model.fastwam.overrides; "
+                "generate the file with FastWAM scripts/preprocess_action_dit_backbone.py."
+            )
+
+
 def _resolve_dataset_stats_path(cfg: DictConfig, ckpt_path: Optional[str]) -> str:
     explicit = cfg.get("dataset_stats_path", None)
     candidates = []
@@ -162,8 +215,8 @@ def _resolve_dataset_stats_path(cfg: DictConfig, ckpt_path: Optional[str]) -> st
         for parent in list(ckpt.parents)[:4]:
             candidates.append(parent / "dataset_stats.json")
     for path in candidates:
-        if path.exists():
-            return str(path)
+        if path.is_file():
+            return str(path.absolute())
     raise FileNotFoundError(
         "Could not locate FastWAM dataset_stats.json. Set "
         "model.dataset_stats_path to the *_dataset_stats.json shipped with the checkpoint. "
@@ -203,16 +256,41 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> nn.Module:
         torch_dtype = torch.bfloat16
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = _instantiate_fastwam_policy(fcfg.model, torch_dtype, device)
-
     ckpt_path = cfg.get("model_path", None)
     if ckpt_path:
-        ckpt_path = os.path.expanduser(os.path.expandvars(str(ckpt_path)))
-        if Path(ckpt_path).exists():
-            logger.info("Loading FastWAM checkpoint: %s", ckpt_path)
-            model.load_checkpoint(ckpt_path)
-        else:
-            raise FileNotFoundError(f"FastWAM model_path not found: {ckpt_path}")
+        ckpt_path = str(
+            Path(os.path.expanduser(os.path.expandvars(str(ckpt_path)))).absolute()
+        )
+        if not Path(ckpt_path).is_file():
+            raise FileNotFoundError(
+                f"FastWAM checkpoint not found: model.model_path={ckpt_path}. "
+                "Download the FastWAM checkpoint and set actor.model.model_path "
+                "(SFT) or rollout.model.model_path (eval) to that file."
+            )
+    stats_path = _resolve_dataset_stats_path(cfg, ckpt_path)
+    logger.info(
+        "FastWAM local resources: model.model_path=%s; model.dataset_stats_path=%s; "
+        "DIFFSYNTH_MODEL_BASE_PATH=%s",
+        ckpt_path,
+        stats_path,
+        os.environ["DIFFSYNTH_MODEL_BASE_PATH"],
+    )
+    _log_pretrained_resources(fcfg.model)
+    try:
+        model = _instantiate_fastwam_policy(fcfg.model, torch_dtype, device)
+    except Exception:
+        logger.exception(
+            "FastWAM base model initialization failed: "
+            "DIFFSYNTH_MODEL_BASE_PATH=%s; DIFFSYNTH_DOWNLOAD_SOURCE=%s. "
+            "See the component paths above and the original exception below.",
+            os.environ["DIFFSYNTH_MODEL_BASE_PATH"],
+            os.environ["DIFFSYNTH_DOWNLOAD_SOURCE"],
+        )
+        raise
+
+    if ckpt_path:
+        logger.info("Loading FastWAM checkpoint: %s", ckpt_path)
+        model.load_checkpoint(ckpt_path)
     else:
         logger.warning(
             "FastWAM get_model called without model_path; using base/random "
@@ -248,7 +326,6 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> nn.Module:
     from hydra.utils import instantiate
 
     processor = instantiate(fcfg.data.train.processor).eval()
-    stats_path = _resolve_dataset_stats_path(cfg, ckpt_path)
     from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
 
     processor.set_normalizer_from_stats(load_dataset_stats_from_json(stats_path))

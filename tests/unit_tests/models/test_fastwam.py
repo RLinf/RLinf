@@ -269,3 +269,85 @@ def test_fastwam_reset_wait_preserves_shared_libero_default() -> None:
     assert 'self.cfg.get("num_steps_wait", 15)' in libero_env
     for config_path in eval_configs:
         assert "num_steps_wait: 30" in config_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("resource", ["checkpoint", "stats"])
+def test_missing_fastwam_local_file_fails_before_model_loading(
+    tmp_path, fastwam_modules, resource
+) -> None:
+    """Missing user files must not be masked by base-model download failures."""
+    from omegaconf import OmegaConf
+
+    package, _ = fastwam_modules
+    (tmp_path / "root.yaml").write_text("model: {}\n")
+    checkpoint = tmp_path / "checkpoint.pt"
+    stats = tmp_path / "stats.json"
+    if resource == "stats":
+        checkpoint.write_bytes(b"checkpoint")
+    cfg = OmegaConf.create(
+        {
+            "model_path": str(checkpoint),
+            "dataset_stats_path": str(stats),
+            "fastwam": {"config_dir": str(tmp_path), "config_name": "root"},
+        }
+    )
+    expected_path = checkpoint if resource == "checkpoint" else stats
+    with pytest.raises(FileNotFoundError) as error:
+        package.get_model(cfg)
+    assert str(expected_path) in str(error.value)
+    assert ("model_path" if resource == "checkpoint" else "dataset_stats_path") in str(
+        error.value
+    )
+
+
+@pytest.mark.parametrize("resource", ["dataset", "metadata", "text_cache", "stats"])
+def test_fastwam_dataloader_reports_missing_local_resources(
+    tmp_path, fastwam_modules, resource
+) -> None:
+    """Dataset errors identify the configured path before upstream instantiation."""
+    from omegaconf import OmegaConf
+
+    # The real upstream dataset is never constructed when a required path is absent.
+    module_name = "rlinf.data.datasets.fastwam"
+    previous = sys.modules.pop(module_name, None)
+    try:
+        module = importlib.import_module(module_name)
+        (tmp_path / "root.yaml").write_text("data:\n  train: {}\n")
+        dataset = tmp_path / "dataset"
+        cache = tmp_path / "text_cache"
+        stats = tmp_path / "stats.json"
+        if resource != "dataset":
+            (dataset / "meta").mkdir(parents=True)
+        if resource not in ("dataset", "metadata"):
+            (dataset / "meta/info.json").write_text("{}")
+        cache.mkdir()
+        if resource != "text_cache":
+            (cache / "prompt.t5_len128.wan22ti2v5b.pt").write_bytes(b"cache")
+        cfg = OmegaConf.create(
+            {
+                "actor": {
+                    "model": {
+                        "dataset_stats_path": str(stats),
+                        "fastwam": {
+                            "config_dir": str(tmp_path),
+                            "config_name": "root",
+                        },
+                    }
+                },
+                "data": {"text_embedding_cache_dir": str(cache)},
+            }
+        )
+        with pytest.raises(FileNotFoundError) as error:
+            module.build_fastwam_sft_dataloader(cfg, 1, 0, [str(dataset)])
+        expected_path = {
+            "dataset": dataset,
+            "metadata": dataset / "meta/info.json",
+            "text_cache": cache,
+            "stats": stats,
+        }[resource]
+        assert str(expected_path) in str(error.value)
+        assert "FastWAM SFT" in str(error.value)
+    finally:
+        sys.modules.pop(module_name, None)
+        if previous is not None:
+            sys.modules[module_name] = previous

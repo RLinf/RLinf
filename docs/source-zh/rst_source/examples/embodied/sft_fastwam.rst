@@ -165,3 +165,10 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
      - ``libero_10_fastwam_eval``
      - ``700``
      - ``17500``
+
+定位资源加载错误
+----------------
+
+如果 SFT 或评测在初始化时失败，先查看 traceback 前面的 FastWAM 资源日志。模型加载会输出 checkpoint、归一化统计文件，以及上游组件加载器实际查找的本地路径。缺少 VAE、T5 encoder、tokenizer 或 Wan DiT 时，警告会列出资源仓库、``DIFFSYNTH_DOWNLOAD_SOURCE`` 和 ``DIFFSYNTH_SKIP_DOWNLOAD``。除非主动禁用，自动下载仍会执行；后续出现 HTTP 错误并不表示本地资源已经齐全。请将日志中的路径与实际文件及 ``DIFFSYNTH_MODEL_BASE_PATH`` 对照。这些检查只报告本地匹配情况，不验证权重完整性。
+
+SFT 还会输出数据集目录、``data.text_embedding_cache_dir`` 和归一化统计文件路径。每个数据集目录需要包含 ``meta/info.json``，文本缓存目录需要包含 ``scripts/precompute_text_embeds.py`` 生成的文件。缺失路径会在构建数据集前报错；个别缓存条目或数据文件缺失，仍可能在读取样本时暴露。如果初始化在 FastWAM 内部失败，日志会保留原始 traceback，并附上资源上下文。这些日志来自 Python；如果 workflow 的 shell 检查在 Python 启动前退出，就不会输出这些信息。
