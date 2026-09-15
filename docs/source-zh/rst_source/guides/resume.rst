@@ -60,7 +60,7 @@ Megatron检查点文件结构如下：
 FSDP/FSDP2 检查点
 ~~~~~~~~~~~~~~~~~~
 
-FSDP/FSDP2 检查点文件结构如下：
+FSDP/FSDP2 根据 actor worker 的实现，使用 DCP（``torch.distributed.checkpoint``）或按 rank 保存的 ``local_shard`` 检查点。默认 DCP 格式的目录结构如下：
 
 .. code-block:: text
 
@@ -73,13 +73,23 @@ FSDP/FSDP2 检查点文件结构如下：
    │       │   ├── __2_0.distcp
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
-   │           └── full_weigths.pt
+   │           └── full_weights.pt
    └── global_step_20/
        └── …
 
 
-FSDP/FSDP2 通过 DCP (torch.distributed.checkpoint) 保存和加载检查点，其结果为一组分布式检查点文件(.distcp)。  
-每个文件包含模型参数、优化器状态和 RNG 状态的分片。
+DCP 将训练状态保存到一组分布式检查点文件（``.distcp``）中。可选导出的 ``model_state_dict/full_weights.pt`` 只包含模型权重；恢复训练时应使用完整的检查点目录，同时恢复优化器、scheduler 和 RNG 状态。
+
+部分 worker 为每个 rank 单独保存一个文件。SAC 和 DAgger 在 ``actor.fsdp_config.use_orig_params`` 为 true 时选择 ``local_shard`` 格式，IQL 则使用此格式保存 policy、critic 和 value 模型。例如，两个 rank 的 SAC actor 目录包含：
+
+.. code-block:: text
+
+   global_step_10/actor/
+   └── local_shard_checkpoint/
+       ├── checkpoint_rank_0.pt
+       └── checkpoint_rank_1.pt
+
+每个文件保存对应 rank 的模型分片、优化器状态、scheduler 状态和 RNG 状态。FSDP2 会将文件中的局部张量恢复到当前模型的分布式参数中，也支持各 rank 分片大小不等的参数。恢复时必须保持模型、FSDP 版本、world size、分片配置以及 rank 与分片的对应关系一致；``local_shard`` 不会为不同拓扑重新分配分片。请保留所有 rank 的文件，使用相同的启动脚本和配置，并按下文设置 ``runner.resume_dir``；worker 会自动选择对应的检查点格式。
 
 
 恢复训练
