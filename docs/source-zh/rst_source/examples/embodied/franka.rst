@@ -408,8 +408,7 @@ GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂
 
    env:
      eval:
-       use_spacemouse: False
-       use_gello: True
+       teleop: gello
        gello_port: "/dev/serial/by-id/usb-FTDI_..."  # 替换为你的 GELLO 串口路径
 
 **运行**
@@ -595,6 +594,8 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 如需在真机上通过与动作块执行重叠来隐藏策略推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
 
 
+
+Franky 阻抗控制器意外停止后，下一次机械臂指令或状态读取会抛出异常；如果 SDK 保留了运动异常，错误信息也会包含其原因。请先检查机器人控制 worker 的报错，解决问题后再启动训练。直接使用 Python API 时，需要先调用 ``disconnect()``，再调用 ``connect()`` 才能继续发送指令；``clear_errors()`` 不会重启已失效的跟踪会话。
 
 可视化与结果
 ----------------------------------------

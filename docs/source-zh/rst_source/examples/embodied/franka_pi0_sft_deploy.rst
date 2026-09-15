@@ -126,7 +126,7 @@
 
 需要注意的是，在 Bin-relocation 任务中，目标末端位姿的实际含义被定义为表示运动空间的中间的最低点。
 特别的，为了避免franka末端撞击盘子边缘，会基于目标末端位姿将一定空间范围截去，用于限制机械臂的运动范围。
-详细参考 ``rlinf/envs/realworld/franka/tasks/franka_bin_relocation.py`` 中的定义。
+详细参考 ``rlinf/envs/real/franka/bin_relocation.py`` 中的定义。
 
 参考 :doc:`franka` 中的「获取任务的目标位姿」章节，
 使用脚本 ``toolkits.realworld_check.test_franka_controller`` 获取目标位姿。
@@ -226,7 +226,7 @@
         |-- meta
     |-- ...
 
-这里 ``realworld_franka_bin_relocation`` 对应在``rlinf/models/embodiment/openpi/__init__.py``中定义的 TrainConfig 字段中的 ``repo_id``。
+这里 ``realworld_franka_bin_relocation`` 对应在 ``rlinf/models/embodiment/openpi/__init__.py`` 中定义的 TrainConfig 字段中的 ``repo_id``。
 
 然后，在训练节点上运行：
 
@@ -246,12 +246,12 @@
 该脚本会将生成的统计信息写入
 ``<assets_dir>/<exp_name>/<repo_id>/norm_stats.json``。
 
-OpenPI 加载器会在运行时从``<model_path>/<repo_id>``读取归一化统计信息。
+OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统计信息。
 
 运行 OpenPI SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-使用``pi0_realworld``数据格式，需要修改SFT训练配置文件``examples/sft/config/realworld_sft_openpi.yaml``：
+使用 ``pi0_realworld`` 数据格式，需要修改 SFT 训练配置文件 ``examples/sft/config/realworld_sft_openpi.yaml``：
 
 .. code:: yaml
 
@@ -264,7 +264,7 @@ OpenPI 加载器会在运行时从``<model_path>/<repo_id>``读取归一化统�
        openpi:
          config_name: "pi0_realworld"
 
-将归一化统计信息放置在模型路径下，OpenPI 加载器会在运行时从``<model_path>/<repo_id>``读取。
+将归一化统计信息放置在模型路径下，OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取。
 文件结构应按照如下：
 
 .. code::
@@ -290,8 +290,7 @@ SFT 导出的 checkpoint 会在后续章节中部署使用。
 第五步：真机部署
 ----------------------------------------
 
-修改 ``evaluations/realworld/realworld_pnp_eval.yaml``，
-使其与你的集群、相机、目标位姿一致：
+修改 ``evaluations/realworld/realworld_pnp_eval.yaml``，使其与你的集群和目标位姿一致。RealSense 相机由系统自动发现；只有需要选择部分相机或指定相机顺序时，才在硬件 entry 中设置 ``camera_serials``：
 
 .. code-block:: yaml
 
@@ -306,7 +305,6 @@ SFT 导出的 checkpoint 会在后续章节中部署使用。
      eval:
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
-         camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
          task_description: "pick up the object and place it into the container"
 
 SFT 训练完成后，将模型检查点路径也更新到部署配置文件中：
@@ -362,7 +360,7 @@ Bin-relocation 任务。
      ee_pose_limit_max: [0.6,  0.2, 0.35, -2.64,  0.5,  0.5]
 
 底层实现上，``FrankaEnv`` 现在接受 ``override_cfg`` 字典，并使用类变量
-``CONFIG_CLS`` 来实例化数据类配置（默认为 ``FrankaRobotConfig``）。
+``CONFIG_CLS`` 来实例化数据类配置（默认为 ``FrankaEnvConfig``）。
 ``PegInsertionEnv`` 和 ``BottleEnv`` 等子类通过覆盖 ``CONFIG_CLS``
 来使用各自的数据类，同时共享相同的构造函数。
 

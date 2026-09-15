@@ -227,7 +227,7 @@ For standalone evaluation, use the unified :doc:`Evaluation CLI
 .. note::
 
    To add a custom IsaacLab task, implement it under
-   ``rlinf/envs/isaaclab/tasks/``, register it in ``rlinf/envs/isaaclab/__init__.py``,
+   ``rlinf/envs/sim/isaaclab/tasks/``, register it in ``rlinf/envs/sim/isaaclab/__init__.py``,
    then point ``init_params.id`` in an env config such as
    ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` at the new task id.
 

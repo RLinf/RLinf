@@ -177,7 +177,7 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 .. code-block:: bash
 
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.envs.realworld.common.gello.gello_expert \
+   python -m rlinf.robotics.parts.teleop.gello \
        --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
 你应该看到持续更新的输出，类似于：
@@ -200,8 +200,7 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 
    env:
      eval:
-       use_spacemouse: False
-       use_gello: True
+       teleop: gello
        gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"
 
 .. list-table:: GELLO 相关配置字段
@@ -211,15 +210,12 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
    * - 字段
      - 默认值
      - 说明
-   * - ``use_gello``
-     - ``False``
-     - 启用 GELLO 遥操作。设置为 ``True`` 以使用 GELLO 替代空间鼠标。
+   * - ``teleop``
+     - ``spacemouse``
+     - 改成 ``gello``，就把机械臂交给主臂来带。
    * - ``gello_port``
      - ``null``
-     - GELLO 设备的串口路径。当 ``use_gello`` 为 ``True`` 时必须指定。
-   * - ``use_spacemouse``
-     - ``True``
-     - 使用 GELLO 时必须设置为 ``False``。
+     - GELLO 设备的串口路径，``teleop`` 为 ``gello`` 时必须指定。
 
 有关完整的数据采集流程，请参考 :doc:`franka` 中的
 **使用 GELLO 进行数据采集** 章节。

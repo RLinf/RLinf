@@ -43,7 +43,7 @@ env:
     no_gripper: False
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: True
+    teleop: spacemouse
     max_episode_steps: 10000
     keyboard_reward_wrapper: single_stage
     override_cfg:

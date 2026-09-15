@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from rlinf.data.datasets.diffusion import EnvRecord, ImageConditionedDataset
-from rlinf.envs.diffusion.utils import media_to_uint8_nhwc
+from rlinf.envs.sim.diffusion.utils import media_to_uint8_nhwc
 
 
 class LeRobotImageConditionedDataset(ImageConditionedDataset):

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from datetime import timedelta
 from typing import Optional
 
 import torch
@@ -154,20 +153,11 @@ class MultiChannelProcessGroup:
             options (Optional[CollectiveGroupOptions]): The options for the collective group.
 
         """
-        from ..cluster import Cluster, ClusterEnvVar
+        from ..cluster import Cluster
 
         self._group_name = group_name
-        try:
-            # Set default timeout to 180 minutes
-            timeout = int(Cluster.get_sys_env_var(ClusterEnvVar.TIMEOUT, "180"))
-            self._logger.debug(
-                f"Setting timeout to {timeout} minutes for group {group_name}"
-            )
-            timeout = timedelta(minutes=timeout)
-        except ValueError:
-            raise ValueError(
-                "Invalid TIMEOUT value. It should be an integer representing minutes."
-            )
+        timeout = Cluster.get_collective_timeout()
+        self._logger.debug(f"Setting timeout to {timeout} for group {group_name}")
 
         if not self._no_accel_ccl:
             pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)

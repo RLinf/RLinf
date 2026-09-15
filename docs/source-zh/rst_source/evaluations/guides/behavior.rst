@@ -54,7 +54,10 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
      - 模型
    * - ``behavior_openpi_pi05_eval.yaml``
      - ``behavior_r1pro``
-     - π₀.₅
+     - π₀.₅（``openpi``）
+   * - ``behavior_openpi_pi05_rlinf_eval.yaml``
+     - ``behavior_r1pro``
+     - π₀.₅（``openpi_rlinf``）
 
 若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（例如 ``behavior_ppo_openpi_pi05_eval``）。回退配置包含 ``actor`` / ``algorithm`` 等训练段，但设置 ``runner.only_eval: True`` 后仍可正常评测。
 
@@ -80,7 +83,7 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
 
 复制或编辑目标 YAML，至少修改 ``rollout.model.model_path``。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`；BEHAVIOR 特有字段与评测协议见下文 :ref:`behavior-eval-config`。
 
-示例 ``behavior_openpi_pi05_eval.yaml`` 中还需保持与训练一致的 OpenPI 参数（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior`` 等）。
+示例 ``behavior_openpi_pi05_eval.yaml`` 与 ``behavior_openpi_pi05_rlinf_eval.yaml`` 中还需保持与训练一致的 OpenPI 参数（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior`` 等）。对 ``openpi`` 和 ``openpi_rlinf`` 而言，``num_action_chunks`` 是环境实际执行的 chunk；网络 horizon 来自 ``pi05_behavior`` 官方 ``TrainConfig.model.action_horizon``（**32**），除非另外设置 ``openpi.action_horizon``。
 
 **Step 4：启动评测**
 
@@ -103,7 +106,7 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
 评测协议概述
 ~~~~~~~~~~~~
 
-BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
+BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
 
 每条评测轨迹由以下配置唯一确定：
 
@@ -229,5 +232,5 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
 - **启动极慢：** 首次加载大场景耗时较长；保持 ``partial_scene_load: true`` 可只加载任务相关房间。
 - **视频帧数少于预期：** ``skip_intermediate_obs_in_chunk: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
-- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/behavior/instance_loader.py``。
+- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/sim/behavior/instance_loader.py``。
 - **步数校验失败：** ``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除。
