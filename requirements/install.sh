@@ -1044,13 +1044,25 @@ agentic_requirements_file() {
 }
 
 install_engine_requirements() {
-    local req="$1" engine_specs engine_req
+    local req="$1" engine_specs engine_req pip_req="$1" rewritten_req=""
     engine_specs=$(sed -n 's/^# engine: //p' "$req")
     local index_args=()
     if [ -n "${PLATFORM_TORCH_INDEX:-}" ]; then
         index_args=(--extra-index-url "$PLATFORM_TORCH_INDEX" --index-strategy unsafe-best-match)
     fi
-    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$req"
+    # Direct wheel URLs (pkg @ https://github.com/...) are fetched over HTTPS,
+    # so git's insteadOf rewrite does not apply. Prefix them when GITHUB_PREFIX is set.
+    if [ -n "$GITHUB_PREFIX" ] && grep -q 'https://github.com/' "$req"; then
+        rewritten_req=$(mktemp)
+        local req_dir
+        req_dir="$(cd "$(dirname "$req")" && pwd)"
+        sed -e "s|https://github.com/|${GITHUB_PREFIX}https://github.com/|g" \
+            -e "s|^-r  *\\([^/].*\\)|-r ${req_dir}/\\1|" \
+            "$req" > "$rewritten_req"
+        pip_req="$rewritten_req"
+    fi
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$pip_req"
+    [ -n "$rewritten_req" ] && rm -f "$rewritten_req"
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
         printf '%s\n' "$engine_specs" > "$engine_req"
