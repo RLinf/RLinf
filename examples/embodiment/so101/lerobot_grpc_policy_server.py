@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import logging
 import pickle  # nosec: LeRobot's official RPC protocol uses pickle.
@@ -272,6 +273,11 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--norm-stats", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--allow-insecure-remote",
+        action="store_true",
+        help="Allow unauthenticated pickle RPC on a non-loopback host; use a trusted tunnel.",
+    )
     parser.add_argument("--port", type=int, default=50051)
     parser.add_argument("--fps", type=int, default=15)
     parser.add_argument("--inference-latency", type=float, default=0.0)
@@ -279,6 +285,14 @@ def main() -> None:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--num-steps", type=int, default=5)
     args = parser.parse_args()
+    try:
+        is_loopback = ipaddress.ip_address(args.host).is_loopback
+    except ValueError:
+        is_loopback = args.host.lower() in {"localhost", "ip6-localhost"}
+    if not is_loopback and not args.allow_insecure_remote:
+        parser.error(
+            "non-loopback gRPC requires --allow-insecure-remote; prefer an SSH/tunnel endpoint"
+        )
     logging.basicConfig(level=logging.INFO)
     config = PolicyServerConfig(
         host=args.host,

@@ -53,10 +53,7 @@ class DaggerSessionController:
         if key == " " and self.state is DaggerState.POLICY_RECORDING:
             self.state = DaggerState.HANDOVER
             return "start_handover"
-        if key == "c" and self.state in {
-            DaggerState.POLICY_RECORDING,
-            DaggerState.EXPERT_RECORDING,
-        }:
+        if key == "c" and self.state is DaggerState.EXPERT_RECORDING:
             self.state = DaggerState.SAVED
             return "save_episode"
         if key == "a" and self.state is DaggerState.EXPERT_RECORDING:

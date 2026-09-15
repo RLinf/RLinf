@@ -42,7 +42,8 @@ env:
   group_name: SO101CollectGroup
   eval:
     auto_reset: false
-    ignore_terminations: true
+    # Keep the task success termination so ``only_success`` can flush it.
+    ignore_terminations: false
     max_episode_steps: 10000
     teleop:
       - so101_leader:

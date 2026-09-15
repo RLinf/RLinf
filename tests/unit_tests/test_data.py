@@ -68,6 +68,8 @@ def test_collect_episode_writes_so101_wrist_frame_as_standard_image():
     wrapper.num_envs = 1
     wrapper.logger = mock.Mock()
     frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    frame[..., 0] = 11
+    frame[..., 2] = 29
     episode = wrapper._buffer_to_lerobot_ep(
         {
             "actions": [np.zeros(6, dtype=np.float32)],
@@ -76,8 +78,8 @@ def test_collect_episode_writes_so101_wrist_frame_as_standard_image():
                 {
                     "frames": {"wrist_1": frame},
                     "state": {
-                        "arm_joint_position": np.zeros(5),
-                        "gripper_position": np.zeros(1),
+                        "arm_joint_position": np.array([np.pi / 2, 0, 0, 0, 0]),
+                        "gripper_position": np.ones(1) * 0.5,
                     },
                 }
             ],
@@ -88,7 +90,12 @@ def test_collect_episode_writes_so101_wrist_frame_as_standard_image():
         is_success=True,
     )
     assert episode is not None
-    assert np.array_equal(episode[0]["image"], frame)
+    assert np.array_equal(episode[0]["image"][..., 0], frame[..., 2])
+    assert np.array_equal(episode[0]["image"][..., 2], frame[..., 0])
+    np.testing.assert_allclose(
+        episode[0]["state"], np.array([0.9, 0, 0, 0, 0, 0.5], dtype=np.float32)
+    )
+    np.testing.assert_allclose(episode[0]["actions"], np.zeros(6, dtype=np.float32))
     assert "wrist_image" not in episode[0]
 
 
@@ -98,6 +105,7 @@ def test_so101_dagger_session_follows_record_handover_save_reset_flow():
 
     assert session.handle(" ") == "ignored"
     assert session.handle("s") == "start_episode"
+    assert session.handle("c") == "ignored"
     assert session.handle(" ") == "start_handover"
     session.handover_finished()
     assert session.state is DaggerState.EXPERT_RECORDING

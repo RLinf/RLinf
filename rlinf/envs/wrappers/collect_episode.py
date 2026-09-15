@@ -552,9 +552,20 @@ class CollectEpisode(gym.Wrapper):
                 continue
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)
             seg_id = int(seg_ids[i]) if i < len(seg_ids) else 0
+            state_array = np.asarray(state, dtype=np.float32).reshape(-1)
+            action_array = np.asarray(np_action, dtype=np.float32).reshape(-1)
+            if str(self.robot_type).lower() == "so101":
+                state_array = self._so101_to_model_units(state_array)
+                action_array = self._so101_to_model_units(action_array)
+                if image is not None:
+                    image = self._bgr_to_rgb(image)
+                if wrist_image is not None:
+                    wrist_image = self._bgr_to_rgb(wrist_image)
+                if extra_view_image is not None:
+                    extra_view_image = self._bgr_to_rgb(extra_view_image)
             frame: dict[str, Any] = {
-                "state": np.asarray(state).astype(np.float32),
-                "actions": np.asarray(np_action).astype(np.float32).flatten(),
+                "state": state_array,
+                "actions": action_array,
                 "task": task_desc,
                 "is_success": np.array([is_success], dtype=bool),
                 "done": np.array([False], dtype=bool),
@@ -580,6 +591,26 @@ class CollectEpisode(gym.Wrapper):
         steps = steps[:end]
         steps[-1]["done"] = np.array([True], dtype=bool)
         return steps
+
+    @staticmethod
+    def _so101_to_model_units(values: np.ndarray) -> np.ndarray:
+        """Convert SO-101 env radians/fraction values to PI05 model units."""
+        values = np.asarray(values, dtype=np.float32).reshape(-1)
+        if values.shape != (6,):
+            raise ValueError(f"SO-101 vectors must have shape (6,), got {values.shape}")
+        if not np.isfinite(values).all():
+            raise ValueError("SO-101 vectors contain non-finite values")
+        result = values.copy()
+        result[:-1] = np.rad2deg(result[:-1]) / 100.0
+        return result
+
+    @staticmethod
+    def _bgr_to_rgb(image: np.ndarray) -> np.ndarray:
+        """Convert an OpenCV BGR frame to the RGB contract used by OpenPI."""
+        image = np.asarray(image)
+        if image.ndim == 3 and image.shape[-1] == 3:
+            return image[..., ::-1].copy()
+        return image
 
     def _ensure_lerobot_writer(self, ep_data: dict):
         """Get-or-create the LeRobot writer. Must be called under ``_lerobot_lock``."""

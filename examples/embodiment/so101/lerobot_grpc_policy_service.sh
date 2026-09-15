@@ -32,6 +32,7 @@ source "${config_file}"
 : "${SO101_GRPC_DEVICE:=cuda:0}"
 : "${SO101_GRPC_FPS:=15}"
 : "${SO101_GRPC_TMUX_SESSION:=so101_lerobot_grpc}"
+: "${SO101_GRPC_ALLOW_INSECURE_REMOTE:=0}"
 : "${SO101_GRPC_LOG:=${root_dir}/examples/embodiment/so101/lerobot_grpc_policy.log}"
 : "${RLINF_PYTHON:=python}"
 
@@ -52,12 +53,16 @@ serve_foreground() {
   check_assets
   mkdir -p "$(dirname "${SO101_GRPC_LOG}")"
   cd "${root_dir}"
+  local remote_args=()
+  if [[ "${SO101_GRPC_ALLOW_INSECURE_REMOTE}" == "1" ]]; then
+    remote_args+=(--allow-insecure-remote)
+  fi
   exec env PYTHONPATH="${root_dir}${PYTHONPATH:+:${PYTHONPATH}}" \
     CUDA_VISIBLE_DEVICES="${SO101_GRPC_CUDA_VISIBLE_DEVICES}" "${RLINF_PYTHON}" \
     -m examples.embodiment.so101.lerobot_grpc_policy_server \
     --checkpoint "${SO101_GRPC_CHECKPOINT}" --norm-stats "${SO101_GRPC_NORM_STATS}" \
     --host "${SO101_GRPC_HOST}" --port "${SO101_GRPC_PORT}" --fps "${SO101_GRPC_FPS}" \
-    --device "${SO101_GRPC_DEVICE}" >>"${SO101_GRPC_LOG}" 2>&1
+    --device "${SO101_GRPC_DEVICE}" "${remote_args[@]}" >>"${SO101_GRPC_LOG}" 2>&1
 }
 
 start() {

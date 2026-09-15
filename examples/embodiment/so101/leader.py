@@ -67,7 +67,9 @@ class SO101LeaderExpert:
                 calibration_dir=(
                     Path(calibration_dir) if calibration_dir is not None else None
                 ),
-                use_degrees=False,
+                # The conversion helpers below consume LeRobot's native
+                # degree/percent representation, not its normalized mode.
+                use_degrees=True,
             )
             self._leader = SO101Leader(config)
 

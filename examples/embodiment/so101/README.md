@@ -52,6 +52,8 @@ On the GPU host, create the service configuration and start the server:
 cp examples/embodiment/so101/lerobot_grpc_policy.env.example \
   examples/embodiment/so101/lerobot_grpc_policy.env
 # Set the checkpoint, norm-stats, Python, host, and port in the env file.
+# The service binds to loopback by default. For a direct remote endpoint,
+# set SO101_GRPC_ALLOW_INSECURE_REMOTE=1 only behind a trusted tunnel/network.
 examples/embodiment/so101/lerobot_grpc_policy_service.sh start
 ```
 

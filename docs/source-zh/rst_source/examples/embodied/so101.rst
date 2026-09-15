@@ -193,7 +193,7 @@ follower 与相机能够协同工作后，再选择 PI05 的运行位置。local
      --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
      --camera /dev/video0 --dry-run
 
-运行硬件时，将 ``--dry-run`` 替换为 ``--pose-file /path/to/poses.json --allow-hardware-motion``。pose JSON 包含 ``joint_order``、``units: "lerobot_native"``、``standard_position`` 和 ``fold_position``；两个 position 都按 6 个 SO101 关节名称记录当前设备采用的值。远程 GPU 使用 ``--inference-backend grpc``，通过 ``--server-address`` 指定 service endpoint。在 GPU 主机上，将 ``examples/embodiment/so101/lerobot_grpc_policy.env.example`` 复制为 ``examples/embodiment/so101/lerobot_grpc_policy.env``，填写 checkpoint 与 norm-stats 路径，然后启动 service：
+运行硬件时，将 ``--dry-run`` 替换为 ``--pose-file /path/to/poses.json --allow-hardware-motion``。pose JSON 包含 ``joint_order``、``units: "lerobot_native"``、``standard_position`` 和 ``fold_position``；两个 position 都按 6 个 SO101 关节名称记录当前设备采用的值。远程 GPU 使用 ``--inference-backend grpc``，通过 ``--server-address`` 指定 service endpoint。在 GPU 主机上，将 ``examples/embodiment/so101/lerobot_grpc_policy.env.example`` 复制为 ``examples/embodiment/so101/lerobot_grpc_policy.env``，填写 checkpoint 与 norm-stats 路径，然后启动 service。service 默认只绑定 loopback；只有在直连 endpoint 位于可信 tunnel 或网络内时，才将 ``SO101_GRPC_ALLOW_INSECURE_REMOTE=1``：
 
 .. code-block:: bash
 

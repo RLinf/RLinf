@@ -261,7 +261,9 @@ select ``--inference-backend grpc`` and pass the service endpoint with
 ``--server-address``. On the GPU host, copy
 ``examples/embodiment/so101/lerobot_grpc_policy.env.example`` to
 ``examples/embodiment/so101/lerobot_grpc_policy.env``, set the checkpoint and
-norm-stats paths, then start the service:
+norm-stats paths, then start the service. The service binds to loopback by
+default; set ``SO101_GRPC_ALLOW_INSECURE_REMOTE=1`` only when a direct remote
+endpoint is protected by a trusted tunnel or network:
 
 .. code-block:: bash
 

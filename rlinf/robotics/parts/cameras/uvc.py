@@ -70,6 +70,7 @@ class UVCCamera(BaseCamera):
         path = self._resolve_device_path(info.serial_number)
         capture = cv2.VideoCapture(path, cv2.CAP_V4L2)
         if not capture.isOpened():
+            capture.release()
             raise RuntimeError(
                 f"Failed to open UVC camera (serial={info.serial_number}, path={path})."
             )
@@ -104,19 +105,14 @@ class UVCCamera(BaseCamera):
     def discover(cls) -> set[str]:
         """Return stable V4L2 identifiers visible on this node."""
         by_id_devices = glob.glob("/dev/v4l/by-id/*")
-        if by_id_devices:
-            # Configurations commonly use the stable by-id basename, while
-            # diagnostics and hand-written configs may use the actual video
-            # node. Include all spellings accepted by ``_resolve_device_path``.
-            identifiers: set[str] = set()
-            for device in by_id_devices:
-                identifiers.update((device, os.path.basename(device)))
-                try:
-                    identifiers.add(os.path.realpath(device))
-                except OSError:
-                    pass
-            return identifiers
-
-        # Keep the full device path: it is accepted by _resolve_device_path
-        # and therefore must also pass RobotDiscovery.validate_cameras.
-        return set(glob.glob("/dev/video*"))
+        # Configurations commonly use the stable by-id basename, while
+        # diagnostics and hand-written configs may use an actual video node.
+        # Include every spelling accepted by ``_resolve_device_path``.
+        identifiers: set[str] = set(glob.glob("/dev/video*"))
+        for device in by_id_devices:
+            identifiers.update((device, os.path.basename(device)))
+            try:
+                identifiers.add(os.path.realpath(device))
+            except OSError:
+                pass
+        return identifiers

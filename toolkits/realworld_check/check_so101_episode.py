@@ -141,7 +141,11 @@ def _validate_so101_vectors(
     writes degree-like joint values and a ``[0, 100]`` gripper.  Select the
     joint envelope first, then accept both normalized gripper conventions.
     """
-    array = np.asarray(values, dtype=np.float32)
+    try:
+        array = np.asarray(values, dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        report.error(f"{field_name} could not be converted to float32: {exc}")
+        return
     if array.ndim != 2 or array.shape[1] != expected_dim:
         report.error(
             f"{field_name} must have shape [frames, {expected_dim}], got {array.shape}."
