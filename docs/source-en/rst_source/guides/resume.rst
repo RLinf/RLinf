@@ -1,10 +1,10 @@
 Checkpoint Resume
 =================
 
-Unexpected events—network errors, power loss, node pre-emptions—can
-interrupt a long-running distributed job.  
-To tackle this challenge, RLinf saves a full checkpoint every ``runner.save_interval`` steps and lets
-you resume from the most recent snapshot with minimal loss of work.
+Resume an interrupted training job by setting ``runner.resume_dir`` to a saved
+checkpoint. RLinf saves checkpoints every ``runner.save_interval`` steps. Use
+the backend-specific layouts below to locate your checkpoint, then relaunch
+training with the same configuration.
 
 
 Checkpoint layout
@@ -76,17 +76,34 @@ FSDP/FSDP2 Checkpoint's file structure looks like this:
    ├── global_step_10/
    │   └── actor/
    │       ├── dcp_checkpoint/
+   │       │   ├── .metadata
    │       │   ├── __0_0.distcp
    │       │   ├── __1_0.distcp
    │       │   ├── __2_0.distcp
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
-   │           └── full_weigths.pt
+   │           └── full_weights.pt
    └── global_step_20/
        └── …
 
-FSDP/FSDP2 saves and loads checkpoints via DCP (torch.distributed.checkpoint), resulting in a set of distributed checkpoint files (.distcp).
-Each file contains a slice of model parameters, optimizer state, and RNG state.
+FSDP/FSDP2 saves model parameters, optimizer state, learning-rate schedulers,
+and random-number generator (RNG) states through DCP
+(``torch.distributed.checkpoint``). Keep all ``.distcp`` files and the
+``.metadata`` file when copying a checkpoint.
+
+DCP checkpoints preserve a separate RNG state for each actor rank: Python,
+NumPy, PyTorch CPU, and the worker's current accelerator device when available.
+Resume with the same actor world size to restore each rank's next random draws.
+When the world size changes, existing ranks restore their saved streams and new
+ranks keep their initialized RNG states. Loading continues with a warning;
+the changed topology does not reproduce the original training sequence.
+Environment state and separately created generators are outside this RNG
+snapshot, so restoring it does not by itself guarantee identical training curves.
+
+Older DCP checkpoints with a single RNG dictionary remain loadable. They may
+have deduplicated different ranks' RNG states; loading them cannot recover the
+discarded streams. The ``local_shard`` checkpoint format continues to store RNG
+state in each rank's own file.
 
 
 Resuming training
@@ -120,5 +137,3 @@ Resuming training
 
    To verify resumption, look for the log line.  
    If the next training step starts at 30, then the resume is working well!
-
-

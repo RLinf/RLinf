@@ -27,10 +27,13 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import FSDPVersion, to_local_if_dtensor
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import get_rng_state, set_rng_state
 
 
 class Checkpoint(Stateful):
+    """Training state; DCP state dictionaries must be built on every rank."""
+
     def __init__(
         self,
         model: Union[FSDP, FSDPModule],
@@ -50,6 +53,7 @@ class Checkpoint(Stateful):
         self.opts = opts
         self.fsdp_version = fsdp_version
         self.checkpoint_format = checkpoint_format
+        self.legacy_rng_state = False
 
     def _get_local_optim_state_dicts(self):
         if isinstance(self.optimizers, Optimizer):
@@ -92,16 +96,41 @@ class Checkpoint(Stateful):
 
             lr_sched_sd = [lr.state_dict() for lr in self.lr_schedulers]
 
+            rng_state = get_rng_state()
+            if not self.legacy_rng_state:
+                all_rng_states = [rng_state]
+                if torch.distributed.is_initialized():
+                    all_rng_states = [None] * torch.distributed.get_world_size()
+                    torch.distributed.all_gather_object(all_rng_states, rng_state)
+                # DCP deduplicates replicated values. Give every rank the same
+                # complete set. Tuples are serialized as one DCP value, keeping
+                # the saved world size intact when loading with a new topology.
+                rng_state = tuple(all_rng_states)
+
             out = {
                 "model": model_sd,
                 "optimizers": optim_sd,
                 "lr_schedulers": lr_sched_sd,
                 "fsdp_version": self.fsdp_version.value,
-                "rng": get_rng_state(),
+                "rng": rng_state,
             }
         return out
 
     def load_state_dict(self, state):
+        rng_state = state.get("rng")
+        if isinstance(rng_state, tuple):
+            distributed = torch.distributed.is_initialized()
+            world_size = torch.distributed.get_world_size() if distributed else 1
+            rank = torch.distributed.get_rank() if distributed else 0
+            if len(rng_state) != world_size and rank == 0:
+                get_logger().warning(
+                    f"RNG world size mismatch: checkpoint has {len(rng_state)} ranks, "
+                    f"current job has {world_size}. Existing ranks restore their saved "
+                    "RNG states; new ranks keep their initialized RNG states. "
+                    "Training is not exactly reproducible across world size changes."
+                )
+            rng_state = rng_state[rank] if rank < len(rng_state) else get_rng_state()
+
         assert "fsdp_version" in state, "Checkpoint is missing FSDP version info."
         ckpt_fsdp_version = FSDPVersion(state["fsdp_version"])
         if ckpt_fsdp_version != self.fsdp_version:
@@ -128,5 +157,5 @@ class Checkpoint(Stateful):
             for lr, lr_sd in zip(self.lr_schedulers, state["lr_schedulers"]):
                 lr.load_state_dict(lr_sd)
 
-        if "rng" in state:
-            set_rng_state(state["rng"])
+        if rng_state is not None:
+            set_rng_state(rng_state)

@@ -17,13 +17,20 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import logging
 import math
 import os
+import random
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
 from rlinf.runners.reasoning_runner import ReasoningRunner
@@ -290,3 +297,182 @@ def test_interrupted_dataloader_save_does_not_publish_completion(tmp_path, monke
     assert not final_path.exists()
     assert not Path(f"{final_path}.tmp").exists()
     assert not runner._is_complete_checkpoint(str(checkpoint))
+
+
+def _draw_random_samples() -> tuple[torch.Tensor, np.ndarray, list[float]]:
+    return torch.rand(8), np.random.random(8), [random.random() for _ in range(8)]
+
+
+def _checkpoint_rng_worker(
+    rank: int,
+    world_size: int,
+    checkpoint_dir: str,
+    rendezvous: str,
+    checkpoint_format: str,
+    load_world_size: int | None = None,
+) -> None:
+    from torch.distributed import checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import StateDictOptions
+
+    from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp2 import FSDP2Strategy
+    from rlinf.hybrid_engines.fsdp.utils import FSDPVersion
+    from rlinf.utils.utils import get_rng_state, seed_everything
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        seed_everything(0)
+        model = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
+        model(torch.ones(1, 2)).sum().backward()
+        optimizer.step()
+        scheduler.step()
+        checkpoint = Checkpoint(
+            model,
+            optimizer,
+            scheduler,
+            StateDictOptions(),
+            FSDPVersion.FSDP2,
+            checkpoint_format=checkpoint_format,
+        )
+
+        if load_world_size is None:
+            # Legacy checkpoints cannot retain different RNG states for each rank.
+            seed_everything(42 if checkpoint_format == "legacy" else 42 + rank)
+            _draw_random_samples()
+            if checkpoint_format == "local_shard":
+                shard_dir = Path(checkpoint_dir) / "local_shard_checkpoint"
+                shard_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    checkpoint.state_dict(), shard_dir / f"checkpoint_rank_{rank}.pt"
+                )
+            else:
+                state = checkpoint
+                dcp_dir = Path(checkpoint_dir) / "dcp_checkpoint"
+                if checkpoint_format == "legacy":
+                    state = checkpoint.state_dict()
+                    state["rng"] = get_rng_state()
+                    dcp_dir = checkpoint_dir
+                dcp.save({"fsdp_checkpoint": state}, checkpoint_id=dcp_dir)
+            torch.save(
+                {
+                    "samples": _draw_random_samples(),
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                },
+                Path(checkpoint_dir) / f"expected_rank_{rank}.pt",
+            )
+
+        expected_rank = rank if load_world_size is None or rank < 2 else 0
+        expected = torch.load(
+            Path(checkpoint_dir) / f"expected_rank_{expected_rank}.pt",
+            weights_only=False,
+        )
+        if load_world_size is not None and rank >= 2:
+            seed_everything(1234 + rank)
+            expected["samples"] = _draw_random_samples()
+
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.fill_(999)
+        for opt_state in optimizer.state.values():
+            opt_state["momentum_buffer"].fill_(999)
+        scheduler.step()
+        seed_everything(1234 + rank)
+
+        from rlinf.utils.logging import get_logger
+
+        messages = io.StringIO()
+        handler = logging.StreamHandler(messages)
+        logger = get_logger()
+        logger.addHandler(handler)
+        try:
+            FSDP2Strategy.load_checkpoint(
+                model,
+                optimizer,
+                scheduler,
+                checkpoint_dir,
+                checkpoint_format="local_shard"
+                if checkpoint_format == "local_shard"
+                else "dcp",
+            )
+        finally:
+            logger.removeHandler(handler)
+        actual = _draw_random_samples()
+        torch.testing.assert_close(actual[0], expected["samples"][0], rtol=0, atol=0)
+        np.testing.assert_array_equal(actual[1], expected["samples"][1])
+        assert actual[2] == expected["samples"][2]
+        torch.testing.assert_close(
+            model.state_dict(), expected["model"], rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            optimizer.state_dict(), expected["optimizer"], rtol=0, atol=0
+        )
+        assert scheduler.state_dict() == expected["scheduler"]
+        assert messages.getvalue().count("RNG world size mismatch") == (
+            1 if load_world_size is not None and rank == 0 else 0
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.skipif(not dist.is_gloo_available(), reason="Gloo is required")
+@pytest.mark.parametrize("checkpoint_format", ["dcp", "local_shard", "legacy"])
+def test_fsdp_checkpoint_restores_rng(tmp_path: Path, checkpoint_format: str) -> None:
+    mp.spawn(
+        _checkpoint_rng_worker,
+        args=(
+            2,
+            str(tmp_path / "checkpoint"),
+            str(tmp_path / "rendezvous"),
+            checkpoint_format,
+        ),
+        nprocs=2,
+        join=True,
+    )
+
+    if checkpoint_format == "dcp":
+        from torch.distributed.checkpoint import FileSystemReader
+
+        metadata = FileSystemReader(
+            tmp_path / "checkpoint" / "dcp_checkpoint"
+        ).read_metadata()
+        assert "fsdp_checkpoint.rng" in metadata.state_dict_metadata
+        assert not any(
+            key.startswith("fsdp_checkpoint.rng.")
+            for key in metadata.state_dict_metadata
+        )
+
+
+@pytest.mark.skipif(not dist.is_gloo_available(), reason="Gloo is required")
+@pytest.mark.parametrize("load_world_size", [1, 3])
+def test_fsdp_checkpoint_restores_rng_when_world_size_changes(
+    tmp_path: Path, load_world_size: int
+) -> None:
+    checkpoint_dir = str(tmp_path / "checkpoint")
+    mp.spawn(
+        _checkpoint_rng_worker,
+        args=(2, checkpoint_dir, str(tmp_path / "save_rendezvous"), "dcp"),
+        nprocs=2,
+        join=True,
+    )
+    mp.spawn(
+        _checkpoint_rng_worker,
+        args=(
+            load_world_size,
+            checkpoint_dir,
+            str(tmp_path / "load_rendezvous"),
+            "dcp",
+            load_world_size,
+        ),
+        nprocs=load_world_size,
+        join=True,
+    )
