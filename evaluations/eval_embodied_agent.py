@@ -43,12 +43,21 @@ def main(cfg) -> None:
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group. Select the worker by ``rollout_backend``:
-    # only ``sglang`` and ``huggingface`` are supported here (vllm is intentionally not wired in);
+    # ``apxinf`` is an eval-only in-process backend. vLLM is intentionally not
+    # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
-    if rollout_backend == "sglang":
+    if rollout_backend == "apxinf":
+        from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
+
+        rollout_group = ApxInfRolloutWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
+    elif rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
         rollout_group = (
