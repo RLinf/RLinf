@@ -576,6 +576,49 @@ ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不
 
    python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
 
+使用 ROS 后端运行
+~~~~~~~~~~~~~~~~~~~~
+
+使用 ROS 后端时，运行步骤与 `运行`_ 相同，只有环境和硬件配置不同。每个运行 RLinf 的终端都要先激活 ROS 环境，尤其是在执行 ``ray start`` 之前：激活时会加载 ROS 和 catkin 工作区，而 Ray worker 会继承该环境。
+
+.. code:: bash
+
+   source franka-ros/bin/activate  # Docker 中执行：source switch_env franka-0.15.0
+   ray stop
+   export RLINF_NODE_RANK=0
+   ray start --head
+
+在两个配置文件中设置 ``backend: franka_ros`` 后，`收集演示`_ 和 `训练 Policy`_ 中的命令无需修改即可运行。
+
+ROS 不需要手动启动。机械臂连接时，RLinf 会依次：
+
+1. 复用已在运行的 ``roscore``，没有则启动一个，并为当前进程创建一个 ROS 节点。
+2. 针对机械臂的 ``robot_ip`` 执行 ``roslaunch serl_franka_controllers impedance.launch``，启动 ``franka_control``、Franka Hand 驱动和笛卡尔阻抗控制器。
+3. 进行关节复位时切换到 ``joint.launch``，机械臂到达复位位姿后再重新启动阻抗控制器。
+
+机械臂的 FCI 连接同一时间只能由一个程序占用，请先关闭其他控制程序。首次运行前，用控制器检查工具确认启动流程正常：
+
+.. code:: bash
+
+   python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
+
+与 Franky 的差异
+^^^^^^^^^^^^^^^^^^
+
+- 机械臂只接受笛卡尔空间的 ``tcp_pose`` 目标。单臂 Franka 任务本身就发送这类目标；关节位置控制（例如双臂关节任务）需要使用 Franky。
+- ``gripper_type: franka`` 通过机械臂启动文件拉起的 ``/franka_gripper`` 话题控制 Franka Hand，因此只有机械臂保持连接时手爪才会响应。Robotiq 等其他末端执行器与使用 Franky 时一样独立连接。
+- 阻抗控制器自行管理增益。任务的 ``compliance_param`` 通过 ``dynamic_reconfigure`` 生效，硬件配置中的 ``compliance`` 设置不起作用。
+
+在多节点方式中，只有控制计算机需要 ROS 环境。GPU 服务器运行 actor 和 rollout，按 `准备两台计算机`_ 安装 Franky 环境即可。
+
+常见问题
+^^^^^^^^^^
+
+- 出现 ``Running kernel does not have realtime capabilities``：启动实时内核，或用 ``FRANKA_REALTIME_CONFIG=ignore`` 重新安装。
+- 出现 libfranka 版本不兼容的错误：按兼容性表中与固件对应的 ``LIBFRANKA_VERSION`` 重新安装，或在 Docker 中选择对应的 ``franka-<version>`` 环境。
+- 机械臂一直没有就绪：确认 Franka Desk 中已激活 FCI，然后在控制器运行期间，于已激活的环境中执行 ``rostopic echo -n 1 /franka_state_controller/franka_states``，正常时会输出一条状态消息。
+- 运行崩溃后可能残留仍占用机械臂的 ``roslaunch`` 进程。重新启动前先停止 Ray，并执行 ``pkill -f roslaunch``。
+
 其他 Franka 工作流
 ------------------
 

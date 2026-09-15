@@ -798,6 +798,75 @@ The controller check tool selects the backend with a flag:
 
    python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
 
+Run with the ROS Backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Running with ROS follows `Run It`_; only the environment and the hardware config
+change. Activate the ROS environment in every shell that runs RLinf, and in
+particular before ``ray start``: activation loads ROS and the catkin workspace,
+and Ray workers inherit that environment.
+
+.. code:: bash
+
+   source franka-ros/bin/activate  # In Docker: source switch_env franka-0.15.0
+   ray stop
+   export RLINF_NODE_RANK=0
+   ray start --head
+
+With ``backend: franka_ros`` set in both recipes, the commands in
+`Collect Demonstrations`_ and `Train the Policy`_ run unchanged.
+
+You do not start ROS yourself. When the arm connects, RLinf:
+
+1. Reuses a running ``roscore`` or starts one, and opens a single ROS node for
+   the process.
+2. Runs ``roslaunch serl_franka_controllers impedance.launch`` for the arm's
+   ``robot_ip``, which brings up ``franka_control``, the Franka Hand driver, and
+   the Cartesian impedance controller.
+3. For a joint reset, switches to ``joint.launch`` until the arm reaches the
+   reset pose, then restarts the impedance controller.
+
+Only one program can hold the arm's FCI connection, so close any other
+controller first. Before the first run, confirm that the launch works with the
+controller check tool:
+
+.. code:: bash
+
+   python -m toolkits.realworld_check.test_franka_controller --backend franka_ros
+
+Differences from Franky
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- The arm accepts Cartesian ``tcp_pose`` targets only. Single-arm Franka tasks
+  already send these; joint-position control, such as the dual-arm joint
+  tasks, needs Franky.
+- ``gripper_type: franka`` reaches the Franka Hand through the
+  ``/franka_gripper`` topics that the arm's launch starts, so the hand responds
+  only while the arm is connected. Other end effectors, such as a Robotiq
+  gripper, connect on their own as they do with Franky.
+- The impedance controller owns its gains. A task's ``compliance_param`` is
+  applied through ``dynamic_reconfigure``, and the hardware config's
+  ``compliance`` settings have no effect.
+
+In the multi-node layout, only the controller needs the ROS environment. The GPU
+server runs actor and rollout and installs the Franky environment as in
+`Prepare Both Computers`_.
+
+Troubleshooting
+^^^^^^^^^^^^^^^^^
+
+- ``Running kernel does not have realtime capabilities``: boot the real-time
+  kernel, or reinstall with ``FRANKA_REALTIME_CONFIG=ignore``.
+- An incompatible libfranka version error: reinstall with the
+  ``LIBFRANKA_VERSION`` that the compatibility table lists for your firmware,
+  or select the matching ``franka-<version>`` environment in Docker.
+- The arm never reports ready: check that FCI is active in Franka Desk, then
+  run ``rostopic echo -n 1 /franka_state_controller/franka_states`` in the
+  activated environment while the controller is up; it should print one state
+  message.
+- A crashed run can leave ``roslaunch`` processes that still hold the arm. Stop
+  Ray and run ``pkill -f roslaunch`` before starting again.
+
 Other Franka Workflows
 --------------------------
 
