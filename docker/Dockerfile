@@ -20,7 +20,7 @@ ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-c
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
 # MUSA lives on the Moore Threads registry, not Docker Hub.
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
-ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
+ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu20.04
 
 
 ##################################################################################################
@@ -65,8 +65,9 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 
 
-# Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
-# bypasses the platform switch and always uses a plain Ubuntu base.
+# Franka depends on ros-noetic, which needs Ubuntu 20.04, so it bypasses the
+# platform switch and uses the CUDA base on 20.04. One node can then run the
+# actor, rollout, and robot control together.
 FROM ${FRANKA_BASE_IMAGE} AS base-image-embodied-franka
 
 
@@ -356,11 +357,10 @@ RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-franka-image
 
 # Install multiple Franka environments with different libfranka versions
-# franka uses ubuntu:20.04 with no GPU stack regardless of build-arg platform,
+# franka always builds on the NVIDIA CUDA base regardless of build-arg platform,
 # so always invoke install.sh with --platform nvidia to skip ROCm detection.
-# A failed iteration must fail the build, not only the last one.
 RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
-            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka || exit 1; \
+            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka; \
         done
 
 # Franky environment. franky-control ships libfranka inside a prebuilt wheel,

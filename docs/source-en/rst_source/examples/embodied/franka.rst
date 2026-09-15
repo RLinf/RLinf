@@ -375,14 +375,18 @@ The first command must print ``True``. If it prints ``False``, check
 ``nvidia-smi`` and re-run the installer after fixing the driver. The second
 prints the controller package path inside ``.venv/franka_catkin_ws``.
 
-Docker Image for a Controller Node
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Use the Docker Image
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-The ``rlinf/rlinf:agentic-rlinf0.4-franka`` image is built on Ubuntu 20.04 with
-ROS Noetic and has no GPU stack: PyTorch in it is CPU-only. Use it for the
-controller computer of the multi-node layout, not for the single-machine GPU
-host. It contains these environments, switched with
-``source switch_env <name>``:
+Instead of installing natively, you can run the
+``rlinf/rlinf:agentic-rlinf0.4-franka`` image. It is built on CUDA 12.8 and
+Ubuntu 20.04 with ROS Noetic, and its environments carry CUDA PyTorch, so one
+container runs the actor, rollout, and robot control on the single-machine
+GPU host. The host still needs driver 570 or newer from
+`Install the NVIDIA Driver on Ubuntu 20.04`_ and the
+`NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
+The image also serves as the controller of the multi-node layout. It contains
+these environments, switched with ``source switch_env <name>``:
 
 .. list-table::
    :header-rows: 1
@@ -406,7 +410,7 @@ select the environment that matches your firmware:
 .. code:: bash
 
    docker run -it --name rlinf-franka \
-     --network host --privileged \
+     --gpus all --network host --privileged \
      --ulimit rtprio=99 --ulimit memlock=-1 \
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-franka bash
@@ -619,8 +623,8 @@ Prepare Both Computers
 
 Prepare the controller as the robot host above, without the NVIDIA driver:
 check the firmware and set up the real-time kernel or its fallback. Then
-either start the Docker image from
-`Docker Image for a Controller Node`_, or install natively with
+either start the Docker image from `Use the Docker Image`_ (omit
+``--gpus all`` on a computer without a GPU), or install natively with
 ``bash requirements/install.sh embodied --env franka``. Without an NVIDIA
 driver, the native installer selects CPU-only PyTorch.
 

@@ -18,7 +18,7 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 ### Additional build arguments
 
-- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
+- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses `nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu20.04`.
 - Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, or `MUSA_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
 
@@ -35,12 +35,13 @@ docker build -f docker/Dockerfile \
 
 ### Building for Franka
 
-The `embodied-franka` target builds on Ubuntu 20.04 with ROS Noetic. It holds one
+The `embodied-franka` target builds on CUDA and Ubuntu 20.04 with ROS Noetic. It holds one
 `franka-<libfranka-version>` venv per supported libfranka release
 (`franka-0.15.0` is active by default), a `franky` venv for the Franky backend
-(libfranka 0.19.0), and `franka-dexhand`. The image has no GPU stack, so its
-venvs carry CPU torch; a host that trains beside the robot installs natively
-instead. See the [Franka example](../docs/source-en/rst_source/examples/embodied/franka.rst).
+(libfranka 0.19.0), and `franka-dexhand`. Its venvs carry CUDA PyTorch, so one
+container can run the actor, rollout, and robot control; run it with `--gpus all`
+on a host with the NVIDIA driver and NVIDIA Container Toolkit. See the
+[Franka example](../docs/source-en/rst_source/examples/embodied/franka.rst).
 
 ### Building for Moore Threads (MUSA)
 

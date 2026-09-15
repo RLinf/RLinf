@@ -272,10 +272,10 @@ NVIDIA 内核模块也必须针对实时内核重新编译，而它的编译过�
 
 第一条命令必须输出 ``True``；如果输出 ``False``，请检查 ``nvidia-smi``，修复驱动后重新运行安装脚本。第二条命令会输出 ``.venv/franka_catkin_ws`` 中控制器软件包的路径。
 
-用于控制节点的 Docker 镜像
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+使用 Docker 镜像
+~~~~~~~~~~~~~~~~~~~~
 
-``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像基于 Ubuntu 20.04 和 ROS Noetic 构建，不含 GPU 软件栈，其中的 PyTorch 仅支持 CPU。它适合用作多节点方式中的控制计算机，不适合单机方式中的 GPU 主机。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
+除本地安装外，也可以直接运行 ``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像。该镜像基于 CUDA 12.8、Ubuntu 20.04 和 ROS Noetic 构建，环境中的 PyTorch 为 CUDA 版本，因此在单机方式的 GPU 主机上，一个容器即可同时运行 actor、rollout 和机器人控制。宿主机仍需按 `在 Ubuntu 20.04 上安装 NVIDIA 驱动`_ 安装 570 及以上版本的驱动，并安装 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_。该镜像也可以用作多节点方式中的控制计算机。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
 
 .. list-table::
    :header-rows: 1
@@ -295,7 +295,7 @@ NVIDIA 内核模块也必须针对实时内核重新编译，而它的编译过�
 .. code:: bash
 
    docker run -it --name rlinf-franka \
-     --network host --privileged \
+     --gpus all --network host --privileged \
      --ulimit rtprio=99 --ulimit memlock=-1 \
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-franka bash
@@ -461,7 +461,7 @@ NVIDIA 内核模块也必须针对实时内核重新编译，而它的编译过�
 准备两台计算机
 ~~~~~~~~~~~~~~
 
-控制计算机按前文的机器人主机准备，但不需要 NVIDIA 驱动：检查固件，配置实时内核或采用不使用实时内核的方式。随后可以启动 `用于控制节点的 Docker 镜像`_，也可以执行 ``bash requirements/install.sh embodied --env franka`` 进行本地安装。没有 NVIDIA 驱动时，本地安装会自动选择仅 CPU 的 PyTorch。
+控制计算机按前文的机器人主机准备，但不需要 NVIDIA 驱动：检查固件，配置实时内核或采用不使用实时内核的方式。随后可以按 `使用 Docker 镜像`_ 启动容器（没有 GPU 的计算机去掉 ``--gpus all``），也可以执行 ``bash requirements/install.sh embodied --env franka`` 进行本地安装。没有 NVIDIA 驱动时，本地安装会自动选择仅 CPU 的 PyTorch。
 
 在 GPU 服务器上安装好 NVIDIA 驱动后，克隆相同版本的 RLinf，安装不含 ROS 的同一环境：
 
