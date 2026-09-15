@@ -34,8 +34,8 @@ def accelerator_autocast(dtype: torch.dtype) -> AbstractContextManager:
     """Autocast to ``dtype`` on the accelerator this worker resolved.
 
     Args:
-        dtype: Autocast dtype, e.g. ``torch.bfloat16`` for the backbone or
-            ``torch.float32`` to undo it around an action head.
+        dtype: Target autocast dtype. Unsupported dtypes may disable
+            autocast without converting existing tensors.
 
     Returns:
         A ``torch.autocast`` on ``Worker.torch_device_type``, or a no-op context

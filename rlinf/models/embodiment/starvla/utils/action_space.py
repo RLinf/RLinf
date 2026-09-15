@@ -180,8 +180,12 @@ def unnormalize_actions_for_env(
             "Set cfg.unnorm_key=None to use normalized actions directly."
         )
 
-    # starVLA is installed only in the starvla venv.
-    from starVLA.model.tools import FrameworkTools
+    try:
+        from starVLA.model.tools import FrameworkTools
+    except ImportError as exc:
+        raise ModuleNotFoundError(
+            "starVLA is required for action unnormalization but is not importable. "
+        ) from exc
 
     actions = np.asarray(normalized_actions, dtype=np.float32)
     flat = actions.reshape(-1, actions.shape[-1]).astype(np.float32, copy=False)

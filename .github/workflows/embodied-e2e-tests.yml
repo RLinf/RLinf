@@ -1378,7 +1378,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export STARVLA_PATH=/workspace/dataset/starVLA
+          export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           bash requirements/install.sh embodied --model starvla --env maniskill_libero
 
       - name: Libero-10 GRPO test
@@ -1406,7 +1406,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export STARVLA_PATH=/workspace/dataset/starVLA
+          export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           export DECORD_PATH=/workspace/dataset/decord
           bash requirements/install.sh --platform ascend embodied --model starvla --env libero
 
