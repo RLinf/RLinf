@@ -108,7 +108,7 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-wan
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-wan
+      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-wan
 
    # 进入容器后，切换到 OpenVLA-OFT 虚拟环境：
    source switch_env openvla-oft
