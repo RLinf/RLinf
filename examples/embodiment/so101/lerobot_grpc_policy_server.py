@@ -29,8 +29,6 @@ from queue import Empty
 from typing import Any
 
 import grpc
-import jax
-import numpy as np
 import torch
 from lerobot.async_inference.configs import PolicyServerConfig
 from lerobot.async_inference.helpers import (
@@ -42,9 +40,7 @@ from lerobot.async_inference.policy_server import PolicyServer
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import receive_bytes_in_chunks
 
-from rlinf.models import get_model
-from rlinf.models.embodiment.openpi.policies.so101_policy import SO101_JOINT_NAMES
-from rlinf.models.embodiment.openpi.so101_inference import build_so101_model_config
+from examples.embodiment.so101.policy_backend import SO101LocalPolicyBackend
 
 
 class RLinfSO101PolicyServer(PolicyServer):
@@ -61,13 +57,11 @@ class RLinfSO101PolicyServer(PolicyServer):
         super().__init__(config)
         self._checkpoint = checkpoint.resolve()
         self._norm_stats = norm_stats.resolve()
-        self._backend_device = torch.device(device)
+        self._configured_device = str(torch.device(device))
+        self._backend_device = torch.device(self._configured_device)
         self._num_steps = num_steps
-        self._backend: Any | None = None
-        self.preprocessor: Any | None = None
-        self.postprocessor: Any | None = None
+        self._backend: SO101LocalPolicyBackend | None = None
         self._policy_fingerprint: tuple[Any, ...] | None = None
-        self._loaded_model_key: tuple[str, str, str] | None = None
         self._load_count = 0
         self._last_load_ms: float | None = None
         self._session_id = 0
@@ -76,25 +70,17 @@ class RLinfSO101PolicyServer(PolicyServer):
     def _feature_fingerprint(features: Any) -> str:
         return json.dumps(features, sort_keys=True, default=repr, separators=(",", ":"))
 
-    def _build_model_config(self, checkpoint: Path) -> Any:
-        return build_so101_model_config(
-            checkpoint, self._norm_stats, num_steps=self._num_steps
-        )
-
-    def _load_backend(self, checkpoint: Path, device: str) -> float:
+    def _load_backend(self) -> float:
         start = time.perf_counter()
-        backend = (
-            get_model(self._build_model_config(checkpoint))
-            .to(torch.device(device))
-            .eval()
+        self._backend = SO101LocalPolicyBackend(
+            self._checkpoint,
+            self._norm_stats,
+            self._configured_device,
+            num_steps=self._num_steps,
         )
-        self._backend = backend
-        self.preprocessor = backend._input_transform  # noqa: SLF001
-        self.postprocessor = backend._output_transform  # noqa: SLF001
-        self._backend_device = torch.device(device)
+        self._backend_device = self._backend.device
         self._last_load_ms = (time.perf_counter() - start) * 1000.0
         self._load_count += 1
-        self._loaded_model_key = ("pi05", str(checkpoint.resolve()), str(device))
         return self._last_load_ms
 
     def load_initial_policy(self) -> None:
@@ -105,7 +91,9 @@ class RLinfSO101PolicyServer(PolicyServer):
             )
         if not self._norm_stats.is_file():
             raise FileNotFoundError(f"Missing norm_stats: {self._norm_stats}")
-        load_ms = self._load_backend(self._checkpoint, str(self._backend_device))
+        if self._backend is not None:
+            return
+        load_ms = self._load_backend()
         self.logger.info(
             "Initial policy load complete load_ms=%.2f load_count=%d checkpoint=%s device=%s",
             load_ms,
@@ -141,67 +129,44 @@ class RLinfSO101PolicyServer(PolicyServer):
                 "SO101 RLinf PI05 serves exactly 20 actions per chunk; "
                 f"got {policy_specs.actions_per_chunk}."
             )
-        requested_checkpoint = Path(policy_specs.pretrained_name_or_path)
-        checkpoint = (
-            requested_checkpoint if requested_checkpoint.is_dir() else self._checkpoint
-        )
-        if not (checkpoint / "model_state_dict/full_weights.pt").is_file():
-            raise FileNotFoundError(f"Incomplete RLinf actor checkpoint: {checkpoint}")
-        if not self._norm_stats.is_file():
-            raise FileNotFoundError(f"Missing norm_stats: {self._norm_stats}")
+        if self._backend is None:
+            self.load_initial_policy()
+        requested_checkpoint = str(policy_specs.pretrained_name_or_path)
+        if requested_checkpoint != str(self._checkpoint):
+            self.logger.info(
+                "Using server checkpoint=%s; client policy path=%s is informational",
+                self._checkpoint,
+                requested_checkpoint,
+            )
+        if str(policy_specs.device) != self._configured_device:
+            self.logger.info(
+                "Using server device=%s; client requested device=%s",
+                self._configured_device,
+                policy_specs.device,
+            )
 
         fingerprint = (
             policy_specs.policy_type,
-            str(checkpoint.resolve()),
-            str(policy_specs.device),
+            str(self._checkpoint),
+            self._configured_device,
             int(policy_specs.actions_per_chunk),
             self._feature_fingerprint(policy_specs.lerobot_features),
         )
         if self._backend is not None and fingerprint == self._policy_fingerprint:
-            self.device = str(policy_specs.device)
+            self.device = self._configured_device
             self.policy_type = policy_specs.policy_type
             self.lerobot_features = policy_specs.lerobot_features
             self.actions_per_chunk = 20
             self.logger.info("Reusing policy fingerprint=%s load_ms=0", fingerprint)
             return services_pb2.Empty()
 
-        model_key = (
-            policy_specs.policy_type,
-            str(checkpoint.resolve()),
-            str(policy_specs.device),
+        self.logger.info(
+            "Binding startup-loaded policy load_ms=0.00 load_count=%d fingerprint=%s",
+            self._load_count,
+            fingerprint,
         )
-        # The configured policy is loaded before the server starts. A first
-        # instruction only binds its feature mapping; a changed fingerprint
-        # performs a real reload.
-        if self._backend is None or not (
-            self._policy_fingerprint is None and model_key == self._loaded_model_key
-        ):
-            start = time.perf_counter()
-            self._backend = (
-                get_model(self._build_model_config(checkpoint))
-                .to(torch.device(policy_specs.device))
-                .eval()
-            )
-            self.preprocessor = self._backend._input_transform  # noqa: SLF001
-            self.postprocessor = self._backend._output_transform  # noqa: SLF001
-            self._backend_device = torch.device(policy_specs.device)
-            self._last_load_ms = (time.perf_counter() - start) * 1000.0
-            self._load_count += 1
-            self._loaded_model_key = model_key
-            self.logger.info(
-                "Policy load complete load_ms=%.2f load_count=%d fingerprint=%s",
-                self._last_load_ms,
-                self._load_count,
-                fingerprint,
-            )
-        else:
-            self.logger.info(
-                "Using startup-loaded policy load_ms=0.00 load_count=%d fingerprint=%s",
-                self._load_count,
-                fingerprint,
-            )
         self._policy_fingerprint = fingerprint
-        self.device = str(policy_specs.device)
+        self.device = self._configured_device
         self.policy_type = policy_specs.policy_type
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = 20
@@ -244,6 +209,7 @@ class RLinfSO101PolicyServer(PolicyServer):
     def GetActions(self, request, context):  # noqa: N802
         """Run inference while treating a cancelled client stream as normal."""
         try:
+            started_at = time.perf_counter()
             observation = self.observation_queue.get(
                 timeout=self.config.obs_queue_timeout
             )
@@ -253,6 +219,12 @@ class RLinfSO101PolicyServer(PolicyServer):
             if not context.is_active():
                 self.logger.info("Action RPC cancelled by client %s", context.peer())
                 return services_pb2.Empty()
+            time.sleep(
+                max(
+                    0.0,
+                    self.config.inference_latency - (time.perf_counter() - started_at),
+                )
+            )
             return services_pb2.Actions(data=pickle.dumps(action_chunk))  # nosec
         except Empty:
             return services_pb2.Empty()
@@ -267,24 +239,6 @@ class RLinfSO101PolicyServer(PolicyServer):
             raise
 
     @staticmethod
-    def _as_hwc_rgb(value: Any) -> np.ndarray:
-        image = (
-            value.detach().cpu().numpy()
-            if torch.is_tensor(value)
-            else np.asarray(value)
-        )
-        if image.ndim == 3 and image.shape[0] == 3 and image.shape[-1] != 3:
-            image = np.moveaxis(image, 0, -1)
-        if image.ndim != 3 or image.shape[-1] != 3:
-            raise ValueError(f"Expected wrist RGB HWC/CHW image, got {image.shape}")
-        if np.issubdtype(image.dtype, np.floating):
-            scale = 255.0 if image.size and float(np.nanmax(image)) <= 1.0 else 1.0
-            image = np.clip(image * scale, 0, 255).astype(np.uint8)
-        elif image.dtype != np.uint8:
-            image = np.clip(image, 0, 255).astype(np.uint8)
-        return image
-
-    @staticmethod
     def _get_field(observation: dict[str, Any], key: str) -> Any:
         if key in observation:
             return observation[key]
@@ -297,44 +251,16 @@ class RLinfSO101PolicyServer(PolicyServer):
         if self._backend is None:
             raise RuntimeError("SendPolicyInstructions must complete before inference.")
         raw = observation_t.get_observation()
-        state = self._get_field(raw, "observation.state")
-        state = (
-            state.detach().cpu().numpy()
-            if torch.is_tensor(state)
-            else np.asarray(state)
+        actions = self._backend.predict(
+            {
+                "observation.images.wrist": self._get_field(
+                    raw, "observation.images.wrist"
+                ),
+                "observation.state": self._get_field(raw, "observation.state"),
+                "task": str(self._get_field(raw, "task")),
+            }
         )
-        state = np.asarray(state, dtype=np.float32).reshape(-1)
-        if state.shape != (len(SO101_JOINT_NAMES),):
-            raise ValueError(f"Expected observation.state [6], got {state.shape}")
-        # The local interface is [-1, 1], while PI05 uses [0, 1] for gripper.
-        state = state.copy()
-        state[-1] = (state[-1] + 1.0) / 2.0
-        wrist = self._as_hwc_rgb(self._get_field(raw, "observation.images.wrist"))
-        task = str(self._get_field(raw, "task"))
-        inputs = self._backend._input_transform(  # noqa: SLF001
-            {"observation/image": wrist, "observation/state": state, "prompt": task}
-        )
-        inputs = jax.tree.map(
-            lambda value: torch.from_numpy(np.asarray(value).copy())[None].to(
-                self._backend_device
-            ),
-            inputs,
-        )
-        from openpi.models import model as openpi_model
-
-        model_observation = openpi_model.Observation.from_dict(inputs)
-        with torch.inference_mode():
-            sampled = self._backend.sample_actions(
-                model_observation, mode="eval", compute_values=False
-            )
-            output = self._backend.output_transform(
-                {"actions": sampled["actions"], "state": model_observation.state}
-            )
-        actions = np.asarray(output["actions"][0], dtype=np.float32)[:20, :6]
-        if actions.shape != (20, 6):
-            raise RuntimeError(f"Expected action chunk [20,6], got {actions.shape}")
-        actions[:, -1] = 2.0 * actions[:, -1] - 1.0
-        actions = np.clip(actions, -1.0, 1.0)
+        self.last_processed_obs = observation_t
         action_tensors = [torch.from_numpy(action.copy()) for action in actions]
         return self._time_action_chunk(
             observation_t.get_timestamp(), action_tensors, observation_t.get_timestep()

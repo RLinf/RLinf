@@ -1,4 +1,4 @@
-# SO-101 dataset validation schema used by the data checker and packaging tool.
+# SO-101 dataset validation schema used by the offline data checker.
 # The collection wrapper currently emits the short RLinf feature names; the
 # aliases below also accept the canonical LeRobot names used by later tools.
 
@@ -9,13 +9,13 @@ sample:
   expected_frames: null
 
 control:
-  # The checker accepts both local RLinf units (radians and gripper [-1, 1])
-  # and canonical LeRobot units (degree-like joints and gripper [0, 100]).
-  # It selects the envelope from the gripper component.
+  # Accept local RLinf units and canonical LeRobot SO-101 units.
   state_dim: 6
   action_dim: 6
-  normalized_range: [-3.2, 3.2]
-  gripper_range: [0.0, 1.0]
+  local_joint_range: [-3.2, 3.2]
+  local_gripper_range: [-1.0, 1.0]
+  canonical_joint_range: [-320.0, 320.0]
+  canonical_gripper_range: [0.0, 100.0]
 
 data_contract:
   required_basic:  # Basic data collection phase

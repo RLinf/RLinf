@@ -29,16 +29,16 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from examples.embodiment.so101.policy_backend import (
+    SO101LocalPolicyBackend,
+    build_so101_model_config,
+)
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
-)
-from rlinf.models.embodiment.openpi.so101_inference import (
-    SO101LocalPolicyBackend,
-    build_so101_model_config,
 )
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -115,10 +115,28 @@ def test_so101_local_policy_backend_uses_grpc_payload_contract():
     np.testing.assert_allclose(actions[:, -1], 0.5)
 
 
+def test_so101_local_policy_backend_converts_chw_float_image():
+    model = _DummySO101Policy()
+    backend = _local_so101_backend(model)
+
+    backend.predict(
+        {
+            "observation.images.wrist": torch.full((3, 8, 12), 0.5),
+            "observation.state": torch.zeros(6),
+            "task": "test",
+        }
+    )
+
+    image = model.last_observation["main_images"]
+    assert tuple(image.shape) == (1, 8, 12, 3)
+    assert image.dtype == torch.uint8
+    assert image[0, 0, 0, 0].item() == 127
+
+
 @pytest.mark.parametrize(
     ("image_shape", "state_shape", "error"),
     [
-        ((32, 48), (6,), "HWC RGB"),
+        ((32, 48), (6,), "HWC/CHW RGB"),
         ((32, 48, 3), (7,), "state shape"),
     ],
 )
@@ -145,6 +163,29 @@ def test_so101_local_policy_backend_rejects_wrong_action_shape():
     }
 
     with pytest.raises(ValueError, match=r"must return \(20, 6\)"):
+        backend.predict(payload)
+
+
+@pytest.mark.parametrize("field", ["image", "state", "action"])
+def test_so101_local_policy_backend_rejects_non_finite_values(field):
+    model = _DummySO101Policy()
+    backend = _local_so101_backend(model)
+    payload = {
+        "observation.images.wrist": np.zeros((8, 12, 3), dtype=np.float32),
+        "observation.state": np.zeros(6, dtype=np.float32),
+        "task": "test",
+    }
+    if field == "image":
+        payload["observation.images.wrist"][0, 0, 0] = np.nan
+    elif field == "state":
+        payload["observation.state"][0] = np.inf
+    else:
+        model.predict_action_batch = lambda *_args, **_kwargs: (
+            torch.full((1, 20, 6), torch.nan),
+            {},
+        )
+
+    with pytest.raises(ValueError, match="non-finite"):
         backend.predict(payload)
 
 

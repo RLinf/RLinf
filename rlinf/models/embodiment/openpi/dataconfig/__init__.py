@@ -516,16 +516,6 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
     TrainConfig(
-        name="pi0_so101",
-        model=pi0_config.Pi0Config(action_horizon=10),
-        data=LeRobotSO101DataConfig(
-            repo_id="so101_data",
-            base_config=DataConfig(prompt_from_task=True),
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
-        ),
-        pytorch_weight_path="checkpoints/torch/pi0_base",
-    ),
-    TrainConfig(
         name="pi05_so101",
         model=pi0_config.Pi0Config(
             # The public SO-101 recipes train and serve 20-action chunks.

@@ -2,8 +2,17 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-"""Shared in-process policy backend for SO-101 Pi05 inference."""
+"""Shared in-process policy backend for the SO-101 example."""
 
 from __future__ import annotations
 
@@ -19,7 +28,7 @@ def build_so101_model_config(
     """Build the RLinf OpenPI configuration used by local and gRPC inference."""
     from omegaconf import OmegaConf
 
-    root = Path(__file__).resolve().parents[4]
+    root = Path(__file__).resolve().parents[3]
     cfg = OmegaConf.load(root / "examples/sft/config/model/pi0_5.yaml")
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
     cfg.model_path = str(checkpoint)
@@ -72,12 +81,35 @@ class SO101LocalPolicyBackend:
         """Return one normalized action chunk for a canonical SO-101 payload."""
         import torch
 
-        image = np.asarray(payload["observation.images.wrist"], dtype=np.uint8)
-        state = np.asarray(payload["observation.state"], dtype=np.float32)
+        image_value = payload["observation.images.wrist"]
+        image = (
+            image_value.detach().cpu().numpy()
+            if torch.is_tensor(image_value)
+            else np.asarray(image_value)
+        )
+        if image.ndim == 3 and image.shape[0] == 3 and image.shape[-1] != 3:
+            image = np.moveaxis(image, 0, -1)
         if image.ndim != 3 or image.shape[-1] != 3:
-            raise ValueError(f"Expected HWC RGB image, got {image.shape}")
+            raise ValueError(f"Expected HWC/CHW RGB image, got {image.shape}")
+        if np.issubdtype(image.dtype, np.floating):
+            if not np.isfinite(image).all():
+                raise ValueError("SO-101 image contains non-finite values.")
+            scale = 255.0 if image.size and float(np.nanmax(image)) <= 1.0 else 1.0
+            image = np.clip(image * scale, 0, 255).astype(np.uint8)
+        elif image.dtype != np.uint8:
+            image = np.clip(image, 0, 255).astype(np.uint8)
+
+        state_value = payload["observation.state"]
+        state = (
+            state_value.detach().cpu().numpy()
+            if torch.is_tensor(state_value)
+            else np.asarray(state_value)
+        )
+        state = np.asarray(state, dtype=np.float32).reshape(-1)
         if state.shape != (6,):
             raise ValueError(f"Expected SO-101 state shape (6,), got {state.shape}")
+        if not np.isfinite(state).all():
+            raise ValueError("SO-101 state contains non-finite values.")
         # Robot-facing gripper values use [-1, 1]. Pi05's SO-101
         # normalization statistics follow LeRobot's [0, 1] convention.
         model_state = state.copy()
@@ -96,5 +128,7 @@ class SO101LocalPolicyBackend:
         result = actions[0].detach().float().cpu().numpy()
         if result.shape != (20, 6):
             raise ValueError(f"SO-101 Pi05 must return (20, 6), got {result.shape}")
+        if not np.isfinite(result).all():
+            raise ValueError("SO-101 Pi05 returned non-finite actions.")
         result[:, -1] = 2.0 * result[:, -1] - 1.0
         return np.clip(result, -1.0, 1.0)

@@ -29,6 +29,7 @@ Run PI05 in the robot process:
 ```bash
 examples/embodiment/run_so101_inference.sh \
   --inference-backend local \
+  --task "Pick up the object and place it in the container." \
   --local-checkpoint /path/to/actor-checkpoint \
   --local-norm-stats /path/to/norm_stats.json \
   --policy-device cuda:0 \
@@ -37,7 +38,11 @@ examples/embodiment/run_so101_inference.sh \
 ```
 
 The equivalent environment variables are `SO101_INFERENCE_BACKEND`,
-`SO101_LOCAL_CHECKPOINT`, and `SO101_LOCAL_NORM_STATS`.
+`SO101_TASK`, `SO101_SERIAL_PORT`, `SO101_ROBOT_ID`, `SO101_CAMERA`,
+`SO101_POSE_FILE`, `SO101_LOCAL_CHECKPOINT`, and `SO101_LOCAL_NORM_STATS`.
+The pose JSON contains `joint_order`, `units: "lerobot_native"`,
+`standard_position`, and `fold_position`; both positions map the six SO-101
+joint names to values recorded for the local rig.
 
 ## Remote inference
 
@@ -55,9 +60,12 @@ Connect the robot host to that endpoint:
 ```bash
 examples/embodiment/run_so101_inference.sh \
   --inference-backend grpc --server-address <inference-host>:50051 \
+  --task "Pick up the object and place it in the container." \
   --serial-port /dev/ttyACM0 --robot-id <robot-id> --camera /dev/video0 \
   --pose-file /path/to/poses.json --allow-hardware-motion
 ```
+
+`SO101_SERVER_ADDRESS` provides the same endpoint without a command-line flag.
 
 ## DAgger and SFT
 
@@ -67,6 +75,7 @@ example, connect to a GPU server with:
 ```bash
 examples/embodiment/run_so101_dagger.sh \
   --inference-backend grpc --server-address <inference-host>:50051 \
+  --task "Pick up the object and place it in the container." \
   --serial-port /dev/ttyACM0 --robot-id <robot-id> --camera /dev/video0 \
   --leader-port /dev/ttyACM1 --leader-id <leader-id> \
   --pose-file /path/to/poses.json --dagger-data-root /path/to/dagger-data \
@@ -74,6 +83,7 @@ examples/embodiment/run_so101_dagger.sh \
 ```
 
 The recorder stores policy, expert, and executed actions in LeRobot format.
+Set `SO101_DAGGER_DATA_ROOT` to choose its default output directory.
 
 Set `SO101_DATASET_PATH`, `PI05_BASE_CHECKPOINT`, and
 `SO101_NORM_STATS_PATH`, then start SFT:

@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """LeRobot v3 loader for SO-101 DAgger intervention frames."""
 
@@ -44,6 +50,8 @@ class _IndexedDataset(torch.utils.data.Dataset):
 
 
 class SO101DaggerDataLoader:
+    """Yield infinite OpenPI batches from successful intervention frames."""
+
     def __init__(
         self,
         loader: torch.utils.data.DataLoader,
@@ -56,9 +64,11 @@ class SO101DaggerDataLoader:
         self._epoch = 0
 
     def data_config(self) -> SO101SftDataConfig:
+        """Return the resolved OpenPI data metadata."""
         return self._data_config
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
+        """Yield batches indefinitely, advancing the distributed epoch."""
         while True:
             if self.sampler is not None:
                 self.sampler.set_epoch(self._epoch)
@@ -70,12 +80,14 @@ class SO101DaggerDataLoader:
                 }
 
     def __len__(self) -> int:
+        """Return the number of batches in one epoch."""
         return len(self._loader)
 
 
 def build_so101_dagger_dataloader(
     cfg: Any, world_size: int, rank: int, data_path: str, eval_dataset: bool = False
 ) -> tuple[SO101DaggerDataLoader, SO101SftDataConfig]:
+    """Build a loader that selects expert labels from successful episodes."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from openpi.shared import normalize
 
@@ -116,7 +128,6 @@ def build_so101_dagger_dataloader(
         delta_timestamps={"expert_action": [step / fps for step in range(horizon)]},
         video_backend="pyav",
     )
-    dataset._ensure_hf_dataset_loaded()  # noqa: SLF001
     frame_table = dataset.hf_dataset
     success = np.asarray(frame_table["is_success"], dtype=bool).reshape(-1)
     intervene = np.asarray(frame_table["intervene_flag"], dtype=bool).reshape(-1)

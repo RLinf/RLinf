@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """OpenPI input and output transforms for the SO-101 joint policy."""
 
@@ -30,9 +36,11 @@ SO101_ACTION_DIM = len(SO101_JOINT_NAMES)
 
 
 def _parse_image(image: np.ndarray) -> np.ndarray:
-    """将 LeRobot 的图像统一成 HWC、uint8。"""
+    """Convert a LeRobot image to HWC uint8."""
     image = np.asarray(image)
     if np.issubdtype(image.dtype, np.floating):
+        if not np.isfinite(image).all():
+            raise ValueError("SO-101 image contains non-finite values.")
         # LeRobot normally sends uint8 frames, but callers may provide either
         # [0, 1] or [0, 255] floating-point images.
         scale = 255.0 if image.size and float(np.nanmax(image)) <= 1.0 else 1.0
@@ -46,7 +54,7 @@ def _parse_image(image: np.ndarray) -> np.ndarray:
 
 @dataclasses.dataclass(frozen=True)
 class SO101Outputs(transforms.DataTransformFn):
-    """从模型补齐后的动作中取回 SO-101 六维动作。"""
+    """Select the six SO-101 dimensions from padded model actions."""
 
     joint_dim: int = SO101_ACTION_DIM
 

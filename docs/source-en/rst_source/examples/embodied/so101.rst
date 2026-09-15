@@ -246,16 +246,26 @@ to print the resolved local configuration:
 
    examples/embodiment/run_so101_inference.sh \
      --inference-backend local \
+     --task "Pick up the object and place it in the container." \
      --local-checkpoint /path/to/actor-checkpoint \
      --local-norm-stats /path/to/norm_stats.json \
      --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
      --camera /dev/video0 --dry-run
 
 For a hardware run, replace ``--dry-run`` with
-``--pose-file /path/to/poses.json --allow-hardware-motion``. For a remote GPU,
+``--pose-file /path/to/poses.json --allow-hardware-motion``. The pose JSON
+declares ``joint_order``, ``units: "lerobot_native"``, ``standard_position``,
+and ``fold_position``; both positions map the six SO101 joint names to values
+recorded for that rig. For a remote GPU,
 select ``--inference-backend grpc`` and pass the service endpoint with
-``--server-address``. The server launcher and its environment template are
-under ``examples/embodiment/so101/``.
+``--server-address``. On the GPU host, copy
+``examples/embodiment/so101/lerobot_grpc_policy.env.example`` to
+``examples/embodiment/so101/lerobot_grpc_policy.env``, set the checkpoint and
+norm-stats paths, then start the service:
+
+.. code-block:: bash
+
+   examples/embodiment/so101/lerobot_grpc_policy_service.sh start
 
 DAgger uses the same backend selection and adds the calibrated leader arm:
 
@@ -263,14 +273,24 @@ DAgger uses the same backend selection and adds the calibrated leader arm:
 
    examples/embodiment/run_so101_dagger.sh \
      --inference-backend grpc --server-address <host>:<port> \
+     --task "Pick up the object and place it in the container." \
      --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
      --leader-port /dev/ttyACM1 --leader-id rlinf_leader \
      --camera /dev/video0 --dry-run
 
 The DAgger entrypoint records policy, expert, and executed actions in a LeRobot
-dataset. Validate or package a completed dataset with
-``toolkits/realworld_check/check_so101_episode.py`` and
-``toolkits/realworld_check/package_so101_dataset.py`` before starting SFT.
+dataset. Validate a completed dataset with
+``toolkits/realworld_check/check_so101_episode.py`` before starting SFT. Set
+``SO101_DATASET_PATH``, ``PI05_BASE_CHECKPOINT``, and
+``SO101_NORM_STATS_PATH`` for the initial training run:
+
+.. code-block:: bash
+
+   examples/embodiment/so101/run_sft.sh
+
+For a DAgger round, set ``SO101_DAGGER_DATASET_PATH`` and
+``SO101_SFT_CHECKPOINT`` as well, then run
+``examples/embodiment/so101/run_dagger_sft.sh``.
 
 New Real-World Tasks
 --------------------

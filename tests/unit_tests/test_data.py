@@ -25,6 +25,7 @@ import pytest
 import torch
 from omegaconf import DictConfig
 
+from examples.embodiment.so101.dagger import DaggerSessionController, DaggerState
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
@@ -89,6 +90,21 @@ def test_collect_episode_writes_so101_wrist_frame_as_standard_image():
     assert episode is not None
     assert np.array_equal(episode[0]["image"], frame)
     assert "wrist_image" not in episode[0]
+
+
+def test_so101_dagger_session_follows_record_handover_save_reset_flow():
+    """The public DAgger keys only advance through valid session states."""
+    session = DaggerSessionController()
+
+    assert session.handle(" ") == "ignored"
+    assert session.handle("s") == "start_episode"
+    assert session.handle(" ") == "start_handover"
+    session.handover_finished()
+    assert session.state is DaggerState.EXPERT_RECORDING
+    assert session.handle("c") == "save_episode"
+    assert session.handle("r") == "reset_only"
+    session.reset_finished()
+    assert session.state is DaggerState.READY
 
 
 class TestMathDatasetMultithread:

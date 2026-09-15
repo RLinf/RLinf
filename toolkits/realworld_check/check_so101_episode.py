@@ -131,6 +131,7 @@ def _validate_so101_vectors(
     *,
     field_name: str,
     expected_dim: int,
+    control: dict[str, Any],
     report: CheckReport,
 ) -> None:
     """Accept both RLinf-normalized and canonical LeRobot SO-101 units.
@@ -146,13 +147,29 @@ def _validate_so101_vectors(
             f"{field_name} must have shape [frames, {expected_dim}], got {array.shape}."
         )
         return
-    canonical_units = np.any(np.abs(array[:, :-1]) > 3.2 + 1e-6) or np.any(
-        array[:, -1] > 1.0 + 1e-6
+    local_joint_range = tuple(float(value) for value in control["local_joint_range"])
+    local_gripper_range = tuple(
+        float(value) for value in control["local_gripper_range"]
+    )
+    canonical_joint_range = tuple(
+        float(value) for value in control["canonical_joint_range"]
+    )
+    canonical_gripper_range = tuple(
+        float(value) for value in control["canonical_gripper_range"]
+    )
+    canonical_units = np.any(array[:, :-1] < local_joint_range[0] - 1e-6) or np.any(
+        array[:, :-1] > local_joint_range[1] + 1e-6
+    )
+    canonical_units = canonical_units or np.any(
+        array[:, -1] < local_gripper_range[0] - 1e-6
+    )
+    canonical_units = canonical_units or np.any(
+        array[:, -1] > local_gripper_range[1] + 1e-6
     )
     if canonical_units:
-        joint_range, gripper_range = (-320.0, 320.0), (0.0, 100.0)
+        joint_range, gripper_range = canonical_joint_range, canonical_gripper_range
     else:
-        joint_range, gripper_range = (-3.2, 3.2), (-1.0, 1.0)
+        joint_range, gripper_range = local_joint_range, local_gripper_range
     _validate_vectors(
         values,
         field_name=field_name,
@@ -392,12 +409,14 @@ def check_dataset(dataset_path: Path, baseline_path: Path) -> CheckReport:
         table[report.field_mapping["observation.state"]].to_pylist(),
         field_name="observation.state",
         expected_dim=int(control["state_dim"]),
+        control=control,
         report=report,
     )
     _validate_so101_vectors(
         table[report.field_mapping["action"]].to_pylist(),
         field_name="action",
         expected_dim=int(control["action_dim"]),
+        control=control,
         report=report,
     )
     image_spec = contract["required_basic"]["observation.images.wrist"]

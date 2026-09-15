@@ -113,9 +113,11 @@ class SO101SftDataLoader:
         self._epoch = 0
 
     def data_config(self) -> SO101SftDataConfig:
+        """Return the resolved OpenPI data metadata."""
         return self._data_config
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
+        """Yield batches indefinitely, advancing the distributed epoch."""
         while True:
             if self.sampler is not None:
                 self.sampler.set_epoch(self._epoch)
@@ -127,6 +129,7 @@ class SO101SftDataLoader:
                 }
 
     def __len__(self) -> int:
+        """Return the number of batches in one epoch."""
         return len(self._loader)
 
 
@@ -163,10 +166,9 @@ def build_so101_sft_dataloader(
     norm_stats = normalize.load(norm_stats_path.parent)
 
     horizon = int(model_cfg.num_action_chunks)
-    fps = int(
-        __import__("json").loads((root / "meta" / "info.json").read_text())["fps"]
-    )
-    raw_features = json.loads((root / "meta" / "info.json").read_text())["features"]
+    info = json.loads((root / "meta" / "info.json").read_text(encoding="utf-8"))
+    fps = int(info["fps"])
+    raw_features = info["features"]
     formal_so101 = "observation.state" in raw_features and "action" in raw_features
     if not formal_so101:
         # The RLinf writer and the historical SO101 recipe use the flat

@@ -187,12 +187,17 @@ follower 与相机能够协同工作后，再选择 PI05 的运行位置。local
 
    examples/embodiment/run_so101_inference.sh \
      --inference-backend local \
+     --task "Pick up the object and place it in the container." \
      --local-checkpoint /path/to/actor-checkpoint \
      --local-norm-stats /path/to/norm_stats.json \
      --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
      --camera /dev/video0 --dry-run
 
-运行硬件时，将 ``--dry-run`` 替换为 ``--pose-file /path/to/poses.json --allow-hardware-motion``。远程 GPU 使用 ``--inference-backend grpc``，通过 ``--server-address`` 指定 service endpoint。server 启动脚本与环境变量模板位于 ``examples/embodiment/so101/``。
+运行硬件时，将 ``--dry-run`` 替换为 ``--pose-file /path/to/poses.json --allow-hardware-motion``。pose JSON 包含 ``joint_order``、``units: "lerobot_native"``、``standard_position`` 和 ``fold_position``；两个 position 都按 6 个 SO101 关节名称记录当前设备采用的值。远程 GPU 使用 ``--inference-backend grpc``，通过 ``--server-address`` 指定 service endpoint。在 GPU 主机上，将 ``examples/embodiment/so101/lerobot_grpc_policy.env.example`` 复制为 ``examples/embodiment/so101/lerobot_grpc_policy.env``，填写 checkpoint 与 norm-stats 路径，然后启动 service：
+
+.. code-block:: bash
+
+   examples/embodiment/so101/lerobot_grpc_policy_service.sh start
 
 DAgger 使用相同的 backend 选项，并增加已标定的 leader：
 
@@ -200,11 +205,18 @@ DAgger 使用相同的 backend 选项，并增加已标定的 leader：
 
    examples/embodiment/run_so101_dagger.sh \
      --inference-backend grpc --server-address <host>:<port> \
+     --task "Pick up the object and place it in the container." \
      --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
      --leader-port /dev/ttyACM1 --leader-id rlinf_leader \
      --camera /dev/video0 --dry-run
 
-DAgger 入口将 policy、expert 和实际执行的动作写入 LeRobot 数据集。启动 SFT 前，可通过 ``toolkits/realworld_check/check_so101_episode.py`` 校验完整数据集，或通过 ``toolkits/realworld_check/package_so101_dataset.py`` 完成校验和打包。
+DAgger 入口将 policy、expert 和实际执行的动作写入 LeRobot 数据集。启动 SFT 前，可通过 ``toolkits/realworld_check/check_so101_episode.py`` 校验完整数据集。首次训练需设置 ``SO101_DATASET_PATH``、``PI05_BASE_CHECKPOINT`` 和 ``SO101_NORM_STATS_PATH``，然后运行：
+
+.. code-block:: bash
+
+   examples/embodiment/so101/run_sft.sh
+
+DAgger 轮次还需设置 ``SO101_DAGGER_DATASET_PATH`` 与 ``SO101_SFT_CHECKPOINT``，再运行 ``examples/embodiment/so101/run_dagger_sft.sh``。
 
 新增真机任务
 ------------

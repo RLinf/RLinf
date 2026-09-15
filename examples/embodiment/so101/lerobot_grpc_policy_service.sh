@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 set -euo pipefail
 
 service_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +26,7 @@ config_file="${SO101_GRPC_CONFIG:-${service_dir}/lerobot_grpc_policy.env}"
 source "${config_file}"
 : "${SO101_GRPC_CHECKPOINT:?Missing SO101_GRPC_CHECKPOINT}"
 : "${SO101_GRPC_NORM_STATS:?Missing SO101_GRPC_NORM_STATS}"
-: "${SO101_GRPC_HOST:=0.0.0.0}"
+: "${SO101_GRPC_HOST:=127.0.0.1}"
 : "${SO101_GRPC_PORT:=50051}"
 : "${SO101_GRPC_CUDA_VISIBLE_DEVICES:=0}"
 : "${SO101_GRPC_DEVICE:=cuda:0}"
@@ -40,7 +54,7 @@ serve_foreground() {
   cd "${root_dir}"
   exec env PYTHONPATH="${root_dir}${PYTHONPATH:+:${PYTHONPATH}}" \
     CUDA_VISIBLE_DEVICES="${SO101_GRPC_CUDA_VISIBLE_DEVICES}" "${RLINF_PYTHON}" \
-    "${service_dir}/lerobot_grpc_policy_server.py" \
+    -m examples.embodiment.so101.lerobot_grpc_policy_server \
     --checkpoint "${SO101_GRPC_CHECKPOINT}" --norm-stats "${SO101_GRPC_NORM_STATS}" \
     --host "${SO101_GRPC_HOST}" --port "${SO101_GRPC_PORT}" --fps "${SO101_GRPC_FPS}" \
     --device "${SO101_GRPC_DEVICE}" >>"${SO101_GRPC_LOG}" 2>&1
