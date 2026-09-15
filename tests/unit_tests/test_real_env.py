@@ -2478,6 +2478,8 @@ def _so101_env(robot_info=None, **overrides):
         "step_frequency": 1000.0,
         # Headless: there is no display to show frames on.
         "enable_camera_player": False,
+        "reset_duration": 0.02,
+        "reset_joint_speed": 10.0,
     }
     settings.update(overrides)
     return SO101ReachEnv(
@@ -2657,6 +2659,93 @@ def test_so101_env_omits_frames_entirely_when_no_camera_is_configured():
             assert "frames" not in env.observation_space.spaces
             assert "frames" not in observation
             assert observation in env.observation_space
+        finally:
+            env.close()
+
+
+def test_so101_env_control_can_run_faster_than_camera_capture():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(
+            step_frequency=60.0,
+            robot_info=_robot_info(
+                SO101Config(
+                    node_rank=0,
+                    serial_port="/dev/mock-so101",
+                    camera_serials=["MOCK0001"],
+                )
+            ),
+        )
+        try:
+            env.reset()
+            start = time.monotonic()
+            for _ in range(12):
+                observation, *_ = env.step(np.zeros(6, dtype=np.float32))
+                assert observation in env.observation_space
+            # Twelve fresh captures alone would take 0.8 s at the default 15 FPS.
+            assert time.monotonic() - start < 0.6
+        finally:
+            env.close()
+
+
+def test_so101_env_can_connect_without_resetting_then_reset_explicitly():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(reset_joint_qpos=[0.2] * 5, reset_on_init=False)
+        try:
+            state = env.robot.get_observation()["arm"]
+            np.testing.assert_allclose(state["arm_joint_position"], np.zeros(5))
+            observation, _ = env.reset()
+            np.testing.assert_allclose(
+                observation["state"]["arm_joint_position"], [0.2] * 5
+            )
+        finally:
+            env.close()
+
+
+def test_so101_tool_home_uses_the_environment_reset(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_so101_env import drive
+
+    commands = iter(["home", "quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(commands))
+    with mocked_sdks():
+        env = _so101_env(reset_joint_qpos=[0.2] * 5, reset_on_init=False)
+        try:
+            drive(env, step=0.01, invert=False, reset=False)
+            assert env.num_steps == 0
+            state = env.robot.get_observation()["arm"]
+            np.testing.assert_allclose(state["arm_joint_position"], [0.2] * 5)
+        finally:
+            env.close()
+
+
+def test_so101_tool_teleop_forwards_gripper_only_and_stationary_commands(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_so101_env import teleop
+
+    with mocked_sdks() as made:
+        leader = made["lerobot.teleoperators.so_leader"].SO101Leader
+        openings = iter([25.0, 50.0, 50.0])
+
+        def get_action(device):
+            try:
+                opening = next(openings)
+            except StopIteration:
+                raise KeyboardInterrupt from None
+            return {**device.positions, "gripper.pos": opening}
+
+        monkeypatch.setattr(leader, "get_action", get_action)
+        env = _so101_env()
+        try:
+            teleop(env, "/dev/mock-leader", "leader")
+            assert env.num_steps == 3
+            state = env.robot.get_observation()["arm"]
+            assert state["end_effector"]["state"][0] == pytest.approx(0.5)
         finally:
             env.close()
 
@@ -3393,7 +3482,39 @@ def test_so101_tool_enumerates_environment_and_cli_settings(
     assert config.camera_serials == ["MOCK0001", "MOCK0002"]
     assert config.max_relative_target == 12
     assert constructor.call_args.args[0]["enable_camera_player"] is player
+    assert constructor.call_args.args[0]["step_frequency"] == 30.0
+    assert constructor.call_args.args[0]["reset_on_init"] is False
+    assert constructor.call_args.args[0]["reset_joint_speed"] == pytest.approx(
+        np.deg2rad(30)
+    )
     constructor.return_value.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("fps", [15, 60])
+def test_so101_tool_passes_the_requested_control_rate(so101_tool, fps):
+    run, constructor = so101_tool
+    run("--fps", str(fps))
+    assert constructor.call_args.args[0]["step_frequency"] == fps
+
+
+def test_so101_tool_passes_reset_speed_and_skips_startup_reset(so101_tool):
+    from toolkits.realworld_check import test_so101_env as tool
+
+    run, constructor = so101_tool
+    run("--reset-speed", "10", "--no-reset")
+    config = constructor.call_args.args[0]
+    assert config["reset_joint_speed"] == pytest.approx(np.deg2rad(10))
+    assert config["reset_on_init"] is False
+    assert tool.drive.call_args.kwargs["reset"] is False
+
+
+@pytest.mark.parametrize("option", ["--fps", "--reset-speed"])
+@pytest.mark.parametrize("fps", ["0", "-1", "nan", "inf"])
+def test_so101_tool_rejects_invalid_control_rates(so101_tool, fps, option):
+    run, constructor = so101_tool
+    with pytest.raises(SystemExit, match="2"):
+        run(option, fps)
+    constructor.assert_not_called()
 
 
 @pytest.mark.parametrize("explicit_port", [False, True])
