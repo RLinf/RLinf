@@ -2389,12 +2389,12 @@ install_lerobot() {
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
-        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}" "$@"
 }
 
 install_franka_ros_realworld_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
-    install_lerobot
+    install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
             bash $SCRIPT_DIR/embodied/ros_install.sh
@@ -2850,7 +2850,7 @@ install_franka_franky_env() {
     # --no-deps keeps the Franka requirements' pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
-    install_lerobot
+    install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
 }
 
 install_franka_dexhand_deps() {
