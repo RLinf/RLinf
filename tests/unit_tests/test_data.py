@@ -20,6 +20,7 @@ import random
 import time
 from unittest import mock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import DictConfig
@@ -28,6 +29,7 @@ from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
     _CODEC_KEY,
@@ -37,6 +39,56 @@ from rlinf.utils.obs_compression import (
     is_compressed_image,
     is_compression_enabled,
 )
+
+
+def test_collect_episode_maps_so101_frames_and_structured_state():
+    """SO-101 observations become the flat fields expected by LeRobot."""
+    wrapper = object.__new__(CollectEpisode)
+    frame = torch.zeros(128, 128, 3, dtype=torch.uint8).numpy()
+    image, wrist, extra, state = wrapper._extract_obs_image_state(
+        {
+            "frames": {"wrist_1": frame},
+            "state": {
+                "arm_joint_position": [1, 2, 3, 4, 5],
+                "gripper_position": [0.5],
+            },
+        }
+    )
+    assert image is None
+    assert np.array_equal(wrist, frame)
+    assert extra is None
+    assert np.array_equal(state, np.array([1, 2, 3, 4, 5, 0.5], dtype=np.float32))
+
+
+def test_collect_episode_writes_so101_wrist_frame_as_standard_image():
+    """A SO-101-only camera is consumable by the flat OpenPI loader."""
+    wrapper = object.__new__(CollectEpisode)
+    wrapper.robot_type = "so101"
+    wrapper.num_envs = 1
+    wrapper.logger = mock.Mock()
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    episode = wrapper._buffer_to_lerobot_ep(
+        {
+            "actions": [np.zeros(6, dtype=np.float32)],
+            "terminated": [True],
+            "observations": [
+                {
+                    "frames": {"wrist_1": frame},
+                    "state": {
+                        "arm_joint_position": np.zeros(5),
+                        "gripper_position": np.zeros(1),
+                    },
+                }
+            ],
+            "infos": [{}, {}],
+            "segment_ids": [0],
+        },
+        env_idx=0,
+        is_success=True,
+    )
+    assert episode is not None
+    assert np.array_equal(episode[0]["image"], frame)
+    assert "wrist_image" not in episode[0]
 
 
 class TestMathDatasetMultithread:

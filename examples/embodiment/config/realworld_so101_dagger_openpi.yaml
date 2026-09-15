@@ -1,0 +1,126 @@
+defaults:
+  - env/so101_reach@env.train
+  - env/so101_reach@env.eval
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-0
+  node_groups:
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - node_rank: 0
+            serial_port: "${oc.env:SO101_FOLLOWER_PORT,/dev/ttyACM0}"
+            calibration_id: "${oc.env:SO101_FOLLOWER_ID,so101_follower}"
+            camera_type: uvc
+            camera_serials: ["${oc.env:SO101_CAMERA,/dev/video0}"]
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: so101-dagger-openpi
+    logger_backends: [tensorboard]
+  max_epochs: 8
+  max_steps: -1
+  only_eval: false
+  val_check_interval: -1
+  save_interval: 1
+  resume_dir: null
+  ckpt_path: ${oc.env:SO101_SFT_CHECKPOINT,/path/to/so101-pi05-sft}
+
+algorithm:
+  loss_type: embodied_dagger
+  adv_type: gae
+  gamma: 0.99
+  update_epoch: 1
+  dagger:
+    only_save_expert: true
+    online_lerobot:
+      enabled: true
+      only_success: true
+      robot_type: so101
+      fps: 15
+      finalize_interval: 1
+      data_path: ${runner.logger.log_path}/so101_dagger
+      rolling_lerobot_window_size: 50000
+      min_frames: 1
+      lerobot_num_workers: 0
+
+env:
+  group_name: SO101DaggerEnv
+  train:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: false
+    ignore_terminations: false
+    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 300
+    teleop:
+      - so101_leader:
+          port: "${oc.env:SO101_LEADER_PORT,/dev/ttyACM1}"
+          calibration_id: "${oc.env:SO101_LEADER_ID,so101_leader}"
+    keyboard_reward_wrapper: start_end
+    override_cfg:
+      enable_camera_player: false
+      max_num_steps: 300
+      step_frequency: 15.0
+      target_joint_qpos: [0.0, 0.0, 0.0, 0.0, 0.0]
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: false
+    ignore_terminations: false
+    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 300
+    override_cfg:
+      enable_camera_player: false
+
+rollout:
+  group_name: SO101DaggerRollout
+  backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_prev_infos: false
+  model:
+    model_path: ${runner.ckpt_path}
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: SO101DaggerActor
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: 1
+  enable_offload: false
+  model:
+    model_path: ${runner.ckpt_path}
+    num_action_chunks: 20
+    action_dim: 6
+    openpi:
+      config_name: pi05_so101
+      action_chunk: ${actor.model.num_action_chunks}
+      action_env_dim: ${actor.model.action_dim}
+      train_expert_only: true
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

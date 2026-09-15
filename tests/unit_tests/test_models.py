@@ -24,6 +24,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -34,6 +35,10 @@ from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
+)
+from rlinf.models.embodiment.openpi.so101_inference import (
+    SO101LocalPolicyBackend,
+    build_so101_model_config,
 )
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -52,6 +57,95 @@ class _DummyModel:
     def to(self, device):
         self.device = device
         return self
+
+
+class _DummySO101Policy:
+    def __init__(self, action_shape=(1, 20, 6)):
+        self.action_shape = action_shape
+        self.last_observation = None
+
+    def predict_action_batch(self, observation, **kwargs):
+        self.last_observation = observation
+        assert kwargs == {"mode": "eval", "compute_values": False}
+        actions = torch.zeros(self.action_shape)
+        if self.action_shape == (1, 20, 6):
+            actions[..., -1] = 0.75
+        return actions, {}
+
+
+def _local_so101_backend(model):
+    backend = SO101LocalPolicyBackend.__new__(SO101LocalPolicyBackend)
+    backend.model = model
+    backend.device = torch.device("cpu")
+    return backend
+
+
+def test_so101_inference_config_is_shared_by_local_and_grpc_backends(tmp_path):
+    checkpoint = tmp_path / "checkpoint"
+    norm_stats = tmp_path / "assets" / "norm_stats.json"
+
+    cfg = build_so101_model_config(checkpoint, norm_stats, num_steps=7)
+
+    assert cfg.model_path == str(checkpoint)
+    assert cfg.num_action_chunks == 20
+    assert cfg.action_dim == 6
+    assert cfg.openpi.config_name == "pi05_so101"
+    assert cfg.openpi.norm_stats_path == str(norm_stats)
+    assert cfg.openpi.action_chunk == 20
+    assert cfg.openpi.action_env_dim == 6
+    assert cfg.openpi.num_steps == 7
+
+
+def test_so101_local_policy_backend_uses_grpc_payload_contract():
+    model = _DummySO101Policy()
+    backend = _local_so101_backend(model)
+    payload = {
+        "observation.images.wrist": np.zeros((32, 48, 3), dtype=np.uint8),
+        "observation.state": np.asarray([0, 0, 0, 0, 0, -0.5], dtype=np.float32),
+        "task": "pick up the block",
+    }
+
+    actions = backend.predict(payload)
+
+    assert actions.shape == (20, 6)
+    assert tuple(model.last_observation["main_images"].shape) == (1, 32, 48, 3)
+    assert tuple(model.last_observation["states"].shape) == (1, 6)
+    assert model.last_observation["states"][0, -1].item() == pytest.approx(0.25)
+    assert model.last_observation["task_descriptions"] == ["pick up the block"]
+    np.testing.assert_allclose(actions[:, -1], 0.5)
+
+
+@pytest.mark.parametrize(
+    ("image_shape", "state_shape", "error"),
+    [
+        ((32, 48), (6,), "HWC RGB"),
+        ((32, 48, 3), (7,), "state shape"),
+    ],
+)
+def test_so101_local_policy_backend_rejects_invalid_observation(
+    image_shape, state_shape, error
+):
+    backend = _local_so101_backend(_DummySO101Policy())
+    payload = {
+        "observation.images.wrist": np.zeros(image_shape, dtype=np.uint8),
+        "observation.state": np.zeros(state_shape, dtype=np.float32),
+        "task": "test",
+    }
+
+    with pytest.raises(ValueError, match=error):
+        backend.predict(payload)
+
+
+def test_so101_local_policy_backend_rejects_wrong_action_shape():
+    backend = _local_so101_backend(_DummySO101Policy((1, 10, 6)))
+    payload = {
+        "observation.images.wrist": np.zeros((32, 48, 3), dtype=np.uint8),
+        "observation.state": np.zeros(6, dtype=np.float32),
+        "task": "test",
+    }
+
+    with pytest.raises(ValueError, match=r"must return \(20, 6\)"):
+        backend.predict(payload)
 
 
 class _DummyBlock(torch.nn.Module):
@@ -92,6 +186,33 @@ def test_custom_model_registration_smoke():
 
     assert isinstance(model, _DummyModel)
     assert received["torch_dtype"] == torch.float32
+
+
+def test_so101_openpi_transform_uses_single_public_image():
+    pytest.importorskip("openpi")
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.so101_policy import SO101Inputs
+
+    transform = SO101Inputs(
+        action_dim=32,
+        model_type=openpi_model.ModelType.PI05,
+    )
+    result = transform(
+        {
+            "observation/image": torch.zeros(3, 8, 8),
+            "observation/state": torch.zeros(6),
+            "actions": torch.zeros(20, 6),
+            "prompt": b"pick the object",
+        }
+    )
+
+    assert result["state"].shape == (32,)
+    assert result["actions"].shape == (20, 32)
+    assert result["image"]["base_0_rgb"].shape == (8, 8, 3)
+    assert bool(result["image_mask"]["base_0_rgb"])
+    assert not bool(result["image_mask"]["left_wrist_0_rgb"])
+    assert result["prompt"] == "pick the object"
 
 
 def test_custom_model_registration_with_fsdp_wrap_policy():

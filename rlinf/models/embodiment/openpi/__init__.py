@@ -19,6 +19,10 @@ import pathlib
 import torch
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.openpi._compat import install_compat_shims
+
+install_compat_shims()
+
 
 def get_model(cfg: DictConfig, torch_dtype=None):
     import glob
@@ -26,7 +30,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     import openpi.shared.download as download
     import openpi.transforms as transforms
     import safetensors
-    from openpi.training import checkpoints as _checkpoints
 
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
     from rlinf.models.embodiment.openpi.openpi_action_model import (
@@ -94,19 +97,21 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
-    norm_stats_path = (
-        data_kwargs.get("norm_stats_path") if data_kwargs is not None else None
-    )
+    norm_stats_path = getattr(cfg.openpi, "norm_stats_path", None)
+    if norm_stats_path is None and data_kwargs is not None:
+        norm_stats_path = data_kwargs.get("norm_stats_path")
     if norm_stats_path is not None:
-        norm_stats = data_config.norm_stats
-        if norm_stats is None:
-            norm_dir = pathlib.Path(norm_stats_path).expanduser()
-            if norm_dir.is_file():
-                norm_dir = norm_dir.parent
-            norm_stats = _checkpoints.load_norm_stats(norm_dir.parent, norm_dir.name)
+        from openpi.shared import normalize
+
+        norm_path = pathlib.Path(str(norm_stats_path)).expanduser()
+        norm_stats = normalize.load(
+            norm_path.parent if norm_path.is_file() else norm_path
+        )
     else:
         # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
         # that the policy is using the same normalization stats as the original training process.
+        from openpi.training import checkpoints as _checkpoints
+
         if data_config.asset_id is None:
             raise ValueError("Asset id is required to load norm stats.")
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)

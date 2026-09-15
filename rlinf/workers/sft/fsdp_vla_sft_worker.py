@@ -39,6 +39,33 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
         elif model_type == SupportedModel.OPENPI:
+            from rlinf.models.embodiment.openpi._compat import install_compat_shims
+
+            install_compat_shims()
+            if self.cfg.actor.model.openpi.config_name == "pi05_so101":
+                if self.cfg.get("algorithm", {}).get("loss_type") == "embodied_dagger":
+                    from rlinf.data.so101_dagger_data_loader import (
+                        build_so101_dagger_dataloader,
+                    )
+
+                    return build_so101_dagger_dataloader(
+                        self.cfg,
+                        self._world_size,
+                        self._rank,
+                        str(data_paths),
+                        eval_dataset,
+                    )
+                from rlinf.data.so101_sft_data_loader import (
+                    build_so101_sft_dataloader,
+                )
+
+                return build_so101_sft_dataloader(
+                    self.cfg,
+                    self._world_size,
+                    self._rank,
+                    str(data_paths),
+                    eval_dataset,
+                )
             from rlinf.data.datasets.openpi_rlinf import (
                 build_official_openpi_sft_dataloader,
             )
@@ -151,6 +178,21 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
         if model_type in (SupportedModel.OPENPI_RLINF, SupportedModel.OPENPI):
+            if (
+                model_type == SupportedModel.OPENPI
+                and self.cfg.actor.model.openpi.config_name == "pi05_so101"
+            ):
+                from rlinf.data.datasets.openpi_rlinf import (
+                    get_official_openpi_sft_num_batches,
+                    is_official_openpi_sft_dataloader,
+                )
+
+                num_batches = (
+                    get_official_openpi_sft_num_batches(self.data_loader)
+                    if is_official_openpi_sft_dataloader(self.data_loader)
+                    else len(self.data_loader)
+                )
+                return max(1, num_batches // self.gradient_accumulation)
             if model_type == SupportedModel.OPENPI_RLINF:
                 from rlinf.data.datasets.openpi_rlinf import (
                     get_official_openpi_sft_num_batches,

@@ -1407,9 +1407,68 @@ def test_declaring_cameras_needs_no_config_class():
     assert not declared["scene"].is_connected, "declaring a camera must not open it"
     assert Camera.declare(None) == {}
     # Backend resolution uses the category registry.
-    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos"}
+    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos", "uvc"}
     with pytest.raises(ValueError, match="Unsupported BaseCamera backend"):
         BaseCamera.backend("no-such-camera")
+
+
+def test_uvc_camera_resolves_v4l2_identifiers_and_reads_color_frames(monkeypatch):
+    """The generic UVC driver follows the camera lifecycle without hardware."""
+    import types
+
+    from rlinf.robotics.parts.cameras import CameraInfo
+    from rlinf.robotics.parts.cameras.uvc import UVCCamera
+
+    class Capture:
+        def __init__(self, path, backend):
+            self.path = path
+            self.backend = backend
+            self.released = False
+            self.settings = []
+
+        def isOpened(self):
+            return True
+
+        def set(self, key, value):
+            self.settings.append((key, value))
+            return True
+
+        def read(self):
+            return True, np.zeros((2, 3, 3), dtype=np.uint8)
+
+        def release(self):
+            self.released = True
+
+    fake_cv2 = types.SimpleNamespace(
+        CAP_V4L2=200,
+        CAP_PROP_FOURCC=6,
+        CAP_PROP_FRAME_WIDTH=3,
+        CAP_PROP_FRAME_HEIGHT=4,
+        CAP_PROP_FPS=5,
+        CAP_PROP_BUFFERSIZE=38,
+        COLOR_GRAY2BGR=8,
+        VideoWriter_fourcc=lambda *chars: 1,
+        VideoCapture=Capture,
+        cvtColor=lambda frame, _code: np.repeat(frame[..., None], 3, axis=-1),
+    )
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    monkeypatch.setattr(
+        "rlinf.robotics.parts.cameras.uvc.glob.glob",
+        lambda pattern: {"/dev/video*": ["/dev/video0"]}.get(pattern, []),
+    )
+
+    info = CameraInfo(name="wrist", serial_number="video0", camera_type="uvc")
+    camera = UVCCamera(info)
+    assert UVCCamera._resolve_device_path("video0") == "/dev/video0"
+    assert UVCCamera._resolve_device_path("7") == 7
+    assert UVCCamera.discover() == {"/dev/video0"}
+
+    device = camera._open()
+    camera._device = device
+    ok, frame = camera._read_frame()
+    assert ok and frame is not None and frame.shape == (2, 3, 3)
+    camera._release(device)
+    assert device.released
 
 
 def test_failed_connect_can_be_retried():

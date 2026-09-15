@@ -13,6 +13,9 @@ docs/build
 dist
 logs/*
 logs_baseline/*
+examples/embodiment/so101/*.env
+examples/embodiment/so101/assets/
+examples/embodiment/so101/reports/
 outputs/*
 *.so
 .venv

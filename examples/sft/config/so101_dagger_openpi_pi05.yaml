@@ -1,0 +1,24 @@
+defaults:
+  - so101_sft_openpi_pi05
+  - _self_
+
+runner:
+  logger:
+    experiment_name: so101_pi05_dagger
+
+data:
+  train_data_paths: ${oc.env:SO101_DAGGER_DATASET_PATH}
+
+algorithm:
+  loss_type: embodied_dagger
+  dagger:
+    only_success: true
+    only_save_expert: true
+    robot_type: so101
+    fps: 15
+
+actor:
+  model:
+    model_path: ${oc.env:SO101_SFT_CHECKPOINT}
+    openpi:
+      train_expert_only: true

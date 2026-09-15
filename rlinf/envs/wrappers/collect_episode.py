@@ -514,6 +514,19 @@ class CollectEpisode(gym.Wrapper):
             image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
                 obs
             )
+            if (
+                image is None
+                and wrist_image is not None
+                and str(self.robot_type).lower() == "so101"
+            ):
+                # The SO-101 public env exposes its only camera as ``frames``.
+                # Store that view as the standard LeRobot ``image`` feature so
+                # the existing OpenPI flat-schema loader can consume collected
+                # episodes without a robot-specific loader fork.
+                wrist_views = self._expand_multi_view_images("wrist_image", wrist_image)
+                if wrist_views:
+                    image = next(iter(wrist_views.values()))
+                    wrist_image = None
             # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
             raw_info = buf["infos"][i + 1]
@@ -784,7 +797,28 @@ class CollectEpisode(gym.Wrapper):
         image = obs.get("main_images", obs.get("image", obs.get("full_image")))
         wrist_image = obs.get("wrist_images", obs.get("wrist_image"))
         extra_view_image = obs.get("extra_view_images", obs.get("extra_view_image"))
+        # Real-world environments expose camera frames under ``frames``.
+        # SO-101's UVC camera is declared as ``wrist_1``; map the first frame
+        # to the writer's wrist view when no explicit image alias is present.
+        frames = obs.get("frames")
+        if wrist_image is None and isinstance(frames, dict) and frames:
+            wrist_image = next(iter(frames.values()))
         state = obs.get("states", obs.get("state"))
+        # SO-101 exposes its arm and gripper as a structured state dict.  The
+        # LeRobot writer stores one flat six-dimensional vector, so normalize
+        # this known public contract at the collection boundary.
+        if isinstance(state, dict) and {
+            "arm_joint_position",
+            "gripper_position",
+        }.issubset(state):
+            state = np.concatenate(
+                [
+                    np.asarray(state["arm_joint_position"], dtype=np.float32).reshape(
+                        -1
+                    ),
+                    np.asarray(state["gripper_position"], dtype=np.float32).reshape(-1),
+                ]
+            )
         return (
             self._to_numpy(image),
             self._to_numpy(wrist_image),

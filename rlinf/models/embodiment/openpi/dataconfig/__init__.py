@@ -73,6 +73,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    LeRobotSO101DataConfig,
+)
 
 _CONFIGS = [
     TrainConfig(
@@ -511,6 +514,34 @@ _CONFIGS = [
             extra_delta_transform=False,
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi0_so101",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101_data",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi05_so101",
+        model=pi0_config.Pi0Config(
+            # The public SO-101 recipes train and serve 20-action chunks.
+            # Keep this in sync with ``actor.model.num_action_chunks`` in the
+            # example configs so OpenPI's model output and dataset targets
+            # have the same temporal dimension.
+            pi05=True,
+            action_horizon=20,
+            discrete_state_input=False,
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101_data",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
     TrainConfig(
         name="pi0_custom",
