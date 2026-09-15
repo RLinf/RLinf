@@ -88,10 +88,11 @@ The real-world pipeline uses **different environments on different nodes**:
 Robot / Env Node
 ~~~~~~~~~~~~~~~~
 
-Follow the multi-node section in :doc:`franka` to install the CPU-only Franky
-controller environment, match libfranka to the firmware, and configure optional
-real-time support. Activate that environment before starting Ray. This recipe
-uses a separate GPU node for the OpenPI actor and rollout.
+Set up the controller node as described in the Installation section of
+:doc:`franka`: the ROS-based ``franka`` environment, installed directly or taken
+from the Franka Docker image, with ``LIBFRANKA_VERSION`` matching the firmware.
+Activate that environment before starting Ray. This recipe runs the OpenPI actor
+and rollout on a separate GPU node.
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~

@@ -30,7 +30,7 @@ RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-reloc
 .. code-block:: bash
 
    # GPU / rollout 节点（π₀ 评测）
-   bash requirements/install.sh embodied --model openpi --env franka
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
 DreamZero 真机评测还需在 GPU 节点安装 DreamZero 依赖，详见 :doc:`../../examples/embodied/sft_dreamzero`。

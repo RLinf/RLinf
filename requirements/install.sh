@@ -102,7 +102,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -501,26 +501,6 @@ configure_nvidia() {
     fi
 
     local _torch_ver _tmaj _tmin _rest _driver_num _index_base _cuda_tag
-    # A controller-only host must stay CPU-only even when a driver or toolkit
-    # happens to be visible during installation.
-    if [ "$UV_TORCH_BACKEND" = "cpu" ]; then
-        _index_base="https://download.pytorch.org/whl"
-        if [ "$USE_MIRRORS" -eq 1 ]; then
-            _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
-        fi
-        PLATFORM_TORCH_INDEX="${_index_base}/cpu"
-        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
-        PLATFORM_FLASH_ATTN_INSTALL=0
-        PLATFORM_VENV_EXPORTS=()
-        PLATFORM_UV_SYNC_ARGS=(
-            --no-install-package liger-kernel
-            --no-install-package triton
-            --no-install-package cuda-toolkit
-            --no-install-package cuda-bindings
-            --no-install-package cuda-pathfinder
-        )
-        return
-    fi
     _torch_ver="$TORCH_VERSION"
     if [ -z "$_torch_ver" ] && [ -f "$PYPROJECT_FILE" ]; then
         _torch_ver=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
@@ -1791,11 +1771,6 @@ install_openvla_model() {
             install_common_embodied_deps
             install_frankasim_env
             ;;
-        franka)
-            create_and_sync_venv
-            install_common_embodied_deps
-            install_franka_realworld_env
-            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA model." >&2
             exit 1
@@ -1808,13 +1783,6 @@ install_openvla_model() {
 
 install_openvla_oft_model() {
     case "$ENV_NAME" in
-        franka)
-            create_and_sync_venv
-            install_common_embodied_deps
-            install_franka_realworld_env
-            install_flash_attn
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
-            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
@@ -1966,10 +1934,10 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
-        franka)
+        franka-franky)
             create_and_sync_venv
             install_common_embodied_deps
-            install_franka_realworld_env
+            install_franka_franky_env
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
@@ -2109,10 +2077,6 @@ install_gr00t_model() {
     maybe_build_decord_from_source
     uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
     case "$ENV_NAME" in
-        franka)
-            install_franka_realworld_env
-            install_flash_attn
-            ;;
         maniskill_libero|libero)
             install_${ENV_NAME}_env
             install_flash_attn
@@ -2414,14 +2378,6 @@ install_lerobot() {
 
 install_franka_realworld_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
-    if [ "$NO_ROOT" -eq 0 ]; then
-        bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
-    fi
-    install_franka_franky_env
-}
-
-install_franka_ros_realworld_env() {
-    uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
@@ -2437,6 +2393,20 @@ install_env_only() {
     fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
+    # A robot host trains in its env venv, so these keep the embodied extra
+    # (transformers, peft, timm, ...) that model installs get from
+    # install_common_embodied_deps, without its simulator packages.
+    case "$ENV_NAME" in
+        franka|franka-dexhand|franka-franky)
+            uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
+            fi
+            ;;
+        so101|piper|dosw1)
+            uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+            ;;
+    esac
     case "$ENV_NAME" in
         d4rl)
             install_d4rl_env
@@ -2451,8 +2421,8 @@ install_env_only() {
             install_franka_realworld_env
             install_franka_dexhand_deps
             ;;
-        franka-ros)
-            install_franka_ros_realworld_env
+        franka-franky)
+            install_franka_franky_env
             ;;
         xsquare_turtle2)
             install_xsquare_turtle2_env
@@ -2798,6 +2768,17 @@ install_franka_env() {
     fi
     popd >/dev/null
 
+    # franka_control reads realtime_config from its source-tree config on every
+    # launch and exposes no launch argument for it, so the file is set here.
+    # "ignore" runs libfranka on a kernel without PREEMPT_RT.
+    local realtime_config="${FRANKA_REALTIME_CONFIG:-enforce}"
+    if [ "$realtime_config" != "enforce" ] && [ "$realtime_config" != "ignore" ]; then
+        echo "FRANKA_REALTIME_CONFIG must be 'enforce' or 'ignore' (got '$realtime_config')." >&2
+        exit 1
+    fi
+    sed -i -E "s/^realtime_config: .*/realtime_config: ${realtime_config}/" \
+        "$ROS_CATKIN_PATH/src/franka_ros/franka_control/config/franka_control_node.yaml"
+
     # Build
     pushd "$ROS_CATKIN_PATH"
     # libfranka first
@@ -2832,6 +2813,20 @@ install_franka_franky_env() {
     # to 0.19.0.  Override FRANKY_WHEEL (URL / local path / PyPI spec) when
     # the host cannot reach github.com.
     local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
+    if [ -z "${FRANKY_WHEEL:-}" ]; then
+        if [ "$(uname -m)" != "x86_64" ]; then
+            echo "Prebuilt franky-control wheels are x86_64 only (this host is $(uname -m)); set FRANKY_WHEEL to a wheel built for it." >&2
+            exit 1
+        fi
+        case "$LIBFRANKA_VERSION" in
+            0.15.0|0.19.0) ;;
+            *)
+                echo "No prebuilt franky-control wheel for libfranka ${LIBFRANKA_VERSION} (available: 0.15.0, 0.19.0). Use --env franka for ROS, or set FRANKY_WHEEL." >&2
+                exit 1
+                ;;
+        esac
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     local PYTAG
     PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
     local FRANKY_WHEEL="${FRANKY_WHEEL:-${GITHUB_PREFIX}https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"

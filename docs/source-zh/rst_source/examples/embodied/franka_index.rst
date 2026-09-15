@@ -17,7 +17,7 @@
       :link: franka
       :link-type: doc
 
-      在 GPU 计算机上使用 Franky 收集演示并训练 policy。
+      配置单臂 Franka，采集演示数据，并运行在线强化学习训练。
 
    .. grid-item-card:: GELLO 数据采集
       :link: franka_gello

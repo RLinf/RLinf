@@ -25,6 +25,14 @@ from rlinf.robotics.parts.arms import Arm
 from rlinf.robotics.parts.end_effectors import EndEffector
 from rlinf.robotics.robots import FrankaRobot
 
+# Franka Emika Panda factory "ready" pose, in radians.
+HOME_JOINTS = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+
+COMMANDS = (
+    "q | getpos | getpos_euler | getjoint | getstate | gethand | "
+    "clear | home | open | close"
+)
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check Franka controller state.")
@@ -37,7 +45,15 @@ def _parse_args() -> argparse.Namespace:
         "--backend",
         default=FrankaRobot.BACKEND,
         choices=sorted(Arm.backends()),
-        help="Arm backend (default: franky). Use franka_ros for ROS Noetic.",
+        help="Arm backend (default: franka_ros). Use franky to reach libfranka "
+        "without ROS.",
+    )
+    parser.add_argument(
+        "--realtime-config",
+        default=None,
+        choices=["enforce", "ignore"],
+        help="libfranka real-time mode for --backend franky (default: enforce). "
+        "franka_ros takes it from FRANKA_REALTIME_CONFIG at install time.",
     )
     parser.add_argument(
         "--end-effector-type",
@@ -92,10 +108,14 @@ def main() -> None:
         if value is not None:
             end_effector_config[key] = value
 
+    arm_settings = {}
+    if args.realtime_config is not None:
+        arm_settings["realtime_config"] = args.realtime_config
+
     # The arm and the end effector open their own connections, so build and
     # connect each one.
     controller = FrankaRobot.declare_arm(
-        robot_ip, node_rank=0, name="CheckArm", backend=args.backend
+        robot_ip, node_rank=0, name="CheckArm", backend=args.backend, **arm_settings
     )
     end_effector = FrankaRobot.declare_end_effector(
         robot_ip,
@@ -114,6 +134,7 @@ def main() -> None:
             time.sleep(0.5)
             if time.time() - start_time > 30:
                 raise TimeoutError("Franka did not become ready within 30 seconds.")
+        print(f"Commands: {COMMANDS}")
         while True:
             try:
                 cmd_str = input("Please input cmd:")
@@ -126,13 +147,23 @@ def main() -> None:
                     r = R.from_quat(tcp_pose[3:].copy())
                     euler = r.as_euler("xyz")
                     print(np.concatenate([tcp_pose[:3], euler]))
+                elif cmd_str == "getjoint":
+                    print(controller.get_state().arm_joint_position)
                 elif cmd_str == "getstate":
                     state = controller.get_state()
                     print(state.to_dict())
                 elif cmd_str == "gethand":
                     print(end_effector.get_observation())
+                elif cmd_str == "clear":
+                    controller.clear_errors()
+                elif cmd_str == "home":
+                    controller.reset_joint(HOME_JOINTS)
+                elif cmd_str == "open":
+                    end_effector.open()
+                elif cmd_str == "close":
+                    end_effector.close()
                 else:
-                    print(f"Unknown cmd: {cmd_str}")
+                    print(f"Unknown cmd: {cmd_str}. Commands: {COMMANDS}")
             except (EOFError, KeyboardInterrupt):
                 break
             time.sleep(1.0)

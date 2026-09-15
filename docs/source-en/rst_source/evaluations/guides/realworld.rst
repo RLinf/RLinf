@@ -30,7 +30,7 @@ Install dependencies separately on the control node and the GPU node:
 .. code-block:: bash
 
    # GPU / rollout node (π₀ evaluation)
-   bash requirements/install.sh embodied --model openpi --env franka
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
 DreamZero real-robot evaluation also requires DreamZero dependencies on the GPU node; see :doc:`../../examples/embodied/sft_dreamzero`.

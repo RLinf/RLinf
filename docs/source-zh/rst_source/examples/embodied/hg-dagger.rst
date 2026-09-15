@@ -88,7 +88,7 @@
 机器人 / Env 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-按 :doc:`franka` 的多节点配置安装 CPU-only Franky 控制环境，选择与固件匹配的 libfranka，并按需配置实时支持。启动 Ray 前先激活该环境。本示例使用独立 GPU 节点运行 OpenPI actor 和 rollout。
+按 :doc:`franka` 的「安装」章节准备控制节点：直接安装基于 ROS 的 ``franka`` 环境，或使用 Franka Docker 镜像，并让 ``LIBFRANKA_VERSION`` 与固件匹配。启动 Ray 前先激活该环境。本示例在独立的 GPU 节点上运行 OpenPI actor 和 rollout。
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

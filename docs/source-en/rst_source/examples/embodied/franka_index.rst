@@ -19,7 +19,7 @@ extensions.
       :link: franka
       :link-type: doc
 
-      Collect demonstrations and train with Franky on a GPU computer.
+      Set up a single-arm Franka, collect demonstrations, and run online RL training.
 
    .. grid-item-card:: GELLO Collection
       :link: franka_gello

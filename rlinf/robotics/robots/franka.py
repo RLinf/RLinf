@@ -29,12 +29,12 @@ class FrankaRobot(Robot):
     """Composable Franka robot.
 
     Single-arm by default. :class:`~..dual_franka.DualFrankaRobot` inherits the
-    declaration logic and changes the arm count.
+    declaration logic and only changes the backend and the arm count.
     """
 
     ROBOT_TYPE = "Franka"
 
-    BACKEND: str = "franky"
+    BACKEND: str = "franka_ros"
     """Registered arm backend used by this robot.
 
     Subclasses may select another backend while reusing the same composition.
@@ -142,6 +142,7 @@ class FrankaRobot(Robot):
         env_idx: int = 0,
         backend: Optional[str] = None,
         compliance: Optional[CartesianCompliance] = None,
+        realtime_config: Optional[str] = None,
         end_effector_node_rank: Optional[int] = None,
         end_effector_type: Optional[str] = None,
         end_effector_config: Optional[dict] = None,
@@ -155,13 +156,17 @@ class FrankaRobot(Robot):
         a different node than the arm it is mounted on. Subclasses can override
         this method to compose a different layout.
         """
+        arm_settings: dict[str, Any] = {"compliance": compliance}
+        # Offered only when set: franka_ros refuses the setting outright.
+        if realtime_config is not None:
+            arm_settings["realtime_config"] = realtime_config
         return {
             "arm": cls.declare_arm(
                 robot_ip,
                 node_rank=node_rank,
                 name=f"{cls.ROBOT_TYPE}Arm-{worker_rank}-{env_idx}",
                 backend=backend,
-                compliance=compliance,
+                **arm_settings,
             ),
             "end_effector": cls.declare_end_effector(
                 robot_ip,
@@ -214,6 +219,13 @@ class FrankaConfig(RobotConfig):
     backend: Optional[str] = None
     """Arm backend this robot runs, such as ``"franka_ros"`` or ``"franky"``.
     ``None`` leaves the choice to the robot class's own :attr:`BACKEND`."""
+
+    realtime_config: Optional[str] = None
+    """libfranka real-time mode for the ``franky`` backend: ``"enforce"``
+    (libfranka's default when ``None``) refuses a kernel without PREEMPT_RT;
+    ``"ignore"`` runs on one. ``franka_ros`` refuses this field because
+    franka_control reads the mode from its launch config, which
+    ``FRANKA_REALTIME_CONFIG`` sets at install time."""
 
     robot_ip: Optional[str] = None
     """IP address of the robotic system.

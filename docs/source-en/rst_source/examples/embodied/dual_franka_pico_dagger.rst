@@ -100,23 +100,29 @@ Robot Nodes
 ^^^^^^^^^^^
 
 Run the robot-node installation on every node that directly communicates with
-a Franka. The installer defaults to libfranka 0.19.0. Override
-``LIBFRANKA_VERSION`` only if your firmware requires another version from the
-official `Franka compatibility
-matrix <https://frankarobotics.github.io/docs/compatibility.html>`_; avoid
-libfranka ``0.18.0``.
+a Franka. Dual-arm Franka always drives the arms through Franky, so install the
+``franka-franky`` environment. It downloads a prebuilt Franky wheel with
+libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
+``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to the one that
+the official `Franka compatibility
+matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for
+your firmware. For other firmware, build a Franky wheel against the matching
+libfranka and pass its path or URL in ``FRANKY_WHEEL``; the ROS backend covers
+other libfranka versions only for single-arm Franka.
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   bash requirements/install.sh embodied --env franka --use-mirror
+   export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
+   bash requirements/install.sh embodied --env franka-franky --use-mirror
    source .venv/bin/activate
 
-The ``franka`` environment installs Franky and the camera and input dependencies,
-including ``pyzmq`` for the PICO consumer side. See :doc:`franka_vr` for the PICO headset,
-XRoboToolkit PC Service, and ``vr_data_publisher`` setup and validation.
+The ``franka-franky`` environment installs Franky with the camera and input
+dependencies, including ``pyzmq`` for the PICO consumer side. See
+:doc:`franka_vr` for the PICO headset, XRoboToolkit PC Service, and
+``vr_data_publisher`` setup and validation.
 
 Inference Node
 ^^^^^^^^^^^^^^

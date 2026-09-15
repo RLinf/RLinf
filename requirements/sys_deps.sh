@@ -118,9 +118,6 @@ install_deps_apt() {
         libhidapi-hidraw0 \
         libusb-1.0-0 \
         libudev1 \
-        rt-tests \
-        ethtool \
-        iputils-ping \
         libsm6 \
         libxext6 \
         libxrender-dev \
@@ -177,12 +174,6 @@ install_deps_dnf() {
         mesa-libGL \
         mesa-libGL-devel \
         glib2 \
-        hidapi \
-        libusb1 \
-        systemd-libs \
-        rt-tests \
-        ethtool \
-        iputils \
         libSM \
         libXext \
         libXrender-devel \
@@ -232,12 +223,6 @@ install_deps_yum() {
         mesa-libGL \
         mesa-libGL-devel \
         glib2 \
-        hidapi \
-        libusb1 \
-        systemd-libs \
-        rt-tests \
-        ethtool \
-        iputils \
         libSM \
         libXext \
         libXrender-devel \
@@ -280,12 +265,6 @@ install_deps_pacman() {
         libglvnd \
         glfw \
         glib2 \
-        hidapi \
-        libusb \
-        systemd-libs \
-        rt-tests \
-        ethtool \
-        iputils \
         libsm \
         libxext \
         libxrender \

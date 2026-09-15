@@ -16,6 +16,8 @@
 
 A PREEMPT_RT kernel, ``rtprio>=80``, and unlimited memory locking are
 recommended. The driver logs a warning if real-time hardening is unavailable.
+libfranka refuses a kernel without PREEMPT_RT unless the arm is declared with
+``realtime_config="ignore"``.
 """
 
 import ctypes
@@ -69,6 +71,11 @@ class FrankyArm(BaseArm):
     MCL_CURRENT: ClassVar[int] = 1
     MCL_FUTURE: ClassVar[int] = 2
     MCL_ONFAULT: ClassVar[int] = 4
+    #: libfranka ``RealtimeConfig`` members by config name.
+    REALTIME_CONFIGS: ClassVar[dict[str, str]] = {
+        "enforce": "Enforce",
+        "ignore": "Ignore",
+    }
 
     @classmethod
     def declare(
@@ -80,6 +87,7 @@ class FrankyArm(BaseArm):
         end_effector_type: Optional[str] = None,
         end_effector_config: Optional[dict] = None,
         compliance: Optional[CartesianCompliance] = None,
+        realtime_config: Optional[str] = None,
         **placement: Any,
     ) -> "FrankyArm":
         """Declare a libfranka arm with the impedance settings offered."""
@@ -89,13 +97,39 @@ class FrankyArm(BaseArm):
             end_effector_type=end_effector_type,
             end_effector_config=end_effector_config,
         )
-        return cls(address, compliance=compliance, **placement)
+        return cls(
+            address,
+            compliance=compliance,
+            realtime_config=realtime_config,
+            **placement,
+        )
 
     def __init__(
-        self, robot_ip: str, compliance: Optional[CartesianCompliance] = None
+        self,
+        robot_ip: str,
+        compliance: Optional[CartesianCompliance] = None,
+        realtime_config: Optional[str] = None,
     ) -> None:
+        """Record the arm's settings without opening a libfranka session.
+
+        Args:
+            robot_ip: Address of the arm's control interface.
+            compliance: Cartesian impedance gains and clips.
+            realtime_config: ``"enforce"`` (libfranka's default when ``None``)
+                refuses a kernel without PREEMPT_RT; ``"ignore"`` runs on one
+                and may then miss control deadlines under load.
+
+        Raises:
+            ValueError: If *realtime_config* names no libfranka mode.
+        """
         self._logger = get_logger()
         self._robot_ip = validated_robot_ip(robot_ip, type(self).__name__)
+        self._realtime_config = realtime_config or "enforce"
+        if self._realtime_config not in self.REALTIME_CONFIGS:
+            raise ValueError(
+                f"realtime_config must be one of {sorted(self.REALTIME_CONFIGS)}, "
+                f"got {realtime_config!r}."
+            )
         self._compliance = compliance or CartesianCompliance()
         self._cart_k_t = self._compliance.translational_stiffness
         self._cart_k_r = self._compliance.rotational_stiffness
@@ -132,10 +166,9 @@ class FrankyArm(BaseArm):
         import franky
 
         self._franky = franky
-        # Request real-time scheduling when available, but allow best-effort
-        # control on hosts without PREEMPT_RT or scheduling permissions.
+        mode = self.REALTIME_CONFIGS[self._realtime_config]
         self._robot = franky.Robot(
-            self._robot_ip, realtime_config=franky.RealtimeConfig.Ignore
+            self._robot_ip, realtime_config=getattr(franky.RealtimeConfig, mode)
         )
         self._robot.recover_from_errors()
         self._robot.relative_dynamics_factor = self.DYNAMICS_FACTOR

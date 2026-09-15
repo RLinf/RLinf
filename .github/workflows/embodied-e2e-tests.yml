@@ -205,6 +205,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export SKIP_ROS=1
           bash requirements/install.sh embodied --env franka
 
       - name: Franka SAC mock-robot test
@@ -373,6 +374,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export SKIP_ROS=1
           bash requirements/install.sh embodied --env franka
 
       - name: Real-world data collection mock-robot test
@@ -401,6 +403,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export SKIP_ROS=1
           bash requirements/install.sh embodied --env franka
 
       - name: Reward-dataset labelling mock-robot test

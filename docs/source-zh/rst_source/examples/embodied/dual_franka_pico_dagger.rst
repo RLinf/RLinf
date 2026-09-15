@@ -95,17 +95,18 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 机器人节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。安装脚本默认使用 libfranka 0.19.0；仅当固件需要其他版本时，才根据 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 设置 ``LIBFRANKA_VERSION``。避免使用 libfranka ``0.18.0``。
+在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，因此需要安装 ``franka-franky`` 环境。该环境会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   bash requirements/install.sh embodied --env franka --use-mirror
+   export LIBFRANKA_VERSION=0.19.0       # 或 0.15.0，与固件匹配
+   bash requirements/install.sh embodied --env franka-franky --use-mirror
    source .venv/bin/activate
 
-``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
+``franka-franky`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
 
 推理节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

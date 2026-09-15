@@ -1,10 +1,4 @@
-transformers<=4.57.6
-torchcodec
-peft
-timm
-imageio[ffmpeg]
-opencv-python
-gymnasium
-gym
+# The default patch_syncer compresses with nvcomp_lz4.
 nvidia-nvcomp-cu12
 evdev
+opencv-python

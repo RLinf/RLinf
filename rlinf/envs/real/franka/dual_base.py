@@ -406,6 +406,7 @@ class DualFrankaEnv(gym.Env):
             right_gripper_connection=self.hardware.right_gripper_connection,
             left_compliance=self._side_compliance("left"),
             right_compliance=self._side_compliance("right"),
+            realtime_config=self.hardware.realtime_config,
             arm_cameras=arm_cameras,
             cameras=base_cameras,
         )

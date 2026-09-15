@@ -50,6 +50,7 @@ class DualFrankaRobot(FrankaRobot):
         right_gripper_connection: Optional[str] = None,
         left_compliance: Optional[CartesianCompliance] = None,
         right_compliance: Optional[CartesianCompliance] = None,
+        realtime_config: Optional[str] = None,
         arm_cameras: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> dict[str, Any]:
         """Return the left and right arm groups with their wrist cameras."""
@@ -88,6 +89,7 @@ class DualFrankaRobot(FrankaRobot):
                     node_rank=node_rank,
                     name=f"{cls.ROBOT_TYPE}Arm-{side}-{worker_rank}-{env_idx}",
                     compliance=compliance,
+                    realtime_config=realtime_config,
                 ),
                 end_effector=cls.declare_end_effector(
                     robot_ip,
@@ -129,6 +131,11 @@ class DualFrankaConfig(RobotConfig):
 
     right_compliance: Optional[CartesianCompliance] = None
     """Impedance settings for the right arm. Falls back to :attr:`compliance`."""
+
+    realtime_config: Optional[str] = None
+    """libfranka real-time mode for both arms: ``"enforce"`` (libfranka's
+    default when ``None``) refuses a kernel without PREEMPT_RT; ``"ignore"``
+    runs on one."""
 
     left_camera_serials: Optional[list[str]] = None
     """Camera serial numbers for the left arm's wrist camera(s)."""
