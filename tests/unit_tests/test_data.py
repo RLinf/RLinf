@@ -18,16 +18,24 @@ import copy
 import json
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 import pytest
 import torch
 from omegaconf import DictConfig
+from torch.utils.data import DataLoader
 
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.data.storage.replay import (
+    PreloadReplayBufferDataset,
+    TrajectoryReplayBuffer,
+    replay_buffer_collate_fn,
+)
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
     _CODEC_KEY,
@@ -694,3 +702,101 @@ def test_infer_obs_batch_size_images_only():
 def test_infer_obs_batch_size_raises_when_unbatched():
     with pytest.raises(ValueError, match="Cannot infer batch size"):
         infer_obs_batch_size({"obs": {}})
+
+
+class TestPreloadReplayBufferDataset:
+    """Prefetched replay batches preserve sampling errors and close cleanly."""
+
+    @pytest.fixture
+    def buffers(self, tmp_path):
+        """Create two disk-backed buffers with distinguishable samples."""
+        buffers = []
+        for name, reward in (("replay", 1.0), ("demo", 2.0)):
+            buffer = TrajectoryReplayBuffer(
+                auto_save=True,
+                auto_save_path=str(tmp_path / name),
+                enable_cache=False,
+            )
+            buffer.add_trajectories(
+                [
+                    Trajectory(
+                        max_episode_length=2,
+                        rewards=torch.full((2, 1, 1), reward),
+                    )
+                ]
+            )
+            # Flush asynchronous writes before reading or removing the files.
+            buffer.close()
+            buffers.append(buffer)
+        yield buffers
+        for buffer in buffers:
+            buffer.close()
+
+    @pytest.mark.parametrize("use_demo", [False, True])
+    def test_batches_and_close(self, buffers, use_demo):
+        dataset = PreloadReplayBufferDataset(
+            buffers[0], buffers[1] if use_demo else None, 2, 1, 1, prefetch_size=1
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            batches = iter(dataset)
+            try:
+                batch = executor.submit(next, batches).result(timeout=5)
+                expected = torch.tensor([[1.0], [2.0 if use_demo else 1.0]])
+                torch.testing.assert_close(batch["rewards"], expected)
+            finally:
+                dataset.close()
+            with pytest.raises(StopIteration):
+                next(batches)
+            dataset.close()
+
+    @pytest.mark.parametrize("failed_buffer", ["replay", "demo"])
+    @pytest.mark.parametrize("after_first_batch", [False, True])
+    def test_missing_trajectory_reaches_consumer(
+        self, buffers, tmp_path, failed_buffer, after_first_batch
+    ):
+        dataset = PreloadReplayBufferDataset(
+            buffers[0], buffers[1], 2, 1, 1, prefetch_size=1
+        )
+        batches = iter(
+            DataLoader(dataset, batch_size=1, collate_fn=replay_buffer_collate_fn)
+        )
+
+        def consume_until_failure():
+            for _ in batches:
+                pass
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                if after_first_batch:
+                    executor.submit(next, batches).result(timeout=5)
+                for path in (tmp_path / failed_buffer).glob("*.pt"):
+                    path.unlink()
+                with pytest.raises(RuntimeError, match="Sampling thread failed") as exc:
+                    executor.submit(consume_until_failure).result(timeout=5)
+                assert isinstance(exc.value.__cause__, FileNotFoundError)
+                assert failed_buffer in str(exc.value.__cause__)
+            finally:
+                dataset.close()
+
+    def test_close_before_iteration(self, buffers):
+        dataset = PreloadReplayBufferDataset(buffers[0], None, 2, 1, 0)
+        dataset.close()
+        dataset.close()
+        assert list(dataset) == []
+
+    def test_close_while_waiting_for_buffer(self, buffers):
+        dataset = PreloadReplayBufferDataset(buffers[0], None, 2, 2, 0)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending_batch = executor.submit(next, iter(dataset))
+            try:
+                deadline = time.monotonic() + 5
+                while dataset.sample_thread is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert dataset.sample_thread is not None
+                with pytest.raises(TimeoutError):
+                    pending_batch.result(timeout=0.1)
+                dataset.close()
+                with pytest.raises(StopIteration):
+                    pending_batch.result(timeout=5)
+            finally:
+                dataset.close()

@@ -14,7 +14,6 @@
 
 import queue
 import threading
-import time
 from typing import Any, Iterator, Optional
 
 import torch
@@ -159,6 +158,8 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
                 the queue. Defaults to 10.
         """
         self._stop_event = threading.Event()
+        self.sample_thread = None
+        self._exception = None
 
         self.replay_buffer = replay_buffer
         self.demo_buffer = demo_buffer
@@ -170,64 +171,65 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
         assert self.prefetch_size > 0, f"{self.prefetch_size=} must be greater than 0"
 
         self.preload_queue = queue.Queue(maxsize=prefetch_size)
-        self.sample_thread = None
-        self._exception = None
 
     def _sample_buffer(self) -> None:
         """Background thread target that continuously samples batches.
 
         Runs in a loop until stop event is set. Waits for buffers to be ready,
         samples batches, and puts them in the preload queue. If the queue is
-        full, skips the sample and retries. Sleeps when buffers are not ready
-        or when errors occur.
+        full, skips the sample and retries. Stops and records any sampling
+        failure so that the iterator can report it to the caller.
         """
-        while not self._stop_event.is_set():
-            if self.preload_queue.full():
-                time.sleep(0.1)
-                continue
+        try:
+            while not self._stop_event.is_set():
+                if self.preload_queue.full():
+                    self._stop_event.wait(0.1)
+                    continue
 
-            is_ready = True
-            if not self.replay_buffer.is_ready(self.min_replay_buffer_size):
-                is_ready = False
-            if self.demo_buffer is not None and not self.demo_buffer.is_ready(
-                self.min_demo_buffer_size
-            ):
-                is_ready = False
+                is_ready = True
+                if not self.replay_buffer.is_ready(self.min_replay_buffer_size):
+                    is_ready = False
+                if self.demo_buffer is not None and not self.demo_buffer.is_ready(
+                    self.min_demo_buffer_size
+                ):
+                    is_ready = False
 
-            if is_ready:
-                if self.demo_buffer is not None:
-                    replay_batch = self.replay_buffer.sample(self.batch_size // 2)
-                    demo_batch = self.demo_buffer.sample(self.batch_size // 2)
-                    batch = concat_batch(replay_batch, demo_batch)
+                if is_ready:
+                    if self.demo_buffer is not None:
+                        replay_batch = self.replay_buffer.sample(self.batch_size // 2)
+                        demo_batch = self.demo_buffer.sample(self.batch_size // 2)
+                        batch = concat_batch(replay_batch, demo_batch)
+                    else:
+                        batch = self.replay_buffer.sample(self.batch_size)
                 else:
-                    batch = self.replay_buffer.sample(self.batch_size)
-            else:
-                time.sleep(3)
-                continue
+                    self._stop_event.wait(3)
+                    continue
 
-            try:
-                self.preload_queue.put(batch, timeout=1)
-            except queue.Full:
-                logger.info("Queue is full, skipping sample")
-                time.sleep(0.1)
-                continue
-            except Exception as e:
-                logger.error(f"Error in ReplayBufferDataset: {e}")
-                self._exception = e
-                self._stop_event.set()
-                break
+                try:
+                    self.preload_queue.put(batch, timeout=1)
+                except queue.Full:
+                    logger.info("Queue is full, skipping sample")
+                    self._stop_event.wait(0.1)
+        except Exception as e:
+            self._exception = e
+            self._stop_event.set()
+            logger.error(f"Error in ReplayBufferDataset: {e}")
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         """Returns an iterator that yields prefetched batches.
 
         Starts the background sampling thread on first call. Retrieves batches
-        from the preload queue and yields them. Stops when the stop event is set.
+        from the preload queue and yields them. Closing the dataset ends iteration.
 
         Yields:
             Batch dictionary containing sampled trajectories. Keys and structure
             depend on the buffer's trajectory format.
+
+        Raises:
+            RuntimeError: If background sampling fails, chained from the original
+                exception.
         """
-        if self.sample_thread is None:
+        if self.sample_thread is None and not self._stop_event.is_set():
             self.sample_thread = threading.Thread(
                 target=self._sample_buffer, daemon=True
             )
@@ -236,31 +238,30 @@ class PreloadReplayBufferDataset(ReplayBufferDataset):
         while not self._stop_event.is_set():
             try:
                 batch = self.preload_queue.get(timeout=1)
-                yield batch
             except queue.Empty:
-                if self._stop_event.is_set():
-                    # Check if thread died with exception
-                    if hasattr(self, "_exception"):
-                        raise RuntimeError(
-                            "Sampling thread failed"
-                        ) from self._exception
-                    break
                 continue
+            if self._stop_event.is_set():
+                break
+            yield batch
+
+        if self._exception is not None:
+            raise RuntimeError("Sampling thread failed") from self._exception
 
     def close(self) -> None:
         """Stops the background sampling thread and cleans up resources.
 
         Sets the stop event and waits up to 10 seconds for the sampling thread
-        to terminate. Logs a warning if the thread does not terminate in time.
+        to terminate. Safe to call repeatedly or before iteration starts. Logs a
+        warning if the thread does not terminate in time.
         """
         self._stop_event.set()
 
         thread_timeout = 10
-        if self.sample_thread.is_alive():
+        if self.sample_thread is not None and self.sample_thread.is_alive():
             self.sample_thread.join(timeout=thread_timeout)
             if self.sample_thread.is_alive():
                 logger.warning(
-                    f"Sample thread is still alive after {thread_timeout} seconds, force killing"
+                    f"Sample thread is still alive after {thread_timeout} seconds"
                 )
 
     def __del__(self) -> None:
