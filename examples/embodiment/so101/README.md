@@ -5,6 +5,23 @@ robot host has a GPU, or `grpc` when a separate GPU host serves the model. Both
 backends use the same observation schema, 20-step action chunks, control loop,
 and DAgger intervention flow.
 
+## Demonstration collection
+
+Record leader-controlled demonstrations through RLinf's collection pipeline:
+
+```bash
+SO101_FOLLOWER_PORT=/dev/ttyACM0 \
+SO101_FOLLOWER_ID=rlinf_follower \
+SO101_LEADER_PORT=/dev/ttyACM1 \
+SO101_LEADER_ID=rlinf_leader \
+SO101_CAMERA=/dev/video0 \
+examples/embodiment/collect_so101.sh 10
+```
+
+The control loop runs at 30 Hz. Finalized episodes use LeRobot format under
+`../results/so101-collect/collected_data`, and RLinf trajectories are stored
+under `../results/so101-collect/demos`.
+
 ## Local inference
 
 Run PI05 in the robot process:

@@ -162,6 +162,22 @@ follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``
 
 ``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），控制循环可在相邻图像帧之间继续执行。连续夹爪命令异步返回。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
 
+采集示范数据
+------------
+
+通过 RLinf 的数采入口记录 leader 控制的示范轨迹：
+
+.. code-block:: bash
+
+   SO101_FOLLOWER_PORT=/dev/ttyACM0 \
+   SO101_FOLLOWER_ID=rlinf_follower \
+   SO101_LEADER_PORT=/dev/ttyACM1 \
+   SO101_LEADER_ID=rlinf_leader \
+   SO101_CAMERA=/dev/video0 \
+   examples/embodiment/collect_so101.sh 10
+
+该命令通过 ``collect_real_data.py`` 以 30 Hz 运行 SO101 控制循环，将完成的 episode 以 LeRobot 格式写入 ``../results/so101-collect/collected_data``，同时将 RLinf trajectory 文件保存在 ``../results/so101-collect/demos``。
+
 运行 PI05 推理与 DAgger
 -----------------------
 

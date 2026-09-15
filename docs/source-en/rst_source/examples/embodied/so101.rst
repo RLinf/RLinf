@@ -215,6 +215,25 @@ Move the leader's gripper away from that opening before retrying
 motion into the obstruction. The driver's ``open_gripper()`` and
 ``close_gripper()`` methods still wait for travel or stall relief.
 
+Collect Demonstrations
+----------------------
+
+Use RLinf's collection entrypoint to record leader-controlled demonstrations:
+
+.. code-block:: bash
+
+   SO101_FOLLOWER_PORT=/dev/ttyACM0 \
+   SO101_FOLLOWER_ID=rlinf_follower \
+   SO101_LEADER_PORT=/dev/ttyACM1 \
+   SO101_LEADER_ID=rlinf_leader \
+   SO101_CAMERA=/dev/video0 \
+   examples/embodiment/collect_so101.sh 10
+
+The command runs ``collect_real_data.py`` with a 30 Hz SO101 control loop. It
+writes the finalized episodes in LeRobot format under
+``../results/so101-collect/collected_data`` and keeps RLinf trajectory files
+under ``../results/so101-collect/demos``.
+
 Run PI05 Inference and DAgger
 -----------------------------
 

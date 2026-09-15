@@ -50,6 +50,7 @@ env:
           calibration_id: "${oc.env:SO101_LEADER_ID,so101_leader}"
     override_cfg:
       enable_camera_player: false
+      step_frequency: 30.0
     data_collection:
       enabled: true
       save_dir: ${runner.logger.log_path}/collected_data
@@ -59,5 +60,5 @@ env:
       export_format: lerobot
       only_success: true
       robot_type: so101
-      fps: 15
+      fps: 30
       finalize_interval: 1
