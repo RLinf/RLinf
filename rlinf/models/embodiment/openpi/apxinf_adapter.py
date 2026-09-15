@@ -17,6 +17,13 @@
 RLinf owns the complete OpenPI input/output transform chain. ApxInf receives
 only resized uint8 RGB views, token ids and optional flow noise through its L1
 ``Model.infer_rgb`` API, and returns normalized model-space actions.
+
+The engine handle is built through ``apxinf_robo.load_bare_model`` rather than
+``apxinf_py.Model.load`` directly: that wrapper is the single place any framework
+should enter ApxInf's L1 seam, and it resolves the tuned GEMM tactics that keep
+the bare handle numerically equal to ApxInf's own policy path (a bare handle
+loaded without them diverges on byte-identical inputs). Pinning a new engine
+build is then a change to APXinf-robo, not to this file.
 """
 
 from __future__ import annotations
@@ -370,42 +377,26 @@ class OpenPIApxInfAdapter:
 
     def _load_model(self):
         try:
-            import apxinf_py
+            from apxinf_robo import load_bare_model
         except ImportError as error:
             raise ImportError(
-                "apxinf_py is not importable in the rollout worker. Install the "
-                "official infinigence/ApxInf CUDA Python binding."
+                "apxinf_robo is not importable in the rollout worker. It is this "
+                "backend's entry point to the ApxInf L1 interface; install it, "
+                "and the official infinigence/ApxInf CUDA Python binding it "
+                "wraps, from https://github.com/RLinf/APXinf-robo."
             ) from error
 
         model_path = self.model_cfg.get("model_path")
         if not model_path:
             raise ValueError("rollout.model.model_path is required for ApxInf")
         model_dir = pathlib.Path(str(model_path))
+        # The checkpoint directory, not a weights file: the engine's loader
+        # resolves model.safetensors.index.json ahead of model.safetensors, and
+        # load_bare_model looks in the same directory for a local tactics.json.
         checkpoint = self.apxinf_cfg.get("checkpoint", None)
-        checkpoint_path = (
-            pathlib.Path(str(checkpoint))
-            if checkpoint
-            else model_dir / "model.safetensors"
-        )
-
-        tactics = self.apxinf_cfg.get("tactics", None)
-        if tactics is None:
-            try:
-                from apxinf._tactics import resolve_pi05_tactics
-
-                tactics = resolve_pi05_tactics(
-                    self.device,
-                    str(self.apxinf_cfg.get("precision", "bf16")),
-                    model_dir=model_dir,
-                    override=None,
-                    allow_missing=bool(self.apxinf_cfg.get("autotune", False)),
-                )
-            except ImportError:
-                tactics = None
+        weights = pathlib.Path(str(checkpoint)) if checkpoint else model_dir
 
         kwargs: dict[str, Any] = {
-            "device": self.device,
-            "precision": str(self.apxinf_cfg.get("precision", "bf16")),
             "autotune": bool(self.apxinf_cfg.get("autotune", False)),
             "action_horizon": self.action_horizon,
             "num_flow_steps": self.num_flow_steps,
@@ -415,11 +406,23 @@ class OpenPIApxInfAdapter:
         calibration = self.apxinf_cfg.get("calibration", None)
         if calibration:
             kwargs["calibration"] = str(calibration)
-        if tactics:
-            kwargs["tactics"] = str(tactics)
         if self.apxinf_cfg.get("num_views", None) is not None:
             kwargs["num_views"] = int(self.apxinf_cfg.get("num_views"))
-        return apxinf_py.Model.load("pi05", str(checkpoint_path), **kwargs)
+        # Otherwise load_bare_model selects the tuned GEMM tactics itself, which
+        # is the reason to go through it: a bare handle loaded without them
+        # returns different actions from ApxInf's own policy path on
+        # byte-identical inputs, and both answers are finite and plausible.
+        tactics = self.apxinf_cfg.get("tactics", None)
+        if tactics is not None:
+            kwargs["tactics"] = str(tactics)
+
+        return load_bare_model(
+            weights,
+            model="pi05",
+            device=self.device,
+            precision=str(self.apxinf_cfg.get("precision", "bf16")),
+            **kwargs,
+        )
 
     def _validate_model_contract(self) -> None:
         if int(self.model.action_horizon) != self.action_horizon:

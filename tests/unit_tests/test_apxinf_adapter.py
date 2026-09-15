@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pathlib
+import sys
+import types
+
 import numpy as np
 import pytest
 import torch
@@ -224,3 +228,58 @@ def test_close_delegates_to_model():
     adapter = _adapter(model=model)
     adapter.close()
     assert model.closed
+
+
+def _stub_apxinf_robo(monkeypatch):
+    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for.
+
+    The real one needs a CUDA binding and a checkpoint, so what is checked here
+    is the contract: which path is handed over, and that the tuned tactics are
+    left to ``load_bare_model`` rather than resolved by hand.
+    """
+    seen = {}
+
+    def load_bare_model(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return _FakeModel()
+
+    module = types.ModuleType("apxinf_robo")
+    module.load_bare_model = load_bare_model
+    monkeypatch.setitem(sys.modules, "apxinf_robo", module)
+    return seen
+
+
+def test_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(_model_cfg(), "cpu", processor=_FakeProcessor())
+
+    assert seen["path"] == pathlib.Path("/not/loaded/in/unit/test")
+    kwargs = seen["kwargs"]
+    assert kwargs["model"] == "pi05"
+    assert kwargs["device"] == "cpu"
+    assert kwargs["precision"] == "bf16"
+    assert kwargs["action_horizon"] == 10
+    assert kwargs["num_flow_steps"] == 5
+    assert kwargs["sampling_seed"] == 0
+    # Left out entirely so load_bare_model applies its own tuned selection.
+    assert "tactics" not in kwargs
+
+
+def test_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(
+        _model_cfg(tactics="/mine.json"), "cpu", processor=_FakeProcessor()
+    )
+
+    assert seen["kwargs"]["tactics"] == "/mine.json"
+
+
+def test_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
+    # ``None`` in sys.modules is how CPython marks an import as unavailable.
+    monkeypatch.setitem(sys.modules, "apxinf_robo", None)
+
+    with pytest.raises(ImportError, match="apxinf_robo"):
+        OpenPIApxInfAdapter(_model_cfg(), "cpu", processor=_FakeProcessor())
