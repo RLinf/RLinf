@@ -101,6 +101,8 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 
 终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
 
+.. _apxinf-backend:
+
 ApxInf 推理后端
 ---------------
 

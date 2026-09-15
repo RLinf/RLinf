@@ -101,6 +101,8 @@ Copy or edit the target YAML and set at least ``rollout.model.model_path``. See 
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
 
+.. _apxinf-backend:
+
 ApxInf Backend
 --------------
 
