@@ -450,19 +450,22 @@ class MegatronActor(MegatronWorker):
         self.model_state_offload_optimizer_and_grad()
 
         # send bucket size
-        if self.num_weight_targets > 0:
-            # Bucket-outer, target-inner: gather once per bucket, then narrow
-            # locally per target. The sent buffers hold views into full_sd, so
-            # prev_full_sd keeps it alive until the next bucket's wait.
+        # Bucket-outer, target-inner: gather once per bucket, then narrow
+        # locally per target. The sent buffers hold views into full_sd, so
+        # prev_full_sd keeps it alive until the next bucket's wait.
+        send_handles = []
+        prev_full_sd = None
+        for bucket_idx, bucket_weight in enumerate(model_bucket_list):
+            for send_handle in send_handles:
+                send_handle.wait()
             send_handles = []
             prev_full_sd = None
-            for bucket_idx, bucket_weight in enumerate(model_bucket_list):
-                for send_handle in send_handles:
-                    send_handle.wait()
-                send_handles = []
-                prev_full_sd = None
 
-                full_sd = self.rollout_weights_reshard.gather_full_model(bucket_weight)
+            # Every rank enters the gather: its collectives run on the TP / EP /
+            # PP groups, which a rank with no rollout target still belongs to.
+            # Only the narrow and the send depend on having a target.
+            full_sd = self.rollout_weights_reshard.gather_full_model(bucket_weight)
+            if self.num_weight_targets > 0:
                 if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
                     buffer = self.rollout_weights_reshard.narrow_to_target(
                         full_sd,
@@ -510,14 +513,16 @@ class MegatronActor(MegatronWorker):
                         del buffer
                 # Keeping one bucket's full_sd alive into the next bucket
                 # overlaps communication with the next gather, at a peak of
-                # two full_sd that bucket_capacity budgets for.
+                # two full_sd that bucket_capacity budgets for. A rank with
+                # no target has no send to anchor, so it skips this anchor
+                # and the del below frees its bucket right away.
                 prev_full_sd = full_sd
-                del full_sd
+            del full_sd
 
-            for send_handle in send_handles:
-                send_handle.wait()
-            # Release the last bucket's full_sd, now that its sends are done.
-            del send_handles, prev_full_sd
+        for send_handle in send_handles:
+            send_handle.wait()
+        # Release the last bucket's full_sd, now that its sends are done.
+        del send_handles, prev_full_sd
 
         if (
             self.placement_mode == PlacementMode.COLLOCATED
