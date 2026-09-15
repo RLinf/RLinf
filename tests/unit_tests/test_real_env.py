@@ -3358,8 +3358,9 @@ def test_real_env_requires_a_robot_descriptor(monkeypatch):
 
 
 @pytest.mark.parametrize("controller_node_rank", [None, 7])
+@pytest.mark.parametrize("compliance", [None, {}, {"max_step": 0.02}])
 def test_franka_preserves_hardware_and_placement_at_construction(
-    monkeypatch, controller_node_rank
+    monkeypatch, controller_node_rank, compliance
 ):
     from rlinf.envs.real.franka import FrankaEnv
     from rlinf.robotics import FrankaConfig, FrankaRobot, RobotInfo
@@ -3373,6 +3374,7 @@ def test_franka_preserves_hardware_and_placement_at_construction(
         camera_serials=["camera"],
         end_effector_type="ruiyan_hand",
         end_effector_config={"port": "/dev/hand"},
+        compliance=compliance,
     )
     info = RobotInfo(type="Franka", model="Franka", config=config)
     before = pickle.dumps(info)
@@ -3393,9 +3395,56 @@ def test_franka_preserves_hardware_and_placement_at_construction(
     assert kwargs["env_idx"] == 4
     assert kwargs["end_effector_type"] == "ruiyan_hand"
     assert kwargs["end_effector_config"] == {"port": "/dev/hand"}
+    assert kwargs["compliance"] == compliance
     camera = kwargs["cameras"]["wrist_1"]
     assert camera.serial_number == "camera"
     assert camera.camera_type == "zed"
+    assert pickle.dumps(info) == before
+
+
+@pytest.mark.parametrize(
+    "shared,left,right,expected_left,expected_right",
+    [
+        (None, None, None, None, None),
+        ({"max_step": 0.02}, None, None, {"max_step": 0.02}, {"max_step": 0.02}),
+        (
+            {"translational_stiffness": 900},
+            {"max_step": 0.02},
+            {},
+            {"max_step": 0.02},
+            {},
+        ),
+        ({"max_step": 0.02}, {}, None, {}, {"max_step": 0.02}),
+    ],
+)
+def test_dual_franka_preserves_shared_and_per_arm_compliance(
+    monkeypatch, shared, left, right, expected_left, expected_right
+):
+    from rlinf.envs.real.franka.dual_franka_tcp import DualFrankaTCPEnv
+    from rlinf.robotics import DualFrankaRobot
+    from rlinf.scheduler.hardware import NodeHardwareConfig
+
+    hardware = NodeHardwareConfig(
+        type="DualFranka",
+        configs=[
+            {
+                "node_rank": 0,
+                "left_robot_ip": "10.0.0.1",
+                "right_robot_ip": "10.0.0.2",
+                "compliance": shared,
+                "left_compliance": left,
+                "right_compliance": right,
+            }
+        ],
+    )
+    info = _robot_info(pickle.loads(pickle.dumps(hardware.configs[0])))
+    before = pickle.dumps(info)
+    build = Mock(side_effect=RuntimeError("stop before opening hardware"))
+    monkeypatch.setattr(DualFrankaRobot, "build", build)
+    with pytest.raises(RuntimeError, match="stop before opening hardware"):
+        DualFrankaTCPEnv({}, robot_info=info)
+    assert build.call_args.kwargs["left_compliance"] == expected_left
+    assert build.call_args.kwargs["right_compliance"] == expected_right
     assert pickle.dumps(info) == before
 
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import ctypes
 import os
+import pickle
 import re
 import runpy
 import subprocess
@@ -3743,6 +3744,45 @@ def _franky_target(mode: str) -> dict[str, np.ndarray]:
     return {"tcp_pose": np.array([0.4, 0.0, 0.3, 0.0, 1.0, 0.0, 0.0])}
 
 
+@pytest.mark.parametrize("custom_limits", [False, True])
+def test_franky_limits_cartesian_targets_after_task_reconfiguration(
+    franky_arm, custom_limits
+):
+    from scipy.spatial.transform import Rotation
+
+    original, sdk = franky_arm
+    original.disconnect()
+    max_step, max_angle = (0.02, 0.05) if custom_limits else (0.03, 0.1)
+    arm = FrankyArm(
+        "10.0.0.1",
+        compliance={"max_step": max_step, "max_step_rad": max_angle}
+        if custom_limits
+        else None,
+    )
+    arm.connect()
+    try:
+        pose = arm.get_observation()["tcp_pose"]
+        start_rotation = Rotation.from_quat(pose[3:])
+        target = pose.copy()
+        target[:3] += [0.12, 0.16, 0.0]
+        target[3:] = (Rotation.from_rotvec([0.0, 0.0, 0.5]) * start_rotation).as_quat()
+        arm.reconfigure_compliance_params(
+            {"translational_stiffness": 2000, "translational_clip_x": 0.003}
+        )
+        for step in (1, 2):
+            arm.send_action({"tcp_pose": target})
+            command = sdk.Robot.instances[-1].trackers[-1].targets[-1][0].matrix
+            np.testing.assert_allclose(
+                command[:3, 3], pose[:3] + step * max_step * np.array([0.6, 0.8, 0.0])
+            )
+            rotation = Rotation.from_matrix(command[:3, :3])
+            assert (rotation * start_rotation.inv()).magnitude() == pytest.approx(
+                step * max_angle
+            )
+    finally:
+        arm.disconnect()
+
+
 def _fail_franky_controller(robot: Any) -> RuntimeError:
     error = RuntimeError("communication_constraints_violation")
     robot.motion_error = error
@@ -5719,103 +5759,122 @@ def test_so101_takes_no_separately_wired_end_effector():
         SO101Arm.declare("/dev/mock-so101", gripper_connection="/dev/ttyUSB0")
 
 
-def test_an_arm_takes_the_compliance_its_robot_was_configured_with():
-    from robot_mocks import mocked_sdks
+def test_franky_preserves_a_complete_compliance_object(franky_arm):
+    from rlinf.robotics.parts.arms.base import CartesianCompliance
 
-    with mocked_sdks():
-        from rlinf.robotics.parts.arms.base import CartesianCompliance
-        from rlinf.robotics.robots import FrankaRobot
+    original, sdk = franky_arm
+    original.disconnect()
+    settings = CartesianCompliance(translational_stiffness=900.0, max_step=0.02)
+    arm = FrankyArm.declare("10.0.0.1", compliance=settings)
+    arm.connect()
+    try:
+        pose = arm.get_observation()["tcp_pose"]
+        target = pose.copy()
+        target[0] += 0.2
+        arm.send_action({"tcp_pose": target})
+        tracker = sdk.Robot.instances[-1].trackers[-1]
+        assert tracker.settings["translational_stiffness"] == 900.0
+        assert tracker.settings["rotational_stiffness"] == 40.0
+        np.testing.assert_allclose(tracker.settings["translational_error_clip"], 0.05)
+        assert tracker.targets[-1][0].matrix[0, 3] == pytest.approx(pose[0] + 0.02)
+    finally:
+        arm.disconnect()
 
-        settings = CartesianCompliance(translational_stiffness=900.0, max_step=0.02)
-        robot = FrankaRobot.build(
-            robot_ip="10.0.0.1",
-            node_rank=0,
-            backend="franky",
-            gripper_type="franka",
-            compliance=settings,
-        )
-        arm = robot.child("arm")
-        # The settings belong to the arm, so a second arm may hold others and a
-        # remotely placed one carries them to the node it opens on.
-        assert arm._compliance is settings
-        assert arm._cart_k_t == 900.0
-
-        # An arm whose controller owns its gains is offered the same settings
-        # and ignores them, rather than refusing to be built.
-        ros = FrankaRobot.declare_arm(
-            "10.0.0.1",
-            node_rank=0,
-            name="arm",
-            backend="franka_ros",
-            compliance=settings,
-        )
-        assert type(ros).__name__ == "FrankaROSArm"
+    ros = FrankaRobot.declare_arm(
+        "10.0.0.1",
+        node_rank=0,
+        name="arm",
+        backend="franka_ros",
+        compliance=settings,
+    )
+    assert isinstance(ros, FrankaROSArm)
 
 
-def test_a_compliance_request_is_held_to_what_the_backend_can_run():
-    from robot_mocks import mocked_sdks
-
-    with mocked_sdks():
-        from rlinf.robotics.parts.arms.base import CartesianCompliance
-        from rlinf.robotics.parts.arms.franky import FrankyArm
-
-        arm = FrankyArm.declare(
-            "10.0.0.1",
-            compliance=CartesianCompliance(stiffness_cap=1200.0, clip_floor=0.005),
-        )
-        arm.connect()
-        try:
-            # A task written for a real-time controller asks for more stiffness
-            # and tighter clips than a client-side loop can hold.
-            arm.reconfigure_compliance_params(
-                {
-                    "translational_stiffness": 2000,
-                    "rotational_stiffness": 150,
-                    "translational_clip_x": 0.003,
-                    "translational_clip_neg_x": 0.001,
-                    "rotational_clip_x": 0.001,
-                }
-            )
-            assert arm._cart_k_t == 1200.0
-            assert arm._cart_k_r == 80.0
-            # The looser of each direction pair, floored.
-            assert arm._cart_trans_clip[0] == pytest.approx(0.005)
-            assert arm._cart_rot_clip[0] == pytest.approx(0.02)
-
-            # Nothing asked for, nothing changed.
-            before = arm._cart_k_t
-            arm.reconfigure_compliance_params({})
-            assert arm._cart_k_t == before
-        finally:
-            arm.disconnect()
+def test_a_compliance_request_is_held_to_what_the_backend_can_run(franky_arm):
+    arm, sdk = franky_arm
+    pose = arm.get_observation()["tcp_pose"]
+    arm.send_action({"tcp_pose": pose})
+    arm.reconfigure_compliance_params(
+        {
+            "translational_stiffness": 2000,
+            "rotational_stiffness": 150,
+            "translational_clip_x": 0.003,
+            "translational_clip_neg_x": 0.001,
+            "rotational_clip_x": 0.001,
+        }
+    )
+    arm.send_action({"tcp_pose": pose})
+    tracker = sdk.Robot.instances[-1].trackers[-1]
+    assert tracker.settings["translational_stiffness"] == 1200.0
+    assert tracker.settings["rotational_stiffness"] == 80.0
+    np.testing.assert_allclose(
+        tracker.settings["translational_error_clip"], [0.005, 0.008, 0.008]
+    )
+    np.testing.assert_allclose(
+        tracker.settings["rotational_error_clip"], [0.02, 0.04, 0.04]
+    )
+    arm.reconfigure_compliance_params({})
+    arm.send_action({"tcp_pose": pose})
+    assert sdk.Robot.instances[-1].trackers[-1] is tracker
+    assert tracker.gains == []
 
 
-def test_a_yaml_compliance_mapping_becomes_settings():
+@pytest.mark.parametrize("through_hardware", [False, True])
+@pytest.mark.parametrize("kind", ["unset", "empty", "mapping", "omegaconf"])
+def test_franky_resolves_compliance_with_its_own_defaults(
+    franky_arm, through_hardware, kind
+):
     from omegaconf import OmegaConf
 
-    from rlinf.robotics.parts.arms.base import CartesianCompliance
-    from rlinf.robotics.robots.franka import FrankaConfig
-
-    default = FrankaConfig(node_rank=0, robot_ip="172.16.0.2")
-    assert isinstance(default.compliance, CartesianCompliance)
-
-    for mapping in (
-        {"translational_stiffness": 1000, "rotational_stiffness": 50},
-        OmegaConf.create({"translational_stiffness": 1000, "rotational_stiffness": 50}),
-    ):
-        config = FrankaConfig(node_rank=0, robot_ip="172.16.0.2", compliance=mapping)
-        assert isinstance(config.compliance, CartesianCompliance)
-        assert config.compliance.translational_stiffness == pytest.approx(1000)
-        assert config.compliance.rotational_stiffness == pytest.approx(50)
-        # Unstated settings keep their defaults.
-        assert config.compliance.max_step == pytest.approx(
-            CartesianCompliance().max_step
+    original, sdk = franky_arm
+    original.disconnect()
+    mapping = {"translational_stiffness": 700}
+    requested = {
+        "unset": None,
+        "empty": {},
+        "mapping": mapping,
+        "omegaconf": OmegaConf.create(mapping),
+    }[kind]
+    before = pickle.dumps(requested)
+    if through_hardware:
+        hardware = NodeHardwareConfig(
+            type="Franka",
+            configs=[{"node_rank": 0, "robot_ip": "10.0.0.1", "compliance": requested}],
         )
+        config = pickle.loads(pickle.dumps(hardware.configs[0]))
+        arm = Arm.backend(config.backend or FrankaRobot.BACKEND).declare(
+            config.robot_ip,
+            compliance=config.compliance,
+        )
+    else:
+        arm = FrankyArm("10.0.0.1", compliance=requested)
+    arm.connect()
+    try:
+        pose = arm.get_observation()["tcp_pose"]
+        target = pose.copy()
+        target[0] += 0.2
+        target[3:] = (R.from_rotvec([0, 0, 0.5]) * R.from_quat(pose[3:])).as_quat()
+        arm.send_action({"tcp_pose": target})
+        tracker = sdk.Robot.instances[-1].trackers[-1]
+        assert tracker.settings["translational_stiffness"] == (
+            700 if requested else 1000
+        )
+        assert tracker.settings["rotational_stiffness"] == 50
+        np.testing.assert_allclose(tracker.settings["translational_error_clip"], 0.008)
+        np.testing.assert_allclose(tracker.settings["rotational_error_clip"], 0.04)
+        command = tracker.targets[-1][0].matrix
+        assert command[0, 3] == pytest.approx(pose[0] + 0.03)
+        rotation = R.from_matrix(command[:3, :3]) * R.from_quat(pose[3:]).inv()
+        assert rotation.magnitude() == pytest.approx(0.1)
+        assert pickle.dumps(requested) == before
+    finally:
+        arm.disconnect()
 
+
+def test_franky_rejects_unknown_compliance_before_connecting():
     with pytest.raises(KeyError, match="translational_stifness"):
-        FrankaConfig(
-            node_rank=0,
-            robot_ip="172.16.0.2",
+        FrankyArm.declare(
+            "172.16.0.2",
             compliance={"translational_stifness": 1000},
         )
 

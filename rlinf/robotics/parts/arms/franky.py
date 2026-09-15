@@ -77,6 +77,18 @@ class FrankyArm(BaseArm):
         "ignore": "Ignore",
     }
 
+    @staticmethod
+    def default_compliance() -> CartesianCompliance:
+        """Return fresh Cartesian settings for Franky's control loop."""
+        return CartesianCompliance(
+            translational_stiffness=1000.0,
+            rotational_stiffness=50.0,
+            translational_clip=0.008,
+            rotational_clip=0.04,
+            max_step=0.03,
+            max_step_rad=0.10,
+        )
+
     @classmethod
     def declare(
         cls,
@@ -86,7 +98,7 @@ class FrankyArm(BaseArm):
         gripper_connection: Optional[str] = None,
         end_effector_type: Optional[str] = None,
         end_effector_config: Optional[dict] = None,
-        compliance: Optional[CartesianCompliance] = None,
+        compliance: CartesianCompliance | Mapping[str, float] | None = None,
         realtime_config: Optional[str] = None,
         **placement: Any,
     ) -> "FrankyArm":
@@ -107,14 +119,15 @@ class FrankyArm(BaseArm):
     def __init__(
         self,
         robot_ip: str,
-        compliance: Optional[CartesianCompliance] = None,
+        compliance: CartesianCompliance | Mapping[str, float] | None = None,
         realtime_config: Optional[str] = None,
     ) -> None:
         """Record the arm's settings without opening a libfranka session.
 
         Args:
             robot_ip: Address of the arm's control interface.
-            compliance: Cartesian impedance gains and clips.
+            compliance: Complete Cartesian settings, or a mapping overriding
+                :meth:`default_compliance`. ``None`` uses those defaults.
             realtime_config: ``"ignore"`` (the default when ``None``) runs
                 on a kernel without PREEMPT_RT, where control deadlines may be
                 missed under load; ``"enforce"`` refuses such a kernel.
@@ -130,7 +143,9 @@ class FrankyArm(BaseArm):
                 f"realtime_config must be one of {sorted(self.REALTIME_CONFIGS)}, "
                 f"got {realtime_config!r}."
             )
-        self._compliance = compliance or CartesianCompliance()
+        self._compliance = CartesianCompliance.from_config(
+            compliance, defaults=self.default_compliance()
+        )
         self._cart_k_t = self._compliance.translational_stiffness
         self._cart_k_r = self._compliance.rotational_stiffness
         self._cart_k_ns = self._compliance.nullspace_stiffness

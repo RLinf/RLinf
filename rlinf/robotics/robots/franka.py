@@ -141,7 +141,7 @@ class FrankaRobot(Robot):
         worker_rank: int = 0,
         env_idx: int = 0,
         backend: Optional[str] = None,
-        compliance: Optional[CartesianCompliance] = None,
+        compliance: CartesianCompliance | Mapping[str, float] | None = None,
         realtime_config: Optional[str] = None,
         end_effector_node_rank: Optional[int] = None,
         end_effector_type: Optional[str] = None,
@@ -213,8 +213,9 @@ class FrankaConfig(RobotConfig):
 
     REQUIRES_CAMERA = True
 
-    compliance: CartesianCompliance = field(default_factory=CartesianCompliance)
-    """Cartesian impedance settings, ignored by backends that own their gains."""
+    compliance: CartesianCompliance | Mapping[str, float] | None = None
+    """Complete Cartesian settings, or overrides of the arm backend's defaults.
+    ``None`` uses backend defaults. Ignored by backends that own their gains."""
 
     backend: Optional[str] = None
     """Arm backend this robot runs, such as ``"franka_ros"`` or ``"franky"``.
@@ -271,8 +272,6 @@ class FrankaConfig(RobotConfig):
 
         if self.camera_serials:
             self.camera_serials = list(self.camera_serials)
-
-        self.compliance = CartesianCompliance.from_config(self.compliance)
 
 
 def resolve_robot_ip(node_rank: int) -> Optional[str]:

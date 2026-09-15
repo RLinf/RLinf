@@ -127,10 +127,11 @@ def franky() -> types.ModuleType:
     class _Tracker:
         """Record impedance targets for assertions."""
 
-        def __init__(self, robot, **_kwargs):
+        def __init__(self, robot, **kwargs):
             self._robot = robot
             robot.is_in_control = True
             robot.trackers.append(self)
+            self.settings = kwargs
             self.targets: list[Any] = []
             self.gains: list[dict[str, Any]] = []
 

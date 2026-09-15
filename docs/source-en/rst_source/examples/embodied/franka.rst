@@ -504,6 +504,73 @@ Before proceeding, confirm that the target and the reset region described
 above are within the safe workspace. Close other programs that control the arm;
 only one process can hold its control connection.
 
+.. _franka-motion-settings:
+
+Configure Arm Motion
+~~~~~~~~~~~~~~~~~~~~
+
+Collection, training, and evaluation use the same Franky Cartesian controller.
+Its defaults apply when the hardware entry has no ``compliance`` mapping, so
+the recipes above need no additional controller settings. They also apply to
+PICO and SpaceMouse teleoperation and to GELLO when it commands Cartesian poses.
+
+.. list-table:: Franky Controller Defaults
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - Setting
+     - Default
+     - Meaning
+   * - ``translational_stiffness``
+     - 1000 N/m
+     - Initial stiffness for position errors.
+   * - ``rotational_stiffness``
+     - 50 Nm/rad
+     - Initial stiffness for orientation errors.
+   * - ``translational_clip``
+     - 0.008 m
+     - Initial position-error limit used to compute restoring torque.
+   * - ``rotational_clip``
+     - 0.04 rad
+     - Initial orientation-error limit used to compute restoring torque.
+   * - ``max_step``
+     - 0.03 m
+     - Maximum position change from the previous commanded target per call.
+   * - ``max_step_rad``
+     - 0.10 rad
+     - Maximum orientation change from the previous commanded target per call.
+
+The first target is limited relative to the measured pose. These target-change
+limits are per call, not speeds; the error clips bound the error used by the
+controller, not the workspace. The environment still applies its action scale
+and workspace bounds before sending a target.
+
+At reset, a task can request different stiffness and error clips through
+``compliance_param``. Franky limits these requests using the hardware settings:
+by default, stiffness is capped at 1200 N/m and 80 Nm/rad, and error clips have
+floors of 5 mm and 0.02 rad. For peg insertion, reset produces those stiffness
+values with position clips of 5 mm in x/y and 10 mm in z, and orientation clips
+of 0.02 rad. ``max_step`` and ``max_step_rad`` remain in effect after reset.
+Other tasks keep their own reset requests.
+
+To change a hardware setting, add only its override beside ``robot_ip`` in
+each recipe that should use it. For example, this limits each position-target
+change to 2 cm while keeping the other Franky defaults:
+
+.. code:: yaml
+
+   compliance:
+     max_step: 0.02
+
+A misspelled key raises when the Franky arm is declared, before it connects.
+In Python, ``FrankyArm(..., compliance={"max_step": 0.02})`` follows the same
+rule. A ``CartesianCompliance`` object instead supplies a complete set of
+values; its fields are used as given, including its own defaults.
+
+The legacy ``franka_ros`` backend keeps its controller configuration and
+ignores this hardware mapping. Joint commands, including dual-arm GELLO
+teleoperation, use joint control rather than these Cartesian settings.
+
 Collect Demonstrations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

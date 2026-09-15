@@ -202,6 +202,14 @@ consumer 连接地址。
            button: "trigger"
 
 
+机械臂运动参数
+----------------------
+
+采集示例使用 Franky 默认运动参数，每次调用的目标变化上限为 3 cm 和 0.10 rad，无需为 PICO 另加 ``compliance``。数采和 policy 执行共用这些默认值；完整参数、任务 reset 的影响及硬件覆盖方法见 :ref:`配置机械臂运动 <franka-motion-settings>`。
+
+``pico.position_scale`` 和 ``pico.rotation_scale`` 控制手柄运动映射为机器人请求运动的比例，只影响 PICO 输入，包括训练时的人工接管。环境先应用动作缩放和工作空间边界，再将请求交给 Franky；Franky 的控制参数同时作用于 PICO 和 policy 下发的目标。
+
+
 夹爪配置
 -------------------
 

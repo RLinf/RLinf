@@ -364,6 +364,54 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 继续之前，确认目标位姿及上文所述的复位区域均处于安全工作范围内。关闭其他控制机械臂的程序；同一时刻只能有一个进程持有控制连接。
 
+.. _franka-motion-settings:
+
+配置机械臂运动
+~~~~~~~~~~~~~~
+
+数采、训练和评估使用同一个 Franky Cartesian 控制器。硬件条目未填写 ``compliance`` 时，控制器采用下表中的默认值，因此上述配置无需额外补充控制参数。PICO、SpaceMouse 遥操作，以及下发 Cartesian 位姿的 GELLO 遥操作，也使用这些默认值。
+
+.. list-table:: Franky 控制器默认值
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - 参数
+     - 默认值
+     - 含义
+   * - ``translational_stiffness``
+     - 1000 N/m
+     - 位置误差对应的初始刚度。
+   * - ``rotational_stiffness``
+     - 50 Nm/rad
+     - 姿态误差对应的初始刚度。
+   * - ``translational_clip``
+     - 0.008 m
+     - 计算恢复力矩时使用的初始位置误差上限。
+   * - ``rotational_clip``
+     - 0.04 rad
+     - 计算恢复力矩时使用的初始姿态误差上限。
+   * - ``max_step``
+     - 0.03 m
+     - 每次调用时，目标位置相对上一次指令目标的最大变化量。
+   * - ``max_step_rad``
+     - 0.10 rad
+     - 每次调用时，目标姿态相对上一次指令目标的最大变化量。
+
+第一次下发目标时，以实测位姿作为限幅基准。目标变化上限按调用次数生效，不表示运动速度；误差限幅约束控制器用于计算力矩的误差，不表示工作空间边界。环境仍会先应用自身的动作缩放和工作空间边界，再下发目标。
+
+任务可以在 reset 时通过 ``compliance_param`` 请求不同的刚度和误差限幅，Franky 再按硬件配置中的限制处理这些请求：默认刚度上限为 1200 N/m 和 80 Nm/rad，误差限幅下限为 5 mm 和 0.02 rad。插孔任务 reset 后的刚度达到上述上限，位置误差限幅为 x/y 方向 5 mm、z 方向 10 mm，姿态误差限幅为 0.02 rad。``max_step`` 和 ``max_step_rad`` 在 reset 后继续有效。其他任务仍使用各自的 reset 参数请求。
+
+需要调整硬件参数时，在需要使用该参数的各个配置中，将差异项写在与 ``robot_ip`` 同级的 ``compliance`` 下。例如，下方配置将每次位置目标的变化限制为 2 cm，其余参数沿用 Franky 默认值：
+
+.. code:: yaml
+
+   compliance:
+     max_step: 0.02
+
+参数名拼写错误会在声明 Franky 机械臂时、建立连接之前报错。Python 中的 ``FrankyArm(..., compliance={"max_step": 0.02})`` 也遵循相同规则；如果传入 ``CartesianCompliance`` 对象，则表示提供一套完整参数，对象中所有字段均按原值使用，包括该对象自身的默认值。
+
+旧版 ``franka_ros`` backend 保留自身的控制器配置，并忽略此硬件 mapping。关节指令使用关节控制，不受这些 Cartesian 参数影响，双臂 GELLO 关节遥操作也属于这种情况。
+
 收集演示
 ~~~~~~~~
 

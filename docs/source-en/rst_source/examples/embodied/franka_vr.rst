@@ -224,6 +224,22 @@ The key configuration is:
            button: "trigger"
 
 
+Franka Motion Settings
+----------------------
+
+The collection example uses Franky's default motion settings, including
+target-change limits of 3 cm and 0.10 rad per call. You do not need to add a
+``compliance`` mapping for PICO. Collection and policy execution share these
+defaults; see :ref:`Configure Arm Motion <franka-motion-settings>` for the
+values, task reset behavior, and hardware overrides.
+
+``pico.position_scale`` and ``pico.rotation_scale`` control how controller
+motion becomes a requested robot motion. They affect PICO input, including
+human interventions during training. The environment applies its action scale
+and workspace bounds before Franky receives the request; Franky's controller
+settings apply to both PICO and policy targets.
+
+
 Gripper Configuration
 ---------------------
 

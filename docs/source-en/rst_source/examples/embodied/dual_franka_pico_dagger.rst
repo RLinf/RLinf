@@ -355,78 +355,30 @@ frames are all human corrections.
 Arm Compliance
 ~~~~~~~~~~~~~~
 
-The default Cartesian gains suit a policy rollout, where the target pose moves
-in small steps. Under PICO the target follows a human hand, and those gains let
-the tool tip trail behind it, which an operator compensates for by overshooting.
-The values below are the ones used for PICO collection on a Franka Panda. They
-belong to the arm rather than to a task, so they go on the ``DualFranka``
-hardware config beside the arm IPs:
+Both arms use Franky's default Cartesian settings during PICO collection,
+DAgger policy execution, and evaluation. No extra ``compliance`` mapping is
+needed. The defaults and the effect of task reset requests are described in
+:ref:`Configure Arm Motion <franka-motion-settings>`. The dual-arm TCP task
+makes no reset request by default, so its initial gains and clips remain active.
+
+To tune both arms together, add a ``compliance`` mapping beside the arm IPs in
+the ``DualFranka`` hardware entry. A side-specific mapping replaces the shared
+mapping for that arm; keys omitted from it use Franky's defaults. For example:
 
 .. code-block:: yaml
 
-   cluster:
-     node_groups:
-       - label: franka
-         node_ranks: 0
-         hardware:
-           type: DualFranka
-           configs:
-             - left_robot_ip: LEFT_ROBOT_IP
-               right_robot_ip: RIGHT_ROBOT_IP
-               node_rank: 0
-               compliance:
-                 translational_stiffness: 1000
-                 rotational_stiffness: 50
-                 translational_clip: 0.008
-                 rotational_clip: 0.04
-                 max_step: 0.03
-                 max_step_rad: 0.10
+   compliance:
+     translational_stiffness: 900.0
+   left_compliance:
+     max_step: 0.02
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 11 11 50
-
-   * - Setting
-     - Default
-     - PICO
-     - Why it changes
-   * - ``translational_stiffness``
-     - 500
-     - 1000
-     - N/m. Doubled so the tip keeps up with the hand instead of trailing it.
-   * - ``rotational_stiffness``
-     - 40
-     - 50
-     - Nm/rad. Raised for the same reason on orientation.
-   * - ``translational_clip``
-     - 0.05
-     - 0.008
-     - m. Largest position error acted on. Cut so the stiffer gain cannot lunge
-       at a distant target.
-   * - ``rotational_clip``
-     - 0.3
-     - 0.04
-     - rad. The same, for orientation error.
-   * - ``max_step``
-     - 0.10
-     - 0.03
-     - m. Furthest one commanded target may sit from the previous one. Cut so
-       hand tremor cannot become a fast motion.
-   * - ``max_step_rad``
-     - 0.30
-     - 0.10
-     - rad. The same, for orientation.
-
-State only the settings that differ; anything omitted keeps its default, and a
-misspelled one raises while the config is built. To give the two arms different
-gains, set ``left_compliance`` or ``right_compliance``; each falls back to
-``compliance``.
-
-These settings reach the arm through the ``franky`` backend and govern every
-Cartesian motion on it, so a policy rollout during DAgger obeys the same gains
-the operator does. The ``franka_ros`` backend ignores them because its own
-controller owns its gains, and GELLO joint teleoperation is unaffected because
-it commands joints rather than a Cartesian target.
+Here the right arm uses 900 N/m and the default 3 cm target-change limit. The
+left arm uses the default 1000 N/m and a 2 cm limit. Omitting
+``left_compliance`` makes the left arm use the shared mapping as well;
+``left_compliance: {}`` selects all backend defaults for that arm.
+``right_compliance`` follows the same rules. These settings also govern policy
+targets during DAgger. GELLO joint teleoperation uses joint control and is
+unaffected by these Cartesian settings.
 
 
 Start the PICO Data Stream
