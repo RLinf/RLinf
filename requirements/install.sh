@@ -746,8 +746,15 @@ configure_ascend() {
     PLATFORM_SYSTEM_SITE_PACKAGES=0
     PLATFORM_VENV_HOOK=""
     # tensorflow_graphics pulls in TensorFlow, which segfaults when it is imported
-    # after torch on Ascend. No Ascend model or environment imports it.
-    PLATFORM_COMMON_REQ_EXCLUDE_RE='^[[:space:]]*tensorflow_graphics'
+    # after torch on Ascend, and the nvidia-* lines are CUDA libraries. No Ascend
+    # model or environment uses them.
+    PLATFORM_COMMON_REQ_EXCLUDE_RE='^[[:space:]]*(tensorflow_graphics|nvidia-)'
+    # openpi requires jax[cuda12]==0.5.3, whose extra brings the JAX CUDA plugin
+    # and the nvidia-* wheels. The override keeps jax 0.5.3, which
+    # orbax-checkpoint needs, and drops the extra.
+    if [ "$MODEL" = "openpi" ]; then
+        PLATFORM_EXTRA_OVERRIDES+=("jax==0.5.3")
+    fi
     # torch-npu tracks torch 1:1 and needs a matching CANN, so the torch line
     # follows the chip: Ascend 950 (CANN 9.1) uses torch 2.10, 910B stays on 2.6.
     # --torch overrides the pin; ASCEND_CHIP names the chip where npu-smi is
