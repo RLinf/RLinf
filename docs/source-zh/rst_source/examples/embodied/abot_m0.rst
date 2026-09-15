@@ -104,7 +104,7 @@ value clipping、可选 entropy 正则）。
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # 进入容器后，切换到 ABot-M0 虚拟环境：
    source switch_env abot_m0

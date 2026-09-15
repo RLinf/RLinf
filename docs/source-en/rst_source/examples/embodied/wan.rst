@@ -109,7 +109,7 @@ Installation
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-wan
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-wan
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-wan
 
    # Inside the container, switch to the OpenVLA-OFT virtual environment:
    source switch_env openvla-oft

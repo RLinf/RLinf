@@ -102,7 +102,7 @@ Franka 控制依赖的准备。
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-franka
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-franka
 
 随后切换到与你的 libfranka 版本兼容的环境：
 
@@ -137,7 +137,7 @@ source 对应的 ROS / Franka controller 环境。
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 进入容器后执行：
 
