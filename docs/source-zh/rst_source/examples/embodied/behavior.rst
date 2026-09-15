@@ -100,7 +100,7 @@
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-behavior
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-behavior
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
 
    # OpenPI 模型（独立镜像）：
    docker run -it --rm --gpus all \
@@ -109,7 +109,7 @@
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
 
    # 两个镜像都会默认激活各自对应的虚拟环境。
 

@@ -222,7 +222,7 @@ CAN 总线需要在使用机械臂之前完成初始化。
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 中国大陆用户可使用下面的镜像以获得更好的下载速度：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 **选项 2：自建环境**
 

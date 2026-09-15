@@ -122,7 +122,7 @@ Installation
       rlinf/rlinf:agentic-rlinf0.4-robotwin
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-robotwin
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robotwin
 
 Switch to the matching virtual environment inside the image:
 
