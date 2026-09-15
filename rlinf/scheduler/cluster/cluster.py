@@ -20,6 +20,7 @@ import signal
 import sys
 import tempfile
 import time
+from datetime import timedelta
 from enum import Enum
 from importlib.metadata import version
 from pathlib import Path
@@ -553,6 +554,35 @@ class Cluster:
         """Get the system environment variable for the cluster."""
         return os.environ.get(Cluster.get_full_env_var_name(env_var), default)
 
+    @staticmethod
+    def get_collective_timeout() -> timedelta:
+        """Get the timeout applied to every collective RLinf creates.
+
+        This covers the inter-worker process groups as well as the process group
+        the training backends collect over, so that one setting governs all of
+        them.
+
+        Returns:
+            timedelta: The value of ``RLINF_TIMEOUT`` interpreted as minutes.
+
+        Raises:
+            ValueError: If ``RLINF_TIMEOUT`` is not a positive integer.
+        """
+        timeout = Cluster.get_sys_env_var(
+            ClusterEnvVar.TIMEOUT, Cluster.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.TIMEOUT]
+        )
+        try:
+            minutes = int(timeout)
+        except ValueError:
+            raise ValueError(
+                "Invalid TIMEOUT value. It should be an integer representing minutes."
+            )
+        if minutes <= 0:
+            raise ValueError(
+                f"Invalid TIMEOUT value {minutes}. It should be a positive number of minutes."
+            )
+        return timedelta(minutes=minutes)
+
     @property
     def num_nodes(self):
         """Get the number of nodes in the cluster."""
@@ -832,13 +862,18 @@ class Cluster:
                 merged_env_vars,
                 self._runtime_code_sync_strip_roots,
             )
+        runtime_env_vars = {
+            key: value
+            for key, value in merged_env_vars.items()
+            if node.default_env_vars.get(key) != value
+        }
         runtime_env_worker = Cluster._combine_ray_runtime_env(
             Cluster._job_code_sync_fragment_for_child_runtime_env(
                 self._ray_code_sync_fragment
             ),
             {
                 "py_executable": python_interpreter_path,
-                "env_vars": merged_env_vars,
+                "env_vars": runtime_env_vars,
             },
         )
 

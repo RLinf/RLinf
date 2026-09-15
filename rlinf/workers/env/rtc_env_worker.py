@@ -32,6 +32,7 @@ from rlinf.data.schema.embodied_types import (
     RTCActionResponse,
     RTCRequest,
 )
+from rlinf.envs import SupportedEnvType
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
@@ -56,8 +57,12 @@ class RTCEnvWorker(EnvWorker):
         rtc_cfg = self.cfg.runner.get("rtc", {})
         if not rtc_cfg.get("enabled", False):
             return
-        assert str(self.cfg.actor.model.model_type) == "openpi", (
-            "RTC real-world evaluation is currently integrated for the OpenPI policy path."
+        assert str(self.cfg.actor.model.model_type) in (
+            "openpi",
+            "openpi_rlinf",
+        ), (
+            "RTC real-world evaluation is currently integrated for the OpenPI "
+            "and openpi_rlinf policy paths."
         )
         assert self.stage_num == 1, (
             "RTC real-world evaluation currently supports a single pipeline stage."
@@ -71,7 +76,7 @@ class RTCEnvWorker(EnvWorker):
         inject_delay_ms = float(rtc_cfg.get("inject_delay_ms", 0.0))
         fixed_delay_steps = int(rtc_cfg.get("fixed_delay_steps", 0))
 
-        if env_type == "realworld":
+        if SupportedEnvType(env_type) is SupportedEnvType.REAL:
             assert chunk_pause_seconds == 0.0, (
                 f"RTC real-world evaluation: chunk_pause_seconds must be 0.0 "
                 f"(real robot has real execution time), got {chunk_pause_seconds}."

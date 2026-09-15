@@ -106,9 +106,6 @@ env:
     override_cfg:
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
-      # Dummy placeholders for robot and camera
-      robot_ip: 0.0.0.0
-      camera_serials: ["0123456789", ]
 
 rollout:
   group_name: "RolloutGroup"

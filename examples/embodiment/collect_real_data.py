@@ -25,7 +25,7 @@ from rlinf.data.schema.embodied_types import (
     ChunkStepResult,
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
-from rlinf.envs.realworld.realworld_env import RealWorldEnv
+from rlinf.envs.real import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
 
