@@ -18,7 +18,7 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 ### Additional build arguments
 
-- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
+- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. Only the legacy `embodied-franka-ros` target uses a fixed Ubuntu 20.04 base; leave `PLATFORM=nvidia` for that target.
 - Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, or `MUSA_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
 
@@ -32,6 +32,26 @@ docker build -f docker/Dockerfile \
     --build-arg NO_MIRROR=1 \
     -t rlinf:embodied-metaworld .
 ```
+
+### Building for Franka
+
+The `embodied-franka` target uses the shared `PLATFORM` base and passes the selected
+platform to every installer. With the default build arguments, it uses CUDA and
+Ubuntu 22.04 with Franky for robot control and CNN training. It bundles libfranka 0.19.0 and activates
+`franky-0.19.0`.
+The same image includes `openvla`, `openvla-oft`, `openpi`, and `gr00t`
+environments, each with Franka dependencies. Select one with
+`source switch_env <model>`.
+Use the shared platform version and base-image arguments above to customize it.
+
+`embodied-franka-ros` preserves the Ubuntu 20.04 / ROS Noetic
+setup for existing deployments, with `franka-0.15.0` activated by default.
+Its hardware configs must explicitly select `backend: franka_ros`.
+Its base override is `FRANKA_ROS_BASE_IMAGE`.
+
+See the [Franka example](../docs/source-en/rst_source/examples/embodied/franka.rst)
+for build/run commands, firmware matching, optional host real-time setup, and
+CPU-only installation on a separate controller.
 
 ### Building for Moore Threads (MUSA)
 

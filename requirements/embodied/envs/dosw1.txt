@@ -1,0 +1,10 @@
+transformers<=4.57.6
+torchcodec
+peft
+timm
+imageio[ffmpeg]
+opencv-python
+gymnasium
+gym
+nvidia-nvcomp-cu12
+evdev

@@ -102,7 +102,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -501,6 +501,26 @@ configure_nvidia() {
     fi
 
     local _torch_ver _tmaj _tmin _rest _driver_num _index_base _cuda_tag
+    # A controller-only host must stay CPU-only even when a driver or toolkit
+    # happens to be visible during installation.
+    if [ "$UV_TORCH_BACKEND" = "cpu" ]; then
+        _index_base="https://download.pytorch.org/whl"
+        if [ "$USE_MIRRORS" -eq 1 ]; then
+            _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
+        fi
+        PLATFORM_TORCH_INDEX="${_index_base}/cpu"
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+        PLATFORM_FLASH_ATTN_INSTALL=0
+        PLATFORM_VENV_EXPORTS=()
+        PLATFORM_UV_SYNC_ARGS=(
+            --no-install-package liger-kernel
+            --no-install-package triton
+            --no-install-package cuda-toolkit
+            --no-install-package cuda-bindings
+            --no-install-package cuda-pathfinder
+        )
+        return
+    fi
     _torch_ver="$TORCH_VERSION"
     if [ -z "$_torch_ver" ] && [ -f "$PYPROJECT_FILE" ]; then
         _torch_ver=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
@@ -1771,6 +1791,11 @@ install_openvla_model() {
             install_common_embodied_deps
             install_frankasim_env
             ;;
+        franka)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_franka_realworld_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA model." >&2
             exit 1
@@ -1783,6 +1808,13 @@ install_openvla_model() {
 
 install_openvla_oft_model() {
     case "$ENV_NAME" in
+        franka)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_franka_realworld_env
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
+            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
@@ -1934,14 +1966,10 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
-        franka-franky)
+        franka)
             create_and_sync_venv
             install_common_embodied_deps
-            uv sync --extra franka --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-            if [ "$NO_ROOT" -eq 0 ]; then
-                bash $SCRIPT_DIR/embodied/franky_install.sh
-            fi
-            install_franka_franky_env
+            install_franka_realworld_env
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
@@ -2081,6 +2109,10 @@ install_gr00t_model() {
     maybe_build_decord_from_source
     uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
     case "$ENV_NAME" in
+        franka)
+            install_franka_realworld_env
+            install_flash_attn
+            ;;
         maniskill_libero|libero)
             install_${ENV_NAME}_env
             install_flash_attn
@@ -2381,7 +2413,15 @@ install_lerobot() {
 }
 
 install_franka_realworld_env() {
-    uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
+    if [ "$NO_ROOT" -eq 0 ]; then
+        bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
+    fi
+    install_franka_franky_env
+}
+
+install_franka_ros_realworld_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
@@ -2411,15 +2451,10 @@ install_env_only() {
             install_franka_realworld_env
             install_franka_dexhand_deps
             ;;
-        franka-franky)
-            uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-            if [ "$NO_ROOT" -eq 0 ]; then
-                bash $SCRIPT_DIR/embodied/franky_install.sh
-            fi
-            install_franka_franky_env
+        franka-ros)
+            install_franka_ros_realworld_env
             ;;
         xsquare_turtle2)
-            uv sync --extra xsquare_turtle2 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
             ;;
         habitat)
@@ -2435,7 +2470,7 @@ install_env_only() {
             install_embodichain_env
             ;;
         gim_arm)
-            uv sync --extra gim_arm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+            install_gim_arm_env
             ;;
         so101)
             install_so101_env
@@ -2801,7 +2836,7 @@ install_franka_franky_env() {
     PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
     local FRANKY_WHEEL="${FRANKY_WHEEL:-${GITHUB_PREFIX}https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
     echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
-    # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
+    # --no-deps keeps the Franka requirements' pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
     install_lerobot
@@ -2812,7 +2847,7 @@ install_franka_dexhand_deps() {
 }
 
 install_piper_env() {
-    uv sync --extra embodied --extra piper --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/piper.txt"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
@@ -2820,7 +2855,7 @@ install_piper_env() {
 }
 
 install_so101_env() {
-    uv sync --extra embodied --extra so101 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/so101.txt"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
@@ -2828,8 +2863,13 @@ install_so101_env() {
 }
 
 install_xsquare_turtle2_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/xsquare_turtle2.txt"
     install_lerobot
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
+}
+
+install_gim_arm_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/gim_arm.txt"
 }
 
 install_robotwin_env() {
@@ -2904,14 +2944,7 @@ install_embodichain_env() {
 }
 
 install_dosw1_env() {
-    # Reuse the standard embodied extra so dosw1 picks up the same
-    # transformers/imageio/gymnasium dependency set as other embodied envs.
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    # The default patch_syncer uses nvcomp_lz4. Keep DOSW1 lightweight by
-    # installing only this shared compression runtime instead of the full
-    # common simulator dependency set.
-    uv pip install nvidia-nvcomp-cu12
-    uv pip install evdev opencv-python
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/dosw1.txt"
 
     # Install DOSW1 SDK. The wheel / airbot_api source are pre-deployed on the
     # DOS-W1 robot under ~/dos_w1/airbot by default; on a generic server they

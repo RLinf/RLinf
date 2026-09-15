@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 import time
 import types
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,10 @@ HOME_TCP = (0.4, 0.0, 0.3, 0.0, 1.0, 0.0, 0.0)
 
 def franky() -> types.ModuleType:
     """Return a ``franky`` module that reports a fixed robot pose."""
+
+    class RealtimeConfig(Enum):
+        Enforce = 0
+        Ignore = 1
 
     class Affine:
         def __init__(self, matrix=None):
@@ -74,9 +79,10 @@ def franky() -> types.ModuleType:
     class Robot:
         instances: list[Any] = []
 
-        def __init__(self, ip):
+        def __init__(self, ip, *, realtime_config=RealtimeConfig.Enforce):
             self.instances.append(self)
             self.ip = ip
+            self.realtime_config = realtime_config
             self.relative_dynamics_factor = 1.0
             self.model = Model()
             self.moved = []
@@ -147,6 +153,7 @@ def franky() -> types.ModuleType:
     return module(
         "franky",
         Robot=Robot,
+        RealtimeConfig=RealtimeConfig,
         Gripper=Gripper,
         Affine=Affine,
         Frame=types.SimpleNamespace(EndEffector="EndEffector"),

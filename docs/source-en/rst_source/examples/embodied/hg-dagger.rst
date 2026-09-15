@@ -88,38 +88,10 @@ The real-world pipeline uses **different environments on different nodes**:
 Robot / Env Node
 ~~~~~~~~~~~~~~~~
 
-Follow the controller-node setup in :doc:`franka` for firmware checks, RT
-kernel, ROS, and Franka controller dependencies.
-
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   docker run -it --rm \
-      --privileged \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-franka
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
-
-Then switch to the libfranka-compatible environment:
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
-
-Before ``ray start`` on the robot node, source the same ROS / Franka controller
-environment described in :doc:`franka`.
+Follow the multi-node section in :doc:`franka` to install the CPU-only Franky
+controller environment, match libfranka to the firmware, and configure optional
+real-time support. Activate that environment before starting Ray. This recipe
+uses a separate GPU node for the OpenPI actor and rollout.
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1,0 +1,10 @@
+transformers<=4.57.6
+torchcodec
+peft
+timm
+imageio[ffmpeg]
+opencv-python
+gymnasium
+gym
+numpy
+pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'

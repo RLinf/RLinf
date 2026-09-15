@@ -668,7 +668,7 @@ def test_an_arm_backend_is_selected_from_the_registry_like_any_driver():
     assert {"franka_ros", "franky"} <= set(Arm.backends())
 
     # The robot selects the backend by its registry name.
-    assert FrankaRobot.BACKEND == "franka_ros"
+    assert FrankaRobot.BACKEND == "franky"
     assert DualFrankaRobot.BACKEND == "franky"
     for robot in (FrankaRobot, DualFrankaRobot):
         assert Arm.backend(robot.BACKEND) is not None
@@ -884,7 +884,7 @@ def test_a_robot_composes_an_arm_and_gets_what_rides_on_it():
         # Readings preserve the composed tree structure.
         assert set(robot.observation_features["arm"]) >= {"tcp_pose"}
         assert set(robot.observation_features["end_effector"]) == {"state"}
-        assert set(robot.action_features["arm"]) == {"tcp_pose"}
+        assert set(robot.action_features["arm"]) == {"tcp_pose", "joint_position"}
         assert set(robot.action_features["end_effector"]) == {"target"}
 
         config = {
@@ -1313,7 +1313,7 @@ def test_dual_franka_inherits_declaration_from_franka():
         "only the arm count differs, and that is what build_arms says"
     )
     # The backend selection applies independently of arm count.
-    assert (FrankaRobot.BACKEND, DualFrankaRobot.BACKEND) == ("franka_ros", "franky")
+    assert (FrankaRobot.BACKEND, DualFrankaRobot.BACKEND) == ("franky", "franky")
     # Arm construction contains the remaining single/dual distinction.
     overridden = [
         name
@@ -3709,6 +3709,25 @@ def franky_arm(
 _FRANKY_TEST_JOINTS = [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0]
 
 
+def test_franky_connects_without_realtime_permissions(franky_arm, monkeypatch):
+    arm, sdk = franky_arm
+    arm.disconnect()
+
+    def denied(*args):
+        raise PermissionError("real-time scheduling unavailable")
+
+    monkeypatch.setattr(os, "sched_setscheduler", denied)
+    monkeypatch.setattr(
+        ctypes,
+        "CDLL",
+        lambda *args, **kwargs: SimpleNamespace(mlockall=lambda flags: -1),
+    )
+    arm.connect()
+    assert sdk.Robot.instances[-1].realtime_config is sdk.RealtimeConfig.Ignore
+    assert arm.is_robot_up()
+    arm.send_action({"joint_position": np.array(_FRANKY_TEST_JOINTS)})
+
+
 def _franky_target(mode: str) -> dict[str, np.ndarray]:
     if mode == "joint":
         return {"joint_position": np.array(_FRANKY_TEST_JOINTS)}
@@ -4431,9 +4450,9 @@ def test_a_robot_composes_the_hand_its_config_names():
 
         # The built-in hand is one device with two drivers, and the arm backend
         # the robot is built on decides which of them reaches it.
-        assert isinstance(hand_of(gripper_type="franka"), FrankaGripper)
+        assert isinstance(hand_of(gripper_type="franka"), FrankyGripper)
         assert isinstance(
-            hand_of(gripper_type="franka", backend="franky"), FrankyGripper
+            hand_of(gripper_type="franka", backend="franka_ros"), FrankaGripper
         )
         # A config that names a driver outright is taken at its word.
         assert isinstance(hand_of(end_effector_type="franky_gripper"), FrankyGripper)
@@ -4444,21 +4463,24 @@ def test_a_robot_composes_the_hand_its_config_names():
 
 
 @pytest.mark.placement
-def test_a_franka_robot_composes_the_backend_and_hand_it_is_given():
+@pytest.mark.parametrize("backend", [None, "franky", "franka_ros"])
+def test_a_franka_robot_composes_the_backend_and_hand_it_is_given(backend):
     from robot_mocks import mocked_sdks
 
     with mocked_sdks():
-        from rlinf.robotics.parts.end_effectors import FrankyGripper
+        from rlinf.robotics.parts.end_effectors import FrankaGripper, FrankyGripper
         from rlinf.robotics.robots import FrankaRobot
 
         robot = FrankaRobot.build(
             robot_ip="10.0.0.1",
             node_rank=0,
-            backend="franky",
+            backend=backend,
             gripper_type="franka",
         )
-        assert type(robot.child("arm")).__name__ == "FrankyArm"
-        assert isinstance(robot.child("end_effector"), FrankyGripper)
+        expected_arm = "FrankaROSArm" if backend == "franka_ros" else "FrankyArm"
+        expected_hand = FrankaGripper if backend == "franka_ros" else FrankyGripper
+        assert type(robot.child("arm")).__name__ == expected_arm
+        assert isinstance(robot.child("end_effector"), expected_hand)
 
         robot.connect()
         assert set(robot.get_observation()) == {"arm", "end_effector"}
@@ -5686,8 +5708,9 @@ def test_shared_gripper_views_report_their_capability():
     assert not fingers.is_gripper
 
 
+@pytest.mark.parametrize("backend", [None, "franky", "franka_ros"])
 def test_controller_cli_accepts_registered_driver_and_settings(
-    registered_tool, monkeypatch
+    registered_tool, monkeypatch, backend
 ):
     from toolkits.realworld_check.test_franka_controller import _parse_args
 
@@ -5700,9 +5723,11 @@ def test_controller_cli_accepts_registered_driver_and_settings(
             "pose_tool",
             "--end-effector-config",
             '{"gain": 2}',
-        ],
+        ]
+        + (["--backend", backend] if backend else []),
     )
     args = _parse_args()
+    assert args.backend == (backend or "franky")
     tool = EndEffector.of(args.end_effector_type, **args.end_effector_config)
     assert tool.gain == 2
     assert args.hand_baudrate is None

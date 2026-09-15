@@ -49,17 +49,11 @@ Single-Arm Franka
 
       在 Franka 上部署 π₀ SFT 策略。
 
-   .. grid-item-card:: Real-World RL (single machine)
-      :link: franka_single_machine
-      :link-type: doc
-
-      在一台 GPU 主机上运行真机强化学习。
-
    .. grid-item-card:: Real-World RL
       :link: franka
       :link-type: doc
 
-      使用彼此独立的机器人控制主机与训练主机运行真机强化学习。
+      在 GPU 计算机上使用 Franky 收集演示并训练 policy。
 
    .. grid-item-card:: Reward Model
       :link: franka_reward_model
@@ -77,6 +71,5 @@ Single-Arm Franka
    Collect-VR <franka_vr>
    HG-DAgger <hg-dagger>
    Collect-SFT-Deploy <franka_pi0_sft_deploy>
-   Real-World RL (single machine) <franka_single_machine>
    Real-World RL <franka>
    Reward Model <franka_reward_model>

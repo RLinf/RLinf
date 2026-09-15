@@ -96,7 +96,7 @@ libfranka ``0.18.0``.
    cd RLinf
 
    export LIBFRANKA_VERSION=0.15.0       # replace with your compatible version
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
 Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
@@ -106,7 +106,7 @@ The two GELLO leaders must stay local to ``node 0``; do not route their
 Real-time prerequisites
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``franka-franky`` uses franky/libfranka to communicate with each Franka at
+``franka`` uses franky/libfranka to communicate with each Franka at
 1 kHz. The RLinf installer installs runtime dependencies only; configure the
 PREEMPT_RT kernel and real-time permissions according to the official `Franka
 real-time kernel guide

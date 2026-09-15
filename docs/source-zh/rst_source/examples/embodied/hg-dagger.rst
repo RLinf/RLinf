@@ -88,38 +88,7 @@
 机器人 / Env 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-请先参考 :doc:`franka` 中的控制节点安装说明，完成固件检查、实时内核、ROS 与
-Franka 控制依赖的准备。
-
-**选项 1：Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm \
-      --privileged \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-franka
-      # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
-
-随后切换到与你的 libfranka 版本兼容的环境：
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
-
-在机器人节点执行 ``ray start`` 之前，请像 :doc:`franka` 中说明的那样，先
-source 对应的 ROS / Franka controller 环境。
+按 :doc:`franka` 的多节点配置安装 CPU-only Franky 控制环境，选择与固件匹配的 libfranka，并按需配置实时支持。启动 Ray 前先激活该环境。本示例使用独立 GPU 节点运行 OpenPI actor 和 rollout。
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

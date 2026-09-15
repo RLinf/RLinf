@@ -80,13 +80,12 @@
 - **机械臂**：Franka Emika Panda 机械臂。
 - **相机**：Intel RealSense 相机（腕部相机用于观测）。
 - **计算节点**：一台带有 GPU 的计算机，用于 SFT 训练与 rollout。
-- **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
+- **机器人连接**：通过有线网络将 GPU 计算机连接到机械臂。也可以使用独立 CPU 控制节点，参见 :doc:`franka` 的多节点配置。
 - **空间鼠标（可选）**：用于远程操控进行数据采集。
 
 .. note::
 
-   关于硬件环境搭建的详细说明（包括 ROS Noetic、libfranka、serl_franka_controllers 等依赖），
-   请参考 :doc:`franka` 中的「硬件环境搭建」与「依赖安装」章节。
+   Franky 安装、固件兼容性和可选实时内核配置参见 :doc:`franka`。
 
 软件依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -98,7 +97,7 @@
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
 
 .. note::

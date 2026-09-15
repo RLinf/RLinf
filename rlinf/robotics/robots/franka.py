@@ -29,12 +29,12 @@ class FrankaRobot(Robot):
     """Composable Franka robot.
 
     Single-arm by default. :class:`~..dual_franka.DualFrankaRobot` inherits the
-    declaration logic and only changes the backend and the arm count.
+    declaration logic and changes the arm count.
     """
 
     ROBOT_TYPE = "Franka"
 
-    BACKEND: str = "franka_ros"
+    BACKEND: str = "franky"
     """Registered arm backend used by this robot.
 
     Subclasses may select another backend while reusing the same composition.

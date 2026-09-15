@@ -59,7 +59,7 @@ def main() -> None:
     robot_ip = os.environ.get("FRANKA_ROBOT_IP")
     assert robot_ip is not None, "Please set the FRANKA_ROBOT_IP environment variable."
 
-    gripper_type = os.environ.get("FRANKA_GRIPPER_TYPE", "robotiq")
+    gripper_type = os.environ.get("FRANKA_GRIPPER_TYPE", "franka")
     gripper_connection = os.environ.get("FRANKA_GRIPPER_PORT")
 
     # The arm and the gripper open their own connections, so build each.

@@ -95,7 +95,7 @@
    cd RLinf
 
    export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
 按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应
@@ -104,7 +104,7 @@
 实时性前提
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``franka-franky`` 通过 franky/libfranka 与每台 Franka 进行 1 kHz 通信。
+``franka`` 通过 franky/libfranka 与每台 Franka 进行 1 kHz 通信。
 RLinf 安装脚本只安装运行依赖；PREEMPT_RT 内核与实时权限请按 Franka 官方
 `实时内核文档
 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_

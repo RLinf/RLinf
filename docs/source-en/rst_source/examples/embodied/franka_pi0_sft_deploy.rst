@@ -80,15 +80,14 @@ Hardware Requirements
 - **Robot arm**: Franka Emika Panda.
 - **Camera**: Intel RealSense camera (wrist camera for observation).
 - **Compute node**: A GPU-equipped machine for SFT training and rollout.
-- **Robot control node**: A small computer on the same LAN as the robot
-  (no GPU required) for controlling the Franka arm.
+- **Robot connection**: A wired connection from the GPU computer to the arm.
+  A separate CPU controller is optional; see the multi-node section in :doc:`franka`.
 - **SpaceMouse (optional)**: For remote teleoperation during data collection.
 
 .. note::
 
-   For detailed hardware setup instructions (ROS Noetic, libfranka,
-   serl_franka_controllers, etc.), refer to the **Hardware Setup** and
-   **Dependency Installation** sections in :doc:`franka`.
+   For Franky installation, firmware compatibility, and optional real-time
+   kernel setup, see :doc:`franka`.
 
 Software Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -102,7 +101,7 @@ model dependencies:
 .. code:: bash
 
    # For mainland China users, you can add `--use-mirror` to the install.sh command.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
 
 .. note::

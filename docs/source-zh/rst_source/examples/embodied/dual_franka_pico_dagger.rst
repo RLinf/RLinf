@@ -105,12 +105,10 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
    cd RLinf
 
    export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-``franka-franky`` 环境会安装 ``franka`` extra，其中包含 PICO consumer 侧所需的
-``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证
-流程见 :doc:`franka_vr`。
+``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
 
 推理节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

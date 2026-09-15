@@ -1,23 +1,19 @@
-Real-World RL
-=============
+Franka 真机强化学习
+====================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
+本示例介绍如何使用 RLinf 在 Franka 机械臂上收集演示并通过 RLPD 在线训练 CNN policy。默认配置在一台配备 GPU 的计算机上运行 Franky 控制、rollout 和训练，使用 Ubuntu 22.04 与 CUDA，无需 ROS。先完成下方的插孔示例，再根据需要配置独立控制节点或其他硬件与 policy。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center
    :width: 80%
+   :alt: 用于真机强化学习的 Franka 机械臂
 
-   基础 RLinf 真机 RL 流程使用的 Franka Emika Panda 机械臂。
-
-使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
+   用于真机强化学习的 Franka 机械臂。
 
 概览
-----------------------------------------
+----
 
-从相机观测和机器人反馈中训练真机操作策略。
+Policy 从相机图像和机器人状态中学习，成功演示用于提供初始回放数据。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -25,644 +21,310 @@ Real-World RL
    .. grid-item-card:: 模型
       :text-align: center
 
-      CNN policy · OpenPI π₀.₅
+      CNN policy
 
    .. grid-item-card:: 算法
       :text-align: center
 
-      SAC · Cross-Q · RLPD · PPO
+      SAC / RLPD
 
    .. grid-item-card:: 任务
       :text-align: center
 
-      Peg insertion · charger · PnP
+      插孔
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      Franka · RealSense/ZED · gripper
-
-| **你将完成:** 安装控制端依赖 → 采集示教 → 启动 Ray → 发起真机训练 → 观察 ``env/reward`` 和视频.
-| **前置条件:** :doc:`安装 </rst_source/start/installation>` · Franka firmware/libfranka 匹配 · 局域网 · 安全操作员.
+      Franka · RealSense · NVIDIA GPU
 
 任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 24 24
-
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - Peg insertion
-     - ``realworld_peginsertion_rlpd_cnn_async``
-     - 在目标末端位姿完成插块插入。
-   * - Charger
-     - ``realworld_charger_sac_cnn_async``
-     - 通过真机奖励反馈完成充电器对齐与插入。
-   * - PnP / eval
-     - ``realworld_pnp_*``
-     - 采集或部署 pick-and-place 类策略。
+本示例将插销插入测得的目标位姿。``realworld_peginsertion_rlpd_cnn_async`` 配置使用演示数据和实时机器人交互数据进行异步训练。SpaceMouse 用于收集演示，也可在训练期间提供人工干预。
 
 观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 25 75
 
    * - 字段
      - 说明
-   * - Observation
-     - RGB 相机帧，以及可选机器人状态。
-   * - Action
-     - 6D/7D 连续笛卡尔增量动作，可包含夹爪控制。
-   * - Reward
-     - 任务成功、键盘标注或任务特定稠密反馈。
-   * - Prompt
-     - 使用 VLA 策略时由 env config 提供真机任务文本。
+   * - 观测
+     - 第一个配置的相机（``wrist_1``）的 RGB 图像和机器人状态。
+   * - 动作
+     - 六维笛卡尔位置与旋转增量；夹爪保持闭合。
+   * - 奖励
+     - 末端位姿达到配置的目标容差时判定成功。
 
-硬件环境搭建
-----------------------------------------
+硬件准备
+--------
 
-真实世界实验需要如下硬件组件：
-
-- **机械臂**：Franka Emika Panda 机械臂。
-- **相机**：Intel RealSense 相机（默认）或 Stereolabs ZED 相机。
-- **夹爪**：Franka 夹爪（默认）或 Robotiq 2F-85/2F-140。
-- **计算节点**：一台带有 GPU 的计算机，用于训练 CNN 策略。
-- **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
-- **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
-- **GELLO（可选）**：一种关节级遥操作设备，可替代空间鼠标，操控更直观，并原生支持夹爪控制。
-- **VR / PICO（可选）**：通过 PICO 头显和手柄进行 6D 末端遥操作，可替代空间鼠标进行数据采集。
+通过有线网络将 Franka 连接到计算机，并通过 USB 连接 RealSense 相机和 SpaceMouse。按照 :doc:`/rst_source/start/installation` 安装 NVIDIA 驱动；使用 Docker 时还需安装 NVIDIA Container Toolkit。下方命令以 x86-64 Ubuntu 22.04 主机为例。
 
 .. warning::
 
-  请确保所有计算机均处于同一局域网络中。
-  机械臂本体只需要与机器人控制节点处于同一局域网即可。
+   每次运行真机时都应由操作员全程监控，并确保急停装置触手可及。固定插销与夹具，清空工作区域，检查复位路径是否安全。此任务会复位到目标上方约 10 cm 的位置，并随机改变水平位置和偏航角。不要直接使用其他机器人的目标位姿。
 
-.. note::
+在机器人的地址打开 Franka Desk，记录 Control 固件版本，并根据 `Franka 兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择 libfranka 版本。镜像内置 libfranka 0.19.0；如果固件要求其他版本，请使用下方的自定义安装方式。不要仅为匹配示例而修改机器人固件。
 
-   **使用 ZED 相机或 Robotiq 夹爪？** 请参考专门的指南
-   :doc:`franka_zed_robotiq`，了解 SDK 安装、串口设备配置、
-   YAML 配置字段以及数据采集。
+实时内核（可选）
+~~~~~~~~~~~~~~~~
 
-   **使用 VR / PICO 遥操作？** 请参考 :doc:`franka_vr`，了解
-   XRoboToolkit、ZeroMQ、PICO wrapper 配置以及操作步骤。
+建议使用 PREEMPT_RT 内核，以满足 Franky 控制循环对时序的要求。在 RLinf 工作流中，实时内核是可选的：驱动会尝试设置实时调度和锁定内存，无法启用时仍可继续运行。没有实时内核时，较重的 CPU 或 GPU 训练负载可能使控制响应变慢；错过控制周期也可能导致运动停止。
+
+如需更稳定的控制时序，请在宿主机上按照 Franka 的 `实时内核安装说明 <https://frankarobotics.github.io/docs/installation_linux.html#setting-up-the-real-time-kernel>`_ 配置内核。Docker 与宿主机共享内核，在容器内安装内核不会启用实时控制。下方 Docker 命令已授予实时优先级和内存锁定权限。开始训练前，应在操作员监控下检查预期训练负载对控制的影响。
 
 安装
-----------------------------------------
+----
 
-控制节点与训练 / rollout 节点需要安装不同的软件依赖。
-
-机器人控制节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. 检查 Franka 固件版本
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在机器人管理网页（一般为 ``http://<robot_ip>/desk``）中，点击 ``SETTINGS`` 选项卡，在 ``DashBoard`` 中查看 ``Control`` 后面的版本号，如下所示。
-请记录该固件版本号，后续步骤会用到。
-
-.. raw:: html
-
-  <div style="flex: 1; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
-  </div>
-.. warning::
-
-  请确保 Franka 固件版本 ``<5.9.0`` 以保证与 serl_franka_controllers 的兼容性。
-  推荐使用固件版本 5.7.2 以获得最佳兼容性。
-
-2. 实时内核安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-推荐在实时内核（Real-time Kernel）上运行 Franka 控制程序，以获得更好的实时性。
-请参考 `Franka 官方文档 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_ 安装实时内核。
-
-3. 依赖安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+克隆 RLinf，后续命令均在仓库根目录执行：
 
 .. code:: bash
 
-  # 为了提高国内下载速度，也可以使用：
-  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-  git clone https://github.com/RLinf/RLinf.git
-  cd RLinf
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
 
-B. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+选择 Docker 或自定义环境。两种方式均安装 Franky 以及 CNN 训练示例所需的依赖。
 
-**方式 1：Docker 镜像**
+Docker（推荐）
+~~~~~~~~~~~~~~
 
-使用 Docker 镜像进行实验。
-
-为了从 Docker 容器内访问机器人、相机和空间鼠标设备，建议使用以下附加参数运行容器：
+从当前代码构建 Franka 镜像，并启动容器：
 
 .. code:: bash
 
-  docker run -it --rm \
-    --privileged \
-    --network host \
-    --name rlinf \
-    -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.4-franka
-    # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
+   docker build -f docker/Dockerfile \
+     --build-arg BUILD_TARGET=embodied-franka \
+     --build-arg NO_MIRROR=1 -t rlinf:franka .
 
-目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
+   docker run -it --name rlinf-franka --gpus all \
+     --network host --privileged --shm-size 20g \
+     --ulimit rtprio=99 --ulimit memlock=-1 \
+     -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
+     rlinf:franka bash
 
-这些版本均基于 `Franka 兼容性矩阵 <https://frankarobotics.github.io/docs/compatibility.html>`_ 进行选择。
-请检查你的 Franka 固件版本，并找到与之兼容的 libfranka 版本。
-
-确定兼容的 libfranka 版本后，可以通过运行以下命令在 docker 容器中切换到对应的虚拟环境：
+镜像使用 CUDA 和 Ubuntu 22.04。在容器内激活已安装的 Franky 环境，并在后续步骤中保持一致：
 
 .. code:: bash
 
-   source switch_env franka-<libfranka_version>
-    # 例如，对于 libfranka 版本 0.15.0
-    # source switch_env franka-0.15.0
+   source switch_env franky-0.19.0
 
-**方式 2：自定义环境**
+如需另开终端，在宿主机执行 ``docker exec -it rlinf-franka bash``，然后再次激活相同环境。
 
-安装脚本主要包含两部分内容：
+自定义环境
+~~~~~~~~~~
 
-- RLinf 框架及真实世界强化学习训练所需的 Python 依赖；
-- 用于 Franka 控制的 ROS Noetic、libfranka、franka_ros 以及 serl_franka_controllers 等依赖。
-
-.. warning::
-
-  由于 ROS Noetic 的要求，安装脚本目前 **仅支持 Ubuntu 20.04**。
-
-.. warning::
-
-  如果你已经手动安装了 ROS Noetic、libfranka、franka_ros 和 serl_franka_controllers，
-  可以在运行安装脚本前设置环境变量 ``export SKIP_ROS=1`` 来跳过这些组件的安装。
-
-  如果你跳过了这些安装，请务必保证已经在 `~/.bashrc` 中 source 了 ROS 的 setup 脚本（通常位于 ``/opt/ros/noetic/setup.bash``），
-  以及 franka_ros 和 serl_franka_controllers 的 setup 脚本（通常位于 ``<your_catkin_ws>/devel/setup.bash``），
-  同时确保 libfranka 的动态库已经加入 ``LD_LIBRARY_PATH``，或者安装在系统库目录 ``/usr/lib`` 中。
-
-  **在每次启动控制节点上的 ray 之前，都需要确保这些环境变量和依赖已经正确加载**，
-  否则可能会导致 Franka 控制相关包无法被正确找到。
-
-.. warning::
-
-  目前，ROS Noetic、libfranka 和 franka_ros 的自动安装仅在固件版本 ``>=5.7.2`` 且 ``<5.9.0`` 的 Franka 上进行过测试，
-  该范围内推荐使用 libfranka 版本 ``0.15`` 和 franka_ros 版本 ``0.10``。
-
-  对于其他固件版本，请先参考 `Franka 兼容性矩阵 <https://frankarobotics.github.io/docs/compatibility.html>`_，
-  然后通过设置环境变量 `export LIBFRANKA_VERSION=<version>` 与 `export FRANKA_ROS_VERSION=<version>` 自行指定 libfranka 和 franka_ros 的版本，再运行安装脚本。
-
-.. note::
-
-  如果安装脚本对你不适用，可参考官方文档 `ROS Noectic 安装说明 <https://wiki.ros.org/noetic/Installation/Ubuntu>`_ ， `Franka 安装说明 <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ ，和 `serl_franka_controllers 安装说明 <https://github.com/rail-berkeley/serl_franka_controllers>`_ 进行手动安装。
-
-执行以下命令安装控制节点依赖：
+不使用 Docker 时，执行以下命令：
 
 .. code:: bash
 
-  # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+   LIBFRANKA_VERSION=0.19.0 bash requirements/install.sh embodied --env franka
+   source .venv/bin/activate
 
-  bash requirements/install.sh embodied --env franka
-  source .venv/bin/activate
+根据固件需要，可将版本改为 ``LIBFRANKA_VERSION=0.15.0``。安装脚本使用包含 libfranka 的版本化 Franky wheel，无需另行安装 libfranka 或 ROS。在 Docker 外运行时，当前用户必须具有相机和 SpaceMouse USB 设备的读取权限；参见 :doc:`/rst_source/start/installation` 和 `SpaceMouse 安装说明 <https://github.com/JakubAndrysek/PySpaceMouse#installation>`_。
 
-训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+检查环境
+~~~~~~~~
 
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-  # 为了提高国内下载速度，也可以使用：
-  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-  git clone https://github.com/RLinf/RLinf.git
-  cd RLinf
-
-B. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**方式 1：Docker 镜像**
-
-使用 Docker 镜像进行实验。
+在已激活的环境中，先检查 Franky 和 CUDA，再连接机械臂：
 
 .. code:: bash
 
-  docker run -it --rm --gpus all \
-    --shm-size 20g \
-    --network host \
-    --name rlinf \
-    -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-    # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**方式 2：自定义环境（Custom Environment）**
-
-在本地环境中直接安装依赖：
-
-.. code:: bash
-
-  # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-
-  bash requirements/install.sh embodied --model openvla --env maniskill_libero
-  source .venv/bin/activate
+   python -c "import franky, torch; assert torch.cuda.is_available(); print(torch.__version__)"
 
 下载模型
-----------------------------------------
+--------
 
-在开始训练之前，需要先下载对应的预训练模型：
+将预训练 ResNet encoder 下载到仓库内：
 
 .. code:: bash
 
-   # 下载模型（两种方式二选一）
-   # 方式 1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+   hf download RLinf/RLinf-ResNet10-pretrained \
+     --local-dir ./models/RLinf-ResNet10-pretrained
 
-   # 方式 2：使用 huggingface-hub
-   # 为了提高国内下载速度，可以添加以下环境变量：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
-
-下载完成后，请在对应的配置 YAML 文件中正确填写模型路径。
+后面的训练命令会将该目录同时传给 actor 和 rollout。
 
 运行
-----------------------------------------
+----
 
-前置准备
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+检查相机与目标位姿
+~~~~~~~~~~~~~~~~~~
 
-**获取任务的目标位姿**
+先检查相机数据流，记录输出的序列号：
 
-对于 Peg-insertion 任务，可以使用脚本 `toolkits.realworld_check.test_franka_controller` 获取目标末端位姿。
+.. code:: bash
 
-首先，需要将 Franka 机器人切换到可编程模式，然后手动将机械臂移动到希望的目标位姿。
+   python toolkits/realworld_check/test_franka_camera.py
 
-随后，在运行脚本之前，先设置环境变量 ``FRANKA_ROBOT_IP`` 为机器人 IP 地址：
+在以下两个现有配置中填写机器人信息：
 
-.. code-block:: bash
+- ``examples/embodiment/config/realworld_collect_data.yaml``
+- ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``
 
-   export FRANKA_ROBOT_IP=<your_robot_ip_address>
+在每个文件的 ``cluster.node_groups`` 中，仅将 ``label: franka`` 对应的条目替换为下方内容。将 ``ROBOT_IP`` 替换为机械臂地址，将 ``CAMERA_SERIAL`` 替换为输出的相机序列号：
 
-然后运行脚本：
+.. code:: yaml
 
-.. code-block:: bash
+   - label: franka
+     node_ranks: 0
+     hardware:
+       type: Franka
+       configs:
+         - robot_ip: ROBOT_IP
+           node_rank: 0
+           camera_serials: ["CAMERA_SERIAL"]
 
+将训练配置中的 ``cluster.num_nodes`` 也设为 1；采集配置已经使用一个节点。训练配置中的 ``4090`` 节点组和组件放置保持不变：这个组名表示 GPU 节点 0，不要求 GPU 型号为 4090。本示例使用一个相机，自动命名为 ``wrist_1``。
+
+通过机器人的引导模式将插销放到成功插入时的目标位姿，然后解锁机械臂并在 Franka Desk 中启用 FCI。使用 Franky 读取位姿：
+
+.. code:: bash
+
+   export FRANKA_ROBOT_IP=192.168.1.10  # 替换为机器人的地址。
    python -m toolkits.realworld_check.test_franka_controller
 
-脚本会提示你输入命令，可以输入 `getpos_euler` 来获取当前末端执行器以欧拉角形式表示的位姿。
+在提示符后输入 ``getpos_euler``，再输入 ``q`` 释放机器人。输出顺序为 ``[x, y, z, roll, pitch, yaw]``，单位为米和弧度。将测得的六个数值填入下方列表，使用逗号分隔，并保存在当前终端中：
 
-数据采集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code:: bash
 
-对于 RLPD 实验，需要先在控制节点上收集一部分初始数据，
-该过程只需在控制节点上运行，不需要其他节点参与。
+   export FRANKA_TARGET_POSE='[x, y, z, roll, pitch, yaw]'  # 替换全部六个数值。
 
-1. 依次激活虚拟环境并 source franka_ros 与 serl_franka_controllers 的 setup 脚本：
+继续之前，确认目标位姿及上文所述的复位区域均处于安全工作范围内。关闭其他控制机械臂的程序；同一时刻只能有一个进程持有控制连接。
 
-.. code-block:: bash
+收集演示
+~~~~~~~~
 
-   source <path_to_your_venv>/bin/activate
-   source <your_catkin_ws>/devel/setup.bash
+启动 Ray 前先设置节点编号。如果硬件检查脚本已经启动了本地 Ray 实例，先停止该实例，让 Ray 重新读取已激活的环境和正确的节点编号：
 
-2. 修改配置文件 ``examples/embodiment/config/realworld_collect_data.yaml``，
-   将其中 ``robot_ip`` 字段填为你的机器人 IP 地址。
+.. code:: bash
 
-.. code-block:: yaml
+   ray stop
+   export RLINF_NODE_RANK=0
+   ray start --head
 
-  cluster:
-    num_nodes: 1
-    component_placement:
-      env:
-        node_group: franka
-        placement: 0
-    node_groups:
-      - label: franka
-        node_ranks: 0
-        hardware:
-          type: Franka
-          configs:
-            - robot_ip: ROBOT_IP
-              node_rank: 0
+移动或旋转 SpaceMouse 控制末端。达到目标容差时，任务会自动标记成功并复位，随后开始下一条演示。收集 20 条成功演示：
 
-将配置中的 `target_ee_pose` 字段改为前面步骤中获取到的目标末端位姿：
+.. code:: bash
 
-.. code-block:: yaml
+   RLINF_LOG_DIR="$PWD/logs/franka-demo" \
+     bash examples/embodiment/collect_data.sh realworld_collect_data \
+     "env.eval.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE"
 
-  env:
-    eval:
-      override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+成功轨迹保存在 ``logs/franka-demo/demos`` 下。RLPD 使用这个 replay buffer 目录，而不是 ``collected_data`` 下的可选 episode 导出文件。等待采集程序退出并释放机械臂后，再启动训练。再次采集时请更换日志目录，避免混合不同批次的演示。
 
-4. 运行数据采集脚本：
+训练 Policy
+~~~~~~~~~~~
 
-.. code-block:: bash
+保持相同的环境、Ray 实例和目标位姿，启动训练：
 
-   bash examples/embodiment/collect_data.sh
+.. code:: bash
 
-在采集过程中，可以使用空间鼠标对机器人进行人工干预，以获得更丰富的数据。
+   bash examples/embodiment/run_realworld_async.sh \
+     realworld_peginsertion_rlpd_cnn_async \
+     "env.train.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE" \
+     "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demos" \
+     "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained" \
+     "rollout.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
 
-脚本默认在收集 20 个 episode 后结束（可以通过配置中的 `num_data_episodes` 字段修改），
-采集到的数据会保存在 ``logs/[running-timestamp]/data.pkl`` 路径下。
+按上述设置，actor、rollout 和 reward 运行在 GPU 0 上，机器人控制运行在节点 0 上。运行期间持续监控机械臂，必要时通过 SpaceMouse 干预。结束实验时，中断启动脚本并等待机器人停止；程序退出后，使用 ``ray stop`` 停止本机 Ray 进程。
 
-5. 数据采集完成后，可以将收集到的数据上传到训练 / rollout 节点。
-
-.. note::
-
-   **使用 ZED 相机和 Robotiq 夹爪？** 我们提供了专用的数据采集脚本和配置文件。
-   请参考 :doc:`franka_zed_robotiq` 中的
-   :ref:`数据采集 <franka-zed-robotiq-data-collection-zh>` 章节。
-
-使用 GELLO 进行数据采集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-除空间鼠标外，RLinf 还支持使用 `GELLO <https://github.com/wuphilipp/gello_software>`_ 进行遥操作数据采集。
-GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂一致，操控更直观、精确，并原生支持夹爪控制。
-
-**前置条件**
-
-- 安装 ``gello`` 和 ``gello-teleop`` 软件包。详细安装说明请参考 :doc:`franka_gello`。
-- GELLO 设备通过 USB 串口连接到控制节点。
-- 确认 GELLO 串口路径（例如 ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``）。
-  可通过以下命令列出可用串口：
-
-  .. code-block:: bash
-
-     ls /dev/serial/by-id/
-
-**配置**
-
-使用配置文件 ``examples/embodiment/config/realworld_collect_data_gello.yaml``。
-与空间鼠标配置的关键区别如下：
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       teleop: gello
-       gello_port: "/dev/serial/by-id/usb-FTDI_..."  # 替换为你的 GELLO 串口路径
-
-**运行**
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
-
-整体流程与空间鼠标采集相同：使用 GELLO 设备操控机器人完成任务，脚本会自动保存成功的 episode。
-
-集群设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在正式开始实验之前，需要先正确地搭建 ray 集群。
-
-.. warning::
-  这一步非常关键，请谨慎操作！任何细微的配置错误，都可能导致依赖缺失或无法正确控制机器人。
-
-RLinf 使用 ray 来管理分布式环境，这意味着：
-当你在某个节点上执行 `ray start` 时，ray 会记录当时的 Python 解释器路径和相关环境变量；
-之后在该节点上由 ray 启动的所有进程都会继承同一套 Python 环境与环境变量。
-
-我们提供了脚本 ``ray_utils/realworld/setup_before_ray.sh``，
-用于在每个节点启动 ray 之前帮助你统一设置环境。你可以根据自己的环境修改该脚本，并在每个节点上 source 它。
-
-该脚本主要负责以下内容：
-
-1. 在使用自定义环境安装方式时，source 正确的虚拟环境，请参考依赖安装部分的说明；
-
-2. 在控制节点上，source franka_ros 与 serl_franka_controllers 的 setup 脚本（通常位于 ``<your_catkin_ws>/devel/setup.bash``），**如果你使用的是 docker 镜像或安装脚本，则在 source 虚拟 Python 环境时已经完成此操作**；
-
-3. 在所有节点上设置 RLinf 相关环境变量：
-
-.. code-block:: bash
-
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<node_rank_of_this_node>
-   export RLINF_COMM_NET_DEVICES=<network_device_for_communication> # 如果只有一个网卡可以省略
-
-其中 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``，
-用来在配置文件中唯一标识每个节点。
-
-``RLINF_COMM_NET_DEVICES`` 为可选项，仅在机器拥有多个网络设备（例如 ``eth0``、``enp3s0`` 等）时需要设置，
-应当指定提供其他节点可访问 IP 的那块网卡。可以通过 ``ifconfig`` 或 ``ip addr`` 查看。
-
-在完成上述环境设置后，可以按如下方式在各节点上启动 ray：
-
-其中 `<head_node_ip_address>` 为 head 节点的 IP 地址，**必须** 能被集群中其他节点访问。
-
-.. code-block:: bash
-
-   # 在 head 节点（节点 rank 0）上
-   ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
-
-   # 在 worker 节点（节点 rank 1 ~ N-1）上
-   ray start --address='<head_node_ip_address>:6379'
-
-可以通过执行 `ray status` 来检查集群是否已正确启动。
-
-配置文件
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-正式运行实验前，需要根据实际集群与机器人设置修改配置文件
-``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``。
-
-首先，在配置文件中将 ``robot_ip`` 字段设置为机器人 IP 地址，将 ``target_ee_pose`` 字段设置为目标末端位姿。
-
-接着，在 ``rollout`` 与 ``actor`` 部分，将 ``model_path`` 字段修改为前面下载好的预训练模型路径；
-同时，将 ``data.path`` 字段设置为你上传 demo 数据的位置。
-
-无显示器键盘奖励包装器（可选）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-如果你希望通过人工使用物理键盘给奖励打标，可以在 real-world env 配置中启用键盘包装器。
-
-例如，在 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml`` 中加入：
-
-.. code-block:: yaml
-
-   env:
-     train:
-       keyboard_reward_wrapper: single_stage  # 或 multi_stage
-
-可用模式如下：
-
-- ``single_stage``：按 ``a`` 记失败奖励，按 ``b`` 记中性奖励，按 ``c`` 记成功奖励。
-- ``multi_stage``：按 ``a`` / ``b`` / ``c`` 在不同奖励阶段之间切换，按 ``q`` 输出负奖励。
-
-新的键盘监听器会直接读取 Linux 输入设备，因此需要在控制节点上、执行 ``ray start`` 之前导出 ``RLINF_KEYBOARD_DEVICE``。
-
-首先，查看当前机器上的键盘设备：
-
-.. code-block:: bash
-
-   ls -l /dev/input/by-id/*-event-kbd
-
-该命令会显示稳定的键盘名称以及其对应的 ``eventX`` 设备。例如，``usb-Logitech_USB_Keyboard-event-kbd -> ../event20`` 表示对应的键盘设备是 ``/dev/input/event20``。
-
-开始训练前，先给该 event 设备开放访问权限：
-
-.. code-block:: bash
-
-   chmod 666 /dev/input/event20
-
-然后在启动 ``ray`` 之前，于 shell 或 setup 脚本中导出这个 event 设备：
-
-.. code-block:: bash
-
-   export RLINF_KEYBOARD_DEVICE=/dev/input/event20
-
-如果你使用的是 ``ray_utils/realworld/setup_before_ray.sh``，建议在控制节点的该脚本中加入这条 ``export``，确保 ray 启动的 env 进程能够继承这个环境变量。
-
-检查环境（可选）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在启动正式实验前，我们推荐先通过若干测试脚本验证整体环境配置是否正确。
-
-首先，在控制节点上测试相机连接：
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_franka_camera
-
-然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照``examples/embodiment/config/realworld_dummy_franka_sac_cnn.yaml``文件添加`env.eval.override_cfg`。
-可以在配置文件中同时将 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `is_dummy` 字段设置为 `True`，
-以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_franka_camera.py`` 得到的camera序列号
-填补在 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `camera_serials` 字段。
-
-在 head 节点上运行测试脚本：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_async.sh realworld_peginsertion_rlpd_cnn_async
-
-运行
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在完成上述检查之后，即可在 head 节点上启动真实世界训练实验：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_async.sh realworld_peginsertion_rlpd_cnn_async
-
-进阶：多机器人配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采集与训练。
-要启用多机器人设置，需要在配置文件的 `node_groups` 部分为每个机器人添加独立的配置。
-
-一个包含两台 Franka 机器人的配置示例位于
-``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_2arms.yaml``，如下所示：
-
-.. code-block:: yaml
-
-  cluster:
-  num_nodes: 3 # 1 个训练 / rollout 节点 + 2 个机器人控制节点
-  component_placement:
-    actor:
-      node_group: "4090"
-      placement: 0 # 运行在训练 / rollout 节点的第一个 GPU 上
-    env:
-      node_group: franka
-      placement: 0-1 # 两个 env 分别绑定两个机器人，rank 0 和 rank 1
-    rollout:
-      node_group: "4090"
-      placement: 0:0-1 # 在训练 / rollout 节点第一个 GPU 上运行两个 rollout 进程
-  node_groups:
-    - label: "4090"
-      node_ranks: 0 # 节点 rank 0 为训练 / rollout 节点
-    - label: franka
-      node_ranks: 1-2 # 节点 rank 1 和 2 为两个机器人控制节点
-      hardware:
-        type: Franka
-        configs:
-          - robot_ip: ROBOT_IP_FOR_RANK1
-            node_rank: 1 # 第一个机器人控制节点的 rank
-          - robot_ip: ROBOT_IP_FOR_RANK2
-            node_rank: 2 # 第二个机器人控制节点的 rank
-
-自然地，你可以按照同样的方式扩展到更多的机器人。
-关于此类异构硬件配置语法的更多细节，请参考 :doc:`../../guides/hetero`。
-
-如需在真机上通过与动作块执行重叠来隐藏策略推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
-
-
-
-Franky 阻抗控制器意外停止后，下一次机械臂指令或状态读取会抛出异常；如果 SDK 保留了运动异常，错误信息也会包含其原因。请先检查机器人控制 worker 的报错，解决问题后再启动训练。直接使用 Python API 时，需要先调用 ``disconnect()``，再调用 ``connect()`` 才能继续发送指令；``clear_errors()`` 不会重启已失效的跟踪会话。
+如果 Franky 阻抗控制器意外停止，RLinf 会报告运动错误，不会静默重启控制。解决原因后再重新启动训练。直接使用 Python API 时，应先调用 ``disconnect()``，再调用 ``connect()``，然后恢复发送指令；``clear_errors()`` 不会重启已经失败的跟踪控制。
 
 可视化与结果
-----------------------------------------
+------------
 
-**1. TensorBoard 日志**
+在另一个已激活环境的终端中启动 TensorBoard：
 
-.. code-block:: bash
+.. code:: bash
 
-   # 启动 TensorBoard
    tensorboard --logdir ./logs --port 6006
 
-**2. 关键监控指标**
+打开 ``http://localhost:6006``，关注 ``env/success_once``、``env/return`` 以及 SAC actor 和 critic 的 loss。日志配置参见 :doc:`/rst_source/guides/logger`。下方曲线和视频展示了插孔与充电器任务的实验结果，不代表所有环境都能在相同时间内完成训练。
 
-- **环境指标**:
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/realworld-curve.png
+   :align: center
+   :width: 100%
 
-  - ``env/episode_len``：该回合实际经历的环境步数（单位：step）
-  - ``env/return``：回合总回报
-  - ``env/reward``：环境的 step-level 奖励
-  - ``env/success_once``：回合中至少成功一次标志（0或1）
-
-- **Training Metrics**:
-
-  - ``train/sac/critic_loss``: Q 函数的损失
-  - ``train/critic/grad_norm``: Q 函数的梯度范数
-
-  - ``train/sac/actor_loss``: 策略损失
-  - ``train/actor/entropy``: 策略熵
-  - ``train/actor/grad_norm``: 策略的梯度范数
-
-  - ``train/sac/alpha_loss``: 温度参数的损失
-  - ``train/sac/alpha``: 温度参数的值
-  - ``train/alpha/grad_norm``: 温度参数的梯度范数
-
-  - ``train/replay_buffer/size``: 当前重放缓冲区的大小
-  - ``train/replay_buffer/max_reward``: 重放缓冲区中存储的最大奖励
-  - ``train/replay_buffer/min_reward``: 重放缓冲区中存储的最小奖励
-  - ``train/replay_buffer/mean_reward``: 重放缓冲区中存储的平均奖励
-  - ``train/replay_buffer/std_reward``: 重放缓冲区中存储的奖励标准差
-  - ``train/replay_buffer/utilization``: 重放缓冲区的利用率
-
-真实世界结果
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-以下提供了插块插入任务和充电器任务的演示视频和训练曲线。在 1 小时的训练时间内，机器人能够学习到一套能够持续成功完成任务的策略。
+   真机训练曲线。
 
 .. raw:: html
 
-  <div style="flex: 0.8; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/realworld-curve.png" style="width: 100%;"/>
-      <p><em>训练曲线</em></p>
-    </div>
+   <video controls muted playsinline preload="metadata" width="720">
+     <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/peg-insertion-compressed.mp4" type="video/mp4">
+   </video>
+   <video controls muted playsinline preload="metadata" width="720">
+     <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/charger-compressed.mp4" type="video/mp4">
+   </video>
 
-.. raw:: html
+多节点配置
+----------
 
-  <div style="flex: 1; text-align: center;">
-    <video controls autoplay loop muted playsinline preload="metadata" width="720">
-      <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/peg-insertion-compressed.mp4" type="video/mp4">
-      Your browser does not support the video tag.
-    </video>
-    <p><em>插块插入（Peg Insertion）</em></p>
-  </div>
+如需将机器人控制与训练负载分开，可以使用独立的控制计算机。控制节点不需要 GPU、CUDA 或 ROS。将机械臂、相机和 SpaceMouse 接到控制节点，由 GPU 计算机运行 actor 和 rollout。
 
-.. raw:: html
+准备控制节点
+~~~~~~~~~~~~
 
-  <div style="flex: 1; text-align: center;">
-    <video controls autoplay loop muted playsinline preload="metadata" width="720">
-      <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/charger-compressed.mp4" type="video/mp4">
-      Your browser does not support the video tag.
-    </video>
-    <p><em>充电器插电（Charger）</em></p>
-  </div>
+在 Ubuntu 22.04 控制节点上克隆相同版本的 RLinf，在仓库根目录安装 CPU 环境：
+
+.. code:: bash
+
+   UV_TORCH_BACKEND=cpu LIBFRANKA_VERSION=0.19.0 \
+     bash requirements/install.sh embodied --env franka
+   source .venv/bin/activate
+   python -c "import franky, torch; assert torch.version.cuda is None"
+
+libfranka 版本选择与前文一致，自定义环境的设备权限说明和实时内核建议同样适用于控制节点。加入多节点集群前，先按前文采集步骤在控制节点上收集演示，此时使用节点编号 0。将完整的 ``logs/franka-demo/demos`` 目录复制到 GPU 计算机。
+
+配置并启动集群
+~~~~~~~~~~~~~~
+
+在 GPU 计算机上使用默认 CUDA 镜像。两台计算机应使用相同的 RLinf 代码版本、Python 版本和 Ray 版本。在 GPU 计算机上编辑 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``：将 ``cluster.num_nodes`` 改为 2，将 Franka 组的 ``node_ranks`` 和硬件配置中的 ``node_rank`` 都改为 1。保留机械臂 IP 和相机序列号。Actor 和 rollout 仍放在节点 0 的 GPU 0 上。
+
+选择两台计算机在互通网络上的 IP，不要使用机械臂的 IP。在 GPU 计算机已激活环境的终端中执行：
+
+.. code:: bash
+
+   ray stop
+   export RLINF_NODE_RANK=0
+   export HEAD_IP=192.168.10.10  # 替换为 GPU 计算机的地址。
+   ray start --head --port=6379 --node-ip-address="$HEAD_IP"
+
+在控制节点的 CPU 环境中执行：
+
+.. code:: bash
+
+   ray stop
+   export RLINF_NODE_RANK=1
+   export HEAD_IP=192.168.10.10        # 与 GPU 计算机地址一致。
+   export CONTROLLER_IP=192.168.10.11 # 替换为控制计算机的地址。
+   ray start --address="$HEAD_IP:6379" --node-ip-address="$CONTROLLER_IP"
+
+在 GPU 计算机上运行 ``ray status``，确认两个节点均已启动。然后仅在 GPU 计算机上执行训练命令，使用本机模型与演示数据路径以及测得的目标位姿。训练时，控制节点不需要模型权重或演示文件。结束后在两个节点分别停止 Ray。多网卡或更多机器人的配置参见 :doc:`/rst_source/guides/hetero`。
+
+兼容已有 ROS 环境
+~~~~~~~~~~~~~~~~~
+
+已有的 ROS Noetic 部署可使用显式的 ``embodied-franka-ros`` Docker 构建目标，或在 Ubuntu 20.04 上执行 ``bash requirements/install.sh embodied --env franka-ros``。在每个 Franka 硬件配置中设置 ``backend: franka_ros``，并在启动 Ray 前激活匹配的 ``franka-<libfranka-version>`` 环境。仍需遵守 ROS 控制器的固件与实时性要求；Franky 的可选实时调度行为不会改变 ROS 的要求。
+
+其他 Franka 工作流
+------------------
+
+使用 VLA policy 时，同一 Docker 镜像提供包含 Franka 依赖的 ``openvla``、``openvla-oft``、``openpi`` 和 ``gr00t`` 环境。激活与模型对应的环境，例如 ``source switch_env openpi``。自定义安装时，将模型与 Franka 一起安装：
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model openpi --env franka --venv openpi
+   source openpi/bin/activate
+
+按需将两条命令中的 ``openpi`` 替换为 ``openvla``、``openvla-oft`` 或 ``gr00t``。这些命令仅安装依赖；模型权重、任务配置和训练步骤参见对应工作流。
+
+完成基础示例后，可按需要参考以下指南：
+
+- :doc:`franka_gello` 与 :doc:`franka_vr`：GELLO 或 PICO 遥操作。
+- :doc:`franka_zed_robotiq` 与 :doc:`franka_dexhand`：其他相机与末端执行器。
+- :doc:`franka_reward_model`：学习奖励模型。
+- :doc:`franka_pi0_sft_deploy` 与 :doc:`hg-dagger`：OpenPI policy。
+- :doc:`dual_franka`：双臂控制；:doc:`/rst_source/guides/rtc`：重叠执行动作与推理。

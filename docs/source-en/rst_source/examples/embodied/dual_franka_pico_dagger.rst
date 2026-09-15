@@ -110,11 +110,11 @@ libfranka ``0.18.0``.
    cd RLinf
 
    export LIBFRANKA_VERSION=0.15.0       # replace with your compatible version
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-The ``franka-franky`` environment installs the ``franka`` extra, including
-``pyzmq`` for the PICO consumer side. See :doc:`franka_vr` for the PICO headset,
+The ``franka`` environment installs Franky and the camera and input dependencies,
+including ``pyzmq`` for the PICO consumer side. See :doc:`franka_vr` for the PICO headset,
 XRoboToolkit PC Service, and ``vr_data_publisher`` setup and validation.
 
 Inference Node

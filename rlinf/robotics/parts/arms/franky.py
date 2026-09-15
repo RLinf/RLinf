@@ -132,7 +132,11 @@ class FrankyArm(BaseArm):
         import franky
 
         self._franky = franky
-        self._robot = franky.Robot(self._robot_ip)
+        # Request real-time scheduling when available, but allow best-effort
+        # control on hosts without PREEMPT_RT or scheduling permissions.
+        self._robot = franky.Robot(
+            self._robot_ip, realtime_config=franky.RealtimeConfig.Ignore
+        )
         self._robot.recover_from_errors()
         self._robot.relative_dynamics_factor = self.DYNAMICS_FACTOR
         self._robot.set_collision_behavior(self.TORQUE_THRESHOLD, self.FORCE_THRESHOLD)
