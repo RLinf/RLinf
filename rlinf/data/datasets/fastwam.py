@@ -27,7 +27,6 @@ into ``text_embedding_cache_dir`` (the dataset raises if a cache entry is missin
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from typing import Any, Iterator
 
 import torch
@@ -172,8 +171,6 @@ def build_fastwam_sft_dataloader(
     data_train = fcfg.data.train
 
     # Normalize dataset dir(s).
-    if not data_paths:
-        raise ValueError("FastWAM SFT data_paths is empty; set data.train_data_paths.")
     if isinstance(data_paths, str):
         dataset_dirs = [data_paths]
     else:
@@ -187,48 +184,6 @@ def build_fastwam_sft_dataloader(
     norm_stats = cfg.data.get("pretrained_norm_stats", None) or model_cfg.get(
         "dataset_stats_path", None
     )
-
-    logger.info(
-        "FastWAM SFT resources: data_paths=%s; data.text_embedding_cache_dir=%s; "
-        "normalization_stats=%s; cwd=%s",
-        dataset_dirs,
-        text_cache,
-        norm_stats,
-        Path.cwd(),
-    )
-    for dataset_dir in dataset_dirs:
-        root = Path(dataset_dir).absolute()
-        if not root.is_dir():
-            raise FileNotFoundError(
-                f"FastWAM SFT dataset directory not found: {root}. "
-                "Check data.train_data_paths (or the validation data_paths); "
-                "download and extract the LIBERO LeRobot dataset first."
-            )
-        if not (root / "meta/info.json").is_file():
-            raise FileNotFoundError(
-                f"FastWAM SFT dataset metadata not found: {root / 'meta/info.json'}. "
-                "Each data_paths entry must point to an extracted LeRobot dataset, "
-                "not the archive or its parent directory."
-            )
-    if not text_cache:
-        raise ValueError(
-            "FastWAM SFT data.text_embedding_cache_dir is not set. "
-            "Run FastWAM scripts/precompute_text_embeds.py and set its output directory."
-        )
-    cache_path = Path(text_cache).absolute()
-    if not cache_path.is_dir() or not any(cache_path.glob("*.t5_len*.wan22ti2v5b.pt")):
-        raise FileNotFoundError(
-            f"FastWAM SFT text embeddings not found: "
-            f"data.text_embedding_cache_dir={cache_path}. "
-            "Expected *.t5_len*.wan22ti2v5b.pt; run FastWAM "
-            "scripts/precompute_text_embeds.py for the dataset task instructions."
-        )
-    if norm_stats and not Path(norm_stats).is_file():
-        raise FileNotFoundError(
-            f"FastWAM SFT normalization statistics not found: "
-            f"{Path(norm_stats).absolute()}. Check data.pretrained_norm_stats "
-            "or actor.model.dataset_stats_path."
-        )
 
     # RobotVideoDataset writes a copy of the stats to misc.get_work_dir()
     # (default "./runs/", which may not exist). Point it at a real directory.
@@ -249,17 +204,11 @@ def build_fastwam_sft_dataloader(
     if norm_stats:
         overrides_kw["pretrained_norm_stats"] = str(norm_stats)
 
+    logger.info("Loading FastWAM SFT dataset: %s", overrides_kw)
     try:
         dataset = instantiate(data_train, **overrides_kw)
     except Exception:
-        logger.exception(
-            "FastWAM SFT dataset initialization failed: data_paths=%s; "
-            "data.text_embedding_cache_dir=%s; normalization_stats=%s. "
-            "See the original exception below for the failing file.",
-            dataset_dirs,
-            text_cache,
-            norm_stats,
-        )
+        logger.exception("FastWAM SFT dataset loading failed: %s", overrides_kw)
         raise
     logger.info("FastWAM SFT dataset: %d samples from %s", len(dataset), dataset_dirs)
 
