@@ -92,7 +92,7 @@ Installation
       rlinf/rlinf:agentic-rlinf0.4-frankasim
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-frankasim
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-frankasim
 
 Switch to the virtual environment inside the image:
 

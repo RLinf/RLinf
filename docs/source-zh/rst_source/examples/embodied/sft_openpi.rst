@@ -161,7 +161,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
         --name rlinf \
         -v .:/workspace/RLinf \
         rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-        # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+        # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
     # 进入容器后，切换到 OpenPI 虚拟环境：
     source switch_env openpi

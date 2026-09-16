@@ -102,7 +102,7 @@ kernel, ROS, and Franka controller dependencies.
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-franka
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-franka
 
 Then switch to the libfranka-compatible environment:
 
@@ -137,7 +137,7 @@ Use the same environment as simulator Pi0 DAgger.
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Inside the container:
 
