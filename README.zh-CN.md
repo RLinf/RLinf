@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/09] 🔥 RLinf 支持 [FastWAM](https://github.com/yuantianyuan01/FastWAM) 的 FSDP 监督微调与 LIBERO 批量评测。文档：[FastWAM 评测与监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html)。
 - [2026/08] 🔥 RLinf 支持对英伟达全模态世界模型 Cosmos3 做 SFT 及基于 SGLang 的评测。文档：[Cosmos3 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html)、[SGLang 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/cosmos3_sglang.html)。
 - [2026/08] 🎉 RLinf 正式入选 **PyTorch 生态**！我们将继续把可扩展的具身与智能体强化学习带给 PyTorch 用户，推动模型智能走进真实世界。博客：[PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/)。
 - [2026/08] 🎉 Isaac Lab v3.0.0 正式采用 RLinf 作为其强化学习（RL）训练基础设施。文档：[Isaac Lab 中的 RLinf](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf)。
@@ -44,7 +45,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/07] 🔥 RLinf 支持在 LIBERO 模拟器上对 Evo-1 进行全参数 SFT 和 GRPO 微调。文档：[Evo-1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html)。
 - [2026/07] 🔥 RLinf 使用 PyTorch 重新实现了 π₀ 和 π₀.₅，数值表现与 JAX 参考实现对齐。文档：[OpenPI_RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_rlinf.html)。
 - [2026/07] 🔥 RLinf 支持 OPD，用于在 LIBERO 上对 OpenVLA-OFT 进行在线策略蒸馏。文档：[OPD](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html)。
-- [2026/07] 🔥 RLinf 支持 [FastWAM](https://github.com/yuantianyuan01/FastWAM) 的批量 LIBERO / LIBERO-Plus 评测与 FSDP 监督微调。文档：[FastWAM 评测与监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html)。
 - [2026/07] 🎉 RLinf v0.3 发布，主要升级：真机 RL 全流程（数据采集 → SFT → RL → 部署）、更多模拟器与 SOTA 模型、系统级优化。发布说明：[RLinf v0.3](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.3.html)。
 - [2026/07] 🔥 RLinf 支持 RLT，用于 VLA 策略的在线强化学习微调。文档：[RLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rlt.html)。
 - [2026/06] 🔥 RLinf 支持 STEAM 离线优势评估与策略优化。文档：[STEAM](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/steam.html)。
@@ -200,9 +200,9 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           </ul>
           <li><b>世界动作模型</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
           </ul>
         </ul>
       </td>

@@ -19,10 +19,10 @@ cluster:
 runner:
   task_type: embodied_eval
   logger:
-    log_path: /workspace/results/libero_spatial_fastwam_eval
+    log_path: ../results/libero_spatial_fastwam_eval
     project_name: rlinf
     experiment_name: "libero_spatial_fastwam_eval"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
   max_epochs: 1
   only_eval: true
   val_check_interval: -1
@@ -61,5 +61,5 @@ rollout:
   model:
     model_type: "fastwam"
     seed: 42
-    model_path: /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
-    dataset_stats_path: /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
+    model_path: /workspace/dataset/FastWAM/libero_uncond_2cam224.pt
+    dataset_stats_path: /workspace/dataset/data/sft-ci-data/fastwam-libero/libero_uncond_2cam224_dataset_stats.json
