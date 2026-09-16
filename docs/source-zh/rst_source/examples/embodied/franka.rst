@@ -301,6 +301,8 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-franka bash
 
+国内下载时，可以将镜像名称中的 ``rlinf/rlinf`` 替换为 ``infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf``，保留原有 tag。
+
 容器启动后已处于 ``franky`` 环境。``--ulimit`` 参数在容器内授予 `授予实时调度权限`_ 中的调度权限，但内核仍是宿主机的内核。镜像中的 Franky 环境内置 libfranka 0.19.0，固件需要 0.15.0 时，请在主机上用 ``LIBFRANKA_VERSION=0.15.0`` 本地安装。如需另开终端，执行 ``docker exec -it rlinf-franka bash``；如果切换过环境，需要再次选择相同环境。
 
 下载模型

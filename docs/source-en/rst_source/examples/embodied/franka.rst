@@ -416,6 +416,9 @@ Start the container with access to the GPU, robot, camera, and SpaceMouse:
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-franka bash
 
+For mainland China downloads, replace ``rlinf/rlinf`` in the image name
+with ``infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf``, keeping the tag unchanged.
+
 The container opens in the ``franky`` environment. The ``--ulimit`` flags grant
 the scheduling permissions from `Allow Real-Time Scheduling`_ inside the
 container; the kernel is still the host's. The image's Franky environment
