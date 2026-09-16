@@ -260,9 +260,9 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
    * - 环境
      - 内容
    * - ``franky``
-     - Franky 后端，内置 libfranka 0.19.0，默认激活。
-   * - ``franka-dexhand``
-     - Franky 后端及灵巧手依赖。
+     - Franky 后端，内置 libfranka 0.19.0 和灵巧手依赖，默认激活。
+   * - ``openvla``、``openvla-oft``、``openpi``、``gr00t``
+     - Franky 后端及对应的 VLA policy。
 
 旧版 ROS 后端需要 Ubuntu 20.04，因此镜像中不包含该后端，见 `旧版 ROS 后端（可选）`_。
 

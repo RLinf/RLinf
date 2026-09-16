@@ -353,9 +353,10 @@ The image contains these environments, switched with
    * - Environment
      - Contents
    * - ``franky``
-     - Franky backend with libfranka 0.19.0. Active by default.
-   * - ``franka-dexhand``
-     - Franky backend with dexterous-hand dependencies.
+     - Franky backend with libfranka 0.19.0 and the dexterous-hand
+       dependencies. Active by default.
+   * - ``openvla``, ``openvla-oft``, ``openpi``, ``gr00t``
+     - Franky backend with that VLA policy.
 
 The image does not include the legacy ROS backend, which needs Ubuntu 20.04; see
 `Legacy ROS Backend (Optional)`_.
