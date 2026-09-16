@@ -423,14 +423,14 @@ class MegatronActor(MegatronWorker):
         """
         Sync the model's full state dict to the rollout worker.
         """
-        assert hasattr(self, "num_weight_targets"), (
-            "num_weight_targets missing — sync_model_to_rollout requires "
-            "init_worker_customize() to have run _setup_rollout_weight_dst_ranks()"
-        )
         if self.recreate_nccl_groups:
             nccl_group_recreate()
         if not self.is_running:
             return
+        assert hasattr(self, "num_weight_targets"), (
+            "num_weight_targets missing — sync_model_to_rollout requires "
+            "init_worker_customize() to have run _setup_rollout_weight_dst_ranks()"
+        )
 
         # ensure weights are on GPU before reshard
         with self.device_lock:

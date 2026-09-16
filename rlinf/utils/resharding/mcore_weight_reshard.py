@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import inspect
+
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer.transformer_layer import (
@@ -23,11 +25,34 @@ from megatron.training.training import unwrap_model
 from .reshard_config import ReshardConfig
 from .utils import all_gather_tensor, pp_merge_params, reshard_tensor_by_rank
 
+_LAYER_OFFSET_HAS_VP_STAGE = (
+    "vp_stage" in inspect.signature(get_transformer_layer_offset).parameters
+)
+
+
+def _layer_offset(config, vp_stage):
+    """Layer offset of one virtual chunk, across megatron-core versions.
+
+    megatron-core 0.15 onwards takes vp_stage as an argument. Older versions
+    read the virtual pipeline rank from global parallel state instead, so they
+    only report the offset of the chunk that is currently active.
+    """
+    if _LAYER_OFFSET_HAS_VP_STAGE:
+        return get_transformer_layer_offset(config, vp_stage=vp_stage)
+    return get_transformer_layer_offset(config)
+
 
 class MegatronCoreWeightReshard:
     def __init__(self, config: ReshardConfig):
         self.config = config
         self.bucket_capacity = self.config.bucket_capacity
+        if not _LAYER_OFFSET_HAS_VP_STAGE:
+            vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+            assert vp_size is None or vp_size == 1, (
+                f"virtual pipeline size {vp_size} requires megatron-core >= 0.15; "
+                "this version cannot report the layer offset of a chunk other "
+                "than the one currently active in parallel state"
+            )
         # When the only target wants exactly this rank's TP shard, the gather
         # clones local shards instead of all_gathering. Set by the actor worker.
         self.tp_gather_is_identity = False
@@ -200,14 +225,11 @@ class MegatronCoreWeightReshard:
         # This rank's pipeline-stage layer offset, from mcore so that uneven
         # stages and custom layouts are covered. The merge applies it on the
         # source side, so each source reports its true global layer number.
-        stage_layer_offset = get_transformer_layer_offset(
-            self.config.model_config, vp_stage=0
-        )
+        stage_layer_offset = _layer_offset(self.config.model_config, 0)
         # Per-chunk offset relative to this stage's base, since interleaved
         # chunks repeat the same local layer number.
         vp_chunk_layer_offset = [
-            get_transformer_layer_offset(self.config.model_config, vp_stage=vp_stage)
-            - stage_layer_offset
+            _layer_offset(self.config.model_config, vp_stage) - stage_layer_offset
             for vp_stage in range(vp_size)
         ]
 
