@@ -1277,11 +1277,6 @@ class EnvWorker(Worker):
                         chunk_episode_payload = chunk_step_payload
                         if chunk_step_payload["valid_action_mask"] is not None:
                             obs_list = chunk_step_payload["obs_list"]
-                            if not isinstance(obs_list, (list, tuple)) or not obs_list:
-                                raise RuntimeError(
-                                    "executed_action_count requires a non-empty "
-                                    "per-action observation list."
-                                )
                             chunk_episode_payload = {
                                 **chunk_step_payload,
                                 "obs_list": [curr_obs, *obs_list[:-1]],
