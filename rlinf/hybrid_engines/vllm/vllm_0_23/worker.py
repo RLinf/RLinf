@@ -137,6 +137,7 @@ class VLLMWorker(_VllmInnerWorker):
                 # bucket dict all-tensor, so that NCCL takes the TENSOR_DICT
                 # path rather than pickling. Extract the int here.
                 bucket_length = bucket_length.item()
+            assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
             # Wake weights only; KV cache and cudagraph stay offloaded until
