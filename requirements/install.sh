@@ -1613,6 +1613,27 @@ EOF
     fi
 }
 
+# Runs `git clone ARGS... URL TARGET_DIR`, retrying because GitHub mirrors such
+# as gh-proxy.com intermittently reject clones. TARGET_DIR must be the last
+# argument and must not exist; a partial checkout is removed between attempts.
+git_clone_with_retry() {
+    local target_dir="${!#}" attempt
+    if [ -e "$target_dir" ]; then
+        echo "[install.sh] ERROR: git clone target $target_dir already exists." >&2
+        return 1
+    fi
+    for attempt in 1 2 3 4; do
+        if git clone "$@"; then
+            return 0
+        fi
+        rm -rf "$target_dir"
+        echo "[install.sh] git clone into $target_dir failed (attempt ${attempt}/4)." >&2
+        [ "$attempt" -lt 4 ] && sleep $(( attempt * 5 ))
+    done
+    echo "[install.sh] ERROR: git clone into $target_dir failed after 4 attempts." >&2
+    return 1
+}
+
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
@@ -1636,7 +1657,7 @@ clone_or_reuse_repo() {
         target_dir="$env_value"
         if [ ! -d "$target_dir" ]; then
             echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
         else
             echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
             local want_ref="" prev="" arg current_ref
@@ -1654,7 +1675,7 @@ clone_or_reuse_repo() {
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
         elif [ -d "$target_dir/.git" ]; then
             echo "Checking git repo $target_dir..." >&2
             local git_intact=1
@@ -1664,7 +1685,7 @@ clone_or_reuse_repo() {
             else
                 echo "Git repo $target_dir is corrupted. Re-cloning..." >&2
                 rm -rf "$target_dir"
-                git clone "$@" "$git_url" "$target_dir" >&2
+                git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
             fi
         fi
     fi
@@ -2808,14 +2829,14 @@ install_franka_env() {
     # Clone necessary repositories
     pushd "$ROS_CATKIN_PATH/src"
     if [ ! -d "$ROS_CATKIN_PATH/src/serl_franka_controllers" ]; then
-        git clone https://github.com/rail-berkeley/serl_franka_controllers
+        git_clone_with_retry https://github.com/rail-berkeley/serl_franka_controllers serl_franka_controllers
     fi
     if [ ! -d "$ROS_CATKIN_PATH/libfranka" ]; then
-        git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka $ROS_CATKIN_PATH/libfranka
+        git_clone_with_retry -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka "$ROS_CATKIN_PATH/libfranka"
     fi
     if [ ! -d "$ROS_CATKIN_PATH/src/franka_ros" ]; then
         # Use a fork version that fixes compile issues with newer libfranka using C++17
-        git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros
+        git_clone_with_retry -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros franka_ros
     fi
     popd >/dev/null
 

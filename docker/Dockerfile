@@ -362,9 +362,10 @@ FROM embodied-common-image AS embodied-franka-image
 # prebuilt wheel and bundles the installer's default libfranka (0.19.0).
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv franky --env franka
 
-# Legacy ROS environments, one per libfranka version.
+# Legacy ROS environments, one per libfranka version. A failed version must fail
+# the build; otherwise only the last iteration's status would count.
 RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
-            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka-ros; \
+            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka-ros || exit 1; \
         done
 
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv franka-dexhand --env franka-dexhand
