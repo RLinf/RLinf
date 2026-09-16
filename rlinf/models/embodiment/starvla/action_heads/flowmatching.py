@@ -488,6 +488,11 @@ def run_default_forward_flowmatching(
 
     # Match the rollout path which runs ODE integration under fp32 autocast
     # to avoid bf16 truncation errors accumulating over Euler steps.
+    # On CUDA this runs the action model in float32, matching starVLA's
+    # QwenGR00T.predict_action. On backends whose autocast rejects float32
+    # (Ascend: get_amp_supported_dtype() is [fp16, bf16]) it falls through
+    # to the backbone dtype, so the Euler steps do accumulate truncation.
+    # TODO(agent): integrate in float32 independently of autocast.
     fp32_ctx = accelerator_autocast(torch.float32)
 
     step_logprobs: list[torch.Tensor] = []
@@ -652,6 +657,11 @@ def run_rollout_flowmatching(
     # model under torch.autocast("cuda", dtype=torch.float32).  Without this,
     # the ODE integration inherits bf16 from the backbone and accumulates
     # truncation errors over num_steps Euler steps.
+    # On CUDA this runs the action model in float32, matching starVLA's
+    # QwenGR00T.predict_action. On backends whose autocast rejects float32
+    # (Ascend: get_amp_supported_dtype() is [fp16, bf16]) it falls through
+    # to the backbone dtype, so the Euler steps do accumulate truncation.
+    # TODO(agent): integrate in float32 independently of autocast.
     fp32_ctx = accelerator_autocast(torch.float32)
 
     with fp32_ctx:
