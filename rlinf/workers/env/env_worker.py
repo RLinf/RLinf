@@ -494,23 +494,15 @@ class EnvWorker(Worker):
 
         executed_counts = infos.pop("executed_action_count", None)
         final_info = infos.get("final_info")
-        if isinstance(final_info, dict):
-            final_counts = final_info.pop("executed_action_count", None)
-            if executed_counts is None:
-                executed_counts = final_counts
+        if executed_counts is None and isinstance(final_info, dict):
+            executed_counts = final_info.pop("executed_action_count", None)
         if executed_counts is None:
             return None
 
-        try:
-            if isinstance(executed_counts, torch.Tensor):
-                raw_counts = executed_counts.detach().cpu()
-            else:
-                raw_counts = torch.as_tensor(np.asarray(executed_counts))
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(
-                "executed_action_count must contain one numeric value per "
-                "environment."
-            ) from exc
+        if isinstance(executed_counts, torch.Tensor):
+            raw_counts = executed_counts.detach().cpu()
+        else:
+            raw_counts = torch.as_tensor(np.asarray(executed_counts))
 
         raw_counts = raw_counts.reshape(-1)
         counts = raw_counts.to(dtype=torch.long)
