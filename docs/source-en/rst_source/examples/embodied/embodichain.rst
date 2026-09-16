@@ -89,7 +89,7 @@ Installation
       rlinf/rlinf:agentic-rlinf0.4-embodichain
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-embodichain
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-embodichain
 
 Switch to the EmbodiChain virtual environment inside the image:
 

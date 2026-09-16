@@ -105,7 +105,7 @@ Installation
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # Inside the container, switch to the Dexbotic virtual environment:
    source switch_env dexbotic

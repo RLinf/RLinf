@@ -136,7 +136,7 @@ Installation
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # Inside the container, switch to the model's virtual environment:
    source switch_env openvla-oft
@@ -347,6 +347,8 @@ Install the RLinf-maintained forks for the suite you want.
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-liberopro   # or ...-liberoplus
+      # Mainland China mirror (LIBERO-Pro): infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberopro
+      # Mainland China mirror (LIBERO-Plus): infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberoplus
 
 **Option 2: Custom environment** — pick the install bundle for the suite:
 

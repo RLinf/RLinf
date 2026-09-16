@@ -1,0 +1,47 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Dense potential/progress LoRA; only data and schedule differ from Trend.
+defaults:
+  - qwen3vl_sft_vlm_trend_reward
+  - _self_
+
+paths:
+  pipeline_root: /path/to/vlm_trend_success_potential
+  model_path: /path/to/Qwen3-VL-4B-Instruct
+
+runner:
+  max_epochs: 400
+  max_steps: 400
+  val_check_interval: 100
+  save_interval: 100
+  experiment_name: vlm_trend_potential_sft
+  output_dir: ${paths.pipeline_root}/potential_sft
+
+data:
+  data_root: ${paths.pipeline_root}/potential_data
+  train_data_paths: ${data.data_root}/train/segments.jsonl
+  val_data_paths: ${data.data_root}/eval/segments.jsonl
+  video_root: ${data.data_root}
+  video_do_sample_frames: true
+  video_fps: 24.0
+
+actor:
+  micro_batch_size: 4
+  eval_batch_size: 16
+  global_batch_size: 256
+  model:
+    model_path: ${paths.model_path}
+  optim:
+    lr_warmup_steps: 20
