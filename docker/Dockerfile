@@ -351,11 +351,11 @@ RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-franka-image
 
 # franky-control ships libfranka inside a prebuilt wheel and bundles the
-# installer's default libfranka (0.19.0). The default franky venv also carries
-# the dexterous-hand dependencies; each model venv adds that policy to the same
+# installer's default libfranka (0.19.0), and every Franky install carries the
+# dexterous-hand dependencies. Each model venv adds that policy to the same
 # Franky stack. The legacy ROS Noetic backend needs Ubuntu 20.04, so it is not
 # part of this image; install it natively with --env franka-ros.
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky --env franka-dexhand && \
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky --env franka && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env franka && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env franka && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env franka && \

@@ -262,7 +262,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
    * - ``franky``
      - Franky 后端，内置 libfranka 0.19.0 和灵巧手依赖，默认激活。
    * - ``openvla``、``openvla-oft``、``openpi``、``gr00t``
-     - Franky 后端及对应的 VLA policy。
+     - ``franky`` 的全部内容及对应的 VLA policy。
 
 旧版 ROS 后端需要 Ubuntu 20.04，因此镜像中不包含该后端，见 `旧版 ROS 后端（可选）`_。
 
@@ -645,7 +645,7 @@ ROS 不需要手动启动。机械臂连接时，RLinf 会依次：
 其他 Franka 工作流
 ------------------
 
-安装脚本可以将 Franka 依赖与其他模型和末端执行器组合。``--env franka-dexhand`` 在 Franky 环境的基础上加入灵巧手依赖。使用 VLA policy 时，将模型和 Franka 一起安装：
+安装脚本可以将 Franka 依赖与其他模型组合。所有 Franky 环境都已包含灵巧手依赖，灵巧手任务无需单独安装。使用 VLA policy 时，将模型和 Franka 一起安装：
 
 .. code:: bash
 

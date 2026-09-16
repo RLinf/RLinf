@@ -102,7 +102,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -2469,7 +2469,7 @@ install_env_only() {
     # (transformers, peft, timm, ...) that model installs get from
     # install_common_embodied_deps, without its simulator packages.
     case "$ENV_NAME" in
-        franka|franka-dexhand|franka-ros)
+        franka|franka-ros)
             uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
@@ -2488,10 +2488,6 @@ install_env_only() {
             ;;
         franka)
             install_franka_franky_env
-            ;;
-        franka-dexhand)
-            install_franka_franky_env
-            install_franka_dexhand_deps
             ;;
         franka-ros)
             install_franka_ros_realworld_env
@@ -2907,9 +2903,7 @@ install_franka_franky_env() {
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
     install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
-}
-
-install_franka_dexhand_deps() {
+    # Ruiyan dexterous-hand and data-glove drivers.
     uv pip install "RLinf-dexterous-hands[glove]"
 }
 

@@ -356,7 +356,7 @@ The image contains these environments, switched with
      - Franky backend with libfranka 0.19.0 and the dexterous-hand
        dependencies. Active by default.
    * - ``openvla``, ``openvla-oft``, ``openpi``, ``gr00t``
-     - Franky backend with that VLA policy.
+     - The ``franky`` contents plus that VLA policy.
 
 The image does not include the legacy ROS backend, which needs Ubuntu 20.04; see
 `Legacy ROS Backend (Optional)`_.
@@ -890,9 +890,10 @@ Troubleshooting
 Other Franka Workflows
 --------------------------
 
-The installer combines the Franka dependencies with other models and end
-effectors. ``--env franka-dexhand`` adds dexterous-hand dependencies to the
-Franky environment. For a VLA policy, install the model and Franka together:
+The installer combines the Franka dependencies with other models. Every Franky
+environment already includes the dexterous-hand dependencies, so a
+dexterous-hand task needs no separate installation. For a VLA policy, install
+the model and Franka together:
 
 .. code:: bash
 
