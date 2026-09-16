@@ -18,7 +18,7 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 ### Additional build arguments
 
-- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses `nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu20.04`.
+- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image.
 - Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, or `MUSA_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
 
@@ -35,12 +35,13 @@ docker build -f docker/Dockerfile \
 
 ### Building for Franka
 
-The `embodied-franka` target builds on CUDA and Ubuntu 20.04. Its default `franky`
-venv runs the Franky backend (libfranka 0.19.0), the `franka-<libfranka-version>`
-venvs keep the legacy ROS Noetic backend, and `franka-dexhand` adds dexterous-hand
-dependencies. Its venvs carry CUDA PyTorch, so one
-container can run the actor, rollout, and robot control; run it with `--gpus all`
-on a host with the NVIDIA driver and NVIDIA Container Toolkit. See the
+The `embodied-franka` target builds on the standard platform base image. Its
+default `franky` venv runs the Franky backend (libfranka 0.19.0), and
+`franka-dexhand` adds dexterous-hand dependencies. Its venvs carry CUDA PyTorch,
+so one container can run the actor, rollout, and robot control; run it with
+`--gpus all` on a host with the NVIDIA driver and NVIDIA Container Toolkit. The
+legacy ROS Noetic backend needs Ubuntu 20.04 and is not included; install it
+natively with `--env franka-ros`. See the
 [Franka example](../docs/source-en/rst_source/examples/embodied/franka.rst).
 
 ### Building for Moore Threads (MUSA)

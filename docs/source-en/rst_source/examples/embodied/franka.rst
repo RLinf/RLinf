@@ -339,7 +339,7 @@ Use the Docker Image
 
 Instead of installing natively, you can run the
 ``rlinf/rlinf:agentic-rlinf0.4-franka`` image. It is built on CUDA 12.8 and
-Ubuntu 20.04, and its environments carry CUDA PyTorch, so one container runs
+Ubuntu 22.04, and its environments carry CUDA PyTorch, so one container runs
 the actor, rollout, and robot control on the single-machine GPU host. The host
 still needs driver 570 or newer and the
 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
@@ -356,10 +356,9 @@ The image contains these environments, switched with
      - Franky backend with libfranka 0.19.0. Active by default.
    * - ``franka-dexhand``
      - Franky backend with dexterous-hand dependencies.
-   * - ``franka-0.10.0``, ``franka-0.13.3``, ``franka-0.14.1``,
-       ``franka-0.15.0``, ``franka-0.18.0``, ``franka-0.19.0``
-     - Legacy ROS backend with that libfranka version; see
-       `Legacy ROS Backend (Optional)`_.
+
+The image does not include the legacy ROS backend, which needs Ubuntu 20.04; see
+`Legacy ROS Backend (Optional)`_.
 
 Start the container with access to the GPU, robot, camera, and SpaceMouse:
 
@@ -729,8 +728,9 @@ RLinf can also drive the arm through ROS Noetic, ``franka_ros``, and
 ``serl_franka_controllers`` instead of Franky. Use this backend for an existing
 ROS deployment, or when your firmware needs a libfranka version other than
 0.15.0 or 0.19.0. It requires Ubuntu 20.04, because ROS Noetic does not support
-later releases. Everything else on this page applies once the backend is
-installed and selected.
+later releases, so the Docker image does not include it and you install it
+natively. Everything else on this page applies once the backend is installed
+and selected.
 
 Install the ROS Environment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -791,10 +791,6 @@ controller package path inside the catkin workspace.
    and `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_
    guides.
 
-In the Docker image, run ``source switch_env franka-<version>`` with the
-libfranka version you need, for example ``source switch_env franka-0.15.0``,
-instead of installing.
-
 Select the Backend and Real-Time Mode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -814,8 +810,7 @@ installed value at every launch; the default ``enforce`` refuses a kernel
 without PREEMPT_RT. To change it, re-run the installer with
 ``FRANKA_REALTIME_CONFIG=ignore`` or ``enforce``; no rebuild is needed. A
 ``realtime_config`` key in a ``franka_ros`` hardware config raises an error
-that points to this variable. The Docker image's ROS environments keep
-``enforce``, so run them on a host with a real-time kernel.
+that points to this variable.
 
 The controller check tool selects the backend with a flag:
 
@@ -833,7 +828,7 @@ and Ray workers inherit that environment.
 
 .. code:: bash
 
-   source franka-ros/bin/activate  # In Docker: source switch_env franka-0.15.0
+   source franka-ros/bin/activate
    ray stop
    export RLINF_NODE_RANK=0
    ray start --head
@@ -883,8 +878,7 @@ Troubleshooting
 - ``Running kernel does not have realtime capabilities``: boot the real-time
   kernel, or reinstall with ``FRANKA_REALTIME_CONFIG=ignore``.
 - An incompatible libfranka version error: reinstall with the
-  ``LIBFRANKA_VERSION`` that the compatibility table lists for your firmware,
-  or select the matching ``franka-<version>`` environment in Docker.
+  ``LIBFRANKA_VERSION`` that the compatibility table lists for your firmware.
 - The arm never reports ready: check that FCI is active in Franka Desk, then
   run ``rostopic echo -n 1 /franka_state_controller/franka_states`` in the
   activated environment while the controller is up; it should print one state

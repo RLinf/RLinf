@@ -251,7 +251,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 使用 Docker 镜像
 ~~~~~~~~~~~~~~~~~~~~
 
-除本地安装外，也可以直接运行 ``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像。该镜像基于 CUDA 12.8 和 Ubuntu 20.04 构建，环境中的 PyTorch 为 CUDA 版本，因此在单机方式的 GPU 主机上，一个容器即可同时运行 actor、rollout 和机器人控制。宿主机仍需安装 570 及以上版本的 NVIDIA 驱动，以及 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
+除本地安装外，也可以直接运行 ``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像。该镜像基于 CUDA 12.8 和 Ubuntu 22.04 构建，环境中的 PyTorch 为 CUDA 版本，因此在单机方式的 GPU 主机上，一个容器即可同时运行 actor、rollout 和机器人控制。宿主机仍需安装 570 及以上版本的 NVIDIA 驱动，以及 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
 
 .. list-table::
    :header-rows: 1
@@ -263,8 +263,8 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
      - Franky 后端，内置 libfranka 0.19.0，默认激活。
    * - ``franka-dexhand``
      - Franky 后端及灵巧手依赖。
-   * - ``franka-0.10.0``、``franka-0.13.3``、``franka-0.14.1``、``franka-0.15.0``、``franka-0.18.0``、``franka-0.19.0``
-     - 使用对应 libfranka 版本的旧版 ROS 后端，见 `旧版 ROS 后端（可选）`_。
+
+旧版 ROS 后端需要 Ubuntu 20.04，因此镜像中不包含该后端，见 `旧版 ROS 后端（可选）`_。
 
 启动容器时授予访问 GPU、机械臂、相机和 SpaceMouse 的权限：
 
@@ -532,7 +532,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 旧版 ROS 后端（可选）
 ---------------------
 
-除 Franky 外，RLinf 也可以通过 ROS Noetic、``franka_ros`` 和 ``serl_franka_controllers`` 控制机械臂。已有 ROS 部署，或者固件需要 0.15.0、0.19.0 以外的 libfranka 版本时，可以使用这一后端。ROS Noetic 只支持 Ubuntu 20.04，因此该后端也要求 Ubuntu 20.04。安装并选定后端后，本页其余步骤保持不变。
+除 Franky 外，RLinf 也可以通过 ROS Noetic、``franka_ros`` 和 ``serl_franka_controllers`` 控制机械臂。已有 ROS 部署，或者固件需要 0.15.0、0.19.0 以外的 libfranka 版本时，可以使用这一后端。ROS Noetic 只支持 Ubuntu 20.04，因此该后端也要求 Ubuntu 20.04，Docker 镜像中不包含该后端，需要在主机上本地安装。安装并选定后端后，本页其余步骤保持不变。
 
 安装 ROS 环境
 ~~~~~~~~~~~~~
@@ -578,8 +578,6 @@ ROS 环境读取以下环境变量：
 
    设置 ``SKIP_ROS=1`` 后，ROS Noetic、libfranka、``franka_ros`` 和 ``serl_franka_controllers`` 需要自行安装。每次执行 ``ray start`` 之前，都要在该终端中 source ``/opt/ros/noetic/setup.bash`` 和 catkin 工作区的 ``devel/setup.bash``，并确保 libfranka 位于 ``LD_LIBRARY_PATH`` 中，因为 Ray worker 会继承启动 Ray 的终端环境。手动安装请参考 `ROS Noetic <https://wiki.ros.org/noetic/Installation/Ubuntu>`_、`libfranka <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ 和 `serl_franka_controllers <https://github.com/rail-berkeley/serl_franka_controllers>`_ 的安装说明。
 
-使用 Docker 镜像时无需安装，执行 ``source switch_env franka-<version>`` 选择所需的 libfranka 版本即可，例如 ``source switch_env franka-0.15.0``。
-
 选择后端与实时模式
 ~~~~~~~~~~~~~~~~~~
 
@@ -593,7 +591,7 @@ ROS 环境读取以下环境变量：
        camera_serials: ["CAMERA_SERIAL"]
        backend: franka_ros
 
-ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不从硬件配置读取。``franka_control`` 每次启动时读取安装写入的值；默认的 ``enforce`` 会拒绝非 PREEMPT_RT 内核。若要修改，用 ``FRANKA_REALTIME_CONFIG=ignore`` 或 ``enforce`` 重新运行安装脚本即可，无需重新编译。在 ``franka_ros`` 硬件配置中写入 ``realtime_config`` 会直接报错，错误信息会提示改用这个变量。Docker 镜像中的 ROS 环境保持 ``enforce``，因此宿主机需要使用实时内核。
+ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不从硬件配置读取。``franka_control`` 每次启动时读取安装写入的值；默认的 ``enforce`` 会拒绝非 PREEMPT_RT 内核。若要修改，用 ``FRANKA_REALTIME_CONFIG=ignore`` 或 ``enforce`` 重新运行安装脚本即可，无需重新编译。在 ``franka_ros`` 硬件配置中写入 ``realtime_config`` 会直接报错，错误信息会提示改用这个变量。
 
 控制器检查工具通过参数选择后端：
 
@@ -608,7 +606,7 @@ ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不
 
 .. code:: bash
 
-   source franka-ros/bin/activate  # Docker 中执行：source switch_env franka-0.15.0
+   source franka-ros/bin/activate
    ray stop
    export RLINF_NODE_RANK=0
    ray start --head
@@ -640,7 +638,7 @@ ROS 不需要手动启动。机械臂连接时，RLinf 会依次：
 ^^^^^^^^^^
 
 - 出现 ``Running kernel does not have realtime capabilities``：启动实时内核，或用 ``FRANKA_REALTIME_CONFIG=ignore`` 重新安装。
-- 出现 libfranka 版本不兼容的错误：按兼容性表中与固件对应的 ``LIBFRANKA_VERSION`` 重新安装，或在 Docker 中选择对应的 ``franka-<version>`` 环境。
+- 出现 libfranka 版本不兼容的错误：按兼容性表中与固件对应的 ``LIBFRANKA_VERSION`` 重新安装。
 - 机械臂一直没有就绪：确认 Franka Desk 中已激活 FCI，然后在控制器运行期间，于已激活的环境中执行 ``rostopic echo -n 1 /franka_state_controller/franka_states``，正常时会输出一条状态消息。
 - 运行崩溃后可能残留仍占用机械臂的 ``roslaunch`` 进程。重新启动前先停止 Ray，并执行 ``pkill -f roslaunch``。
 
