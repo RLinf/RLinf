@@ -968,24 +968,6 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                         done_by_trunc=done_by_trunc,
                     )
 
-        if valid_mask is not None:
-            for env_idx in range(num_envs):
-                if valid_lengths[env_idx] != 0:
-                    continue
-                done_by_term = bool(episode_terminations[env_idx])
-                done_by_trunc = bool(episode_truncations[env_idx])
-                if not (done_by_term or done_by_trunc):
-                    continue
-                self._update_episode_success(
-                    env_idx,
-                    self._completion_info_for_env(infos_list, env_idx),
-                )
-                self._maybe_flush_env(
-                    env_idx,
-                    done_by_term=done_by_term,
-                    done_by_trunc=done_by_trunc,
-                )
-
     def drain_episodes(self) -> list[list[dict[str, Any]]]:
         episodes = self.episodes
         self.episodes = []
