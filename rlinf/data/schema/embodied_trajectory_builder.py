@@ -519,20 +519,6 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
         return bool(flags)
 
     @classmethod
-    def _normalize_valid_action_mask(
-        cls,
-        valid_action_mask,
-        *,
-        num_envs: int,
-        chunk_size: int,
-    ) -> np.ndarray | None:
-        if valid_action_mask is None:
-            return None
-        mask = cls._to_numpy(valid_action_mask)
-        mask = np.asarray(mask, dtype=bool)
-        return mask
-
-    @classmethod
     def _flags_by_env(cls, flags, num_envs: int) -> np.ndarray:
         values = cls._to_numpy(flags)
         if values.ndim == 0:
@@ -817,10 +803,10 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                 action_dim=action_dim,
             )
 
-        valid_mask = self._normalize_valid_action_mask(
-            valid_action_mask,
-            num_envs=num_envs,
-            chunk_size=chunk_size,
+        valid_mask = (
+            None
+            if valid_action_mask is None
+            else np.asarray(self._to_numpy(valid_action_mask), dtype=bool)
         )
         if valid_mask is not None:
             valid_lengths = valid_mask.sum(axis=1)
