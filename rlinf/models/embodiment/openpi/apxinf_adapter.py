@@ -373,6 +373,7 @@ class OpenPIApxInfAdapter:
     def _load_model(self):
         try:
             from apxinf_robo import load_bare_model
+            from apxinf_robo.engine import resolve_tactics
         except ImportError as error:
             raise ImportError(
                 "apxinf_robo is not importable in the rollout worker. Install it "
@@ -401,9 +402,20 @@ class OpenPIApxInfAdapter:
             kwargs["calibration"] = str(calibration)
         if self.apxinf_cfg.get("num_views", None) is not None:
             kwargs["num_views"] = int(self.apxinf_cfg.get("num_views"))
-        # Leave tactics out unless configured, so load_bare_model selects the
-        # tuned GEMM tactics itself.
         tactics = self.apxinf_cfg.get("tactics", None)
+        if tactics is None and weights != model_dir:
+            # An explicit weights file: resolve from the checkpoint directory,
+            # which is where a checkpoint-local tactics.json lives. Leaving it
+            # to load_bare_model would key the lookup on the file path and
+            # silently fall back to the hardware default.
+            tactics = resolve_tactics(
+                self.device,
+                str(self.apxinf_cfg.get("precision", "bf16")),
+                model_dir=model_dir,
+                allow_missing=True,
+            )
+        # Otherwise leave it out, so load_bare_model selects the tuned GEMM
+        # tactics itself.
         if tactics is not None:
             kwargs["tactics"] = str(tactics)
 

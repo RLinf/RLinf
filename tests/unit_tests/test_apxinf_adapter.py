@@ -230,7 +230,7 @@ def test_close_delegates_to_model():
     assert model.closed
 
 
-def _stub_apxinf_robo(monkeypatch):
+def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
     """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
     seen = {}
 
@@ -239,9 +239,17 @@ def _stub_apxinf_robo(monkeypatch):
         seen["kwargs"] = kwargs
         return _FakeModel()
 
+    def resolve_tactics(device, precision, **kwargs):
+        seen["resolve"] = {"device": device, "precision": precision, **kwargs}
+        return resolved_tactics
+
     module = types.ModuleType("apxinf_robo")
     module.load_bare_model = load_bare_model
+    engine = types.ModuleType("apxinf_robo.engine")
+    engine.resolve_tactics = resolve_tactics
+    module.engine = engine
     monkeypatch.setitem(sys.modules, "apxinf_robo", module)
+    monkeypatch.setitem(sys.modules, "apxinf_robo.engine", engine)
     return seen
 
 
@@ -260,6 +268,7 @@ def test_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
     assert kwargs["sampling_seed"] == 0
     # Left out so load_bare_model selects the tuned tactics.
     assert "tactics" not in kwargs
+    assert "resolve" not in seen
 
 
 def test_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
@@ -270,6 +279,24 @@ def test_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
     )
 
     assert seen["kwargs"]["tactics"] == "/mine.json"
+    assert "resolve" not in seen
+
+
+def test_an_explicit_weights_file_resolves_tactics_from_the_checkpoint_dir(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch, resolved_tactics="/ckpt/tactics.json")
+
+    OpenPIApxInfAdapter(
+        _model_cfg(checkpoint="/ckpt/model-00001-of-00002.safetensors"),
+        "cpu",
+        processor=_FakeProcessor(),
+    )
+
+    # The weights file goes to the loader, the directory to the tactics lookup:
+    # keying the lookup on the file would miss a checkpoint-local tactics.json.
+    assert seen["path"] == pathlib.Path("/ckpt/model-00001-of-00002.safetensors")
+    assert seen["resolve"]["model_dir"] == pathlib.Path("/not/loaded/in/unit/test")
+    assert seen["resolve"]["precision"] == "bf16"
+    assert seen["kwargs"]["tactics"] == "/ckpt/tactics.json"
 
 
 def test_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
