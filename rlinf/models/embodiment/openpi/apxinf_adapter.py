@@ -18,12 +18,7 @@ RLinf owns the complete OpenPI input/output transform chain. ApxInf receives
 only resized uint8 RGB views, token ids and optional flow noise through its L1
 ``Model.infer_rgb`` API, and returns normalized model-space actions.
 
-The engine handle is built through ``apxinf_robo.load_bare_model`` rather than
-``apxinf_py.Model.load`` directly: that wrapper is the single place any framework
-should enter ApxInf's L1 seam, and it resolves the tuned GEMM tactics that keep
-the bare handle numerically equal to ApxInf's own policy path (a bare handle
-loaded without them diverges on byte-identical inputs). Pinning a new engine
-build is then a change to APXinf-robo, not to this file.
+The engine handle comes from ``apxinf_robo.load_bare_model``.
 """
 
 from __future__ import annotations
@@ -380,19 +375,17 @@ class OpenPIApxInfAdapter:
             from apxinf_robo import load_bare_model
         except ImportError as error:
             raise ImportError(
-                "apxinf_robo is not importable in the rollout worker. It is this "
-                "backend's entry point to the ApxInf L1 interface; install it, "
-                "and the official infinigence/ApxInf CUDA Python binding it "
-                "wraps, from https://github.com/RLinf/APXinf-robo."
+                "apxinf_robo is not importable in the rollout worker. Install it "
+                "and the apxinf_py CUDA binding: "
+                "https://github.com/RLinf/APXinf-robo"
             ) from error
 
         model_path = self.model_cfg.get("model_path")
         if not model_path:
             raise ValueError("rollout.model.model_path is required for ApxInf")
         model_dir = pathlib.Path(str(model_path))
-        # The checkpoint directory, not a weights file: the engine's loader
-        # resolves model.safetensors.index.json ahead of model.safetensors, and
-        # load_bare_model looks in the same directory for a local tactics.json.
+        # Pass the checkpoint directory, not a weights file: the loader resolves
+        # the safetensors index itself, and tactics are keyed on the directory.
         checkpoint = self.apxinf_cfg.get("checkpoint", None)
         weights = pathlib.Path(str(checkpoint)) if checkpoint else model_dir
 
@@ -408,10 +401,8 @@ class OpenPIApxInfAdapter:
             kwargs["calibration"] = str(calibration)
         if self.apxinf_cfg.get("num_views", None) is not None:
             kwargs["num_views"] = int(self.apxinf_cfg.get("num_views"))
-        # Otherwise load_bare_model selects the tuned GEMM tactics itself, which
-        # is the reason to go through it: a bare handle loaded without them
-        # returns different actions from ApxInf's own policy path on
-        # byte-identical inputs, and both answers are finite and plausible.
+        # Leave tactics out unless configured, so load_bare_model selects the
+        # tuned GEMM tactics itself.
         tactics = self.apxinf_cfg.get("tactics", None)
         if tactics is not None:
             kwargs["tactics"] = str(tactics)

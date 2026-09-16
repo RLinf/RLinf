@@ -231,12 +231,7 @@ def test_close_delegates_to_model():
 
 
 def _stub_apxinf_robo(monkeypatch):
-    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for.
-
-    The real one needs a CUDA binding and a checkpoint, so what is checked here
-    is the contract: which path is handed over, and that the tuned tactics are
-    left to ``load_bare_model`` rather than resolved by hand.
-    """
+    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
     seen = {}
 
     def load_bare_model(path, **kwargs):
@@ -263,7 +258,7 @@ def test_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
     assert kwargs["action_horizon"] == 10
     assert kwargs["num_flow_steps"] == 5
     assert kwargs["sampling_seed"] == 0
-    # Left out entirely so load_bare_model applies its own tuned selection.
+    # Left out so load_bare_model selects the tuned tactics.
     assert "tactics" not in kwargs
 
 
