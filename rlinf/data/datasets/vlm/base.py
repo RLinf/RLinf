@@ -43,9 +43,11 @@ class VLMBaseDataset(Dataset):
         data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
+        eval_dataset: bool = False,
     ) -> None:
         super().__init__()
         self.cfg = config
+        self.eval_dataset = eval_dataset
         raw_paths = [data_paths] if isinstance(data_paths, str) else list(data_paths)
         # Expand directories into file lists recursively (json/jsonl/parquet)
         self.data_paths = self._expand_data_paths(raw_paths)
