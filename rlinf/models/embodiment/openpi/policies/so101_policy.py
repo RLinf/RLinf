@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenPI input and output transforms for the SO-101 joint policy."""
+"""SO-101 input/output transforms used by the shared OpenPI policy.
+
+This module follows the existing ``policies/`` convention: it adapts an
+environment's observations and actions at the OpenPI policy boundary. It does
+not define an SO-101 model; ``pi05_so101`` uses the shared PI05 implementation.
+"""
 
 from __future__ import annotations
 
