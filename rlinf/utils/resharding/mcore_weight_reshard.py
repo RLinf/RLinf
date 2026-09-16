@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import functools
 import inspect
 
 import torch
@@ -25,9 +26,12 @@ from megatron.training.training import unwrap_model
 from .reshard_config import ReshardConfig
 from .utils import all_gather_tensor, pp_merge_params, reshard_tensor_by_rank
 
-_LAYER_OFFSET_HAS_VP_STAGE = (
-    "vp_stage" in inspect.signature(get_transformer_layer_offset).parameters
-)
+
+@functools.cache
+def _layer_offset_has_vp_stage():
+    # Probed on first use rather than at import: the docs build mocks megatron,
+    # and a mocked function has no signature to inspect.
+    return "vp_stage" in inspect.signature(get_transformer_layer_offset).parameters
 
 
 def _layer_offset(config, vp_stage):
@@ -37,7 +41,7 @@ def _layer_offset(config, vp_stage):
     read the virtual pipeline rank from global parallel state instead, so they
     only report the offset of the chunk that is currently active.
     """
-    if _LAYER_OFFSET_HAS_VP_STAGE:
+    if _layer_offset_has_vp_stage():
         return get_transformer_layer_offset(config, vp_stage=vp_stage)
     return get_transformer_layer_offset(config)
 
@@ -46,7 +50,7 @@ class MegatronCoreWeightReshard:
     def __init__(self, config: ReshardConfig):
         self.config = config
         self.bucket_capacity = self.config.bucket_capacity
-        if not _LAYER_OFFSET_HAS_VP_STAGE:
+        if not _layer_offset_has_vp_stage():
             vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
             assert vp_size is None or vp_size == 1, (
                 f"virtual pipeline size {vp_size} requires megatron-core >= 0.15; "
