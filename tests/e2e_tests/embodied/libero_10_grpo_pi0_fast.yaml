@@ -5,6 +5,7 @@ defaults:
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:
@@ -32,7 +33,7 @@ runner:
   max_steps: 1
   only_eval: False
   val_check_interval: -1
-  save_interval: 1
+  save_interval: -1
   resume_dir: null
   ckpt_path: null
 
@@ -121,10 +122,13 @@ actor:
   enable_offload: False
 
   model:
+    model_path: ${oc.env:PI0FAST_MODEL_PATH,/workspace/dataset/pi0_fast/pi0fast-libero}
     is_lora: True
     lora_rank: 2
     lora_target_scope: "all_linear"
     pi0_fast:
+      text_tokenizer_name: ${oc.env:PI0FAST_TEXT_TOKENIZER,/workspace/dataset/pi0_fast/paligemma-3b-pt-224}
+      action_tokenizer_name: ${oc.env:PI0FAST_ACTION_TOKENIZER,/workspace/dataset/pi0_fast/tokenizer-lib-mean}
       gradient_checkpointing: True
 
   optim:

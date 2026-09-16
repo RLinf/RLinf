@@ -88,9 +88,15 @@ Then update these fields in
 .. code:: yaml
 
    model_path: "/path/to/pi0fast-libero"
+   num_action_chunks: 10
+   action_dim: 7
    pi0_fast:
      text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
      action_tokenizer_name: "/path/to/tokenizer-lib-mean"
+
+``num_action_chunks`` and ``action_dim`` must match the checkpoint
+(``n_action_steps`` and the action feature dim). A mismatch fails at load
+time rather than silently truncating FAST DCT reconstruction.
 
 GRPO fine-tuning
 ----------------
@@ -134,7 +140,8 @@ Baseline evaluation
 -------------------
 
 The evaluation config uses greedy decoding, seed 0, ordered fixed LIBERO reset
-states, and 500 episodes:
+states, and 500 episodes. Train and eval share the same FAST sampler and
+detokenize path; eval does not collect replay log-probabilities.
 
 .. code:: bash
 
@@ -163,9 +170,10 @@ that marker. Every token from one trajectory shares its trajectory-level GRPO
 advantage. PPO clipping is applied per token before the masked token losses are
 aggregated.
 
-Malformed sequences are not resampled. They execute a safe zero action, receive
-the normal environment failure feedback, and remain in the policy objective.
-This keeps sampling on-policy.
+Malformed sequences are not resampled. They execute a safe zero action after
+the action postprocessor, receive the normal environment failure feedback, and
+remain in the policy objective. This keeps sampling on-policy and is shared by
+train and eval.
 
 Monitoring
 ----------

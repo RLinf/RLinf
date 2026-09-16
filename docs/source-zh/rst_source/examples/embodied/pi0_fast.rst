@@ -80,14 +80,20 @@ Attention；如需安装，可去掉 ``--no-flash-attn``。
       --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
       --local-dir /path/to/tokenizer-lib-mean
 
-然后修改 ``examples/embodiment/config/model/pi0_fast.yaml`` 中的三个字段：
+然后修改 ``examples/embodiment/config/model/pi0_fast.yaml`` 中的字段：
 
 .. code:: yaml
 
    model_path: "/path/to/pi0fast-libero"
+   num_action_chunks: 10
+   action_dim: 7
    pi0_fast:
      text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
      action_tokenizer_name: "/path/to/tokenizer-lib-mean"
+
+``num_action_chunks`` 和 ``action_dim`` 必须与 checkpoint 的 ``n_action_steps``
+以及 action feature 维度一致。不一致时会在加载阶段直接报错，而不会静默截断 FAST
+DCT 重建。
 
 GRPO 微调
 ------------------------
@@ -130,7 +136,8 @@ Baseline 评测
 ------------------------
 
 评测配置采用 greedy decoding、seed 0、LIBERO 有序固定 reset state，共运行 500 个
-episode：
+episode。训练和评测共用同一套 FAST 采样与 detokenize 路径；评测不收集 replay
+log-probability。
 
 .. code:: bash
 
@@ -157,8 +164,9 @@ PI0-FAST 原生生成完整动作字符串，RLinf 不预先注入 ``Action:`` �
 标记之后的 token。同一条轨迹的所有 token 共享轨迹级 GRPO advantage；PPO 对每个
 token 独立 clipping，之后再按 mask 聚合 token loss。
 
-非法序列不会重采样，而是执行安全零动作，由环境正常返回失败反馈，并继续参与策略
-目标。这样可以保持 on-policy 采样。
+非法序列不会重采样，而是在 action postprocessor 之后执行安全零动作，由环境正常
+返回失败反馈，并继续参与策略目标。这样可以保持 on-policy 采样，且训练与评测行为
+一致。
 
 监控指标
 --------------------

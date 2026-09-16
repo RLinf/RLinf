@@ -6,6 +6,7 @@ model_path: "/path/to/pi0fast-libero"
 precision: "bf16"
 load_to_device: True
 
+# Must match the checkpoint's n_action_steps and action feature dim.
 num_action_chunks: 10
 action_dim: 7
 
