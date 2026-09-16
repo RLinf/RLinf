@@ -103,7 +103,7 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-libero
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-libero
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-libero
 
    # 在容器内切换到 MolmoAct2 虚拟环境：
    source switch_env molmoact2

@@ -15,12 +15,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import torch
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.placement_types import Replicate
 
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.utils import (
     materialize_tensor,
     normalize_device,
@@ -774,6 +776,40 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         )
 
 
+def _dtensor_requires_collective(value: torch.Tensor | DTensor) -> bool:
+    """Return whether ``full_tensor()`` would launch a process-group collective.
+
+    Replicated DTensors and dense tensors stay local. Any other placement
+    (shard or partial) all-gathers or reduces.
+    """
+    if not isinstance(value, DTensor):
+        return False
+    return not all(isinstance(placement, Replicate) for placement in value.placements)
+
+
+def _init_sync_requires_sender_lockstep(
+    values: Iterable[torch.Tensor | DTensor],
+) -> bool:
+    """Return whether init-sync must keep sender ranks in lockstep between buckets.
+
+    Needed only when more than one rank will call ``full_tensor()`` on a sharded
+    or partial DTensor. A default-group NCCL, MCCL, or HCCL barrier cannot
+    provide that lockstep: those backends implement barrier as a GPU all-reduce,
+    so non-source ranks would launch it while the actor-to-rollout broadcast is
+    still in flight. Callers that need lockstep wait on a CPU/Gloo group after
+    the source rank drains the broadcast.
+
+    ``values`` must cover every tensor that will later be materialized, not just
+    the init-sync prefixes. The snapshot build after ``_sync_init_weights``
+    still calls ``full_tensor()`` on the remaining sharded parameters.
+    """
+    if not torch.distributed.is_initialized():
+        return False
+    if torch.distributed.get_world_size() <= 1:
+        return False
+    return any(_dtensor_requires_collective(value) for value in values)
+
+
 class PatchWeightSyncer(WeightSyncer):
     def __init__(
         self,
@@ -791,6 +827,7 @@ class PatchWeightSyncer(WeightSyncer):
         self.ordered_keys: list[str] | None = None
         self.patch_builder: PatchBuilder | None = None
         self._active_sender = True
+        self._sender_cpu_group = None
         self.delta_encoding = delta_encoding
         self.transport_device = normalize_device(transport_device)
         self.snapshot_device = normalize_device(snapshot_device)
@@ -835,6 +872,19 @@ class PatchWeightSyncer(WeightSyncer):
 
         return selected_weights
 
+    def _ensure_sender_cpu_group(self) -> torch.distributed.ProcessGroup:
+        """Return a Gloo group for host-side sender lockstep.
+
+        Cached after the first call. ``new_group`` is a collective, so every
+        sender rank must enter this method together.
+        """
+        if self._sender_cpu_group is None:
+            self._sender_cpu_group = torch.distributed.new_group(
+                backend="gloo",
+                timeout=Cluster.get_collective_timeout(),
+            )
+        return self._sender_cpu_group
+
     async def _sync_init_weights(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
@@ -848,6 +898,9 @@ class PatchWeightSyncer(WeightSyncer):
                     f"Patch init sync sender key {key} does not exist on receiver"
                 )
 
+        lockstep = _init_sync_requires_sender_lockstep(state_dict.values())
+        cpu_group = self._ensure_sender_cpu_group() if lockstep else None
+
         for bucket in iter_named_tensor_buckets(
             selected_weights,
             0,
@@ -856,6 +909,18 @@ class PatchWeightSyncer(WeightSyncer):
             dtype_resolver=lambda key, _dtype: receiver_dtypes[key],
         ):
             await send(bucket)
+            if not lockstep:
+                continue
+            # `send` returns once the broadcast is enqueued. Drain it on the
+            # source rank before the Gloo wait so the next ``full_tensor()``
+            # (next bucket or the snapshot build after this loop) cannot
+            # overlap the actor-to-rollout broadcast.
+            if (
+                self._active_sender
+                and self.transport_device.type == Worker.torch_device_type
+            ):
+                Worker.torch_platform.current_stream().synchronize()
+            torch.distributed.barrier(group=cpu_group)
 
     @torch.no_grad()
     def _apply_init_weight_bucket(
