@@ -330,7 +330,7 @@ class RoboTwinEnv(gym.Env):
         infos_list = []
 
         raw_obs_list, step_reward, terminations, truncations, info_list = (
-            self.venv.per_step(chunk_actions)
+            self.venv.step_with_full_obs(chunk_actions)
         )
 
         obs_list = [self._extract_obs_image(raw_obs) for raw_obs in raw_obs_list]
