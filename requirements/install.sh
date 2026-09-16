@@ -2833,26 +2833,37 @@ install_xsquare_turtle2_env() {
 }
 
 install_robotwin_env() {
-    # Set TORCH_CUDA_ARCH_LIST based on the CUDA version
-    local cuda_mm cuda_major cuda_minor
-    cuda_mm=$(detect_cuda_major_minor) || {
-        echo "Could not detect CUDA version. Cannot build robotwin environment." >&2
-        exit 1
-    }
-    cuda_major="${cuda_mm%% *}"
-    cuda_minor="${cuda_mm##* }"
-    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-        # Include Blackwell support for CUDA 12.8+
-        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    # pytorch3d, warp-lang and curobo are CUDA-only, and TORCH_CUDA_ARCH_LIST exists solely
+    # for them. RoboTwin itself runs without all three once the task config selects
+    # planner_backend=mplib, so only require CUDA on platforms that can build them.
+    local build_curobo_stack=0
+    if [ "$PLATFORM" = "nvidia" ]; then
+        build_curobo_stack=1
+        local cuda_mm cuda_major cuda_minor
+        cuda_mm=$(detect_cuda_major_minor) || {
+            echo "Could not detect CUDA version. Cannot build robotwin environment." >&2
+            exit 1
+        }
+        cuda_major="${cuda_mm%% *}"
+        cuda_minor="${cuda_mm##* }"
+        if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+            # Include Blackwell support for CUDA 12.8+
+            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+        else
+            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+        fi
     else
-        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+        echo "[install.sh] ${PLATFORM}: skipping pytorch3d/warp-lang/curobo (CUDA-only)."
+        echo "[install.sh] Set planner_backend: mplib in the task config; curobo is unavailable."
     fi
 
     uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
 
-    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
-    uv pip install warp-lang==1.11.1
-    uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+    if [ "$build_curobo_stack" -eq 1 ]; then
+        uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
+        uv pip install warp-lang==1.11.1
+        uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+    fi
 
     # patch sapien and mplib for robotwin
     SAPIEN_LOCATION=$(uv pip show sapien | grep 'Location' | awk '{print $2}')/sapien
