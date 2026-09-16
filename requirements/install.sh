@@ -460,18 +460,45 @@ detect_nvidia_driver_max_cuda() {
     echo "$(( maj * 10 + min ))"
 }
 
+# Prints the newest cuXXX tag <= driver_num that publishes the given torch
+# version. Returns 1 when no index has the wheel, and 2 when an index cannot be
+# fetched, so a network failure never silently selects an older CUDA build.
 detect_nvidia_torch_cuda_tag() {
     local torch_ver="$1" index_base="$2" driver_num="$3"
-    local ver_re n listing
+    local ver_re n url listing http_code attempt
+    local listing_file
     ver_re=$(printf '%s' "$torch_ver" | sed 's/\./\\./g')
+    listing_file=$(mktemp)
     for n in 130 129 128 126 124 121 118; do
         [ "$n" -le "$driver_num" ] || continue
-        listing=$(curl -fsSL --max-time 60 "${index_base}/cu${n}/torch/" 2>/dev/null) || continue
+        url="${index_base}/cu${n}/torch/"
+        http_code=""
+        # curl on Ubuntu 20.04 lacks --retry-all-errors, so retry explicitly.
+        for attempt in 1 2 3 4; do
+            http_code=$(curl -sSL --max-time 60 -o "$listing_file" -w '%{http_code}' "$url" 2>/dev/null) || http_code="000"
+            case "$http_code" in
+                200|403|404) break ;;
+            esac
+            echo "[install.sh] Fetching ${url} failed (HTTP ${http_code}, attempt ${attempt}/4)." >&2
+            [ "$attempt" -lt 4 ] && sleep $(( attempt * 5 ))
+        done
+        case "$http_code" in
+            200) ;;
+            403|404) continue ;;
+            *)
+                echo "[install.sh] ERROR: could not fetch ${url}; refusing to fall back to an older CUDA build." >&2
+                rm -f "$listing_file"
+                return 2
+                ;;
+        esac
+        listing=$(cat "$listing_file")
         if grep -qE "torch-${ver_re}(%2B|\+)cu${n}-" <<< "$listing"; then
+            rm -f "$listing_file"
             echo "cu${n}"
             return 0
         fi
     done
+    rm -f "$listing_file"
     return 1
 }
 
@@ -532,6 +559,14 @@ configure_nvidia() {
         else
             _index_base="https://download.pytorch.org/whl"
         fi
+        local _tag_rc=1
+        if [ "$_cpu_only" -eq 0 ]; then
+            _tag_rc=0
+            _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num") || _tag_rc=$?
+            if [ "$_tag_rc" -eq 2 ]; then
+                exit 1
+            fi
+        fi
         if [ "$_cpu_only" -eq 1 ]; then
             PLATFORM_TORCH_STR=""
             PLATFORM_TORCH_INDEX="${_index_base}/cpu"
@@ -540,7 +575,7 @@ configure_nvidia() {
                 export UV_TORCH_BACKEND="cpu"
             fi
             echo "[install.sh] Routing torch ${_torch_ver} (cpu) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
-        elif _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num"); then
+        elif [ "$_tag_rc" -eq 0 ]; then
             PLATFORM_CUDA_TAG="$_cuda_tag"
             PLATFORM_TORCH_STR="+${_cuda_tag}"
             PLATFORM_TORCH_INDEX="${_index_base}/${_cuda_tag}"
