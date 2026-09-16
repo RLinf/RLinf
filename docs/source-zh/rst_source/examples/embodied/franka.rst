@@ -1,7 +1,7 @@
 Franka 真机强化学习
 ====================
 
-本页介绍如何使用 RLinf 在 Franka 机械臂上训练 CNN policy，从收集演示到 RLPD 在线训练。默认配置只用一台装有 NVIDIA GPU、运行 Ubuntu 20.04 或 22.04 的 x86-64 计算机。Franky 通过 libfranka 的 Python 绑定控制机械臂，不需要 ROS，同一台计算机还负责 rollout 和训练。你将先准备这台主机（检查固件、安装 NVIDIA 驱动和实时内核），再通过本地安装或 Docker 部署 RLinf，然后运行插孔示例。后面几节分别介绍独立控制节点、面向已有部署的旧版 ROS 后端，以及其他 Franka 工作流。
+本页介绍如何使用 RLinf 在 Franka 机械臂上训练 CNN policy，从收集演示到 RLPD 在线训练。默认配置只用一台装有 NVIDIA GPU、运行 Ubuntu 20.04 或 22.04 的 x86-64 计算机。Franky 通过 libfranka 的 Python 绑定控制机械臂，不需要 ROS，同一台计算机还负责 rollout 和训练。你将先准备这台主机（检查固件、安装实时内核并为其配置 GPU 驱动），再通过本地安装或 Docker 部署 RLinf，然后运行插孔示例。后面几节分别介绍独立控制节点、面向已有部署的旧版 ROS 后端，以及其他 Franka 工作流。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center
@@ -96,7 +96,7 @@ Policy 从相机图像和机器人状态中学习，成功演示用于提供初�
 准备机器人主机
 --------------
 
-安装 RLinf 之前，需要先在机器人主机上确定三件事：固件决定需要哪个 libfranka 版本，也决定能否使用 Franky；NVIDIA 驱动决定安装脚本能否选用 CUDA 版 PyTorch；内核决定 libfranka 的 1 kHz 控制循环能否实时运行。请在主机上依次完成以下步骤。
+安装 RLinf 之前，先检查固件并选择兼容的 libfranka 版本，再为机械臂的 1 kHz 控制循环准备内核。如果主机配有 GPU，请在运行 ``requirements/install.sh`` 前确认 ``nvidia-smi`` 在该内核下正常工作，否则安装脚本会选择仅 CPU 的 PyTorch。
 
 检查固件并选择 libfranka 版本
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -114,38 +114,6 @@ Policy 从相机图像和机器人状态中学习，成功演示用于提供初�
 
 RLinf 已测试过两种组合：固件 5.9.2 搭配 libfranka 0.19.0，关闭实时检查后运行在标准内核上；固件 5.7.2 至 5.9.0 搭配 libfranka 0.15.0，运行在实时内核上。不要仅为匹配示例而修改机器人固件。
 
-安装 NVIDIA 驱动
-~~~~~~~~~~~~~~~~
-
-驱动必须在 RLinf 之前安装。``requirements/install.sh`` 会检测驱动，并安装与之匹配的 CUDA 版 PyTorch 2.11：CUDA 12.6 wheel 需要 560 及以上的驱动，CUDA 12.8 wheel 需要 570 及以上。检测不到驱动时，安装脚本会退回到仅 CPU 的 PyTorch，训练将无法使用 GPU。
-
-如果 ``nvidia-smi`` 已显示 570 或更新的驱动，保留现有驱动并跳过本步骤。否则，添加 NVIDIA 的 CUDA 软件源并从中安装驱动。下面的命令适用于 Ubuntu 20.04；在 Ubuntu 22.04 上，将 URL 中的 ``ubuntu2004`` 换成 ``ubuntu2204``：
-
-.. code:: bash
-
-   sudo apt-get install -y build-essential dkms wget "linux-headers-$(uname -r)"
-   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
-   sudo dpkg -i cuda-keyring_1.1-1_all.deb
-   sudo apt-get update
-   sudo apt-get install -y cuda-drivers-575
-   sudo reboot
-
-这些命令依次完成：
-
-1. 安装编译驱动内核模块所需的编译器、DKMS 和内核头文件。
-2. 通过 ``cuda-keyring`` 注册 NVIDIA 的 APT 软件源和签名密钥。
-3. 安装支持 CUDA 12.9 的 575 驱动，并为当前内核编译内核模块。
-
-如果 Secure Boot 要求注册 Machine Owner Key（MOK），请在重启时完成注册，否则模块无法加载。重新登录后，``nvidia-smi`` 应能列出 GPU。不要将该软件源与 ``.run`` 文件或其他软件源安装的驱动混用；如有旧驱动，先按 NVIDIA 的 `驱动安装指南 <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_ 卸载。
-
-``cuda-drivers-575`` 编译的是 NVIDIA 专有内核模块。GeForce RTX 50 系列等必须使用开源内核模块的 GPU，需要改用开源驱动。Ubuntu 20.04 软件源不提供开源内核模块的软件包，因此在 20.04 上需要从 NVIDIA `驱动下载 <https://www.nvidia.com/en-us/drivers/>`_ 页面获取驱动；在 22.04 上，按驱动安装指南选择开源内核模块。
-
-本示例不需要 CUDA toolkit，PyTorch wheel 已自带 CUDA 运行时。只有需要编译 CUDA 扩展时才安装 toolkit，并使用仅包含 toolkit 的安装包，避免替换驱动：
-
-.. code:: bash
-
-   sudo apt-get install -y cuda-toolkit-12-8
-
 安装实时内核（推荐）
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -160,21 +128,28 @@ libfranka 每毫秒向机械臂发送一次指令。PREEMPT_RT 内核能在 roll
 
 第二条命令必须输出 ``1``，否则请先从 GRUB 的高级选项中选择实时内核。
 
-在实时内核上使用 NVIDIA 驱动
+在实时内核上安装 NVIDIA 驱动
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-NVIDIA 内核模块也必须针对实时内核重新编译，而它的编译过程会拒绝 PREEMPT_RT 内核，除非设置 ``IGNORE_PREEMPT_RT_PRESENCE=1``。如果进入实时内核后 ``nvidia-smi`` 报错，带上该变量重新编译模块并重启：
+进入实时内核后，需要使用上一步安装的对应版本 ``linux-headers`` 编译 NVIDIA 内核模块。安装时传入 ``IGNORE_PREEMPT_RT_PRESENCE=1``，即可跳过驱动对 PREEMPT_RT 的编译检查。使用 APT 安装时，先按 NVIDIA 的 `驱动安装指南 <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_ 配置软件源并选择适合 GPU 和 Ubuntu 版本的软件包，再将下面的 ``DRIVER_PACKAGE`` 替换为实际包名：
+
+.. code:: bash
+
+   sudo env IGNORE_PREEMPT_RT_PRESENCE=1 apt-get install -y DRIVER_PACKAGE
+   sudo reboot
+
+如果已经通过 DKMS 安装过驱动，只需为当前实时内核编译模块：
 
 .. code:: bash
 
    sudo env IGNORE_PREEMPT_RT_PRESENCE=1 dkms autoinstall -k "$(uname -r)"
    sudo reboot
 
-如果在实时内核运行后才安装驱动，则将同一变量传给 APT：``sudo env IGNORE_PREEMPT_RT_PRESENCE=1 apt-get install -y cuda-drivers-575``。以后驱动或内核更新触发模块重新编译时，同样需要设置该变量。
+重启进入实时内核后，运行 ``nvidia-smi``，确认能列出 GPU，再安装 RLinf。以后驱动或内核更新触发模块重新编译时，同样需要传入该环境变量。
 
 .. warning::
 
-   NVIDIA 驱动未正式支持 PREEMPT_RT 内核。``IGNORE_PREEMPT_RT_PRESENCE=1`` 仅跳过编译时的检查，不保证兼容性。请在实时内核上确认 ``nvidia-smi`` 正常；GPU 不可用时不要开始训练，可切回原内核恢复系统。
+   ``IGNORE_PREEMPT_RT_PRESENCE=1`` 仅跳过编译检查；NVIDIA 未正式支持 PREEMPT_RT 内核。如果 GPU 不可用，可切回原内核恢复系统。
 
 授予实时调度权限
 ^^^^^^^^^^^^^^^^
@@ -276,7 +251,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 使用 Docker 镜像
 ~~~~~~~~~~~~~~~~~~~~
 
-除本地安装外，也可以直接运行 ``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像。该镜像基于 CUDA 12.8 和 Ubuntu 20.04 构建，环境中的 PyTorch 为 CUDA 版本，因此在单机方式的 GPU 主机上，一个容器即可同时运行 actor、rollout 和机器人控制。宿主机仍需按 `安装 NVIDIA 驱动`_ 安装 570 及以上版本的驱动，并安装 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
+除本地安装外，也可以直接运行 ``rlinf/rlinf:agentic-rlinf0.4-franka`` 镜像。该镜像基于 CUDA 12.8 和 Ubuntu 20.04 构建，环境中的 PyTorch 为 CUDA 版本，因此在单机方式的 GPU 主机上，一个容器即可同时运行 actor、rollout 和机器人控制。宿主机仍需安装 570 及以上版本的 NVIDIA 驱动，以及 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_。镜像包含以下环境，通过 ``source switch_env <name>`` 切换：
 
 .. list-table::
    :header-rows: 1

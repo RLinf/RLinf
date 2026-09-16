@@ -6,8 +6,8 @@ from demonstration collection to online RLPD training. The default setup uses
 one x86-64 computer with an NVIDIA GPU running Ubuntu 20.04 or 22.04. Franky
 controls the arm through Python bindings to libfranka, so ROS is not required,
 and the same computer runs rollout and training. You first prepare that host
-(firmware check, NVIDIA driver, real-time kernel), install RLinf natively or
-with Docker, then run the peg-insertion example. The later sections cover a
+(firmware check, real-time kernel, GPU driver for that kernel), install RLinf
+natively or with Docker, then run the peg-insertion example. The later sections cover a
 separate controller node, the legacy ROS backend for existing deployments, and
 other Franka workflows.
 
@@ -118,11 +118,10 @@ layout; the multi-node layout reuses its steps and is described in
 Prepare the Robot Host
 --------------------------
 
-Three decisions on the robot host come before any RLinf installation. The
-firmware decides which libfranka version you need, and with it whether Franky
-can drive the arm. The NVIDIA driver decides whether the installer picks a CUDA
-build of PyTorch. The kernel decides whether libfranka can run its 1 kHz
-control loop in real time. Complete these steps on the host in order.
+Before installing RLinf, check the firmware to choose a compatible libfranka
+version, then prepare the kernel for the arm's 1 kHz control loop. On a GPU
+host, make sure ``nvidia-smi`` works with that kernel before running
+``requirements/install.sh``; otherwise, the installer selects CPU-only PyTorch.
 
 Check the Firmware and Choose libfranka
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -149,58 +148,6 @@ kernel with the real-time check disabled, and with firmware 5.7.2 up to 5.9.0
 using libfranka 0.15.0 on a real-time kernel. Do not change robot firmware
 merely to match this example.
 
-Install the NVIDIA Driver
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Install the driver before RLinf. ``requirements/install.sh`` detects the driver
-and installs the matching CUDA build of PyTorch 2.11: CUDA 12.6 wheels need
-driver 560 or newer, and CUDA 12.8 wheels need 570 or newer. Without a driver,
-the installer falls back to CPU-only PyTorch, and training cannot use the GPU.
-
-If ``nvidia-smi`` already reports driver 570 or newer, keep it and skip this
-step. Otherwise, add NVIDIA's CUDA repository and install a driver from it. The
-commands below are for Ubuntu 20.04; on Ubuntu 22.04, replace ``ubuntu2004``
-with ``ubuntu2204`` in the URL:
-
-.. code:: bash
-
-   sudo apt-get install -y build-essential dkms wget "linux-headers-$(uname -r)"
-   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
-   sudo dpkg -i cuda-keyring_1.1-1_all.deb
-   sudo apt-get update
-   sudo apt-get install -y cuda-drivers-575
-   sudo reboot
-
-What this does:
-
-1. Installs the compiler, DKMS, and kernel headers that the driver's kernel
-   module is built with.
-2. Registers NVIDIA's APT repository and signing key through ``cuda-keyring``.
-3. Installs driver 575, which supports CUDA 12.9, and builds its kernel module
-   for the running kernel.
-
-If Secure Boot requests Machine Owner Key (MOK) enrollment, complete it during
-reboot so the module can load. After logging back in, ``nvidia-smi`` should
-list your GPU. Do not mix this repository with a driver installed from a
-``.run`` file or from another repository; remove the old driver first, as
-described in NVIDIA's
-`driver installation guide <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_.
-
-``cuda-drivers-575`` builds NVIDIA's proprietary kernel module. GPUs that
-require the open kernel module, such as the GeForce RTX 50 series, need an open
-driver instead. The Ubuntu 20.04 repository ships no open-module packages, so
-on 20.04 use a driver from NVIDIA's
-`driver downloads <https://www.nvidia.com/en-us/drivers/>`_ page; on 22.04,
-select the open module as described in the driver installation guide.
-
-The CUDA toolkit is not required for this example because PyTorch wheels
-bundle the CUDA runtime. Install it only if you need to compile CUDA
-extensions, using the toolkit-only package so the driver stays unchanged:
-
-.. code:: bash
-
-   sudo apt-get install -y cuda-toolkit-12-8
-
 Install a Real-Time Kernel (Recommended)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -225,31 +172,39 @@ GRUB fallback. After rebooting into the new kernel, check it:
 The second command must print ``1``. If it does not, select the real-time
 kernel under GRUB's advanced options before continuing.
 
-Use the NVIDIA Driver with the Real-Time Kernel
+Install the NVIDIA Driver on the Real-Time Kernel
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The NVIDIA kernel module must also be built for the real-time kernel, and its
-build refuses a PREEMPT_RT kernel unless ``IGNORE_PREEMPT_RT_PRESENCE=1`` is
-set. If ``nvidia-smi`` fails after booting the real-time kernel, rebuild the
-module with the override and reboot:
+After booting the real-time kernel, build the NVIDIA module against the
+matching ``linux-headers`` installed above. Pass
+``IGNORE_PREEMPT_RT_PRESENCE=1`` to the installation command to bypass the
+driver's PREEMPT_RT build check. For an APT installation, follow NVIDIA's
+`driver installation guide <https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/ubuntu.html>`_
+to configure the repository and choose a package for your GPU and Ubuntu
+version, then replace ``DRIVER_PACKAGE`` below with that package name:
+
+.. code:: bash
+
+   sudo env IGNORE_PREEMPT_RT_PRESENCE=1 apt-get install -y DRIVER_PACKAGE
+   sudo reboot
+
+If the driver is already installed through DKMS, build its module for the
+running real-time kernel instead:
 
 .. code:: bash
 
    sudo env IGNORE_PREEMPT_RT_PRESENCE=1 dkms autoinstall -k "$(uname -r)"
    sudo reboot
 
-If you install the driver after the real-time kernel is running, pass the same
-override to APT instead:
-``sudo env IGNORE_PREEMPT_RT_PRESENCE=1 apt-get install -y cuda-drivers-575``.
-Apply the override again whenever a driver or kernel update rebuilds the module.
+After rebooting into the real-time kernel, run ``nvidia-smi`` and confirm it
+lists the GPU before installing RLinf. Apply the same environment variable
+whenever a driver or kernel update rebuilds the module.
 
 .. warning::
 
-   NVIDIA drivers are not officially supported on PREEMPT_RT kernels.
-   ``IGNORE_PREEMPT_RT_PRESENCE=1`` bypasses the build-time check; it does not
-   guarantee compatibility. Check ``nvidia-smi`` on the real-time kernel and do
-   not start training if the GPU is unavailable. Boot the previous kernel to
-   recover.
+   ``IGNORE_PREEMPT_RT_PRESENCE=1`` only bypasses the build check; NVIDIA does
+   not officially support PREEMPT_RT kernels. If the GPU is unavailable, boot
+   the previous kernel to recover.
 
 Allow Real-Time Scheduling
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -386,7 +341,7 @@ Instead of installing natively, you can run the
 ``rlinf/rlinf:agentic-rlinf0.4-franka`` image. It is built on CUDA 12.8 and
 Ubuntu 20.04, and its environments carry CUDA PyTorch, so one container runs
 the actor, rollout, and robot control on the single-machine GPU host. The host
-still needs driver 570 or newer from `Install the NVIDIA Driver`_ and the
+still needs driver 570 or newer and the
 `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
 The image contains these environments, switched with
 ``source switch_env <name>``:
