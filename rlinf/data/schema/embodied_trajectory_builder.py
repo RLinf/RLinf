@@ -529,16 +529,7 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
         if valid_action_mask is None:
             return None
         mask = cls._to_numpy(valid_action_mask)
-        if mask.shape != (num_envs, chunk_size):
-            raise ValueError(
-                "valid_action_mask must have shape "
-                f"({num_envs}, {chunk_size}), got {mask.shape}."
-            )
         mask = np.asarray(mask, dtype=bool)
-        if chunk_size > 1 and np.any(mask[:, 1:] & ~mask[:, :-1]):
-            raise ValueError(
-                "valid_action_mask must be a contiguous prefix for every env."
-            )
         return mask
 
     @classmethod
@@ -546,10 +537,6 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
         values = cls._to_numpy(flags)
         if values.ndim == 0:
             return np.full(num_envs, bool(values), dtype=bool)
-        if values.shape[0] != num_envs:
-            raise ValueError(
-                f"Expected {num_envs} environment flags, got shape {values.shape}."
-            )
         return np.asarray(values, dtype=bool).reshape(num_envs, -1).any(axis=1)
 
     def _completion_info_for_env(
@@ -888,9 +875,6 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                     step_obs=step_obs,
                     step_info=step_info,
                     env_idx=env_idx,
-                    # Action-aligned inputs are already the pre-action states.
-                    # A post-action final_observation must not replace them or
-                    # seed the next episode; the next chunk carries reset obs.
                     env_done=env_done and not observations_are_action_aligned,
                 )
 

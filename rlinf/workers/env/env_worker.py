@@ -489,13 +489,6 @@ class EnvWorker(Worker):
         num_envs: int,
         chunk_size: int,
     ) -> torch.Tensor | None:
-        """Consume optional action-execution counts and build prefix masks.
-
-        Chunked environments may report ``executed_action_count`` when they
-        stop before executing the full action chunk. Keeping this conversion
-        here makes the protocol available to every simulator while leaving
-        environments that always execute the full chunk unchanged.
-        """
         if not isinstance(infos, dict):
             return None
 
@@ -520,22 +513,7 @@ class EnvWorker(Worker):
             ) from exc
 
         raw_counts = raw_counts.reshape(-1)
-        if raw_counts.numel() != num_envs:
-            raise RuntimeError(
-                "executed_action_count must contain one value per environment; "
-                f"expected {num_envs}, got {raw_counts.numel()}."
-            )
-        if raw_counts.is_floating_point() and not torch.equal(
-            raw_counts, raw_counts.round()
-        ):
-            raise RuntimeError("executed_action_count values must be integers.")
-
         counts = raw_counts.to(dtype=torch.long)
-        if ((counts < 0) | (counts > chunk_size)).any():
-            raise RuntimeError(
-                "executed_action_count values must be in "
-                f"[0, {chunk_size}], got {counts.tolist()}."
-            )
         action_indices = torch.arange(chunk_size, dtype=torch.long).unsqueeze(0)
         return action_indices < counts.unsqueeze(1)
 

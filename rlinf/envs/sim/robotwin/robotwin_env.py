@@ -332,11 +332,6 @@ class RoboTwinEnv(gym.Env):
         raw_obs_list, step_reward, terminations, truncations, info_list = (
             self.venv.per_step(chunk_actions)
         )
-        if len(raw_obs_list) != chunk_step:
-            raise RuntimeError(
-                f"RoboTwin returned {len(raw_obs_list)} observations for "
-                f"an action chunk of length {chunk_step}."
-            )
 
         obs_list = [self._extract_obs_image(raw_obs) for raw_obs in raw_obs_list]
         infos = list_of_dict_to_dict_of_list(info_list)
