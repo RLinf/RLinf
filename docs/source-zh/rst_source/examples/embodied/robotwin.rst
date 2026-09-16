@@ -154,6 +154,14 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
    source .venv/bin/activate
 
+.. note::
+
+   在非 NVIDIA 硬件上需加 ``--platform``（例如 ``--platform amd --rocm 6.4``）。``pytorch3d``、
+   ``warp-lang`` 与 ``curobo`` 仅支持 CUDA，在这些平台上会被跳过，因此需要在 task config 里设置
+   ``planner_backend: mplib``——默认的 ``curobo`` 会在构造环境时失败。在 AMD CDNA（Instinct）卡上，
+   安装脚本还会把 Vulkan 指向 Mesa lavapipe，因为这类卡没有光栅化单元；渲染因此运行在 CPU 上，
+   明显慢于硬件渲染。
+
 克隆 RoboTwin 并下载资产：
 
 .. code:: bash

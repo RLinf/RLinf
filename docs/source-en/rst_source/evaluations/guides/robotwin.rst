@@ -17,6 +17,10 @@ Environment Setup
 
 Supported models include ``openvla-oft``, ``openpi``, and ``lingbotvla`` — replace ``--model`` accordingly during installation.
 
+On non-NVIDIA hardware add ``--platform`` (for example ``--platform amd --rocm 6.4``) and set
+``planner_backend: mplib`` in the task config; ``curobo`` is CUDA-only and is not installed there.
+See :doc:`../../examples/embodied/robotwin` for the full note.
+
 **RoboTwin repository and assets**
 
 Before evaluation, clone the RLinf-compatible branch and download simulation assets (see the training doc for details):

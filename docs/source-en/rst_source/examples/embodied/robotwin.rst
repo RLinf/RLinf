@@ -156,6 +156,15 @@ Install dependencies for the model you want to run:
 
    source .venv/bin/activate
 
+.. note::
+
+   On non-NVIDIA hardware add ``--platform`` (for example
+   ``--platform amd --rocm 6.4``). ``pytorch3d``, ``warp-lang`` and ``curobo`` are CUDA-only and
+   are skipped there, so set ``planner_backend: mplib`` in the task config — the ``curobo``
+   default fails at environment construction. On AMD CDNA (Instinct) parts the installer also
+   points Vulkan at Mesa lavapipe, since those cards carry no rasterization hardware; rendering
+   therefore runs on CPU and is markedly slower than a hardware renderer.
+
 Clone RoboTwin and download its assets:
 
 .. code:: bash

@@ -25,7 +25,7 @@
      - LIBERO · ManiSkill（需要带有 ``maniskill_widowx`` head 的 checkpoint）
    * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
      - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>`
-     - LIBERO · ManiSkill
+     - LIBERO · ManiSkill · ROCm 上的 RoboTwin（见 :doc:`RoboTwin <embodied/robotwin>`）
 
 模型示例
 --------
