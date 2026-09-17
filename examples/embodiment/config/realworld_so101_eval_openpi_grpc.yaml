@@ -1,0 +1,12 @@
+# SO-101 evaluation with gRPC backend for policy inference
+# Inherits base eval config and only overrides gRPC-specific settings
+
+defaults:
+  - realworld_so101_eval_openpi
+  - override rollout/grpc_policy@rollout.grpc_policy
+
+rollout:
+  backend: grpc
+  grpc_policy:
+    server_address: SERVER_ADDRESS  # Replace: gRPC server address (e.g., localhost:50051)
+    timeout: 30.0

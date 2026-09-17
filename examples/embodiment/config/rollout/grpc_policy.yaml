@@ -1,0 +1,8 @@
+# gRPC policy configuration for remote inference
+# Used with rollout.backend: grpc
+
+# @package rollout.grpc_policy
+server_address: localhost:50051
+timeout: 30.0
+max_retries: 3
+retry_delay: 1.0
