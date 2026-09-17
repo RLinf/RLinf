@@ -329,6 +329,18 @@ validate_python_version() {
     fi
 }
 
+# lerobot depends on opencv-python-headless, which writes the same cv2 package
+# as the opencv-python that real-robot envs request, so whichever wheel lands
+# last decides whether cv2 can open a camera window. Keep only the GUI wheel at
+# the version lerobot resolved; --no-deps leaves that resolution untouched.
+use_opencv_gui_wheel() {
+    local ver
+    ver=$(uv pip show opencv-python-headless 2>/dev/null | sed -n 's/^Version: //p') || true
+    [ -n "$ver" ] || return 0
+    uv pip uninstall opencv-python opencv-python-headless
+    uv pip install --no-deps "opencv-python==${ver}"
+}
+
 #=======================PLATFORM CONFIG=======================
 # Per-platform runtime env-var configuration. Each configure_<platform> runs
 # before any uv operation, so set everything that affects how dependencies
@@ -2514,18 +2526,6 @@ install_lerobot() {
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}" "$@"
-}
-
-# lerobot depends on opencv-python-headless, which writes the same cv2 package
-# as the opencv-python that real-robot envs request, so whichever wheel lands
-# last decides whether cv2 can open a camera window. Keep only the GUI wheel at
-# the version lerobot resolved; --no-deps leaves that resolution untouched.
-use_opencv_gui_wheel() {
-    local ver
-    ver=$(uv pip show opencv-python-headless 2>/dev/null | sed -n 's/^Version: //p') || true
-    [ -n "$ver" ] || return 0
-    uv pip uninstall opencv-python opencv-python-headless
-    uv pip install --no-deps "opencv-python==${ver}"
 }
 
 install_franka_ros_realworld_env() {
