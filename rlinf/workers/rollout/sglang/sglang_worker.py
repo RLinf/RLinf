@@ -233,17 +233,15 @@ class SGLangWorker(Worker):
         self.log_on_first_rank(f"{server_args=}")
         self._engine = Engine(**dataclasses.asdict(server_args))
 
-    def shutdown(self):
-        """
-        Shutdown the SGLang task.
-        """
+    def stop(self):
+        """Stop the SGLang engine and finalize stats collectors."""
         # Finalize meta_info statistics collectors if they exist
         if self._collect_meta_stats:
             self.async_meta_stats_collector.finalize()
 
-        self.log_info(f"Shutting down SGLang worker {self._rank} ...")
+        self.log_info(f"Stopping SGLang worker {self._rank} ...")
         self._engine.shutdown()
-        self.log_info(f"SGLang worker {self._rank} shutdown complete.")
+        self.log_info(f"SGLang worker {self._rank} stopped.")
 
     async def _validate_weight_at_first(self):
         """
