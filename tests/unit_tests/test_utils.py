@@ -19,6 +19,9 @@ from __future__ import annotations
 import importlib.util
 import math
 import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -290,3 +293,59 @@ def test_interrupted_dataloader_save_does_not_publish_completion(tmp_path, monke
     assert not final_path.exists()
     assert not Path(f"{final_path}.tmp").exists()
     assert not runner._is_complete_checkpoint(str(checkpoint))
+
+
+_REDIRECTED_ENTRYPOINT = textwrap.dedent(
+    """
+    import hydra
+
+    from rlinf.scheduler import Cluster
+    from rlinf.utils.utils import output_redirector
+
+
+    @hydra.main(version_base="1.1", config_path=None)
+    @output_redirector
+    def main(cfg):
+        Cluster(num_nodes=1)
+        print("entrypoint ran")
+        if cfg.outcome == "raise":
+            raise RuntimeError("entrypoint failed")
+
+
+    main()
+    """
+)
+
+
+def _run_redirected_entrypoint(tmp_path, outcome):
+    script = tmp_path / "entrypoint.py"
+    script.write_text(_REDIRECTED_ENTRYPOINT)
+    return subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            f"+outcome={outcome}",
+            f"+runner.output_dir={tmp_path}",
+            "+runner.experiment_name=exp",
+            f"hydra.run.dir={tmp_path / 'hydra'}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+
+def test_redirected_entrypoint_exits_zero_and_keeps_its_log(tmp_path):
+    result = _run_redirected_entrypoint(tmp_path, "return")
+
+    assert result.returncode == 0, result.stderr
+    assert "entrypoint ran" in (tmp_path / "exp" / "log" / "main.log").read_text()
+
+
+def test_redirected_entrypoint_failure_is_not_reported_as_success(tmp_path):
+    # Hydra catches the exception and calls sys.exit(1) itself, so the failure
+    # never reaches sys.excepthook.
+    result = _run_redirected_entrypoint(tmp_path, "raise")
+
+    assert result.returncode == 1, result.stderr
+    assert "entrypoint failed" in (tmp_path / "exp" / "log" / "main.log").read_text()
