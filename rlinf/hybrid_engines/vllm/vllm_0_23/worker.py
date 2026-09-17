@@ -70,6 +70,10 @@ class VLLMWorker(_VllmInnerWorker):
             self._rlinf_worker.get_parent_rank(), self.rank
         ]
         self.is_weight_offloaded = False
+        # Per-tag offload state, mirroring sgl_scheduler.offloaded_tags:
+        # sync_hf_weight wakes only weights, while KV cache stays offloaded
+        # until onload_kv_cudagraph. is_weight_offloaded gates the sync path.
+        self.offloaded_tags = {"weights": False, "kv_cache": False}
 
     def initialize_from_config(self, kv_cache_config: KVCacheConfig) -> None:
         """Allocate GPU KV cache with the specified kv_cache_config."""
@@ -84,6 +88,7 @@ class VLLMWorker(_VllmInnerWorker):
 
     def offload_model_weights(self) -> None:
         super().sleep(level=2)
+        self.offloaded_tags = {"weights": True, "kv_cache": True}
         self.is_weight_offloaded = True
 
     def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
@@ -127,9 +132,19 @@ class VLLMWorker(_VllmInnerWorker):
             # recv from the Megatron backend
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
+            if isinstance(bucket_length, torch.Tensor):
+                # The actor sends bucket_length as a GPU tensor to keep the
+                # bucket dict all-tensor, so that NCCL takes the TENSOR_DICT
+                # path rather than pickling. Extract the int here.
+                bucket_length = bucket_length.item()
+            assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
-            super().wake_up()
+            # Wake weights only; KV cache and cudagraph stay offloaded until
+            # onload_kv_cudagraph, so the two models are never both resident.
+            # Large MoE models OOM otherwise.
+            super().wake_up(tags=["weights"])
+            self.offloaded_tags["weights"] = False
             self.is_weight_offloaded = False
 
         assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
@@ -155,6 +170,27 @@ class VLLMWorker(_VllmInnerWorker):
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
 
+        # If KV cache wasn't offloaded (disaggregated), warm up now; otherwise
+        # onload_kv_cudagraph() does it after KV cache is restored.
+        if not self.offloaded_tags["kv_cache"]:
+            super().compile_or_warm_up_model()
+
+    def onload_kv_cudagraph(self) -> None:
+        """Onload KV cache + cuda graph deferred from sync_hf_weight.
+
+        Mirrors sgl_scheduler.onload_kv_cudagraph (resume tags=["kv_cache",
+        "cuda_graph"]). sync_hf_weight only woke weights for load_weights;
+        KV cache + cudagraph are restored here, after the actor offloaded its
+        reshard state dict, to avoid both models + KV+cudagraph on HBM
+        simultaneously (OOM for large MoE). vLLM has no cuda_graph tag, so the
+        cuda graph is re-captured via compile_or_warm_up_model.
+        """
+        assert self.offloaded_tags["kv_cache"], (
+            "Cannot onload kv_cache: not offloaded (already onloaded). "
+            f"offload_state={self.offloaded_tags}"
+        )
+        super().wake_up(tags=["kv_cache"])
+        self.offloaded_tags["kv_cache"] = False
         super().compile_or_warm_up_model()
 
     def use_sharded_weights(self) -> None:

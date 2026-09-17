@@ -1,0 +1,23 @@
+model_type: "fastwam"
+precision: bf16
+is_lora: false
+# Null starts training from the upstream base model.
+model_path: null
+# Action and state normalization statistics.
+dataset_stats_path: /path/to/fastwam/libero_uncond_2cam224_dataset_stats.json
+
+# Train only the MoT experts and proprio encoder.
+freeze_non_dit: true
+
+fastwam:
+  config_dir: null
+  config_name: sim_libero
+  overrides:
+    # Load pretrained Wan2.2 and ActionDiT weights.
+    - model.skip_dit_load_from_pretrain=false
+    - model.action_dit_pretrained_path=/path/to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
+    - model.mot_checkpoint_mixed_attn=false
+    # Cached text embeddings do not require the T5 encoder.
+    - model.load_text_encoder=false
+    # Reuse converted VAE and T5 assets.
+    - model.redirect_common_files=true

@@ -42,6 +42,8 @@ from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
 
+_SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
+
 
 class SGLangWorker(Worker):
     def __init__(
@@ -159,6 +161,23 @@ class SGLangWorker(Worker):
         else:
             load_format = "auto"
 
+        # moe_dp_size / moe_a2a_backend only exist on newer sglang; passing a
+        # keyword the installed version does not define is a TypeError even
+        # when the value is the default, so only forward the ones it has.
+        version_dependent_args = {
+            "moe_dp_size": self._cfg_rollout.sglang.get("moe_dp_size", 1),
+            "moe_a2a_backend": self._cfg_rollout.sglang.get("moe_a2a_backend", None),
+        }
+        for name in list(version_dependent_args):
+            if name in _SERVER_ARGS_FIELDS:
+                continue
+            value = version_dependent_args.pop(name)
+            if name in self._cfg_rollout.sglang:
+                self.log_warning(
+                    f"sglang ServerArgs has no field {name!r}; "
+                    f"the configured value {value!r} is ignored"
+                )
+
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
@@ -167,12 +186,26 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
-            # sglang >=0.5.11 drops the `enable_ep_moe` flag and enables EP via ep_size > 1.
-            ep_size=(
+            # Expert parallel: pass ep_size explicitly. sglang derives
+            # moe_tp = tp // ep // moe_dp itself. ep_size defaults to
+            # tp when only enable_ep_moe is set, which is pure EP.
+            ep_size=self._cfg_rollout.sglang.get(
+                "ep_size",
                 self._cfg_rollout.tensor_parallel_size
                 if self._cfg_rollout.sglang.get("enable_ep_moe", False)
-                else 1
+                else 1,
             ),
+            # DP-attention decouples attention TP from MoE TP: dp_size shards
+            # attention (attn_tp = tp // dp // attn_cp), while ep_size and
+            # moe_tp_size act on the experts, and moe_dense_tp_size on the
+            # dense MLP layers. All fall back to sglang's own defaults, so
+            # non-DPA configs are unaffected.
+            dp_size=self._cfg_rollout.sglang.get("dp_size", 1),
+            enable_dp_attention=self._cfg_rollout.sglang.get(
+                "enable_dp_attention", False
+            ),
+            enable_dp_lm_head=self._cfg_rollout.sglang.get("enable_dp_lm_head", False),
+            moe_dense_tp_size=self._cfg_rollout.sglang.get("moe_dense_tp_size", None),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
@@ -194,24 +227,21 @@ class SGLangWorker(Worker):
             dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
             tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
             trust_remote_code=self._cfg_rollout.model.trust_remote_code,
+            **version_dependent_args,
         )
 
         self.log_on_first_rank(f"{server_args=}")
-        self._engine = Engine(
-            **dataclasses.asdict(server_args),
-        )
+        self._engine = Engine(**dataclasses.asdict(server_args))
 
-    def shutdown(self):
-        """
-        Shutdown the SGLang task.
-        """
+    def stop(self):
+        """Stop the SGLang engine and finalize stats collectors."""
         # Finalize meta_info statistics collectors if they exist
         if self._collect_meta_stats:
             self.async_meta_stats_collector.finalize()
 
-        self.log_info(f"Shutting down SGLang worker {self._rank} ...")
+        self.log_info(f"Stopping SGLang worker {self._rank} ...")
         self._engine.shutdown()
-        self.log_info(f"SGLang worker {self._rank} shutdown complete.")
+        self.log_info(f"SGLang worker {self._rank} stopped.")
 
     async def _validate_weight_at_first(self):
         """
@@ -321,6 +351,19 @@ class SGLangWorker(Worker):
         assert self.weight_reload == "cpu"
         await self._engine.tokenizer_manager.resume_memory_occupation(
             obj=ResumeMemoryOccupationReqInput()
+        )
+
+    async def onload_kv_cudagraph(self):
+        """
+        Onload only the KV cache and CUDA graph back to GPU, leaving model
+        weights on GPU (already resumed in sync_hf_weight). Used in collocated
+        'sync' mode where resume_memory_occupation is split: weights resumed
+        before load_weights (needs ~10GB), KV+cuda graph deferred until after
+        the actor has offloaded its model (avoids both models on GPU
+        simultaneously).
+        """
+        await self._engine.tokenizer_manager.resume_memory_occupation(
+            obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
         )
 
     async def abort_generation(self):

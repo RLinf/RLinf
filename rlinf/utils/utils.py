@@ -594,6 +594,15 @@ class DualOutput:
 
 
 def output_redirector(func):
+    """Tee an entrypoint's output into ``main.log`` and end the process after it.
+
+    When the entrypoint returns, the process exits 0 at once, without running
+    interpreter teardown: on the torch 2.11 stack ray's core worker can
+    segfault there after the run has finished. When it raises, the exception
+    propagates and the process exits through the normal path with its own
+    exit code.
+    """
+
     @wraps(func)
     def wrapper(cfg, *args, **kwargs):
         log_path = os.path.join(
@@ -619,7 +628,7 @@ def output_redirector(func):
         try:
             sys.stdout = dual_out
             sys.stderr = dual_err
-            return func(cfg, *args, **kwargs)
+            func(cfg, *args, **kwargs)
 
         except Exception as e:
             import traceback
@@ -633,6 +642,11 @@ def output_redirector(func):
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+
+        # Only a run that returned gets here, so exiting 0 cannot hide a
+        # failure. Skipping teardown also skips atexit, so close the log first.
+        close()
+        os._exit(0)
 
     return wrapper
 
