@@ -56,6 +56,21 @@ from .io_struct import (
 logger.setLevel(logging.WARNING)
 
 
+def patch_glm4_moe_lite_shared_expert_tp1():
+    """Backport the sglang fix for GLM-4.7-Flash's MoE block.
+
+    Up to 0.5.12.post1, Glm4MoeLiteSparseMoeBlock calls nn.Module.__init__ instead
+    of DeepseekV2MoE.__init__, so the inherited forward reads an unset
+    _shared_expert_tp1 and cuda graph capture fails. sglang main sets it to False.
+    """
+    try:
+        from sglang.srt.models.glm4_moe_lite import Glm4MoeLiteSparseMoeBlock
+    except ImportError:
+        return
+    if not hasattr(Glm4MoeLiteSparseMoeBlock, "_shared_expert_tp1"):
+        Glm4MoeLiteSparseMoeBlock._shared_expert_tp1 = False
+
+
 class Scheduler(_Scheduler):
     """
     Overridden class of SGLang's TP worker class _Scheduler.
@@ -63,6 +78,8 @@ class Scheduler(_Scheduler):
     """
 
     def __init__(self, *args, **kwargs):
+        # Must run before super().__init__, which builds the model.
+        patch_glm4_moe_lite_shared_expert_tp1()
         super().__init__(*args, **kwargs)
         # `TpModelWorkerClient` is used when ServerArgs.enable_overlap=True, and it has 'worker' attribute.
         # But in early SGLang version, `TpModelWorker` doesn't have 'worker' attribute.
