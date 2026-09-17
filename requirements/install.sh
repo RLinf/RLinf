@@ -3133,6 +3133,18 @@ install_roboverse_env() {
 
 #=======================AGENTIC INSTALLER=======================
 
+# transformer-engine-torch's setup.py deletes its build_tools/ after bdist_wheel,
+# and uv builds sdists inside its cache, so the next build of the same version
+# (another Python or torch) fails on the cached source. Drop it and retry once.
+uv_install_te_from_source() {
+    if NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation "$@"; then
+        return 0
+    fi
+    echo "[install.sh] transformer-engine-torch build failed; retrying from a fresh sdist..."
+    uv cache clean transformer-engine-torch
+    NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation "$@"
+}
+
 install_te_2_17() {
     local torch_cu_major te_extra
     torch_cu_major=$(python - <<'EOF'
@@ -3149,8 +3161,7 @@ EOF
     te_extra="core_cu${torch_cu_major}"
     if [ "$torch_cu_major" != "12" ]; then
         echo "[install.sh] Installing TE 2.17.0 (${te_extra})..."
-        NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation \
-            "transformer-engine[pytorch,${te_extra}]==2.17.0"
+        uv_install_te_from_source "transformer-engine[pytorch,${te_extra}]==2.17.0"
         echo "[install.sh] TE 2.17.0 installed."
         return 0
     fi
@@ -3158,8 +3169,8 @@ EOF
     echo "[install.sh] Installing TE 2.17.0 (${te_extra}, source build with nvcc)..."
     uv pip install --no-build-isolation "transformer-engine[${te_extra}]==2.17.0"
     uv pip install einops onnx onnxscript packaging pydantic nvdlfw-inspect
-    NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation --no-deps \
-        --no-binary transformer-engine-torch "transformer-engine-torch==2.17.0"
+    uv_install_te_from_source --no-deps --no-binary transformer-engine-torch \
+        "transformer-engine-torch==2.17.0"
     if uv pip show transformer-engine-cu13 >/dev/null 2>&1; then
         echo "[install.sh] ERROR: transformer-engine-cu13 present on a CUDA 12 torch; its core would shadow the cu12 one." >&2
         exit 1
