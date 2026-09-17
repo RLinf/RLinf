@@ -21,13 +21,22 @@ The gRPC backend is useful when:
 On the GPU server, start the LeRobot gRPC policy server:
 
 ```bash
-# See examples/embodiment/so101/lerobot_grpc_policy_server.py for SO-101
+# Basic usage
 python examples/embodiment/so101/lerobot_grpc_policy_server.py \
   --checkpoint /path/to/actor-checkpoint \
   --norm-stats /path/to/norm_stats.json \
   --host 0.0.0.0 \
   --port 50051 \
   --device cuda:0
+
+# With GPU optimizations (recommended for production)
+python examples/embodiment/so101/lerobot_grpc_policy_server.py \
+  --checkpoint /path/to/actor-checkpoint \
+  --norm-stats /path/to/norm_stats.json \
+  --host 0.0.0.0 \
+  --port 50051 \
+  --device cuda:0 \
+  --enable-torch-compile  # ~2x speedup, requires warmup
 ```
 
 Or use the service wrapper:
@@ -36,10 +45,32 @@ Or use the service wrapper:
 # Configure the service
 cp examples/embodiment/so101/lerobot_grpc_policy.env.example \
    examples/embodiment/so101/lerobot_grpc_policy.env
-# Edit the .env file with your paths
+# Edit the .env file with your paths and enable optimizations
 
 # Start the service
 examples/embodiment/so101/lerobot_grpc_policy_service.sh start
+```
+
+#### GPU Optimization Options
+
+The gRPC server supports the following optimizations (cloud/GPU side):
+
+- `--enable-torch-compile`: Enable torch.compile for ~2x speedup
+  - Requires PyTorch 2.0+ and a compatible GPU
+  - First few inferences will be slower due to compilation
+  - Recommended mode: `max-autotune-no-cudagraphs`
+
+- `--enable-cuda-graph`: Capture CUDA graph for deterministic low latency
+  - Reduces kernel launch overhead
+  - Mutually exclusive with torch.compile
+  - Best for fixed batch sizes
+
+Set these in `lerobot_grpc_policy.env`:
+```bash
+SO101_GRPC_ENABLE_TORCH_COMPILE=true
+SO101_GRPC_TORCH_COMPILE_MODE=max-autotune-no-cudagraphs
+# OR
+SO101_GRPC_ENABLE_CUDA_GRAPH=true
 ```
 
 ### 2. Configure Training to Use gRPC Backend
@@ -85,7 +116,11 @@ The `init_worker()` method checks `cfg.rollout.use_grpc_backend`:
 - If `True`: Creates a `GRPCPolicyAdapter` instead of loading a local model
 - If `False`: Standard local model loading (default behavior)
 
-Optimizations like torch.compile and CUDA graphs are automatically skipped for gRPC backend.
+**Edge device (rollout worker)**: Optimizations like torch.compile and CUDA graphs are 
+automatically skipped since inference happens remotely.
+
+**Cloud server (gRPC backend)**: Apply optimizations via command-line flags when starting 
+the server to maximize GPU inference throughput.
 
 ## Limitations
 

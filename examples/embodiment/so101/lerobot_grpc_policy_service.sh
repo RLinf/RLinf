@@ -17,6 +17,9 @@ source "${config_file}"
 : "${SO101_GRPC_CUDA_VISIBLE_DEVICES:=0}"
 : "${SO101_GRPC_DEVICE:=cuda:0}"
 : "${SO101_GRPC_FPS:=15}"
+: "${SO101_GRPC_ENABLE_TORCH_COMPILE:=false}"
+: "${SO101_GRPC_TORCH_COMPILE_MODE:=max-autotune-no-cudagraphs}"
+: "${SO101_GRPC_ENABLE_CUDA_GRAPH:=false}"
 : "${SO101_GRPC_TMUX_SESSION:=so101_lerobot_grpc}"
 : "${SO101_GRPC_LOG:=${root_dir}/examples/embodiment/so101/lerobot_grpc_policy.log}"
 : "${RLINF_PYTHON:=python}"
@@ -38,12 +41,20 @@ serve_foreground() {
   check_assets
   mkdir -p "$(dirname "${SO101_GRPC_LOG}")"
   cd "${root_dir}"
+
+  # Build optimization flags
+  local opt_flags=()
+  [[ "${SO101_GRPC_ENABLE_TORCH_COMPILE}" == "true" ]] && {
+    opt_flags+=(--enable-torch-compile --torch-compile-mode "${SO101_GRPC_TORCH_COMPILE_MODE}")
+  }
+  [[ "${SO101_GRPC_ENABLE_CUDA_GRAPH}" == "true" ]] && opt_flags+=(--enable-cuda-graph)
+
   exec env PYTHONPATH="${root_dir}${PYTHONPATH:+:${PYTHONPATH}}" \
     CUDA_VISIBLE_DEVICES="${SO101_GRPC_CUDA_VISIBLE_DEVICES}" "${RLINF_PYTHON}" \
     "${service_dir}/lerobot_grpc_policy_server.py" \
     --checkpoint "${SO101_GRPC_CHECKPOINT}" --norm-stats "${SO101_GRPC_NORM_STATS}" \
     --host "${SO101_GRPC_HOST}" --port "${SO101_GRPC_PORT}" --fps "${SO101_GRPC_FPS}" \
-    --device "${SO101_GRPC_DEVICE}" >>"${SO101_GRPC_LOG}" 2>&1
+    --device "${SO101_GRPC_DEVICE}" "${opt_flags[@]}" >>"${SO101_GRPC_LOG}" 2>&1
 }
 
 start() {

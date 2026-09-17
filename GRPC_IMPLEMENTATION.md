@@ -27,6 +27,7 @@
 - 实现 LeRobot 的 `PolicyServer` 协议
 - 加载 RLinf PI05 checkpoint 并提供 gRPC 推理服务
 - 支持配置化启动（通过 `.env` 文件和服务脚本）
+- **支持云端 GPU 优化**：torch.compile 和 CUDA graphs（边缘设备不需要，云端可选）
 
 ### 3. 配置文件
 
@@ -47,6 +48,8 @@
 cd examples/embodiment/so101
 cp lerobot_grpc_policy.env.example lerobot_grpc_policy.env
 # 编辑 .env 文件设置 checkpoint 路径
+# 可选：启用 GPU 优化
+# SO101_GRPC_ENABLE_TORCH_COMPILE=true  # ~2x 加速
 ./lerobot_grpc_policy_service.sh start
 ```
 
@@ -118,6 +121,22 @@ gRPC 响应 → RLinf 格式：
 2. **Expert 本地化**：DAgger 的 expert 模型必须在本地
 3. **OPD 本地化**：OPD feature models 必须在本地
 4. **Server 更新**：训练期间模型更新需要重启 gRPC server
+
+### GPU 优化策略
+
+**边缘设备（rollout worker）：**
+- 自动跳过 torch.compile 和 CUDA graphs
+- 推理通过 gRPC 远程执行，本地无需优化
+
+**云端服务器（gRPC policy server）：**
+- 可选启用 `torch.compile`（推荐生产环境）
+  - 约 2x 加速
+  - 首次推理会有编译开销（warmup）
+  - 通过 `--enable-torch-compile` 启用
+- 可选启用 CUDA graphs（固定 batch size 场景）
+  - 降低 kernel 启动开销
+  - 与 torch.compile 互斥
+  - 通过 `--enable-cuda-graph` 启用
 
 ## 文件清单
 

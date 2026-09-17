@@ -57,12 +57,18 @@ class RLinfSO101PolicyServer(PolicyServer):
         norm_stats: Path,
         device: str,
         num_steps: int,
+        enable_torch_compile: bool = False,
+        torch_compile_mode: str = "max-autotune-no-cudagraphs",
+        enable_cuda_graph: bool = False,
     ) -> None:
         super().__init__(config)
         self._checkpoint = checkpoint.resolve()
         self._norm_stats = norm_stats.resolve()
         self._backend_device = torch.device(device)
         self._num_steps = num_steps
+        self._enable_torch_compile = enable_torch_compile
+        self._torch_compile_mode = torch_compile_mode
+        self._enable_cuda_graph = enable_cuda_graph
         self._backend: Any | None = None
         self.preprocessor: Any | None = None
         self.postprocessor: Any | None = None
@@ -88,6 +94,19 @@ class RLinfSO101PolicyServer(PolicyServer):
             .to(torch.device(device))
             .eval()
         )
+
+        # Apply optimizations for GPU inference
+        if self._enable_torch_compile:
+            self.logger.info(
+                "Enabling torch.compile with mode=%s", self._torch_compile_mode
+            )
+            backend.enable_torch_compile(mode=self._torch_compile_mode)
+
+        if self._enable_cuda_graph:
+            self.logger.info("Capturing CUDA graph for inference")
+            # For gRPC server, we typically process one observation at a time
+            backend.capture_cuda_graph(train_batch_size=1, eval_batch_size=1)
+
         self._backend = backend
         self.preprocessor = backend._input_transform  # noqa: SLF001
         self.postprocessor = backend._output_transform  # noqa: SLF001
@@ -352,6 +371,21 @@ def main() -> None:
     parser.add_argument("--obs-queue-timeout", type=float, default=2.0)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--num-steps", type=int, default=5)
+    parser.add_argument(
+        "--enable-torch-compile",
+        action="store_true",
+        help="Enable torch.compile for faster inference on GPU",
+    )
+    parser.add_argument(
+        "--torch-compile-mode",
+        default="max-autotune-no-cudagraphs",
+        help="torch.compile mode (default: max-autotune-no-cudagraphs)",
+    )
+    parser.add_argument(
+        "--enable-cuda-graph",
+        action="store_true",
+        help="Capture CUDA graph for deterministic latency",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     config = PolicyServerConfig(
@@ -362,14 +396,25 @@ def main() -> None:
         obs_queue_timeout=args.obs_queue_timeout,
     )
     policy_server = RLinfSO101PolicyServer(
-        config, args.checkpoint, args.norm_stats, args.device, args.num_steps
+        config,
+        args.checkpoint,
+        args.norm_stats,
+        args.device,
+        args.num_steps,
+        enable_torch_compile=args.enable_torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
+        enable_cuda_graph=args.enable_cuda_graph,
     )
     policy_server.load_initial_policy()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
     server.add_insecure_port(f"{args.host}:{args.port}")
     policy_server.logger.info(
-        "SO101 LeRobot gRPC PolicyServer listening at %s:%d", args.host, args.port
+        "SO101 LeRobot gRPC PolicyServer listening at %s:%d (torch_compile=%s cuda_graph=%s)",
+        args.host,
+        args.port,
+        args.enable_torch_compile,
+        args.enable_cuda_graph,
     )
     server.start()
     server.wait_for_termination()
