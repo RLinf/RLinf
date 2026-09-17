@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 from collections import deque
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import torch
@@ -26,18 +26,23 @@ from opensora.registry import MODELS, SCHEDULERS, build_module
 from opensora.utils.inference_utils import prepare_multi_resolution_info
 from opensora.utils.misc import to_torch_dtype
 
-from rlinf.envs.sim.world_model.backend import FrameQueue, autocast
+from rlinf.envs.sim.world_model.registry import register_backend
 from rlinf.envs.utils import recursive_to_device
+
+from . import FrameQueue, autocast
 
 __all__ = ["OpenSoraBackend"]
 
 
+@register_backend("opensora")
 class OpenSoraBackend:
     """In-process backend holding the action-conditioned OpenSora STDiT and its VAE.
 
     A session holds the trajectory's condition window as a queue of latents, so pixels are
     only ever decoded on the way out.
     """
+
+    supports_kir = False
 
     def __init__(self, cfg, device: torch.device):
         self.cfg = cfg
@@ -81,6 +86,14 @@ class OpenSoraBackend:
         )
 
         self._sessions: dict[int, dict[str, Any]] = {}
+
+    @staticmethod
+    def load_reward_model(cfg):
+        rm_cfg = OmegaConf.to_container(cfg.world_model_cfg.reward_model, resolve=True)
+        return build_module(rm_cfg, MODELS)
+
+    def reward_instructions(self, env) -> Optional[list[str]]:
+        return None
 
     def _load_vae(self):
         vae_cfg = OmegaConf.to_container(self.wm_cfg.vae, resolve=True)

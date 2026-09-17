@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Episode semantics for a world-model environment, shared by every backend.
+"""Public world-model environment.
 
-A subclass only says which :class:`~rlinf.envs.sim.world_model.backend.WorldModelBackend`
-generates the frames and which reward model scores them.
+Workers construct :class:`WorldModelEnv`. Each world model registers a backend
+with :func:`~rlinf.envs.sim.world_model.registry.register_backend`;
+construction looks up ``cfg.backend`` and builds that backend. A backend
+generates the frames and loads the reward model that scores them.
 """
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from typing import Optional, Union
 
 import numpy as np
@@ -30,19 +31,20 @@ import torchvision.transforms as transforms
 
 from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
 from rlinf.envs.sim.world_model.backend import WorldModelBackend
-from rlinf.envs.sim.world_model.base_world_env import BaseWorldEnv
+from rlinf.envs.sim.world_model.registry import get_backend, get_backend_name
 from rlinf.envs.utils import recursive_to_device
+from rlinf.scheduler import Worker, WorkerInfo
 
 __all__ = ["WorldModelEnv"]
 
 DEFAULT_ACTION_DIM = 7  # LIBERO
 
 
-class WorldModelEnv(BaseWorldEnv):
-    """A gym-style env whose dynamics come from a generative world model."""
+class WorldModelEnv:
+    """Gym-style env whose dynamics come from a registered world-model backend.
 
-    # Whether the model conditions on KIR keyframes; ``enable_kir`` is rejected otherwise.
-    supports_kir = True
+    ``cfg.backend`` selects the backend (for example ``wan`` or ``opensora``).
+    """
 
     def __init__(
         self,
@@ -51,11 +53,46 @@ class WorldModelEnv(BaseWorldEnv):
         seed_offset,
         total_num_processes,
         record_metrics=True,
-        worker_info=None,
+        worker_info: Optional[WorkerInfo] = None,
     ):
-        super().__init__(
-            cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics
+        backend = cfg.get("backend", None) or get_backend_name(
+            getattr(cfg, "env_type", None)
         )
+        if not backend:
+            raise ValueError(
+                "WorldModelEnv requires cfg.backend to select a registered backend "
+                "(for example 'wan' or 'opensora')"
+            )
+        self._backend_cls = get_backend(backend)
+        self.supports_kir = self._backend_cls.supports_kir
+
+        self.cfg = cfg
+        self.device = torch.device(Worker.torch_device_type or "cpu")
+
+        self.seed = cfg.seed + seed_offset
+        self.total_num_processes = total_num_processes
+        self.num_envs = num_envs
+        self.worker_info = worker_info
+        self.record_metrics = record_metrics
+
+        self.auto_reset = getattr(cfg, "auto_reset", True)
+        self.ignore_terminations = getattr(cfg, "ignore_terminations", False)
+        self.use_rel_reward = getattr(cfg, "use_rel_reward", False)
+
+        self._is_start = True
+        self._elapsed_steps = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
+
+        self.video_cfg = cfg.video_cfg
+        self.prev_step_reward = torch.zeros(
+            self.num_envs, dtype=torch.float32, device=self.device
+        )
+        self.enable_kir = cfg.get("enable_kir", True)
+        self.dataset = self._build_dataset(cfg)
+        if self.record_metrics:
+            self._init_metrics()
+
         # Reset state management
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.group_size = cfg.group_size
@@ -69,12 +106,16 @@ class WorldModelEnv(BaseWorldEnv):
         self.update_reset_state_ids()
 
         # Generation geometry is a property of the model, so it comes from the backend.
-        self.backend: WorldModelBackend = self._build_backend()
+        self.backend: WorldModelBackend = self._backend_cls(
+            self.cfg, self._get_runtime_device()
+        )
         self.chunk = self.backend.chunk  # Ta
         self.condition_frame_length = self.backend.condition_frame_length  # To
         self.image_size = self.backend.image_size
 
-        self.reward_model = self._load_reward_model().eval().to(self.device)
+        self.reward_model = (
+            self._backend_cls.load_reward_model(self.cfg).eval().to(self.device)
+        )
 
         # Initialize state
         # Will be a tensor [num_envs, 3, 1, T, h, w]
@@ -95,22 +136,73 @@ class WorldModelEnv(BaseWorldEnv):
 
         self._is_offloaded = False
 
-    @abstractmethod
-    def _build_backend(self) -> WorldModelBackend:
-        """Return the backend that generates frames for this world model."""
+    @property
+    def info_logging_keys(self):
+        return []
 
-    @abstractmethod
-    def _load_reward_model(self):
-        """Return the reward model that scores generated frames."""
+    @property
+    def is_start(self):
+        return self._is_start
+
+    @is_start.setter
+    def is_start(self, value):
+        self._is_start = value
+
+    @property
+    def elapsed_steps(self) -> torch.Tensor:
+        return self._elapsed_steps
+
+    @elapsed_steps.setter
+    def elapsed_steps(self, value):
+        self._elapsed_steps = value
+
+    def _get_runtime_device(self) -> torch.device:
+        """The device a backend should run on, with the platform's device type resolved."""
+        if Worker.torch_device_type is not None:
+            device_index = 0 if self.device.index is None else self.device.index
+            return torch.device(f"{Worker.torch_device_type}:{device_index}")
+        return torch.device(self.device.type)
+
+    @staticmethod
+    def _clear_accelerator_cache() -> None:
+        Worker.torch_platform.empty_cache()
+
+    def _init_metrics(self):
+        """Initialize episode metrics tensors."""
+        self.success_once = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.returns = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float32
+        )
+
+    def _reset_metrics(self, env_idx: Optional[Union[int, torch.Tensor]] = None):
+        """Reset metrics either globally or for targeted environments."""
+        if env_idx is not None:
+            mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+            mask[env_idx] = True
+            self.prev_step_reward[mask] = 0.0
+            self._elapsed_steps[mask] = 0
+            if self.record_metrics:
+                self.success_once[mask] = False
+                self.returns[mask] = 0
+        else:
+            self.prev_step_reward[:] = 0
+            self._elapsed_steps[:] = 0
+            if self.record_metrics:
+                self.success_once[:] = False
+                self.returns[:] = 0.0
 
     def _reward_instructions(self) -> Optional[list[str]]:
         """Per-frame task instructions, for reward models that condition on the task."""
-        return None
+        return self.backend.reward_instructions(self)
 
     def _build_dataset(self, cfg):
         if not self.supports_kir:
             if cfg.get("enable_kir", False):
-                raise ValueError(f"{type(self).__name__} does not support enable_kir")
+                raise ValueError(
+                    f"{self._backend_cls.__name__} does not support enable_kir"
+                )
             self.enable_kir = False
         return NpyTrajectoryDatasetWrapper(
             cfg.initial_image_path, enable_kir=self.enable_kir
@@ -482,19 +574,22 @@ class WorldModelEnv(BaseWorldEnv):
         # Get states (dummy for now, can be extended)
         states = torch.zeros((num_envs, 16), device=self.device, dtype=torch.float32)
 
-        # Wrap observation - format aligned with libero_env
+        # Wrap observation - format aligned with libero_env.
+        # Copy task_descriptions: a subset reset mutates the env list in place, and
+        # auto-reset keeps this obs as final_observation of the finished episode.
         obs = {
             "main_images": full_image,  # [num_envs, H, W, 3]
             "wrist_images": None,  # Not available in world model
             "states": states,  # [num_envs, 16]
-            "task_descriptions": self.task_descriptions,  # list of strings
+            "task_descriptions": list(self.task_descriptions),
         }
 
         return obs
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
         """Restart the episodes that ended, leaving the other slots running."""
-        final_obs = extracted_obs
+        final_obs = dict(extracted_obs)
+        final_obs["task_descriptions"] = list(extracted_obs["task_descriptions"])
         final_info = infos
 
         env_idx = torch.arange(0, self.num_envs, device=self.device)[dones]

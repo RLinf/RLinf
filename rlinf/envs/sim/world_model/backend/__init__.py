@@ -14,16 +14,17 @@
 
 """Interface between a world-model env and the backend that generates frames.
 
-The env owns episode semantics; a backend only advances frames. The condition window
-lives behind the session, so the env hands it over once at ``open_session`` and
-afterwards sends only the action chunk. Implementations live next to this module, one
-file each.
+The env owns episode semantics; a backend advances frames, loads the reward
+model that scores them, and may supply per-frame task instructions. The
+condition window lives behind the session, so the env hands it over once at
+``open_session`` and afterwards sends only the action chunk. In-process
+implementations live in this package, one module each (``wan``, ``opensora``).
 """
 
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import ContextManager, Protocol, Sequence
+from typing import Any, ContextManager, Optional, Protocol, Sequence
 
 import torch
 
@@ -42,9 +43,18 @@ def autocast(device: torch.device, dtype: torch.dtype) -> ContextManager:
 class WorldModelBackend(Protocol):
     """Advances frames for a world-model environment."""
 
+    # Whether the model conditions on KIR keyframes; ``enable_kir`` is rejected otherwise.
+    supports_kir: bool
     chunk: int
     condition_frame_length: int
     image_size: tuple[int, int]
+
+    @staticmethod
+    def load_reward_model(cfg: Any) -> torch.nn.Module:
+        """Return the reward model that scores generated frames."""
+
+    def reward_instructions(self, env: Any) -> Optional[list[str]]:
+        """Per-frame task instructions, or ``None`` if the reward model ignores the task."""
 
     def open_session(
         self,

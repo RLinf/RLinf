@@ -233,6 +233,8 @@ uses a fixed chunk length, ``use_proprio`` defaults to ``False``, ``num_images_i
    env/eval: libero_spatial
 
    # In env/train/wan_libero_spatial.yaml:
+   env_type: world_model
+   backend: wan
    wm_env_type: libero
    task_suite_name: libero_spatial
    reset_gripper_open: True

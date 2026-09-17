@@ -228,7 +228,8 @@ to ``1``, and ``num_action_chunks`` to ``8``.
          opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
 
    # In env/train/opensora_libero_spatial.yaml:
-   env_type: opensora_wm
+   env_type: world_model
+   backend: opensora
    wm_env_type: libero
    # Initial image path for world model initialization
    initial_image_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset_for_rlinf_world_model_init/base_policy_rollout_buffer

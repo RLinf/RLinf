@@ -14,24 +14,30 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import torch
+from diffsynth.models.reward_model import ResnetRewModel, TaskEmbedResnetRewModel
 from diffsynth.pipelines.wan_video_new import ModelConfig, WanVideoPipeline
 from PIL import Image
 
-from rlinf.envs.sim.world_model.backend import FrameQueue, autocast
+from rlinf.envs.sim.world_model.registry import register_backend
+
+from . import FrameQueue, autocast
 
 __all__ = ["WanBackend"]
 
 
+@register_backend("wan")
 class WanBackend:
     """In-process backend holding diffsynth's action-conditioned ``WanVideoPipeline``.
 
     A session holds the trajectory's reference frame, its last generated frames and the
     actions that produced them.
     """
+
+    supports_kir = True
 
     def __init__(self, cfg, device: torch.device):
         self.cfg = cfg
@@ -49,6 +55,26 @@ class WanBackend:
             )
         self._sessions: dict[int, dict[str, Any]] = {}
         self._pipe = self._build_pipeline()
+
+    @staticmethod
+    def load_reward_model(cfg):
+        if cfg.reward_model.type == "ResnetRewModel":
+            return ResnetRewModel(cfg.reward_model.from_pretrained)
+        if cfg.reward_model.type == "TaskEmbedResnetRewModel":
+            return TaskEmbedResnetRewModel(
+                checkpoint_path=cfg.reward_model.from_pretrained,
+                task_suite_name=cfg.task_suite_name,
+            )
+        raise ValueError(f"Unknown reward model type: {cfg.reward_model.type}")
+
+    def reward_instructions(self, env) -> Optional[list[str]]:
+        if env.cfg.reward_model.type != "TaskEmbedResnetRewModel":
+            return None
+        # One instruction per scored frame, so each description repeats over its chunk
+        instructions = []
+        for env_idx in range(env.num_envs):
+            instructions.extend([env.task_descriptions[env_idx]] * self.chunk)
+        return instructions
 
     def _build_pipeline(self) -> WanVideoPipeline:
         # diffsynth takes the device as a string, torch.device stringifies to one.
