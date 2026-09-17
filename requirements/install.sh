@@ -20,6 +20,9 @@ PLATFORM="nvidia"
 ROCM_VERSION=""
 # googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
 RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
+# ManiSkill and RoboTwin both run on SAPIEN, and RoboTwin's dependencies do not
+# install it.
+SAPIEN_SPEC="sapien==3.0.1; platform_system == 'Linux' and platform_machine == 'x86_64' and python_version < '3.14'"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -1773,7 +1776,7 @@ EOF
 install_common_embodied_deps() {
     uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
-        grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" \
+        { grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" || [ $? -eq 1 ]; } \
             | uv pip install -r -
     else
         uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
@@ -2546,21 +2549,11 @@ install_env_only() {
     fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
-    # A robot host trains in its env venv, so these keep the embodied extra
-    # (transformers, peft, timm, ...) that model installs get from
-    # install_common_embodied_deps, without its simulator packages.
-    case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1)
-            uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-            ;;
-    esac
-    # Robot hosts need the same system libraries as simulator installs, such as
-    # GTK for camera preview windows.
+    # A robot host trains in its env venv, so it takes the same embodied extra,
+    # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
         franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
-            if [ "$NO_ROOT" -eq 0 ]; then
-                bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
-            fi
+            install_common_embodied_deps
             ;;
     esac
     case "$ENV_NAME" in
@@ -2676,7 +2669,7 @@ install_libero_env() {
 install_maniskill_libero_env() {
     install_libero_env
     # The largest git fetch in the install; truncates on slow links.
-    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
+    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22 "$SAPIEN_SPEC"
 
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
 }
@@ -3036,7 +3029,7 @@ install_robotwin_env() {
         export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
     fi
 
-    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
+    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai "$SAPIEN_SPEC"
 
     uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
     uv pip install warp-lang==1.11.1
