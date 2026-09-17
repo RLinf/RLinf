@@ -90,7 +90,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun")
 TEST_BUILD=${TEST_BUILD:-0}
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -139,13 +139,15 @@ Common options:
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
-                           ROCm), ascend (experimental, NPU), or musa (experimental, Moore
-                           Threads). Sets UV_TORCH_BACKEND where applicable
+                           ROCm), ascend (experimental, NPU), musa (experimental, Moore
+                           Threads) or kunlun (experimental, Kunlunxin). Sets UV_TORCH_BACKEND where applicable
                            (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
                            bypass (e.g. UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI
                            and adds torch-npu in install_ascend_extras. MUSA installs no torch at
                            all: run it inside the Moore Threads training-suite image and it
                            reuses that image's torch/torch-musa via a --system-site-packages venv.
+                           KUNLUN clones the training-suite image's complete torch environment into --venv
+                           using /opt/clone-uv-env.sh, so torch/torch-kunlun and their dependencies are reused.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
@@ -155,7 +157,7 @@ Common options:
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support
-                           (Ascend/MUSA).
+                           (Ascend/MUSA/Kunlun).
     --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
                            CUDA toolchain mismatch prevents download apex of the right version.
     --no-natten            Skip natten install. Useful when no SHI-Labs wheel matches the
@@ -787,6 +789,99 @@ for name in ("torch", "torch_musa", "torchvision", "torchaudio", "flash_attn"):
 EOF
 }
 
+configure_kunlun() {
+    # Kunlun's Torch/XPU runtime is supplied by the base image. Clone that
+    # complete uv environment into the requested --venv instead of forcing all
+    # installs into the vendor's fixed environment path.
+    local clone_script="${KUNLUN_CLONE_UV_ENV_SCRIPT:-/opt/clone-uv-env.sh}"
+    if [ ! -f "$clone_script" ]; then
+        echo "[install.sh] kunlun: environment clone script not found at '$clone_script'." >&2
+        exit 1
+    fi
+    if [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ] || [ ! -x "/opt/venvs/$VENV_DIR/bin/python" ]; then
+        echo "[install.sh] kunlun: cloning the base environment into '$VENV_DIR'."
+        bash "$clone_script" "$VENV_DIR"
+    else
+        echo "[install.sh] kunlun: reusing existing environment at '$VENV_DIR'."
+    fi
+
+    local base_python="/opt/venvs/$VENV_DIR/bin/python"
+    if [ ! -x "$base_python" ] || [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ]; then
+        echo "[install.sh] kunlun: cloned environment at '$VENV_DIR' is missing python/activate." >&2
+        exit 1
+    fi
+    VENV_DIR="/opt/venvs/$VENV_DIR"
+
+
+    local image_python_mm image_torch image_torch_public
+    image_python_mm=$("$base_python" - <<'EOF'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+EOF
+)
+    if [ "$USER_SET_PYTHON" -eq 1 ] && [[ "$PYTHON_VERSION" != "${image_python_mm}"* ]]; then
+        echo "[install.sh] kunlun: --python ${PYTHON_VERSION} does not match the cloned environment's Python ${image_python_mm}." >&2
+        exit 1
+    fi
+    PYTHON_VERSION="$image_python_mm"
+
+    image_torch=$("$base_python" - <<'EOF'
+import importlib.metadata as metadata
+try:
+    print(metadata.version("torch"))
+except metadata.PackageNotFoundError:
+    pass
+EOF
+)
+    if [ -z "$image_torch" ]; then
+        echo "[install.sh] kunlun: torch is missing from '$VENV_DIR'." >&2
+        exit 1
+    fi
+    image_torch_public="${image_torch%%+*}"
+    if [ -n "$TORCH_VERSION" ] && [ "$TORCH_VERSION" != "$image_torch_public" ]; then
+        echo "[install.sh] kunlun: --torch ${TORCH_VERSION} conflicts with the cloned environment's torch ${image_torch}." >&2
+        echo "[install.sh] Do not replace the vendor Torch; clone an image with the required version instead." >&2
+        exit 1
+    fi
+    TORCH_VERSION="$image_torch_public"
+
+    PLATFORM_TORCH_STR=""
+    PLATFORM_TORCH_INDEX=""
+    PLATFORM_TORCH_PACKAGES=()
+    PLATFORM_VENV_EXPORTS=()
+    PLATFORM_FLASH_ATTN_INSTALL=0
+    PLATFORM_FLASH_ATTN_PREBUILT=0
+    PLATFORM_RELAX_TORCHCODEC=1
+    local torch_major torch_rest torch_minor
+    torch_major="${TORCH_VERSION%%.*}"
+    torch_rest="${TORCH_VERSION#*.}"
+    torch_minor="${torch_rest%%.*}"
+    PLATFORM_TORCHCODEC_SPEC="$(derive_torchcodec_spec "$torch_major" "$torch_minor" 2>/dev/null || true)"
+    [ -n "$PLATFORM_TORCHCODEC_SPEC" ] || PLATFORM_TORCHCODEC_SPEC="torchcodec>=0.8,<0.10"
+    PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=("--inexact")
+
+    # These packages either replace the vendor torch or contain CUDA-specific
+    # kernels. They may still be resolved as project dependencies, but uv must
+    # leave any image-provided copy untouched.
+    local pkg
+    for pkg in torch torchvision torchaudio torchcodec triton flash-attn \
+        xformers apex transformer-engine transformer-engine-torch \
+        flashinfer-cubin flashinfer-python sglang-kernel vllm sglang xgrammar; do
+        PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "$pkg")
+    done
+
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
+    PLATFORM_VENV_HOOK=""
+    PLATFORM_COMMON_REQ_EXCLUDE_RE=""
+
+    if [ -n "${UV_TORCH_BACKEND:-}" ]; then
+        echo "[install.sh] kunlun: ignoring UV_TORCH_BACKEND=${UV_TORCH_BACKEND}; using the cloned environment's vendor torch." >&2
+        unset UV_TORCH_BACKEND
+    fi
+    echo "[install.sh] kunlun: using ${VENV_DIR} (python=${PYTHON_VERSION}, torch=${image_torch})."
+}
+
 
 # Envs that need a different torch than the project default (Isaac Sim /
 # OmniGibson need 2.5.1) declare it here, so configure_platform and
@@ -821,6 +916,7 @@ configure_platform() {
         amd)     configure_amd ;;
         ascend)  configure_ascend ;;
         musa)    configure_musa ;;
+        kunlun)  configure_kunlun ;;
     esac
     echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
@@ -969,12 +1065,57 @@ EOF
     fi
 }
 
+install_kunlun_extras() {
+    # Nothing to install; validate the vendor environment after dependency setup.
+    python - "$TORCH_VERSION" <<'EOF'
+import importlib
+import sys
+
+import torch
+
+expected = sys.argv[1]
+actual = torch.__version__.split("+", 1)[0]
+if actual != expected:
+    raise SystemExit(
+        f"[install.sh] kunlun: vendor torch changed during environment setup: "
+        f"expected {expected}, found {torch.__version__}."
+    )
+
+try:
+    importlib.import_module("torch_xmlir")
+except Exception as exc:
+    raise SystemExit(
+        f"[install.sh] kunlun: torch_xmlir is not importable: {type(exc).__name__}: {exc}"
+    )
+
+try:
+    available = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if available else 0
+except Exception as exc:
+    print(
+        f"[install.sh] kunlun: skipping device check ({type(exc).__name__}: {exc}); "
+        "this is allowed during Docker build and must be checked at runtime.",
+        file=sys.stderr,
+    )
+else:
+    if available:
+        print(f"[install.sh] kunlun: torch {torch.__version__}, {device_count} device(s)")
+    else:
+        print(
+            "[install.sh] kunlun: torch_xmlir imported but no device is visible; "
+            "this is allowed during Docker build and must be checked at runtime.",
+            file=sys.stderr,
+        )
+EOF
+}
+
 install_platform_extras() {
     case "$PLATFORM" in
         nvidia)  install_nvidia_extras ;;
         amd)     install_amd_extras ;;
         ascend)  install_ascend_extras ;;
         musa)    install_musa_extras ;;
+        kunlun)  install_kunlun_extras ;;
     esac
 }
 

@@ -359,6 +359,7 @@ class AcceleratorUtil:
         AcceleratorType.NV_GPU,
         AcceleratorType.AMD_GPU,
         AcceleratorType.MUSA_GPU,
+        AcceleratorType.KUNLUN_XPU,
     ]
 
     @staticmethod

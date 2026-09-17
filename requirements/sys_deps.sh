@@ -379,7 +379,7 @@ case "$PLATFORM" in
         echo "Installing rendering runtime config for AMD/Radeon"
         install_render_config_amd
         ;;
-    ascend|musa)
+    ascend|musa|kunlun)
         # Server-side, with no display GPU. Skip the EGL/Vulkan ICD config;
         # software rendering still gets mesa drivers from the step above.
         echo "Skipping rendering runtime config on ${PLATFORM} platform"

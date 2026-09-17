@@ -18,8 +18,8 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 ### Additional build arguments
 
-- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
-- Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, or `MUSA_BASE_IMAGE` directly.
+- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), `musa` (Moore Threads), or `kunlun` (Kunlunxin). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
+- Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `KUNLUN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, `MUSA_BASE_IMAGE`, or `KUNLUN_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
 
 Example with non-default args:
@@ -57,6 +57,26 @@ DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile \
 docker run -it --runtime=mthreads --ipc=host --shm-size=100g \
     -e MTHREADS_VISIBLE_DEVICES=all \
     rlinf:embodied-maniskill_libero bash
+```
+
+### Building for Kunlunxin (KUNLUN)
+
+`PLATFORM=kunlun` builds on top of the Kunlunxin image
+(`hub.kunlunxin.com/public/kunlunxin-self-driving/xav-rlinf:$KUNLUN_VER`). The
+image supplies the vendor Torch runtime, and `install.sh` clones that Python
+environment before installing RLinf dependencies. The `embodied-libero` target
+installs the `openpi` environment when built for Kunlunxin.
+
+Install Buildx and build the image from the RLinf root directory. 
+
+```shell
+apt-get install -y docker-buildx
+
+docker buildx build \
+    -f docker/Dockerfile \
+    --build-arg BUILD_TARGET=embodied-libero \
+    --build-arg PLATFORM=kunlun \
+    -t rlinf:embodied-libero .     
 ```
 
 # Using the Docker Image
