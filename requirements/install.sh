@@ -150,7 +150,7 @@ Common options:
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
-                           or 3.12.13 for agentic on the torch 2.11 stack.
+                           or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
@@ -3373,7 +3373,7 @@ main() {
             # stacks keep 3.11 (no cp312 flash-attn/apex wheels); MUSA keeps the
             # image interpreter.
             if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM" != "musa" ] && engine_needs_torch211; then
-                PYTHON_VERSION="3.12.13"
+                PYTHON_VERSION="3.12.12"
             fi
             create_and_sync_venv
             install_agentic
