@@ -3151,7 +3151,7 @@ install_mbridge() {
     # which megatron/bridge/__init__.py imports unconditionally through
     # auto_bridge, so install that one explicitly.
     echo "[install.sh] Installing rlinf-megatron-bridge (PyPI wheel)..."
-    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge"
+    uv pip install --no-deps "rlinf-megatron-bridge"
     uv pip install "nvidia-modelopt==0.45.0"
 
     local mbridge_ver modelopt_ver
