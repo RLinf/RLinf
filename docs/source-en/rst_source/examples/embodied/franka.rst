@@ -4,8 +4,8 @@ Real-World RL with Franka
 This page walks you through training a CNN policy on a Franka arm with RLinf,
 from demonstration collection to online RLPD training. The default setup uses
 one x86-64 computer with an NVIDIA GPU running Ubuntu 20.04 or 22.04. Franky
-controls the arm through Python bindings to libfranka, so ROS is not required,
-and the same computer runs rollout and training. You first prepare that host
+controls the arm through Python bindings to libfranka, and the same computer
+runs rollout and training. You first prepare that host
 (firmware check, real-time kernel, GPU driver for that kernel), install RLinf
 natively or with Docker, then run the peg-insertion example. The later sections cover a
 separate controller node, the legacy ROS backend for existing deployments, and
@@ -288,8 +288,7 @@ What this does:
 2. Installs system packages through APT, which needs sudo. Pass ``--no-root``
    only if those packages are already installed.
 3. Installs the Franka dependencies, LeRobot, and a prebuilt
-   ``franky-control`` wheel that bundles libfranka. No ROS installation or
-   catkin build is involved.
+   ``franky-control`` wheel that bundles libfranka.
 
 The wheel targets manylinux 2.28, so the same environment works on Ubuntu
 20.04 and 22.04. The installer reads these variables:
@@ -357,9 +356,6 @@ The image contains these environments, switched with
        dependencies. Active by default.
    * - ``openvla``, ``openvla-oft``, ``openpi``, ``gr00t``
      - The ``franky`` contents plus that VLA policy.
-
-The image does not include the legacy ROS backend, which needs Ubuntu 20.04; see
-`Legacy ROS Backend (Optional)`_.
 
 Start the container with access to the GPU, robot, camera, and SpaceMouse:
 
@@ -728,10 +724,9 @@ Legacy ROS Backend (Optional)
 RLinf can also drive the arm through ROS Noetic, ``franka_ros``, and
 ``serl_franka_controllers`` instead of Franky. Use this backend for an existing
 ROS deployment, or when your firmware needs a libfranka version other than
-0.15.0 or 0.19.0. It requires Ubuntu 20.04, because ROS Noetic does not support
-later releases, so the Docker image does not include it and you install it
-natively. Everything else on this page applies once the backend is installed
-and selected.
+0.15.0 or 0.19.0. It runs on Ubuntu 20.04, the release ROS Noetic supports, and
+is installed natively on the host. Everything else on this page applies once the
+backend is installed and selected.
 
 Install the ROS Environment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -837,7 +832,7 @@ and Ray workers inherit that environment.
 With ``backend: franka_ros`` set in both recipes, the commands in
 `Collect Demonstrations`_ and `Train the Policy`_ run unchanged.
 
-You do not start ROS yourself. When the arm connects, RLinf:
+When the arm connects, RLinf starts ROS itself:
 
 1. Reuses a running ``roscore`` or starts one, and opens a single ROS node for
    the process.
@@ -891,8 +886,7 @@ Other Franka Workflows
 --------------------------
 
 The installer combines the Franka dependencies with other models. Every Franky
-environment already includes the dexterous-hand dependencies, so a
-dexterous-hand task needs no separate installation. For a VLA policy, install
+environment includes the dexterous-hand dependencies. For a VLA policy, install
 the model and Franka together:
 
 .. code:: bash

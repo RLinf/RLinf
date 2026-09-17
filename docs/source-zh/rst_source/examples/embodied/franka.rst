@@ -1,7 +1,7 @@
 Franka 真机强化学习
 ====================
 
-本页介绍如何使用 RLinf 在 Franka 机械臂上训练 CNN policy，从收集演示到 RLPD 在线训练。默认配置只用一台装有 NVIDIA GPU、运行 Ubuntu 20.04 或 22.04 的 x86-64 计算机。Franky 通过 libfranka 的 Python 绑定控制机械臂，不需要 ROS，同一台计算机还负责 rollout 和训练。你将先准备这台主机（检查固件、安装实时内核并为其配置 GPU 驱动），再通过本地安装或 Docker 部署 RLinf，然后运行插孔示例。后面几节分别介绍独立控制节点、面向已有部署的旧版 ROS 后端，以及其他 Franka 工作流。
+本页介绍如何使用 RLinf 在 Franka 机械臂上训练 CNN policy，从收集演示到 RLPD 在线训练。默认配置只用一台装有 NVIDIA GPU、运行 Ubuntu 20.04 或 22.04 的 x86-64 计算机。Franky 通过 libfranka 的 Python 绑定控制机械臂，同一台计算机还负责 rollout 和训练。你将先准备这台主机（检查固件、安装实时内核并为其配置 GPU 驱动），再通过本地安装或 Docker 部署 RLinf，然后运行插孔示例。后面几节分别介绍独立控制节点、面向已有部署的旧版 ROS 后端，以及其他 Franka 工作流。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
    :align: center
@@ -214,7 +214,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
 1. 创建 ``.venv`` 虚拟环境，安装 RLinf 和具身训练依赖，其中包括与驱动匹配的 PyTorch。
 2. 通过 APT 安装系统软件包，这一步需要 sudo 权限。只有这些软件包已经装好时，才传入 ``--no-root``。
-3. 安装 Franka 依赖、LeRobot，以及包含 libfranka 的预编译 ``franky-control`` wheel。整个过程不安装 ROS，也不需要 catkin 编译。
+3. 安装 Franka 依赖、LeRobot，以及包含 libfranka 的预编译 ``franky-control`` wheel。
 
 该 wheel 面向 manylinux 2.28 构建，因此同一个环境可在 Ubuntu 20.04 和 22.04 上使用。安装脚本读取以下环境变量：
 
@@ -263,8 +263,6 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
      - Franky 后端，内置 libfranka 0.19.0 和灵巧手依赖，默认激活。
    * - ``openvla``、``openvla-oft``、``openpi``、``gr00t``
      - ``franky`` 的全部内容及对应的 VLA policy。
-
-旧版 ROS 后端需要 Ubuntu 20.04，因此镜像中不包含该后端，见 `旧版 ROS 后端（可选）`_。
 
 启动容器时授予访问 GPU、机械臂、相机和 SpaceMouse 的权限：
 
@@ -532,7 +530,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 旧版 ROS 后端（可选）
 ---------------------
 
-除 Franky 外，RLinf 也可以通过 ROS Noetic、``franka_ros`` 和 ``serl_franka_controllers`` 控制机械臂。已有 ROS 部署，或者固件需要 0.15.0、0.19.0 以外的 libfranka 版本时，可以使用这一后端。ROS Noetic 只支持 Ubuntu 20.04，因此该后端也要求 Ubuntu 20.04，Docker 镜像中不包含该后端，需要在主机上本地安装。安装并选定后端后，本页其余步骤保持不变。
+除 Franky 外，RLinf 也可以通过 ROS Noetic、``franka_ros`` 和 ``serl_franka_controllers`` 控制机械臂。已有 ROS 部署，或者固件需要 0.15.0、0.19.0 以外的 libfranka 版本时，可以使用这一后端。该后端运行在 ROS Noetic 支持的 Ubuntu 20.04 上，需要在主机上本地安装。安装并选定后端后，本页其余步骤保持不变。
 
 安装 ROS 环境
 ~~~~~~~~~~~~~
@@ -613,7 +611,7 @@ ROS 后端的实时模式在安装时由 ``FRANKA_REALTIME_CONFIG`` 决定，不
 
 在两个配置文件中设置 ``backend: franka_ros`` 后，`收集演示`_ 和 `训练 Policy`_ 中的命令无需修改即可运行。
 
-ROS 不需要手动启动。机械臂连接时，RLinf 会依次：
+机械臂连接时，RLinf 会自行启动 ROS，依次：
 
 1. 复用已在运行的 ``roscore``，没有则启动一个，并为当前进程创建一个 ROS 节点。
 2. 针对机械臂的 ``robot_ip`` 执行 ``roslaunch serl_franka_controllers impedance.launch``，启动 ``franka_control``、Franka Hand 驱动和笛卡尔阻抗控制器。
@@ -645,7 +643,7 @@ ROS 不需要手动启动。机械臂连接时，RLinf 会依次：
 其他 Franka 工作流
 ------------------
 
-安装脚本可以将 Franka 依赖与其他模型组合。所有 Franky 环境都已包含灵巧手依赖，灵巧手任务无需单独安装。使用 VLA policy 时，将模型和 Franka 一起安装：
+安装脚本可以将 Franka 依赖与其他模型组合。所有 Franky 环境都包含灵巧手依赖。使用 VLA policy 时，将模型和 Franka 一起安装：
 
 .. code:: bash
 

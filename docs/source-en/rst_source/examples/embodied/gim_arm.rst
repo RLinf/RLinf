@@ -87,8 +87,7 @@ Hardware Setup
 
 .. note::
 
-   Unlike the Franka setup, GimArm does **not** require a real-time kernel or ROS.
-   Communication uses the Linux SocketCAN interface directly.
+   GimArm communicates through the Linux SocketCAN interface directly.
 
 Installation
 ------------
