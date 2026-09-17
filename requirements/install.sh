@@ -2550,14 +2550,17 @@ install_env_only() {
     # (transformers, peft, timm, ...) that model installs get from
     # install_common_embodied_deps, without its simulator packages.
     case "$ENV_NAME" in
-        franka|franka-ros)
+        franka|franka-ros|so101|piper|dosw1)
             uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+            ;;
+    esac
+    # Robot hosts need the same system libraries as simulator installs, such as
+    # GTK for camera preview windows.
+    case "$ENV_NAME" in
+        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
             fi
-            ;;
-        so101|piper|dosw1)
-            uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             ;;
     esac
     case "$ENV_NAME" in

@@ -115,6 +115,7 @@ install_deps_apt() {
         libgl1-mesa-dev \
         libgl1 \
         libglib2.0-0 \
+        libgtk2.0-dev \
         libhidapi-hidraw0 \
         libusb-1.0-0 \
         libudev1 \
@@ -174,6 +175,7 @@ install_deps_dnf() {
         mesa-libGL \
         mesa-libGL-devel \
         glib2 \
+        gtk2-devel \
         libSM \
         libXext \
         libXrender-devel \
@@ -223,6 +225,7 @@ install_deps_yum() {
         mesa-libGL \
         mesa-libGL-devel \
         glib2 \
+        gtk2-devel \
         libSM \
         libXext \
         libXrender-devel \
@@ -246,6 +249,7 @@ install_deps_yum() {
 
 install_deps_pacman() {
     # Pacman package names for Arch Linux
+    # gtk2 is AUR-only on Arch, so OpenCV's GTK+ 2 GUI dependency is not installed here.
     sudo pacman -Sy --noconfirm \
         linux-api-headers \
         wget \
