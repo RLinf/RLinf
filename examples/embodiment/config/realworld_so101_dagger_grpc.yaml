@@ -1,0 +1,18 @@
+# SO-101 DAgger training with gRPC backend for student policy
+# Expert runs locally, student policy uses remote gRPC inference
+
+defaults:
+  - realworld_so101_dagger_openpi
+  - _self_
+
+# Enable gRPC backend for student policy rollout
+rollout:
+  use_grpc_backend: true
+  grpc:
+    server_address: "localhost:50051"
+    timeout: 30.0
+
+  # Expert model still runs locally
+  expert_model:
+    model_type: "teleop"
+    robot_type: "so101"

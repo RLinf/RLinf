@@ -139,17 +139,38 @@ class MultiStepRolloutWorker(Worker):
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
     def init_worker(self):
-        rollout_model_config = copy.deepcopy(self.model_cfg)
-        with open_dict(rollout_model_config):
-            rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.model_path = self.cfg.rollout.model.model_path
+        # Check if using gRPC backend for remote inference
+        use_grpc = self.cfg.rollout.get("use_grpc_backend", False)
 
-        self.hf_model: BasePolicy = get_model(rollout_model_config)
+        if use_grpc:
+            # Use gRPC policy adapter for remote inference
+            from rlinf.workers.rollout.grpc.grpc_policy_adapter import GRPCPolicyAdapter
 
-        if self.cfg.runner.get("ckpt_path", None):
+            grpc_cfg = self.cfg.rollout.get("grpc", {})
+            server_address = grpc_cfg.get("server_address", "localhost:50051")
+            timeout = grpc_cfg.get("timeout", 30.0)
+
+            self.hf_model: BasePolicy = GRPCPolicyAdapter(
+                server_address=server_address,
+                timeout=timeout,
+                device=self.device,
+            )
+            self.log(f"Using gRPC backend at {server_address}")
+        else:
+            # Standard local model loading
+            rollout_model_config = copy.deepcopy(self.model_cfg)
+            with open_dict(rollout_model_config):
+                rollout_model_config.precision = self.cfg.rollout.model.precision
+                rollout_model_config.model_path = self.cfg.rollout.model.model_path
+
+            self.hf_model: BasePolicy = get_model(rollout_model_config)
+
+        # Load checkpoint (only for local model, not gRPC)
+        if not use_grpc and self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
+        # RLT feature model (for OPD)
         rlt_feature_model_config = OmegaConf.select(
             self.cfg, "rollout.rlt_feature_model", default=None
         )
@@ -159,6 +180,7 @@ class MultiStepRolloutWorker(Worker):
             self.rlt_feature_model.requires_grad_(False)
             self.rlt_route = build_rlt_route(self.cfg)
 
+        # Expert model (for DAgger)
         if self.cfg.rollout.get("expert_model", None) and not self.enable_opd:
             expert_model_config = build_expert_model_config(
                 self.cfg,
@@ -171,22 +193,25 @@ class MultiStepRolloutWorker(Worker):
                 expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
                 self.expert_model.load_state_dict(expert_model_dict)
 
+        # Set eval mode
         self.hf_model.eval()
         if self.expert_model is not None:
             self.expert_model.eval()
         if self.rlt_feature_model is not None:
             self.rlt_feature_model.eval()
 
-        if self.cfg.rollout.get("enable_torch_compile", False):
-            mode = self.cfg.rollout.get(
-                "torch_compile_mode", "max-autotune-no-cudagraphs"
-            )
-            self.hf_model.enable_torch_compile(mode=mode)
-        if self.enable_cuda_graph and not self.enable_offload:
-            self.hf_model.capture_cuda_graph(
-                train_batch_size=self.per_node_train_batch_size,
-                eval_batch_size=self.per_node_eval_batch_size,
-            )
+        # Optimizations (only for local model, not gRPC)
+        if not use_grpc:
+            if self.cfg.rollout.get("enable_torch_compile", False):
+                mode = self.cfg.rollout.get(
+                    "torch_compile_mode", "max-autotune-no-cudagraphs"
+                )
+                self.hf_model.enable_torch_compile(mode=mode)
+            if self.enable_cuda_graph and not self.enable_offload:
+                self.hf_model.capture_cuda_graph(
+                    train_batch_size=self.per_node_train_batch_size,
+                    eval_batch_size=self.per_node_eval_batch_size,
+                )
 
         self.setup_sample_params()
         if self.enable_offload:
