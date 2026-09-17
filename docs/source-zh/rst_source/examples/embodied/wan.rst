@@ -252,7 +252,7 @@ VLA 模型下载
 
 - ``enable_kir``：是否启用 KIR（KeyFrame-Init Rollout）。关闭时，重置仅采样文件名不含 ``_kir`` 的 ``.npy``；启用时，从 ``dataset/`` 中所有初始化文件采样。
 - ``num_inference_steps``：世界模型生成/推理步数（默认 ``5``）。步数越少生成越快，但可能降低画质；即使单步生成也能带来性能提升。
-- ``reward_model.type``：奖励模型类别——``ResnetRewModel`` 或 ``TaskEmbedResnetRewModel``。
+- ``reward_model.type``：奖励模型类别——``ResnetRewModel``、``TaskEmbedResnetRewModel`` 或 ``TOPRewardModel``\ （见 :ref:`wan-frozen-vlm-reward-zh`）。
 - ``reset_gripper_open``：是否以张开夹爪初始化。训练与评估默认 ``True``，不建议修改。
 
 **3. 启动**
@@ -262,6 +262,79 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
+
+.. _wan-frozen-vlm-reward-zh:
+
+可选：用不训练的 VLM 作为奖励模型
+----------------------------------------
+
+每个 Wan checkpoint 自带的 ``ResnetRewModel`` 是在模拟器的特权状态上训练的，因此每个套件都需要
+一份自己的 ``resnet_rm.pth``。``TOPRewardModel`` 用一个全程不训练的 VLM 取代它：把生成的画面连同
+一句\ **断言任务已完成**\ 的话一起喂进去，再读这句话的 ``log P(" True")``。换套件只需换指令文本。
+
+判分器在 env worker 内部构造，与 Wan 和策略同处一个进程，因此它跑在上面那条 Wan 安装命令建出的
+环境里——``bash requirements/install.sh embodied --model openvla-oft --env wan``。该环境需要
+``transformers >= 4.57`` 才认得 Qwen3-VL，比 OpenVLA-OFT 钉的版本新，装完后在该环境里升级：
+
+.. code:: bash
+
+   uv pip install --upgrade "transformers>=4.57,<=4.57.6"
+
+然后在 env 预设中指向权重：
+
+.. code-block:: yaml
+
+   reward_model:
+     type: TOPRewardModel
+     from_pretrained: /Pathto/model/Qwen3-VL-8B-Instruct
+     success_prob_threshold: 0.46 # exp(log P(" True")) 达到该值即判成功
+     window_frames: 16            # 每次调用喂入的帧数，末端对齐 chunk 边界
+     fps: 2.0                     # 经 processor 的 video_metadata 进入时间编码
+
+``examples/embodiment/config/wan_libero_spatial_topreward_grpo_openvlaoft.yaml`` 是现成配方：
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh wan_libero_spatial_topreward_grpo_openvlaoft
+
+分数会被阈值化成 0/1，语义与 ResNet 模型的 ``round()`` 一致：驱动 ``terminations`` 与 loss mask，
+下游不需要任何改动。
+
+调它之前要知道两件事：
+
+- **敏感的旋钮是打分窗口，不是阈值。** 只看一个 action chunk 会丢掉成功与失败 episode 之间的区分度，
+  让这次调用同时看到上一个 chunk 就能恢复。模型为每个 env slot 缓存一个 chunk 的帧，该 slot 重启时
+  丢弃，因此一个窗口不会横跨两条 episode。
+- **prompt 用陈述句，不用疑问句。** 疑问式的 prompt 在同一批画面上给无关指令的分数\ **反而更高**\ 。
+
+.. list-table:: **不训练的 VLM 与 ResNet 判分器对比，真实 LIBERO，n = 500**
+    :header-rows: 1
+    :widths: 22 20 20 20 18
+
+    * - 套件
+      - Base
+      - ResNet（最好点）
+      - 不训练的 VLM（最好点）
+      - 差
+    * - Spatial
+      - 44.8%
+      - 57.4%
+      - 56.0%
+      - −1.4
+    * - Object
+      - 34.2%
+      - 36.8%
+      - 34.8%
+      - −2.0
+
+两个差都落在该基准 3.1 个百分点的标准误之内，即不训练的 VLM 与在该域上专门训过的判分器打平。
+Object 那一行用的是在 Spatial 上标定的阈值与窗口，原样迁移、未作调整。注意 Object 上\ **两个判分器**\
+相对 base 都涨得很少，所以那一行说明的是判分器可跨套件迁移，而不是这套配方在 Object 上很强。
+
+代价是每个 env slot 每个 action chunk 一次前向，在该 worker 持有的 slot 上串行执行，因此一个 chunk
+step 的代价是 ``total_num_envs / env_world_size`` 次前向。上面那些读数来自每训练步 4096 次前向，
+落在 Wan rollout 自身的 run-to-run 波动之内。每个 env worker 各持一份权重，因此宿主内存要按
+``env_world_size`` 份来规划。
 
 可视化与结果
 ----------------------------------------
