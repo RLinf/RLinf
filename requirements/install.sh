@@ -3145,16 +3145,18 @@ EOF
 }
 
 install_mbridge() {
-    # py3.10/3.11 fork of megatron-bridge. --no-deps keeps torch and nemo-toolkit
+    # megatron-bridge needs Python 3.12. --no-deps keeps torch and nemo-toolkit
     # untouched but also drops nvidia-modelopt, which megatron.bridge imports.
-    echo "[install.sh] Installing rlinf-megatron-bridge (PyPI wheel)..."
-    uv pip install --no-deps "rlinf-megatron-bridge"
+    # The old rlinf-megatron-bridge fork owns the same files, so remove it first.
+    echo "[install.sh] Installing megatron-bridge 0.5.0 (PyPI wheel)..."
+    uv pip uninstall rlinf-megatron-bridge || true
+    uv pip install --no-deps "megatron-bridge==0.5.0"
     uv pip install "nvidia-modelopt==0.45.0"
 
     local mbridge_ver modelopt_ver
-    mbridge_ver=$(uv pip show rlinf-megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')
+    mbridge_ver=$(uv pip show megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')
     modelopt_ver=$(uv pip show nvidia-modelopt 2>/dev/null | awk '/^Version:/{print $2}')
-    echo "[install.sh] rlinf-megatron-bridge ${mbridge_ver} + nvidia-modelopt ${modelopt_ver} installed."
+    echo "[install.sh] megatron-bridge ${mbridge_ver} + nvidia-modelopt ${modelopt_ver} installed."
 }
 
 # FA4 backward is sm90+ only; on sm<9 drop it so TE falls back to FA2.
@@ -3217,7 +3219,7 @@ install_agentic() {
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
     # otherwise clone into the venv.
     local megatron_branch="core_r0.13.0"
-    # rlinf-megatron-bridge 0.5.0 needs mcore 0.18+.
+    # megatron-bridge 0.5.0 needs mcore 0.18+.
     [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.18.0"
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b "$megatron_branch")
