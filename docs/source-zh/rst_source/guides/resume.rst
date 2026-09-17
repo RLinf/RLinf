@@ -1,9 +1,7 @@
 检查点恢复
 =================
 
-意外情况 —— 网络错误、断电、节点被抢占 —— 都可能中断一个长时间运行的分布式任务。  
-为了解决这一问题，RLinf 会在每隔 ``runner.save_interval`` 步时保存一个完整的检查点，  
-并允许你从最近的快照恢复，最大限度减少工作损失。  
+将 ``runner.resume_dir`` 指向已保存的检查点，即可恢复中断的训练。RLinf 每隔 ``runner.save_interval`` 步保存一次检查点。先根据下文的后端目录结构找到检查点，再使用相同配置重新启动训练。
 
 检查点布局
 -----------------
@@ -68,18 +66,22 @@ FSDP/FSDP2 检查点文件结构如下：
    ├── global_step_10/
    │   └── actor/
    │       ├── dcp_checkpoint/
+   │       │   ├── .metadata
    │       │   ├── __0_0.distcp
    │       │   ├── __1_0.distcp
    │       │   ├── __2_0.distcp
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
-   │           └── full_weigths.pt
+   │           └── full_weights.pt
    └── global_step_20/
        └── …
 
 
-FSDP/FSDP2 通过 DCP (torch.distributed.checkpoint) 保存和加载检查点，其结果为一组分布式检查点文件(.distcp)。  
-每个文件包含模型参数、优化器状态和 RNG 状态的分片。
+FSDP/FSDP2 通过 DCP（``torch.distributed.checkpoint``）保存模型参数、优化器状态、学习率调度器和随机数生成器（RNG）状态。复制检查点时，保留全部 ``.distcp`` 文件以及 ``.metadata`` 文件。
+
+DCP 检查点分别保存每个 actor rank 的 Python、NumPy 和 PyTorch CPU RNG 状态；worker 有加速设备时，也保存当前设备的 RNG 状态。恢复时保持 actor world size 不变，才能让各 rank 从原来的位置继续生成随机数。如果 world size 改变，已有 rank 恢复各自保存的序列，新增 rank 保留初始化后的 RNG 状态。加载会继续执行并输出警告；改变拓扑后不能复现原来的训练序列。这一机制不会恢复环境状态或单独创建的 generator，因此仅恢复这些 RNG 状态不能保证训练曲线完全一致。
+
+旧版 DCP 检查点中保存的单个 RNG 字典仍可加载，但 DCP 可能已将不同 rank 的 RNG 状态去重，恢复时无法找回被丢弃的序列。``local_shard`` 格式仍在每个 rank 自己的文件中保存 RNG 状态。
 
 
 恢复训练

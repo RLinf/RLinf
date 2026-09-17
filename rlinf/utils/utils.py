@@ -722,7 +722,7 @@ def get_rng_state() -> dict:
     }
     from rlinf.scheduler.worker.worker import Worker
 
-    if Worker.torch_platform.is_available():
+    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
         rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
     return rng_state
 
@@ -743,7 +743,11 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     from rlinf.scheduler.worker.worker import Worker
 
-    if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and Worker.torch_device_type in rng_state
+    ):
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
 
 
