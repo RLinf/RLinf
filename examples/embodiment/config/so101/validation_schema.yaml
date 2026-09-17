@@ -1,0 +1,47 @@
+# SO-101 dataset validation schema used by the data checker and packaging tool.
+# The collection wrapper currently emits the short RLinf feature names; the
+# aliases below also accept the canonical LeRobot names used by later tools.
+
+sample:
+  dataset_path: /path/to/so101-dataset
+  expected_robot_type: so101
+  expected_episodes: null
+  expected_frames: null
+
+control:
+  # Joint values are radians and the gripper is in [0, 1].  A single
+  # conservative envelope keeps this checker independent of a particular
+  # servo calibration while still rejecting malformed data.
+  state_dim: 6
+  action_dim: 6
+  normalized_range: [-3.2, 3.2]
+  gripper_range: [0.0, 1.0]
+
+data_contract:
+  required_basic:  # Basic data collection phase
+    observation.state:
+      aliases: [observation.state, state]
+    action:
+      aliases: [action, actions]
+    observation.images.wrist:
+      # With one configured camera, SO101ReachEnv exposes it as the main
+      # image.  ``image`` is therefore the expected basic-phase alias.
+      aliases: [observation.images.wrist, image, wrist_image]
+      shape: [128, 128, 3]
+    task:
+      aliases: [task, task_index]
+    episode_index:
+      aliases: [episode_index]
+    timestamp:
+      aliases: [timestamp]
+    done:
+      aliases: [done]
+    success:
+      aliases: [is_success, success]
+  required_dagger:  # DAgger phase additional fields
+    policy_action:
+      target_stage: DAgger
+    expert_action:
+      target_stage: DAgger
+    executed_action:
+      target_stage: DAgger
