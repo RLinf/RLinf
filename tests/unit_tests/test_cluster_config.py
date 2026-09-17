@@ -15,6 +15,7 @@
 import logging
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -1238,3 +1239,21 @@ def test_cluster_env_configs_multi_node_group_and_hetero_placement():
         if ray.is_initialized():
             ray.shutdown()
         _reset_cluster_singleton()
+
+
+def test_process_that_built_a_cluster_keeps_its_exit_code():
+    # A pytest run that builds a Cluster ends the same way: sys.exit(<code>).
+    script = (
+        "import sys\n"
+        "from rlinf.scheduler import Cluster\n"
+        "Cluster(num_nodes=1)\n"
+        "sys.exit(3)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert result.returncode == 3, result.stderr

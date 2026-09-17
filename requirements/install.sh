@@ -149,7 +149,8 @@ Common options:
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
-    --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14.
+    --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
+                           or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
@@ -1062,11 +1063,22 @@ platform_index_args() {
 }
 
 install_engine_requirements() {
-    local req="$1" engine_specs engine_req
+    local req="$1" engine_specs engine_req pip_req="$1" rewritten_req=""
     engine_specs=$(sed -n 's/^# engine: //p' "$req")
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
-    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$req"
+    # git insteadOf does not cover direct wheel URLs, so prefix them here.
+    if [ -n "$GITHUB_PREFIX" ] && grep -q 'https://github.com/' "$req"; then
+        rewritten_req=$(mktemp)
+        local req_dir
+        req_dir="$(cd "$(dirname "$req")" && pwd)"
+        sed -e "s|https://github.com/|${GITHUB_PREFIX}https://github.com/|g" \
+            -e "s|^-r  *\\([^/].*\\)|-r ${req_dir}/\\1|" \
+            "$req" > "$rewritten_req"
+        pip_req="$rewritten_req"
+    fi
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$pip_req"
+    [ -n "$rewritten_req" ] && rm -f "$rewritten_req"
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
         printf '%s\n' "$engine_specs" > "$engine_req"
@@ -1286,25 +1298,45 @@ install_uv() {
 }
 
 setup_mirror() {
+    remove_stale_github_mirror_rule
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
         export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
-        trap 'unset_mirror' EXIT INT TERM HUP
+        # Scope the GitHub rewrite to this process and its children through git's
+        # environment config, so no global state is left behind on any exit path.
+        local idx="${GIT_CONFIG_COUNT:-0}"
+        export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
+        export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
+        export GIT_CONFIG_COUNT=$((idx + 1))
     fi
 }
 
-unset_mirror() {
-    if [ "$USE_MIRRORS" -eq 1 ]; then
-        unset UV_PYTHON_INSTALL_MIRROR
-        unset UV_DEFAULT_INDEX
-        unset HF_ENDPOINT
-        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/" || true
-        unset GITHUB_PREFIX
-    fi
+# Older install.sh versions wrote the mirror rewrite to ~/.gitconfig and lost the
+# cleanup trap, so the rule outlived the install. Remove any such leftover.
+remove_stale_github_mirror_rule() {
+    command -v git >/dev/null 2>&1 || return 0
+    local key value
+    while read -r key value; do
+        [ "$value" = "https://github.com/" ] || continue
+        [ "$key" = "url.https://github.com/.insteadof" ] && continue
+        echo "[install.sh] Removing stale global git rule left by a previous mirror install: ${key} = ${value}"
+        git config --global --unset-all "$key" '^https://github\.com/$' || true
+    done < <(git config --global --get-regexp '^url\..*github\.com/\.insteadof$' 2>/dev/null || true)
+}
+
+# uv venv only fetches a missing interpreter when automatic downloads are on.
+# Install it explicitly so hosts with python-downloads = "manual" still work.
+ensure_uv_python() {
+    [ "${UV_PYTHON_PREFERENCE:-}" = "only-system" ] && return 0
+    uv python find "$PYTHON_VERSION" >/dev/null 2>&1 && return 0
+    local bin_args=()
+    uv python install --help 2>/dev/null | grep -q -- "--no-bin" && bin_args=(--no-bin)
+    echo "[install.sh] Python ${PYTHON_VERSION} not found; installing it with uv..."
+    uv python install "${bin_args[@]}" "$PYTHON_VERSION" || \
+        echo "[install.sh] WARNING: uv could not install Python ${PYTHON_VERSION}; the venv step will fail." >&2
 }
 
 create_and_sync_venv() {
@@ -1334,6 +1366,7 @@ EOF
 
             # Create new venv
             install_uv
+            ensure_uv_python
             uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
             # shellcheck disable=SC1090
             source "$VENV_DIR/bin/activate"
@@ -1344,6 +1377,7 @@ EOF
             rm -rf "$VENV_DIR"
 
             install_uv
+            ensure_uv_python
             uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
             # shellcheck disable=SC1090
             source "$VENV_DIR/bin/activate"
@@ -1354,6 +1388,7 @@ EOF
     else
         # Create new venv
         install_uv
+        ensure_uv_python
         uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
@@ -3098,6 +3133,18 @@ install_roboverse_env() {
 
 #=======================AGENTIC INSTALLER=======================
 
+# transformer-engine-torch's setup.py deletes its build_tools/ after bdist_wheel,
+# and uv builds sdists inside its cache, so the next build of the same version
+# (another Python or torch) fails on the cached source. Drop it and retry once.
+uv_install_te_from_source() {
+    if NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation "$@"; then
+        return 0
+    fi
+    echo "[install.sh] transformer-engine-torch build failed; retrying from a fresh sdist..."
+    uv cache clean transformer-engine-torch
+    NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation "$@"
+}
+
 install_te_2_17() {
     local torch_cu_major te_extra
     torch_cu_major=$(python - <<'EOF'
@@ -3114,8 +3161,7 @@ EOF
     te_extra="core_cu${torch_cu_major}"
     if [ "$torch_cu_major" != "12" ]; then
         echo "[install.sh] Installing TE 2.17.0 (${te_extra})..."
-        NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation \
-            "transformer-engine[pytorch,${te_extra}]==2.17.0"
+        uv_install_te_from_source "transformer-engine[pytorch,${te_extra}]==2.17.0"
         echo "[install.sh] TE 2.17.0 installed."
         return 0
     fi
@@ -3123,8 +3169,8 @@ EOF
     echo "[install.sh] Installing TE 2.17.0 (${te_extra}, source build with nvcc)..."
     uv pip install --no-build-isolation "transformer-engine[${te_extra}]==2.17.0"
     uv pip install einops onnx onnxscript packaging pydantic nvdlfw-inspect
-    NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation --no-deps \
-        --no-binary transformer-engine-torch "transformer-engine-torch==2.17.0"
+    uv_install_te_from_source --no-deps --no-binary transformer-engine-torch \
+        "transformer-engine-torch==2.17.0"
     if uv pip show transformer-engine-cu13 >/dev/null 2>&1; then
         echo "[install.sh] ERROR: transformer-engine-cu13 present on a CUDA 12 torch; its core would shadow the cu12 one." >&2
         exit 1
@@ -3133,11 +3179,18 @@ EOF
 }
 
 install_mbridge() {
-    # megatron-bridge 0.4.2 requires python >= 3.12, so RLinf publishes a
-    # py3.10/3.11 fork. --no-deps avoids re-resolving torch and nemo-toolkit.
-    echo "[install.sh] Installing rlinf-megatron-bridge 0.4.2 (PyPI wheel)..."
-    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge==0.4.2"
-    echo "[install.sh] rlinf-megatron-bridge 0.4.2 installed (import: megatron.bridge)."
+    # megatron-bridge needs Python 3.12. --no-deps keeps torch and nemo-toolkit
+    # untouched but also drops nvidia-modelopt, which megatron.bridge imports.
+    # The old rlinf-megatron-bridge fork owns the same files, so remove it first.
+    echo "[install.sh] Installing megatron-bridge 0.5.0 (PyPI wheel)..."
+    uv pip uninstall rlinf-megatron-bridge || true
+    uv pip install --no-deps "megatron-bridge==0.5.0"
+    uv pip install "nvidia-modelopt==0.45.0"
+
+    local mbridge_ver modelopt_ver
+    mbridge_ver=$(uv pip show megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')
+    modelopt_ver=$(uv pip show nvidia-modelopt 2>/dev/null | awk '/^Version:/{print $2}')
+    echo "[install.sh] megatron-bridge ${mbridge_ver} + nvidia-modelopt ${modelopt_ver} installed."
 }
 
 # FA4 backward is sm90+ only; on sm<9 drop it so TE falls back to FA2.
@@ -3182,7 +3235,7 @@ install_agentic() {
     engine_ver=$(effective_engine_version)
     if engine_needs_torch211; then
         torch211_stack=1
-        echo "[install.sh] ${engine} ${engine_ver} runs on torch 2.11: using TE 2.17, mcore 0.17, megatron-bridge."
+        echo "[install.sh] ${engine} ${engine_ver} runs on torch 2.11: using TE 2.17, mcore 0.18, megatron-bridge."
     fi
 
     local engine_req
@@ -3200,7 +3253,8 @@ install_agentic() {
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
     # otherwise clone into the venv.
     local megatron_branch="core_r0.13.0"
-    [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.17.0"
+    # megatron-bridge 0.5.0 needs mcore 0.18+.
+    [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.18.0"
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b "$megatron_branch")
 
@@ -3220,7 +3274,13 @@ install_agentic() {
     fi
 
     if [ "$torch211_stack" -eq 1 ]; then
-        install_mbridge
+        # megatron-bridge requires Python 3.12; an explicit --python below that
+        # still gets the rest of the stack, just without Megatron-Bridge models.
+        if python -c 'import sys; sys.exit(sys.version_info < (3, 12))'; then
+            install_mbridge
+        else
+            echo "[install.sh] WARNING: skipping megatron-bridge, which needs Python 3.12 (venv has $(python -V 2>&1))." >&2
+        fi
         uninstall_fa4_conditional
         setup_nccl_env
     fi
@@ -3334,6 +3394,12 @@ main() {
             esac
             ;;
         agentic)
+            # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
+            # stacks keep 3.11 (no cp312 flash-attn/apex wheels); MUSA keeps the
+            # image interpreter.
+            if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM" != "musa" ] && engine_needs_torch211; then
+                PYTHON_VERSION="3.12.12"
+            fi
             create_and_sync_venv
             install_agentic
             ;;

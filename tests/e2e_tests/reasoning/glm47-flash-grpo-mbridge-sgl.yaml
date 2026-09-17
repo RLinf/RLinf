@@ -31,7 +31,7 @@ runner:
   max_tokens_per_mbs: 2048
 
   resume_dir: null
-  experiment_name: moonlight-16b-megatron-mbridge
+  experiment_name: glm47-flash-megatron-mbridge
   output_dir: /workspace/results
 
 algorithm:
@@ -74,13 +74,13 @@ algorithm:
 rollout:
   group_name: "RolloutGroup"
 
-  gpu_memory_utilization: 0.55
+  gpu_memory_utilization: 0.5
 
   weight_reload: sync
 
   model:
-    model_path: /workspace/dataset/Moonlight-16B-A3B-Instruct-8L
-    model_type: deepseek_v3
+    model_path: /workspace/dataset/GLM-4.7-Flash-8L
+    model_type: glm4_moe_lite
     precision: ${actor.model.precision}
   enforce_eager: False
   distributed_executor_backend: mp
@@ -97,6 +97,12 @@ rollout:
     use_torch_compile: False
     torch_compile_max_bs: 128
     enable_ep_moe: true
+    ep_size: 4
+    moe_dp_size: 1
+    dp_size: 2
+    enable_dp_attention: true
+    moe_dense_tp_size: 1
+    moe_a2a_backend: none
 
   vllm:
     attention_backend: FLASH_ATTN
@@ -150,7 +156,7 @@ actor:
   seed: 1234
 
   model:
-    model_type: deepseek_v3
+    model_type: glm4_moe_lite
     megatron_checkpoint: null
     precision: bf16
     add_bias_linear: False
@@ -159,15 +165,12 @@ actor:
     pipeline_model_parallel_size: 1
     expert_model_parallel_size: 4
     expert_tensor_parallel_size: 1
-    moe_grouped_gemm: te
-
-    multi_latent_attention: True
 
     activation: swiglu
     sequence_parallel: True
 
-    recompute_method: uniform
     recompute_granularity: full
+    recompute_method: uniform
     recompute_num_layers: 1
 
     seq_length: ${runner.seq_length}
@@ -178,20 +181,17 @@ actor:
     apply_rope_fusion: False
     bias_dropout_fusion: False
     persist_layer_norm: False
-    bias_activation_fusion: True
+    bias_activation_fusion: False
     attention_softmax_in_fp32: True
     batch_p2p_comm: False
     variable_seq_lengths: True
     gradient_accumulation_fusion: False
     moe_token_dispatcher_type: alltoall
-    use_cpu_initialization: False
-
-    moe_router_load_balancing_type: "aux_loss"
-    init_method_std: 0.008
-    moe_router_topk: 6
-    moe_router_pre_softmax: False
-    moe_aux_loss_coeff: 0.0
+    moe_grouped_gemm: te
+    multi_latent_attention: True
+    moe_aux_loss_coeff: 0
     moe_router_bias_update_rate: 0
+    use_cpu_initialization: False
 
   optim:
     optimizer: adam
@@ -209,6 +209,7 @@ actor:
     optimizer_enable_pin: false
     overlap_param_gather_with_optimizer_step: False
     optimizer_cpu_offload: True
+    optimizer_offload_fraction: 0.5
     use_precision_aware_optimizer: True
     clip_grad: 1.0
     loss_scale: 65536
@@ -223,7 +224,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /workspace/dataset/Moonlight-16B-A3B-Instruct-8L
+    tokenizer_model: /workspace/dataset/GLM-4.7-Flash-8L
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'
@@ -242,7 +243,7 @@ actor:
     accumulate_allreduce_grads_in_fp32: True
 
     ckpt_convertor:
-      model: Moonlight-16B-A3B-Instruct
+      model: GLM-4.7-Flash
       hf_model_path: ${rollout.model.model_path}
 
     profiler:
