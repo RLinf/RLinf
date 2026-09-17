@@ -1319,6 +1319,18 @@ unset_mirror() {
     fi
 }
 
+# uv venv only fetches a missing interpreter when automatic downloads are on.
+# Install it explicitly so hosts with python-downloads = "manual" still work.
+ensure_uv_python() {
+    [ "${UV_PYTHON_PREFERENCE:-}" = "only-system" ] && return 0
+    uv python find "$PYTHON_VERSION" >/dev/null 2>&1 && return 0
+    local bin_args=()
+    uv python install --help 2>/dev/null | grep -q -- "--no-bin" && bin_args=(--no-bin)
+    echo "[install.sh] Python ${PYTHON_VERSION} not found; installing it with uv..."
+    uv python install "${bin_args[@]}" "$PYTHON_VERSION" || \
+        echo "[install.sh] WARNING: uv could not install Python ${PYTHON_VERSION}; the venv step will fail." >&2
+}
+
 create_and_sync_venv() {
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
@@ -1346,6 +1358,7 @@ EOF
 
             # Create new venv
             install_uv
+            ensure_uv_python
             uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
             # shellcheck disable=SC1090
             source "$VENV_DIR/bin/activate"
@@ -1356,6 +1369,7 @@ EOF
             rm -rf "$VENV_DIR"
 
             install_uv
+            ensure_uv_python
             uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
             # shellcheck disable=SC1090
             source "$VENV_DIR/bin/activate"
@@ -1366,6 +1380,7 @@ EOF
     else
         # Create new venv
         install_uv
+        ensure_uv_python
         uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
