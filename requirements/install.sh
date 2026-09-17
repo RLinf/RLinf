@@ -1298,25 +1298,33 @@ install_uv() {
 }
 
 setup_mirror() {
+    remove_stale_github_mirror_rule
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
         export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
-        trap 'unset_mirror' EXIT INT TERM HUP
+        # Scope the GitHub rewrite to this process and its children through git's
+        # environment config, so no global state is left behind on any exit path.
+        local idx="${GIT_CONFIG_COUNT:-0}"
+        export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
+        export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
+        export GIT_CONFIG_COUNT=$((idx + 1))
     fi
 }
 
-unset_mirror() {
-    if [ "$USE_MIRRORS" -eq 1 ]; then
-        unset UV_PYTHON_INSTALL_MIRROR
-        unset UV_DEFAULT_INDEX
-        unset HF_ENDPOINT
-        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/" || true
-        unset GITHUB_PREFIX
-    fi
+# Older install.sh versions wrote the mirror rewrite to ~/.gitconfig and lost the
+# cleanup trap, so the rule outlived the install. Remove any such leftover.
+remove_stale_github_mirror_rule() {
+    command -v git >/dev/null 2>&1 || return 0
+    local key value
+    while read -r key value; do
+        [ "$value" = "https://github.com/" ] || continue
+        [ "$key" = "url.https://github.com/.insteadof" ] && continue
+        echo "[install.sh] Removing stale global git rule left by a previous mirror install: ${key} = ${value}"
+        git config --global --unset-all "$key" '^https://github\.com/$' || true
+    done < <(git config --global --get-regexp '^url\..*github\.com/\.insteadof$' 2>/dev/null || true)
 }
 
 # uv venv only fetches a missing interpreter when automatic downloads are on.
