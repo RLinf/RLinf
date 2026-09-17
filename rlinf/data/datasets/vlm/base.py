@@ -225,6 +225,9 @@ class VLMBaseDataset(Dataset):
             )
 
             inputs.pop("attention_mask", None)
+            # transformers 5 adds this per-token (1, prompt_len) tensor, which the
+            # actor cannot batch; it only feeds M-RoPE, and actors pass position_ids.
+            inputs.pop("mm_token_type_ids", None)
 
             if self.cfg.rollout.rollout_backend == "sglang":
                 ids = inputs.pop("input_ids")
