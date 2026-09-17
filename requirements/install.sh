@@ -3145,11 +3145,19 @@ EOF
 }
 
 install_mbridge() {
-    # megatron-bridge requires python >= 3.12, so RLinf publishes a
-    # py3.10/3.11 fork. --no-deps avoids re-resolving torch and nemo-toolkit.
+    # rlinf-megatron-bridge is RLinf's py3.10/3.11 fork of megatron-bridge,
+    # which itself requires python >= 3.12. --no-deps avoids re-resolving torch
+    # and nemo-toolkit; it also skips megatron-core[dev] -> nvidia-modelopt,
+    # which megatron/bridge/__init__.py imports unconditionally through
+    # auto_bridge, so install that one explicitly.
     echo "[install.sh] Installing rlinf-megatron-bridge (PyPI wheel)..."
-    uv pip install --no-deps "rlinf-megatron-bridge"
-    echo "[install.sh] rlinf-megatron-bridge installed (import: megatron.bridge)."
+    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge"
+    uv pip install "nvidia-modelopt==0.45.0"
+
+    local mbridge_ver modelopt_ver
+    mbridge_ver=$(uv pip show rlinf-megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')
+    modelopt_ver=$(uv pip show nvidia-modelopt 2>/dev/null | awk '/^Version:/{print $2}')
+    echo "[install.sh] rlinf-megatron-bridge ${mbridge_ver} + nvidia-modelopt ${modelopt_ver} installed."
 }
 
 # FA4 backward is sm90+ only; on sm<9 drop it so TE falls back to FA2.
@@ -3212,7 +3220,9 @@ install_agentic() {
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
     # otherwise clone into the venv.
     local megatron_branch="core_r0.13.0"
-    [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.17.0"
+    # rlinf-megatron-bridge 0.5.0 imports megatron.core._rank_utils.safe_get_world_size,
+    # which only exists from mcore 0.18.
+    [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.18.0"
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b "$megatron_branch")
 
@@ -3233,6 +3243,22 @@ install_agentic() {
 
     if [ "$torch211_stack" -eq 1 ]; then
         install_mbridge
+
+        # A bridge release only imports against the mcore it was built for:
+        # 0.5.0 needs megatron.core._rank_utils.safe_get_world_size, which is
+        # 0.18+. megatron.core is not in site-packages -- it is the clone
+        # above, and the PYTHONPATH line for it only went into the venv's
+        # activate script -- so name it here. Fail now, with the real
+        # ImportError, rather than inside the first actor, where RLinf's
+        # patcher rewrites it into an unrelated "prefix object not found".
+        echo "[install.sh] Checking megatron.bridge imports against ${megatron_dir}..."
+        if ! PYTHONPATH="${megatron_dir}:${PYTHONPATH:-}" python -c "import megatron.bridge"; then
+            echo "[install.sh] ERROR: rlinf-megatron-bridge does not import against the Megatron-LM in ${megatron_dir}." >&2
+            echo "[install.sh] See the traceback above; megatron_branch has to match this bridge release." >&2
+            exit 1
+        fi
+        echo "[install.sh] megatron.bridge imports OK."
+
         uninstall_fa4_conditional
         setup_nccl_env
     fi
