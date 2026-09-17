@@ -41,6 +41,7 @@ _BUILTIN_MODULES: dict[str, str] = {
     "wan": "rlinf.envs.sim.world_model.backend.wan",
     "opensora": "rlinf.envs.sim.world_model.backend.opensora",
     "bwm": "rlinf.envs.sim.world_model.backend.bwm",
+    "remote": "rlinf.envs.sim.world_model.backend.remote",
 }
 
 #: Retired ``env_type`` spellings mapped to the backend they now select.
