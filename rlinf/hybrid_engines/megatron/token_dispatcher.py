@@ -13,15 +13,20 @@
 # limitations under the License.
 
 import os
-from typing import NamedTuple, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 import torch
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_sequence_parallel_region
 from megatron.core.transformer.moe.token_dispatcher import MoETokenDispatcher
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from rlinf.hybrid_engines.megatron.megatron_model_manager import HAVE_FUSCO, fusco_lib
+
+if TYPE_CHECKING:
+    # mcore >= 0.17 only; annotated as a string so this module imports against
+    # older trees too. The runtime keyword below must still match the installed
+    # mcore's MoETokenDispatcher (pg_collection since 0.17).
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 if HAVE_FUSCO:
     import idxtools
@@ -229,7 +234,7 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         num_local_experts: int,
         local_expert_indices: list[int],
         config: TransformerConfig,
-        pg_collection: Optional[ProcessGroupCollection] = None,
+        pg_collection: "Optional[ProcessGroupCollection]" = None,
     ):
         super().__init__(config=config, pg_collection=pg_collection)
 
