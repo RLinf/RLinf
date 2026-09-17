@@ -3274,7 +3274,13 @@ install_agentic() {
     fi
 
     if [ "$torch211_stack" -eq 1 ]; then
-        install_mbridge
+        # megatron-bridge requires Python 3.12; an explicit --python below that
+        # still gets the rest of the stack, just without Megatron-Bridge models.
+        if python -c 'import sys; sys.exit(sys.version_info < (3, 12))'; then
+            install_mbridge
+        else
+            echo "[install.sh] WARNING: skipping megatron-bridge, which needs Python 3.12 (venv has $(python -V 2>&1))." >&2
+        fi
         uninstall_fa4_conditional
         setup_nccl_env
     fi
