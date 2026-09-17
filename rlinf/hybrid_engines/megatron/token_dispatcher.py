@@ -16,8 +16,8 @@ import os
 from typing import NamedTuple, Optional
 
 import torch
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_sequence_parallel_region
-from megatron.core.transformer.moe.moe_utils import ModelCommProcessGroups
 from megatron.core.transformer.moe.token_dispatcher import MoETokenDispatcher
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -229,9 +229,9 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         num_local_experts: int,
         local_expert_indices: list[int],
         config: TransformerConfig,
-        model_comm_pgs: Optional[ModelCommProcessGroups] = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
     ):
-        super().__init__(config=config, model_comm_pgs=model_comm_pgs)
+        super().__init__(config=config, pg_collection=pg_collection)
 
         self.num_local_experts = num_local_experts
         self.num_experts = config.num_moe_experts
