@@ -61,20 +61,38 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ---
 
-## ⏳ Milestone 3: HG-DAgger Logic Extensions（最关键）
-**状态：未开始**
+## ✅ Milestone 3: HG-DAgger Logic Extensions（最关键）
+**状态：已完成并 commit (d337bf88)**
 
 ### 目标
-显式接管状态机扩展
+显式接管状态机扩展，支持 leader-follower 设备的安全操作
 
-### 计划内容
-- 显式接管状态机
-- smooth_intervene 扩展
-- episode recorder 集成
+### 完成内容
+- ✅ 添加 `teleop_intervention.mode` 配置（activity|explicit）
+- ✅ explicit 模式绕过 PICO 设备检查
+- ✅ SO101Leader 添加 `hold()` 方法返回当前关节位置
+- ✅ 配置 3 秒缓冲期（可配置）用于操作员安全抓取/释放 leader arm
+- ✅ 缓冲期内 episode 停止记录
+
+### 核心改动
+- `smooth_intervene.py`: 添加 mode 参数，只在 activity 模式检查 PICO
+- `so101_leader.py`: 添加 `hold()` 方法（8 行）
+- `composed.py`: 添加 gripper_position context getter
+- `realworld_so101_dagger_openpi.yaml`: 配置 explicit mode + hold_buffer_seconds
+
+### 安全机制
+- **触发干预后 3 秒缓冲期**：等待操作员握稳 leader，避免机械臂砸向桌面
+- **结束干预后 3 秒缓冲期**：等待操作员撤手，避机械臂突然移动夹到手
+
+### 待真机验证
+- ⏳ 缓冲期机制是否按预期工作
+- ⏳ episode 在缓冲期内是否停止记录
 
 ### 相关文件
 - `rlinf/utils/env_helpers/smooth_intervene.py`
 - `rlinf/envs/wrappers/collect_episode.py`
+- `rlinf/robotics/parts/teleop/so101_leader.py`
+- `rlinf/envs/real/wrappers/teleop/composed.py`
 
 ---
 
