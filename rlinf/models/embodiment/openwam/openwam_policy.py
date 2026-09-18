@@ -74,10 +74,11 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         self._prompt_template = _prompt_template_for_dataset(
             getattr(dataloader_cfg, "type", None)
         )
-        # FSDP wraps these repeated blocks as separate units (see
-        # get_fsdp_wrap_policy); without them the 12B-parameter model becomes
-        # one flat parameter that must fit on every rank in full precision.
-        self._no_split_modules = _repeated_block_classes(self.architecture)
+        # No per-block FSDP wrapping: OpenWAM's joint denoising driver reads
+        # block weights directly (pre_attn_at_layer) outside the blocks'
+        # forward, where a wrapped block is still sharded. The whole policy is
+        # one FSDP unit, which is why the SFT recipe uses FSDP2 (no persistent
+        # full-precision unsharded flat parameter).
         # Checkpoints without an explicit layout (e.g. the LIBERO multiview
         # readers) use OpenWAM's three-slot canvas: head camera on top, two
         # wrist cameras below; missing slots stay black, as in the reader.
@@ -346,27 +347,6 @@ def _checkpoint_with_encoder_override(
                 )
         OmegaConf.save(cfg, staged / "config.yaml")
         yield str(staged)
-
-
-def _repeated_block_classes(architecture: Any) -> list[str] | None:
-    """Names of trainable layer classes (``*Block``) that FSDP wraps as units.
-
-    Frozen towers (VAE, text encoder) stay in the root unit: wrapping their
-    blocks gains nothing and the VAE's forward does not survive FSDP's
-    argument handling.
-    """
-    modules = getattr(architecture, "modules", None)
-    if modules is None:
-        return None
-    counts: dict[str, int] = {}
-    for module in modules():
-        name = type(module).__name__
-        if name.endswith("Block") and any(
-            parameter.requires_grad for parameter in module.parameters()
-        ):
-            counts[name] = counts.get(name, 0) + 1
-    names = sorted(name for name, count in counts.items() if count >= 2)
-    return names or None
 
 
 def _infer_batch_size(obs: dict[str, Any]) -> int:

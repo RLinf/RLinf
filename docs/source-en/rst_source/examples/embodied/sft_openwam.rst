@@ -54,7 +54,7 @@ Start the Ray-managed FSDP runner:
 
 Override ``cluster.component_placement.actor`` and keep ``actor.global_batch_size`` divisible by the actor world size when you change the GPU count.
 
-The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping, so no rank ever holds the whole model on its device. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
+The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single FSDP unit (OpenWAM's joint denoising driver reads block weights outside their forward), so the recipe uses FSDP2, which does not keep FSDP1's full-precision unsharded flat parameter. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping, so no rank ever holds the whole model on its device. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
 
 Validation and resuming
 -----------------------

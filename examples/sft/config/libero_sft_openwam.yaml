@@ -51,9 +51,13 @@ actor:
     total_training_steps: 30000
 
   fsdp_config:
-    strategy: "fsdp"
+    # The policy is a single FSDP unit (OpenWAM's joint denoising driver reads
+    # block weights outside their forward), so FSDP2 is used: FSDP1 would keep
+    # a 46 GiB full-precision unsharded flat parameter per rank.
+    strategy: "fsdp2"
     sharding_strategy: "full_shard"
     use_orig_params: true
+    reshard_after_forward: true
     gradient_checkpointing: false
     mixed_precision:
       param_dtype: bf16

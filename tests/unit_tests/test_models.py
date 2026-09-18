@@ -1962,6 +1962,9 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
     # fp32 master weights: bf16 ones round away nearly every update at lr=1e-6.
     assert cfg.actor.model.precision == "fp32"
     assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
+    # One FSDP unit (see OpenWAMPolicy); FSDP2 avoids FSDP1's full-precision
+    # unsharded flat parameter that does not fit for 12B parameters in fp32.
+    assert cfg.actor.fsdp_config.strategy == "fsdp2"
     assert validate_sft_cfg(cfg) is cfg
 
     rl_cfg = OmegaConf.create(
@@ -2031,39 +2034,6 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
     assert architecture._device == torch.device("cuda:3")
     assert video._device == torch.device("cuda:3")
     assert not hasattr(architecture.backbones["vlm"], "_device")
-    assert policy._no_split_modules is None  # no nn.Module tree to inspect
-
-
-def test_openwam_policy_declares_repeated_blocks_for_fsdp_wrapping():
-    """Repeated *Block classes become FSDP units instead of one huge flat param."""
-
-    class DiTBlock(torch.nn.Linear):
-        pass
-
-    class ResidualBlock(torch.nn.Linear):
-        pass
-
-    class Head(torch.nn.Linear):
-        pass
-
-    class _Architecture(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.blocks = torch.nn.ModuleList([DiTBlock(2, 2), DiTBlock(2, 2)])
-            # frozen VAE-style blocks stay in the root FSDP unit
-            self.vae = torch.nn.ModuleList([ResidualBlock(2, 2), ResidualBlock(2, 2)])
-            self.vae.requires_grad_(False)
-            self.head = Head(2, 2)
-            self.action_dim = 10
-
-    policy = OpenWAMPolicy(
-        SimpleNamespace(architecture=_Architecture()),
-        num_frames=33,
-        height=8,
-        width=8,
-        denoise_steps=2,
-    )
-    assert policy._no_split_modules == ["DiTBlock"]
 
 
 def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
