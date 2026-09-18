@@ -2198,10 +2198,10 @@ def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
     source.sampler.set_epoch(1)
     iterator = iter(source)
     consumed = [indices(next(iterator)) for _ in range(2)]
+    source_state = source.state_dict()  # position after two batches
     remaining = [indices(batch) for batch in iterator]
     ckpt = tmp_path / "global_step_2" / "actor"
     ckpt.mkdir(parents=True)
-    source_state = source.state_dict()
 
     def make_stub():
         # super().load_checkpoint needs a real instance; skip the heavy __init__.
