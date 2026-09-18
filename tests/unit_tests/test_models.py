@@ -1923,7 +1923,7 @@ def test_openwam_sft_dataloader_concatenates_multiple_datasets(tmp_path, monkeyp
 def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
     source = _make_source(tmp_path)
     step_dir = _make_rlinf_checkpoint(tmp_path)
-    out = tmp_path / "openwam-sft"
+    out = tmp_path / "exported"
 
     written = export_checkpoint(step_dir, source, out)
 
