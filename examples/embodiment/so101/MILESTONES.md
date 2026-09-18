@@ -96,22 +96,29 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ---
 
-## ⏳ Milestone 4: OpenPI Model and Data Transforms
-**状态：未开始**
+## ✅ Milestone 4: OpenPI Model and Data Transforms
+**状态：已完成并 commit (f1897981)**
 
 ### 目标
 统一 SO101 的单位和 OpenPI transforms
 
-### 计划内容
-- 数据加载器放到正确位置
-- SO101 dataconfig
-- SO101 policy
+### 完成内容
+- ✅ SO101JointDataConfig 创建（`so101_dataconfig.py`）
+  - 12 个关节配置
+  - UVC 相机后端
+  - 参考 Franka YAML 风格
+- ✅ 注册 `pi05_so101_joint` 配置到 `dataconfig/__init__.py`
+- ✅ SO101Policy 已存在并集成
+- ✅ 数据加载器已就绪
+  - `so101_sft_data_loader.py`
+  - `so101_dagger_data_loader.py`
 
 ### 相关文件
-- `rlinf/models/embodiment/openpi/dataconfig/so101_dataconfig.py`
-- `rlinf/models/embodiment/openpi/policies/so101_policy.py`
-- `rlinf/data/so101_sft_data_loader.py`
-- `rlinf/data/so101_dagger_data_loader.py`
+- `rlinf/models/embodiment/openpi/dataconfig/so101_dataconfig.py` (新增)
+- `rlinf/models/embodiment/openpi/dataconfig/__init__.py` (注册)
+- `rlinf/models/embodiment/openpi/policies/so101_policy.py` (已存在)
+- `rlinf/data/so101_sft_data_loader.py` (已存在)
+- `rlinf/data/so101_dagger_data_loader.py` (已存在)
 
 ---
 
@@ -164,11 +171,12 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ## 当前工作
 
-**Milestone 2 开发完成 ✅**
-- 所有代码、配置、文档已就绪
-- 等待真机验证
+**Milestone 4 开发完成 ✅**
+- SO101JointDataConfig 创建并注册
+- OpenPI 数据管线集成完毕
+- 参考 Franka YAML 配置风格
 
-**下一步：Milestone 3 - HG-DAgger Logic Extensions**
+**下一步：Milestone 5 - SFT / DAgger Training Configs**
 
 ---
 
