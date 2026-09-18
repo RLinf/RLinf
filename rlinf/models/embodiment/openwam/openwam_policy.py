@@ -156,6 +156,22 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         )
         return model
 
+    def retarget_runtime_device(self, device: torch.device | str) -> None:
+        """Point OpenWAM's cached input device at ``device`` without moving weights.
+
+        OpenWAM's architecture and video backbones remember the device they
+        prepare inputs on (text token ids, frame tensors, noise). The FSDP SFT
+        path builds the policy on the CPU and lets FSDP move parameters and
+        buffers, so that cache is retargeted here; ``set_dtype_device`` is not
+        used because it would move the whole model.
+        """
+        device = torch.device(device)
+        owners = [self.architecture]
+        owners.extend((getattr(self.architecture, "backbones", None) or {}).values())
+        for owner in owners:
+            if hasattr(owner, "_device"):
+                owner._device = device
+
     def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
         if forward_type in (ForwardType.SFT, ForwardType.DEFAULT):
             return self.sft_forward(**kwargs)

@@ -32,11 +32,8 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None) -> OpenWA
     # sets ``load_to_device: false``: the policy is then built on the CPU and
     # FSDP moves each rank's shard to its GPU while wrapping, instead of every
     # rank first materialising the whole model on its own device.
-    device = (
-        str(cfg.get("device", "cuda"))
-        if bool(cfg.get("load_to_device", True))
-        else "cpu"
-    )
+    load_to_device = bool(cfg.get("load_to_device", True))
+    device = str(cfg.get("device", "cuda")) if load_to_device else "cpu"
     model = OpenWAMPolicy.from_checkpoint(
         model_path=str(model_path),
         ckpt_name=cfg.get("ckpt_name"),
@@ -55,6 +52,11 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None) -> OpenWA
             else None
         ),
     )
+    if not load_to_device:
+        # FSDP moves parameters and buffers to the accelerator while wrapping,
+        # but OpenWAM prepares its inputs (text ids, frames) on the device it
+        # cached at load time. Point that cache at the accelerator now.
+        model.retarget_runtime_device(torch.device(str(cfg.get("device", "cuda"))))
     return model
 
 
