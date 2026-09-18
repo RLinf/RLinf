@@ -2031,10 +2031,41 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
     assert architecture._device == torch.device("cuda:3")
     assert video._device == torch.device("cuda:3")
     assert not hasattr(architecture.backbones["vlm"], "_device")
+    assert policy._no_split_modules is None  # no nn.Module tree to inspect
+
+
+def test_openwam_policy_declares_repeated_blocks_for_fsdp_wrapping():
+    """Repeated *Block classes become FSDP units instead of one huge flat param."""
+
+    class DiTBlock(torch.nn.Module):
+        pass
+
+    class ResidualBlock(torch.nn.Module):
+        pass
+
+    class Head(torch.nn.Module):
+        pass
+
+    class _Architecture(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList([DiTBlock(), DiTBlock()])
+            self.vae = torch.nn.ModuleList([ResidualBlock(), ResidualBlock()])
+            self.head = Head()
+            self.action_dim = 10
+
+    policy = OpenWAMPolicy(
+        SimpleNamespace(architecture=_Architecture()),
+        num_frames=33,
+        height=8,
+        width=8,
+        denoise_steps=2,
+    )
+    assert policy._no_split_modules == ["DiTBlock", "ResidualBlock"]
 
 
 def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
-    """The engine reads decode_video from cfg.inference.optimization only."""
+    """The engine reads decode_video from the top-level cfg.optimization only."""
     import sys
 
     from omegaconf import OmegaConf
@@ -2087,7 +2118,8 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
         denoise_steps=4,
     )
     cfg = engines[0].cfg
-    assert cfg.inference.optimization.decode_video is False
+    # The engine reads the switch from the top-level optimization section.
+    assert cfg.optimization.decode_video is False
     assert (cfg.inference.num_frames, cfg.inference.denoise_steps) == (33, 4)
     assert policy.architecture.calls[0] == ("freeze", ["vae"])
     # precision reaches the weights: fp32 master weights for the SFT optimizer.

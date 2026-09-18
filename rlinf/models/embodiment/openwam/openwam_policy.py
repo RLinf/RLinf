@@ -74,6 +74,10 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         self._prompt_template = _prompt_template_for_dataset(
             getattr(dataloader_cfg, "type", None)
         )
+        # FSDP wraps these repeated blocks as separate units (see
+        # get_fsdp_wrap_policy); without them the 12B-parameter model becomes
+        # one flat parameter that must fit on every rank in full precision.
+        self._no_split_modules = _repeated_block_classes(self.architecture)
         # Checkpoints without an explicit layout (e.g. the LIBERO multiview
         # readers) use OpenWAM's three-slot canvas: head camera on top, two
         # wrist cameras below; missing slots stay black, as in the reader.
@@ -123,11 +127,11 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         cfg.inference.height = height
         cfg.inference.width = width
         # Evaluation only consumes actions: skip the VAE decode of the generated
-        # video. The engine reads this switch from cfg.inference.optimization,
-        # not from the per-call condition dict.
-        if OmegaConf.select(cfg, "inference.optimization", default=None) is None:
-            cfg.inference.optimization = {}
-        cfg.inference.optimization.decode_video = False
+        # video. JointInferenceEngine reads this switch from the top-level
+        # cfg.optimization at construction, not from the per-call condition.
+        if OmegaConf.select(cfg, "optimization", default=None) is None:
+            cfg.optimization = {}
+        cfg.optimization.decode_video = False
         freeze_names = OmegaConf.select(cfg, "model.freeze", default=[]) or []
         architecture.freeze_modules(list(freeze_names))
         training_cfg = OmegaConf.select(cfg, "training", default=OmegaConf.create({}))
@@ -342,6 +346,20 @@ def _checkpoint_with_encoder_override(
                 )
         OmegaConf.save(cfg, staged / "config.yaml")
         yield str(staged)
+
+
+def _repeated_block_classes(architecture: Any) -> list[str] | None:
+    """Names of module classes that repeat as layers (``*Block``), for FSDP wrapping."""
+    modules = getattr(architecture, "modules", None)
+    if modules is None:
+        return None
+    counts: dict[str, int] = {}
+    for module in modules():
+        name = type(module).__name__
+        if name.endswith("Block"):
+            counts[name] = counts.get(name, 0) + 1
+    names = sorted(name for name, count in counts.items() if count >= 2)
+    return names or None
 
 
 def _infer_batch_size(obs: dict[str, Any]) -> int:
