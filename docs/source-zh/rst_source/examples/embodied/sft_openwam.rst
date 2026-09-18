@@ -54,7 +54,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 
 修改 GPU 数量时，同时修改 ``cluster.component_placement.actor``，并确保 ``actor.global_batch_size`` 能被 actor world size 整除。
 
-模型预设保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU，任何一张卡都不会先装下整个模型。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
+预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU，任何一张卡都不会先装下整个模型。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
 
 验证与断点续训
 --------------

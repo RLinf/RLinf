@@ -45,8 +45,6 @@ env:
     render_gpu_ids: [0]
     auto_reset: true
     ignore_terminations: true
-    # 32 steps = three 10-action generations plus one partial; enough to exercise
-    # the rollout, the action adapter and the metric path without a full episode.
     # Three 10-step generations; must stay divisible by rollout.model.num_action_chunks.
     max_episode_steps: 30
     max_steps_per_rollout_epoch: 30
@@ -71,7 +69,7 @@ rollout:
     model_type: "openwam"
     precision: bf16
     is_lora: false
-    model_path: /mnt/data/wangyuran/openwam_checkpoints/new-openwam-libero-sft-10epoch-delta-aligned
+    model_path: /path/to/openwam-libero-sft-delta-aligned
     device: cuda
     load_to_device: true
     ckpt_name: null

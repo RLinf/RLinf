@@ -29,7 +29,7 @@ runner:
   resume_dir: null
 
 data:
-  train_data_paths: /mnt/data/wangyuran/benchmark_data/libero
+  train_data_paths: /path/to/libero
   num_workers: 0
 
 actor:

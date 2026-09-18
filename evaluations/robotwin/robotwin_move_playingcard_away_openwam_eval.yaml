@@ -3,6 +3,7 @@
 defaults:
   - env/robotwin_openwam_aloha@env.eval
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:
@@ -78,7 +79,7 @@ rollout:
     model_type: "openwam"
     precision: bf16
     is_lora: false
-    model_path: /mnt/data/wangyuran/openwam_checkpoints/OpenWAM_Study_Checkpoints/architecture_study/robotwin_dual_system_joint_self_attention
+    model_path: /path/to/openwam-robotwin-checkpoint
     device: cuda
     load_to_device: true
     ckpt_name: null

@@ -108,10 +108,16 @@ def load_policy_state_dict(rlinf_checkpoint: Path) -> dict[str, Any]:
         consolidated = os.path.join(tmp, "consolidated.pt")
         dcp_to_torch_save(str(dcp_dir), consolidated)
         state = torch.load(consolidated, map_location="cpu", weights_only=False)
-    return _find_policy_state(state)
+    policy_state = _find_policy_state(state)
+    if policy_state is None:
+        raise ValueError(
+            f"{dcp_dir} holds no state dict with '{ARCHITECTURE_PREFIX}*' keys; "
+            "is this an RLinf OpenWAM checkpoint?"
+        )
+    return policy_state
 
 
-def _find_policy_state(state: Any) -> dict[str, Any]:
+def _find_policy_state(state: Any) -> dict[str, Any] | None:
     """Locate the dict whose keys carry the ``architecture.`` prefix."""
     if isinstance(state, dict):
         if any(str(key).startswith(ARCHITECTURE_PREFIX) for key in state):

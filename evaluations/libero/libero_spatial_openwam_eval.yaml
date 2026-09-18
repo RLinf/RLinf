@@ -36,9 +36,9 @@ env:
   group_name: "EnvGroup"
   eval:
     rollout_epoch: 1
-    # Two subprocess environments share the dedicated env worker/GPU.
+    # Three subprocess environments share the dedicated env worker (GPU 2).
     total_num_envs: 3
-    render_gpu_ids: [0, 2, 3] # one EGL renderer per GPU, none on the rollout GPU (1)
+    render_gpu_ids: [0, 1, 2] # one EGL renderer per GPU, none on the rollout GPU (3)
     auto_reset: true
     ignore_terminations: true
     max_episode_steps: 600
@@ -47,8 +47,8 @@ env:
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
     is_eval: true
-    # Only the final frame of each action chunk is consumed by eval; disabling
-    # intermediate EGL renders keeps multi-process LIBERO stable.
+    # Render every step; one EGL renderer per GPU (render_gpu_ids) keeps
+    # multi-process LIBERO stable. Set true to render only at chunk ends.
     skip_intermediate_renders: false
     openwam_action_representation: native_delta_eef10
     video_cfg:
@@ -64,7 +64,7 @@ rollout:
     model_type: "openwam"
     precision: bf16
     is_lora: false
-    model_path: /mnt/data/wangyuran/openwam_checkpoints/new-openwam-libero-sft-10epoch-delta-aligned
+    model_path: /path/to/openwam-libero-sft-delta-aligned
     device: cuda
     load_to_device: true
     ckpt_name: null

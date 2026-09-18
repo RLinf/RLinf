@@ -31,10 +31,7 @@ import json
 from pathlib import Path
 
 CHUNK = 32
-CHECKPOINT = (
-    "/mnt/data/wangyuran/openwam_checkpoints/OpenWAM_Study_Checkpoints/"
-    "architecture_study/robotwin_dual_system_joint_self_attention"
-)
+CHECKPOINT = "/path/to/openwam-robotwin-checkpoint"
 
 # RoboTwin 2.0 ``task_config/_eval_step_limit.yml`` (RLinf_support branch).
 STEP_LIMITS = {
@@ -172,6 +169,7 @@ RECIPE = """# OpenWAM (RoboTwin study checkpoint, dual-system joint self-attenti
 defaults:
   - env/robotwin_openwam_aloha@env.eval
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:

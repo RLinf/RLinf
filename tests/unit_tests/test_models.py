@@ -146,6 +146,9 @@ def test_openwam_libero_eval_recipes_validate(openwam_eval_recipe, name, suite):
     assert cfg.rollout.model.openwam.inference_horizon == 10
     assert cfg.rollout.model.num_action_chunks == 10
     assert cfg.rollout.model.load_to_device is True
+    # EGL renderers never share a GPU with OpenWAM inference.
+    assert cfg.cluster.component_placement.rollout not in cfg.env.eval.render_gpu_ids
+    assert len(cfg.env.eval.render_gpu_ids) == cfg.env.eval.total_num_envs
     assert cfg.runner.logger.experiment_name == f"{suite}_openwam_eval"
 
 
@@ -1597,6 +1600,11 @@ def test_openwam_robotwin_recipe_generator_covers_all_tasks():
     from toolkits.openwam.gen_robotwin_eval_recipes import STEP_LIMITS, rounded_steps
 
     assert len(STEP_LIMITS) == 50 and len(_ROBOTWIN_RECIPES) == 50
+    recipes_dir = Path(__file__).resolve().parents[2] / "evaluations/robotwin"
+    for name in _ROBOTWIN_RECIPES:
+        text = (recipes_dir / f"{name}.yaml").read_text()
+        assert "  - _self_\n" in text, name
+        assert "/mnt/" not in text, name
     assert {f"robotwin_{t}_openwam_eval" for t in STEP_LIMITS} == set(_ROBOTWIN_RECIPES)
     assert rounded_steps(400) == 416 and rounded_steps(512) == 512
 
@@ -1951,6 +1959,9 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
     ):
         cfg = hydra.compose(config_name="libero_sft_openwam")
     assert cfg.actor.model.load_to_device is False
+    # fp32 master weights: bf16 ones round away nearly every update at lr=1e-6.
+    assert cfg.actor.model.precision == "fp32"
+    assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
     assert validate_sft_cfg(cfg) is cfg
 
     rl_cfg = OmegaConf.create(
@@ -2020,6 +2031,67 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
     assert architecture._device == torch.device("cuda:3")
     assert video._device == torch.device("cuda:3")
     assert not hasattr(architecture.backbones["vlm"], "_device")
+
+
+def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
+    """The engine reads decode_video from cfg.inference.optimization only."""
+    import sys
+
+    from omegaconf import OmegaConf
+
+    class _Architecture(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(1, dtype=torch.bfloat16))
+            self.calls = []
+
+        def freeze_modules(self, names):
+            self.calls.append(("freeze", list(names)))
+
+        def init_training_schedulers(self, num_timesteps):
+            self.calls.append(("schedulers", num_timesteps))
+
+        def set_training_runtime(self, **kwargs):
+            self.calls.append(("runtime", kwargs))
+
+    engines = []
+
+    class _Engine:
+        def __init__(self, cfg, architecture):
+            self.cfg, self.architecture = cfg, architecture
+            engines.append(self)
+
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    (ckpt / "config.yaml").write_text(
+        "model:\n  video_backbone:\n    encoder:\n      name: wan22_vae\n"
+    )
+    loaded_cfg = OmegaConf.create({"model": {"freeze": ["vae"]}, "inference": {}})
+    deploy = ModuleType("openwam.deploy")
+    deploy.JointInferenceEngine = _Engine
+    deploy.load_from_checkpoint_dir = lambda path, device, ckpt_name: (
+        loaded_cfg,
+        _Architecture(),
+    )
+    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
+    monkeypatch.setitem(sys.modules, "openwam.deploy", deploy)
+
+    policy = OpenWAMPolicy.from_checkpoint(
+        model_path=str(ckpt),
+        ckpt_name=None,
+        device="cpu",
+        torch_dtype=torch.float32,
+        num_frames=33,
+        height=384,
+        width=320,
+        denoise_steps=4,
+    )
+    cfg = engines[0].cfg
+    assert cfg.inference.optimization.decode_video is False
+    assert (cfg.inference.num_frames, cfg.inference.denoise_steps) == (33, 4)
+    assert policy.architecture.calls[0] == ("freeze", ["vae"])
+    # precision reaches the weights: fp32 master weights for the SFT optimizer.
+    assert next(policy.parameters()).dtype == torch.float32
 
 
 def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):

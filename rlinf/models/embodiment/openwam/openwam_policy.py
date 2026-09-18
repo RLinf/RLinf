@@ -74,6 +74,9 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         self._prompt_template = _prompt_template_for_dataset(
             getattr(dataloader_cfg, "type", None)
         )
+        # Checkpoints without an explicit layout (e.g. the LIBERO multiview
+        # readers) use OpenWAM's three-slot canvas: head camera on top, two
+        # wrist cameras below; missing slots stay black, as in the reader.
         layout = getattr(dataloader_cfg, "camera_layout", None)
         self._camera_layout = (
             list(layout)
@@ -119,6 +122,12 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         cfg.inference.denoise_steps = denoise_steps
         cfg.inference.height = height
         cfg.inference.width = width
+        # Evaluation only consumes actions: skip the VAE decode of the generated
+        # video. The engine reads this switch from cfg.inference.optimization,
+        # not from the per-call condition dict.
+        if OmegaConf.select(cfg, "inference.optimization", default=None) is None:
+            cfg.inference.optimization = {}
+        cfg.inference.optimization.decode_video = False
         freeze_names = OmegaConf.select(cfg, "model.freeze", default=[]) or []
         architecture.freeze_modules(list(freeze_names))
         training_cfg = OmegaConf.select(cfg, "training", default=OmegaConf.create({}))
@@ -219,7 +228,12 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
     def predict_action_batch(
         self, env_obs: dict[str, Any], mode: str = "eval", **kwargs
     ):
-        """Generate one action chunk per observation in ``env_obs``."""
+        """Generate one action chunk per observation in ``env_obs``.
+
+        OpenWAM's deploy engine generates one condition at a time, so this
+        runs ``len(env_obs)`` sequential generations; evaluation cost grows
+        linearly with ``total_num_envs``.
+        """
         if mode == "train":
             raise NotImplementedError(
                 "OpenWAMPolicy only supports evaluation rollouts (mode='eval'); "
@@ -259,7 +273,6 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
                 "height": self.height,
                 "width": self.width,
                 "denoise_steps": self.denoise_steps,
-                "decode_video": False,
             }
             result = self.engine.generate(condition)
             actions.append(np.asarray(result["actions"]))
