@@ -412,6 +412,78 @@ def test_starvla_gaussian_is_float32_and_keeps_the_gradient_path():
     assert log_std.grad is not None
 
 
+class _QwenVisionPatchEmbed(torch.nn.Module):
+    """Shape contract of Qwen2.5-VL PatchEmbed: Conv3d kernel == stride."""
+
+    def __init__(self, in_channels=3, temporal=2, patch=4, embed_dim=8):
+        super().__init__()
+        self.in_channels = in_channels
+        self.temporal_patch_size = temporal
+        self.patch_size = patch
+        kernel = (temporal, patch, patch)
+        self.proj = torch.nn.Conv3d(
+            in_channels, embed_dim, kernel_size=kernel, stride=kernel, bias=False
+        )
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states = hidden_states.view(
+            -1,
+            self.in_channels,
+            self.temporal_patch_size,
+            self.patch_size,
+            self.patch_size,
+        )
+        hidden_states = self.proj(hidden_states.to(self.proj.weight.dtype))
+        return hidden_states.view(-1, self.proj.out_channels)
+
+
+def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        _linear_patch_embed_forward,
+    )
+
+    torch.manual_seed(0)
+    module = _QwenVisionPatchEmbed()
+    patches = torch.randn(5, 3 * 2 * 4 * 4, requires_grad=True)
+
+    conv_out = module(patches)
+    linear_out = _linear_patch_embed_forward(module, patches)
+    torch.testing.assert_close(linear_out, conv_out, rtol=1e-5, atol=1e-5)
+
+    linear_out.sum().backward()
+    assert module.proj.weight.grad is not None
+    assert patches.grad is not None
+
+
+def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        _linear_patch_embed_forward,
+        patch_vision_patch_embed,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    model = torch.nn.Sequential(_QwenVisionPatchEmbed())
+    original_forward = model[0].forward
+
+    assert patch_vision_patch_embed(model) == 1
+    assert model[0].forward.__func__ is _linear_patch_embed_forward
+    assert original_forward.__func__ is not _linear_patch_embed_forward
+
+
+def test_qwen_vl_linear_patch_embed_is_left_alone_on_nvidia(monkeypatch):
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        patch_vision_patch_embed,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    model = torch.nn.Sequential(_QwenVisionPatchEmbed())
+
+    assert patch_vision_patch_embed(model) == 0
+    assert model[0].forward.__func__ is _QwenVisionPatchEmbed.forward
+
+
 def _history_cfg():
     return OmegaConf.create(
         {
