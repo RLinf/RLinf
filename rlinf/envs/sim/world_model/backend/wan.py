@@ -77,6 +77,9 @@ class WanBackend:
         return instructions
 
     def _build_pipeline(self) -> WanVideoPipeline:
+        from rlinf.envs.sim.world_model.ascend_patch import install_ascend_patch
+
+        install_ascend_patch(self.device)
         # diffsynth takes the device as a string, torch.device stringifies to one.
         pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,

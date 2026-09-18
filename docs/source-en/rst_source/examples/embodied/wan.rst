@@ -43,7 +43,7 @@ Train OpenVLA-OFT with GRPO on LIBERO suites simulated by the Wan world model.
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1 node · GPUs
+      NVIDIA CUDA · :ref:`Huawei Ascend CANN <wan-hardware>` (Wan backend)
 
 | **You'll do:** install → download the VLA model → download the Wan world-model weights + init data → launch ``run_embodiment.sh`` → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · an OpenVLA-OFT SFT checkpoint · Wan world-model weights and init dataset (steps below).
@@ -96,6 +96,9 @@ Unlike a traditional simulator, Wan has no ``reset()``: it requires initializati
 
 Installation
 ------------
+
+Use the NVIDIA setup below, or follow :ref:`the Ascend setup <wan-hardware>`
+for Wan world-model inference on NPU.
 
 .. include:: _setup_common.rst
 
@@ -316,3 +319,64 @@ with ``reset_gripper_open = True``.
       - **+16.3%**
       - **+41.2%**
       - **+11.9%**
+
+.. _wan-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+The installation above uses NVIDIA CUDA. For Wan world-model inference on Huawei
+Ascend CANN, use the setup below before following the same checkpoint and task
+configuration steps.
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+Use an Ascend host or container with CANN and the NPU driver available. Wan
+generates observations directly from the world model, so this training workflow
+does not require the LIBERO simulator or OSMesa rendering.
+
+Create an environment with the OpenVLA-OFT policy and Wan world-model
+dependencies:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan
+   source .venv/bin/activate
+
+Add ``--use-mirror`` for downloads from mainland China. The installer adds the
+matching ``torch-npu`` package and skips CUDA flash-attention. Install MindIE-SD
+separately in this activated environment, using a build compatible with your
+CANN and PyTorch versions. The installer does not install MindIE-SD.
+
+Check that the NPU is available and the required MindIE-SD operators can be
+imported:
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import torch
+   import torch_npu
+   from mindiesd import rotary_position_embedding
+   from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+   assert torch.npu.is_available(), "No Ascend NPU is available"
+   PY
+
+When the Wan backend runs on NPU, RLinf automatically enables accelerated
+attention, rotary embeddings, and RMSNorm before constructing the pipeline.
+If the dependencies cannot be imported, it logs a warning and keeps the original
+diffsynth operators. This setup covers the Wan backend; validate the policy
+checkpoint's numerical behavior separately on your target hardware.
+
+After downloading the checkpoints and initialization data described above, set
+the policy and world-model paths in
+``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml``. Keep
+``runner.val_check_interval: -1`` and ``runner.only_eval: False`` as in the
+default config to train in Wan with simulator evaluation disabled.
+
+Launch the Wan LIBERO-Spatial GRPO recipe from the repository root:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
