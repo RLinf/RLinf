@@ -1,0 +1,13 @@
+model_type: "openwam"
+precision: "bf16"
+is_lora: false
+model_path: /mnt/data/wangyuran/openwam_checkpoints/openwam-libero-sft-30000
+device: "cuda"
+load_to_device: false
+ckpt_name: null
+num_frames: 33
+height: 384
+width: 320
+denoise_steps: 10
+lambda_video: 1.0
+lambda_action: 1.0
