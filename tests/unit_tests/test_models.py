@@ -2204,14 +2204,13 @@ def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
     source_state = source.state_dict()
 
     def make_stub():
+        # super().load_checkpoint needs a real instance; skip the heavy __init__.
         loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
-        return SimpleNamespace(
-            data_loader=loader,
-            data_iter=iter(loader),
-            _rank=0,
-            _world_size=1,
-            _data_epoch=0,
-        )
+        stub = object.__new__(FSDPVlaSftWorker)
+        stub.data_loader = loader
+        stub.data_iter = iter(loader)
+        stub._rank, stub._world_size, stub._data_epoch = 0, 1, 0
+        return stub
 
     # The state was captured after two batches; the resumed worker gets the rest.
     torch.save([source_state], ckpt / "data.pt")
