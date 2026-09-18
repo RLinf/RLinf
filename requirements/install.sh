@@ -915,6 +915,14 @@ EOF
     fi
 }
 
+install_ascend_tensorflow_pins() {
+    # TF 2.21 SIGSEGVs against Ray's protobuf 6.x on Ascend. Shared by every
+    # embodied model whose install pulls TensorFlow (GR00T, StarVLA, …).
+    [ "$PLATFORM" = "ascend" ] || return 0
+    echo "[install.sh] Applying Ascend TensorFlow compatibility pins"
+    uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/tensorflow.txt"
+}
+
 install_musa_extras() {
     # Nothing to install; just fail here rather than mid-training.
     python - <<'EOF'
@@ -2091,6 +2099,7 @@ install_starvla_model() {
     fi
 
     install_flash_attn
+    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2148,10 +2157,7 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
-    if [ "$PLATFORM" = "ascend" ]; then
-        echo "[install.sh] Applying Ascend GR00T compatibility pins"
-        uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/gr00t.txt"
-    fi
+    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
