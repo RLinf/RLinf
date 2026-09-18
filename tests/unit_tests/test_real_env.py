@@ -192,6 +192,7 @@ def test_a_franka_observation_comes_from_one_snapshot():
     )
 
 
+@pytest.mark.placement
 def test_franka_depth_reaches_the_observation_only_when_asked_for():
     """A rig without a depth camera keeps the schema a policy already reads.
 
@@ -2384,6 +2385,7 @@ def _so101_env(robot_info=None, **overrides):
     )
 
 
+@pytest.mark.placement
 def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
     from robot_mocks import mocked_sdks
 
@@ -2413,6 +2415,7 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
     """The env speaks radians; only the driver may speak lerobot's units.
 
@@ -2440,6 +2443,7 @@ def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_scores_the_distance_to_the_target_configuration():
     from robot_mocks import mocked_sdks
 
@@ -2462,6 +2466,7 @@ def test_so101_env_scores_the_distance_to_the_target_configuration():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_clips_an_action_to_the_joint_limits():
     from robot_mocks import mocked_sdks
 
@@ -2512,6 +2517,7 @@ def test_so101_task_is_registered_with_gymnasium():
     assert "SO101ReachEnv-v1" in gym.registry
 
 
+@pytest.mark.placement
 def test_so101_env_resizes_camera_frames_to_the_declared_shape():
     """A camera delivers its native resolution; the space fixes one size."""
     from robot_mocks import mocked_sdks
@@ -2538,6 +2544,7 @@ def test_so101_env_resizes_camera_frames_to_the_declared_shape():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_omits_frames_entirely_when_no_camera_is_configured():
     """Gymnasium rejects an empty Dict space, so the key is dropped instead."""
     from robot_mocks import mocked_sdks
@@ -2553,6 +2560,7 @@ def test_so101_env_omits_frames_entirely_when_no_camera_is_configured():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_control_can_run_faster_than_camera_capture():
     from robot_mocks import mocked_sdks
 
@@ -2579,6 +2587,7 @@ def test_so101_env_control_can_run_faster_than_camera_capture():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_can_connect_without_resetting_then_reset_explicitly():
     from robot_mocks import mocked_sdks
 
@@ -2595,6 +2604,7 @@ def test_so101_env_can_connect_without_resetting_then_reset_explicitly():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_tool_home_uses_the_environment_reset(monkeypatch):
     from robot_mocks import mocked_sdks
 
@@ -2613,6 +2623,7 @@ def test_so101_tool_home_uses_the_environment_reset(monkeypatch):
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_tool_teleop_forwards_gripper_only_and_stationary_commands(monkeypatch):
     from robot_mocks import mocked_sdks
 
@@ -2714,6 +2725,7 @@ def test_entry_points_reach_realworldenv_through_its_package():
     )
 
 
+@pytest.mark.placement
 def test_piper_env_runs_a_whole_episode_against_a_faked_arm():
     from robot_mocks import mocked_sdks
 
@@ -2745,6 +2757,7 @@ def test_piper_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_commands_reach_the_arm_in_radians():
     """pyAgxArm takes radians, so nothing on this path rescales them.
 
@@ -2773,6 +2786,7 @@ def test_piper_env_commands_reach_the_arm_in_radians():
             env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_clips_an_action_to_the_joint_limits():
     from robot_mocks import mocked_sdks
 
@@ -2794,6 +2808,7 @@ def test_piper_env_clips_an_action_to_the_joint_limits():
             env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_scores_the_distance_to_the_target_configuration():
     from robot_mocks import mocked_sdks
 
@@ -2830,6 +2845,7 @@ def test_piper_env_runs_without_hardware_when_dummy():
         env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_without_a_gripper_has_a_six_wide_action():
     from robot_mocks import mocked_sdks
 
@@ -2864,6 +2880,7 @@ def test_piper_task_is_registered_with_gymnasium():
     assert "PiperReachEnv-v1" in gym.registry
 
 
+@pytest.mark.placement
 def test_piper_env_resizes_camera_frames_to_the_declared_shape():
     from robot_mocks import mocked_sdks
 
@@ -2984,6 +3001,7 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
     assert sample.parts["end_effector"][0] == pytest.approx(0.7)
 
 
+@pytest.mark.placement
 def test_so101_env_is_driven_by_its_leader():
     from robot_mocks import mocked_sdks
 
