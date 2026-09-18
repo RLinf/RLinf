@@ -140,7 +140,7 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 ### 相关文件
 - `examples/sft/config/realworld_sft_openpi_so101.yaml`
 - `examples/embodiment/config/realworld_so101_dagger_openpi.yaml`
-- `examples/embodiment/config/realworld_so101_collect_data_joint.yaml`
+- `examples/embodiment/config/realworld_so101_collect_data.yaml`
 
 ---
 

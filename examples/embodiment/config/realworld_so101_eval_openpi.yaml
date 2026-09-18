@@ -137,7 +137,7 @@ actor:
     model_path: ${rollout.model.model_path}
     precision: null
     num_action_chunks: 20
-    action_dim: 8
+    action_dim: 6  # SO-101 follower: 5 joints + 1 gripper
     add_value_head: False
     openpi:
       config_name: "pi05_so101_joint"

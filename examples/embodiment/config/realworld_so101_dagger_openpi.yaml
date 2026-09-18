@@ -142,7 +142,7 @@ actor:
     model_path: ${rollout.model.model_path}
     precision: null
     num_action_chunks: 20
-    action_dim: 12  # SO-101 joint space: 6 + 6
+    action_dim: 12  # SO-101 leader + follower: (5 joints + gripper) × 2
     add_value_head: false
 
     openpi:

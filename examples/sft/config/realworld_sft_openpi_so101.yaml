@@ -59,8 +59,8 @@ actor:
 
   model:
     model_path: /path/to/pi05_base_pytorch_new
-    # SO-101 joint-space: 12-dim env actions
-    # [left_arm_joints(6), right_arm_joints(6)], 20-step env/SFT window.
+    # SO-101 joint-space: 12-dim training data
+    # [leader(5 joints + gripper), follower(5 joints + gripper)], 20-step window.
     num_action_chunks: 20
     action_dim: 12
     openpi:
