@@ -1018,6 +1018,12 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if not only_eval and model_type == SupportedModel.OPENWAM:
+        raise ValueError(
+            "OpenWAM supports supervised fine-tuning (runner.task_type=sft) and "
+            "evaluation (runner.task_type=embodied_eval or runner.only_eval=True) "
+            "only; RL training with the OpenWAM policy is not implemented."
+        )
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
         # gap per action, which assumes the OpenVLA family's tokenized action layout.

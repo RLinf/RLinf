@@ -66,7 +66,7 @@ rollout:
     is_lora: false
     model_path: /mnt/data/wangyuran/openwam_checkpoints/new-openwam-libero-sft-10epoch-delta-aligned
     device: cuda
-    load_to_device: false
+    load_to_device: true
     ckpt_name: null
     num_frames: 33
     num_action_chunks: 10 # executed per generation, see openwam.inference_horizon

@@ -14,12 +14,40 @@ from typing import Any
 
 import torch
 from omegaconf import ListConfig, OmegaConf
+from torchdata.stateful_dataloader import StatefulDataLoader
+from torchdata.stateful_dataloader.sampler import StatefulDistributedSampler
+
+
+class EpochStatefulDistributedSampler(StatefulDistributedSampler):
+    """``StatefulDistributedSampler`` that also checkpoints the shuffle epoch.
+
+    torchdata's sampler only records how many indices were yielded; the
+    permutation itself depends on ``set_epoch``, which a resumed process would
+    otherwise start again from epoch 0 and replay data it has already seen.
+    """
+
+    _EPOCH = "epoch"
+
+    def state_dict(self) -> dict[str, Any]:
+        state = super().state_dict()
+        state[self._EPOCH] = int(self.epoch)
+        return state
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        super().load_state_dict(state_dict)
+        if self._EPOCH in state_dict:
+            self.set_epoch(int(state_dict[self._EPOCH]))
 
 
 def build_openwam_sft_dataloader(
     cfg: Any, world_size: int, rank: int, data_paths: Any, eval_dataset: bool = False
 ) -> tuple[Any, dict[str, Any]]:
-    """Construct a distributed DataLoader yielding lists of native samples."""
+    """Construct a distributed ``StatefulDataLoader`` yielding lists of native samples.
+
+    The loader and its sampler expose ``state_dict``/``load_state_dict``, so the
+    SFT worker checkpoints the data position (and the shuffle epoch) next to the
+    model and a ``runner.resume_dir`` run continues exactly where it stopped.
+    """
     if isinstance(data_paths, (list, tuple, ListConfig)):
         dataset_dirs = [str(path) for path in data_paths if path is not None]
     elif data_paths is None:
@@ -56,7 +84,7 @@ def build_openwam_sft_dataloader(
     dataset = (
         datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
     )
-    sampler = torch.utils.data.distributed.DistributedSampler(
+    sampler = EpochStatefulDistributedSampler(
         dataset,
         num_replicas=int(world_size),
         rank=int(rank),
@@ -70,7 +98,8 @@ def build_openwam_sft_dataloader(
         else int(cfg.actor.micro_batch_size)
     )
     num_workers = int(OmegaConf.select(cfg, "data.num_workers", default=0))
-    loader = torch.utils.data.DataLoader(
+    prefetch_factor = int(OmegaConf.select(cfg, "data.prefetch_factor", default=2))
+    loader = StatefulDataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
@@ -78,6 +107,8 @@ def build_openwam_sft_dataloader(
         collate_fn=list,
         pin_memory=True,
         drop_last=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
     )
     return loader, {
         "dataset_type": str(native_dl.type),

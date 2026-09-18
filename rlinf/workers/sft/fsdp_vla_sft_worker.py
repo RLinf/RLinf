@@ -20,6 +20,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
 from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
@@ -93,9 +94,53 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def get_eval_model_output(self, batch: dict[str, Any]):
-        # now the eval is not supported for embodied sft
-        raise NotImplementedError("eval is not supported for embodied sft right now.")
+    def _is_openwam(self) -> bool:
+        return SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENWAM
+
+    def get_eval_model_output(self, batch: Any) -> dict[str, float]:
+        """Return the per-batch validation losses of an OpenWAM SFT model."""
+        if not self._is_openwam():
+            # now the eval is not supported for the other embodied sft models
+            raise NotImplementedError(
+                "eval is not supported for embodied sft right now."
+            )
+        with torch.no_grad(), self.amp_context:
+            output = self.model(forward_type=ForwardType.SFT, data=batch)
+        if isinstance(output, torch.Tensor):
+            return {"loss": float(output.detach().item())}
+        return {
+            key: float(value.detach().item())
+            for key, value in output.items()
+            if torch.is_tensor(value) and value.numel() == 1
+        }
+
+    def run_eval(self):
+        """Average OpenWAM's native SFT losses over the validation loader.
+
+        The base implementation counts token-level hits, which has no meaning
+        for a video/action diffusion loss, so OpenWAM reports ``loss``,
+        ``loss_video`` and ``loss_action`` (logged under ``eval/``) instead.
+        ``actor.eval_max_batches`` caps the number of validation batches per
+        rank for large datasets.
+        """
+        if not self._is_openwam():
+            return super().run_eval()
+        assert self.eval_data_loader is not None, "eval_data_loader is not set"
+        max_batches = self.cfg.actor.get("eval_max_batches", None)
+        with self.worker_timer():
+            self.model.eval()
+            sums: dict[str, float] = {}
+            num_batches = 0
+            for index, batch in enumerate(self.eval_data_loader):
+                if max_batches is not None and index >= int(max_batches):
+                    break
+                for key, value in self.get_eval_model_output(batch).items():
+                    sums[key] = sums.get(key, 0.0) + value
+                num_batches += 1
+            self.model.train()
+            metrics = {key: value / max(1, num_batches) for key, value in sums.items()}
+            metrics["num_batches"] = float(num_batches)
+            return all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
 
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
         with self.amp_context:
@@ -150,6 +195,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             state = all_states[self._rank]
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)
+            # Creating the iterator applies the sampler state. Continue the
+            # shuffle epoch it recorded instead of replaying epoch 0 after the
+            # first exhaustion (samplers without an epoch keep the default).
+            epoch = getattr(getattr(self.data_loader, "sampler", None), "epoch", None)
+            if epoch is not None:
+                self._data_epoch = int(epoch)
 
             rng_path = os.path.join(load_path, "rng.pt")
             if os.path.exists(rng_path):

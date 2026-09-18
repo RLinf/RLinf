@@ -2,8 +2,8 @@ model_type: "openwam"
 precision: "bf16"
 is_lora: false
 model_path: /mnt/data/wangyuran/openwam_checkpoints/openwam-libero-sft-30000
-device: "cuda"
-load_to_device: false
+device: "cuda" # where rollout/eval recipes load the model (load_to_device: true)
+load_to_device: false # SFT: build on the CPU, FSDP moves each rank's shard to its GPU
 ckpt_name: null
 num_frames: 33
 height: 384

@@ -28,10 +28,19 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None) -> OpenWA
     if not model_path:
         raise ValueError("OpenWAM requires actor.model.model_path to be set.")
     openwam_cfg = cfg.get("openwam", {}) or {}
+    # Rollout/eval recipes load straight onto ``device``. The FSDP SFT recipe
+    # sets ``load_to_device: false``: the policy is then built on the CPU and
+    # FSDP moves each rank's shard to its GPU while wrapping, instead of every
+    # rank first materialising the whole model on its own device.
+    device = (
+        str(cfg.get("device", "cuda"))
+        if bool(cfg.get("load_to_device", True))
+        else "cpu"
+    )
     model = OpenWAMPolicy.from_checkpoint(
         model_path=str(model_path),
         ckpt_name=cfg.get("ckpt_name"),
-        device=str(cfg.get("device", "cuda")),
+        device=device,
         torch_dtype=torch_dtype,
         num_frames=int(cfg.get("num_frames", 49)),
         height=int(cfg.get("height", 384)),

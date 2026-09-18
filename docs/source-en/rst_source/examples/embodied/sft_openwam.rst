@@ -54,6 +54,15 @@ Start the Ray-managed FSDP runner:
 
 Override ``cluster.component_placement.actor`` and keep ``actor.global_batch_size`` divisible by the actor world size when you change the GPU count.
 
+The model preset keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping, so no rank ever holds the whole model on its device. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
+
+Validation and resuming
+-----------------------
+
+Set ``data.val_data_paths`` (one dataset root or a list, read with the same dataloader settings) and ``runner.val_check_interval`` to report ``eval/loss``, ``eval/loss_video`` and ``eval/loss_action`` averaged over the validation loader. ``actor.eval_batch_size`` sets the per-rank validation batch and ``actor.eval_max_batches`` caps the number of validation batches per rank for large datasets.
+
+Checkpoints store the data loader, sampler (including the shuffle epoch) and RNG states next to the model weights, so ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` continues with the next unseen batch instead of restarting the epoch.
+
 Visualization and Results
 -------------------------
 

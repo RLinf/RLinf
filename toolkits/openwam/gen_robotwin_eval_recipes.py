@@ -249,7 +249,7 @@ rollout:
     is_lora: false
     model_path: {checkpoint}
     device: cuda
-    load_to_device: false
+    load_to_device: true
     ckpt_name: null
     num_frames: 33
     num_action_chunks: 32   # OpenWAM's RoboTwin protocol executes the full 32-step chunk

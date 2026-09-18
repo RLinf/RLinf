@@ -145,6 +145,7 @@ def test_openwam_libero_eval_recipes_validate(openwam_eval_recipe, name, suite):
     assert cfg.env.eval.max_episode_steps == 600
     assert cfg.rollout.model.openwam.inference_horizon == 10
     assert cfg.rollout.model.num_action_chunks == 10
+    assert cfg.rollout.model.load_to_device is True
     assert cfg.runner.logger.experiment_name == f"{suite}_openwam_eval"
 
 
@@ -1936,6 +1937,185 @@ def test_openwam_sft_dataloader_concatenates_multiple_datasets(tmp_path, monkeyp
     assert single["dataset_dir"] == "/a" and single["num_samples"] == 3
     with pytest.raises(ValueError, match="requires data.train_data_paths"):
         build_openwam_sft_dataloader(cfg, 1, 0, [])
+
+
+def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
+    """The SFT preset defers device placement to FSDP; RL recipes are refused."""
+    import hydra
+
+    from rlinf.config import validate_embodied_cfg, validate_sft_cfg
+
+    repo = Path(__file__).resolve().parents[2]
+    with hydra.initialize_config_dir(
+        version_base="1.1", config_dir=str(repo / "examples/sft/config")
+    ):
+        cfg = hydra.compose(config_name="libero_sft_openwam")
+    assert cfg.actor.model.load_to_device is False
+    assert validate_sft_cfg(cfg) is cfg
+
+    rl_cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied", "only_eval": False},
+            "actor": {"model": {"model_type": "openwam"}},
+            "rollout": {"model": {"model_type": "openwam"}},
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(ValueError, match="RL training with the OpenWAM policy"):
+        validate_embodied_cfg(rl_cfg)
+
+
+def test_openwam_get_model_honors_load_to_device(monkeypatch):
+    """SFT builds the policy on the CPU for FSDP; rollout loads straight to the device."""
+    from rlinf.models.embodiment import openwam as openwam_module
+
+    seen = []
+    monkeypatch.setattr(
+        OpenWAMPolicy,
+        "from_checkpoint",
+        classmethod(lambda cls, **kwargs: seen.append(kwargs) or torch.nn.Module()),
+    )
+    cfg = OmegaConf.create(
+        {
+            "model_path": "/ckpt",
+            "device": "cuda:1",
+            "load_to_device": False,
+            "num_frames": 33,
+            "openwam": {"inference_horizon": 10},
+        }
+    )
+    openwam_module.get_model(cfg, torch.bfloat16)
+    cfg.load_to_device = True
+    openwam_module.get_model(cfg, torch.bfloat16)
+    assert [call["device"] for call in seen] == ["cpu", "cuda:1"]
+    assert seen[0]["inference_horizon"] == 10
+    assert seen[0]["torch_dtype"] == torch.bfloat16
+
+
+def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
+    """Register a fake ``openwam.dataloader.registry.build_dataset``."""
+    import sys
+
+    class _FakeDataset(torch.utils.data.Dataset):
+        def __init__(self, root, length):
+            self.root = root
+            self.length = length
+
+        def __len__(self):
+            return self.length
+
+        def __getitem__(self, index):
+            return {"root": self.root, "index": index}
+
+    def fake_build_dataset(dl_cfg, split):
+        return _FakeDataset(dl_cfg.dataset_dir, lengths[dl_cfg.dataset_dir])
+
+    registry = ModuleType("openwam.dataloader.registry")
+    registry.build_dataset = fake_build_dataset
+    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
+    monkeypatch.setitem(
+        sys.modules, "openwam.dataloader", ModuleType("openwam.dataloader")
+    )
+    monkeypatch.setitem(sys.modules, "openwam.dataloader.registry", registry)
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    (ckpt / "config.yaml").write_text(
+        "dataloader:\n  type: libero\n  dataset_dir: /unused\n  num_frames: 33\n"
+    )
+    return OmegaConf.create(
+        {
+            "actor": {
+                "model": {"model_path": str(ckpt)},
+                "micro_batch_size": 2,
+                "seed": 3,
+            },
+            "data": {},
+        }
+    )
+
+
+def test_openwam_sft_dataloader_checkpoints_and_resumes_mid_epoch(
+    tmp_path, monkeypatch
+):
+    """A resumed loader continues the same shuffle epoch at the next unseen batch."""
+    pytest.importorskip("torchdata")
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    cfg = _openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
+    loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+    assert isinstance(loader, StatefulDataLoader)
+
+    def indices(batch):
+        return [sample["index"] for sample in batch]
+
+    reference = []
+    for epoch in range(2):
+        loader.sampler.set_epoch(epoch)
+        reference.append([indices(batch) for batch in loader])
+    assert len(reference[1]) == 5 and reference[0] != reference[1]
+
+    # Interrupt epoch 1 after two batches and resume in a fresh process' loader.
+    loader.sampler.set_epoch(1)
+    iterator = iter(loader)
+    consumed = [indices(next(iterator)) for _ in range(2)]
+    state = loader.state_dict()
+
+    resumed, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+    resumed.load_state_dict(state)
+    remaining = [indices(batch) for batch in resumed]
+    assert consumed + remaining == reference[1]
+    assert resumed.sampler.epoch == 1
+
+
+def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
+    """Validation averages OpenWAM's SFT losses; other models keep raising."""
+    pytest.importorskip("torchdata")
+    import contextlib
+
+    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    class _Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def forward(self, forward_type, data):
+            assert forward_type == ForwardType.SFT
+            self.calls += 1
+            value = float(sum(sample["v"] for sample in data))
+            return {
+                "loss": torch.tensor(value),
+                "loss_video": torch.tensor(value / 2),
+                "loss_action": torch.tensor([1.0, 2.0]),  # non-scalar: dropped
+            }
+
+    stub = SimpleNamespace(
+        cfg=OmegaConf.create(
+            {"actor": {"model": {"model_type": "openwam"}, "eval_max_batches": 2}}
+        ),
+        eval_data_loader=[[{"v": 1.0}], [{"v": 3.0}], [{"v": 5.0}]],
+        model=_Model(),
+        amp_context=contextlib.nullcontext(),
+        worker_timer=contextlib.nullcontext,
+    )
+    stub._is_openwam = lambda: FSDPVlaSftWorker._is_openwam(stub)
+    stub.get_eval_model_output = lambda batch: FSDPVlaSftWorker.get_eval_model_output(
+        stub, batch
+    )
+    monkeypatch.setattr(
+        worker_module, "all_reduce_dict", lambda metrics, op=None: metrics
+    )
+
+    metrics = FSDPVlaSftWorker.run_eval(stub)
+    assert metrics == {"loss": 2.0, "loss_video": 1.0, "num_batches": 2.0}
+    assert stub.model.calls == 2 and stub.model.training
+
+    stub.cfg.actor.model.model_type = "openpi"
+    with pytest.raises(NotImplementedError, match="eval is not supported"):
+        FSDPVlaSftWorker.get_eval_model_output(stub, [{"v": 1.0}])
 
 
 def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
