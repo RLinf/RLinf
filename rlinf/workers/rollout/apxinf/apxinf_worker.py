@@ -54,7 +54,7 @@ class ApxInfRolloutWorker(Worker):
         self.apxinf_adapter = None
 
     def init_worker(self) -> None:
-        from rlinf.models.embodiment.openpi.apxinf_adapter import (
+        from rlinf.models.embodiment.openpi_rlinf.apxinf_adapter import (
             OpenPIApxInfAdapter,
         )
 

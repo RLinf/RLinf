@@ -28,49 +28,49 @@ from openpi.training.config import (
     TrainConfig,
 )
 
-from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.behavior_dataconfig import (
     LeRobotBehaviorDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
     DualFrankaTcpRot6dDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.franka_co_training_dataconfig import (
     LeRobotFrankaEEDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.franka_dataconfig import (
     CustomDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.gsenv_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.gsenv_dataconfig import (
     LeRobotGSEnvDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.isaaclab_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.isaaclab_dataconfig import (
     LeRobotIsaacLabStackCubeDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.libero_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.libero_dataconfig import (
     LeRobotLiberoDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.maniskill_dataconfig import (
     LeRobotManiSkillDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.maniskill_rlt_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.maniskill_rlt_dataconfig import (
     LeRobotRLTManiSkillJointDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.polaris_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.polaris_dataconfig import (
     LeRobotPolarisDroidDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.realworld_dataconfig import (
     LeRobotRealworldDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
+from rlinf.models.embodiment.openpi_rlinf.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
 

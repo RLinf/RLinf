@@ -61,6 +61,7 @@ actor:
   model:
     model_path: /workspace/dataset/ci_behavior/base_model
     openpi:
+      task: sft
       assets_dir: /workspace/dataset/ci_behavior/assets
       asset_id: "behavior-1k/2025-challenge-demos"
 

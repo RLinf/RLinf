@@ -1,7 +1,7 @@
 defaults:
   - env/robocasa_closedrawer@env.train
   - env/robocasa_closedrawer@env.eval
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -109,13 +109,14 @@ actor:
 
   model:
     model_path: "/workspace/dataset/RLinf-Pi0-RoboCasa"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 5
     num_steps: 5
     action_dim: 12
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi0_robocasa_human"
       num_images_in_input: 2
       detach_critic_input: True

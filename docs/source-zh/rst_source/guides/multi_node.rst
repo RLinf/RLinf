@@ -141,7 +141,7 @@
 .. code-block:: bash
 
    cd <RLinf 仓库根目录>
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_rlinf
 
 推理类任务示例：
 

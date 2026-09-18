@@ -11,8 +11,8 @@
      - ``model_type``
      - 示例配置
    * - π₀ / π₀.₅（OpenPI）
-     - ``openpi``
-     - ``libero_spatial_openpi_pi05_eval``、``libero_goal_openpi_eval``、``robotwin_adjust_bottle_openpi_eval`` 等
+     - ``openpi_rlinf``
+     - ``libero_spatial_openpi_pi05_eval``、``libero_goal_openpi_eval``、``robotwin_adjust_bottle_openpi_rlinf_eval`` 等
    * - OpenVLA-OFT
      - ``openvla_oft``
      - ``libero_10_openvlaoft_eval``、``robotwin_place_empty_cup_openvlaoft_eval``、``maniskill_ood_openvlaoft_eval`` 等

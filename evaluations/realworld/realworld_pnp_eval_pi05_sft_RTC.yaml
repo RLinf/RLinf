@@ -1,7 +1,7 @@
 defaults:
   - env/realworld_bin_relocation@env.train
   - env/realworld_bin_relocation@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -162,7 +162,7 @@ rollout:
 
   model:
     model_path: /path/to/model
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     precision: ${actor.model.precision}
     add_value_head: False
     num_action_chunks: 5
@@ -171,6 +171,7 @@ rollout:
     num_steps: 10
     is_lora: False
     openpi:
+      task: eval
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2
       noise_method: "flow_sde"
@@ -192,13 +193,14 @@ actor:
 
   model:
     model_path: /path/to/model
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     add_value_head: False
     num_action_chunks: 5
     rewrite_chunk_gripper: False
     num_steps: 10
     is_lora: False
     openpi:
+      task: eval
       value_after_vlm: False
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2

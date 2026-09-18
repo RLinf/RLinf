@@ -84,7 +84,7 @@ class _RLInfOpenPITransforms:
         from openpi.shared import normalize as normalize_lib
         from openpi.training import checkpoints
 
-        from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+        from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
         self.model_cfg = model_cfg
         self.num_action_chunks = int(model_cfg.get("num_action_chunks"))

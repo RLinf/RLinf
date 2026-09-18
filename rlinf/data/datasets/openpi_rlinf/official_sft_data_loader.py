@@ -21,7 +21,6 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
-from rlinf.config import SupportedModel
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 
 
@@ -43,10 +42,9 @@ def build_official_openpi_sft_dataloader(
 
     import openpi.training.data_loader as openpi_data_loader
 
-    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+    from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
     model_cfg = cfg.actor.model
-    model_type = SupportedModel(model_cfg.model_type)
     batch_size = cfg.actor.micro_batch_size
     if eval_dataset:
         batch_size = cfg.actor.get("eval_batch_size", batch_size)
@@ -58,15 +56,14 @@ def build_official_openpi_sft_dataloader(
         repo_id=repo_id,
         data_kwargs=getattr(model_cfg, "openpi_data", None),
     )
-    if model_type == SupportedModel.OPENPI_RLINF:
-        config = dataclasses.replace(
-            config,
-            num_workers=int(
-                OmegaConf.select(cfg, "data.num_workers", default=config.num_workers)
-            ),
-            seed=int(OmegaConf.select(cfg, "actor.seed", default=config.seed)),
-        )
-        _validate_openpi_rlinf_model_shape(model_cfg, config)
+    config = dataclasses.replace(
+        config,
+        num_workers=int(
+            OmegaConf.select(cfg, "data.num_workers", default=config.num_workers)
+        ),
+        seed=int(OmegaConf.select(cfg, "actor.seed", default=config.seed)),
+    )
+    _validate_openpi_rlinf_model_shape(model_cfg, config)
 
     data_loader = openpi_data_loader.create_data_loader(
         config, framework="pytorch", shuffle=not eval_dataset
@@ -94,15 +91,21 @@ def is_official_openpi_sft_dataloader(data_loader: Any) -> bool:
 
 
 def _validate_openpi_rlinf_model_shape(model_cfg: Any, openpi_config: Any) -> None:
-    """Keep the local Pi0 architecture consistent with the OpenPI config."""
-    local_horizon = int(model_cfg.num_action_chunks)
+    """Keep the local Pi0 architecture consistent with the OpenPI config.
+
+    The official loader sizes the SFT action window from
+    ``TrainConfig.model.action_horizon``, not ``num_action_chunks`` (that field
+    is the env-executed chunk). ``get_model`` already builds the network from
+    the same TrainConfig unless YAML overrides ``openpi.action_horizon``.
+    """
+    yaml_horizon = OmegaConf.select(model_cfg, "openpi.action_horizon", default=None)
     official_horizon = int(openpi_config.model.action_horizon)
-    if local_horizon != official_horizon:
+    if yaml_horizon is not None and int(yaml_horizon) != official_horizon:
         raise ValueError(
-            "openpi_rlinf SFT action horizon must match the official OpenPI "
-            f"config: actor.model.num_action_chunks={local_horizon}, "
-            f"{model_cfg.openpi.config_name}.model.action_horizon="
-            f"{official_horizon}."
+            "openpi_rlinf SFT data uses TrainConfig.model.action_horizon="
+            f"{official_horizon} from {model_cfg.openpi.config_name}; "
+            f"openpi.action_horizon={int(yaml_horizon)} would build a different "
+            "network. Unset it, or change the TrainConfig."
         )
 
     local_action_dim = int(model_cfg.openpi.model_action_dim)

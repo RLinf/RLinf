@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,17 +14,31 @@
 import dataclasses
 import pathlib
 
+import numpy as np
 import openpi.models.model as _model
 import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import calvin_policy
+from rlinf.models.embodiment.openpi_rlinf.policies import realworld_policy
 
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotCalvinDataConfig(DataConfigFactory):
+class LeRobotRealworldDataConfig(DataConfigFactory):
+    """Data configuration for RLinf-collected realworld LeRobot datasets."""
+
+    default_prompt: str | None = None
     extra_delta_transform: bool = False
+
+    def generate_observations(
+        image: np.ndarray, state: np.ndarray, prompt: str
+    ) -> dict:
+        """Creates an input example for the realworld policy."""
+        return {
+            "observation/image": image,
+            "observation/state": state,
+            "prompt": prompt,
+        }
 
     @override
     def create(
@@ -34,38 +48,33 @@ class LeRobotCalvinDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "video.image_base",
-                        "observation/wrist_image": "video.image_wrist",
-                        "observation/state_ee_pos": "state.ee_pos",
-                        "observation/state_ee_rot": "state.ee_rot",
-                        "observation/state_gripper": "state.gripper",
-                        "actions/delta_ee_pos": "action.delta_ee_pos",
-                        "actions/delta_ee_rot": "action.delta_ee_rot",
-                        "actions/gripper": "action.gripper",
+                        "observation/image": "image",
+                        "observation/extra_view_image": "extra_view_image",
+                        "observation/state": "state",
+                        "actions": "actions",
                         "prompt": "prompt",
                     }
                 )
             ]
         )
+
         data_transforms = _transforms.Group(
-            inputs=[calvin_policy.CalvinInputs(model_type=model_config.model_type)],
-            outputs=[calvin_policy.CalvinOutputs()],
+            inputs=[
+                realworld_policy.RealworldInputs(
+                    action_dim=model_config.action_dim,
+                    model_type=model_config.model_type,
+                )
+            ],
+            outputs=[realworld_policy.RealworldOutputs()],
         )
-        if self.extra_delta_transform:
-            delta_action_mask = _transforms.make_bool_mask(6, -1)
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-            )
-        model_transforms = ModelTransformFactory()(model_config)
+
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
+            model_config
+        )
+
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-            action_sequence_keys=(
-                "action.delta_ee_pos",
-                "action.delta_ee_rot",
-                "action.gripper",
-            ),
         )

@@ -1,7 +1,7 @@
 defaults:
   - env/maniskill_pick_and_place_digital_twin@env.train
   - env/maniskill_pick_and_place_digital_twin@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -113,12 +113,13 @@ actor:
   # Override the default values in model/pi0_5
   model:
     model_path: "/path/to/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     add_value_head: True
     num_action_chunks: 4 # interface for the env
     num_steps: 4
     # openpi specific parameters
     openpi:
+      task: rl
       value_after_vlm: True
       config_name: "pi05_maniskill_sim_real_co_training"
       num_images_in_input: 1

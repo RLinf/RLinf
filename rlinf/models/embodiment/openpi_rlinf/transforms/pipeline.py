@@ -28,8 +28,7 @@ def build_openpi_transforms(
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
-    Returns two lists ready for :func:`openpi.transforms.compose`, matching
-    ``rlinf/models/embodiment/openpi/__init__.py`` exactly:
+    Returns two lists ready for :func:`openpi.transforms.compose`:
 
     * input:  ``[InjectDefaultPrompt(None), *data.inputs, Normalize, *model.inputs]``
     * output: ``[*model.outputs, Unnormalize, *data.outputs]``
@@ -44,7 +43,7 @@ def build_openpi_transforms(
     import openpi.transforms as transforms
     from openpi.training import checkpoints as _checkpoints
 
-    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+    from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
     train_config = get_openpi_config(
         config_name, model_path=str(model_path), data_kwargs=data_kwargs

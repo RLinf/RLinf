@@ -288,11 +288,10 @@ interference, eliminating the need for offload functionality.
 
 **2.1 Model Parameters**
 
-This page covers two implementations of π\ :sub:`0`\ / π\ :sub:`0.5`\ :
-``model_type: openpi`` (templates ``model/pi0``, ``model/pi0_5``), which the
-recipes above use, and ``model_type: openpi_rlinf`` (templates
-``model/pi0_rlinf``, ``model/pi0_5_rlinf``). Both keep the network action
-horizon separate from the chunk the environment executes:
+This page covers the ``model_type: openpi_rlinf`` implementation of
+π\ :sub:`0`\ / π\ :sub:`0.5`\  (templates ``model/pi0_rlinf``,
+``model/pi0_5_rlinf``). The network action horizon is
+kept separate from the chunk the environment executes:
 
 - ``num_action_chunks`` / ``openpi.action_chunk`` is the **env-executed**
   chunk (what RLinf sends to the simulator).
@@ -300,7 +299,7 @@ horizon separate from the chunk the environment executes:
   otherwise the official OpenPI ``TrainConfig.model.action_horizon`` for
   ``openpi.config_name``; otherwise it falls back to ``num_action_chunks``.
 
-The ``openpi`` implementation copies ``action_horizon`` from official
+``openpi_rlinf`` copies ``action_horizon`` from official
 ``TrainConfig.model``, then overlays ``cfg.openpi``. Default templates only
 interpolate ``num_action_chunks`` into ``action_chunk``; they do **not** set
 the network horizon from ``num_action_chunks``.
@@ -359,10 +358,8 @@ In the paper, we provide two technical approaches, flow-noise and flow-sde, to f
      noise_logvar_range: [0.08, 0.16] # learnable noise range for flow-noise
      joint_logprob: False # whether to optimize joint probability density function. For flow-sde, please set to False. For flow-noise, please set to True.
 
-For a complete flow-sde setup on ``openpi_rlinf``, see
-``libero_spatial_ppo_openpi_rlinf.yaml``. The legacy ``openpi`` recipes are
-``libero_spatial_ppo_openpi.yaml`` (flow-sde) and
-``maniskill_ppo_openpi.yaml`` (flow-noise).
+For a complete flow-sde setup, see ``libero_spatial_ppo_openpi_rlinf.yaml``.
+For flow-noise, see ``maniskill_ppo_openpi.yaml``.
 
 **2.3 LoRA Settings**
 

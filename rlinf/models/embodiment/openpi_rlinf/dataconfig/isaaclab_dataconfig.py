@@ -11,9 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Data config for dual-Franka TCP rot6d SFT — body-frame SE(3) delta on rot6d
-(component-wise subtraction would break on rotations)."""
-
 import dataclasses
 import pathlib
 
@@ -22,21 +19,16 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import dual_franka_tcp_rot6d_policy
-from rlinf.models.embodiment.openpi.transforms import (
-    DUAL_ARM_ROT6D_LAYOUT,
-    RigidBodyAbsoluteActions,
-    RigidBodyDeltaActions,
-)
+from rlinf.models.embodiment.openpi_rlinf.policies import isaaclab_policy
 
 
 @dataclasses.dataclass(frozen=True)
-class DualFrankaTcpRot6dDataConfig(DataConfigFactory):
-    default_prompt: str | None = None
+class LeRobotIsaacLabStackCubeDataConfig(DataConfigFactory):
+    """OpenPI data config aligned with stack-cube fine-tuning recipe."""
 
-    # SE(3) delta at train, absolute recovery at inference. pi0/pi05 trains
-    # on deltas, so default True.
-    extra_delta_transform: bool = True
+    default_prompt: str | None = (
+        "Stack the red block on the blue block, then stack the green block on the red block"
+    )
 
     @override
     def create(
@@ -46,32 +38,19 @@ class DualFrankaTcpRot6dDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "image",
-                        "observation/extra_view_image-0": "extra_view_image-0",
-                        "observation/extra_view_image-1": "extra_view_image-1",
-                        "observation/state": "state",
-                        "actions": "actions",
-                        "prompt": "prompt",
+                        "observation/image": "observation.images.front",
+                        "observation/wrist_image": "observation.images.wrist",
+                        "observation/state": "observation.state",
+                        "actions": "action",
                     }
                 )
             ]
         )
 
         data_transforms = _transforms.Group(
-            inputs=[
-                dual_franka_tcp_rot6d_policy.DualFrankaTcpRot6dInputs(
-                    action_dim=model_config.action_dim,
-                    model_type=model_config.model_type,
-                )
-            ],
-            outputs=[dual_franka_tcp_rot6d_policy.DualFrankaTcpRot6dOutputs()],
+            inputs=[isaaclab_policy.IsaacLabInputs(model_type=model_config.model_type)],
+            outputs=[isaaclab_policy.IsaacLabOutputs()],
         )
-
-        if self.extra_delta_transform:
-            data_transforms = data_transforms.push(
-                inputs=[RigidBodyDeltaActions(DUAL_ARM_ROT6D_LAYOUT)],
-                outputs=[RigidBodyAbsoluteActions(DUAL_ARM_ROT6D_LAYOUT)],
-            )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
             model_config
@@ -82,5 +61,5 @@ class DualFrankaTcpRot6dDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-            action_sequence_keys=("actions",),
+            action_sequence_keys=("action",),
         )

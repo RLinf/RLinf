@@ -17,7 +17,7 @@ Examples:
 
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval
    bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
 
 Option 2: Auto-Infer Benchmark
 ------------------------------

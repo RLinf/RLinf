@@ -17,7 +17,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.models.embodiment.openpi.apxinf_adapter import (
+from rlinf.models.embodiment.openpi_rlinf.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
@@ -85,7 +85,7 @@ def _model_cfg(**apxinf_overrides):
     }
     return OmegaConf.create(
         {
-            "model_type": "openpi",
+            "model_type": "openpi_rlinf",
             "model_path": "/not/loaded/in/unit/test",
             "num_action_chunks": 5,
             "action_dim": 7,

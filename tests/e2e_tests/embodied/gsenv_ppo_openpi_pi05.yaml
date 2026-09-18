@@ -1,7 +1,7 @@
 defaults:
   - env/gsenv_put_cube_on_plate@env.train
   - env/gsenv_put_cube_on_plate@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -108,12 +108,13 @@ actor:
 
   model:
     model_path: "/workspace/dataset/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 5
     add_value_head: True
     policy_setup: "panda-ee-target-dpos"
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi05_gsenv"
       num_images_in_input: 1
       noise_level: 0.5

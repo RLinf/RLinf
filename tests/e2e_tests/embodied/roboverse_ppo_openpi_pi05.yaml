@@ -1,7 +1,7 @@
 defaults:
   - env/roboverse_put_bowl_on_cabinet@env.train
   - env/roboverse_put_bowl_on_cabinet@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -120,10 +120,11 @@ actor:
   # Override the default values in model/pi0_5
   model:
     model_path: "/workspace/dataset/RLinf-Pi05-SFT"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 4
     add_value_head: True
     openpi:
+      task: rl
       config_name: "pi05_libero"
       num_images_in_input: 2
       value_after_vlm: True

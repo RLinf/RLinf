@@ -25,11 +25,11 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     import safetensors
     from openpi.training import checkpoints as _checkpoints
 
-    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
     from rlinf.models.embodiment.openpi_cfg.openpi_cfg_action_model import (
         OpenPi0Config,
         OpenPi0ForCFGActionPrediction,
     )
+    from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
     config_name = getattr(cfg.openpi, "config_name", None)
     actor_train_config = get_openpi_config(config_name)

@@ -1,6 +1,6 @@
 defaults:
   - env/libero_spatial@env.eval
-  - model/pi0_5@rollout.model
+  - model/pi0_5_rlinf@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -60,8 +60,9 @@ rollout:
 
   model:
     model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 5
     num_steps: 3
     openpi:
+      task: eval
       noise_level: 0.3

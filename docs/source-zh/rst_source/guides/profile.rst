@@ -100,7 +100,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
 
 .. code-block:: text
 
-   ../results/libero_spatial_ppo_openpi/profiling/
+   ../results/libero_spatial_ppo_openpi_rlinf/profiling/
 
 如果希望写入固定目录，可以显式设置 ``output_dir``：
 

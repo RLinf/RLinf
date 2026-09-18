@@ -278,12 +278,12 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 **2.1 模型参数**
 
-本文同时覆盖 π\ :sub:`0`\ / π\ :sub:`0.5`\  的两套实现：上方配方使用的 ``model_type: openpi``（模板 ``model/pi0``、``model/pi0_5``），以及 ``model_type: openpi_rlinf``（模板 ``model/pi0_rlinf``、``model/pi0_5_rlinf``）。两者都把网络 action horizon 和环境实际执行的 chunk 分开：
+本文覆盖 π\ :sub:`0`\ / π\ :sub:`0.5`\  的 ``model_type: openpi_rlinf`` 实现（模板 ``model/pi0_rlinf``、``model/pi0_5_rlinf``）。网络 action horizon 和环境实际执行的 chunk 是分开的：
 
 - ``num_action_chunks`` / ``openpi.action_chunk`` 是 **环境实际执行** 的 chunk（RLinf 发给模拟器的步数）。
 - **网络** ``action_horizon`` 优先用 YAML 里的 ``openpi.action_horizon``；未设置时用 ``openpi.config_name`` 对应官方 OpenPI ``TrainConfig.model.action_horizon``；再没有才回退到 ``num_action_chunks``。
 
-``openpi`` 实现从官方 ``TrainConfig.model`` 拷出 ``action_horizon``，再用 ``cfg.openpi`` 整表覆盖。默认模板只把 ``num_action_chunks`` 插值到 ``action_chunk``，**不会** 把 ``num_action_chunks`` 写成网络 horizon。
+``openpi_rlinf`` 从官方 ``TrainConfig.model`` 拷出 ``action_horizon``，再用 ``cfg.openpi`` 整表覆盖。默认模板只把 ``num_action_chunks`` 插值到 ``action_chunk``，**不会** 把 ``num_action_chunks`` 写成网络 horizon。
 
 LIBERO PPO 常见写法是 ``num_action_chunks: 5``，而 ``pi0_libero`` 官方 horizon 仍是 **50**，``pi05_libero`` 官方 horizon 是 **10**。只有 checkpoint 的 horizon 和该 ``TrainConfig`` 不一致时，才在实验 YAML 里覆写 ``openpi.action_horizon``。
 
@@ -330,7 +330,7 @@ LIBERO PPO 常见写法是 ``num_action_chunks: 5``，而 ``pi0_libero`` 官方 
      noise_logvar_range: [0.08, 0.16] # 针对 flow-noise 的可学习噪声范围
      joint_logprob: False # 是否优化联合概率密度函数，对于flow-sde，请设置为False，对于flow-noise，请设置为True
 
-例如，``openpi_rlinf`` 上完整的 flow-sde 设置见 ``libero_spatial_ppo_openpi_rlinf.yaml``。legacy ``openpi`` 配方为 ``libero_spatial_ppo_openpi.yaml``\ （flow-sde）和 ``maniskill_ppo_openpi.yaml``\ （flow-noise）。
+例如，完整的 flow-sde 设置见 ``libero_spatial_ppo_openpi_rlinf.yaml``，flow-noise 见 ``maniskill_ppo_openpi.yaml``。
 
 **2.3 LoRA设置**
 

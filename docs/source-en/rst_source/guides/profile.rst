@@ -104,7 +104,7 @@ For example:
 
 .. code-block:: text
 
-   ../results/libero_spatial_ppo_openpi/profiling/
+   ../results/libero_spatial_ppo_openpi_rlinf/profiling/
 
 To override, set ``output_dir`` explicitly:
 

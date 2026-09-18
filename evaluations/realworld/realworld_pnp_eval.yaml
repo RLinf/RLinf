@@ -1,6 +1,6 @@
 defaults:
   - env/realworld_bin_relocation@env.eval
-  - model/pi0@rollout.model
+  - model/pi0_rlinf@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -78,6 +78,7 @@ rollout:
     add_value_head: False
 
     openpi:
+      task: eval
       config_name: "pi0_realworld"
       train_expert_only: False
       detach_critic_input: True

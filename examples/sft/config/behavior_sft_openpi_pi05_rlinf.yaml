@@ -72,6 +72,7 @@ actor:
     # New-format fp32 base checkpoint (exactly what the reference trainer loads).
     model_path: /path/to/pi05_base_pytorch_new
     openpi:
+      task: sft
       assets_dir: /path/to/assets
       asset_id: "behavior-1k/2025-challenge-demos"
 

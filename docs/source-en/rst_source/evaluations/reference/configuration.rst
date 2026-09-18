@@ -7,7 +7,7 @@ Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core s
 
    defaults:
      - env/libero_spatial@env.eval      # Environment preset
-     - model/pi0_5@rollout.model        # Model preset
+     - model/pi0_5_rlinf@rollout.model  # Model preset
      - override hydra/job_logging: stdout
 
    hydra:
@@ -39,7 +39,7 @@ Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core s
      generation_backend: "huggingface"
      model:
        model_path: "/path/to/model"   # Required: model weights path
-       model_type: "openpi"
+       model_type: "openpi_rlinf"
 
 .. _env-eval-fields:
 

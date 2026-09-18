@@ -19,7 +19,7 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import Dict, Union, override
 
-from rlinf.models.embodiment.openpi.policies import robocasa_policy
+from rlinf.models.embodiment.openpi_rlinf.policies import robocasa_policy
 
 
 @dataclasses.dataclass(frozen=True)
@@ -48,8 +48,8 @@ class LeRobotRobocasaDataConfig(DataConfigFactory):
         # and then modify the mappings below so your dataset's keys get matched to those target keys.
         # The repack transform simply remaps key names here.
 
-        # FIXME: repack_transform is not used in RLinf, neither RL nor SFT,
-        # see rlinf/models/embodiment/openpi/__init__.py as a empty repack_transform is used to wrap the model
+        # FIXME: repack_transform is not used in RLinf, neither RL nor SFT;
+        # an empty repack_transform is used to wrap the model.
         # these keys are features in LerobotDataset, so you can use it to make SFT right.
         repack_transform = _transforms.Group(
             inputs=[

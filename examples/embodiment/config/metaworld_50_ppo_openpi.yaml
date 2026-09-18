@@ -1,7 +1,7 @@
 defaults:
   - env/metaworld_50@env.train
   - env/metaworld_50@env.eval
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -112,6 +112,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi0_metaworld"
       num_images_in_input: 1
       detach_critic_input: True

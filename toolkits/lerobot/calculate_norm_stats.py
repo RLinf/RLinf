@@ -22,7 +22,7 @@ import tyro
 from openpi.training.config import DataConfig
 
 from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
-from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
 
 class RemoveStrings(transforms.DataTransformFn):

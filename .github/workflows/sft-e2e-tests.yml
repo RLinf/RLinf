@@ -35,7 +35,7 @@ jobs:
                -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
-  sft-maniskill-openpi-test:
+  sft-maniskill-openpi-rlinf-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -50,7 +50,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
-      - name: SFT ManiSkill OpenPI test
+      - name: SFT ManiSkill OpenPI-RLinf test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -58,7 +58,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_sft_openpi
 
-      - name: SFT ManiSkill RLT Stage1 OpenPI Pi05 test
+      - name: SFT ManiSkill RLT Stage1 OpenPI-RLinf Pi05 test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -119,7 +119,7 @@ jobs:
                -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
-  sft-openpi-pytorch-behavior-test:
+  sft-openpi-rlinf-behavior-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -136,7 +136,7 @@ jobs:
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: SFT BEHAVIOR OpenPI-PyTorch test
+      - name: SFT BEHAVIOR OpenPI-RLinf test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH

@@ -212,7 +212,7 @@ Stage II：仿真-真机协同 RL 训练
 
 **Python 配置类参考**
 
-在代码层面，``pi05_maniskill_sim_real_co_training`` 对应的配置位于 ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``。需确保 ``model`` 架构与 ``normalization`` 状态与 SFT 阶段保持一致。
+在代码层面，``pi05_maniskill_sim_real_co_training`` 对应的配置位于 ``rlinf/models/embodiment/openpi_rlinf/dataconfig/__init__.py``。需确保 ``model`` 架构与 ``normalization`` 状态与 SFT 阶段保持一致。
 
 **关于 Batch Size 的说明:**
 

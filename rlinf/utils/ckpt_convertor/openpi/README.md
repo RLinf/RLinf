@@ -87,7 +87,7 @@ RLinf SFT-trained checkpoint -> OpenPI_RLinf bare `Pi0` layout.
   prefixes (`model.`, `_fsdp_wrapped_module.`, `_orig_mod.`, `module.`) to recover
   the bare `Pi0` keys.
 - **Model configuration**: `--config-name` is required and is resolved through
-  `rlinf.models.embodiment.openpi.dataconfig.get_openpi_config`. It is the same
+  `rlinf.models.embodiment.openpi_rlinf.dataconfig.get_openpi_config`. It is the same
   source used by SFT and eval, and supplies Pi0/Pi0.5 selection, action horizon,
   model action dimension, token length, and state-input semantics. For example,
   use `pi05_behavior`, `pi0_aloha_robotwin`, or `pi05_aloha_robotwin`. This mode
@@ -111,7 +111,7 @@ The two SFT configurations keep FSDP dtypes aligned with
 | Configuration | `actor.model.precision` | FSDP `param_dtype` | FSDP reduction and buffer dtype |
 | --- | --- | --- | --- |
 | `behavior_sft_openpi_pi05_rlinf.yaml` | null | null | null |
-| `robotwin_sft_openpi_rlinf.yaml` | null | null | null |
+| `robotwin_adjust_bottle_sft_openpi_rlinf.yaml` | null | null | null |
 
 Converter `--dtype` is independent of training compute. The BEHAVIOR recipe
 can still emit a bf16 artifact; the RoboTwin recipe typically keeps fp32 to
@@ -136,8 +136,8 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
     --dtype              fp32 \
     --ckpt              /path/to/checkpoints/global_step_30000 \
     --input-norm-stats /path/to/robotwin/norm_stats.json \
-    --output-model      /path/to/pi0_robotwin_sft_openpi_rlinf \
-    --output-norm-stats /path/to/pi0_robotwin_sft_openpi_rlinf/physical-intelligence/robotwin/norm_stats.json \
+    --output-model      /path/to/pi0_robotwin_adjust_bottle_sft_openpi_rlinf \
+    --output-norm-stats /path/to/pi0_robotwin_adjust_bottle_sft_openpi_rlinf/physical-intelligence/robotwin/norm_stats.json \
     --reference-model   /path/to/pi0_base_openpi_rlinf
 ```
 

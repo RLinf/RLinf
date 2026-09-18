@@ -1,6 +1,6 @@
 defaults:
   - env/libero_object@env.eval
-  - model/pi0_5@rollout.model
+  - model/pi0_5_rlinf@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -57,8 +57,9 @@ rollout:
 
   model:
     model_path: "/mnt/project_rlinf_hs/chenkang/openpi-main/checkpoints/sft/pi05_libero/few_sft/30000/" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 5
     # openpi specific parameters
     openpi:
+      task: eval
       noise_level: 0.3

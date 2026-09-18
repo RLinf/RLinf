@@ -142,7 +142,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         import openpi.transforms as transforms
 
         from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
-        from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+        from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
         data_cfg = self.cfg.get("data", {})
         openpi_cfg = self.cfg.actor.model.openpi

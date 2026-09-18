@@ -1,7 +1,7 @@
 defaults:
   - env/robotwin_adjust_bottle@env.train
   - env/robotwin_adjust_bottle@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -147,6 +147,7 @@ actor:
     add_value_head: True
     num_steps: 5
     openpi:
+      task: rl
       config_name: "pi05_aloha_robotwin"
       num_images_in_input: 3
       noise_level: 0.3

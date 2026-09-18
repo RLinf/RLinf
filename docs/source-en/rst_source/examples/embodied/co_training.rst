@@ -204,7 +204,7 @@ Point ``model_path`` to your SFT checkpoint and ``sft_data_path`` to the real da
 - ``enable_sft_co_train``: Set to ``True`` to enable co-training; ``False`` for PPO-only.
 - ``sft_loss_weight``: Weight :math:`\beta` for the SFT term (:math:`\mathcal{L}_{SFT}`) in the total loss.
 
-The dataconfig ``pi05_maniskill_sim_real_co_training`` is defined in ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``. Keep model architecture and normalization consistent with Stage I.
+The dataconfig ``pi05_maniskill_sim_real_co_training`` is defined in ``rlinf/models/embodiment/openpi_rlinf/dataconfig/__init__.py``. Keep model architecture and normalization consistent with Stage I.
 
 **Batch size**
 

@@ -88,7 +88,6 @@ SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
-SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
@@ -135,7 +134,6 @@ EMBODIED_MODEL = set(
     {
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
-        SupportedModel.OPENPI,
         SupportedModel.OPENPI_RLINF,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
@@ -960,17 +958,10 @@ def validate_only_eval_rollout_model(model_cfg) -> None:
         missing.append("rollout.model.num_action_chunks")
 
     model_type = str(OmegaConf.select(model_cfg, "model_type", default="") or "")
-    if model_type in (
-        SupportedModel.OPENPI.value,
-        SupportedModel.OPENPI_RLINF.value,
-    ):
+    if model_type == SupportedModel.OPENPI_RLINF.value:
         if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
             missing.append("rollout.model.openpi.config_name")
-        # ``task`` selects Pi0Eval / Pi0RL / … only in openpi_rlinf.
-        # Official OpenPI get_model ignores it and must not require it.
-        if model_type == SupportedModel.OPENPI_RLINF.value and OmegaConf.select(
-            model_cfg, "openpi.task", default=None
-        ) in (None, ""):
+        if OmegaConf.select(model_cfg, "openpi.task", default=None) in (None, ""):
             missing.append("rollout.model.openpi.task")
         has_num_steps = (
             OmegaConf.select(model_cfg, "num_steps", default=None) is not None

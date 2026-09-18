@@ -1,6 +1,6 @@
 defaults:
   - env/polaris_droid_tapeintocontainer@env.eval
-  - model/pi0_5@rollout.model
+  - model/pi0_5_rlinf@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -60,12 +60,13 @@ rollout:
 
   model:
     model_path: "/path/to/model/RLinf-Pi05-Polaris-droid_jointpos/"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     action_dim: 8
     num_action_chunks: 15
     num_steps: 10
     add_value_head: True
     openpi:
+      task: eval
       config_name: "pi05_droid_polaris"
       num_images_in_input: 2
       noise_level: 0.5

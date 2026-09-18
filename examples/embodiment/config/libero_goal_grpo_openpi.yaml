@@ -1,7 +1,7 @@
 defaults:
   - env/libero_goal@env.train
   - env/libero_goal@env.eval
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout

@@ -1,7 +1,7 @@
 defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
   - env/maniskill_put_on_plate_in_scene_25_main@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -110,7 +110,7 @@ actor:
   enable_offload: False
   model:
     model_path: "/workspace/dataset/RLinf-Pi05-ManiSkill-25Main-SFT"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 5
     action_dim: 7
     is_lora: False
@@ -119,6 +119,7 @@ actor:
     num_steps: 4
     add_value_head: True
     openpi:
+      task: rl
       config_name: "pi05_maniskill"
       num_images_in_input: 1
       noise_level: 0.5

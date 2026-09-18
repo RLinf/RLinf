@@ -125,9 +125,7 @@ Please switch to the OpenPI virtual environment via the built-in ``switch_env`` 
 RLT uses ``model_type: openpi_rlinf`` in the configs below. The install target
 is still ``openpi`` because the vendored PyTorch model shares the OpenPI runtime
 and the RLT Stage 1 dataloader keeps using the OpenPI data pipeline for
-ManiSkill and real-world compatibility. This ``openpi_rlinf`` path is RLinf's
-vendored PyTorch Pi0.5 implementation aligned with the JAX OpenPI reference, not
-the older official OpenPI PyTorch path.
+ManiSkill and real-world compatibility.
 
 How RLT Works
 -------------

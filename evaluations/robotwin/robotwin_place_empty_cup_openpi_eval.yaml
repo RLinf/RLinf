@@ -1,6 +1,6 @@
 defaults:
   - env/robotwin_place_empty_cup@env.eval
-  - model/pi0@rollout.model
+  - model/pi0_rlinf@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -72,6 +72,7 @@ rollout:
     add_value_head: True
     num_steps: 5
     openpi:
+      task: eval
       config_name: "pi0_aloha_robotwin"
       num_images_in_input: 3
       train_expert_only: True

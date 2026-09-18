@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5@model
+  - model/pi0_5_rlinf@model
   - override hydra/job_logging: stdout
 
 hydra:

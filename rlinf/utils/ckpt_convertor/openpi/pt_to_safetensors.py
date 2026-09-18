@@ -16,7 +16,7 @@
 
 The ``--config-name`` argument is the single source of truth for the target
 Pi0/Pi0.5 architecture. It is resolved through
-``rlinf.models.embodiment.openpi.dataconfig.get_openpi_config`` so the
+``rlinf.models.embodiment.openpi_rlinf.dataconfig.get_openpi_config`` so the
 converter uses the same action horizon, action dimension, token length, and
 state-input semantics as SFT and eval.
 """
@@ -84,7 +84,7 @@ class SftToOpenPIRLinfModelSpec:
 
 def _get_openpi_train_config(config_name: str) -> Any:
     """Lazily import the shared OpenPI config registry for a conversion."""
-    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+    from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
     return get_openpi_config(config_name)
 

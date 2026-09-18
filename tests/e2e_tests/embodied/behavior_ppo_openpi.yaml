@@ -1,7 +1,7 @@
 defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -110,11 +110,12 @@ actor:
 
   model:
     model_path: "/workspace/dataset/RLinf-Pi0-BEHAVIOR"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 5 # interface for the env
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi0_behavior"
       detach_critic_input: True
 

@@ -19,11 +19,11 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import behavior_policy
+from rlinf.models.embodiment.openpi_rlinf.policies import maniskill_policy
 
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotBehaviorDataConfig(DataConfigFactory):
+class LeRobotManiSkillDataConfig(DataConfigFactory):
     """
     This config is used to configure transforms that are applied at various parts of the data pipeline.
     For your own dataset, you can copy this class and modify the transforms to match your dataset based on the
@@ -31,9 +31,6 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
     """
 
     extra_delta_transform: bool = False
-    extract_state_from_proprio: bool = False
-    use_all_wrist_images: bool = False
-    use_quantile_norm: bool = False
 
     @override
     def create(
@@ -43,7 +40,7 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
         # and *not* during inference. We can use it to make inputs from the dataset look
         # as close as possible to those coming from the inference environment (e.g. match the keys).
         # Below, we match the keys in the dataset (which we defined in the data conversion script) to
-        # the keys we use in our inference pipeline (defined in the inference script for behavior).
+        # the keys we use in our inference pipeline (defined in the inference script for libero).
         # For your own dataset, first figure out what keys your environment passes to the policy server
         # and then modify the mappings below so your dataset's keys get matched to those target keys.
         # The repack transform simply remaps key names here.
@@ -51,11 +48,10 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "image",
-                        "observation/wrist_image": "wrist_image",
-                        "observation/state": "state",
+                        "observation/image": "observation.images.top",
+                        "observation/state": "observation.state",
                         "actions": "actions",
-                        "prompt": "prompt",
+                        "prompt": "prompt",  # 'task_descriptions'
                     }
                 )
             ]
@@ -64,18 +60,14 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
         # The data transforms are applied to the data coming from the dataset *and* during inference.
         # Below, we define the transforms for data going into the model (``inputs``) and the transforms
         # for data coming out of the model (``outputs``) (the latter is only used during inference).
-        # We defined these transforms in `libero_policy.py`. You can check the detailed comments there for
+        # We defined these transforms in `maniskill_policy.py`. You can check the detailed comments there for
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
         data_transforms = _transforms.Group(
             inputs=[
-                behavior_policy.BehaviorInputs(
-                    model_type=model_config.model_type,
-                    extract_state_from_proprio=self.extract_state_from_proprio,
-                    use_all_wrist_images=self.use_all_wrist_images,
-                )
+                maniskill_policy.ManiSkillInputs(model_type=model_config.model_type)
             ],
-            outputs=[behavior_policy.BehaviorOutputs()],
+            outputs=[maniskill_policy.ManiSkillOutputs()],
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first
@@ -108,5 +100,4 @@ class LeRobotBehaviorDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-            use_quantile_norm=self.use_quantile_norm,
         )

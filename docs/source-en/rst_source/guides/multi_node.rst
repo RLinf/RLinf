@@ -152,7 +152,7 @@ Step 5: Launch RLinf training
 .. code-block:: bash
 
    cd <RLinf repo root>
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_rlinf
 
 Reasoning example:
 

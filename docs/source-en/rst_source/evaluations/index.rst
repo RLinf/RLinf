@@ -19,7 +19,7 @@ The table below lists benchmarks that have example configs under ``evaluations/`
      - ``realworld/realworld_eval.yaml``, ``realworld/realworld_pnp_eval.yaml``, ``realworld/realworld_pnp_eval_dreamzero.yaml``
    * - BEHAVIOR-1K
      - ``behavior_r1pro``
-     - ``behavior/behavior_openpi_pi05_eval.yaml``
+     - ``behavior/behavior_openpi_pi05_rlinf_eval.yaml``
    * - LIBERO
      - ``libero_spatial``, ``libero_object``, ``libero_goal``, ``libero_10``
      - ``libero/libero_spatial_openpi_pi05_eval.yaml``, ``libero/libero_spatial_dreamzero_eval_sglang.yaml``, etc.

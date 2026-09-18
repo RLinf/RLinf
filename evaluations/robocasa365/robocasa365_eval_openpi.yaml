@@ -1,6 +1,6 @@
 defaults:
   - env/robocasa365@env.eval
-  - model/pi0@rollout.model
+  - model/pi0_rlinf@rollout.model
   - _self_
   - override hydra/job_logging: stdout
 
@@ -83,7 +83,7 @@ rollout:
     max_new_tokens: null
 
   model:
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/path/to/pi0-robocasa-pretrain-human300}
     precision: null
     num_action_chunks: 5
@@ -94,6 +94,7 @@ rollout:
     num_steps: 5
     add_value_head: False
     openpi:
+      task: eval
       config_name: "pi0_robocasa365_pretrain_human300"
       num_images_in_input: 2
       noise_level: 0.5

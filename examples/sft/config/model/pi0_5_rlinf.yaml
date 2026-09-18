@@ -35,7 +35,7 @@ openpi:
   # experiments, so it defaults to `sft`.
   task: sft
   # openpi TrainConfig key selecting the shared transform pipeline
-  # (rlinf.models.embodiment.openpi.dataconfig.get_openpi_config). Also the env
+  # (rlinf.models.embodiment.openpi_rlinf.dataconfig.get_openpi_config). Also the env
   # selector for the SFT dataloader registry. The SFT data loader and the eval/RL
   # model factory both build their transforms from it.
   config_name: "pi05_behavior"

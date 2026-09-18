@@ -1,7 +1,7 @@
 defaults:
   - env/realworld_dual_franka_tcp_rot6d@env.train
   - env/realworld_dual_franka_tcp_rot6d@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -136,6 +136,7 @@ actor:
     action_dim: 20                 # dual-franka tcp_rot6d: [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]
     add_value_head: False
     openpi:
+      task: eval
       config_name: "pi05_dualfranka_tcp_rot6d"
       train_expert_only: False
       detach_critic_input: True

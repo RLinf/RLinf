@@ -41,7 +41,7 @@ from openpi.transforms import DataTransformFn
 from torch.utils.data import Dataset
 
 from rlinf.data.storage.lerobot import episode_boundaries
-from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+from rlinf.models.embodiment.openpi_rlinf.policies import franka_policy, libero_policy
 
 from .common import BaseDataLoaderImpl, ReCapMixtureDataset
 from .utils import (

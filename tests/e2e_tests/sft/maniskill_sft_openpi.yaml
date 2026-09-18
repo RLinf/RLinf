@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -42,9 +42,10 @@ actor:
   model:
     precision: null
     model_path: "/workspace/dataset/pi0_maniskill"
-    num_action_chunks: 4 # interface for the env
+    num_action_chunks: 4 # env-executed length, not network horizon
     add_value_head: True
     openpi:
+      task: sft
       config_name: "pi0_maniskill"
       detach_critic_input: True
       train_expert_only: False

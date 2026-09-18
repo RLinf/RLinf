@@ -134,7 +134,7 @@ perfectly legal.
 - [ ] Model types in docs match `SupportedModel` string values in `rlinf/config.py`
 - [ ] Env types in docs match `SupportedEnvType` values in `rlinf/envs/__init__.py`
 - [ ] Scripts referenced (e.g. `run_embodiment.sh`, `train_embodied_agent.py`) exist
-- [ ] Python paths (e.g. `rlinf/models/embodiment/openpi/dataconfig/__init__.py`) exist
+- [ ] Python paths (e.g. `rlinf/models/embodiment/openpi_rlinf/dataconfig/__init__.py`) exist
 
 ### Doc structure
 - [ ] Root toctree in EN and ZH matches

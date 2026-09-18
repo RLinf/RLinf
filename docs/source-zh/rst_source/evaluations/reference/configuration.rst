@@ -7,7 +7,7 @@
 
    defaults:
      - env/libero_spatial@env.eval      # 环境 preset
-     - model/pi0_5@rollout.model        # 模型 preset
+     - model/pi0_5_rlinf@rollout.model  # 模型 preset
      - override hydra/job_logging: stdout
 
    hydra:
@@ -39,7 +39,7 @@
      generation_backend: "huggingface"
      model:
        model_path: "/path/to/model"   # 必填：模型权重路径
-       model_type: "openpi"
+       model_type: "openpi_rlinf"
 
 .. _env-eval-fields:
 

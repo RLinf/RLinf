@@ -70,15 +70,12 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    * - ``robotwin_place_empty_cup_openpi_eval.yaml``
      - place_empty_cup
      - π₀
-   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
-     - adjust_bottle
-     - π₀
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
    * - ``robotwin_adjust_bottle_openpi_rlinf_eval.yaml``
      - adjust_bottle
-     - OpenPI_RLinf π₀
+     - π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA
@@ -159,7 +156,7 @@ RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机�
    * - ``adjust_bottle``
      - 150
      - 200
-     - ``robotwin_adjust_bottle_openpi_eval``
+     - ``robotwin_adjust_bottle_openpi_rlinf_eval``
    * - ``place_empty_cup``
      - 260
      - 200
@@ -263,7 +260,7 @@ LingBotVLA
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
+   bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_rlinf_eval \
      env.eval.total_num_envs=64 \
      rollout.model.model_path=/path/to/model
 

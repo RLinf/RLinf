@@ -12,18 +12,76 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RTC overlap guidance for the vendored Pi0 eval sampler."""
+"""RTC overlap guidance for the vendored Pi0 eval sampler.
+
+``RTCGuidanceContext`` and ``build_rtc_target_and_mask`` are the shared
+protocol used by both ``openpi_rlinf`` and the leftover OpenPI PyTorch
+sampler; the Euler loop below is the vendored-Pi0 implementation.
+"""
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 import torch
 
-from rlinf.models.embodiment.openpi.rtc_guidance import (
-    RTCGuidanceContext,
-    build_rtc_target_and_mask,
-)
 from rlinf.models.embodiment.openpi_rlinf.modules.model import preprocess_observation
 from rlinf.models.embodiment.openpi_rlinf.sampling import rl_sampler
+
+
+@dataclass
+class RTCGuidanceContext:
+    """RTC context passed from rollout runtime to the OpenPI sampler."""
+
+    prev_model_actions: torch.Tensor | None = None  # [B, H, A_model]
+    executed_horizon: int = 0
+    delay_steps: int = 0
+
+    def get_prev_remaining(self) -> torch.Tensor | None:
+        if self.prev_model_actions is None:
+            return None
+        executed_horizon = int(max(self.executed_horizon, 0))
+        if executed_horizon >= self.prev_model_actions.shape[1]:
+            return None
+        return self.prev_model_actions[:, executed_horizon:, :]
+
+
+def build_rtc_target_and_mask(
+    prev_remaining: torch.Tensor | None,
+    horizon: int,
+    action_dim: int,
+    delay_steps: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build overlap target and soft mask in model action space."""
+    batch_size = 1 if prev_remaining is None else prev_remaining.shape[0]
+    target = torch.zeros((batch_size, horizon, action_dim), device=device, dtype=dtype)
+    mask = torch.zeros((batch_size, horizon, 1), device=device, dtype=dtype)
+
+    if prev_remaining is None or prev_remaining.numel() == 0:
+        return target, mask
+
+    overlap = min(prev_remaining.shape[1], horizon)
+    if overlap <= 0:
+        return target, mask
+
+    target[:, :overlap] = prev_remaining[:, :overlap].to(device=device, dtype=dtype)
+    hard_end = min(max(int(delay_steps), 0), overlap)
+    if hard_end > 0:
+        # Actions that are likely to be executed before the new chunk arrives
+        # are treated as hard constraints.
+        mask[:, :hard_end, 0] = 1.0
+    if hard_end < overlap:
+        # Later overlap positions are softly guided so the new plan can still
+        # adapt to the latest camera observation.
+        i = torch.arange(hard_end, overlap, device=device, dtype=dtype)
+        denom = max(float(overlap - hard_end + 1), 1.0)
+        c_i = (overlap - i) / denom
+        soft = c_i * (torch.expm1(c_i) / (math.e - 1.0))
+        mask[:, hard_end:overlap, 0] = soft
+    return target, mask
 
 
 @torch.no_grad()

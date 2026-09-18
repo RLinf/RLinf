@@ -69,11 +69,6 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_openpi(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.openpi import get_model
-
-        return get_model(cfg, torch_dtype)
-
     def _build_openpi_rlinf(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_rlinf import get_model
 
@@ -204,12 +199,6 @@ def _register_builtin_models():
     register_model(
         SupportedModel.MOLMOACT2.value,
         _build_molmoact2,
-        category="embodied",
-        force=True,
-    )
-    register_model(
-        SupportedModel.OPENPI.value,
-        _build_openpi,
         category="embodied",
         force=True,
     )
@@ -400,10 +389,7 @@ def get_model(cfg: DictConfig):
                 ],
                 init_lora_weights="gaussian",
             )
-            if SupportedModel(model_type) in (
-                SupportedModel.OPENPI,
-                SupportedModel.CFG_MODEL,
-            ):
+            if SupportedModel(model_type) == SupportedModel.CFG_MODEL:
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)

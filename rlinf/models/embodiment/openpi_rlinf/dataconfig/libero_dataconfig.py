@@ -19,7 +19,7 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import libero_policy
+from rlinf.models.embodiment.openpi_rlinf.policies import libero_policy
 
 
 @dataclasses.dataclass(frozen=True)

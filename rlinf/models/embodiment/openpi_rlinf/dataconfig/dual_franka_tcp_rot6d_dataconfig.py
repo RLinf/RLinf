@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Data config for dual-Franka TCP rot6d SFT — body-frame SE(3) delta on rot6d
+(component-wise subtraction would break on rotations)."""
+
 import dataclasses
 import pathlib
 
@@ -19,16 +22,21 @@ import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
 from typing_extensions import override
 
-from rlinf.models.embodiment.openpi.policies import isaaclab_policy
+from rlinf.models.embodiment.openpi_rlinf.policies import dual_franka_tcp_rot6d_policy
+from rlinf.models.embodiment.openpi_rlinf.transforms.rigid_body_delta import (
+    DUAL_ARM_ROT6D_LAYOUT,
+    RigidBodyAbsoluteActions,
+    RigidBodyDeltaActions,
+)
 
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotIsaacLabStackCubeDataConfig(DataConfigFactory):
-    """OpenPI data config aligned with stack-cube fine-tuning recipe."""
+class DualFrankaTcpRot6dDataConfig(DataConfigFactory):
+    default_prompt: str | None = None
 
-    default_prompt: str | None = (
-        "Stack the red block on the blue block, then stack the green block on the red block"
-    )
+    # SE(3) delta at train, absolute recovery at inference. pi0/pi05 trains
+    # on deltas, so default True.
+    extra_delta_transform: bool = True
 
     @override
     def create(
@@ -38,19 +46,32 @@ class LeRobotIsaacLabStackCubeDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "observation.images.front",
-                        "observation/wrist_image": "observation.images.wrist",
-                        "observation/state": "observation.state",
-                        "actions": "action",
+                        "observation/image": "image",
+                        "observation/extra_view_image-0": "extra_view_image-0",
+                        "observation/extra_view_image-1": "extra_view_image-1",
+                        "observation/state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
                     }
                 )
             ]
         )
 
         data_transforms = _transforms.Group(
-            inputs=[isaaclab_policy.IsaacLabInputs(model_type=model_config.model_type)],
-            outputs=[isaaclab_policy.IsaacLabOutputs()],
+            inputs=[
+                dual_franka_tcp_rot6d_policy.DualFrankaTcpRot6dInputs(
+                    action_dim=model_config.action_dim,
+                    model_type=model_config.model_type,
+                )
+            ],
+            outputs=[dual_franka_tcp_rot6d_policy.DualFrankaTcpRot6dOutputs()],
         )
+
+        if self.extra_delta_transform:
+            data_transforms = data_transforms.push(
+                inputs=[RigidBodyDeltaActions(DUAL_ARM_ROT6D_LAYOUT)],
+                outputs=[RigidBodyAbsoluteActions(DUAL_ARM_ROT6D_LAYOUT)],
+            )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
             model_config
@@ -61,5 +82,5 @@ class LeRobotIsaacLabStackCubeDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-            action_sequence_keys=("action",),
+            action_sequence_keys=("actions",),
         )

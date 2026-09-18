@@ -1,7 +1,7 @@
 defaults:
   - env/polaris_droid_tapeintocontainer@env.train
   - env/polaris_droid_tapeintocontainer@env.eval
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -110,6 +110,7 @@ actor:
     num_steps: 10
     add_value_head: True
     openpi:
+      task: rl
       config_name: "pi0_droid_polaris"
       num_images_in_input: 2
       noise_level: 0.5

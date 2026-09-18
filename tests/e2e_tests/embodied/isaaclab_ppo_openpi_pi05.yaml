@@ -1,7 +1,7 @@
 defaults:
   - env/isaaclab_stack_cube@env.train
   - env/isaaclab_stack_cube@env.eval
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -104,12 +104,13 @@ actor:
 
   model:
     model_path: "/workspace/dataset/RLinf-Pi05-SFT"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     action_dim: 7
     num_action_chunks: 5
     num_steps: 5
     add_value_head: True
     openpi:
+      task: rl
       config_name: "pi05_isaaclab_stack_cube"
       num_images_in_input: 2
       noise_level: 0.5

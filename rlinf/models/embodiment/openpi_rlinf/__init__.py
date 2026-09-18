@@ -358,7 +358,7 @@ def _resolve_action_horizon_and_chunk(cfg, model_cfg) -> tuple[int, int]:
 
     config_name = str(OmegaConf.select(model_cfg, "config_name", default="") or "")
     if config_name:
-        from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+        from rlinf.models.embodiment.openpi_rlinf.dataconfig import get_openpi_config
 
         official_horizon = int(
             get_openpi_config(

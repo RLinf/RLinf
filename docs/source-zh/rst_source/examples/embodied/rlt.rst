@@ -117,8 +117,6 @@ RLT 将表示学习和在线 RL 控制拆开。
 下面的 RLT 配置使用 ``model_type: openpi_rlinf``。安装命令仍使用
 ``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT
 Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
-这里的 ``openpi_rlinf`` 是 RLinf vendored、已对齐 JAX OpenPI 参考实现精度的
-PyTorch Pi0.5 路径，不是旧的官方 OpenPI PyTorch 路径。
 
 RLT 如何工作
 ------------

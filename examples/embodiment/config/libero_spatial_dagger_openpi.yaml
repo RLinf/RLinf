@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/pi0@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -117,6 +117,7 @@ actor:
     num_action_chunks: 10
     add_value_head: False
     openpi:
+      task: dagger
       config_name: "pi0_libero"
       train_expert_only: False
       detach_critic_input: True
