@@ -294,13 +294,16 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的三个模型系列及其支持路径。每种硬件后端都适用于所在行列出的全部环境。✅ 表示代码与安装器支持该组合，运行时仍需使用兼容的模型 checkpoint 与任务配置。
+先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的模型系列及其支持路径。每种硬件后端都适用于所在行列出的全部环境。✅ 表示代码与安装器支持该组合，运行时仍需使用兼容的模型 checkpoint 与任务配置。
 
 | 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
 | [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
+
+— 表示本表未声明支持该组合。
 
 在非 CUDA 后端上，ManiSkill 使用 CPU 运行 PhysX 仿真，并通过 PCI 地址独立选择 renderer。MUSA 还需要厂商修改过的 SAPIEN 与 ManiSkill 包。GR00T 的 ManiSkill 路径需要带有 `maniskill_widowx` embodiment head 的 checkpoint；非 NVIDIA 的 GR00T 支持范围为 N1.5。AMD、昇腾和 MUSA 上的 LIBERO 使用 OSMesa。
 
