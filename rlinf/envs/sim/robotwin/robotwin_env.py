@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import json
 import os
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import gymnasium as gym
 import numpy as np
@@ -27,6 +28,153 @@ from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.envs.utils import center_crop_image, list_of_dict_to_dict_of_list
 
 __all__ = ["RoboTwinEnv"]
+
+
+OPENWAM_ROBOTWIN_REPRESENTATIONS = ("absolute_eef20",)
+_ACTION_TYPE_MARKER = "_rlinf_robotwin_action_type"
+
+
+def robotwin_task_eef20_proprio(task: Any) -> np.ndarray:
+    """Read OpenWAM's 20-D dual-arm EEF proprio straight from a RoboTwin task.
+
+    Matches ``RoboTwinDataset._read_eef_actions`` / ``get_obs()["endpose"]``:
+    ``[l_xyz(3), l_rot6d(6), l_grip(1), r_xyz(3), r_rot6d(6), r_grip(1)]`` with
+    RoboTwin's xyzw quaternion turned into the first two rotation-matrix
+    columns and the gripper kept as the raw ``[0, 1]`` opening (1 = open).
+    ``VectorEnv.update_obs`` drops the ``endpose`` block, so the pose is read
+    from the task object instead of the observation dict.
+    """
+    from rlinf.utils.rot6d import quat_xyzw_to_rot6d
+
+    left = np.asarray(task.get_arm_pose("left"), dtype=np.float32).reshape(-1)
+    right = np.asarray(task.get_arm_pose("right"), dtype=np.float32).reshape(-1)
+    if left.shape[0] != 7 or right.shape[0] != 7:
+        raise ValueError(
+            "RoboTwin endpose must be 7-D xyz+quat_xyzw per arm, "
+            f"got left={left.shape}, right={right.shape}"
+        )
+    grippers = (
+        float(np.asarray(task.robot.get_left_gripper_val()).reshape(-1)[0]),
+        float(np.asarray(task.robot.get_right_gripper_val()).reshape(-1)[0]),
+    )
+    proprio = np.concatenate(
+        [
+            left[:3],
+            quat_xyzw_to_rot6d(left[3:7]),
+            [grippers[0]],
+            right[:3],
+            quat_xyzw_to_rot6d(right[3:7]),
+            [grippers[1]],
+        ]
+    ).astype(np.float32)
+    if not np.isfinite(proprio).all():
+        raise ValueError("RoboTwin EEF proprio contains non-finite values")
+    return proprio
+
+
+def execute_robotwin_ee_chunk(task: Any, chunk_actions: Any):
+    """Run a chunk of 16-D ``ee`` actions on a RoboTwin task, one target at a time.
+
+    ``gen_sparse_reward_data`` accepts an ``action_type`` argument but always
+    slices the chunk as joint targets (6 + 1 + 6 + 1) and TOPPs the joint path,
+    so 16-D end-effector chunks would drive the arms to garbage. ``take_action``
+    does handle ``action_type="ee"`` (7-D pose + gripper per arm, planned with
+    the arm's motion planner), so replay the chunk through it and reproduce the
+    sparse-reward bookkeeping of ``gen_sparse_reward_data``: success on the
+    task's ``eval_success`` flag, truncation when ``take_action_cnt`` reaches
+    ``step_lim``. Returns ``(reward, termination, truncation, infos)`` shaped
+    like the original so ``VectorEnv.step`` can consume it unchanged.
+    """
+    infos = {"success": False}
+    reward = np.zeros(1, dtype=np.float32)
+    termination = np.zeros(1, dtype=np.int32)
+    truncation = np.zeros(1, dtype=np.int32)
+
+    def _finish():
+        if getattr(task, "eval_success", False):
+            infos["success"] = True
+            reward[:] = 1
+            termination[:] = 1
+        elif task.take_action_cnt >= task.step_lim:
+            truncation[:] = 1
+        return reward, termination, truncation, infos
+
+    if getattr(task, "eval_success", False) or task.take_action_cnt >= task.step_lim:
+        return _finish()
+    actions = np.asarray(chunk_actions, dtype=np.float32)
+    if actions.ndim == 1:
+        actions = actions[None]
+    if actions.shape[-1] != 16:
+        raise ValueError(
+            f"RoboTwin ee control expects 16-D actions per step, got {actions.shape}"
+        )
+    for action in actions:
+        if (
+            getattr(task, "eval_success", False)
+            or task.take_action_cnt >= task.step_lim
+        ):
+            break
+        task.take_action(action, action_type="ee")
+    return _finish()
+
+
+def step_robotwin_venv(venv: Any, actions: Any, timeout_s: float | None):
+    """``VectorEnv.step`` with a configurable per-sub-environment timeout.
+
+    RoboTwin's ``VectorEnv.step`` waits ``future.result(timeout=120)`` on each
+    sub-environment. End-effector chunks are planned target by target, and a
+    few hard targets make the motion planner retry for tens of seconds, so a
+    32-step chunk can legitimately exceed two minutes; the resulting
+    ``TimeoutError`` surfaces as an empty "SubEnv i step error". Re-implement the
+    fan-out with the caller's budget (``None`` waits indefinitely). Falls back
+    to ``venv.step`` when the VectorEnv does not expose its thread pool.
+    """
+    envs = getattr(venv, "envs", None)
+    pool = getattr(venv, "env_thread_pool", None)
+    transform = getattr(venv, "transform", None)
+    if not envs or pool is None or transform is None:
+        return venv.step(actions)
+    futures = [pool.submit(env.step, actions[i]) for i, env in enumerate(envs)]
+    results = []
+    for index, future in enumerate(futures):
+        try:
+            results.append(future.result(timeout=timeout_s))
+        except Exception as exc:  # noqa: BLE001 - mirror VectorEnv's reporting
+            raise RuntimeError(
+                f"SubEnv {index} step error: {type(exc).__name__}: {exc}"
+            ) from exc
+    return transform(results)
+
+
+def bind_robotwin_action_type(venv: Any, action_type: str) -> int:
+    """Make every RoboTwin sub-environment execute chunks as ``action_type``.
+
+    RoboTwin's ``VectorEnv.step`` forwards a chunk to
+    ``task.gen_sparse_reward_data(chunk_actions)``, which only understands
+    14-D joint targets. For ``"ee"`` that entry point is replaced on each task
+    instance by :func:`execute_robotwin_ee_chunk`; ``"qpos"`` restores the
+    original method. Idempotent; returns how many tasks were (re)bound.
+    """
+    if action_type not in ("qpos", "ee"):
+        raise ValueError(f"Unsupported RoboTwin action_type {action_type!r}")
+    bound = 0
+    for sub_env in getattr(venv, "envs", []) or []:
+        task = getattr(sub_env, "task", None)
+        if task is None or getattr(task, _ACTION_TYPE_MARKER, None) == action_type:
+            continue
+        original = getattr(task, "_rlinf_original_gen_sparse_reward_data", None)
+        if original is None:
+            original = task.gen_sparse_reward_data
+            task._rlinf_original_gen_sparse_reward_data = original
+        if action_type == "ee":
+            task.gen_sparse_reward_data = functools.partial(
+                execute_robotwin_ee_chunk, task
+            )
+        else:
+            task.gen_sparse_reward_data = original
+        setattr(task, _ACTION_TYPE_MARKER, action_type)
+        bound += 1
+    return bound
 
 
 class RoboTwinEnv(gym.Env):
@@ -64,6 +212,29 @@ class RoboTwinEnv(gym.Env):
         self.task_name = cfg.task_config.task_name
 
         self.center_crop = cfg.get("center_crop", False)
+        # OpenWAM RoboTwin checkpoints act in the 20-D absolute EEF space of the
+        # dataset's ``endpose`` fields. ``absolute_eef20`` switches the
+        # sub-environments to RoboTwin's ``ee`` controller and adds a matching
+        # ``native_proprio`` observation; joint-space policies leave it unset.
+        self.openwam_action_representation = cfg.get(
+            "openwam_action_representation", None
+        )
+        if self.openwam_action_representation not in (
+            None,
+            *OPENWAM_ROBOTWIN_REPRESENTATIONS,
+        ):
+            raise ValueError(
+                "RoboTwin openwam_action_representation must be one of "
+                f"{OPENWAM_ROBOTWIN_REPRESENTATIONS} or null, "
+                f"got {self.openwam_action_representation!r}"
+            )
+        self.robotwin_action_type = (
+            "ee" if self.openwam_action_representation is not None else "qpos"
+        )
+        # Per-chunk wait for one sub-environment; null waits indefinitely. Only
+        # used for ee control, joint chunks keep VectorEnv's own 120 s.
+        timeout = cfg.get("robotwin_step_timeout_s", 1800)
+        self.robotwin_step_timeout_s = None if timeout is None else float(timeout)
         self._init_reset_state_ids()
 
         self._init_env()
@@ -90,6 +261,17 @@ class RoboTwinEnv(gym.Env):
             n_envs=self.num_envs,
             env_seeds=env_seeds,
         )
+        self._bind_action_type()
+
+    def _venv_step(self, actions):
+        if self.robotwin_action_type == "ee":
+            return step_robotwin_venv(self.venv, actions, self.robotwin_step_timeout_s)
+        return self.venv.step(actions)
+
+    def _bind_action_type(self) -> None:
+        """(Re)bind the controller mode; sub-envs are rebuilt after ``close()``."""
+        if self.robotwin_action_type != "qpos":
+            bind_robotwin_action_type(self.venv, self.robotwin_action_type)
 
     @property
     def device(self):
@@ -202,8 +384,53 @@ class RoboTwinEnv(gym.Env):
             "states": batch_states,
             "task_descriptions": batch_instructions,
         }
+        if self.openwam_action_representation == "absolute_eef20":
+            extracted_obs["native_proprio"] = self._extract_native_proprio(raw_obs)
 
         return extracted_obs
+
+    def _extract_native_proprio(self, raw_obs) -> torch.Tensor:
+        """20-D EEF proprio per env, from ``endpose`` when present else the task."""
+        proprios = []
+        sub_envs = list(getattr(self.venv, "envs", []) or [])
+        for index, obs in enumerate(raw_obs):
+            endpose = obs.get("endpose") if isinstance(obs, dict) else None
+            if endpose and all(
+                key in endpose
+                for key in (
+                    "left_endpose",
+                    "right_endpose",
+                    "left_gripper",
+                    "right_gripper",
+                )
+            ):
+                from rlinf.utils.rot6d import quat_xyzw_to_rot6d
+
+                left = np.asarray(endpose["left_endpose"], dtype=np.float32).reshape(-1)
+                right = np.asarray(endpose["right_endpose"], dtype=np.float32).reshape(
+                    -1
+                )
+                proprio = np.concatenate(
+                    [
+                        left[:3],
+                        quat_xyzw_to_rot6d(left[3:7]),
+                        np.asarray(endpose["left_gripper"], np.float32).reshape(-1)[:1],
+                        right[:3],
+                        quat_xyzw_to_rot6d(right[3:7]),
+                        np.asarray(endpose["right_gripper"], np.float32).reshape(-1)[
+                            :1
+                        ],
+                    ]
+                ).astype(np.float32)
+            else:
+                if index >= len(sub_envs):
+                    raise RuntimeError(
+                        "RoboTwin observation has no endpose and the VectorEnv exposes "
+                        f"only {len(sub_envs)} sub-environments for {len(raw_obs)} observations"
+                    )
+                proprio = robotwin_task_eef20_proprio(sub_envs[index].task)
+            proprios.append(torch.from_numpy(proprio))
+        return torch.stack(proprios)
 
     def _calc_step_reward(self, terminations):
         reward = self.cfg.reward_coef * terminations
@@ -249,6 +476,7 @@ class RoboTwinEnv(gym.Env):
         env_seeds = self.reset_state_ids.tolist() if env_seeds is None else env_seeds
 
         self.venv.reset(env_idx=env_idx, env_seeds=env_seeds)
+        self._bind_action_type()
         raw_obs = self.venv.get_obs()
         infos = {}
 
@@ -274,7 +502,8 @@ class RoboTwinEnv(gym.Env):
             # [n_envs, action_dim] -> [n_envs, 1, action_dim]
             actions = actions[:, None, :]
 
-        raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
+        self._bind_action_type()
+        raw_obs, step_reward, terminations, truncations, info_list = self._venv_step(
             actions
         )
         extracted_obs = self._extract_obs_image(raw_obs)
@@ -329,7 +558,8 @@ class RoboTwinEnv(gym.Env):
         obs_list = []
         infos_list = []
 
-        raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
+        self._bind_action_type()
+        raw_obs, step_reward, terminations, truncations, info_list = self._venv_step(
             chunk_actions
         )
         extracted_obs = self._extract_obs_image(raw_obs)
@@ -412,7 +642,8 @@ class RoboTwinEnv(gym.Env):
             self.venv.close(clear_cache)
 
     def sample_action_space(self):
-        return np.random.randn(self.num_envs, self.horizon, 14)
+        action_dim = 16 if self.robotwin_action_type == "ee" else 14
+        return np.random.randn(self.num_envs, self.horizon, action_dim)
 
     def _init_reset_state_ids(self):
         if self.cfg.get("seeds_path", None) is not None and os.path.exists(

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import multiprocessing
+import traceback
 import warnings
 from multiprocessing import connection
 from typing import Any, Callable, Optional, Union
@@ -227,8 +228,16 @@ def _worker(
             else:
                 p.close()
                 raise NotImplementedError
-    except KeyboardInterrupt:
-        p.close()
+    except BaseException:
+        # A LIBERO child can otherwise disappear silently, leaving the Ray
+        # worker with only an opaque EOFError. Preserve the original traceback
+        # in the worker log before closing the pipe so multi-env failures are
+        # diagnosable (and do not masquerade as rollout/model errors).
+        traceback.print_exc()
+        try:
+            p.close()
+        finally:
+            raise
 
 
 class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
@@ -253,6 +262,17 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
         self.process.start()
         self.child_remote.close()
         EnvWorker.__init__(self, env_fn)
+
+    def recv(self):
+        """Receive a result and preserve the child exit status on EOF."""
+        try:
+            return super().recv()
+        except EOFError as exc:
+            exitcode = self.process.exitcode
+            raise RuntimeError(
+                "LIBERO environment subprocess exited before returning a result "
+                f"(exitcode={exitcode}); inspect the worker log for the child traceback"
+            ) from exc
 
     def reconfigure_env_fn(self, env_fn_param):
         self.parent_remote.send(["reconfigure", env_fn_param])
