@@ -94,6 +94,7 @@ VLA / WAM 模型监督微调
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   OpenWAM <embodied/sft_openwam>
    OpenPI_RLinf <embodied/sft_openpi_rlinf>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
