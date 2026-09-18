@@ -122,15 +122,25 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ---
 
-## ⏳ Milestone 5: SFT / DAgger Training Configs
-**状态：未开始**
+## ✅ Milestone 5: SFT / DAgger Training Configs
+**状态：已完成并 commit (c42438f5)**
 
 ### 目标
-修复训练配置与 norm stats
+标准化训练配置，对齐 Franka 风格
+
+### 完成内容
+- ✅ 标准化 YAML 格式（False/True → false/true）
+- ✅ 添加 `_self_` 到 defaults 确保正确的覆盖顺序
+- ✅ 简化 component_placement 为 `actor,rollout,env: all`
+- ✅ 更新模型引用：pi0_5 → pi0_5_rlinf
+- ✅ 补充 openpi 配置字段（action_horizon, discrete_state_input）
+- ✅ 修正 action_dim: 8 → 12（SO-101 双臂各 6-DOF）
+- ✅ 统一占位符注释格式
 
 ### 相关文件
 - `examples/sft/config/realworld_sft_openpi_so101.yaml`
 - `examples/embodiment/config/realworld_so101_dagger_openpi.yaml`
+- `examples/embodiment/config/realworld_so101_collect_data_joint.yaml`
 
 ---
 
@@ -171,12 +181,12 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ## 当前工作
 
-**Milestone 4 开发完成 ✅**
-- SO101JointDataConfig 创建并注册
-- OpenPI 数据管线集成完毕
-- 参考 Franka YAML 配置风格
+**Milestone 5 开发完成 ✅**
+- 配置文件标准化为统一 YAML 风格
+- 对齐 Franka 配置结构
+- 修正 action_dim 和补充缺失字段
 
-**下一步：Milestone 5 - SFT / DAgger Training Configs**
+**下一步：Milestone 6 - Toolkits（选择性保留）**
 
 ---
 
