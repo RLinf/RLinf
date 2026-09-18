@@ -4,6 +4,7 @@
 defaults:
   - env/so101_reach@env.train
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:
@@ -40,20 +41,20 @@ runner:
 
   max_epochs: 1
   max_steps: -1
-  only_eval: False
+  only_eval: false
   num_data_episodes: 10
-  record_task_description: False
+  record_task_description: false
 
 env:
   group_name: "EnvGroup"
-  enable_offload: False
+  enable_offload: false
 
   train:
     rollout_epoch: 1
     total_num_envs: 1
-    auto_reset: False
-    ignore_terminations: True
-    no_gripper: False
+    auto_reset: false
+    ignore_terminations: true
+    no_gripper: false
     teleop:
       - so101_leader:
           port: /dev/ttyACM1
@@ -65,19 +66,19 @@ env:
       max_num_steps: 10000
       task_description: TASK_DESCRIPTION  # Replace: task prompt
       success_hold_steps: 1
-      use_dense_reward: False
-      enable_camera_player: False
+      use_dense_reward: false
+      enable_camera_player: false
     data_collection:
-      enabled: True
+      enabled: true
       save_dir: ${runner.logger.log_path}/collected_data
       # Write the finalized LeRobot tree consumed by SO101 SFT and the
       # offline checker. Pickle remains useful for debugging, but cannot be
       # passed directly to the OpenPI dataloader.
       export_format: lerobot
-      only_success: True
+      only_success: true
       robot_type: so101
       fps: 15
       finalize_interval: 1
 
 algorithm:
-  collect_only: True
+  collect_only: true
