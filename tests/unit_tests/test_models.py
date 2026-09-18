@@ -2037,21 +2037,23 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
 def test_openwam_policy_declares_repeated_blocks_for_fsdp_wrapping():
     """Repeated *Block classes become FSDP units instead of one huge flat param."""
 
-    class DiTBlock(torch.nn.Module):
+    class DiTBlock(torch.nn.Linear):
         pass
 
-    class ResidualBlock(torch.nn.Module):
+    class ResidualBlock(torch.nn.Linear):
         pass
 
-    class Head(torch.nn.Module):
+    class Head(torch.nn.Linear):
         pass
 
     class _Architecture(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.blocks = torch.nn.ModuleList([DiTBlock(), DiTBlock()])
-            self.vae = torch.nn.ModuleList([ResidualBlock(), ResidualBlock()])
-            self.head = Head()
+            self.blocks = torch.nn.ModuleList([DiTBlock(2, 2), DiTBlock(2, 2)])
+            # frozen VAE-style blocks stay in the root FSDP unit
+            self.vae = torch.nn.ModuleList([ResidualBlock(2, 2), ResidualBlock(2, 2)])
+            self.vae.requires_grad_(False)
+            self.head = Head(2, 2)
             self.action_dim = 10
 
     policy = OpenWAMPolicy(
@@ -2061,7 +2063,7 @@ def test_openwam_policy_declares_repeated_blocks_for_fsdp_wrapping():
         width=8,
         denoise_steps=2,
     )
-    assert policy._no_split_modules == ["DiTBlock", "ResidualBlock"]
+    assert policy._no_split_modules == ["DiTBlock"]
 
 
 def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):

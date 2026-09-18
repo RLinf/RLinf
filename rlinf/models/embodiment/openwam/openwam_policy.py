@@ -349,14 +349,21 @@ def _checkpoint_with_encoder_override(
 
 
 def _repeated_block_classes(architecture: Any) -> list[str] | None:
-    """Names of module classes that repeat as layers (``*Block``), for FSDP wrapping."""
+    """Names of trainable layer classes (``*Block``) that FSDP wraps as units.
+
+    Frozen towers (VAE, text encoder) stay in the root unit: wrapping their
+    blocks gains nothing and the VAE's forward does not survive FSDP's
+    argument handling.
+    """
     modules = getattr(architecture, "modules", None)
     if modules is None:
         return None
     counts: dict[str, int] = {}
     for module in modules():
         name = type(module).__name__
-        if name.endswith("Block"):
+        if name.endswith("Block") and any(
+            parameter.requires_grad for parameter in module.parameters()
+        ):
             counts[name] = counts.get(name, 0) + 1
     names = sorted(name for name, count in counts.items() if count >= 2)
     return names or None
