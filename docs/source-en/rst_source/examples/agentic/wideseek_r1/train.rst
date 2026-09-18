@@ -38,13 +38,24 @@ Use this page to prepare the model, data, and config for WideSeek-R1 training.
    :depth: 2
    :local:
 
+Installation
+------------
+
+.. include:: _install.rst
+
+Judge Model
+-----------
+
+.. include:: _judge.rst
+
 Prerequisites
 -------------
 
 Before launching training, make sure the following components are ready:
 
-- The RLinf environment is installed. See :doc:`../../../start/installation`.
-- The judge model server is running. See :doc:`index`.
+- The RLinf environment is installed. See Installation above, or the
+  :doc:`installation guide <../../../start/installation>`.
+- The judge model is running. See Judge Model above.
 - The offline retrieval tools are configured. See :doc:`tools`.
 
 Download the Base Model
@@ -118,6 +129,9 @@ Then run:
 .. code-block:: bash
 
    bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
+
+Multi-node training is supported because multi-agent generation is expensive on
+a single eight-GPU machine. See :doc:`../../../guides/multi_node`.
 
 Visualization and Results
 -------------------------

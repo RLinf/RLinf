@@ -43,13 +43,24 @@ dense model.
    :depth: 2
    :local:
 
+Installation
+------------
+
+.. include:: _install.rst
+
+Judge Model
+-----------
+
+.. include:: _judge.rst
+
 Prerequisites
 -------------
 
 Before evaluation, make sure the following components are ready:
 
-- The RLinf environment is installed. See :doc:`../../../start/installation`.
-- The judge model server is running. See :doc:`index`.
+- The RLinf environment is installed. See Installation above, or the
+  :doc:`installation guide <../../../start/installation>`.
+- The judge model is running. See Judge Model above.
 - The appropriate tool backend is configured. See :doc:`tools`.
 
 Download the Model
@@ -149,6 +160,9 @@ Then run one of the following commands:
 
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+
+Multi-node evaluation is supported because multi-agent generation is expensive
+on a single eight-GPU machine. See :doc:`../../../guides/multi_node`.
 
 Output Files
 ------------

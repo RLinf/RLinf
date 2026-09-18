@@ -37,13 +37,23 @@ WideSeek-R1 训练
    :depth: 2
    :local:
 
+安装
+----
+
+.. include:: _install.rst
+
+评判模型
+--------
+
+.. include:: _judge.rst
+
 前置条件
-----------------------------------------
+--------
 
 开始训练前，请确保以下组件已准备就绪：
 
-- RLinf 环境已安装。参见 :doc:`../../../start/installation`。
-- 评判模型服务已启动。参见 :doc:`index`。
+- RLinf 环境已安装。参见上方的安装，或 :doc:`安装指南 <../../../start/installation>`。
+- 评判模型已启动。参见上方的评判模型。
 - 离线检索工具已配置完成。参见 :doc:`tools`。
 
 下载基础模型
@@ -105,6 +115,8 @@ WideSeek-R1 训练使用一个 2 万条样本的混合数据集，该数据集�
 .. code-block:: bash
 
    bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
+
+多智能体生成的时间开销较大，单机 8 卡会显著降低实验效率，因此 WideSeek-R1 支持多节点训练。详细内容请参阅 :doc:`../../../guides/multi_node`。
 
 可视化与结果
 ----------------------------------------

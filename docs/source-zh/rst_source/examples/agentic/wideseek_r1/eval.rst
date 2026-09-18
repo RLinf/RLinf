@@ -42,13 +42,23 @@ WideSeek-R1 评测
    :depth: 2
    :local:
 
+安装
+----
+
+.. include:: _install.rst
+
+评判模型
+--------
+
+.. include:: _judge.rst
+
 前置条件
-----------------------------------------
+--------
 
 评测前，请确保以下组件已准备就绪：
 
-- RLinf 环境已安装。参见 :doc:`../../../start/installation`。
-- 评判模型服务已启动。参见 :doc:`index`。
+- RLinf 环境已安装。参见上方的安装，或 :doc:`安装指南 <../../../start/installation>`。
+- 评判模型已启动。参见上方的评判模型。
 - 已配置相应的工具后端。参见 :doc:`tools`。
 
 下载模型
@@ -141,6 +151,8 @@ WideSearch 基准
 
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+
+多智能体生成的时间开销较大，单机 8 卡会显著降低实验效率，因此 WideSeek-R1 支持多节点评测。详细内容请参阅 :doc:`../../../guides/multi_node`。
 
 输出文件
 ----------------------------------------
