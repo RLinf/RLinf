@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import os
 from typing import Any
 
@@ -189,18 +190,30 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().load_checkpoint(load_path)
 
         if isinstance(self.data_loader, StatefulDataLoader):
-            all_states = torch.load(
-                os.path.join(load_path, "data.pt"), weights_only=False
-            )
-            state = all_states[self._rank]
-            self.data_loader.load_state_dict(state)
-            self.data_iter = iter(self.data_loader)
-            # Creating the iterator applies the sampler state. Continue the
-            # shuffle epoch it recorded instead of replaying epoch 0 after the
-            # first exhaustion (samplers without an epoch keep the default).
-            epoch = getattr(getattr(self.data_loader, "sampler", None), "epoch", None)
-            if epoch is not None:
-                self._data_epoch = int(epoch)
+            data_path = os.path.join(load_path, "data.pt")
+            if os.path.exists(data_path):
+                all_states = torch.load(data_path, weights_only=False)
+                state = all_states[self._rank]
+                self.data_loader.load_state_dict(state)
+                self.data_iter = iter(self.data_loader)
+                # Creating the iterator applies the sampler state. Continue the
+                # shuffle epoch it recorded instead of replaying epoch 0 after
+                # the first exhaustion (samplers without an epoch keep the
+                # default).
+                epoch = getattr(
+                    getattr(self.data_loader, "sampler", None), "epoch", None
+                )
+                if epoch is not None:
+                    self._data_epoch = int(epoch)
+            else:
+                # Checkpoints written before the data loader became stateful
+                # (or by a plain DataLoader) carry no data position.
+                logging.warning(
+                    "%s has no data.pt; the data loader restarts from the "
+                    "beginning of the epoch, so samples seen before the "
+                    "checkpoint may repeat.",
+                    load_path,
+                )
 
             rng_path = os.path.join(load_path, "rng.pt")
             if os.path.exists(rng_path):

@@ -2175,6 +2175,63 @@ def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
         FSDPVlaSftWorker.get_eval_model_output(stub, [{"v": 1.0}])
 
 
+def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
+    tmp_path, monkeypatch, caplog
+):
+    """Resume restores the loader and epoch; old checkpoints without data.pt warn."""
+    pytest.importorskip("torchdata")
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    monkeypatch.setattr(
+        worker_module.FSDPSftWorker, "load_checkpoint", lambda self, path: None
+    )
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+    cfg, _ = _openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
+
+    def indices(batch):
+        return [sample["index"] for sample in batch]
+
+    # Reference run: two batches into epoch 1, then checkpoint the loader.
+    source, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+    source.sampler.set_epoch(1)
+    iterator = iter(source)
+    consumed = [indices(next(iterator)) for _ in range(2)]
+    remaining = [indices(batch) for batch in iterator]
+    ckpt = tmp_path / "global_step_2" / "actor"
+    ckpt.mkdir(parents=True)
+    source_state = source.state_dict()
+
+    def make_stub():
+        loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+        return SimpleNamespace(
+            data_loader=loader,
+            data_iter=iter(loader),
+            _rank=0,
+            _world_size=1,
+            _data_epoch=0,
+        )
+
+    # The state was captured after two batches; the resumed worker gets the rest.
+    torch.save([source_state], ckpt / "data.pt")
+    stub = make_stub()
+    FSDPVlaSftWorker.load_checkpoint(stub, str(ckpt))
+    assert stub._data_epoch == 1
+    assert [indices(batch) for batch in stub.data_iter] == remaining
+    assert len(consumed) + len(remaining) == 5
+
+    # An older checkpoint without data.pt is still usable, with a warning.
+    old = tmp_path / "global_step_1" / "actor"
+    old.mkdir(parents=True)
+    stub = make_stub()
+    with caplog.at_level("WARNING"):
+        FSDPVlaSftWorker.load_checkpoint(stub, str(old))
+    assert "has no data.pt" in caplog.text
+    assert stub._data_epoch == 0
+    assert len([indices(batch) for batch in stub.data_iter]) == 5
+
+
 def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
     source = _make_source(tmp_path)
     step_dir = _make_rlinf_checkpoint(tmp_path)
