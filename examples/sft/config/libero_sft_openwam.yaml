@@ -51,13 +51,17 @@ actor:
     total_training_steps: 30000
 
   fsdp_config:
-    # The policy is a single FSDP unit (OpenWAM's joint denoising driver reads
-    # block weights outside their forward), so FSDP2 is used: FSDP1 would keep
-    # a 46 GiB full-precision unsharded flat parameter per rank.
+    # The DiT / action blocks stay in the root FSDP unit (OpenWAM's joint
+    # denoising driver reads their weights outside the blocks' forward), so
+    # FSDP2 is used: FSDP1 would keep a 46 GiB full-precision unsharded flat
+    # parameter per rank. FSDP2 needs at least one sub-unit; the frozen Wan VAE
+    # residual blocks are plain modules only used through their forward.
     strategy: "fsdp2"
     sharding_strategy: "full_shard"
     use_orig_params: true
     reshard_after_forward: true
+    wrap_policy:
+      module_classes_to_wrap: [ResidualBlock]
     gradient_checkpointing: false
     mixed_precision:
       param_dtype: bf16

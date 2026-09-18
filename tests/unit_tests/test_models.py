@@ -1965,6 +1965,9 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
     # One FSDP unit (see OpenWAMPolicy); FSDP2 avoids FSDP1's full-precision
     # unsharded flat parameter that does not fit for 12B parameters in fp32.
     assert cfg.actor.fsdp_config.strategy == "fsdp2"
+    assert list(cfg.actor.fsdp_config.wrap_policy.module_classes_to_wrap) == [
+        "ResidualBlock"
+    ]
     assert validate_sft_cfg(cfg) is cfg
 
     rl_cfg = OmegaConf.create(
@@ -2034,8 +2037,7 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
     assert architecture._device == torch.device("cuda:3")
     assert video._device == torch.device("cuda:3")
     assert not hasattr(architecture.backbones["vlm"], "_device")
-    # FSDP shards the architecture as one unit; blocks are never wrapped alone.
-    assert policy._no_split_modules == ["SimpleNamespace"]
+    assert not hasattr(policy, "_no_split_modules")  # DiT blocks stay in the root unit
 
 
 def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
