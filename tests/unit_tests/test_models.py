@@ -148,6 +148,24 @@ def test_openwam_libero_eval_recipes_validate(openwam_eval_recipe, name, suite):
     assert cfg.runner.logger.experiment_name == f"{suite}_openwam_eval"
 
 
+def test_openwam_libero_eval_smoke_recipe_validates(openwam_eval_recipe):
+    """The e2e smoke recipe keeps its short step budget divisible by the chunk."""
+    from rlinf.config import validate_cfg
+
+    repo = Path(__file__).resolve().parents[2]
+    cfg = openwam_eval_recipe(
+        "libero_spatial_openwam_eval",
+        subdir=str(repo / "tests/e2e_tests/evaluations"),
+    )
+    cfg.runner.task_type = "embodied_eval"
+    cfg = validate_cfg(cfg)
+    env = cfg.env.eval
+    assert env.total_num_envs == 1
+    assert env.max_episode_steps == env.max_steps_per_rollout_epoch == 30
+    assert env.max_steps_per_rollout_epoch % cfg.rollout.model.num_action_chunks == 0
+    assert cfg.rollout.model.openwam.inference_horizon == 10
+
+
 def test_openwam_observation_adapter_smoke():
     observations = {
         "states": np.zeros((2, 7), dtype=np.float32),

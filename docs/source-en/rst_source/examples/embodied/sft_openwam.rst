@@ -78,13 +78,14 @@ Evaluation
 
 The LIBERO evaluation recipes use the same checkpoint contract as this recipe. ``evaluations/libero/`` ships ``libero_{spatial,object,goal,10}_openwam_eval.yaml`` (see :doc:`../../evaluations/guides/libero`); each episode is logged as ``[libero eval] task_id=.., trial_id=.., success=..`` so success can be split per task. RoboTwin checkpoints use ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml`` for all 50 tasks (see :doc:`../../evaluations/guides/robotwin`).
 
-Run a short two-environment smoke test after setting ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``. The checked-in recipe places the env worker and rollout worker on separate GPUs so EGL rendering does not share a GPU with OpenWAM inference:
+Run the short smoke recipe (one environment, 30 steps, i.e. three 10-step generations) after setting ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``. The recipes place the env worker and rollout worker on separate GPUs so EGL rendering does not share a GPU with OpenWAM inference:
 
-.. code:: bash
+.. code-block:: bash
 
-   python evaluations/eval_embodied_agent.py \\
-     --config-path libero --config-name libero_spatial_openwam_eval \\
-     env.eval.max_steps_per_rollout_epoch=32 env.eval.max_episode_steps=32
+   python evaluations/eval_embodied_agent.py \
+     --config-path ../tests/e2e_tests/evaluations --config-name libero_spatial_openwam_eval
+
+Keep ``env.eval.max_steps_per_rollout_epoch`` divisible by ``rollout.model.num_action_chunks`` (10 with the default ``openwam.inference_horizon``) when you shorten a recipe.
 
 The checked-in recipes target checkpoints trained with native delta EEF10 actions (``env.eval.openwam_action_representation: native_delta_eef10``). For a checkpoint trained on the canonical LIBERO bucket, which emits absolute EEF10 goals, set it to ``absolute_eef10``: RLinf then converts each goal against the current achieved pose before sending the 7-D OSC command. Keep this value aligned with the dataset metadata of the checkpoint under evaluation.
 

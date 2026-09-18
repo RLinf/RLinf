@@ -47,8 +47,9 @@ env:
     ignore_terminations: true
     # 32 steps = three 10-action generations plus one partial; enough to exercise
     # the rollout, the action adapter and the metric path without a full episode.
-    max_episode_steps: 32
-    max_steps_per_rollout_epoch: 32
+    # Three 10-step generations; must stay divisible by rollout.model.num_action_chunks.
+    max_episode_steps: 30
+    max_steps_per_rollout_epoch: 30
     group_size: 1
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true

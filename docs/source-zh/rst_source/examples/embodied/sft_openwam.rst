@@ -78,13 +78,14 @@ FSDP worker 会把完整的 ``OpenWAMPolicy`` state dict 保存在 ``<log_path>/
 
 LIBERO 评估配方与本配方使用同一套 checkpoint 约定。``evaluations/libero/`` 提供 ``libero_{spatial,object,goal,10}_openwam_eval.yaml``（见 :doc:`../../evaluations/guides/libero`）；每条 episode 会记录 ``[libero eval] task_id=.., trial_id=.., success=..``，可以按任务拆分成功率。RoboTwin checkpoint 使用 ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml``，覆盖全部 50 个任务（见 :doc:`../../evaluations/guides/robotwin`）。
 
-设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl`` 后，可以先运行双环境 32 步 smoke test。当前配方将 env worker 与 rollout worker 分到不同 GPU，避免 EGL 渲染和 OpenWAM 推理争用同一张卡：
+设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl`` 后，可以先运行 smoke 配方（1 个环境、30 步，即三次 10 步生成）。配方把 env worker 与 rollout worker 分到不同 GPU，避免 EGL 渲染和 OpenWAM 推理争用同一张卡：
 
-.. code:: bash
+.. code-block:: bash
 
-   python evaluations/eval_embodied_agent.py \\
-     --config-path libero --config-name libero_spatial_openwam_eval \\
-     env.eval.max_steps_per_rollout_epoch=32 env.eval.max_episode_steps=32
+   python evaluations/eval_embodied_agent.py \
+     --config-path ../tests/e2e_tests/evaluations --config-name libero_spatial_openwam_eval
+
+自行缩短配方时，``env.eval.max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks``（默认 ``openwam.inference_horizon`` 下为 10）整除。
 
 配方默认面向用 native delta EEF10 动作训练的 checkpoint（``env.eval.openwam_action_representation: native_delta_eef10``）。如果 checkpoint 按标准 LIBERO 数据训练、输出绝对 EEF10 目标位姿，请改为 ``absolute_eef10``：RLinf 会在每个环境 step 根据当前实际位姿计算目标差值，再发送 7D OSC 动作。该值必须与被评估 checkpoint 的数据 metadata 一致。
 
