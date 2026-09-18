@@ -1519,7 +1519,7 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def adv_requires_group_baseline(
-    adv_type: str, use_reinpp_baseline: bool = False
+    adv_type: Optional[str], use_reinpp_baseline: bool = False
 ) -> bool:
     """Whether an advantage estimator draws its baseline from within-group
     statistics and therefore requires ``algorithm.group_size > 1``.
@@ -1531,8 +1531,11 @@ def adv_requires_group_baseline(
 
     ``adv_type`` is lower-cased to match how :func:`get_adv_and_returns`
     dispatches, so a differently-cased name cannot slip past the guard and still
-    reach the group-based estimator.
+    reach the group-based estimator. Offline configs leave it unset, which
+    selects no estimator and therefore needs no group.
     """
+    if not adv_type:
+        return False
     adv_type = adv_type.lower()
     if adv_type in ("grpo", "grpo_dynamic"):
         return True
