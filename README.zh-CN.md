@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/09] 🔥 RLinf 支持 [FastWAM](https://github.com/yuantianyuan01/FastWAM) 的 FSDP 监督微调与 LIBERO 批量评测。文档：[FastWAM 评测与监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html)。
 - [2026/08] 🔥 RLinf 支持对英伟达全模态世界模型 Cosmos3 做 SFT 及基于 SGLang 的评测。文档：[Cosmos3 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html)、[SGLang 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/cosmos3_sglang.html)。
 - [2026/08] 🎉 RLinf 正式入选 **PyTorch 生态**！我们将继续把可扩展的具身与智能体强化学习带给 PyTorch 用户，推动模型智能走进真实世界。博客：[PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/)。
 - [2026/08] 🎉 Isaac Lab v3.0.0 正式采用 RLinf 作为其强化学习（RL）训练基础设施。文档：[Isaac Lab 中的 RLinf](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf)。
@@ -199,6 +200,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           </ul>
           <li><b>世界动作模型</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
           </ul>
@@ -292,13 +294,16 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的三个模型系列及其支持路径。每种硬件后端都适用于所在行列出的全部环境。✅ 表示代码与安装器支持该组合，运行时仍需使用兼容的模型 checkpoint 与任务配置。
+先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的模型系列及其支持路径。每种硬件后端都适用于所在行列出的全部环境。✅ 表示代码与安装器支持该组合，运行时仍需使用兼容的模型 checkpoint 与任务配置。
 
 | 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
 | [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
+
+— 表示本表未声明支持该组合。
 
 在非 CUDA 后端上，ManiSkill 使用 CPU 运行 PhysX 仿真，并通过 PCI 地址独立选择 renderer。MUSA 还需要厂商修改过的 SAPIEN 与 ManiSkill 包。GR00T 的 ManiSkill 路径需要带有 `maniskill_widowx` embodiment head 的 checkpoint；非 NVIDIA 的 GR00T 支持范围为 N1.5。AMD、昇腾和 MUSA 上的 LIBERO 使用 OSMesa。
 

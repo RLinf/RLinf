@@ -89,8 +89,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         tokenizer: AutoTokenizer,
         eval_dataset: bool = False,
     ) -> None:
-        super().__init__(data_paths, config, tokenizer)
-        self.eval_dataset = eval_dataset
+        super().__init__(data_paths, config, tokenizer, eval_dataset)
         self._data_root = config.data.get("data_root") or os.environ.get(
             "RLINF_DATA_ROOT"
         )

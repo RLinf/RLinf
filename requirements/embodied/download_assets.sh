@@ -62,7 +62,11 @@ download_maniskill_assets() {
 
 	# ManiSkill assets
 	export MS_ASSET_DIR="${root_dir}/.maniskill"
-	if [ -d "$MS_ASSET_DIR" ]; then
+	# Check the downloaded files, not the directory: an interrupted download
+	# leaves the directory behind without them. download_asset -y replaces
+	# whatever partial copy is there.
+	if [ -f "$MS_ASSET_DIR/data/tasks/bridge_v2_real2sim_dataset/custom/info_bridge_custom_v0.json" ] &&
+		[ -d "$MS_ASSET_DIR/data/robots/widowx" ]; then
 		echo "[download_assets] ManiSkill assets already exist at $MS_ASSET_DIR, skipping download."
 	elif ! ms_import_err=$(python -c "import mani_skill" 2>&1); then
 		# The download goes through mani_skill, and so through torch, which needs

@@ -17,9 +17,14 @@ mounted:
       -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v "$PWD":/workspace/RLinf \
       -w /workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0 bash
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero-cann9.1.1 bash
 
-For downloads from mainland China, the image is also available under
+This image builds on CANN 9.1.1 for 910B and carries every ManiSkill and LIBERO
+model environment. The tag above carries both an arm64 and an amd64 build, so
+Docker pulls the one matching the host; the ``-arm64`` and ``-amd64`` tags name
+a single architecture. The earlier LIBERO-only
+image remains available as ``agentic-rlinf0.3-libero-cann9.0``. For downloads
+from mainland China, the image is also available under
 ``docker.1ms.run/rlinf/rlinf`` with the same tag. To expose specific NPUs,
 replace ``--privileged`` with the following device arguments, adding a
 ``/dev/davinciN`` entry for each NPU you will use:
@@ -32,16 +37,16 @@ replace ``--privileged`` with the following device arguments, adding a
    --device=/dev/davinci0
 
 To build the image from your checkout, run this on the host and substitute
-``rlinf-libero-cann9`` for the image in the command above:
+``rlinf-maniskill_libero-cann9`` for the image in the command above:
 
 .. code-block:: bash
 
    DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile \
       --build-arg PLATFORM=ascend \
-      --build-arg CANN_VER=9.0.0-910b \
+      --build-arg CANN_VER=9.1.1-910b \
       --build-arg UBUNTU_VER=22.04 \
-      --build-arg BUILD_TARGET=embodied-libero \
-      -t rlinf-libero-cann9 .
+      --build-arg BUILD_TARGET=embodied-maniskill_libero \
+      -t rlinf-maniskill_libero-cann9 .
 
 ``CANN_VER`` includes the hardware suffix in the Ascend base-image tag.
 The Dockerfile also accepts ``ASCEND_BASE_IMAGE`` to select a different full
