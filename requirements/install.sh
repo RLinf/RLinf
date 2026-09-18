@@ -837,7 +837,7 @@ EOF
     local pkg
     for pkg in torch torchvision torchaudio torchcodec triton flash-attn \
         deepspeed vllm sglang xgrammar liger-kernel transformer-engine \
-        torch-memory-saver ray; do
+        torch-memory-saver; do
         PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "$pkg")
     done
     PLATFORM_SYSTEM_SITE_PACKAGES=1
