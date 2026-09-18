@@ -22,7 +22,7 @@ ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER
 # MUSA lives on the Moore Threads registry, not Docker Hub.
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
 # KUNLUN lives on the Kunlunxin registry, not Docker Hub.
-ARG KUNLUN_BASE_IMAGE=hub.kunlunxin.com/public/kunlunxin-self-driving/xav-rlinf:${KUNLUN_VER}
+ARG KUNLUN_BASE_IMAGE=hub.kunlunxin.com/public/kunlita/xav-rlinf:${KUNLUN_VER}
 ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
 
 

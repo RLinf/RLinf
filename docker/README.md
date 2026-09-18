@@ -62,7 +62,7 @@ docker run -it --runtime=mthreads --ipc=host --shm-size=100g \
 ### Building for Kunlunxin (KUNLUN)
 
 `PLATFORM=kunlun` builds on top of the Kunlunxin image
-(`hub.kunlunxin.com/public/kunlunxin-self-driving/xav-rlinf:$KUNLUN_VER`). The
+(`hub.kunlunxin.com/public/kunlita/xav-rlinf:$KUNLUN_VER`). The
 image supplies the vendor Torch runtime, and `install.sh` clones that Python
 environment before installing RLinf dependencies. The `embodied-libero` target
 installs the `openpi` environment when built for Kunlunxin.
