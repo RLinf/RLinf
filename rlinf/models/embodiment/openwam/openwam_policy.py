@@ -74,11 +74,13 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         self._prompt_template = _prompt_template_for_dataset(
             getattr(dataloader_cfg, "type", None)
         )
-        # No per-block FSDP wrapping: OpenWAM's joint denoising driver reads
-        # block weights directly (pre_attn_at_layer) outside the blocks'
-        # forward, where a wrapped block is still sharded. The whole policy is
-        # one FSDP unit, which is why the SFT recipe uses FSDP2 (no persistent
-        # full-precision unsharded flat parameter).
+        # One FSDP unit for the whole architecture, no per-block wrapping:
+        # OpenWAM's joint denoising driver reads block weights directly
+        # (pre_attn_at_layer) outside the blocks' forward, where a wrapped
+        # block would still be sharded. Inside architecture.forward every
+        # parameter is unsharded. The SFT recipe uses FSDP2, which keeps no
+        # persistent full-precision unsharded flat parameter for that unit.
+        self._no_split_modules = [type(self.architecture).__name__]
         # Checkpoints without an explicit layout (e.g. the LIBERO multiview
         # readers) use OpenWAM's three-slot canvas: head camera on top, two
         # wrist cameras below; missing slots stay black, as in the reader.

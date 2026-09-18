@@ -2034,6 +2034,8 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
     assert architecture._device == torch.device("cuda:3")
     assert video._device == torch.device("cuda:3")
     assert not hasattr(architecture.backbones["vlm"], "_device")
+    # FSDP shards the architecture as one unit; blocks are never wrapped alone.
+    assert policy._no_split_modules == ["SimpleNamespace"]
 
 
 def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
