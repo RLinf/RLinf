@@ -2377,9 +2377,11 @@ def test_shipped_configs_give_the_policy_the_action_width_it_expects():
             continue
         if not isinstance(doc, dict):
             continue
-        action_dim = _resolved(
-            doc, ((doc.get("rollout") or {}).get("model") or {}).get("action_dim")
-        )
+        # A model section may itself be an interpolation, e.g. ${actor.model}.
+        model = _resolved(doc, (doc.get("rollout") or {}).get("model"))
+        if not isinstance(model, dict):
+            continue
+        action_dim = _resolved(doc, model.get("action_dim"))
         if not isinstance(action_dim, int):
             continue
         for name, section, env_id in _merged_sections(path, doc):

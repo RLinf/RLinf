@@ -1,4 +1,5 @@
-env_type: opensora_wm
+env_type: world_model
+backend: opensora
 task_suite_name: libero_spatial
 wm_env_type: libero
 

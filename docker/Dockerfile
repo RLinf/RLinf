@@ -440,6 +440,10 @@ RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-libero-image
 
+# Clone the LIBERO env repo once into a shared path; every model below reuses it
+# (via clone_or_reuse_repo) instead of re-downloading it per venv.
+ENV LIBERO_PATH=/opt/envs/LIBERO
+
 # Ascend supports the openvla, openvla-oft and gr00t models only.
 RUN if [ "${RLINF_PLATFORM}" = "ascend" ]; then \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
@@ -449,6 +453,7 @@ RUN if [ "${RLINF_PLATFORM}" = "ascend" ]; then \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env libero && \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env libero && \
         bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero; \
@@ -473,8 +478,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-liberoplus-image
 
-# Install openvla-oft env for LIBERO-Plus
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus
+# Install openvla-oft and fastwam envs for LIBERO-Plus
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env liberoplus
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc

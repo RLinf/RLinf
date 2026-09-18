@@ -30,8 +30,7 @@ RLinf 提供两种安装方式：**选项 1（UV）** 在本地构建与机器�
 
 - 使用 ``--venv <dir>`` 指定虚拟环境目录。
 - 使用 ``--use-mirror`` 加速中国大陆环境下的下载。
-- 仅在依赖需要时使用 ``--python <version>``\ 。默认版本是 Python 3.11.14；部分环境
-  如 ``behavior`` 和 ``d4rl`` 需要 Python 3.10。
+- 仅在依赖需要时使用 ``--python <version>``\ 。默认版本是 Python 3.11.14，``agentic`` 目标在默认的 torch 2.11 栈上使用 Python 3.12.12；部分环境如 ``behavior`` 和 ``d4rl`` 需要 Python 3.10。
 - 仅在需要不同 PyTorch wheel 时使用 ``--torch <version>``\ 。
 - 使用 ``--platform amd``、``--platform ascend`` 或 ``--platform musa`` 选择对应硬件。在 :ref:`模型图库 <model-hardware-support>` 中确认模型与环境组合，再按对应示例准备运行环境。
 

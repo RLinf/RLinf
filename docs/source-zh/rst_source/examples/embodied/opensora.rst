@@ -227,7 +227,8 @@ rollout 的 3000 条轨迹构建）：
          opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
 
    # 在 env/train/opensora_libero_spatial.yaml 中：
-   env_type: opensora_wm
+   env_type: world_model
+   backend: opensora
    wm_env_type: libero
    # world model 初始化的初始图像路径
    initial_image_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset_for_rlinf_world_model_init/base_policy_rollout_buffer

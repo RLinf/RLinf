@@ -20,6 +20,9 @@ Choose ``<model>`` and ``<env>`` to match your target benchmark:
    * - LIBERO
      - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero`` / ``molmoact2``
      - ``maniskill_libero`` or ``libero``
+   * - LIBERO / LIBERO-Plus
+     - ``fastwam``
+     - ``libero`` or ``liberoplus``
    * - RoboTwin
      - ``openvla-oft`` / ``openpi`` / ``lingbotvla``
      - ``robotwin``
