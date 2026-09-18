@@ -144,14 +144,25 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ---
 
-## ⏳ Milestone 6: Toolkits（选择性保留）
-**状态：未开始**
+## ✅ Milestone 6: Toolkits（选择性保留）
+**状态：已完成**
 
 ### 目标
 决定哪些独立 toolkit 保留
 
+### 决策
+**保留以下通用工具（对所有机器人有用）：**
+- ✅ `check_robot_parts.py` - 通用机器人部件检查工具
+- ✅ `collect_monitor.py` - 数据收集进度监控工具
+- ✅ `test_so101_env.py` - SO-101 手动测试工具（支持 teleop）
+
+**其他工具：**
+- 其他 `test_*_controller.py` 文件是各机器人的独立测试工具，保持原样
+
 ### 相关文件
-- `toolkits/realworld_check/` 下的所有文件
+- `toolkits/realworld_check/check_robot_parts.py`
+- `toolkits/realworld_check/collect_monitor.py`
+- `toolkits/realworld_check/test_so101_env.py`
 
 ---
 
@@ -181,12 +192,11 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ## 当前工作
 
-**Milestone 5 开发完成 ✅**
-- 配置文件标准化为统一 YAML 风格
-- 对齐 Franka 配置结构
-- 修正 action_dim 和补充缺失字段
+**Milestone 6 开发完成 ✅**
+- 保留通用工具（check_robot_parts, collect_monitor, test_so101_env）
+- 其他机器人测试工具保持原样
 
-**下一步：Milestone 6 - Toolkits（选择性保留）**
+**下一步：Milestone 7 - Docs**
 
 ---
 
