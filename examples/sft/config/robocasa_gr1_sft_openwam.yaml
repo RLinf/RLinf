@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on RoboCasa GR1 humanoid.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=robocasa_gr1, cameras, action mode) drives the
+# native OpenWAM reader, so a robocasa_gr1 checkpoint must be paired with robocasa_gr1 data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "robocasa_gr1_sft_openwam"
+
+data:
+  train_data_paths: /path/to/robocasa_gr1_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-robocasa-gr1-checkpoint

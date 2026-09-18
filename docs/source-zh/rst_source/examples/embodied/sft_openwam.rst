@@ -46,6 +46,31 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 
 在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认将 actor 放到 GPU ``0-1``，并使用 ``use_orig_params: true``，因为 OpenWAM 会冻结部分 backbone，同时训练 action 模块。
 
+数据读取器由 checkpoint 的 ``config.yaml`` 决定，因此配方要把 checkpoint 和同类型的数据配对。``examples/sft/config/`` 下每种 OpenWAM 读取器各有一份配方，都继承 ``libero_sft_openwam.yaml``，只改路径和实验名：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - 配方
+     - 数据
+   * - ``libero_sft_openwam``
+     - LIBERO（LeRobot v3，EEF10 动作）
+   * - ``robotwin_sft_openwam``
+     - RoboTwin 2.0（aloha-agilex，20 维双臂 EEF）
+   * - ``robodojo_sft_openwam``
+     - RoboDojo 真机数据
+   * - ``ebench_sft_openwam``
+     - EBench
+   * - ``robocasa365_sft_openwam``
+     - RoboCasa365
+   * - ``robocasa_gr1_sft_openwam``
+     - RoboCasa GR1 人形
+   * - ``vlabench_sft_openwam``
+     - VLABench
+
+显存吃紧时可以打开 ``fsdp_config.gradient_checkpointing: true``，它会转发给 OpenWAM 自己的分块 checkpointing（``use_gradient_checkpointing``）。
+
 启动由 Ray 管理的 FSDP runner：
 
 .. code:: bash

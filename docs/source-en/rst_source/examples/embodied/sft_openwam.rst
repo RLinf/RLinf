@@ -46,6 +46,31 @@ Run It
 
 Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to GPUs ``0-1`` and uses ``use_orig_params: true`` because OpenWAM freezes part of its backbone while training the action modules.
 
+The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. One recipe per OpenWAM reader ships under ``examples/sft/config/``; each inherits ``libero_sft_openwam.yaml`` and only sets the paths and the experiment name:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Recipe
+     - Data
+   * - ``libero_sft_openwam``
+     - LIBERO (LeRobot v3, EEF10 actions)
+   * - ``robotwin_sft_openwam``
+     - RoboTwin 2.0 (aloha-agilex, 20-D dual-arm EEF)
+   * - ``robodojo_sft_openwam``
+     - RoboDojo real-robot data
+   * - ``ebench_sft_openwam``
+     - EBench
+   * - ``robocasa365_sft_openwam``
+     - RoboCasa365
+   * - ``robocasa_gr1_sft_openwam``
+     - RoboCasa GR1 humanoid
+   * - ``vlabench_sft_openwam``
+     - VLABench
+
+``fsdp_config.gradient_checkpointing: true`` is forwarded to OpenWAM's own block checkpointing (``use_gradient_checkpointing``) when memory is tight.
+
 Start the Ray-managed FSDP runner:
 
 .. code:: bash

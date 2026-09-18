@@ -139,24 +139,25 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         architecture.freeze_modules(list(freeze_names))
         training_cfg = OmegaConf.select(cfg, "training", default=OmegaConf.create({}))
         architecture.init_training_schedulers(1000)
-        architecture.set_training_runtime(
-            use_gradient_checkpointing=bool(
+        training_runtime = {
+            "use_gradient_checkpointing": bool(
                 OmegaConf.select(
                     training_cfg, "use_gradient_checkpointing", default=False
                 )
             ),
-            use_gradient_checkpointing_offload=bool(
+            "use_gradient_checkpointing_offload": bool(
                 OmegaConf.select(
                     training_cfg, "use_gradient_checkpointing_offload", default=False
                 )
             ),
-            max_timestep_boundary=float(
+            "max_timestep_boundary": float(
                 OmegaConf.select(training_cfg, "max_timestep_boundary", default=1.0)
             ),
-            min_timestep_boundary=float(
+            "min_timestep_boundary": float(
                 OmegaConf.select(training_cfg, "min_timestep_boundary", default=0.0)
             ),
-        )
+        }
+        architecture.set_training_runtime(**training_runtime)
         model = cls(
             JointInferenceEngine(cfg=cfg, architecture=architecture),
             num_frames=num_frames,
@@ -170,7 +171,21 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         model.to(
             device=device, dtype=torch_dtype or next(architecture.parameters()).dtype
         )
+        model._training_runtime = training_runtime
         return model
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """Route ``fsdp_config.gradient_checkpointing`` to OpenWAM's runtime flags.
+
+        OpenWAM checkpoints its DiT blocks itself when
+        ``use_gradient_checkpointing`` is set on the architecture; RLinf's
+        ``use_reentrant`` choice does not apply and is ignored.
+        """
+        del gradient_checkpointing_kwargs
+        runtime = dict(getattr(self, "_training_runtime", None) or {})
+        runtime["use_gradient_checkpointing"] = True
+        self.architecture.set_training_runtime(**runtime)
+        self._training_runtime = runtime
 
     def retarget_runtime_device(self, device: torch.device | str) -> None:
         """Point OpenWAM's cached input device at ``device`` without moving weights.

@@ -1982,6 +1982,40 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
         validate_embodied_cfg(rl_cfg)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "robotwin_sft_openwam",
+        "robodojo_sft_openwam",
+        "ebench_sft_openwam",
+        "robocasa365_sft_openwam",
+        "robocasa_gr1_sft_openwam",
+        "vlabench_sft_openwam",
+    ],
+)
+def test_openwam_dataset_sft_recipes_inherit_the_libero_recipe(name):
+    """Every dataset recipe only changes paths and the experiment name."""
+    import hydra
+
+    from rlinf.config import validate_sft_cfg
+
+    repo = Path(__file__).resolve().parents[2]
+    with hydra.initialize_config_dir(
+        version_base="1.1", config_dir=str(repo / "examples/sft/config")
+    ):
+        cfg = hydra.compose(config_name=name)
+        base = hydra.compose(config_name="libero_sft_openwam")
+    assert validate_sft_cfg(cfg) is cfg
+    assert cfg.runner.logger.experiment_name == name
+    assert str(cfg.data.train_data_paths).startswith("/path/to/")
+    assert cfg.data.train_data_paths != base.data.train_data_paths
+    assert str(cfg.actor.model.model_path).startswith("/path/to/")
+    assert cfg.actor.model.precision == "fp32"
+    assert cfg.actor.model.load_to_device is False
+    assert cfg.actor.fsdp_config.strategy == "fsdp2"
+    assert cfg.actor.optim.lr == base.actor.optim.lr
+
+
 def test_openwam_get_model_honors_load_to_device(monkeypatch):
     """SFT builds the policy on the CPU for FSDP; rollout loads straight to the device."""
     from rlinf.models.embodiment import openwam as openwam_module
@@ -2100,6 +2134,12 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
     assert policy.architecture.calls[0] == ("freeze", ["vae"])
     # precision reaches the weights: fp32 master weights for the SFT optimizer.
     assert next(policy.parameters()).dtype == torch.float32
+    # RLinf's fsdp_config.gradient_checkpointing reaches OpenWAM's runtime flags
+    # and keeps the checkpoint's timestep boundaries.
+    policy.gradient_checkpointing_enable()
+    kind, runtime = policy.architecture.calls[-1]
+    assert kind == "runtime" and runtime["use_gradient_checkpointing"] is True
+    assert runtime["max_timestep_boundary"] == 1.0
 
 
 def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
