@@ -194,6 +194,19 @@ class SO101Leader(TeleopDevice):
         moved = float(np.linalg.norm(target - current)) > self.MOVEMENT_EPSILON
         return TeleopAction(parts={"arm": target, "end_effector": grip}, driving=moved)
 
+    def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
+        """Return current follower pose as hold action for smooth intervene.
+
+        Used during explicit-mode intervention buffer periods to keep the robot
+        stationary while the operator grabs or releases the leader arm.
+        """
+        joints = np.asarray(context["joint_positions"], dtype=np.float32)
+        if joints.ndim == 2:
+            joints = joints[0]
+        if joints.shape != (5,):
+            raise ValueError(f"Expected 5 joints for SO-101, got shape {joints.shape}")
+        return {"arm": joints}
+
 
 if __name__ == "__main__":
     import argparse

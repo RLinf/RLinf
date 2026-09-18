@@ -23,8 +23,8 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ---
 
-## 🔄 Milestone 2: gRPC / Local Inference (推理功能)
-**状态：进行中 (~90%)**
+## ✅ Milestone 2: gRPC / Local Inference (推理功能)
+**状态：开发完成，等待真机验证 (commit 5b0d75e1)**
 
 ### 背景
 > 为什么不是先做 DAgger？因为如果要上真机验证，DAgger 必须要求策略能够推理，所以把推理提前了。
@@ -42,13 +42,15 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 - ✅ 服务脚本（`lerobot_grpc_policy_service.sh`）
 - ✅ 文档（`GRPC_IMPLEMENTATION.md`）
 - ✅ 已对照 Franka 配置规划了 SO-101 配置结构
-
-### 待完成
-- 🔄 **配置重构为 YAML 结构**（当前任务）
+- ✅ 配置重构为 YAML 结构
   - 参考 Franka 的配置方式
-  - 对齐命名：数采配置要写 `joint` 而不是 `gello`
-  - 删除 `.env.example`，用标准 YAML 配置
-- ⏳ 真机验证推理流程能跑通
+  - 对齐命名：数采配置写 `joint` 而不是 `gello`
+  - 创建标准 YAML 配置文件
+  - 提取 rollout 配置组
+
+### 待真机验证
+- ⏳ 本地推理模式能跑通
+- ⏳ gRPC 推理模式能跑通
 
 ### 相关文件
 - `rlinf/workers/rollout/grpc/grpc_policy_adapter.py`
@@ -144,12 +146,11 @@ SO-101 机器人集成按以下 9 个模块顺序推进：
 
 ## 当前工作
 
-**正在做：Milestone 2 - 配置 YAML 化**
-- 文档不用管了最后一起整理
-- 把配置改成 yaml
-- 看看 Franka 怎么做配置的
+**Milestone 2 开发完成 ✅**
+- 所有代码、配置、文档已就绪
+- 等待真机验证
 
-**进度：Milestone 2 约 85%**
+**下一步：Milestone 3 - HG-DAgger Logic Extensions**
 
 ---
 

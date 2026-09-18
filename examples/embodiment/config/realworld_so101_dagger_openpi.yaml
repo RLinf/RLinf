@@ -88,6 +88,9 @@ env:
     rollout_epoch: 1
     total_num_envs: 1
     smooth_intervene: True
+    teleop_intervention:
+      mode: explicit
+      hold_buffer_seconds: 3.0
     ignore_terminations: False
     auto_reset: True
     no_gripper: False

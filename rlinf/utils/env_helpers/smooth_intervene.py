@@ -15,9 +15,10 @@
 """Realworld smooth-intervene helpers for EnvWorker orchestration.
 
 Bypasses policy inference across action-chunk boundaries while human teleop
-continues. Requires PICO (``env.train.teleop: pico``); SpaceMouse is not
-supported. Env only supplies hold actions; this module owns PolicyOutput dummy
-construction and per-stage continue/skip state.
+continues. Activity-triggered intervention remains restricted to PICO because
+it relies on motion reports; explicit triggers can be used with stateful
+leader-follower devices such as SO101. Env only supplies hold actions; this
+module owns PolicyOutput dummy construction and per-stage continue/skip state.
 """
 
 from __future__ import annotations
@@ -184,15 +185,28 @@ class SmoothInterveneController:
             # Every registered device, so a config naming a real one that this
             # check then rejects says why -- rather than reporting it as a
             # device that does not exist.
+            mode = str(
+                OmegaConf.select(
+                    cfg, "env.train.teleop_intervention.mode", default="activity"
+                )
+            ).lower()
+            if mode not in {"activity", "explicit"}:
+                raise ValueError(
+                    "env.train.teleop_intervention.mode must be 'activity' or "
+                    f"'explicit' (got {mode!r})"
+                )
             devices = resolve_teleop_devices(
                 OmegaConf.select(cfg, "env.train") or {},
                 supported=TeleopDevice.names(),
             )
             named = [d if isinstance(d, str) else next(iter(dict(d))) for d in devices]
-            if not named or any(name != "pico" for name in named):
+            if not named:
+                raise ValueError("smooth_intervene requires at least one teleop device")
+            if mode == "activity" and any(name != "pico" for name in named):
                 raise ValueError(
-                    "smooth_intervene requires every env.train.teleop entry to be "
-                    f"pico (PICO-only; got {named!r})"
+                    "activity-triggered smooth_intervene requires every "
+                    f"env.train.teleop entry to be pico (got {named!r}); use "
+                    "teleop_intervention.mode: explicit for stateful devices"
                 )
         return cls(stage_num=stage_num, enabled=enabled)
 

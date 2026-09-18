@@ -73,6 +73,7 @@ class ComposedTeleop(TeleopDevice):
         ("action_scale", "get_action_scale"),
         ("joint_positions", "get_joint_positions"),
         ("gripper_open", "get_gripper_open"),
+        ("gripper_position", "get_gripper_position"),
         ("hand_reset_pose", "get_hand_reset_pose"),
     )
 
