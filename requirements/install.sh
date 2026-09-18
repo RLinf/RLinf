@@ -90,7 +90,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "biren")
 TEST_BUILD=${TEST_BUILD:-0}
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -139,13 +139,13 @@ Common options:
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
-                           ROCm), ascend (experimental, NPU), or musa (experimental, Moore
-                           Threads). Sets UV_TORCH_BACKEND where applicable
-                           (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
-                           bypass (e.g. UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI
-                           and adds torch-npu in install_ascend_extras. MUSA installs no torch at
-                           all: run it inside the Moore Threads training-suite image and it
-                           reuses that image's torch/torch-musa via a --system-site-packages venv.
+                           ROCm), ascend (experimental, NPU), musa (experimental, Moore
+                           Threads), or biren (experimental, SUPA). Sets UV_TORCH_BACKEND
+                           where applicable (auto / rocm<version> / cpu); export UV_TORCH_BACKEND
+                           yourself to bypass (e.g. UV_TORCH_BACKEND=cu124). Ascend uses CPU torch
+                           from PyPI and adds torch-npu in install_ascend_extras. MUSA and Biren
+                           install no torch: run inside the corresponding vendor runtime and reuse
+                           its torch stack via a --system-site-packages venv.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
@@ -788,6 +788,117 @@ EOF
 }
 
 
+configure_biren() {
+    # torch_supa is preinstalled in the SUPA runtime.
+    # Reuse that interpreter and prevent uv from replacing the vendor stack.
+    if [ "$USER_SET_PYTHON" -eq 0 ]; then
+        PYTHON_VERSION=$(python - <<'EOF'
+import sys
+
+print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+EOF
+)
+        echo "[install.sh] biren: reusing the image interpreter, python ${PYTHON_VERSION}"
+        validate_python_version
+    fi
+    export UV_PYTHON_PREFERENCE="${UV_PYTHON_PREFERENCE:-only-system}"
+    if [ -z "$TORCH_VERSION" ]; then
+        local _torch_probe
+        _torch_probe=$(python - <<'EOF' 2>&1 || true
+import importlib.metadata as metadata
+
+print(metadata.version("torch").split("+")[0])
+EOF
+)
+        if [[ "$_torch_probe" =~ ^[0-9]+\.[0-9]+ ]]; then
+            TORCH_VERSION="$_torch_probe"
+            echo "[install.sh] biren: pinning torch ${TORCH_VERSION} to match the runtime."
+        else
+            echo "[install.sh] biren: no torch found for $(command -v python); run inside a SUPA runtime." >&2
+            echo "[install.sh] ${_torch_probe}" >&2
+            exit 1
+        fi
+    fi
+    PLATFORM_TORCH_STR=""
+    if [ "$USE_MIRRORS" -eq 1 ]; then
+        PLATFORM_TORCH_INDEX="https://mirrors.tencent.com/pytorch-wheels/whl/cpu"
+    else
+        PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+    fi
+    PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+    export UV_TORCH_BACKEND="${UV_TORCH_BACKEND:-cpu}"
+    PLATFORM_VENV_EXPORTS=()
+    PLATFORM_FLASH_ATTN_INSTALL=0
+    PLATFORM_FLASH_ATTN_PREBUILT=0
+    PLATFORM_RELAX_TORCHCODEC=1
+    PLATFORM_TORCHCODEC_SPEC=""
+    PLATFORM_EXTRA_OVERRIDES=("numpy<2")
+    PLATFORM_UV_SYNC_ARGS=("--inexact")
+    local pkg
+    for pkg in torch torchvision torchaudio torchcodec triton flash-attn \
+        deepspeed vllm sglang xgrammar liger-kernel transformer-engine \
+        torch-memory-saver ray; do
+        PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "$pkg")
+    done
+    PLATFORM_SYSTEM_SITE_PACKAGES=1
+    PLATFORM_VENV_HOOK=seed_biren_torch_metadata
+    PLATFORM_COMMON_REQ_EXCLUDE_RE='^[[:space:]]*nvidia-'
+}
+
+seed_biren_torch_metadata() {
+    VENV_DIR="$VENV_DIR" python - <<'EOF'
+import importlib.metadata as metadata
+import os
+import pathlib
+import shutil
+import subprocess
+
+venv_python = pathlib.Path(os.environ["VENV_DIR"]) / "bin" / "python"
+venv_site = pathlib.Path(
+    subprocess.run(
+        [str(venv_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+)
+keep = ("METADATA", "WHEEL", "INSTALLER", "top_level.txt", "entry_points.txt")
+for name in (
+    "torch",
+    "torch_supa",
+    "torch_supa_ext",
+    "torchvision",
+    "torchaudio",
+    "flashattn_train",
+    "flashattn_infer",
+    "triton",
+):
+    try:
+        dist = metadata.distribution(name)
+    except metadata.PackageNotFoundError:
+        continue
+    root = pathlib.Path(dist.locate_file(""))
+    matches = [
+        path
+        for variant in {name, name.replace("_", "-"), name.replace("-", "_")}
+        for path in root.glob(f"{variant}-{dist.version}.dist-info")
+        if path.is_dir()
+    ]
+    if not matches or matches[0].parent == venv_site:
+        continue
+    destination = venv_site / matches[0].name
+    shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True)
+    for metadata_file in keep:
+        source = matches[0] / metadata_file
+        if source.is_file():
+            shutil.copy2(source, destination / metadata_file)
+    (destination / "RECORD").write_text("")
+    print(f"[install.sh] biren: reusing runtime {name}=={dist.version}")
+EOF
+}
+
+
 # Envs that need a different torch than the project default (Isaac Sim /
 # OmniGibson need 2.5.1) declare it here, so configure_platform and
 # apply_torch_override re-point TORCH_VERSION, the wheel index and
@@ -821,6 +932,7 @@ configure_platform() {
         amd)     configure_amd ;;
         ascend)  configure_ascend ;;
         musa)    configure_musa ;;
+        biren)   configure_biren ;;
     esac
     echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
@@ -969,12 +1081,67 @@ EOF
     fi
 }
 
+install_biren_extras() {
+    # Fail during installation rather than during the first distributed worker.
+    python - <<'EOF'
+import importlib.metadata as metadata
+import sys
+
+missing = []
+for name in ("torch", "torch_supa"):
+    try:
+        metadata.distribution(name)
+    except metadata.PackageNotFoundError:
+        missing.append(name)
+if missing:
+    print(
+        "[install.sh] --platform biren requires "
+        f"{' and '.join(missing)} in the base runtime. ",
+        "Run this inside a SUPA image or activate its vendor environment.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+try:
+    import torch
+    import torch_supa  # noqa: F401
+except Exception as exc:
+    print(
+        f"[install.sh] biren: vendor runtime import failed ({type(exc).__name__}: {exc}).",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if torch.supa.is_available():
+    print(f"[install.sh] biren: torch {torch.__version__}, {torch.supa.device_count()} SUPA device(s)")
+else:
+    print(
+        "[install.sh] WARNING: torch_supa imports but reports no visible SUPA device.",
+        file=sys.stderr,
+    )
+EOF
+
+    local cuda_pkgs
+    cuda_pkgs=$(uv pip list --format json 2>/dev/null \
+        | grep -oE '"name":"[^"]+"' \
+        | sed -e 's/^"name":"//' -e 's/"$//' \
+        | grep -E '^(nvidia|cuda)[-_]' \
+        | grep -vx 'nvidia-ml-py' \
+        | tr '\n' ' ' || true)
+    if [ -n "$cuda_pkgs" ]; then
+        echo "[install.sh] biren: removing CUDA-only wheels: ${cuda_pkgs}"
+        # shellcheck disable=SC2086
+        uv pip uninstall $cuda_pkgs || true
+    fi
+}
+
 install_platform_extras() {
     case "$PLATFORM" in
         nvidia)  install_nvidia_extras ;;
         amd)     install_amd_extras ;;
         ascend)  install_ascend_extras ;;
         musa)    install_musa_extras ;;
+        biren)   install_biren_extras ;;
     esac
 }
 
