@@ -361,6 +361,29 @@ detect_rocm_version() {
     echo "$mm"
 }
 
+# ISA of the first GPU the ROCm stack reports, e.g. gfx942. Prints it on
+# success, returns 1 when no GPU is visible; gfx000 is the CPU agent.
+detect_amd_gfx_arch() {
+    local raw=""
+    if command -v rocminfo &>/dev/null; then
+        raw=$(rocminfo 2>/dev/null | grep -oE 'gfx[0-9a-f]{3,}' | grep -v '^gfx000$' | head -n1)
+    fi
+    if [ -z "$raw" ] && command -v rocm_agent_enumerator &>/dev/null; then
+        raw=$(rocm_agent_enumerator 2>/dev/null | grep -oE 'gfx[0-9a-f]{3,}' | grep -v '^gfx000$' | head -n1)
+    fi
+    [ -z "$raw" ] && return 1
+    echo "$raw"
+}
+
+# Whether a gfx ISA is CDNA, the compute-only Instinct line. Those parts have no
+# rasterization hardware, so Mesa's RADV cannot render on them.
+amd_gfx_is_cdna() {
+    case "$1" in
+        gfx908|gfx90a|gfx940|gfx941|gfx942|gfx950) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Find a torch version on the PyTorch wheel index that has a +rocm<rocm_ver>
 # Linux x86_64 wheel matching PYTHON_VERSION's cpXY tag. Prefers the smallest
 # version >= 2.5; falls back to the highest available wheel if no >= 2.5 wheel
@@ -595,13 +618,30 @@ configure_amd() {
     # deps in [project.dependencies] so [tool.uv.sources] mappings actually
     # take effect (uv only applies sources to direct deps).
     PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio" "pytorch-triton-rocm" "triton-rocm")
-    PLATFORM_VENV_EXPORTS=(
-        "export AMD_VULKAN_ICD=RADV"
-        "export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
-        "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
-    )
+    # The Vulkan driver follows the GPU ISA, not the platform. RADV renders on
+    # RDNA; on CDNA it reports the card as a usable discrete GPU and then fails
+    # when SAPIEN allocates a render image, so those hosts render on Mesa's
+    # software rasterizer. VK_DRIVER_FILES wins over VK_ICD_FILENAMES and
+    # AMD_VULKAN_ICD steers Mesa back to RADV, so all three move together.
+    # Undetected GPUs keep the RADV defaults.
+    local gfx_arch
+    gfx_arch=$(detect_amd_gfx_arch) || gfx_arch=""
+    if [ -n "$gfx_arch" ] && amd_gfx_is_cdna "$gfx_arch"; then
+        echo "[install.sh] Detected CDNA (${gfx_arch}); rendering with Mesa lavapipe."
+        PLATFORM_VENV_EXPORTS=(
+            "unset AMD_VULKAN_ICD"
+            "export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"
+            "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"
+        )
+    else
+        PLATFORM_VENV_EXPORTS=(
+            "export AMD_VULKAN_ICD=RADV"
+            "export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+            "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+        )
+    fi
     PLATFORM_FLASH_ATTN_INSTALL=1
-    PLATFORM_FLASH_ATTN_PREBUILT=0
+    PLATFORM_FLASH_ATTN_PREBUILT=1
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_TORCHCODEC_SPEC=""
     PLATFORM_EXTRA_OVERRIDES=()
@@ -836,18 +876,6 @@ apply_env_default_torch() {
     fi
 }
 
-# Models that require a different Torch family declare it here. An explicit
-# --torch value, including one already selected for an environment, wins.
-apply_model_default_torch() {
-    [ -n "$TORCH_VERSION" ] && return 0
-    case "$MODEL" in
-        fastwam)
-            TORCH_VERSION="2.7.1"
-            echo "[install.sh] Model '${MODEL}' pins torch ${TORCH_VERSION}; overriding the project default."
-            ;;
-    esac
-}
-
 configure_platform() {
     if [[ ! " ${SUPPORTED_PLATFORMS[*]} " =~ " $PLATFORM " ]]; then
         echo "--platform must be one of: ${SUPPORTED_PLATFORMS[*]} (got '$PLATFORM')." >&2
@@ -944,6 +972,14 @@ EOF
         echo "[install.sh] torchcodec is installed but does not import (likely a CUDA wheel without libnvrtc); uninstalling."
         uv pip uninstall torchcodec || true
     fi
+}
+
+install_ascend_tensorflow_pins() {
+    # TF 2.21 SIGSEGVs against Ray's protobuf 6.x on Ascend. Shared by every
+    # embodied model whose install pulls TensorFlow (GR00T, StarVLA, …).
+    [ "$PLATFORM" = "ascend" ] || return 0
+    echo "[install.sh] Applying Ascend TensorFlow compatibility pins"
+    uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/tensorflow.txt"
 }
 
 # A vendor-torch platform has nothing to install; fail here rather than
@@ -1519,16 +1555,20 @@ print(f"{parts[0]}.{parts[1]}")
 EOF
 )
 
-    # Detect CUDA major, e.g. 12 from 12.4
-    local cuda_mm cuda_major
-    cuda_mm=$(detect_cuda_major_minor) || {
-        echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
-        FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
-        return 0
-    }
-    cuda_major="${cuda_mm%% *}"
-
-    local cu_tag="cu${cuda_major}"            # e.g. cu12
+    # Accelerator tag of the wheel: cu12 for CUDA 12.x, rocm7.2 for ROCm 7.2.
+    local cu_tag
+    if [ "$PLATFORM" = "amd" ]; then
+        cu_tag="rocm${ROCM_VERSION}"
+    else
+        local cuda_mm cuda_major
+        cuda_mm=$(detect_cuda_major_minor) || {
+            echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
+            FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+            return 0
+        }
+        cuda_major="${cuda_mm%% *}"
+        cu_tag="cu${cuda_major}"
+    fi
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
 
     # Match flash-attn wheel ABI to the currently installed torch build.
@@ -1853,10 +1893,26 @@ EOF
     local decord_path
     decord_path=$(clone_or_reuse_repo DECORD_PATH "$VENV_DIR/decord" https://github.com/dmlc/decord.git -b v0.6.0 --recurse-submodules)
 
+    # decord's FindFFmpeg only locates the libraries when its own search picks
+    # up the distribution's arch-specific paths. Pass what pkg-config reports,
+    # which makes the finder accept them directly.
+    local ffmpeg_args=() ffmpeg_inc ffmpeg_libdir ffmpeg_libs component
+    if command -v pkg-config &>/dev/null && pkg-config --exists libavcodec libavformat; then
+        ffmpeg_inc=$(pkg-config --variable=includedir libavcodec)
+        ffmpeg_libdir=$(pkg-config --variable=libdir libavcodec)
+        ffmpeg_libs=""
+        for component in avformat avfilter avcodec avutil swresample avdevice; do
+            [ -f "${ffmpeg_libdir}/lib${component}.so" ] && ffmpeg_libs="${ffmpeg_libs}${ffmpeg_libs:+;}${ffmpeg_libdir}/lib${component}.so"
+        done
+        if [ -n "$ffmpeg_libs" ] && [ -d "$ffmpeg_inc" ]; then
+            ffmpeg_args=(-DFFMPEG_INCLUDE_DIR="$ffmpeg_inc" -DFFMPEG_LIBRARIES="$ffmpeg_libs")
+        fi
+    fi
+
     mkdir -p "$decord_path/build"
     (
         cd "$decord_path/build"
-        cmake .. -DUSE_CUDA=0 -DCMAKE_BUILD_TYPE=Release
+        cmake .. -DUSE_CUDA=0 -DCMAKE_BUILD_TYPE=Release "${ffmpeg_args[@]}"
         make -j"$(nproc)"
     )
     uv pip install "$decord_path/python" --no-build-isolation
@@ -2063,6 +2119,9 @@ install_openpi_model() {
     # Enforce RLinf-compatible runtime pins to avoid known breakages.
     # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
     uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
+    if [ "$PLATFORM" = "ascend" ]; then
+        uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/openpi.txt"
+    fi
 
     # Replace transformers models with OpenPI's modified versions
     local py_major_minor
@@ -2122,11 +2181,15 @@ install_starvla_model() {
     esac
 
     local starvla_path
-    starvla_path=$(clone_or_reuse_repo STARVLA_PATH "$VENV_DIR/starVLA" https://github.com/starVLA/starVLA.git -b "${STARVLA_GIT_REF:-starVLA-1.2}" --depth 1)
+    starvla_path=$(clone_or_reuse_repo STARVLA_PATH "$VENV_DIR/starVLA" https://github.com/starVLA/starVLA.git -b "${STARVLA_GIT_REF:-starVLA-v1.6}" --depth 1)
 
     # Prefer upstream StarVLA requirements first when available.
     if [ -f "$starvla_path/requirements.txt" ]; then
-        uv pip install -r "$starvla_path/requirements.txt"
+        maybe_build_decord_from_source
+        # eva-decord ships the same `decord` module as decord and has no
+        # aarch64 wheel, so install decord alone.
+        grep -Ev '^[[:space:]]*eva-decord' "$starvla_path/requirements.txt" \
+            | uv pip install -r -
     fi
 
     # Enforce RLinf-compatible runtime pins to avoid known breakages.
@@ -2143,6 +2206,7 @@ install_starvla_model() {
     fi
 
     install_flash_attn
+    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2200,10 +2264,7 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
-    if [ "$PLATFORM" = "ascend" ]; then
-        echo "[install.sh] Applying Ascend GR00T compatibility pins"
-        uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/gr00t.txt"
-    fi
+    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2261,6 +2322,7 @@ install_dexbotic_model() {
 
             local dexbotic_path
             dexbotic_path=$(clone_or_reuse_repo DEXBOTIC_PATH "$VENV_DIR/dexbotic" https://github.com/dexmal/dexbotic.git -b 0.2.0)
+            maybe_build_decord_from_source
             uv pip install -e "$dexbotic_path"
 
             install_${ENV_NAME}_env
@@ -2316,6 +2378,7 @@ install_abot_m0_model() {
 
     uv pip install -e "$abot_path" --no-deps
 
+    maybe_build_decord_from_source
     uv pip install -r $SCRIPT_DIR/embodied/models/abot.txt
 
     install_flash_attn
@@ -2677,8 +2740,45 @@ install_libero_env() {
 
 install_maniskill_libero_env() {
     install_libero_env
+    local maniskill_overrides=()
+    if is_aarch64_platform; then
+        # PyPI has no aarch64 wheels for ManiSkill's mplib==0.1.1 or for sapien.
+        # mplib is only used by ManiSkill's motion-planning examples, and SAPIEN
+        # publishes aarch64 wheels on its GitHub releases.
+        local py_tag override_file
+        py_tag=$(python -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+        override_file=$(mktemp)
+        cat > "$override_file" <<EOF
+mplib; platform_machine != 'aarch64'
+sapien @ ${GITHUB_PREFIX}https://github.com/haosulab/SAPIEN/releases/download/3.0.3/sapien-3.0.3-${py_tag}-${py_tag}-linux_aarch64.whl
+EOF
+        maniskill_overrides=(--override "$override_file")
+    fi
     # The largest git fetch in the install; truncates on slow links.
-    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
+    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22 "${maniskill_overrides[@]}"
+    if [ ${#maniskill_overrides[@]} -gt 0 ]; then
+        rm -f "${maniskill_overrides[1]}"
+        # The aarch64 wheel bundles librt from glibc 2.28, which needs private
+        # symbols from a libpthread of the same release and fails to load on
+        # newer glibc. The system librt provides the same public symbols.
+        local sapien_libs system_librt bundled_librt
+        sapien_libs=$(python -c 'import importlib.util, pathlib; print(pathlib.Path(importlib.util.find_spec("sapien").origin).parents[1] / "sapien.libs")')
+        # Look the library up by path: ldconfig is statically linked and crashes
+        # intermittently under QEMU user-mode emulation during arm64 cross-builds.
+        local libdir
+        system_librt=""
+        for libdir in "/lib/$(uname -m)-linux-gnu" "/usr/lib/$(uname -m)-linux-gnu" /lib64 /usr/lib64; do
+            if [ -e "$libdir/librt.so.1" ]; then
+                system_librt="$libdir/librt.so.1"
+                break
+            fi
+        done
+        if [ -n "$system_librt" ]; then
+            for bundled_librt in "$sapien_libs"/librt-*.so; do
+                [ -f "$bundled_librt" ] && [ ! -L "$bundled_librt" ] && ln -sf "$system_librt" "$bundled_librt"
+            done
+        fi
+    fi
 
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
 }
@@ -3151,6 +3251,16 @@ install_opensora_world_model() {
     install_apex
 }
 
+# Empty per-package uv cache inside the venv, for rebuilds that must not clean the
+# shared cache (other venvs may symlink into it).
+fresh_uv_cache() {
+    local dir
+    dir="$(realpath "$VENV_DIR")/.uv-fresh-cache/$1"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    printf '%s\n' "$dir"
+}
+
 install_tensornvme() {
     local url="git+${GITHUB_PREFIX}https://github.com/fangqi-Zhu/TensorNVMe.git"
     uv pip install "$url" --no-build-isolation
@@ -3158,8 +3268,8 @@ install_tensornvme() {
     local tnvme_env=(env "LD_LIBRARY_PATH=$HOME/.tensornvme/lib:${LD_LIBRARY_PATH:-}")
     if ! "${tnvme_env[@]}" python -c "import tensornvme._C" >/dev/null 2>&1; then
         echo "[install.sh] tensornvme does not load against this torch; rebuilding."
-        uv cache clean tensornvme || true
-        uv pip install "$url" --no-build-isolation --reinstall-package tensornvme
+        UV_CACHE_DIR="$(fresh_uv_cache tensornvme)" \
+            uv pip install "$url" --no-build-isolation --reinstall-package tensornvme
         "${tnvme_env[@]}" python -c "import tensornvme._C" >/dev/null 2>&1 \
             || echo "[install.sh] WARNING: tensornvme still does not import; expected without a GPU, otherwise check the torch ABI."
     fi
@@ -3189,16 +3299,15 @@ install_roboverse_env() {
 
 #=======================AGENTIC INSTALLER=======================
 
-# transformer-engine-torch's setup.py deletes its build_tools/ after bdist_wheel,
-# and uv builds sdists inside its cache, so the next build of the same version
-# (another Python or torch) fails on the cached source. Drop it and retry once.
+# TE's setup.py deletes build_tools/ from uv's cached sdist, so rebuilds from the
+# shared cache fail; retry from a fresh cache.
 uv_install_te_from_source() {
     if NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation "$@"; then
         return 0
     fi
     echo "[install.sh] transformer-engine-torch build failed; retrying from a fresh sdist..."
-    uv cache clean transformer-engine-torch
-    NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation "$@"
+    NVTE_PYTORCH_FORCE_BUILD=TRUE UV_CACHE_DIR="$(fresh_uv_cache transformer-engine-torch)" \
+        uv pip install --no-build-isolation "$@"
 }
 
 install_te_2_17() {
@@ -3366,7 +3475,6 @@ main() {
     parse_args "$@"
     validate_python_version
     apply_env_default_torch
-    apply_model_default_torch
     apply_agentic_torch_default
     configure_platform
     setup_mirror

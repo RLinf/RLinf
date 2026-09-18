@@ -37,7 +37,7 @@ Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · GPU
+      1 节点 · NVIDIA CUDA · :ref:`华为昇腾 CANN <starvla-hardware>` （QwenOFT + LIBERO）
 
 | **你将完成：** 安装 → 下载 StarVLA checkpoint 与 base VLM → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 StarVLA LIBERO checkpoint 与 Qwen2.5-VL 基座（见下文）。
@@ -85,27 +85,29 @@ Vision-Language-Action 工具箱，支持将 VLM backbone 与 action head 以模
 
 必选字段：
 
-* ``main_images``：主视角 RGB，``torch.uint8``，形状 ``[B, H, W, 3]``（常用 ``H=W=224``）。
+* ``main_images``：主视角 RGB，``torch.uint8``，形状 ``[B, H, W, 3]``\ （常用 ``H=W=224``）。
 * ``states``：本体状态，``torch.float32``，形状 ``[B, D_state]``。
 * ``task_descriptions``：自然语言任务描述，``list[str]``，长度为 ``B``。
 
 可选字段：
 
 * ``wrist_images``：腕部视角 RGB，``torch.uint8``，形状 ``[B, H, W, 3]``。
-* ``extra_view_images``：其他视角 RGB，推荐形状 ``[B, V, H, W, 3]``（``V`` 为额外视角数）。若仅提供单个额外视角，也允许 ``[B, H, W, 3]``，等价视为 ``V=1``。
+* ``extra_view_images``：其他视角 RGB，推荐形状 ``[B, V, H, W, 3]``\ （``V`` 为额外视角数）。若仅提供单个额外视角，也允许 ``[B, H, W, 3]``，等价视为 ``V=1``。
 
-在 LIBERO 的默认实现中，``states`` 的常见定义为末端位置 ``(x, y, z)``（3 维）、
-末端姿态轴角 ``(rx, ry, rz)``（3 维）与夹爪状态（原始 2 维），因此常见
+在 LIBERO 的默认实现中，``states`` 的常见定义为末端位置 ``(x, y, z)``\ （3 维）、
+末端姿态轴角 ``(rx, ry, rz)``\ （3 维）与夹爪状态（原始 2 维），因此常见
 ``D_state = 3 + 3 + 2 = 8``。若 checkpoint 期望 7 维状态，wrapper 会将 2 维夹爪状态压缩为
 ``[x, y, z, rx, ry, rz, g_mean]``，其中 ``g_mean = 0.5 * (g0 + g1)``。
 
 StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
-``T = actor.model.num_action_chunks``（planning horizon），
-``D_action = actor.model.action_dim``（LIBERO 常用 7）。Rollout 采用 receding-horizon：
+``T = actor.model.num_action_chunks``\ （planning horizon），
+``D_action = actor.model.action_dim``\ （LIBERO 常用 7）。Rollout 采用 receding-horizon：
 每次 forward 产生长度 ``T`` 的动作序列，环境执行前 ``N`` 步（``1 <= N <= T``）后重新规划。
 
 安装
 ----------------------------------------
+
+NVIDIA CUDA 可使用以下两种安装方式。华为昇腾 CANN 请参照 :ref:`starvla-hardware`。
 
 .. include:: _setup_common.rst
 
@@ -191,6 +193,43 @@ StarVLA + GRPO + LIBERO Spatial 使用
    bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
 评估建议采用 RLinf 统一的评估流程，详见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。
+
+.. _starvla-hardware:
+
+在不同硬件后端上运行
+----------------------------------------
+
+NVIDIA 使用上面的安装与启动步骤。华为昇腾 CANN 支持在 LIBERO 上使用 GRPO 训练 StarVLA（QwenOFT）。昇腾使用相同的 checkpoint 与任务配置，并通过 OSMesa 在 CPU 上渲染。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 安装器将 starVLA 固定为 ``starVLA-v1.6``，并在 aarch64 上从源码构建 ``decord``。如果通过 ``STARVLA_PATH`` 复用上游代码目录，也需确保其版本为 ``starVLA-v1.6``。
+
+使用昇腾 LIBERO 容器，或已安装 CANN 与 NPU 驱动的宿主机：
+
+.. include:: _ascend_libero.rst
+
+在容器内使用 RLinf 代码创建 StarVLA 环境，也可以直接在昇腾宿主机上运行相同命令：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model starvla --env libero
+   source .venv/bin/activate
+
+国内下载可添加 ``--use-mirror``。安装器会安装匹配的 ``torch-npu`` 包，并跳过 CUDA flash-attention。
+
+按上文下载 StarVLA checkpoint 与 Qwen2.5-VL 基座模型。在 checkpoint 的 ``config.yaml`` 中，将 ``framework.qwenvl.base_vlm`` 设置为基座模型的本地路径；在 ``examples/embodiment/config/libero_spatial_grpo_starvla.yaml`` 中，将 ``actor.model.model_path`` 与 ``rollout.model.model_path`` 均设置为 StarVLA checkpoint 的本地目录。
+
+在已激活的环境中启用软件渲染：
+
+.. include:: _libero_osmesa.rst
+
+默认配置使用一个节点，将 actor、rollout 和环境 worker 放置在所有可用设备上。根据 NPU 数量与显存调整 ``cluster.component_placement``、``actor.micro_batch_size``、``actor.global_batch_size``，以及训练和评估的 ``total_num_envs``，然后启动 LIBERO Spatial 训练：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
 可视化与结果
 ----------------------------------------

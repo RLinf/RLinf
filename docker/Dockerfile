@@ -6,9 +6,9 @@ ARG PLATFORM=nvidia
 # Per-platform runtime versions. Override these for common CUDA/ROCm/CANN bumps, or
 # override the full base-image args below for a different image family/Ubuntu.
 ARG CUDA_VER=12.8.1
-ARG ROCM_VER=6.4
+ARG ROCM_VER=7.2
 ARG ROCM_ARCHS=gfx90a;gfx942
-ARG CANN_VER=9.0.0-910b
+ARG CANN_VER=9.1.1-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
 ARG UBUNTU_VER=22.04
 # Registry prefix for the Docker Hub base images, with a trailing slash.
@@ -56,7 +56,6 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-wan
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-libero
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberopro
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
@@ -228,7 +227,8 @@ RUN chmod +x /usr/local/bin/download_assets
 ##################################################################################################
 FROM embodied-common-image AS embodied-maniskill_libero-image
 
-# Install openvla env
+# Install the model envs; every platform builds the same image. FastWAM supports
+# LIBERO but not ManiSkill.
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env maniskill_libero && \
@@ -237,7 +237,11 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t_n1d7 --model gr00t_n1d7 --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dexbotic --model dexbotic --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env libero
 
 RUN source switch_env openvla && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
@@ -434,33 +438,6 @@ FROM embodied-common-image AS embodied-embodichain-image
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv embodichain --env embodichain
 
 RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
-
-##################################################################################################
-# Embodied: LIBERO
-##################################################################################################
-FROM embodied-common-image AS embodied-libero-image
-
-# Clone the LIBERO env repo once into a shared path; every model below reuses it
-# (via clone_or_reuse_repo) instead of re-downloading it per venv.
-ENV LIBERO_PATH=/opt/envs/LIBERO
-
-# Ascend supports the openvla, openvla-oft and gr00t models only.
-RUN if [ "${RLINF_PLATFORM}" = "ascend" ]; then \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero; \
-    else \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero; \
-    fi
-
-# Set default env
-RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: LIBERO-Pro

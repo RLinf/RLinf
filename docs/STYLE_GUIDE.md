@@ -350,6 +350,31 @@ Every benchmark (env) or model example page must:
    the H1 in a subtitle, and give any `:ref:` that points at a renamed section
    explicit link text so it still reads right.
 
+### Non-CUDA hardware sections
+
+A recipe page that runs on more than one accelerator gets one dedicated section
+for the non-CUDA platforms, not notes scattered through the CUDA instructions.
+
+- **One section, one anchor.** Put it after the CUDA install and launch steps,
+  name it `Run on Different Hardware Backends`, and give it a `:ref:` anchor
+  (`_<recipe>-hardware`) so the Hardware card and the support table can link to
+  it. Inside, use one H3 per platform, named for the vendor stack: `AMD ROCm`,
+  `Huawei Ascend CANN`, `Moore Threads MUSA`.
+- **Each platform subsection covers the same four things**, in this order: how to
+  start the container or install natively, what the platform changes about the
+  run (device flags, rendering, simulator backend), the launch command, and the
+  limits a reader would otherwise discover at runtime.
+- **Container and install blocks are partials.** The commands repeat across
+  recipes, so they live in `_<platform>_<env>.rst` (`_amd_libero.rst`,
+  `_ascend_libero.rst`, `_musa_maniskill.rst`) and are pulled in with
+  `.. include::`. Recipe-specific tokens (`--model`, config name, checkpoint)
+  stay on the page.
+- **State the hardware the page was verified on**, and say what is untested
+  rather than implying every platform behaves alike.
+- **Keep the support table honest.** Every platform with a subsection appears in
+  the `vla_wam_index` hardware row for that recipe, and every platform in that
+  row has a subsection.
+
 ### Page anatomy (recipe / example pages)
 
 ```rst
