@@ -59,7 +59,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 验证与断点续训
 --------------
 
-设置 ``data.val_data_paths``（一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。``actor.eval_batch_size`` 是每个 rank 的验证 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的验证 batch 数。
+设置 ``data.val_data_paths``（一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。``actor.eval_batch_size`` 是每个 rank 的验证 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的验证 batch 数。LeRobot 风格的读取器按 split 选取 episode：验证默认读 ``val`` split，如果验证集是一个只有 train split 的独立数据集，请设置 ``data.openwam_val_split: train``（验证集为空时会在启动阶段直接报错）。
 
 checkpoint 会把 dataloader、sampler（含 shuffle 的 epoch）和随机数状态与模型权重一起保存，因此 ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` 会从下一个未见过的 batch 继续，而不是重头开始这一轮数据。
 

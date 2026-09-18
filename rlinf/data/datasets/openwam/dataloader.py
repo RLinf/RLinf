@@ -66,7 +66,11 @@ def build_openwam_sft_dataloader(
     if not hasattr(native_cfg, "dataloader"):
         raise ValueError(f"OpenWAM config has no dataloader section: {config_path}")
     native_dl = native_cfg.dataloader.copy()
-    native_dl.split = "val" if eval_dataset else "train"
+    # LeRobot-style readers select episodes by split. A validation root that only
+    # ships a train split (the usual case for a separate held-out dataset) is
+    # read with data.openwam_val_split=train.
+    val_split = str(OmegaConf.select(cfg, "data.openwam_val_split", default="val"))
+    native_dl.split = val_split if eval_dataset else "train"
     overrides = OmegaConf.select(cfg, "data.openwam", default=None)
     if overrides is not None:
         native_dl = OmegaConf.merge(native_dl, overrides)
@@ -81,6 +85,16 @@ def build_openwam_sft_dataloader(
         dl_cfg.dataset_dir = dataset_dir
         datasets.append(build_dataset(dl_cfg, split=str(native_dl.split)))
     per_dataset = {d: len(ds) for d, ds in zip(dataset_dirs, datasets)}
+    if sum(per_dataset.values()) == 0:
+        raise ValueError(
+            f"OpenWAM {native_dl.split} dataset is empty: {per_dataset}. "
+            + (
+                "If the validation root only has a train split, set "
+                "data.openwam_val_split=train."
+                if eval_dataset
+                else "Check data.train_data_paths and the checkpoint's dataloader config."
+            )
+        )
     dataset = (
         datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
     )

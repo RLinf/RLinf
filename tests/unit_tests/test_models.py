@@ -2037,7 +2037,10 @@ def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
         def __getitem__(self, index):
             return {"root": self.root, "index": index}
 
+    calls = []
+
     def fake_build_dataset(dl_cfg, split):
+        calls.append((dl_cfg.dataset_dir, split))
         return _FakeDataset(dl_cfg.dataset_dir, lengths[dl_cfg.dataset_dir])
 
     registry = ModuleType("openwam.dataloader.registry")
@@ -2052,7 +2055,7 @@ def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
     (ckpt / "config.yaml").write_text(
         "dataloader:\n  type: libero\n  dataset_dir: /unused\n  num_frames: 33\n"
     )
-    return OmegaConf.create(
+    cfg = OmegaConf.create(
         {
             "actor": {
                 "model": {"model_path": str(ckpt)},
@@ -2062,6 +2065,7 @@ def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
             "data": {},
         }
     )
+    return cfg, calls
 
 
 def test_openwam_sft_dataloader_checkpoints_and_resumes_mid_epoch(
@@ -2073,7 +2077,7 @@ def test_openwam_sft_dataloader_checkpoints_and_resumes_mid_epoch(
 
     from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
 
-    cfg = _openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
+    cfg, _ = _openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
     loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
     assert isinstance(loader, StatefulDataLoader)
 
@@ -2097,6 +2101,29 @@ def test_openwam_sft_dataloader_checkpoints_and_resumes_mid_epoch(
     remaining = [indices(batch) for batch in resumed]
     assert consumed + remaining == reference[1]
     assert resumed.sampler.epoch == 1
+
+
+def test_openwam_sft_validation_split_is_configurable_and_never_empty(
+    tmp_path, monkeypatch
+):
+    """Validation reads the val split by default and fails loudly when empty."""
+    pytest.importorskip("torchdata")
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    cfg, calls = _openwam_fake_dataset_cfg(
+        tmp_path, monkeypatch, {"/train": 6, "/held-out": 4, "/no-val": 0}
+    )
+    build_openwam_sft_dataloader(cfg, 1, 0, "/train")
+    build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
+    assert calls == [("/train", "train"), ("/held-out", "val")]
+
+    # A LeRobot root without a val split yields nothing: refuse instead of
+    # silently reporting an empty validation pass.
+    with pytest.raises(ValueError, match="openwam_val_split=train"):
+        build_openwam_sft_dataloader(cfg, 1, 0, "/no-val", eval_dataset=True)
+    cfg.data.openwam_val_split = "train"
+    _, info = build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
+    assert calls[-1] == ("/held-out", "train") and info["num_samples"] == 4
 
 
 def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
