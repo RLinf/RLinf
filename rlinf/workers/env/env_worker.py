@@ -482,6 +482,33 @@ class EnvWorker(Worker):
             return
         await env.wait_delay()
 
+    @staticmethod
+    def _valid_action_mask_from_infos(
+        infos: Any,
+        *,
+        num_envs: int,
+        chunk_size: int,
+    ) -> torch.Tensor | None:
+        if not isinstance(infos, dict):
+            return None
+
+        executed_counts = infos.pop("executed_action_count", None)
+        final_info = infos.get("final_info")
+        if executed_counts is None and isinstance(final_info, dict):
+            executed_counts = final_info.pop("executed_action_count", None)
+        if executed_counts is None:
+            return None
+
+        if isinstance(executed_counts, torch.Tensor):
+            raw_counts = executed_counts.detach().cpu()
+        else:
+            raw_counts = torch.as_tensor(np.asarray(executed_counts))
+
+        raw_counts = raw_counts.reshape(-1)
+        counts = raw_counts.to(dtype=torch.long)
+        action_indices = torch.arange(chunk_size, dtype=torch.long).unsqueeze(0)
+        return action_indices < counts.unsqueeze(1)
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
         self,
@@ -514,8 +541,16 @@ class EnvWorker(Worker):
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
-        if isinstance(infos_list, (list, tuple)):
-            infos = infos_list[-1] if infos_list else None
+        infos = (
+            infos_list[-1]
+            if isinstance(infos_list, (list, tuple)) and infos_list
+            else infos_list
+        )
+        valid_action_mask = self._valid_action_mask_from_infos(
+            infos,
+            num_envs=chunk_terminations.shape[0],
+            chunk_size=len(obs_list) if isinstance(obs_list, (list, tuple)) else 1,
+        )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -573,6 +608,7 @@ class EnvWorker(Worker):
             "terminations": chunk_terminations,
             "truncations": chunk_truncations,
             "infos_list": infos_list,
+            "valid_action_mask": valid_action_mask,
         }
         return env_output, env_info, chunk_step_payload
 
@@ -599,8 +635,16 @@ class EnvWorker(Worker):
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
-        if isinstance(infos_list, (list, tuple)):
-            infos = infos_list[-1] if infos_list else None
+        infos = (
+            infos_list[-1]
+            if isinstance(infos_list, (list, tuple)) and infos_list
+            else infos_list
+        )
+        self._valid_action_mask_from_infos(
+            infos,
+            num_envs=chunk_terminations.shape[0],
+            chunk_size=len(obs_list) if isinstance(obs_list, (list, tuple)) else 1,
+        )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -1230,9 +1274,17 @@ class EnvWorker(Worker):
                     await self._maybe_wait_env_delay(stage_id)
                     stage_builder = self.trajectory_builders[stage_id]
                     if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
+                        chunk_episode_payload = chunk_step_payload
+                        if chunk_step_payload["valid_action_mask"] is not None:
+                            obs_list = chunk_step_payload["obs_list"]
+                            chunk_episode_payload = {
+                                **chunk_step_payload,
+                                "obs_list": [curr_obs, *obs_list[:-1]],
+                                "observations_are_action_aligned": True,
+                            }
                         stage_builder.append_chunk_episode_data(
                             policy_output=policy_output,
-                            **chunk_step_payload,
+                            **chunk_episode_payload,
                         )
                     env_batch = env_output.to_dict()
                     skip_rollout_send = self.smooth_intervene.on_chunk_done(
