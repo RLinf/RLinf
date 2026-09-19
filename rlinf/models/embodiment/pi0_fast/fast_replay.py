@@ -19,15 +19,6 @@ from typing import Any
 import torch
 
 
-def _language_token_keys() -> tuple[str, str]:
-    from lerobot.utils.constants import (
-        OBS_LANGUAGE_ATTENTION_MASK,
-        OBS_LANGUAGE_TOKENS,
-    )
-
-    return OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
-
-
 def compute_token_logprobs(
     logits: torch.Tensor,
     action_tokens: torch.Tensor,
@@ -75,193 +66,57 @@ def compute_token_logprobs(
     return logprobs, entropy
 
 
-def _first_tensor_device(batch: dict[str, Any]) -> torch.device | None:
-    for value in batch.values():
-        if torch.is_tensor(value):
-            return value.device
-        if isinstance(value, dict):
-            device = _first_tensor_device(value)
-            if device is not None:
-                return device
-    return None
+# LeRobot 8a74e0ac (the documented pi0_fast pin) keeps prepare_attention_masks_4d
+# helper on PI0FastPytorch. Later LeRobot extracted it to lerobot.policies.common,
+# which does not exist at that commit.
+_OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38
 
 
-def _policy_device(policy, batch: dict[str, Any] | None = None) -> torch.device:
-    first_param = next(policy.parameters(), None)
-    if first_param is not None:
-        return first_param.device
-
-    if batch is not None:
-        batch_device = _first_tensor_device(batch)
-        if batch_device is not None:
-            return batch_device
-
-    model = getattr(policy, "model", None)
-    if model is not None:
-        first_model_param = next(model.parameters(), None)
-        if first_model_param is not None:
-            return first_model_param.device
-
-    return torch.device("cpu")
+def _prepare_attention_masks_4d(
+    att_2d_masks: torch.Tensor, dtype: torch.dtype | None = None
+) -> torch.Tensor:
+    """Expand boolean 2D attention masks to the additive 4D transformer layout."""
+    att_2d_masks_4d = att_2d_masks[:, None, :, :]
+    result = torch.where(att_2d_masks_4d, 0.0, _OPENPI_ATTENTION_MASK_VALUE)
+    if dtype is not None:
+        result = result.to(dtype=dtype)
+    return result
 
 
-def _policy_floating_dtype(policy) -> torch.dtype | None:
-    for param in policy.parameters():
-        if param.is_floating_point():
-            return param.dtype
+def _prepare_sample_inputs(policy, batch: dict[str, Any]):
+    """Prepare LeRobot sample_actions_fast* inputs without appending BOS.
 
-    model = getattr(policy, "model", None)
-    if model is not None:
-        for param in model.parameters():
-            if param.is_floating_point():
-                return param.dtype
-
-    return None
-
-
-def _preprocess_images(
-    policy, batch: dict[str, Any]
-) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-    images = []
-    img_masks = []
-    device = _policy_device(policy, batch)
-    target_dtype = _policy_floating_dtype(policy)
-
-    present_img_keys = [key for key in policy.config.image_features if key in batch]
-    missing_img_keys = [key for key in policy.config.image_features if key not in batch]
-
-    if len(present_img_keys) == 0:
-        raise ValueError(
-            "All image features are missing from the batch. At least one expected. "
-            f"(batch: {batch.keys()}) (image_features: {policy.config.image_features})"
-        )
-
-    img = None
-    mask = None
-    for key in present_img_keys:
-        img = batch[key]
-        if img.device != device:
-            img = img.to(device)
-        if img.dtype != torch.float32:
-            img = img.to(torch.float32)
-
-        is_channels_first = img.shape[1] == 3
-        if is_channels_first:
-            img = img.permute(0, 2, 3, 1)
-        if img.shape[1:3] != policy.config.image_resolution:
-            from lerobot.policies.pi0_fast.modeling_pi0_fast import (
-                resize_with_pad_torch,
-            )
-
-            img = resize_with_pad_torch(img, *policy.config.image_resolution)
-        img = img * 2.0 - 1.0
-        if is_channels_first:
-            img = img.permute(0, 3, 1, 2)
-        if target_dtype is not None and img.dtype != target_dtype:
-            img = img.to(dtype=target_dtype)
-
-        images.append(img)
-        mask = torch.ones(img.shape[0], dtype=torch.bool, device=device)
-        img_masks.append(mask)
-
-    if img is None or mask is None:
-        raise ValueError("pi0_fast image preprocessing requires at least one image.")
-
-    for _ in range(len(missing_img_keys)):
-        images.append(torch.ones_like(img) * -1)
-        img_masks.append(torch.zeros_like(mask))
-
-    return images, img_masks
-
-
-def _ensure_prefix_precision(model, prefix_embs: torch.Tensor) -> torch.Tensor:
-    layer = model.paligemma_with_expert.paligemma.language_model.layers[0]
-    if layer.self_attn.q_proj.weight.dtype == torch.bfloat16:
-        return prefix_embs.to(dtype=torch.bfloat16)
-    return prefix_embs
-
-
-def _condition_prefix(policy, batch: dict[str, Any]):
-    token_key, mask_key = _language_token_keys()
-    device = _policy_device(policy, batch)
-    images, img_masks = _preprocess_images(policy, batch)
-    tokens = batch[token_key].to(device=device, dtype=torch.long)
-    masks = batch[mask_key].to(device=device, dtype=torch.bool)
-    bos_token = torch.full(
-        (tokens.shape[0], 1),
-        policy._paligemma_tokenizer.bos_token_id,
-        dtype=torch.long,
-        device=device,
-    )
-    tokens = torch.cat([tokens, bos_token], dim=1)
-    masks = torch.cat(
-        [masks, torch.ones((masks.shape[0], 1), dtype=torch.bool, device=device)],
-        dim=1,
+    ``PI0FastPytorch.sample_actions_fast`` / ``sample_actions_fast_kv_cache``
+    append the BOS token internally. Replay still has to add it itself because
+    ``embed_prefix_fast`` does not.
+    """
+    images, img_masks = policy._preprocess_images(batch)
+    device = next(policy.parameters()).device
+    tokens = batch["observation.language.tokens"].to(device=device, dtype=torch.long)
+    masks = batch["observation.language.attention_mask"].to(
+        device=device, dtype=torch.bool
     )
     return images, img_masks, tokens, masks
 
 
-def _forward_embeds(model, prefix_embs, prefix_pad_masks, prefix_att_masks):
-    position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-    att_4d = model._prepare_attention_masks_4d(
-        prefix_att_masks, dtype=prefix_embs.dtype
-    )
-    (prefix_out, _), _ = model.paligemma_with_expert.forward(
-        attention_mask=att_4d,
-        position_ids=position_ids,
-        past_key_values=None,
-        inputs_embeds=[prefix_embs, None],
-        use_cache=False,
-        adarms_cond=[None, None],
-    )
-    return prefix_out
+def _generation_mask_from_native_tokens(
+    action_tokens: torch.Tensor, *, greedy: bool
+) -> torch.Tensor:
+    """Mark tokens actually emitted by LeRobot sampling.
 
-
-def _sample_next_token(
-    logits: torch.Tensor, *, temperature: float, do_sample: bool = True
-) -> tuple[torch.Tensor, torch.Tensor]:
-    if do_sample and temperature > 0:
-        sampling_logits = logits / temperature
-        probs = torch.softmax(sampling_logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-    else:
-        sampling_logits = logits
-        next_token = torch.argmax(logits, dim=-1, keepdim=True)
-    logprob = torch.log_softmax(sampling_logits.float(), dim=-1).gather(
-        dim=-1, index=next_token
-    )
-    return next_token, logprob.squeeze(-1)
-
-
-def _action_prefix_token_tensor(policy, device: torch.device) -> torch.Tensor:
-    prefix_ids = policy._paligemma_tokenizer.encode(
-        "Action: ", add_special_tokens=False
-    )
-    if len(prefix_ids) == 0:
-        raise ValueError("pi0_fast tokenizer produced an empty Action prefix.")
-    return torch.tensor(prefix_ids, dtype=torch.long, device=device)
-
-
-def _end_marker_token_tensor(policy, device: torch.device) -> torch.Tensor:
-    end_ids = policy._paligemma_tokenizer.encode("|", add_special_tokens=False)
-    if len(end_ids) == 0:
-        raise ValueError("pi0_fast tokenizer produced an empty action end marker.")
-    return torch.tensor(end_ids, dtype=torch.long, device=device)
-
-
-def _init_action_token_buffers(
-    *,
-    batch_size: int,
-    max_action_tokens: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    action_tokens = torch.zeros(
-        (batch_size, max_action_tokens), dtype=torch.long, device=device
-    )
-    action_token_mask = torch.ones(
-        (batch_size, max_action_tokens), dtype=torch.bool, device=device
-    )
-    return action_tokens, action_token_mask
+    Greedy KV-cache decoding may stop once every row has emitted ``|`` and leave
+    a shared zero-filled suffix. Stochastic decoding always fills the buffer, so
+    every position is treated as generated.
+    """
+    if not greedy:
+        return torch.ones_like(action_tokens, dtype=torch.bool)
+    trailing_pad_columns = (action_tokens == 0).all(dim=0)
+    generated = torch.ones_like(action_tokens, dtype=torch.bool)
+    if bool(trailing_pad_columns.all()):
+        return torch.zeros_like(action_tokens, dtype=torch.bool)
+    last_generated = int((~trailing_pad_columns).nonzero(as_tuple=False)[-1].item())
+    generated[:, last_generated + 1 :] = False
+    return generated
 
 
 def _find_first_subsequence(values: list[int], needle: list[int], *, start: int) -> int:
@@ -271,15 +126,6 @@ def _find_first_subsequence(values: list[int], needle: list[int], *, start: int)
     return -1
 
 
-def _bpe_vocab_size(policy) -> int:
-    tokenizer = policy.action_tokenizer.bpe_tokenizer
-    if hasattr(tokenizer, "get_vocab_size"):
-        return int(tokenizer.get_vocab_size())
-    if hasattr(tokenizer, "get_vocab"):
-        return len(tokenizer.get_vocab())
-    raise AttributeError("FAST BPE tokenizer does not expose its vocabulary size.")
-
-
 def build_action_sequence_metadata(
     policy: Any,
     action_tokens: torch.Tensor,
@@ -287,9 +133,20 @@ def build_action_sequence_metadata(
 ) -> dict[str, torch.Tensor]:
     """Validate native FAST output and build the PPO mask through the first `|`."""
     device = action_tokens.device
-    prefix_ids = _action_prefix_token_tensor(policy, device).tolist()
-    end_ids = _end_marker_token_tensor(policy, device).tolist()
-    bpe_vocab_size = _bpe_vocab_size(policy)
+    tokenizer = policy._paligemma_tokenizer
+    prefix_ids = tokenizer.encode("Action: ", add_special_tokens=False)
+    if not prefix_ids:
+        raise ValueError("pi0_fast tokenizer produced an empty Action prefix.")
+    end_ids = tokenizer.encode("|", add_special_tokens=False)
+    if not end_ids:
+        raise ValueError("pi0_fast tokenizer produced an empty action end marker.")
+    bpe = policy.action_tokenizer.bpe_tokenizer
+    if hasattr(bpe, "get_vocab_size"):
+        bpe_vocab_size = int(bpe.get_vocab_size())
+    elif hasattr(bpe, "get_vocab"):
+        bpe_vocab_size = len(bpe.get_vocab())
+    else:
+        raise AttributeError("FAST BPE tokenizer does not expose its vocabulary size.")
     paligemma_vocab_size = int(policy._paligemma_tokenizer.vocab_size)
     fast_skip_tokens = int(policy.config.fast_skip_tokens)
 
@@ -388,66 +245,6 @@ def safe_detokenize_actions(
     return actions, metadata
 
 
-def _append_action_token(model, prefix_embs, prefix_pad_masks, prefix_att_masks, token):
-    token_emb = model.paligemma_with_expert.embed_language_tokens(token)
-    token_emb = _ensure_prefix_precision(model, token_emb)
-    prefix_embs = torch.cat([prefix_embs, token_emb], dim=1)
-
-    bsz = prefix_pad_masks.shape[0]
-    device = prefix_pad_masks.device
-    prefix_pad_masks = torch.cat(
-        [prefix_pad_masks, torch.ones((bsz, 1), dtype=torch.bool, device=device)],
-        dim=1,
-    )
-
-    old_len = prefix_att_masks.shape[1]
-    new_len = old_len + 1
-    new_att_masks = torch.zeros(
-        (bsz, new_len, new_len), dtype=torch.bool, device=device
-    )
-    new_att_masks[:, :old_len, :old_len] = prefix_att_masks
-    new_att_masks[:, -1, :] = prefix_pad_masks
-    return prefix_embs, prefix_pad_masks, new_att_masks
-
-
-def _advance_kv_cache(
-    model,
-    lm_head,
-    past_key_values,
-    current_pad_mask,
-    token,
-    *,
-    embedding_dtype: torch.dtype,
-):
-    token_emb = model.paligemma_with_expert.embed_language_tokens(token)
-    if embedding_dtype == torch.bfloat16:
-        token_emb = token_emb.to(dtype=torch.bfloat16)
-
-    bsz = current_pad_mask.shape[0]
-    device = current_pad_mask.device
-    current_pad_mask = torch.cat(
-        [
-            current_pad_mask,
-            torch.ones((bsz, 1), dtype=torch.bool, device=device),
-        ],
-        dim=1,
-    )
-    current_position_ids = (current_pad_mask.sum(dim=1, keepdim=True) - 1).long()
-    step_att_mask = model._prepare_attention_masks_4d(
-        current_pad_mask.unsqueeze(1), dtype=token_emb.dtype
-    )
-    (step_out, _), past_key_values = model.paligemma_with_expert.forward(
-        attention_mask=step_att_mask,
-        position_ids=current_position_ids,
-        past_key_values=past_key_values,
-        inputs_embeds=[token_emb, None],
-        use_cache=True,
-        adarms_cond=[None, None],
-    )
-    logits = lm_head(step_out[:, -1, :])
-    return logits, past_key_values, current_pad_mask
-
-
 def generate_action_tokens_with_logprobs(
     policy: Any,
     batch: dict[str, Any],
@@ -460,6 +257,10 @@ def generate_action_tokens_with_logprobs(
     compute_logprobs: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Generate a native FAST action sequence and optional behavior logprobs.
+
+    Sampling is delegated to LeRobot's ``sample_actions_fast`` /
+    ``sample_actions_fast_kv_cache``. RLinf only detokenizes, builds the GRPO
+    mask, and teacher-forces the sampled tokens for behavior logprobs.
 
     Args:
         policy: LeRobot PI0-Fast policy.
@@ -475,64 +276,35 @@ def generate_action_tokens_with_logprobs(
         Generated tokens, masks, decoded actions, validity metadata, and optional
         behavior log probabilities.
     """
-    if getattr(getattr(policy, "config", None), "use_kv_cache", True):
-        model = getattr(policy, "model", None)
-        restore_gradient_checkpointing = bool(
-            getattr(model, "gradient_checkpointing_enabled", False)
-        )
-        try:
-            if restore_gradient_checkpointing:
-                model.gradient_checkpointing_disable()
-            return _generate_action_tokens_with_logprobs_kv_cache(
-                policy,
-                batch,
-                max_action_tokens=max_action_tokens,
-                num_action_chunks=num_action_chunks,
-                action_dim=action_dim,
-                temperature=temperature,
-                do_sample=do_sample,
-                compute_logprobs=compute_logprobs,
-            )
-        finally:
-            if restore_gradient_checkpointing:
-                model.gradient_checkpointing_enable()
-
+    sample_temperature = temperature if do_sample and temperature > 0 else 0.0
+    images, img_masks, tokens, masks = _prepare_sample_inputs(policy, batch)
     model = policy.model
-    images, img_masks, tokens, masks = _condition_prefix(policy, batch)
-    bsz = tokens.shape[0]
-    device = tokens.device
-    lm_head = model.paligemma_with_expert.paligemma.lm_head
-
-    prefix_embs, prefix_pad_masks, prefix_att_masks, _, _ = model.embed_prefix_fast(
-        images,
-        img_masks,
-        tokens,
-        masks,
-        fast_action_tokens=None,
-        fast_action_masks=None,
+    use_kv_cache = bool(getattr(policy.config, "use_kv_cache", True))
+    sample_fn = (
+        model.sample_actions_fast_kv_cache
+        if use_kv_cache
+        else model.sample_actions_fast
     )
-    prefix_embs = _ensure_prefix_precision(model, prefix_embs)
-
-    action_tokens, action_token_mask = _init_action_token_buffers(
-        batch_size=bsz,
-        max_action_tokens=max_action_tokens,
-        device=device,
+    restore_gradient_checkpointing = use_kv_cache and bool(
+        getattr(model, "gradient_checkpointing_enabled", False)
     )
-
-    for step in range(max_action_tokens):
-        prefix_out = _forward_embeds(
-            model, prefix_embs, prefix_pad_masks, prefix_att_masks
+    try:
+        if restore_gradient_checkpointing:
+            model.gradient_checkpointing_disable()
+        action_tokens = sample_fn(
+            images,
+            img_masks,
+            tokens,
+            masks,
+            max_decoding_steps=max_action_tokens,
+            temperature=sample_temperature,
         )
-        logits = lm_head(prefix_out[:, -1, :])
-        next_token, _ = _sample_next_token(
-            logits, temperature=temperature, do_sample=do_sample
-        )
-        action_tokens[:, step] = next_token.squeeze(-1)
-        if step < max_action_tokens - 1:
-            prefix_embs, prefix_pad_masks, prefix_att_masks = _append_action_token(
-                model, prefix_embs, prefix_pad_masks, prefix_att_masks, next_token
-            )
-
+    finally:
+        if restore_gradient_checkpointing:
+            model.gradient_checkpointing_enable()
+    action_token_mask = _generation_mask_from_native_tokens(
+        action_tokens, greedy=sample_temperature <= 0
+    )
     actions, metadata = safe_detokenize_actions(
         policy,
         action_tokens,
@@ -557,101 +329,7 @@ def generate_action_tokens_with_logprobs(
             replay_logits,
             action_tokens,
             metadata["action_logprob_mask"],
-            temperature=temperature,
-            compute_entropy=False,
-        )
-        result["token_logprobs"] = token_logprobs
-    return result
-
-
-def _generate_action_tokens_with_logprobs_kv_cache(
-    policy,
-    batch: dict[str, Any],
-    *,
-    max_action_tokens: int,
-    num_action_chunks: int,
-    action_dim: int,
-    temperature: float,
-    do_sample: bool = True,
-    compute_logprobs: bool = True,
-) -> dict[str, torch.Tensor]:
-    model = policy.model
-    images, img_masks, tokens, masks = _condition_prefix(policy, batch)
-    bsz = tokens.shape[0]
-    device = tokens.device
-    lm_head = model.paligemma_with_expert.paligemma.lm_head
-
-    prefix_embs, prefix_pad_masks, prefix_att_masks, _, _ = model.embed_prefix_fast(
-        images,
-        img_masks,
-        tokens,
-        masks,
-        fast_action_tokens=None,
-        fast_action_masks=None,
-    )
-    prefix_embs = _ensure_prefix_precision(model, prefix_embs)
-
-    position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-    att_4d = model._prepare_attention_masks_4d(
-        prefix_att_masks, dtype=prefix_embs.dtype
-    )
-    (prefix_out, _), past_key_values = model.paligemma_with_expert.forward(
-        attention_mask=att_4d,
-        position_ids=position_ids,
-        past_key_values=None,
-        inputs_embeds=[prefix_embs, None],
-        use_cache=True,
-        adarms_cond=[None, None],
-    )
-
-    logits = lm_head(prefix_out[:, -1, :])
-    action_tokens, action_token_mask = _init_action_token_buffers(
-        batch_size=bsz,
-        max_action_tokens=max_action_tokens,
-        device=device,
-    )
-    current_pad_mask = prefix_pad_masks
-
-    for step in range(max_action_tokens):
-        next_token, _ = _sample_next_token(
-            logits, temperature=temperature, do_sample=do_sample
-        )
-        action_tokens[:, step] = next_token.squeeze(-1)
-        if step < max_action_tokens - 1:
-            logits, past_key_values, current_pad_mask = _advance_kv_cache(
-                model,
-                lm_head,
-                past_key_values,
-                current_pad_mask,
-                next_token,
-                embedding_dtype=prefix_embs.dtype,
-            )
-
-    actions, metadata = safe_detokenize_actions(
-        policy,
-        action_tokens,
-        action_horizon=num_action_chunks,
-        action_dim=action_dim,
-        generation_mask=action_token_mask,
-    )
-    result = {
-        "actions": actions,
-        "action_tokens": action_tokens,
-        "action_token_mask": action_token_mask,
-        "action_logprob_mask": metadata["action_logprob_mask"],
-        "prefix_valid": metadata["prefix_valid"],
-        "end_marker_present": metadata["end_marker_present"],
-        "decode_valid": metadata["decode_valid"],
-    }
-    if compute_logprobs:
-        replay_logits, _ = replay_action_logits(
-            policy, batch, action_tokens, action_token_mask
-        )
-        token_logprobs, _ = compute_token_logprobs(
-            replay_logits,
-            action_tokens,
-            metadata["action_logprob_mask"],
-            temperature=temperature,
+            temperature=temperature if temperature > 0 else 1.0,
             compute_entropy=False,
         )
         result["token_logprobs"] = token_logprobs
@@ -676,7 +354,21 @@ def replay_action_logits(
         Per-token logits and the final hidden state used for diagnostics.
     """
     model = policy.model
-    images, img_masks, tokens, masks = _condition_prefix(policy, forward_inputs)
+    images, img_masks, tokens, masks = _prepare_sample_inputs(policy, forward_inputs)
+    bos_token = torch.full(
+        (tokens.shape[0], 1),
+        policy._paligemma_tokenizer.bos_token_id,
+        dtype=torch.long,
+        device=tokens.device,
+    )
+    tokens = torch.cat([tokens, bos_token], dim=1)
+    masks = torch.cat(
+        [
+            masks,
+            torch.ones((masks.shape[0], 1), dtype=torch.bool, device=tokens.device),
+        ],
+        dim=1,
+    )
     lm_head = model.paligemma_with_expert.paligemma.lm_head
     action_tokens = action_tokens.to(device=tokens.device, dtype=torch.long)
     action_token_mask = action_token_mask.to(device=tokens.device, dtype=torch.bool)
@@ -692,8 +384,22 @@ def replay_action_logits(
             fast_action_masks=None if single_token else action_token_mask[:, :-1],
         )
     )
-    prefix_embs = _ensure_prefix_precision(model, prefix_embs)
-    prefix_out = _forward_embeds(model, prefix_embs, prefix_pad_masks, prefix_att_masks)
+    q_proj = model.paligemma_with_expert.paligemma.model.language_model.layers[
+        0
+    ].self_attn.q_proj
+    if q_proj.weight.dtype == torch.bfloat16:
+        prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
+
+    position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+    att_4d = _prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+    (prefix_out, _), _ = model.paligemma_with_expert.forward(
+        attention_mask=att_4d,
+        position_ids=position_ids,
+        past_key_values=None,
+        inputs_embeds=[prefix_embs, None],
+        use_cache=False,
+        adarms_cond=[None, None],
+    )
 
     if single_token:
         return lm_head(prefix_out[:, -1:, :]), prefix_out[:, -1, :]
