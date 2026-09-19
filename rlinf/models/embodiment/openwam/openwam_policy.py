@@ -66,6 +66,7 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
                 f"{inference_horizon} for num_frames={num_frames}"
             )
         self.architecture = engine.architecture
+        self._frozen_module_names: tuple[str, ...] = ()
         engine_cfg = getattr(engine, "cfg", None)
         dataloader_cfg = getattr(engine_cfg, "dataloader", None)
         self._multiview = bool(getattr(dataloader_cfg, "multiview", False))
@@ -107,6 +108,7 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         lambda_action: float = 1.0,
         encoder_model_path: str | None = None,
         inference_horizon: int | None = None,
+        runtime_dtype: torch.dtype | None = None,
     ) -> "OpenWAMPolicy":
         """Build OpenWAM's checkpoint loader and joint inference engine."""
         from omegaconf import OmegaConf
@@ -129,6 +131,19 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         cfg.inference.denoise_steps = denoise_steps
         cfg.inference.height = height
         cfg.inference.width = width
+        # ``num_frames`` is the raw action/state window.  Wan sees only every
+        # ``video_stride``-th frame, so preserve the native video contract when
+        # the checkpoint does not already record an explicit inference value.
+        if OmegaConf.select(cfg, "inference.video_num_frames", default=None) is None:
+            dataloader_cfg = OmegaConf.select(cfg, "dataloader", default=None)
+            if dataloader_cfg is not None:
+                raw_frames = int(
+                    OmegaConf.select(dataloader_cfg, "num_frames", default=num_frames)
+                )
+                video_stride = max(
+                    1, int(OmegaConf.select(dataloader_cfg, "video_stride", default=1))
+                )
+                cfg.inference.video_num_frames = (raw_frames - 1) // video_stride + 1
         # Evaluation only consumes actions: skip the VAE decode of the generated
         # video. JointInferenceEngine reads this switch from the top-level
         # cfg.optimization at construction, not from the per-call condition.
@@ -136,7 +151,7 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
             cfg.optimization = {}
         cfg.optimization.decode_video = False
         freeze_names = OmegaConf.select(cfg, "model.freeze", default=[]) or []
-        architecture.freeze_modules(list(freeze_names))
+        frozen_module_names = architecture.freeze_modules(list(freeze_names)) or []
         training_cfg = OmegaConf.select(cfg, "training", default=OmegaConf.create({}))
         architecture.init_training_schedulers(1000)
         training_runtime = {
@@ -172,7 +187,48 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
             device=device, dtype=torch_dtype or next(architecture.parameters()).dtype
         )
         model._training_runtime = training_runtime
+        model._frozen_module_names = tuple(frozen_module_names)
+        if runtime_dtype is not None:
+            model.set_runtime_dtype(runtime_dtype)
         return model
+
+    def set_runtime_dtype(self, dtype: torch.dtype | None) -> None:
+        """Set OpenWAM's input/runtime dtype without changing parameter storage.
+
+        FSDP keeps fp32 master parameters while casting the forward parameters
+        to its configured mixed-precision dtype. OpenWAM creates action and
+        proprio tensors from its cached runtime dtype, so that cache must follow
+        FSDP's compute dtype independently of the optimizer/master dtype.
+        """
+        if dtype is None:
+            return
+        owners = [self.architecture]
+        backbones = getattr(self.architecture, "backbones", None)
+        if backbones is not None:
+            owners.extend(backbones.values())
+        for owner in owners:
+            if hasattr(owner, "_dtype"):
+                owner._dtype = dtype
+
+    def _restore_frozen_eval(self) -> None:
+        """Keep native frozen subtrees in eval mode after a trainer ``train()``."""
+        get_submodule = getattr(self.architecture, "get_submodule", None)
+        if get_submodule is None:
+            return
+        for name in self._frozen_module_names:
+            try:
+                module = get_submodule(name)
+            except (AttributeError, KeyError):
+                continue
+            for submodule in module.modules():
+                submodule.training = False
+
+    def train(self, mode: bool = True):
+        """Set mode while preserving OpenWAM's frozen-module eval contract."""
+        super().train(mode)
+        if mode:
+            self._restore_frozen_eval()
+        return self
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         """Route ``fsdp_config.gradient_checkpointing`` to OpenWAM's runtime flags.
@@ -296,6 +352,15 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
                 "width": self.width,
                 "denoise_steps": self.denoise_steps,
             }
+            video_num_frames = getattr(
+                getattr(getattr(self.engine, "cfg", None), "inference", None),
+                "video_num_frames",
+                None,
+            )
+            if video_num_frames is not None:
+                # Omitting the key preserves the engine's native fallback;
+                # passing ``None`` would reach ``int(None)`` in JointInferenceEngine.
+                condition["video_num_frames"] = video_num_frames
             result = self.engine.generate(condition)
             actions.append(np.asarray(result["actions"]))
             results.append(result)
@@ -492,15 +557,14 @@ def _compose_observation_image(
     following slots of ``camera_layout``; missing cameras stay black, exactly
     like the dataset reader pads them.
     """
-    from openwam.dataloader.transforms.multiview import (
-        assemble_multiview_layout,
-        crop_and_resize,
-    )
+    from openwam.dataloader.transforms.multiview import assemble_multiview_layout
 
     if not multiview:
         if main_image.size == (width, height):
             return main_image
-        return crop_and_resize(main_image, height, width)
+        # Native single-view readers decode directly to (width, height); do not
+        # center-crop a square environment frame and discard its vertical view.
+        return main_image.resize((width, height), Image.Resampling.LANCZOS)
 
     frames = {camera_layout[0]: main_image}
     for slot, frame in zip(camera_layout[1:], _wrist_frames(wrist_image)):

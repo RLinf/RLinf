@@ -13,13 +13,16 @@
 # limitations under the License.
 import logging
 import os
+import shutil
+from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, torch_dtype_from_precision
+from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.utils import get_rng_state, set_rng_state
@@ -29,6 +32,39 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        self._openwam_normalization_stats_path: str | None = None
+        if self._is_openwam():
+            train_info = getattr(self, "data_config", None) or {}
+            eval_info = getattr(self, "eval_data_config", None) or {}
+            train_digest = train_info.get("normalization_stats_digest")
+            eval_digest = eval_info.get("normalization_stats_digest")
+            if train_digest and eval_digest and train_digest != eval_digest:
+                raise ValueError(
+                    "OpenWAM train and validation data use different normalization "
+                    "stats; configure one shared artifact for both splits."
+                )
+            self._openwam_normalization_stats_path = train_info.get(
+                "normalization_stats_path"
+            ) or eval_info.get("normalization_stats_path")
+
+    def model_provider_func(self):
+        """Build VLA models with OpenWAM's FSDP compute dtype."""
+        if self._is_openwam():
+            model_cfg = OmegaConf.create(
+                OmegaConf.to_container(self.cfg.actor.model, resolve=False)
+            )
+            model_cfg.runtime_dtype = self.cfg.actor.fsdp_config.mixed_precision.get(
+                "param_dtype", None
+            )
+            # Keep fp32 (or the configured master dtype) in parameter storage;
+            # OpenWAM's cached input/backbone runtime dtype is passed separately
+            # above so FSDP mixed precision can control compute without changing
+            # optimizer/master weights.
+            return get_model(
+                model_cfg,
+                torch_dtype=torch_dtype_from_precision(model_cfg.get("precision")),
+            )
+        return super().model_provider_func()
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
@@ -130,18 +166,35 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         max_batches = self.cfg.actor.get("eval_max_batches", None)
         with self.worker_timer():
             self.model.eval()
-            sums: dict[str, float] = {}
+            # Native losses are already means over each local batch. Accumulate
+            # weighted sums so uneven validation shards and a final short batch
+            # contribute according to their actual number of samples.
+            loss_keys = ("loss", "loss_video", "loss_action")
+            sums = dict.fromkeys(loss_keys, 0.0)
+            num_samples = 0
             num_batches = 0
             for index, batch in enumerate(self.eval_data_loader):
                 if max_batches is not None and index >= int(max_batches):
                     break
-                for key, value in self.get_eval_model_output(batch).items():
-                    sums[key] = sums.get(key, 0.0) + value
+                batch_size = len(batch)
+                outputs = self.get_eval_model_output(batch)
+                for key in loss_keys:
+                    sums[key] += float(outputs.get(key, 0.0)) * batch_size
+                num_samples += batch_size
                 num_batches += 1
             self.model.train()
-            metrics = {key: value / max(1, num_batches) for key, value in sums.items()}
-            metrics["num_batches"] = float(num_batches)
-            return all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
+            reduced = all_reduce_dict(
+                {
+                    **sums,
+                    "num_samples": float(num_samples),
+                    "num_batches": float(num_batches),
+                },
+                op=torch.distributed.ReduceOp.SUM,
+            )
+            total_samples = max(1.0, reduced.pop("num_samples"))
+            for key in loss_keys:
+                reduced[key] /= total_samples
+            return reduced
 
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
         with self.amp_context:
@@ -166,6 +219,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
+
+        if self._is_openwam() and self._openwam_normalization_stats_path:
+            stats_path = Path(self._openwam_normalization_stats_path)
+            if not stats_path.is_file():
+                raise FileNotFoundError(
+                    f"OpenWAM normalization stats artifact not found at checkpoint time: {stats_path}"
+                )
+            if self._rank == 0:
+                shutil.copy2(stats_path, Path(save_path) / "normalization_stats.npy")
+            torch.distributed.barrier()
 
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()

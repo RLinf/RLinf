@@ -245,6 +245,7 @@ def test_openwam_encoder_path_override_stages_checkpoint(tmp_path):
 
 def test_openwam_eval_inference_horizon_truncates_chunks():
     """Eval executes the first ``inference_horizon`` actions of a 32-step chunk."""
+    pytest.importorskip("openwam.dataloader.transforms.multiview")
 
     class _Engine:
         architecture = SimpleNamespace(action_dim=10)
@@ -2094,10 +2095,13 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
         def __init__(self):
             super().__init__()
             self.weight = torch.nn.Parameter(torch.zeros(1, dtype=torch.bfloat16))
+            self.frozen = torch.nn.Dropout(p=0.5)
+            self._dtype = torch.bfloat16
             self.calls = []
 
         def freeze_modules(self, names):
             self.calls.append(("freeze", list(names)))
+            return list(names)
 
         def init_training_schedulers(self, num_timesteps):
             self.calls.append(("schedulers", num_timesteps))
@@ -2117,7 +2121,13 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
     (ckpt / "config.yaml").write_text(
         "model:\n  video_backbone:\n    encoder:\n      name: wan22_vae\n"
     )
-    loaded_cfg = OmegaConf.create({"model": {"freeze": ["vae"]}, "inference": {}})
+    loaded_cfg = OmegaConf.create(
+        {
+            "model": {"freeze": ["frozen"]},
+            "dataloader": {"num_frames": 33, "video_stride": 4},
+            "inference": {},
+        }
+    )
     deploy = ModuleType("openwam.deploy")
     deploy.JointInferenceEngine = _Engine
     deploy.load_from_checkpoint_dir = lambda path, device, ckpt_name: (
@@ -2136,14 +2146,19 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
         height=384,
         width=320,
         denoise_steps=4,
+        runtime_dtype=torch.bfloat16,
     )
     cfg = engines[0].cfg
     # The engine reads the switch from the top-level optimization section.
     assert cfg.optimization.decode_video is False
     assert (cfg.inference.num_frames, cfg.inference.denoise_steps) == (33, 4)
-    assert policy.architecture.calls[0] == ("freeze", ["vae"])
+    assert cfg.inference.video_num_frames == 9
+    assert policy.architecture.calls[0] == ("freeze", ["frozen"])
     # precision reaches the weights: fp32 master weights for the SFT optimizer.
     assert next(policy.parameters()).dtype == torch.float32
+    assert policy.architecture._dtype == torch.bfloat16
+    policy.train()
+    assert policy.architecture.frozen.training is False
     # RLinf's fsdp_config.gradient_checkpointing reaches OpenWAM's runtime flags
     # and keeps the checkpoint's timestep boundaries.
     policy.gradient_checkpointing_enable()
@@ -2255,8 +2270,15 @@ def test_openwam_sft_validation_split_is_configurable_and_never_empty(
     _, info = build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
     assert calls[-1] == ("/held-out", "train") and info["num_samples"] == 4
 
-    with pytest.raises(ValueError, match="loader has zero batches"):
-        build_openwam_sft_dataloader(cfg, 2, 0, "/tiny")
+    # Validation shards are intentionally uneven: rank 0 receives the one
+    # sample and rank 1 has an empty local loader, while global aggregation can
+    # still account for the sample.
+    eval_loader, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tiny", eval_dataset=True)
+    empty_eval_loader, _ = build_openwam_sft_dataloader(
+        cfg, 2, 1, "/tiny", eval_dataset=True
+    )
+    assert len(eval_loader) == 1
+    assert len(empty_eval_loader) == 0
 
 
 def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
@@ -2300,7 +2322,12 @@ def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
     )
 
     metrics = FSDPVlaSftWorker.run_eval(stub)
-    assert metrics == {"loss": 2.0, "loss_video": 1.0, "num_batches": 2.0}
+    assert metrics == {
+        "loss": 2.0,
+        "loss_action": 0.0,
+        "loss_video": 1.0,
+        "num_batches": 2.0,
+    }
     assert stub.model.calls == 2 and stub.model.training
 
     stub.cfg.actor.model.model_type = "openpi"
@@ -2379,6 +2406,11 @@ def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
 def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
     source = _make_source(tmp_path)
     step_dir = _make_rlinf_checkpoint(tmp_path)
+    # The worker persists the stats actually used by this SFT run under actor/;
+    # export must prefer them over the source checkpoint's initialization stats.
+    np.save(
+        step_dir / "actor" / "normalization_stats.npy", np.ones(3, dtype=np.float32)
+    )
     out = tmp_path / "exported"
 
     written = export_checkpoint(step_dir, source, out)
@@ -2390,6 +2422,9 @@ def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
     assert (out / "config.yaml").read_text() == (source / "config.yaml").read_text()
     assert (out / "tokenizer" / "tokenizer.json").is_file()
     assert (out / "normalization_stats.npy").is_file()
+    assert np.array_equal(
+        np.load(out / "normalization_stats.npy"), np.ones(3, dtype=np.float32)
+    )
     assert not list(out.glob("checkpoint_step_30000*"))
     assert not (out / "rlinf_value_head.pt").exists()
     # Keys outside architecture.* (for example an RL value head) are rejected.

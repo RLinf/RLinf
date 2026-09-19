@@ -19,6 +19,7 @@ from __future__ import annotations
 import torch
 from omegaconf import DictConfig
 
+from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.openwam.openwam_policy import OpenWAMPolicy
 
 
@@ -49,6 +50,11 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None) -> OpenWA
         encoder_model_path=(
             str(cfg.get("encoder_model_path"))
             if cfg.get("encoder_model_path") is not None
+            else None
+        ),
+        runtime_dtype=(
+            torch_dtype_from_precision(cfg.get("runtime_dtype"))
+            if cfg.get("runtime_dtype") is not None
             else None
         ),
     )

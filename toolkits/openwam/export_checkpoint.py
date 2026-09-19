@@ -77,6 +77,15 @@ def infer_step(rlinf_checkpoint: Path) -> int | None:
     return None
 
 
+def find_run_normalization_stats(rlinf_checkpoint: Path) -> Path | None:
+    """Find stats persisted by an OpenWAM SFT actor checkpoint."""
+    candidates = (
+        rlinf_checkpoint / "actor" / "normalization_stats.npy",
+        rlinf_checkpoint / "normalization_stats.npy",
+    )
+    return next((path for path in candidates if path.is_file()), None)
+
+
 def load_policy_state_dict(rlinf_checkpoint: Path) -> dict[str, Any]:
     """Return the full ``OpenWAMPolicy`` state dict saved by the FSDP actor."""
     import torch
@@ -202,6 +211,7 @@ def export_checkpoint(
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    run_stats = find_run_normalization_stats(rlinf_checkpoint)
     for entry in source_dir.iterdir():
         if entry.suffix == ".safetensors":
             continue
@@ -214,6 +224,15 @@ def export_checkpoint(
             shutil.copytree(entry, target)
         else:
             shutil.copy2(entry, target)
+
+    if run_stats is not None:
+        # The source checkpoint's stats describe the initialization data.
+        # Prefer the artifact captured by the SFT worker when the run used a
+        # different dataset root or an explicitly shared stats file.
+        target = output_dir / "normalization_stats.npy"
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        shutil.copy2(run_stats, target)
 
     safetensors_path = output_dir / f"checkpoint_step_{step}.safetensors"
     save_file(
@@ -244,8 +263,9 @@ def verify_export(output_dir: Path, safetensors_path: Path, device: str) -> None
             if "action_backbone" not in key and checked >= 8:
                 continue
             expected = handle.get_tensor(key)
-            actual = state[key].detach().to("cpu", expected.dtype)
-            if not torch.equal(actual, expected):
+            actual = state[key].detach().to("cpu")
+            expected_for_compare = expected.to(dtype=actual.dtype)
+            if not torch.equal(actual, expected_for_compare):
                 raise RuntimeError(f"Loaded tensor differs from export: {key}")
             checked += 1
             if checked >= 64:

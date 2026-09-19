@@ -10,12 +10,59 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
 import torch
 from omegaconf import ListConfig, OmegaConf
 from torchdata.stateful_dataloader import StatefulDataLoader
 from torchdata.stateful_dataloader.sampler import StatefulDistributedSampler
+
+
+def _normalization_stats_paths(dataset: Any) -> list[str]:
+    """Collect stats artifacts from leaf and aggregate native readers."""
+    paths: list[str] = []
+    visited: set[int] = set()
+
+    def visit(node: Any) -> None:
+        if node is None or id(node) in visited:
+            return
+        visited.add(id(node))
+        path = getattr(node, "normalization_stats_path", None)
+        if path:
+            paths.append(str(path))
+        for attr in ("buckets", "_buckets", "datasets", "_datasets", "_sub_datasets"):
+            children = getattr(node, attr, None)
+            if children:
+                for child in children:
+                    visit(child)
+
+    visit(dataset)
+    return list(dict.fromkeys(paths))
+
+
+class UnevenDistributedSampler(torch.utils.data.Sampler[int]):
+    """Shard validation indices without padding or dropping tail samples."""
+
+    def __init__(self, dataset: Any, num_replicas: int, rank: int):
+        if num_replicas <= 0:
+            raise ValueError(f"num_replicas must be positive, got {num_replicas}")
+        if rank < 0 or rank >= num_replicas:
+            raise ValueError(f"rank must be in [0, {num_replicas}), got {rank}")
+        self.dataset = dataset
+        self.num_replicas = int(num_replicas)
+        self.rank = int(rank)
+
+    def __iter__(self):
+        return iter(range(self.rank, len(self.dataset), self.num_replicas))
+
+    def __len__(self) -> int:
+        if self.rank >= len(self.dataset):
+            return 0
+        return (
+            len(self.dataset) - self.rank + self.num_replicas - 1
+        ) // self.num_replicas
 
 
 class EpochStatefulDistributedSampler(StatefulDistributedSampler):
@@ -85,6 +132,43 @@ def build_openwam_sft_dataloader(
         dl_cfg.dataset_dir = dataset_dir
         datasets.append(build_dataset(dl_cfg, split=str(native_dl.split)))
     per_dataset = {d: len(ds) for d, ds in zip(dataset_dirs, datasets)}
+    stats_paths_by_dataset = [
+        _normalization_stats_paths(dataset) for dataset in datasets
+    ]
+    has_stats = [
+        getattr(dataset, "normalization_stats", None) is not None
+        for dataset in datasets
+    ]
+    if any(stats_paths_by_dataset) and not all(stats_paths_by_dataset):
+        raise ValueError(
+            "OpenWAM SFT dataset roots do not share one normalization stats "
+            "artifact; configure normalization_stats_path explicitly for every root."
+        )
+    if any(
+        has_stats[index] and not stats_paths_by_dataset[index]
+        for index in range(len(datasets))
+    ):
+        raise ValueError(
+            "OpenWAM reader exposes normalization statistics without a file path; "
+            "configure normalization_stats_path so the trained policy can be exported."
+        )
+    stats_paths = [path for paths in stats_paths_by_dataset for path in paths]
+    stats_digest = None
+    if stats_paths:
+        digests = []
+        for stats_path in stats_paths:
+            path = Path(stats_path)
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"OpenWAM normalization stats artifact not found: {path}"
+                )
+            digests.append(hashlib.sha256(path.read_bytes()).hexdigest())
+        if len(set(digests)) != 1:
+            raise ValueError(
+                "OpenWAM SFT dataset roots use different normalization stats; "
+                "use one shared normalization_stats_path before mixing roots."
+            )
+        stats_digest = digests[0]
     if sum(per_dataset.values()) == 0:
         raise ValueError(
             f"OpenWAM {native_dl.split} dataset is empty: {per_dataset}. "
@@ -98,14 +182,19 @@ def build_openwam_sft_dataloader(
     dataset = (
         datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
     )
-    sampler = EpochStatefulDistributedSampler(
-        dataset,
-        num_replicas=int(world_size),
-        rank=int(rank),
-        shuffle=not eval_dataset,
-        drop_last=True,
-        seed=int(OmegaConf.select(cfg, "actor.seed", default=0)),
-    )
+    if eval_dataset:
+        sampler = UnevenDistributedSampler(
+            dataset, num_replicas=int(world_size), rank=int(rank)
+        )
+    else:
+        sampler = EpochStatefulDistributedSampler(
+            dataset,
+            num_replicas=int(world_size),
+            rank=int(rank),
+            shuffle=True,
+            drop_last=True,
+            seed=int(OmegaConf.select(cfg, "actor.seed", default=0)),
+        )
     batch_size = (
         int(cfg.actor.get("eval_batch_size", cfg.actor.micro_batch_size))
         if eval_dataset
@@ -120,12 +209,12 @@ def build_openwam_sft_dataloader(
         num_workers=num_workers,
         collate_fn=list,
         pin_memory=True,
-        drop_last=True,
+        drop_last=not eval_dataset,
         persistent_workers=num_workers > 0,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
     )
-    if len(loader) == 0:
-        split_name = "validation" if eval_dataset else "training"
+    if len(loader) == 0 and not eval_dataset:
+        split_name = "training"
         raise ValueError(
             f"OpenWAM {split_name} loader has zero batches: "
             f"num_samples={len(dataset)}, world_size={world_size}, "
@@ -137,4 +226,6 @@ def build_openwam_sft_dataloader(
         "dataset_dir": dataset_dirs[0] if len(dataset_dirs) == 1 else dataset_dirs,
         "num_samples": len(dataset),
         "num_samples_per_dataset": per_dataset,
+        "normalization_stats_path": stats_paths[0] if stats_paths else None,
+        "normalization_stats_digest": stats_digest,
     }
