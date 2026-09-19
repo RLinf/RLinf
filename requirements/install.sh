@@ -80,6 +80,10 @@ PLATFORM_SYSTEM_SITE_PACKAGES=0
 # Name of a function run after the venv is created and activated, before the
 # first `uv sync`. Set by configure_<platform>; empty means no hook.
 PLATFORM_VENV_HOOK=""
+# Distributions a vendor image provides (torch and its device extension),
+# whose metadata seed_vendor_torch_metadata copies into the venv. Set by
+# configure_<platform>.
+PLATFORM_VENDOR_DISTS=()
 # ERE matching lines to drop from embodied/envs/common.txt, for platforms where
 # some of those wheels are unusable. Set by configure_<platform>.
 PLATFORM_COMMON_REQ_EXCLUDE_RE=""
@@ -93,7 +97,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren")
 TEST_BUILD=${TEST_BUILD:-0}
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -143,14 +147,16 @@ Common options:
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
                            ROCm), ascend (experimental, NPU), musa (experimental, Moore
-                           Threads) or kunlun (experimental, Kunlunxin). Sets UV_TORCH_BACKEND where applicable
-                           (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
-                           bypass (e.g. UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI
-                           and adds torch-npu in install_ascend_extras. MUSA installs no torch at
-                           all: run it inside the Moore Threads training-suite image and it
-                           reuses that image's torch/torch-musa via a --system-site-packages venv.
-                           KUNLUN clones the training-suite image's complete torch environment into --venv
-                           using /opt/clone-uv-env.sh, so torch/torch-kunlun and their dependencies are reused.
+                           Threads), kunlun (experimental, Kunlunxin), or biren (experimental,
+                           SUPA). Sets UV_TORCH_BACKEND where applicable (auto / rocm<version> /
+                           cpu); export UV_TORCH_BACKEND yourself to bypass (e.g.
+                           UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI and adds
+                           torch-npu in install_ascend_extras. MUSA and Biren install no torch:
+                           run inside the corresponding vendor runtime and reuse its torch stack
+                           via a --system-site-packages venv. KUNLUN clones the training-suite
+                           image's complete torch environment into --venv using
+                           /opt/clone-uv-env.sh, so torch/torch-kunlun and their dependencies
+                           are reused.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
@@ -751,10 +757,17 @@ configure_ascend() {
     fi
 }
 
-configure_musa() {
-    # torch-musa is not on PyPI: it ships preinstalled in the vendor
-    # training-suite image. So MUSA installs no torch of its own and instead
-    # reuses the image's interpreter and site-packages.
+# MUSA and Biren ship torch with its device extension (torch-musa, torch_supa)
+# preinstalled in the vendor image, and neither extension is on PyPI. So these
+# platforms install no torch of their own and instead reuse the image's
+# interpreter and site-packages. The caller lists the image's distributions in
+# PLATFORM_VENDOR_DISTS.
+#
+# Args:
+#   $1: platform name, used in messages.
+#   $2: hint printed when the image interpreter has no torch.
+configure_vendor_torch_platform() {
+    local platform="$1" missing_torch_hint="$2"
     if [ "$USER_SET_PYTHON" -eq 0 ]; then
         PYTHON_VERSION=$(python - <<'EOF'
 import sys
@@ -762,10 +775,10 @@ import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
 EOF
 )
-        echo "[install.sh] musa: reusing the image interpreter, python ${PYTHON_VERSION}"
+        echo "[install.sh] ${platform}: reusing the image interpreter, python ${PYTHON_VERSION}"
         validate_python_version
     fi
-    # uv would otherwise pick a managed interpreter, which has no torch-musa.
+    # uv would otherwise pick a managed interpreter, which has no vendor torch.
     export UV_PYTHON_PREFERENCE="${UV_PYTHON_PREFERENCE:-only-system}"
     # Pin torch to the image's version so the seeded metadata satisfies it.
     if [ -z "$TORCH_VERSION" ]; then
@@ -779,9 +792,9 @@ EOF
 )
         if [[ "$_torch_probe" =~ ^[0-9]+\.[0-9]+ ]]; then
             TORCH_VERSION="$_torch_probe"
-            echo "[install.sh] musa: pinning torch ${TORCH_VERSION} to match the image."
+            echo "[install.sh] ${platform}: pinning torch ${TORCH_VERSION} to match the image."
         else
-            echo "[install.sh] musa: no torch found for the image interpreter ($(command -v python)); is this a Moore Threads training-suite container?" >&2
+            echo "[install.sh] ${platform}: no torch found for the image interpreter ($(command -v python)); ${missing_torch_hint}" >&2
             echo "[install.sh] ${_torch_probe}" >&2
             exit 1
         fi
@@ -798,39 +811,40 @@ EOF
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="cpu"
     fi
-    # RAY_EXPERIMENTAL_NOSET_MUSA_VISIBLE_DEVICES comes from MUSAGPUManager, the
-    # MUSA libraries are already on the image's LD_LIBRARY_PATH, and the
-    # renderer is selected per run by the e2e/example scripts.
+    # The device-visibility variables come from the platform's accelerator
+    # manager, the vendor libraries are already on the image's LD_LIBRARY_PATH,
+    # and the renderer is selected per run by the e2e/example scripts.
     PLATFORM_VENV_EXPORTS=()
-    # The image ships MUSA builds of flash-attn and apex, so there is nothing to
+    # The image ships the vendor's flash-attn builds, so there is nothing to
     # install; the CUDA sources would not build here anyway.
     PLATFORM_FLASH_ATTN_INSTALL=0
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_TORCHCODEC_SPEC=""
-    # The image's torch-musa is built against numpy 1.x.
+    # The vendor torch builds are compiled against numpy 1.x.
     PLATFORM_EXTRA_OVERRIDES=("numpy<2")
-    # Either MUSA builds that only exist in the image, or CUDA-only kernels:
+    # Either vendor builds that only exist in the image, or CUDA-only kernels:
     # resolve them, never write them into the venv.
     PLATFORM_UV_SYNC_ARGS=("--inexact")
     local pkg
     for pkg in torch torchvision torchaudio torchcodec triton flash-attn \
         deepspeed vllm sglang xgrammar liger-kernel transformer-engine \
-        torch-memory-saver ray; do
+        torch-memory-saver; do
         PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "$pkg")
     done
     PLATFORM_SYSTEM_SITE_PACKAGES=1
-    PLATFORM_VENV_HOOK=seed_musa_torch_metadata
+    PLATFORM_VENV_HOOK=seed_vendor_torch_metadata
     # The nvidia-* wheels pull a CUDA torch in behind them.
     PLATFORM_COMMON_REQ_EXCLUDE_RE='^[[:space:]]*nvidia-'
 }
 
 # uv does not see packages inherited through --system-site-packages, so any
 # `uv pip install` needing torch or flash-attn would pull one in and shadow the
-# image's MUSA build. Copy their *metadata* (never the files) so uv treats them
-# as installed. RECORD is left empty so an uninstall cannot delete the originals.
-seed_musa_torch_metadata() {
-    VENV_DIR="$VENV_DIR" python - <<'EOF'
+# image's vendor build. Copy the metadata of PLATFORM_VENDOR_DISTS (never the
+# files) so uv treats them as installed. RECORD is left empty so an uninstall
+# cannot delete the originals.
+seed_vendor_torch_metadata() {
+    VENV_DIR="$VENV_DIR" PLATFORM="$PLATFORM" VENDOR_DISTS="${PLATFORM_VENDOR_DISTS[*]}" python - <<'EOF'
 import importlib.metadata as metadata
 import os
 import pathlib
@@ -850,7 +864,7 @@ venv_site = pathlib.Path(
 
 KEEP = ("METADATA", "WHEEL", "INSTALLER", "top_level.txt", "entry_points.txt")
 
-for name in ("torch", "torch_musa", "torchvision", "torchaudio", "flash_attn"):
+for name in os.environ["VENDOR_DISTS"].split():
     try:
         dist = metadata.distribution(name)
     except metadata.PackageNotFoundError:
@@ -876,8 +890,26 @@ for name in ("torch", "torch_musa", "torchvision", "torchaudio", "flash_attn"):
         if (src / meta).is_file():
             shutil.copy2(src / meta, dst / meta)
     (dst / "RECORD").write_text("")
-    print(f"[install.sh] musa: reusing the image's {name}=={dist.version}", file=sys.stderr)
+    print(
+        f"[install.sh] {os.environ['PLATFORM']}: reusing the image's {name}=={dist.version}",
+        file=sys.stderr,
+    )
 EOF
+}
+
+configure_musa() {
+    configure_vendor_torch_platform musa "is this a Moore Threads training-suite container?"
+    PLATFORM_VENDOR_DISTS=(torch torch_musa torchvision torchaudio flash_attn)
+    # Ray also comes from the image.
+    PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "ray")
+}
+
+configure_biren() {
+    configure_vendor_torch_platform biren "is this a SUPA runtime image?"
+    PLATFORM_VENDOR_DISTS=(
+        torch torch_supa torch_supa_ext torchvision torchaudio
+        flashattn_train flashattn_infer triton
+    )
 }
 
 configure_kunlun() {
@@ -1008,6 +1040,7 @@ configure_platform() {
         ascend)  configure_ascend ;;
         musa)    configure_musa ;;
         kunlun)  configure_kunlun ;;
+        biren)   configure_biren ;;
     esac
     echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
@@ -1097,24 +1130,37 @@ install_ascend_tensorflow_pins() {
     uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/tensorflow.txt"
 }
 
-install_musa_extras() {
-    # Nothing to install; just fail here rather than mid-training.
-    python - <<'EOF'
+# A vendor-torch platform has nothing to install; fail here rather than
+# mid-training when the image lacks torch or its device extension, then drop
+# the CUDA wheels that the resolution pulled in.
+#
+# Args:
+#   $1: device extension module, e.g. torch_musa; its device API is torch.musa.
+#   $2: hint printed when torch or the extension is missing.
+#   $3: hint printed when the extension reports no device.
+install_vendor_torch_extras() {
+    VENDOR_MODULE="$1" MISSING_HINT="$2" NO_DEVICE_HINT="$3" PLATFORM="$PLATFORM" python - <<'EOF'
+import importlib
 import importlib.metadata as metadata
+import os
 import sys
+
+platform = os.environ["PLATFORM"]
+module = os.environ["VENDOR_MODULE"]
+device = module.removeprefix("torch_")
 
 # Checkable without a device, unlike `import torch`.
 missing = []
-for name in ("torch", "torch_musa"):
+for name in ("torch", module):
     try:
         metadata.distribution(name)
     except metadata.PackageNotFoundError:
         missing.append(name)
 if missing:
     print(
-        "[install.sh] --platform musa requires "
+        f"[install.sh] --platform {platform} requires "
         f"{' and '.join(missing)} to be installed for the image's interpreter. "
-        "Run this inside a Moore Threads training-suite container.",
+        f"{os.environ['MISSING_HINT']}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -1122,12 +1168,12 @@ if missing:
 # Only possible where a device is visible, i.e. not in a docker build.
 try:
     import torch
-    import torch_musa  # noqa: F401
 
-    available = torch.musa.is_available()
+    importlib.import_module(module)
+    available = getattr(torch, device).is_available()
 except Exception as exc:
     print(
-        f"[install.sh] musa: torch {metadata.version('torch')} present; "
+        f"[install.sh] {platform}: torch {metadata.version('torch')} present; "
         f"skipping the device check ({type(exc).__name__}). This is expected "
         "during a docker build.",
         file=sys.stderr,
@@ -1135,14 +1181,13 @@ except Exception as exc:
 else:
     if available:
         print(
-            f"[install.sh] musa: torch {torch.__version__}, "
-            f"{torch.musa.device_count()} device(s)"
+            f"[install.sh] {platform}: torch {torch.__version__}, "
+            f"{getattr(torch, device).device_count()} device(s)"
         )
     else:
         print(
-            "[install.sh] WARNING: torch_musa is installed but reports no "
-            "available MUSA device. At runtime that means the container was "
-            "started without `--runtime=mthreads`.",
+            f"[install.sh] WARNING: {module} is installed but reports no "
+            f"available {device.upper()} device. {os.environ['NO_DEVICE_HINT']}",
             file=sys.stderr,
         )
 EOF
@@ -1158,10 +1203,22 @@ EOF
         | grep -vx 'nvidia-ml-py' \
         | tr '\n' ' ' || true)
     if [ -n "$cuda_pkgs" ]; then
-        echo "[install.sh] musa: removing CUDA-only wheels: ${cuda_pkgs}"
+        echo "[install.sh] ${PLATFORM}: removing CUDA-only wheels: ${cuda_pkgs}"
         # shellcheck disable=SC2086
         uv pip uninstall $cuda_pkgs || true
     fi
+}
+
+install_musa_extras() {
+    install_vendor_torch_extras torch_musa \
+        "Run this inside a Moore Threads training-suite container." \
+        "At runtime that means the container was started without \`--runtime=mthreads\`."
+}
+
+install_biren_extras() {
+    install_vendor_torch_extras torch_supa \
+        "Run this inside a SUPA runtime image or activate its vendor environment." \
+        "At runtime that means no SUPA device is visible to the container."
 }
 
 install_kunlun_extras() {
@@ -1215,6 +1272,7 @@ install_platform_extras() {
         ascend)  install_ascend_extras ;;
         musa)    install_musa_extras ;;
         kunlun)  install_kunlun_extras ;;
+        biren)   install_biren_extras ;;
     esac
 }
 
@@ -3761,9 +3819,9 @@ main() {
             ;;
         agentic)
             # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
-            # stacks keep 3.11 (no cp312 flash-attn/apex wheels); MUSA keeps the
-            # image interpreter.
-            if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM" != "musa" ] && engine_needs_torch211; then
+            # stacks keep 3.11 (no cp312 flash-attn/apex wheels); a venv over a
+            # vendor image's site-packages keeps the image interpreter.
+            if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 0 ] && engine_needs_torch211; then
                 PYTHON_VERSION="3.12.12"
             fi
             create_and_sync_venv
