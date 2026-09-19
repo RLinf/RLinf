@@ -211,7 +211,6 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
                 override_cfg={
                     "enable_camera_depth": enable_camera_depth,
                     "enable_camera_player": False,
-                    "step_frequency": 10000.0,
                 },
                 worker_info=None,
                 env_idx=0,
