@@ -46,7 +46,6 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
-from rlinf.scheduler import Worker
 from rlinf.models.embodiment.openwam.openwam_policy import (
     OpenWAMPolicy,
     _batch_value,
@@ -55,6 +54,7 @@ from rlinf.models.embodiment.openwam.openwam_policy import (
     _libero_state_to_eef10,
     _to_pil,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
