@@ -1,4 +1,4 @@
-在 Franka 上使用 Reward Model
+在 Franka 上使用奖励模型
 ================================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -207,11 +207,9 @@ ResNet Reward Model（逐帧成功判别）
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
-生成的 ``.pt`` 文件符合 ``RewardDatasetPayload`` 约定的标准格式，包含 ``images``、
-``labels`` （1 = 成功，0 = 失败）和 ``metadata``。
-详细说明及完整示例请参见 :doc:`../../extending/reward_model` 中的方式二。
+生成的 ``.pt`` 文件符合 ``RewardDatasetPayload`` 约定的标准格式，包含 ``images``、``labels``\ （1 = 成功，0 = 失败）和 ``metadata``。详细说明及完整示例请参见 :doc:`../../extending/reward_model` 中的方式二。
 
-Reward Model 训练
+奖励模型训练
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 本步骤同 :doc:`../../extending/reward_model` 中的 ``2. Reward Model 训练`` 部分。

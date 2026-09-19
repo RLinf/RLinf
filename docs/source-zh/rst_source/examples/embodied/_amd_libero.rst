@@ -8,7 +8,7 @@ ROCm LIBERO 容器需要访问 AMD 内核与渲染设备。在宿主机的仓库
       -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero-rocm7.2 bash
 
-该镜像基于 ROCm 7.2，包含全部 ManiSkill 与 LIBERO 模型环境。此前仅含 LIBERO 的镜像仍可使用，tag 为 ``agentic-rlinf0.3-libero-rocm6.4`` 与 ``agentic-rlinf0.3-libero-rocm7.2.3``。中国大陆用户可使用 ``docker.1ms.run/rlinf/rlinf`` 下的同名 tag。
+该镜像基于 ROCm 7.2，包含全部 ManiSkill 与 LIBERO 模型环境。此前仅含 LIBERO 的镜像仍可使用，tag 为 ``agentic-rlinf0.3-libero-rocm6.4`` 与 ``agentic-rlinf0.3-libero-rocm7.2.3``。中国大陆用户可使用 ``infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf`` 下的同名 tag。
 
 如需从当前代码构建包含这些模型的共用镜像，在宿主机运行以下命令，再将上面的容器镜像替换为 ``rlinf:embodied-maniskill_libero-rocm7.2``：
 

@@ -355,7 +355,7 @@ class Cluster:
             }
             if self._ray_code_sync_fragment is not None:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
-            ray.init(**ray_init_kwargs)
+            self._start_local_ray(ray_init_kwargs)
 
         # Ray log collector
         if distributed_log_dir is not None:
@@ -480,6 +480,21 @@ class Cluster:
             exit(-1)
 
         signal.signal(signal.SIGUSR1, signal_handler)
+
+    def _start_local_ray(self, ray_init_kwargs: dict[str, Any]):
+        """Start a local Ray instance, retrying once if the node fails to come up.
+
+        Ray kills the raylet when a starting node misses its fixed 15s dashboard
+        agent deadline, which a loaded machine can hit.
+        """
+        try:
+            ray.init(**ray_init_kwargs)
+        except Exception as first_failure:
+            self._logger.warning(
+                f"{Cluster.SYS_NAME} could not start a local Ray instance ({first_failure}). Starting it again."
+            )
+            ray.shutdown()
+            ray.init(**ray_init_kwargs)
 
     def _init_from_existing_managers(self):
         if not ray.is_initialized():

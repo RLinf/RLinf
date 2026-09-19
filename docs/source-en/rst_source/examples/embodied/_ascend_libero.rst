@@ -25,9 +25,9 @@ Docker pulls the one matching the host; the ``-arm64`` and ``-amd64`` tags name
 a single architecture. The earlier LIBERO-only
 image remains available as ``agentic-rlinf0.3-libero-cann9.0``. For downloads
 from mainland China, the image is also available under
-``docker.1ms.run/rlinf/rlinf`` with the same tag. To expose specific NPUs,
-replace ``--privileged`` with the following device arguments, adding a
-``/dev/davinciN`` entry for each NPU you will use:
+``infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf`` with the same
+tag. To expose specific NPUs, replace ``--privileged`` with the following device
+arguments, adding a ``/dev/davinciN`` entry for each NPU you will use:
 
 .. code-block:: text
 
