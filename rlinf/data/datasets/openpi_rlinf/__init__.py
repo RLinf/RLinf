@@ -35,6 +35,14 @@ def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
     return build_dual_franka_sft_dataloader
 
 
+def _load_libero_sfp_sft_dataloader() -> SftDataLoaderBuilder:
+    from rlinf.data.datasets.openpi_rlinf.libero import (
+        build_libero_sfp_sft_dataloader,
+    )
+
+    return build_libero_sfp_sft_dataloader
+
+
 def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
     from rlinf.data.datasets.openpi_rlinf.official_sft_data_loader import (
         build_official_openpi_sft_dataloader,
@@ -43,10 +51,14 @@ def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
     return build_official_openpi_sft_dataloader
 
 
-# Environment name -> lazy SFT dataloader builder.
+# Environment name -> lazy SFT dataloader builder. ``_resolve_env`` matches
+# these names as substrings of ``openpi.config_name``, so a key must be specific
+# enough not to capture a neighbouring config: "libero_sfp" selects the
+# Streaming Flow Policy loader without also claiming plain "pi05_libero".
 _SFT_DATALOADER_BUILDERS = {
     "behavior": _load_behavior_sft_dataloader,
     "dualfranka": _load_dual_franka_sft_dataloader,
+    "libero_sfp": _load_libero_sfp_sft_dataloader,
     "robotwin": _load_official_openpi_sft_dataloader,
 }
 

@@ -66,7 +66,7 @@ def build_official_openpi_sft_dataloader(
             ),
             seed=int(OmegaConf.select(cfg, "actor.seed", default=config.seed)),
         )
-        _validate_openpi_rlinf_model_shape(model_cfg, config)
+        validate_openpi_rlinf_model_shape(model_cfg, config)
 
     data_loader = openpi_data_loader.create_data_loader(
         config, framework="pytorch", shuffle=not eval_dataset
@@ -93,7 +93,7 @@ def is_official_openpi_sft_dataloader(data_loader: Any) -> bool:
     return getattr(data_loader, "_data_loader", None) is not None
 
 
-def _validate_openpi_rlinf_model_shape(model_cfg: Any, openpi_config: Any) -> None:
+def validate_openpi_rlinf_model_shape(model_cfg: Any, openpi_config: Any) -> None:
     """Keep the local Pi0 architecture consistent with the OpenPI config."""
     local_horizon = int(model_cfg.num_action_chunks)
     official_horizon = int(openpi_config.model.action_horizon)

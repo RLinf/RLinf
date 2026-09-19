@@ -109,6 +109,9 @@ class Observation:
     token_ar_mask: torch.Tensor | None = None
     token_loss_mask: torch.Tensor | None = None
     pcd_xyz: torch.Tensor | None = None
+    # Cumulative action state the current chunk starts from. Only Streaming Flow
+    # Policy training reads it; flow-matching models leave it None.
+    action_states: torch.Tensor | None = None
 
     @classmethod
     def from_observation_like(cls, observation: Any) -> Observation:
@@ -160,6 +163,7 @@ class Observation:
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
             pcd_xyz=data.get("pcd_xyz"),
+            action_states=data.get("action_states"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -198,6 +202,7 @@ def _observation_to_dtype(obs: Observation, dtype: torch.dtype) -> Observation:
         token_ar_mask=_tensor_to_dtype(obs.token_ar_mask, dtype),
         token_loss_mask=_tensor_to_dtype(obs.token_loss_mask, dtype),
         pcd_xyz=_tensor_to_dtype(obs.pcd_xyz, dtype),
+        action_states=_tensor_to_dtype(obs.action_states, dtype),
     )
 
 
@@ -311,6 +316,7 @@ def preprocess_observation(
         token_ar_mask=observation.token_ar_mask,
         token_loss_mask=observation.token_loss_mask,
         pcd_xyz=observation.pcd_xyz,
+        action_states=observation.action_states,
     )
 
 

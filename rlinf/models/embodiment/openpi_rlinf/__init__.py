@@ -25,6 +25,10 @@ from rlinf.models.embodiment.openpi_rlinf.checkpoint import (
     resolve_model_safetensors,
 )
 from rlinf.models.embodiment.openpi_rlinf.rlt_config import build_rlt_config
+from rlinf.models.embodiment.openpi_rlinf.sfp_config import (
+    build_sfp_config,
+    validate_sfp_config,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -47,6 +51,14 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     from rlinf.models.embodiment.openpi_rlinf.pi0_config import Pi0Config
 
     model_cfg = cfg.openpi
+    task = OmegaConf.select(model_cfg, "task", default="sft")
+    task = str(task).lower() if task is not None else "sft"
+    # Objective sidecars are pure config, so reject impossible combinations
+    # before any checkpoint I/O.
+    rlt_cfg = build_rlt_config(model_cfg)
+    sfp_cfg = build_sfp_config(model_cfg)
+    validate_sfp_config(sfp_cfg, rlt_cfg, task)
+
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
@@ -100,15 +112,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         pi0_kwargs["max_token_len"] = int(max_token_len)
 
     pi0_config = Pi0Config(**pi0_kwargs)
-    rlt_cfg = build_rlt_config(model_cfg)
     runtime = {
         "num_steps": num_steps,
         "action_env_dim": action_env_dim,
         "action_chunk": action_chunk,
     }
-
-    task = OmegaConf.select(model_cfg, "task", default="sft")
-    task = str(task).lower() if task is not None else "sft"
 
     if task == "sft":
         model = Pi0(
@@ -117,6 +125,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             action_env_dim=action_env_dim,
             action_chunk=action_chunk,
             rlt_cfg=rlt_cfg,
+            sfp_cfg=sfp_cfg,
         )
     elif task == "eval":
         from rlinf.models.embodiment.openpi_rlinf.tasks.eval import Pi0Eval

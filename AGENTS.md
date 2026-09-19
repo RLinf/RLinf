@@ -260,6 +260,60 @@ documentation.
 
 Google Python style; Ruff for lint/format; docstrings and type hints on public APIs. Logging: `rlinf.utils.logging.get_logger()` or Workers’ `self.log_*`. Config YAML: static values only; no computed fields; don’t overwrite user-facing fields in code. Commits: [Conventional Commits](https://www.conventionalcommits.org/), ~72-char subject, imperative; every commit `Signed-off-by:` (e.g. `git commit -s`). PRs: same title format, fill template, link issues; for perf-sensitive changes include test results. New behavior needs tests (unit or e2e); if e2e needs GPUs/hardware, document and skip appropriately in CI. Full details: [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### Documentation pages follow a fixed skeleton
+
+Voice is not enough for a docs page. Before writing or editing one, read the
+matching part of `docs/STYLE_GUIDE.md` — “Example / recipe page requirements”
+and “Page anatomy” for a recipe page, “Landing page and section intros” and
+“Section and subsection index pages” for an index — and then open two or three
+sibling pages in the same gallery subsection and match their skeleton. A page
+whose prose reads well but whose structure was invented from scratch still has
+to be rewritten, so this is the first step, not a final polish. The `refine-docs`
+skill runs this pass.
+
+Recipe and example pages (env, model, algorithm, SFT, robot) carry a required
+structure, not a suggested one: a credited opening figure, an `Overview` section
+whose card grid uses that subsection's schema, the `You'll do:` and
+`Prerequisites:` lines, Title Case headings drawn from the standard set
+(`Installation`, `Download the Model`, `Run It`, `Visualization and Results`),
+shared setup text pulled in through `_setup_common.rst` and `_model_path.rst`
+rather than retyped, footguns in a `warning` rather than in prose, and metrics
+and evaluation linked out instead of re-explained per page.
+
+Every page exists in both `docs/source-en/` and `docs/source-zh/`. Write the two
+in the same pass: same structure and translated headings, identical untranslated
+code identifiers, and each written natively rather than translated clause by
+clause. Adding a page also means adding its card and its `toctree` entry to the
+section index in both languages.
+
+### Run docs-check before calling a docs change done
+
+Touching anything under `docs/` means running the `docs-check` skill yourself,
+without being asked. It is a gate, not a review aid: eyeballing the diff does
+not catch what these three harnesses catch.
+
+```bash
+python3 .agents/skills/docs-check/build_docs.py         # en + zh, must be 0 warnings
+python3 .agents/skills/docs-check/check_rst_markup.py   # silent mis-renders
+python3 .agents/skills/docs-check/check_doc_symbols.py  # names the code does not define
+```
+
+Both language trees are separate Read the Docs projects with
+`fail_on_warning: true`, so a green English build says nothing about `rlinf-cn`;
+build both every time. The markup checker exists because the worst Chinese
+defects are silent: an inline literal or `**` sitting against `（`, `）` or a CJK
+character either breaks the build or, worse, closes at some later marker and
+swallows the prose in between while Sphinx stays quiet. Both harnesses report
+across the whole repository, so compare their counts against `main` and act on
+what your change added rather than on the standing baseline.
+
+Beyond the harnesses, confirm by hand that every command, CLI flag, config key,
+path, and model or env name on the page exists in the code, and that each claim
+about behaviour matches it. Recipe pages are the usual source of this kind of
+error: a Docker tag whose image lacks the venv the page then tells the reader to
+activate, or a number nobody measured, survives a clean build and fails only for
+the reader following along.
+
 ---
 
 ## Further reading
