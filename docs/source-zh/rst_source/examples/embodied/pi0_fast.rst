@@ -55,7 +55,7 @@ Attention；如需安装，可去掉 ``--no-flash-attn``。
      - revision
    * - LeRobot 源码
      - ``huggingface/lerobot``
-     - ``8a74e0ac6d01706d67fddfed682a09d694d9c8c0``
+     - ``3e37269dc60ee6195e44dd2810c95f1df5dfda99``
    * - 策略 checkpoint
      - ``lerobot/pi0fast-libero``
      - ``840f4b503f4c09110421c33c810a85b6684fd658``
