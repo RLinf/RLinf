@@ -299,13 +299,14 @@ Choose a model and environment together, then follow the model link for hardware
 | Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
 | [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/wan.rst#wan-hardware) | Wan | ✅ | ✅ | — | — |
 | [GR00T N1.5](docs/source-en/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-en/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-en/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
 
 — indicates that this matrix does not claim support for the combination.
 
-On non-CUDA backends, ManiSkill runs PhysX simulation on CPU and selects its renderer independently by PCI address. MUSA additionally requires the vendor-modified SAPIEN and ManiSkill packages. The GR00T ManiSkill path requires a checkpoint with a `maniskill_widowx` embodiment head; the non-NVIDIA GR00T scope is N1.5. LIBERO uses OSMesa on AMD, Ascend, and MUSA.
+On non-CUDA backends, ManiSkill runs PhysX simulation on CPU and selects its renderer independently by PCI address. MUSA additionally requires the vendor-modified SAPIEN and ManiSkill packages. The GR00T ManiSkill path requires a checkpoint with a `maniskill_widowx` embodiment head; the non-NVIDIA GR00T scope is N1.5. LIBERO uses OSMesa on AMD, Ascend, and MUSA. Wan on Ascend uses MindIE-SD attention, RoPE, and RMSNorm kernels when MindIE-SD is installed separately; the installer does not install it.
 
 ### Agentic AI
 
