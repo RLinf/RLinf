@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pathlib
+import sys
+import types
+
 import numpy as np
 import pytest
 import torch
@@ -224,3 +228,80 @@ def test_close_delegates_to_model():
     adapter = _adapter(model=model)
     adapter.close()
     assert model.closed
+
+
+def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
+    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
+    seen = {}
+
+    def load_bare_model(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return _FakeModel()
+
+    def resolve_tactics(device, precision, **kwargs):
+        seen["resolve"] = {"device": device, "precision": precision, **kwargs}
+        return resolved_tactics
+
+    module = types.ModuleType("apxinf_robo")
+    module.load_bare_model = load_bare_model
+    engine = types.ModuleType("apxinf_robo.engine")
+    engine.resolve_tactics = resolve_tactics
+    module.engine = engine
+    monkeypatch.setitem(sys.modules, "apxinf_robo", module)
+    monkeypatch.setitem(sys.modules, "apxinf_robo.engine", engine)
+    return seen
+
+
+def test_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(_model_cfg(), "cpu", processor=_FakeProcessor())
+
+    assert seen["path"] == pathlib.Path("/not/loaded/in/unit/test")
+    kwargs = seen["kwargs"]
+    assert kwargs["model"] == "pi05"
+    assert kwargs["device"] == "cpu"
+    assert kwargs["precision"] == "bf16"
+    assert kwargs["action_horizon"] == 10
+    assert kwargs["num_flow_steps"] == 5
+    assert kwargs["sampling_seed"] == 0
+    # Left out so load_bare_model selects the tuned tactics.
+    assert "tactics" not in kwargs
+    assert "resolve" not in seen
+
+
+def test_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(
+        _model_cfg(tactics="/mine.json"), "cpu", processor=_FakeProcessor()
+    )
+
+    assert seen["kwargs"]["tactics"] == "/mine.json"
+    assert "resolve" not in seen
+
+
+def test_an_explicit_weights_file_resolves_tactics_from_the_checkpoint_dir(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch, resolved_tactics="/ckpt/tactics.json")
+
+    OpenPIApxInfAdapter(
+        _model_cfg(checkpoint="/ckpt/model-00001-of-00002.safetensors"),
+        "cpu",
+        processor=_FakeProcessor(),
+    )
+
+    # The weights file goes to the loader, the directory to the tactics lookup:
+    # keying the lookup on the file would miss a checkpoint-local tactics.json.
+    assert seen["path"] == pathlib.Path("/ckpt/model-00001-of-00002.safetensors")
+    assert seen["resolve"]["model_dir"] == pathlib.Path("/not/loaded/in/unit/test")
+    assert seen["resolve"]["precision"] == "bf16"
+    assert seen["kwargs"]["tactics"] == "/ckpt/tactics.json"
+
+
+def test_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
+    # ``None`` in sys.modules is how CPython marks an import as unavailable.
+    monkeypatch.setitem(sys.modules, "apxinf_robo", None)
+
+    with pytest.raises(ImportError, match="apxinf_robo"):
+        OpenPIApxInfAdapter(_model_cfg(), "cpu", processor=_FakeProcessor())
