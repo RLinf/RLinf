@@ -20,8 +20,8 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from omegaconf import DictConfig
-from transformers import AutoTokenizer
 
+from rlinf.agents.tokenization import get_agentic_tokenizer
 from rlinf.agents.tool_call.schema import (
     ToolChannelRequest,
     ToolChannelResponse,
@@ -106,7 +106,13 @@ class AgentLoopWorker(Worker):
                 "agent loop worker must be MultiAgentLoopWorker if is_dynamic_rollout_batch is True"
             )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
+        self.agentic_tokenizer = get_agentic_tokenizer(
+            cfg.rollout.model.model_path,
+            cfg.agentloop.get("agentic_tokenizer", "default"),
+            cfg.agentloop.get("chat_template_kwargs", None),
+            cfg.rollout.model.get("trust_remote_code", False),
+        )
+        self.tokenizer = self.agentic_tokenizer.tokenizer  # back-compat alias
         self.toolcall_parser = None
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)
