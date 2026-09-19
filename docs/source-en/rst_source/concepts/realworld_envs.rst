@@ -62,7 +62,8 @@ placement describe the rig. Keep those values in the hardware config under
 ``env.eval.override_cfg`` accept only environment and task settings. For example,
 ``enable_camera_player`` controls presentation and remains an env setting.
 Omit ``camera_serials`` to discover cameras through the selected backend
-(RealSense by default); discovery orders them by serial number. Provide serials
+(RealSense by default; use ``camera_type: uvc`` for ordinary USB/V4L2 cameras);
+discovery orders them by the backend's identifiers. Provide serials
 only when the rig needs a particular subset or order. An explicit empty list
 selects no cameras on robots that support camera-free operation.
 

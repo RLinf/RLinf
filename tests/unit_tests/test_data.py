@@ -20,14 +20,17 @@ import random
 import time
 from unittest import mock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import DictConfig
 
+from examples.embodiment.so101.dagger import DaggerSessionController, DaggerState
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
     _CODEC_KEY,
@@ -37,6 +40,79 @@ from rlinf.utils.obs_compression import (
     is_compressed_image,
     is_compression_enabled,
 )
+
+
+def test_collect_episode_maps_so101_frames_and_structured_state():
+    """SO-101 observations become the flat fields expected by LeRobot."""
+    wrapper = object.__new__(CollectEpisode)
+    frame = torch.zeros(128, 128, 3, dtype=torch.uint8).numpy()
+    image, wrist, extra, state = wrapper._extract_obs_image_state(
+        {
+            "frames": {"wrist_1": frame},
+            "state": {
+                "arm_joint_position": [1, 2, 3, 4, 5],
+                "gripper_position": [0.5],
+            },
+        }
+    )
+    assert image is None
+    assert np.array_equal(wrist, frame)
+    assert extra is None
+    assert np.array_equal(state, np.array([1, 2, 3, 4, 5, 0.5], dtype=np.float32))
+
+
+def test_collect_episode_writes_so101_wrist_frame_as_standard_image():
+    """A SO-101-only camera is consumable by the flat OpenPI loader."""
+    wrapper = object.__new__(CollectEpisode)
+    wrapper.robot_type = "so101"
+    wrapper.num_envs = 1
+    wrapper.logger = mock.Mock()
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    frame[..., 0] = 11
+    frame[..., 2] = 29
+    episode = wrapper._buffer_to_lerobot_ep(
+        {
+            "actions": [np.zeros(6, dtype=np.float32)],
+            "terminated": [True],
+            "observations": [
+                {
+                    "frames": {"wrist_1": frame},
+                    "state": {
+                        "arm_joint_position": np.array([np.pi / 2, 0, 0, 0, 0]),
+                        "gripper_position": np.ones(1) * 0.5,
+                    },
+                }
+            ],
+            "infos": [{}, {}],
+            "segment_ids": [0],
+        },
+        env_idx=0,
+        is_success=True,
+    )
+    assert episode is not None
+    assert np.array_equal(episode[0]["image"][..., 0], frame[..., 2])
+    assert np.array_equal(episode[0]["image"][..., 2], frame[..., 0])
+    np.testing.assert_allclose(
+        episode[0]["state"], np.array([0.9, 0, 0, 0, 0, 0.5], dtype=np.float32)
+    )
+    np.testing.assert_allclose(episode[0]["actions"], np.zeros(6, dtype=np.float32))
+    assert "wrist_image" not in episode[0]
+
+
+def test_so101_dagger_session_follows_record_handover_save_reset_flow():
+    """The public DAgger keys only advance through valid session states."""
+    session = DaggerSessionController()
+
+    assert session.handle(" ") == "ignored"
+    assert session.handle("s") == "start_episode"
+    assert session.handle("c") == "ignored"
+    assert session.handle(" ") == "start_handover"
+    session.handover_finished()
+    assert session.state is DaggerState.EXPERT_RECORDING
+    assert session.handle("c") == "save_episode"
+    assert session.handle("r") == "reset_only"
+    session.reset_finished()
+    assert session.state is DaggerState.READY
 
 
 class TestMathDatasetMultithread:

@@ -1,0 +1,65 @@
+defaults:
+  - env/so101_reach@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: so101
+      placement: 0
+  node_groups:
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - node_rank: 0
+            serial_port: "${oc.env:SO101_FOLLOWER_PORT,/dev/ttyACM0}"
+            calibration_id: "${oc.env:SO101_FOLLOWER_ID,so101_follower}"
+            camera_type: uvc
+            camera_serials: ["${oc.env:SO101_CAMERA,/dev/video0}"]
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results/so101-collect
+    project_name: rlinf
+    experiment_name: so101-collect
+    logger_backends: []
+  num_data_episodes: 10
+  record_task_description: false
+
+env:
+  group_name: SO101CollectGroup
+  eval:
+    auto_reset: false
+    # Keep the task success termination so ``only_success`` can flush it.
+    ignore_terminations: false
+    max_episode_steps: 10000
+    teleop:
+      - so101_leader:
+          port: "${oc.env:SO101_LEADER_PORT,/dev/ttyACM1}"
+          calibration_id: "${oc.env:SO101_LEADER_ID,so101_leader}"
+    override_cfg:
+      enable_camera_player: false
+      step_frequency: 30.0
+    data_collection:
+      enabled: true
+      save_dir: ${runner.logger.log_path}/collected_data
+      # Write the finalized LeRobot tree consumed by SO101 SFT and the
+      # offline checker.  Pickle remains useful for debugging, but cannot be
+      # passed directly to the OpenPI dataloader.
+      export_format: lerobot
+      only_success: true
+      robot_type: so101
+      fps: 30
+      finalize_interval: 1
