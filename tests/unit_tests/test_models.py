@@ -484,6 +484,113 @@ def test_qwen_vl_linear_patch_embed_is_left_alone_on_nvidia(monkeypatch):
     assert model[0].forward.__func__ is _QwenVisionPatchEmbed.forward
 
 
+_WAN_NPU_PATCHES = "rlinf.envs.sim.world_model.backend.npu_patches"
+
+
+@pytest.fixture
+def wan_dit(monkeypatch):
+    """diffsynth's Wan DiT module, whose operators the NPU patches rebind."""
+    from rlinf.utils.patcher import Patcher
+
+    def flash_attention(q, k, v, num_heads, compatibility_mode=False):
+        return q
+
+    def rope_apply(x, freqs, num_heads):
+        return x
+
+    class RMSNorm(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    dit = ModuleType("diffsynth.models.wan_video_dit")
+    dit.flash_attention, dit.rope_apply, dit.RMSNorm = (
+        flash_attention,
+        rope_apply,
+        RMSNorm,
+    )
+    for name in ("diffsynth", "diffsynth.models"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, dit.__name__, dit)
+    yield dit
+    Patcher.clear()
+
+
+def _import_wan_npu_patches(monkeypatch, *, mindiesd: bool) -> ModuleType:
+    """Import the Wan NPU patches on an Ascend stack with or without MindIE-SD."""
+    vendor = {"torch_npu": ModuleType("torch_npu"), "mindiesd": None}
+    if mindiesd:
+        names = (
+            "mindiesd",
+            "mindiesd.layers",
+            "mindiesd.layers.flash_attn",
+            "mindiesd.layers.flash_attn.attention_forward",
+        )
+        vendor.update({name: ModuleType(name) for name in names})
+        vendor["mindiesd"].rotary_position_embedding = lambda *args, **kwargs: None
+        vendor[names[-1]].attention_forward = lambda *args, **kwargs: None
+    for name, module in vendor.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    spec = importlib.util.find_spec(_WAN_NPU_PATCHES)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, _WAN_NPU_PATCHES, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _patch_like_wan_backend(npu_patches: ModuleType) -> None:
+    """Run the patch sequence ``WanBackend._build_pipeline`` runs."""
+    from rlinf.utils.patcher import Patcher
+
+    Patcher.clear()
+    npu_patches.apply_npu_patches(Patcher)
+    Patcher.apply()
+
+
+def _wan_operators(dit: ModuleType) -> tuple:
+    return dit.flash_attention, dit.rope_apply, dit.RMSNorm.forward
+
+
+def test_wan_npu_patches_leave_diffsynth_alone_on_nvidia(wan_dit, monkeypatch):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=True)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    operators = _wan_operators(wan_dit)
+
+    _patch_like_wan_backend(npu_patches)
+    assert _wan_operators(wan_dit) == operators
+
+
+def test_wan_npu_patches_log_why_mindiesd_is_unavailable(wan_dit, monkeypatch, caplog):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=False)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    operators = _wan_operators(wan_dit)
+
+    _patch_like_wan_backend(npu_patches)
+    assert _wan_operators(wan_dit) == operators
+    assert "import of mindiesd halted" in caplog.text
+
+
+def test_wan_npu_patches_rebind_the_dit_operators_on_every_build(wan_dit, monkeypatch):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=True)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    kernels = (
+        npu_patches.npu_flash_attention,
+        npu_patches.npu_rope_apply,
+        npu_patches.npu_rmsnorm_forward,
+    )
+
+    # Every WanBackend in the process repeats the sequence on the patched module.
+    for _ in range(2):
+        _patch_like_wan_backend(npu_patches)
+        assert _wan_operators(wan_dit) == kernels
+
+
 def _history_cfg():
     return OmegaConf.create(
         {
