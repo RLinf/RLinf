@@ -139,9 +139,9 @@ rollout
    * - ``rollout.eos``
      - EOS token id override; ``null`` uses ``tokenizer.eos_token_id``.
    * - ``rollout.tensor_parallel_size``
-     - TP degree inside the generation backend. See :doc:`5D`.
+     - TP degree inside the generation backend. See :doc:`5D Parallelism <../examples/agentic/5D>`.
    * - ``rollout.pipeline_parallel_size``
-     - PP degree inside the generation backend. See :doc:`5D`.
+     - PP degree inside the generation backend. See :doc:`5D Parallelism <../examples/agentic/5D>`.
    * - ``rollout.return_logprobs``
      - Whether the engine returns log-probs; defaults to the negation of
        ``algorithm.recompute_logprobs``.

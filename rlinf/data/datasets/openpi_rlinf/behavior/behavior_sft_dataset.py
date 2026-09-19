@@ -577,13 +577,11 @@ def partition_chunk_indices(
 
 
 class BehaviorSftDataset(LeRobotDataset):
-    """Streaming BEHAVIOR-1K dataset for pi05 SFT (task filtering + chunk streaming).
+    """BEHAVIOR-1K dataset for pi05 SFT with task filtering.
 
-    The dataset streams contiguous keyframe *chunks* of each episode rather than
-    returning the frame at a random ``idx``: ``__getitem__`` ignores ``idx`` and
-    advances an internal streaming cursor. Chunks are partitioned across data
-    loader workers (and, in this port, across distributed ranks) so that every
-    consumer sees a disjoint stream — see :meth:`__getitem__`.
+    The dataset can sample frames by index or stream contiguous keyframe chunks.
+    Streaming ignores ``idx`` and partitions chunks across data loader workers
+    and distributed ranks so that every consumer sees a disjoint stream.
 
     Direct-task mode (the default) sets the per-frame prompt to the fine-grained
     task text. Skill mode (``skill_labels`` provided) additionally resolves each
@@ -1023,9 +1021,10 @@ class BehaviorSftDataset(LeRobotDataset):
         ][0]
 
     def __getitem__(self, idx) -> dict:
-        """Return the next streamed frame (the ``idx`` argument is ignored).
+        """Return an indexed frame or the next frame in the streaming cursor.
 
-        In streaming mode the dataset maintains a per-consumer cursor over a
+        Indexed mode delegates to :class:`LeRobotDataset`. Streaming mode ignores
+        ``idx`` and maintains a per-consumer cursor over a
         disjoint slice of the keyframe chunks. The slice is selected so that:
 
         * each data loader worker on a rank streams a different set of chunks, and

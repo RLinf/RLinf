@@ -20,7 +20,7 @@ rollout、不规则的多轮工具交互，以及随时间变化的瓶颈，会�
 供给的组件转移到当前瓶颈。
 
 DynaRL 基于 RLinf 实现，并与现有推理引擎（如 SGLang）与训练后端（如 Megatron-LM）
-集成，对应 RLinf 的 :doc:`动态调度 <../../guides/dynamic_scheduling>` 功能。
+集成，对应 RLinf 的 :doc:`动态调度 <../../examples/agentic/dynamic_scheduling>` 功能。
 
 结果
 ----
@@ -157,7 +157,7 @@ Trainer 迁移开销主要随模型规模增长（1.5B 亚毫秒级到 32B 数�
 快速开始
 --------
 
-- **教程：** :doc:`../../guides/dynamic_scheduling`
+- **教程：** :doc:`../../examples/agentic/dynamic_scheduling`
 
 引用
 ----

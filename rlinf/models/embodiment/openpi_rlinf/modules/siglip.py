@@ -250,13 +250,7 @@ class SigLIPViT(nn.Module):
         # --- Stem + pos_embed in float32 (matching JAX) ---
         # image is (B, H, W, C) -> (B, C, H, W)
         x = image.permute(0, 3, 1, 2)
-        x = F.conv2d(
-            x.float(),
-            self.stem.weight.float(),
-            None if self.stem.bias is None else self.stem.bias.float(),
-            stride=self.stem.stride,
-            padding=self.stem.padding,
-        )
+        x = self.stem(x.float())
         B, C, h, w = x.shape
         x = x.reshape(B, C, h * w).permute(0, 2, 1)  # (B, h*w, width)
 
