@@ -230,6 +230,8 @@ VLA 模型下载
    env/eval: libero_spatial
 
    # 在 env/train/wan_libero_spatial.yaml 中：
+   env_type: world_model
+   backend: wan
    wm_env_type: libero
    task_suite_name: libero_spatial
    reset_gripper_open: True

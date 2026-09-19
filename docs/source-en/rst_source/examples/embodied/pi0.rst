@@ -509,6 +509,8 @@ Add ``--use-mirror`` for downloads from mainland China. The installer adds the
 matching ``torch-npu`` package and skips CUDA flash-attention; OpenPI then uses
 the common NPU worker and collective paths.
 
+.. include:: _ascend_torch.rst
+
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~
 

@@ -154,6 +154,10 @@ jobs:
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
+              - 'rlinf/models/embodiment/fastwam/**'
+              - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
+              - 'evaluations/libero/*fastwam*'
+              - 'examples/embodiment/config/model/fastwam.yaml'
             offline_rl_filter: &offline_rl
               - *shared
               - 'rlinf/workers/sft/**'

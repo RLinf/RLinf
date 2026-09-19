@@ -17,6 +17,9 @@ Environment Setup
 
 Supported models include ``openvla-oft``, ``openpi``, and ``lingbotvla`` — replace ``--model`` accordingly during installation.
 
+On AMD ROCm, install with ``--platform`` and set ``planner_backend: mplib`` in the task config;
+see :ref:`Run on Different Hardware Backends <robotwin-hardware>`.
+
 **RoboTwin repository and assets**
 
 Before evaluation, clone the RLinf-compatible branch and download simulation assets (see the training doc for details):

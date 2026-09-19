@@ -73,6 +73,52 @@ jobs:
                -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
+  sft-fastwam-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create FastWAM environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model fastwam --env libero
+
+      - name: FastWAM LIBERO FSDP SFT test
+        timeout-minutes: 25
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_fastwam
+
+      - name: FastWAM LIBERO batch evaluation
+        timeout-minutes: 25
+        run: |
+          ray stop || true
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh libero_spatial_fastwam_eval
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+
   sft-openpi-pytorch-behavior-test:
     runs-on: embodied
     steps:

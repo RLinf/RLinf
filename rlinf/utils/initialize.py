@@ -144,6 +144,9 @@ def set_megatron_args(cfg):
     args.vocab_file = None
 
     args.iteration = 0
+    # Gates RL-specific branches in megatron.training.training; mcore defaults
+    # to False, but RLinf's Megatron actor always does RL training.
+    args.perform_rl_step = True
 
     set_args(args)
 

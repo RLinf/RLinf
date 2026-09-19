@@ -80,25 +80,24 @@
 - **机械臂**：Franka Emika Panda 机械臂。
 - **相机**：Intel RealSense 相机（腕部相机用于观测）。
 - **计算节点**：一台带有 GPU 的计算机，用于 SFT 训练与 rollout。
-- **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
+- **机器人计算机**：通过网线连接机械臂，运行 Franka 控制器和数据采集。默认就是 GPU 计算机本身；多节点配置中则是一台不带 GPU 的独立控制节点。
 - **空间鼠标（可选）**：用于远程操控进行数据采集。
 
 .. note::
 
-   关于硬件环境搭建的详细说明（包括 ROS Noetic、libfranka、serl_franka_controllers 等依赖），
-   请参考 :doc:`franka` 中的「硬件环境搭建」与「依赖安装」章节。
+   机器人计算机上的 Franky 安装、固件兼容性和实时内核配置参见 :doc:`franka` 的「安装」章节。
 
 软件依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**控制节点** （数据采集）需要安装 Franka 控制相关依赖，可参考 :doc:`franka` 依赖安装部分。
+**机器人计算机**\ （数据采集，以及部署时的 env worker）需要 Franka 控制环境，按 :doc:`franka` 的「安装」章节配置。
 
-**训练 / Rollout 节点** （SFT 训练 + 部署）需要安装 OpenPI 模型相关依赖：
+**训练 / Rollout 节点**\ （SFT 训练 + 部署）需要 OpenPI 模型环境。加上 ``--env franka`` 会同时安装 Franky 依赖，因此当机器人计算机就是这台 GPU 计算机时，一个环境即可承担两种角色：
 
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
 
 .. note::
@@ -128,14 +127,12 @@
 特别的，为了避免franka末端撞击盘子边缘，会基于目标末端位姿将一定空间范围截去，用于限制机械臂的运动范围。
 详细参考 ``rlinf/envs/real/franka/bin_relocation.py`` 中的定义。
 
-参考 :doc:`franka` 中的「获取任务的目标位姿」章节，
-使用脚本 ``toolkits.realworld_check.test_franka_controller`` 获取目标位姿。
-记录此位姿，后续步骤中将替换到配置文件中。
+参考 :doc:`franka` 中获取目标位姿的步骤，使用脚本 ``toolkits.realworld_check.test_franka_controller`` 获取目标位姿。记录此位姿，后续步骤中将替换到配置文件中。
 
 第二步：采集专家数据
 ----------------------------------------
 
-参考 :doc:`franka` 中的「数据采集」章节，在控制节点上采集专家数据。
+参考 :doc:`franka` 中收集演示数据的步骤，在机器人计算机上采集专家数据。
 
 特别的，除了原有配置外，还需要针对 Bin-relocation 任务，做出以下修改：
 
@@ -212,8 +209,7 @@
 需要为刚采集得到的 LeRobot 数据集计算归一化统计量，
 这是启动 SFT 训练的前提条件。
 
-首先，将控制节点采集到的数据上传到训练节点的数据目录中，
-例如 ``/path/to/lerobot_data``。文件结构应按照如下：
+首先，将机器人计算机采集到的数据复制到训练节点的数据目录中，例如 ``/path/to/lerobot_data``；两者为同一台机器时可跳过复制。文件结构应按照如下：
 
 .. code::
 
@@ -318,10 +314,7 @@ SFT 训练完成后，将模型检查点路径也更新到部署配置文件中�
      model:
        model_path: "/path/to/pi0-model"
 
-在 Ray 集群启动后（参考 :doc:`franka` 中的「集群配置」章节），
-通过 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用
-``realworld_pnp_eval`` 运行部署。策略将根据输入的观测自主控制机器人完成
-Bin-relocation 任务。
+按 :doc:`franka` 启动 Ray 集群后，通过 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 使用 ``realworld_pnp_eval`` 运行部署。policy 将根据输入的观测自主控制机器人完成 Bin-relocation 任务。
 
 可以通过修改 ``env.eval.rollout_epoch`` 参数来控制评估的轮数。
 

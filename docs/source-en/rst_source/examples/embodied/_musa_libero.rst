@@ -11,6 +11,12 @@ driver libraries and devices are available inside the container:
       -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
       "$MUSA_IMAGE" bash
 
+A prebuilt image with the LIBERO model environments already installed is
+published as ``rlinf/rlinf:agentic-rlinf0.4-maniskill_libero-musa``. It builds
+on the same training-suite image and starts the same way. ManiSkill still needs
+the vendor simulator packages described below, so use the vendor image for
+ManiSkill.
+
 Verify device access before installing a model environment:
 
 .. code-block:: bash
