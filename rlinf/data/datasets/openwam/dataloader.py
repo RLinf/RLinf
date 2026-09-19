@@ -124,6 +124,14 @@ def build_openwam_sft_dataloader(
         persistent_workers=num_workers > 0,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
     )
+    if len(loader) == 0:
+        split_name = "validation" if eval_dataset else "training"
+        raise ValueError(
+            f"OpenWAM {split_name} loader has zero batches: "
+            f"num_samples={len(dataset)}, world_size={world_size}, "
+            f"batch_size={batch_size}, drop_last=True. "
+            "Add more data or reduce the actor world size/batch size."
+        )
     return loader, {
         "dataset_type": str(native_dl.type),
         "dataset_dir": dataset_dirs[0] if len(dataset_dirs) == 1 else dataset_dirs,

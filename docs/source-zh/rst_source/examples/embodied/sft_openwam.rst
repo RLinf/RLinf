@@ -27,7 +27,7 @@ OpenWAM 监督微调
    .. grid-item-card:: 硬件
       :text-align: center
 
-      2 张及以上 GPU 与 FSDP
+      推荐 4 张 GPU 与 FSDP2
 
 OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_paths`` 指向数据集根目录（也可以是多个根目录的列表，各数据集用同一套 dataloader 设置读取后按样本数比例拼接）；loader 会读取 ``actor.model.model_path`` 下的 ``config.yaml``，并保留原生的帧数、动作和归一化约定。
 
@@ -44,7 +44,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 运行
 ----
 
-在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认将 actor 放到 GPU ``0-1``，并使用 ``use_orig_params: true``，因为 OpenWAM 会冻结部分 backbone，同时训练 action 模块。
+在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认将 actor 放到 GPU ``0-3``。由于 OpenWAM 的可训练 DiT/action 参数保留在根 FSDP2 单元中，推荐使用 4 个 rank；在 80 GiB GPU 上使用两张卡可能超出显存预算。
 
 数据读取器由 checkpoint 的 ``config.yaml`` 决定，因此配方要把 checkpoint 和同类型的数据配对。``examples/sft/config/`` 下每种 OpenWAM 读取器各有一份配方，都继承 ``libero_sft_openwam.yaml``，只改路径和实验名：
 
@@ -56,6 +56,18 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
      - 数据
    * - ``libero_sft_openwam``
      - LIBERO（LeRobot v3，EEF10 动作）
+   * - ``agibotworld_sft_openwam``
+     - AgibotWorld
+   * - ``interndata_a1_sft_openwam``
+     - InterData A1
+   * - ``mixture_sft_openwam``
+     - OpenWAM reader 混合数据
+   * - ``muka_franka_sft_openwam``
+     - Muka Franka
+   * - ``oxe_droid_sft_openwam``
+     - OXE DROID
+   * - ``robocoin_sft_openwam``
+     - RoboCoin
    * - ``robotwin_sft_openwam``
      - RoboTwin 2.0（aloha-agilex，20 维双臂 EEF）
    * - ``robodojo_sft_openwam``
@@ -69,7 +81,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
    * - ``vlabench_sft_openwam``
      - VLABench
 
-显存吃紧时可以打开 ``fsdp_config.gradient_checkpointing: true``，它会转发给 OpenWAM 自己的分块 checkpointing（``use_gradient_checkpointing``）。
+基础配方默认启用 ``fsdp_config.gradient_checkpointing: true``，并将它转发给 OpenWAM 自己的分块 checkpointing（``use_gradient_checkpointing``）。同时使用 ``global_batch_size: 8`` 和 ``micro_batch_size: 1``，在不增加每个 rank 激活显存的情况下提高有效 batch。
 
 启动由 Ray 管理的 FSDP runner：
 
@@ -79,14 +91,14 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 
 修改 GPU 数量时，同时修改 ``cluster.component_placement.actor``，并确保 ``actor.global_batch_size`` 能被 actor world size 整除。
 
-预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。整个 policy 是一个 FSDP 单元（OpenWAM 的联合去噪驱动会在块的 forward 之外直接读取块权重），因此配方使用 FSDP2，避免 FSDP1 为每个 rank 保留一份全精度未分片的 flat 参数。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU，任何一张卡都不会先装下整个模型。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
+预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。由于 OpenWAM 的联合去噪驱动会在块的 forward 之外直接读取块权重，policy 使用一个根 FSDP2 单元。``reshard_after_forward`` 只作用于 wrap policy 指定的冻结 ``ResidualBlock`` 子单元；可训练的根参数在联合 forward 和 backward 期间仍需驻留。因此，配方默认使用四个 rank 并启用 gradient checkpointing；这并不保证两张 80 GiB GPU 一定能够运行。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
 
 验证与断点续训
 --------------
 
 设置 ``data.val_data_paths``（一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。``actor.eval_batch_size`` 是每个 rank 的验证 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的验证 batch 数。LeRobot 风格的读取器按 split 选取 episode：验证默认读 ``val`` split，如果验证集是一个只有 train split 的独立数据集，请设置 ``data.openwam_val_split: train``（验证集为空时会在启动阶段直接报错）。
 
-checkpoint 会把 dataloader、sampler（含 shuffle 的 epoch）和随机数状态与模型权重一起保存，因此 ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` 会从下一个未见过的 batch 继续，而不是重头开始这一轮数据。
+checkpoint 会把 dataloader、sampler（含 shuffle 的 epoch）和随机数状态与模型权重一起保存，因此 ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` 会从下一个未见过的 batch 继续，而不是重头开始这一轮数据。OpenWAM 配方设置了 ``runner.strict_resume: true``，缺少 ``data.pt`` 或 ``rng.pt`` 的旧 checkpoint 会直接报错；只有明确接受重新开始数据流时才应取消该设置。
 
 查看结果
 --------

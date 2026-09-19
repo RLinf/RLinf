@@ -27,7 +27,7 @@ Overview
    .. grid-item-card:: Hardware
       :text-align: center
 
-      2+ GPUs with FSDP
+      4 GPUs recommended with FSDP2
 
 The OpenWAM checkpoint supplies the model and dataloader settings. Set ``data.train_data_paths`` to the dataset root (or a list of roots: each is read with the same dataloader settings and the windows are concatenated, so the mixture is sampled in proportion to size); the loader reads ``config.yaml`` from ``actor.model.model_path`` and keeps the native frame, action, and normalization conventions.
 
@@ -44,7 +44,7 @@ Install the OpenWAM environment and RLinf:
 Run It
 ------
 
-Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to GPUs ``0-1`` and uses ``use_orig_params: true`` because OpenWAM freezes part of its backbone while training the action modules.
+Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to GPUs ``0-3``. Four ranks are recommended because OpenWAM keeps its trainable DiT/action parameters in the root FSDP2 unit; a two-card run can exceed the memory budget of 80-GiB GPUs.
 
 The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. One recipe per OpenWAM reader ships under ``examples/sft/config/``; each inherits ``libero_sft_openwam.yaml`` and only sets the paths and the experiment name:
 
@@ -56,6 +56,18 @@ The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pair
      - Data
    * - ``libero_sft_openwam``
      - LIBERO (LeRobot v3, EEF10 actions)
+   * - ``agibotworld_sft_openwam``
+     - AgibotWorld
+   * - ``interndata_a1_sft_openwam``
+     - InterData A1
+   * - ``mixture_sft_openwam``
+     - Mixed OpenWAM reader data
+   * - ``muka_franka_sft_openwam``
+     - Muka Franka
+   * - ``oxe_droid_sft_openwam``
+     - OXE DROID
+   * - ``robocoin_sft_openwam``
+     - RoboCoin
    * - ``robotwin_sft_openwam``
      - RoboTwin 2.0 (aloha-agilex, 20-D dual-arm EEF)
    * - ``robodojo_sft_openwam``
@@ -69,7 +81,7 @@ The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pair
    * - ``vlabench_sft_openwam``
      - VLABench
 
-``fsdp_config.gradient_checkpointing: true`` is forwarded to OpenWAM's own block checkpointing (``use_gradient_checkpointing``) when memory is tight.
+The base recipe enables ``fsdp_config.gradient_checkpointing: true`` and forwards it to OpenWAM's own block checkpointing (``use_gradient_checkpointing``). It also uses ``global_batch_size: 8`` with ``micro_batch_size: 1`` so the effective batch grows without increasing per-rank activation memory.
 
 Start the Ray-managed FSDP runner:
 
@@ -79,14 +91,14 @@ Start the Ray-managed FSDP runner:
 
 Override ``cluster.component_placement.actor`` and keep ``actor.global_batch_size`` divisible by the actor world size when you change the GPU count.
 
-The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single FSDP unit (OpenWAM's joint denoising driver reads block weights outside their forward), so the recipe uses FSDP2, which does not keep FSDP1's full-precision unsharded flat parameter. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping, so no rank ever holds the whole model on its device. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
+The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single root FSDP2 unit because OpenWAM's joint denoising driver reads block weights outside their forward. ``reshard_after_forward`` only applies to the frozen ``ResidualBlock`` subunits named by the wrap policy; the trainable root parameters remain resident for the joint forward and backward. The checked-in four-rank placement and gradient checkpointing are therefore part of the memory budget, rather than a guarantee that a two-card 80-GiB run will fit. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
 
 Validation and resuming
 -----------------------
 
 Set ``data.val_data_paths`` (one dataset root or a list, read with the same dataloader settings) and ``runner.val_check_interval`` to report ``eval/loss``, ``eval/loss_video`` and ``eval/loss_action`` averaged over the validation loader. ``actor.eval_batch_size`` sets the per-rank validation batch and ``actor.eval_max_batches`` caps the number of validation batches per rank for large datasets. LeRobot-style readers select episodes by split: validation reads the ``val`` split by default, so set ``data.openwam_val_split`` to ``train`` when the validation root is a separate held-out dataset that only ships a train split (an empty validation set is rejected at start-up).
 
-Checkpoints store the data loader, sampler (including the shuffle epoch) and RNG states next to the model weights, so ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` continues with the next unseen batch instead of restarting the epoch.
+Checkpoints store the data loader, sampler (including the shuffle epoch) and RNG states next to the model weights, so ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` continues with the next unseen batch instead of restarting the epoch. The OpenWAM recipe sets ``runner.strict_resume: true`` and fails if an older checkpoint has no ``data.pt`` or ``rng.pt``; unset it only when restarting the data stream is intentional.
 
 Visualization and Results
 -------------------------

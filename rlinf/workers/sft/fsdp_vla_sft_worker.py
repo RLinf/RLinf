@@ -190,6 +190,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().load_checkpoint(load_path)
 
         if isinstance(self.data_loader, StatefulDataLoader):
+            runner_cfg = getattr(getattr(self, "cfg", None), "runner", None)
+            strict_resume = bool(
+                runner_cfg.get("strict_resume", False)
+                if runner_cfg is not None
+                else False
+            )
             data_path = os.path.join(load_path, "data.pt")
             if os.path.exists(data_path):
                 all_states = torch.load(data_path, weights_only=False)
@@ -208,17 +214,24 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             else:
                 # Checkpoints written before the data loader became stateful
                 # (or by a plain DataLoader) carry no data position.
-                logging.warning(
-                    "%s has no data.pt; the data loader restarts from the "
-                    "beginning of the epoch, so samples seen before the "
-                    "checkpoint may repeat.",
-                    load_path,
+                message = (
+                    f"{load_path} has no data.pt; the data loader restarts from "
+                    "the beginning of the epoch, so samples seen before the "
+                    "checkpoint may repeat."
                 )
+                if strict_resume:
+                    raise FileNotFoundError(message)
+                logging.warning(message)
 
             rng_path = os.path.join(load_path, "rng.pt")
             if os.path.exists(rng_path):
                 all_rng_states = torch.load(rng_path, weights_only=False)
                 set_rng_state(all_rng_states[self._rank])
+            elif strict_resume:
+                raise FileNotFoundError(
+                    f"{load_path} has no rng.pt; strict resume requires the "
+                    "checkpoint RNG state."
+                )
 
             torch.distributed.barrier()
 

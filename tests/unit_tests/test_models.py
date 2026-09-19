@@ -1959,6 +1959,10 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
     ):
         cfg = hydra.compose(config_name="libero_sft_openwam")
     assert cfg.actor.model.load_to_device is False
+    assert cfg.cluster.component_placement.actor == "0-3"
+    assert cfg.runner.strict_resume is True
+    assert cfg.actor.global_batch_size == 8
+    assert cfg.actor.fsdp_config.gradient_checkpointing is True
     # fp32 master weights: bf16 ones round away nearly every update at lr=1e-6.
     assert cfg.actor.model.precision == "fp32"
     assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
@@ -1985,6 +1989,12 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
 @pytest.mark.parametrize(
     "name",
     [
+        "agibotworld_sft_openwam",
+        "interndata_a1_sft_openwam",
+        "mixture_sft_openwam",
+        "muka_franka_sft_openwam",
+        "oxe_droid_sft_openwam",
+        "robocoin_sft_openwam",
         "robotwin_sft_openwam",
         "robodojo_sft_openwam",
         "ebench_sft_openwam",
@@ -2231,7 +2241,7 @@ def test_openwam_sft_validation_split_is_configurable_and_never_empty(
     from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
 
     cfg, calls = _openwam_fake_dataset_cfg(
-        tmp_path, monkeypatch, {"/train": 6, "/held-out": 4, "/no-val": 0}
+        tmp_path, monkeypatch, {"/train": 6, "/held-out": 4, "/no-val": 0, "/tiny": 1}
     )
     build_openwam_sft_dataloader(cfg, 1, 0, "/train")
     build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
@@ -2244,6 +2254,9 @@ def test_openwam_sft_validation_split_is_configurable_and_never_empty(
     cfg.data.openwam_val_split = "train"
     _, info = build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
     assert calls[-1] == ("/held-out", "train") and info["num_samples"] == 4
+
+    with pytest.raises(ValueError, match="loader has zero batches"):
+        build_openwam_sft_dataloader(cfg, 2, 0, "/tiny")
 
 
 def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
@@ -2349,6 +2362,18 @@ def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
     assert "has no data.pt" in caplog.text
     assert stub._data_epoch == 0
     assert len([indices(batch) for batch in stub.data_iter]) == 5
+
+    # OpenWAM's checked-in recipe opts into strict resume so a silent data
+    # restart cannot be mistaken for an exact continuation.
+    strict_stub = make_stub()
+    strict_stub.cfg = OmegaConf.create({"runner": {"strict_resume": True}})
+    with pytest.raises(FileNotFoundError, match="has no data.pt"):
+        FSDPVlaSftWorker.load_checkpoint(strict_stub, str(old))
+
+    strict_data_stub = make_stub()
+    strict_data_stub.cfg = OmegaConf.create({"runner": {"strict_resume": True}})
+    with pytest.raises(FileNotFoundError, match="has no rng.pt"):
+        FSDPVlaSftWorker.load_checkpoint(strict_data_stub, str(ckpt))
 
 
 def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
