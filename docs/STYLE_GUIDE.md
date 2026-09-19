@@ -23,6 +23,16 @@ These apply to every page:
 - **Outcome first.** After stating the page's purpose, explain what the reader
   gets and how. Open each section with the result it establishes.
 - **No throat-clearing.** Cut "This section provides a comprehensive guide to … within the RLinf framework, focusing on…". Start with the verb or the result.
+- **Describe what exists, not what is absent or gone.** Document the current
+  requirements, commands, and contents. Cut sentences whose only content is that
+  something is not needed, not included, or no longer used: "ROS is not
+  required", "the image does not include the ROS backend", "no separate
+  installation is needed", "不需要 ROS". A reader who never used the old setup
+  learns nothing from them, and they go stale with the history they point to.
+  When the underlying fact matters, state it positively: "The ROS backend runs
+  on Ubuntu 20.04 and installs on the host." Keep a negative only when it answers
+  a decision the reader is making now, such as "the controller computer needs no
+  GPU". Record removals and migrations in release notes and PR descriptions.
 - **Annotate commands.** After any non-trivial command, say what it does ("What this does: 1… 2…") and point to where to configure it further.
 - **Name what you mean.** Prefer `Robot.connect`, `PartGroup`, `Placement` to "the
   common layer", "the robotics machinery", "the rest of the system".
@@ -569,6 +579,8 @@ merging, and rewrite if any of these are true:
 - The ZH page tracks the EN sentence for sentence.
 - The page introduction does not establish a result, scope, and reading order.
 - The first prose sentence does not state the page's purpose directly.
+- A sentence tells the reader what is not required, not included, or no longer
+  used instead of what the current setup needs.
 - A section can be moved elsewhere without changing the surrounding
   explanation, or begins with code or an API name before stating why it is
   needed.

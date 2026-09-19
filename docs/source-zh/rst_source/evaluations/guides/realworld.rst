@@ -22,16 +22,17 @@ RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-reloc
 
 .. code-block:: bash
 
-   # 机器人控制节点（Franka + 相机 + ROS）
+   # 机器人控制节点（Franka + 相机）
    bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
-   source <your_catkin_ws>/devel/setup.bash
 
 .. code-block:: bash
 
    # GPU / rollout 节点（π₀ 评测）
    bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
+
+控制节点使用默认的 Franky backend。如需改用 ROS 控制机械臂，请参考 :doc:`../../examples/embodied/franka` 的「旧版 ROS 后端（可选）」章节。
 
 DreamZero 真机评测还需在 GPU 节点安装 DreamZero 依赖，详见 :doc:`../../examples/embodied/sft_dreamzero`。
 
@@ -131,11 +132,11 @@ Ray 集群启动
    # 多网卡时指定对外可达网卡：
    # export RLINF_COMM_NET_DEVICES=<network_interface>
 
-控制节点还需 source ROS / franka 工作空间（若未写入 setup 脚本）：
+若 setup 脚本未激活 Franka 环境，控制节点还需手动激活：
 
 .. code-block:: bash
 
-   source <your_catkin_ws>/devel/setup.bash
+   source .venv/bin/activate
 
 然后启动 Ray（记 head 节点 IP 为 ``<head_ip>``）：
 
@@ -151,7 +152,7 @@ Ray 集群启动
 
 .. important::
 
-   ``ray start`` 会冻结当时的 Python 解释器与环境变量；请在各节点完成 venv、ROS、``PYTHONPATH`` 等配置后再启动 Ray。
+   ``ray start`` 会冻结当时的 Python 解释器与环境变量；请在各节点完成 venv、``PYTHONPATH`` 等配置后再启动 Ray。
 
 完整评测流程（PnP / π₀）
 ------------------------

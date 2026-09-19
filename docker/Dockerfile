@@ -20,7 +20,6 @@ ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-c
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
 # MUSA lives on the Moore Threads registry, not Docker Hub.
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
-ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
 
 
 ##################################################################################################
@@ -62,11 +61,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
-
-
-# Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
-# bypasses the platform switch and always uses a plain Ubuntu base.
-FROM ${FRANKA_BASE_IMAGE} AS base-image-embodied-franka
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
 ##################################################################################################
@@ -355,29 +350,22 @@ RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################
-# Embodied: Franka (Ubuntu 20.04, ROS Noetic)
+# Embodied: Franka
 ##################################################################################################
 FROM embodied-common-image AS embodied-franka-image
 
-# Install multiple Franka environments with different libfranka versions
-# franka uses ubuntu:20.04 with no GPU stack regardless of build-arg platform,
-# so always invoke install.sh with --platform nvidia to skip ROCm detection.
-RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
-            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka; \
-        done
+# franky-control ships libfranka inside a prebuilt wheel and bundles the
+# installer's default libfranka (0.19.0), and every Franky install carries the
+# dexterous-hand dependencies. Each model venv adds that policy to the same
+# Franky stack. The legacy ROS Noetic backend needs Ubuntu 20.04, so it is not
+# part of this image; install it natively with --env franka-ros.
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env franka
 
-# Franky environments. franky-control ships libfranka inside a prebuilt wheel,
-# so these need no ROS/catkin build and are kept in separate venvs from the
-# franka-$v ones above. Only the libfranka versions with published wheels are
-# built: https://github.com/Brunch-Life/franky/releases
-RUN for v in 0.15.0 0.19.0; do \
-            LIBFRANKA_VERSION="$v" bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franky-$v" --env franka-franky; \
-        done
-
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv franka-dexhand --env franka-dexhand
-
-# Set default env (recommended libfranka 0.15.0)
-RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
+RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

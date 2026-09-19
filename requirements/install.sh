@@ -20,6 +20,9 @@ PLATFORM="nvidia"
 ROCM_VERSION=""
 # googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
 RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
+# ManiSkill and RoboTwin both run on SAPIEN, and RoboTwin's dependencies do not
+# install it.
+SAPIEN_SPEC="sapien==3.0.1; platform_system == 'Linux' and platform_machine == 'x86_64' and python_version < '3.14'"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -102,7 +105,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -330,6 +333,18 @@ validate_python_version() {
     fi
 }
 
+# lerobot depends on opencv-python-headless, which writes the same cv2 package
+# as the opencv-python that real-robot envs request, so whichever wheel lands
+# last decides whether cv2 can open a camera window. Keep only the GUI wheel at
+# the version lerobot resolved; --no-deps leaves that resolution untouched.
+use_opencv_gui_wheel() {
+    local ver
+    ver=$(uv pip show opencv-python-headless 2>/dev/null | sed -n 's/^Version: //p') || true
+    [ -n "$ver" ] || return 0
+    uv pip uninstall opencv-python opencv-python-headless
+    uv pip install --no-deps "opencv-python==${ver}"
+}
+
 #=======================PLATFORM CONFIG=======================
 # Per-platform runtime env-var configuration. Each configure_<platform> runs
 # before any uv operation, so set everything that affects how dependencies
@@ -484,18 +499,45 @@ detect_nvidia_driver_max_cuda() {
     echo "$(( maj * 10 + min ))"
 }
 
+# Prints the newest cuXXX tag <= driver_num that publishes the given torch
+# version. Returns 1 when no index has the wheel, and 2 when an index cannot be
+# fetched, so a network failure never silently selects an older CUDA build.
 detect_nvidia_torch_cuda_tag() {
     local torch_ver="$1" index_base="$2" driver_num="$3"
-    local ver_re n listing
+    local ver_re n url listing http_code attempt
+    local listing_file
     ver_re=$(printf '%s' "$torch_ver" | sed 's/\./\\./g')
+    listing_file=$(mktemp)
     for n in 130 129 128 126 124 121 118; do
         [ "$n" -le "$driver_num" ] || continue
-        listing=$(curl -fsSL --max-time 60 "${index_base}/cu${n}/torch/" 2>/dev/null) || continue
+        url="${index_base}/cu${n}/torch/"
+        http_code=""
+        # curl on Ubuntu 20.04 lacks --retry-all-errors, so retry explicitly.
+        for attempt in 1 2 3 4; do
+            http_code=$(curl -sSL --max-time 60 -o "$listing_file" -w '%{http_code}' "$url" 2>/dev/null) || http_code="000"
+            case "$http_code" in
+                200|403|404) break ;;
+            esac
+            echo "[install.sh] Fetching ${url} failed (HTTP ${http_code}, attempt ${attempt}/4)." >&2
+            [ "$attempt" -lt 4 ] && sleep $(( attempt * 5 ))
+        done
+        case "$http_code" in
+            200) ;;
+            403|404) continue ;;
+            *)
+                echo "[install.sh] ERROR: could not fetch ${url}; refusing to fall back to an older CUDA build." >&2
+                rm -f "$listing_file"
+                return 2
+                ;;
+        esac
+        listing=$(cat "$listing_file")
         if grep -qE "torch-${ver_re}(%2B|\+)cu${n}-" <<< "$listing"; then
+            rm -f "$listing_file"
             echo "cu${n}"
             return 0
         fi
     done
+    rm -f "$listing_file"
     return 1
 }
 
@@ -556,6 +598,14 @@ configure_nvidia() {
         else
             _index_base="https://download.pytorch.org/whl"
         fi
+        local _tag_rc=1
+        if [ "$_cpu_only" -eq 0 ]; then
+            _tag_rc=0
+            _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num") || _tag_rc=$?
+            if [ "$_tag_rc" -eq 2 ]; then
+                exit 1
+            fi
+        fi
         if [ "$_cpu_only" -eq 1 ]; then
             PLATFORM_TORCH_STR=""
             PLATFORM_TORCH_INDEX="${_index_base}/cpu"
@@ -564,7 +614,7 @@ configure_nvidia() {
                 export UV_TORCH_BACKEND="cpu"
             fi
             echo "[install.sh] Routing torch ${_torch_ver} (cpu) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
-        elif _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num"); then
+        elif [ "$_tag_rc" -eq 0 ]; then
             PLATFORM_CUDA_TAG="$_cuda_tag"
             PLATFORM_TORCH_STR="+${_cuda_tag}"
             PLATFORM_TORCH_INDEX="${_index_base}/${_cuda_tag}"
@@ -1665,6 +1715,27 @@ EOF
     fi
 }
 
+# Runs `git clone ARGS... URL TARGET_DIR`, retrying because GitHub mirrors such
+# as gh-proxy.com intermittently reject clones. TARGET_DIR must be the last
+# argument and must not exist; a partial checkout is removed between attempts.
+git_clone_with_retry() {
+    local target_dir="${!#}" attempt
+    if [ -e "$target_dir" ]; then
+        echo "[install.sh] ERROR: git clone target $target_dir already exists." >&2
+        return 1
+    fi
+    for attempt in 1 2 3 4; do
+        if git clone "$@"; then
+            return 0
+        fi
+        rm -rf "$target_dir"
+        echo "[install.sh] git clone into $target_dir failed (attempt ${attempt}/4)." >&2
+        [ "$attempt" -lt 4 ] && sleep $(( attempt * 5 ))
+    done
+    echo "[install.sh] ERROR: git clone into $target_dir failed after 4 attempts." >&2
+    return 1
+}
+
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
@@ -1688,7 +1759,7 @@ clone_or_reuse_repo() {
         target_dir="$env_value"
         if [ ! -d "$target_dir" ]; then
             echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
         else
             echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
             local want_ref="" prev="" arg current_ref
@@ -1706,7 +1777,7 @@ clone_or_reuse_repo() {
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
         elif [ -d "$target_dir/.git" ]; then
             echo "Checking git repo $target_dir..." >&2
             local git_intact=1
@@ -1716,7 +1787,7 @@ clone_or_reuse_repo() {
             else
                 echo "Git repo $target_dir is corrupted. Re-cloning..." >&2
                 rm -rf "$target_dir"
-                git clone "$@" "$git_url" "$target_dir" >&2
+                git_clone_with_retry "$@" "$git_url" "$target_dir" >&2
             fi
         fi
     fi
@@ -1780,7 +1851,7 @@ EOF
 install_common_embodied_deps() {
     uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
-        grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" \
+        { grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" || [ $? -eq 1 ]; } \
             | uv pip install -r -
     else
         uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
@@ -1874,6 +1945,11 @@ install_openvla_model() {
             install_common_embodied_deps
             install_frankasim_env
             ;;
+        franka)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_franka_franky_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenVLA model." >&2
             exit 1
@@ -1886,6 +1962,13 @@ install_openvla_model() {
 
 install_openvla_oft_model() {
     case "$ENV_NAME" in
+        franka)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_franka_franky_env
+            install_flash_attn
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
+            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
@@ -2037,13 +2120,9 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
-        franka-franky)
+        franka)
             create_and_sync_venv
             install_common_embodied_deps
-            uv sync --extra franka --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-            if [ "$NO_ROOT" -eq 0 ]; then
-                bash $SCRIPT_DIR/embodied/franky_install.sh
-            fi
             install_franka_franky_env
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
@@ -2192,6 +2271,10 @@ install_gr00t_model() {
     maybe_build_decord_from_source
     uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
     case "$ENV_NAME" in
+        franka)
+            install_franka_franky_env
+            install_flash_attn
+            ;;
         maniskill_libero|libero)
             install_${ENV_NAME}_env
             install_flash_attn
@@ -2543,18 +2626,19 @@ install_lerobot() {
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
-        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}" "$@"
 }
 
-install_franka_realworld_env() {
-    uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    install_lerobot
+install_franka_ros_realworld_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
+    install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
             bash $SCRIPT_DIR/embodied/ros_install.sh
         fi
         install_franka_env
     fi
+    use_opencv_gui_wheel
 }
 
 install_env_only() {
@@ -2563,6 +2647,13 @@ install_env_only() {
     fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
+    # A robot host trains in its env venv, so it takes the same embodied extra,
+    # training dependencies and system libraries as a model install.
+    case "$ENV_NAME" in
+        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
+            install_common_embodied_deps
+            ;;
+    esac
     case "$ENV_NAME" in
         d4rl)
             install_d4rl_env
@@ -2571,21 +2662,12 @@ install_env_only() {
             install_dummy_env
             ;;
         franka)
-            install_franka_realworld_env
-            ;;
-        franka-dexhand)
-            install_franka_realworld_env
-            install_franka_dexhand_deps
-            ;;
-        franka-franky)
-            uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-            if [ "$NO_ROOT" -eq 0 ]; then
-                bash $SCRIPT_DIR/embodied/franky_install.sh
-            fi
             install_franka_franky_env
             ;;
+        franka-ros)
+            install_franka_ros_realworld_env
+            ;;
         xsquare_turtle2)
-            uv sync --extra xsquare_turtle2 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
             ;;
         habitat)
@@ -2601,7 +2683,7 @@ install_env_only() {
             install_embodichain_env
             ;;
         gim_arm)
-            uv sync --extra gim_arm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+            install_gim_arm_env
             ;;
         so101)
             install_so101_env
@@ -2699,7 +2781,7 @@ EOF
         maniskill_overrides=(--override "$override_file")
     fi
     # The largest git fetch in the install; truncates on slow links.
-    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22 "${maniskill_overrides[@]}"
+    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22 "$SAPIEN_SPEC" "${maniskill_overrides[@]}"
     if [ ${#maniskill_overrides[@]} -gt 0 ]; then
         rm -f "${maniskill_overrides[1]}"
         # The aarch64 wheel bundles librt from glibc 2.28, which needs private
@@ -2955,16 +3037,27 @@ install_franka_env() {
     # Clone necessary repositories
     pushd "$ROS_CATKIN_PATH/src"
     if [ ! -d "$ROS_CATKIN_PATH/src/serl_franka_controllers" ]; then
-        git clone https://github.com/rail-berkeley/serl_franka_controllers
+        git_clone_with_retry https://github.com/rail-berkeley/serl_franka_controllers serl_franka_controllers
     fi
     if [ ! -d "$ROS_CATKIN_PATH/libfranka" ]; then
-        git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka $ROS_CATKIN_PATH/libfranka
+        git_clone_with_retry -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka "$ROS_CATKIN_PATH/libfranka"
     fi
     if [ ! -d "$ROS_CATKIN_PATH/src/franka_ros" ]; then
         # Use a fork version that fixes compile issues with newer libfranka using C++17
-        git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros
+        git_clone_with_retry -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros franka_ros
     fi
     popd >/dev/null
+
+    # franka_control reads realtime_config from its source-tree config on every
+    # launch and exposes no launch argument for it, so the file is set here.
+    # "ignore" runs libfranka on a kernel without PREEMPT_RT.
+    local realtime_config="${FRANKA_REALTIME_CONFIG:-enforce}"
+    if [ "$realtime_config" != "enforce" ] && [ "$realtime_config" != "ignore" ]; then
+        echo "FRANKA_REALTIME_CONFIG must be 'enforce' or 'ignore' (got '$realtime_config')." >&2
+        exit 1
+    fi
+    sed -i -E "s/^realtime_config: .*/realtime_config: ${realtime_config}/" \
+        "$ROS_CATKIN_PATH/src/franka_ros/franka_control/config/franka_control_node.yaml"
 
     # Build
     pushd "$ROS_CATKIN_PATH"
@@ -3000,22 +3093,35 @@ install_franka_franky_env() {
     # to 0.19.0.  Override FRANKY_WHEEL (URL / local path / PyPI spec) when
     # the host cannot reach github.com.
     local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
+    if [ -z "${FRANKY_WHEEL:-}" ]; then
+        if [ "$(uname -m)" != "x86_64" ]; then
+            echo "Prebuilt franky-control wheels are x86_64 only (this host is $(uname -m)); set FRANKY_WHEEL to a wheel built for it." >&2
+            exit 1
+        fi
+        case "$LIBFRANKA_VERSION" in
+            0.15.0|0.19.0) ;;
+            *)
+                echo "No prebuilt franky-control wheel for libfranka ${LIBFRANKA_VERSION} (available: 0.15.0, 0.19.0). Use --env franka-ros for ROS, or set FRANKY_WHEEL." >&2
+                exit 1
+                ;;
+        esac
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     local PYTAG
     PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
     local FRANKY_WHEEL="${FRANKY_WHEEL:-${GITHUB_PREFIX}https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
     echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
-    # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
+    # --no-deps keeps the Franka requirements' pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
-    install_lerobot
-}
-
-install_franka_dexhand_deps() {
+    install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
+    # Ruiyan dexterous-hand and data-glove drivers.
     uv pip install "RLinf-dexterous-hands[glove]"
+    use_opencv_gui_wheel
 }
 
 install_piper_env() {
-    uv sync --extra embodied --extra piper --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/piper.txt"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
@@ -3023,16 +3129,23 @@ install_piper_env() {
 }
 
 install_so101_env() {
-    uv sync --extra embodied --extra so101 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/so101.txt"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "lerobot[feetech]>=0.4.1,<0.7"
+    use_opencv_gui_wheel
 }
 
 install_xsquare_turtle2_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/xsquare_turtle2.txt"
     install_lerobot
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
+    use_opencv_gui_wheel
+}
+
+install_gim_arm_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/gim_arm.txt"
 }
 
 install_robotwin_env() {
@@ -3060,7 +3173,7 @@ install_robotwin_env() {
         echo "[install.sh] Set planner_backend: mplib in the task config; curobo is unavailable."
     fi
 
-    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
+    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai "$SAPIEN_SPEC"
 
     if [ "$build_curobo_stack" -eq 1 ]; then
         uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
@@ -3118,14 +3231,7 @@ install_embodichain_env() {
 }
 
 install_dosw1_env() {
-    # Reuse the standard embodied extra so dosw1 picks up the same
-    # transformers/imageio/gymnasium dependency set as other embodied envs.
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    # The default patch_syncer uses nvcomp_lz4. Keep DOSW1 lightweight by
-    # installing only this shared compression runtime instead of the full
-    # common simulator dependency set.
-    uv pip install nvidia-nvcomp-cu12
-    uv pip install evdev opencv-python
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/dosw1.txt"
 
     # Install DOSW1 SDK. The wheel / airbot_api source are pre-deployed on the
     # DOS-W1 robot under ~/dos_w1/airbot by default; on a generic server they

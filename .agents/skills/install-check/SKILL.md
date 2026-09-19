@@ -135,7 +135,7 @@ bash -n requirements/install.sh && echo "syntax OK"
   pyproject it is — confirm it's not RLinf's.
 - **Docker coverage gaps are real.** The check currently flags models
   `gr00t_n1d6`, `dreamzero`, `qwen3_vl` and envs `genesis`, `habitat`,
-  `xsquare_turtle2`, `franka-dexhand` as having no Dockerfile stage. New
+  `xsquare_turtle2` as having no Dockerfile stage. New
   additions like these should get one. A handful of utility/real-robot targets
   (`dummy`, `d4rl`, `gim_arm`, `dosw1`) intentionally have no image — keep them
   out *consciously*, don't let the gap pass silently.

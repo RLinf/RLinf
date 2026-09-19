@@ -123,6 +123,8 @@ jobs:
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
               code=0
+              # One head per file; tests attach to it instead of starting their own.
+              ray start --head > /dev/null || { ray stop > /dev/null; ray start --head > /dev/null; }
               pytest "$file" || code=$?
               ray stop
               [ $code -eq 0 ] || exit $code
