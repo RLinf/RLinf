@@ -29,8 +29,11 @@ Common Parameters
 - `trajectory_format`: `pt` (default) or `pkl`.
 - `enable_cache` / `cache_size`: enable cache and set its size for throughput.
 - `sample_window_size`: sample from the most recent N trajectories; 0 means all.
-- `auto_save`: whether to persist to disk; `False` keeps cache and saves on checkpoint.
-  disables checkpoints.
+- ``auto_save``: whether to persist trajectories as they arrive. When ``False``,
+  the buffer always enables memory caching, even if ``enable_cache=False``,
+  and uses ``sample_window_size`` as the cache capacity. Set a positive
+  ``sample_window_size`` to retain the recent trajectories needed for sampling
+  and save them to disk with ``save_checkpoint()``.
 
 Add Trajectories
 ----------------
