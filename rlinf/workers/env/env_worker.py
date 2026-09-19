@@ -57,6 +57,12 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 
+_RLT_GEOMETRY_TRACE_DTYPES = {
+    "geometry_critical_active": torch.bool,
+    "rlt_oracle_expert_active": torch.bool,
+    "success_current": torch.bool,
+}
+
 
 class EnvWorker(Worker):
     # Class-level default so the observation send path is safe even when the
@@ -637,6 +643,7 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
+            dones=chunk_dones,
             rlt_switch_flags=rlt_switch_flags,
         )
         return env_output, env_info
@@ -977,11 +984,60 @@ class EnvWorker(Worker):
         data = {
             "obs": env_batch["obs"],
             "final_obs": env_batch["final_obs"],
+            "dones": env_batch.get("dones", None),
         }
         if self.enable_rlt:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
         return data
+
+    def _consume_rollout_infos(self, policy_output: Any, env: Any) -> None:
+        """Forward rollout diagnostics to environments that consume them."""
+        forward_inputs = getattr(policy_output, "forward_inputs", None)
+        if (
+            not isinstance(forward_inputs, dict)
+            or "rlt_gate_entered" not in forward_inputs
+        ):
+            return
+        set_rollout_infos = get_env_attr(env, "set_rollout_infos")
+        if not callable(set_rollout_infos):
+            raise ValueError(
+                "Rollout diagnostics require the environment to implement "
+                "set_rollout_infos()."
+            )
+        set_rollout_infos(forward_inputs)
+
+    @staticmethod
+    def _append_rlt_oracle_trace_infos(
+        policy_output: PolicyOutput,
+        env_output: EnvOutput,
+    ) -> None:
+        """Align environment oracle values with gate diagnostics for tracing."""
+        forward_inputs = policy_output.forward_inputs
+        score = forward_inputs.get("rlt_gate_score_min")
+        if not isinstance(score, torch.Tensor):
+            return
+
+        batch_size = int(score.shape[0])
+        env_infos = env_output.env_infos
+        if not isinstance(env_infos, dict):
+            env_infos = {}
+        for key, dtype in _RLT_GEOMETRY_TRACE_DTYPES.items():
+            value = env_infos.get(key)
+            if value is None:
+                final_info = env_infos.get("final_info")
+                if isinstance(final_info, dict):
+                    value = final_info.get(key)
+            if value is None:
+                continue
+            normalized = torch.as_tensor(value, dtype=dtype)
+            if normalized.numel() % batch_size != 0:
+                raise ValueError(
+                    f"RLT oracle trace info {key!r} has "
+                    f"{normalized.numel()} values for batch size {batch_size}."
+                )
+            normalized = normalized.reshape(batch_size, -1)[:, -1:]
+            forward_inputs[key] = normalized.cpu().contiguous()
 
     def _split_and_compress_obs(
         self, data: dict[str, Any], split_sizes: list[int]
@@ -1172,6 +1228,11 @@ class EnvWorker(Worker):
                         self.smooth_intervene.remember_policy_output(
                             stage_id, policy_output
                         )
+                    self._consume_rollout_infos(
+                        policy_output,
+                        self.env_list[stage_id],
+                    )
+                    self._append_rlt_oracle_trace_infos(policy_output, env_output)
                     rewards = self.compute_bootstrap_rewards(
                         env_output, policy_output.bootstrap_values, reward_model_output
                     )
@@ -1319,6 +1380,7 @@ class EnvWorker(Worker):
                     self.smooth_intervene.remember_policy_output(
                         stage_id, policy_output
                     )
+                self._append_rlt_oracle_trace_infos(policy_output, env_output)
                 rewards = self.compute_bootstrap_rewards(
                     env_output, policy_output.bootstrap_values, reward_model_output
                 )
@@ -1447,16 +1509,30 @@ class EnvWorker(Worker):
 
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
+                    gate_enabled = bool(
+                        OmegaConf.select(
+                            self.cfg,
+                            "rollout.rlt_critical_phase_gate.enable",
+                            default=False,
+                        )
+                    )
                     policy_output = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
-                        infer_batch_size_fn=self._infer_rollout_batch_size
-                        if self.env_decoupled_mode
-                        else None,
+                        merge_fn=PolicyOutput.merge if gate_enabled else None,
+                        infer_batch_size_fn=(
+                            self._infer_rollout_batch_size
+                            if self.env_decoupled_mode or gate_enabled
+                            else None
+                        ),
                         decoupled_mode=self.env_decoupled_mode,
+                    )
+                    self._consume_rollout_infos(
+                        policy_output,
+                        self.eval_env_list[stage_id],
                     )
                     raw_chunk_actions = (
                         policy_output.actions

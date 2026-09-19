@@ -36,6 +36,11 @@ STEAM：用于离线策略优化的集成优势建模
 | **你将完成：** SFT 一个集成进度评论器 → 计算集成优势 → CFG 训练策略 → 评测。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · SigLIP + Gemma3 + π₀.₅ 检查点 · LeRobot 格式数据集（见下文步骤）。
 
+.. toctree::
+   :hidden:
+
+   RLT 运行时进度路由 <steam/rlt_progress_estimation>
+
 流程
 ----------------------------------------
 
