@@ -35,7 +35,7 @@ from rlinf.utils.metric_utils import (
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
+from rlinf.utils.utils import clear_memory, compute_entropy_loss
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -445,14 +445,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         self.cfg.algorithm.entropy_bonus > 0
                         and not loss_kwargs["critic_warmup"]
                     ):
-                        entropy = out["entropy"]
-                        entropy = reshape_entropy(
-                            entropy,
+                        entropy_loss = compute_entropy_loss(
+                            out["entropy"],
                             entropy_type=self.cfg.algorithm.entropy_type,
+                            loss_mask=loss_mask,
                             action_dim=self.cfg.actor.model.get("action_dim", 7),
                             batch_size=out["logprobs"].shape[0],
                         )
-                        entropy_loss = masked_mean(entropy, mask=loss_mask)
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
                     loss = loss / self.gradient_accumulation
