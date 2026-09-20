@@ -294,7 +294,9 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 #### Hardware Support
 
-Choose a model and environment together, then follow the model link for hardware setup. The component tables above list components independently; this matrix records the supported paths for the model families covered by the hardware recipes. Each hardware backend applies to every environment listed in its row. ✅ means the code and installer support the combination; a compatible model checkpoint and task config are still required.
+RLinf runs the same training stack on NVIDIA and AMD GPUs and on domestic accelerators, including Huawei Ascend NPUs, Moore Threads GPUs and Kunlunxin XPUs. Each vendor is described once, in a manager class that reports how many devices a node has, how a worker is given access to them, which collective communication backend and network interface to use, and which torch device namespace to call. The scheduler, workers, placement and weight resharding reach the hardware through that one interface, so moving a job to another accelerator is a configuration change, and supporting a new accelerator means registering a manager class and an install path instead of editing the training loop. `requirements/install.sh --platform <name>` and the Docker build argument `PLATFORM` then build the matching vendor torch stack.
+
+Choose a model and environment together, then follow the model link for hardware setup. The component tables above list components independently; the matrix below records the supported paths for the model families covered by the hardware recipes, and each hardware backend applies to every environment listed in its row.
 
 | Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
@@ -303,10 +305,6 @@ Choose a model and environment together, then follow the model link for hardware
 | [GR00T N1.5](docs/source-en/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-en/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-en/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-
-— indicates that this matrix does not claim support for the combination.
-
-On non-CUDA backends, ManiSkill runs PhysX simulation on CPU and selects its renderer independently by PCI address. MUSA additionally requires the vendor-modified SAPIEN and ManiSkill packages. The GR00T ManiSkill path requires a checkpoint with a `maniskill_widowx` embodiment head; the non-NVIDIA GR00T scope is N1.5. LIBERO uses OSMesa on AMD, Ascend, and MUSA. Wan on Ascend uses MindIE-SD attention, RoPE, and RMSNorm kernels when MindIE-SD is installed separately; the installer does not install it.
 
 ### Agentic AI
 

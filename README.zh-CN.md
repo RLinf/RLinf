@@ -294,7 +294,9 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的模型系列及其支持路径。每种硬件后端都适用于所在行列出的全部环境。✅ 表示代码与安装器支持该组合，运行时仍需使用兼容的模型 checkpoint 与任务配置。
+RLinf 在 NVIDIA、AMD GPU 以及华为昇腾 NPU、摩尔线程 GPU、昆仑芯 XPU 等国产加速卡上运行同一套训练代码。每种硬件只描述一次：由一个 manager 类给出节点上的设备数量、worker 如何获得这些设备、使用哪种集合通信 backend 与网卡，以及对应的 torch 设备命名空间。调度器、worker、placement 与权重 resharding 都经由这一层接口访问硬件，因此把任务迁移到另一种加速卡只需改配置；新增一种加速卡也只需注册一个 manager 类与一条安装路径，不必改动训练主流程。`requirements/install.sh --platform <name>` 与 Docker 构建参数 `PLATFORM` 会安装对应厂商的 torch 栈。
+
+先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的模型系列及其支持路径，每种硬件后端都适用于所在行列出的全部环境。
 
 | 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
@@ -303,10 +305,6 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 | [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-
-— 表示本表未声明支持该组合。
-
-在非 CUDA 后端上，ManiSkill 使用 CPU 运行 PhysX 仿真，并通过 PCI 地址独立选择 renderer。MUSA 还需要厂商修改过的 SAPIEN 与 ManiSkill 包。GR00T 的 ManiSkill 路径需要带有 `maniskill_widowx` embodiment head 的 checkpoint；非 NVIDIA 的 GR00T 支持范围为 N1.5。AMD、昇腾和 MUSA 上的 LIBERO 使用 OSMesa。昇腾上的 Wan 在单独安装 MindIE-SD 后使用其 attention、RoPE 与 RMSNorm 加速算子；安装脚本不会安装 MindIE-SD。
 
 ### 智能体强化学习
 
