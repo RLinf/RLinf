@@ -12,6 +12,9 @@ ARG CANN_VER=9.1.1-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
 ARG KUNLUN_VER=v1.7.2
 ARG UBUNTU_VER=22.04
+# Reason-image only. FA4 backward is sm90+; Docker builds cannot probe the GPU.
+# Pass --build-arg UNINSTALL_FA4=1 when the image will run on Ampere (e.g. A100).
+ARG UNINSTALL_FA4=0
 # Registry prefix for the Docker Hub base images, with a trailing slash.
 # Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=m.daocloud.io/docker.io/ when it is unreachable.
 ARG REGISTRY_MIRROR=
@@ -174,6 +177,8 @@ FROM base-image AS reason-image
 # (nvidia-cutlass-dsl, flashinfer, tilelang, tokenspeed-mla) to different
 # versions, so sharing a venv means whichever is installed second downgrades the
 # other's kernels. Activate `reason-vllm` for vLLM rollout.
+ARG UNINSTALL_FA4
+ENV UNINSTALL_FA4=${UNINSTALL_FA4}
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason --engine sglang && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason-vllm --engine vllm
 
