@@ -92,7 +92,7 @@ Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 
       rlinf/rlinf:agentic-rlinf0.4-frankasim
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-frankasim
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-frankasim
 
 在镜像中切换到虚拟环境：
 

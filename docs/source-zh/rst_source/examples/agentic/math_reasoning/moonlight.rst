@@ -46,9 +46,7 @@ Moonlight-16B-A3B-Instruct 是 DeepSeek-V3 架构的混合专家模型：
 - **MTP** ：多 token 预测头（``num_nextn_predict_layers=1``）；RL 中不训练。
 - 使用 **precision-aware optimizer** （Float8 master 权重）训练，提升显存效率。
 
-actor 通过 Megatron-Bridge（``rlinf-megatron-bridge``）把 HuggingFace 权重转换为
-Megatron-Core 分片 checkpoint；rollout 使用 SGLang（DeepSeek-V2 后端，``model_type: deepseek_v3``），
-开启专家并行（``ep_size == tp_size``）。
+actor 通过 Megatron-Bridge（``megatron-bridge``）把 HuggingFace 权重转换为 Megatron-Core 分片 checkpoint；rollout 使用 SGLang（DeepSeek-V2 后端，``model_type: deepseek_v3``），开启专家并行（``ep_size == tp_size``）。
 
 数据集
 ------
@@ -74,15 +72,13 @@ GRPO 原理
 .. code-block:: bash
 
    cd /path/to/RLinf
-   MEGATRON_PATH=/path/to/Megatron-LM-core0.17 \
+   MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
    bash requirements/install.sh agentic \
      --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
      --no-apex --platform nvidia --use-mirror \
      --venv /opt/venv/reason_0512_v3
 
-该命令安装 agentic 栈——sglang 0.5.12 + torch 2.11+cu130 + TransformerEngine 2.17 +
-transformers 5.6 + py3.11 兼容的 ``rlinf-megatron-bridge`` 0.4.2 wheel + flash-attn，
-并通过 ``MEGATRON_PATH`` 复用 Megatron-Core 0.17 clone。
+该命令创建 Python 3.12 虚拟环境并安装 agentic 栈：sglang 0.5.12 + torch 2.11+cu130 + TransformerEngine 2.17 + transformers 5.6 + ``megatron-bridge`` 0.5.0 wheel + flash-attn，并通过 ``MEGATRON_PATH`` 复用 Megatron-Core 0.18 clone。
 
 启动训练
 --------

@@ -3,7 +3,7 @@ LIBERO Evaluation
 
 LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo), with suites including Spatial, Object, Goal, and Long. RLinf supports parallel VLA policy evaluation on LIBERO with task-level success metrics.
 
-Related training docs: :doc:`../../examples/embodied/libero`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
+Related training docs: :doc:`../../examples/embodied/libero`, :doc:`../../examples/embodied/sft_fastwam`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
 
 Environment Setup
 -----------------
@@ -13,7 +13,9 @@ Environment Setup
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
+With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
+
+Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
 
 Example Configs
 ---------------
@@ -39,6 +41,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_dreamzero_eval_sglang.yaml``
      - Spatial
      - DreamZero (SGLang backend)
+   * - ``libero_spatial_fastwam_eval.yaml``
+     - Spatial
+     - FastWAM
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2
@@ -48,6 +53,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_object_openvlaoft_eval.yaml``
      - Object
      - OpenVLA-OFT
+   * - ``libero_object_fastwam_eval.yaml``
+     - Object
+     - FastWAM
    * - ``libero_object_molmoact2_eval.yaml``
      - Object
      - MolmoAct2
@@ -57,15 +65,24 @@ Available under ``evaluations/libero/``:
    * - ``libero_goal_openvlaoft_eval.yaml``
      - Goal
      - OpenVLA-OFT
+   * - ``libero_goal_fastwam_eval.yaml``
+     - Goal
+     - FastWAM
    * - ``libero_goal_molmoact2_eval.yaml``
      - Goal
      - MolmoAct2
    * - ``libero_10_openpi_pi05_eval.yaml``
      - Long (libero_10)
      - π₀.₅
+   * - ``libero_10_apxinf_pi05_eval.yaml``
+     - Long (libero_10)
+     - π₀.₅ (ApxInf backend)
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+   * - ``libero_10_fastwam_eval.yaml``
+     - Long (libero_10)
+     - FastWAM
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2
@@ -97,6 +114,31 @@ Copy or edit the target YAML and set at least ``rollout.model.model_path``. See 
 **Step 4: Check results**
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
+
+ApxInf Backend
+--------------
+
+The ApxInf path is evaluation-only. Install the official
+`ApxInf <https://github.com/infinigence/ApxInf>`_ Python frontend and CUDA
+binding in the RLinf runtime, then point ``APXINF_PI05_MODEL_DIR`` at a
+checkpoint directory containing ``config.json``, ``model.safetensors``,
+``tokenizer.model``, and ``norm_stats.json``:
+
+.. code-block:: bash
+
+   export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
+   bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+
+This config keeps the native OpenPI contract: two already-oriented LIBERO
+images, an 8-D state, a state-free PI0.5 prompt, 5 flow steps, a 10-action
+prediction horizon, and execution of only the first 5 actions. RLinf's OpenPI
+transforms own resize, tokenization, checkpoint normalization and action
+unnormalization. ApxInf's low-level ``Model.infer_rgb`` API owns only model
+inference and, by default, initial Gaussian noise sampling. Set
+``rollout.model.apxinf.noise_source=observation`` and pass an explicit
+``[B,10,32]`` noise tensor when doing paired numerical parity tests.
+The default 10 environments x 10 rollout epochs evaluate 10 reset states for
+each LIBERO-10 task (100 trajectories total).
 
 .. _libero-eval-config:
 

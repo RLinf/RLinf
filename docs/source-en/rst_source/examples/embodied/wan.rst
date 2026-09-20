@@ -109,7 +109,7 @@ Installation
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-wan
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-wan
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-wan
 
    # Inside the container, switch to the OpenVLA-OFT virtual environment:
    source switch_env openvla-oft
@@ -233,6 +233,8 @@ uses a fixed chunk length, ``use_proprio`` defaults to ``False``, ``num_images_i
    env/eval: libero_spatial
 
    # In env/train/wan_libero_spatial.yaml:
+   env_type: world_model
+   backend: wan
    wm_env_type: libero
    task_suite_name: libero_spatial
    reset_gripper_open: True

@@ -442,9 +442,15 @@ class ReasoningRunner:
             self.critic.sync_model_to_inference()
             self.critic_inference.sync_model_from_actor().wait()  # TODO change this name
 
+        # self.rollout here is always 'sync' mode (cpu/None weight_reload is only
+        # used by separate judge/eval rollouts), so this is unconditional.
         self.actor.sync_model_to_rollout()
         self.rollout.sync_model_from_actor().wait()
         self.actor.del_reshard_state_dict().wait()
+        # KV cache + cudagraph were deferred (only weights resumed) to avoid OOM;
+        # mirrors the offload condition — pure disaggregated never offloads them.
+        if self.component_placement.is_collocated or self.component_placement.is_auto:
+            self.rollout.onload_kv_cudagraph().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)

@@ -353,6 +353,47 @@ def test_build_history_input_emits_on_interval_tick():
     ]
 
 
+def _success_potential_state_machine():
+    from rlinf.models.embodiment.reward.vlm_reward_model import (
+        ShapedVLMRewardModel,
+    )
+
+    model = ShapedVLMRewardModel.__new__(ShapedVLMRewardModel)
+    model.potential_gamma = 1.0
+    model.potential_scale = 1.0
+    model.potential_ema_alpha = 0.5
+    model.potential_clip = 0.0
+    model.success_threshold = 0.5
+    model.success_bonus = 1.0
+    model.success_confirmation_windows = 1
+    model.gt_success_bonus = 0.0
+    model.infer_micro_batch_size = 0
+    model._previous_potentials = None
+    model._success_fired = None
+    model._success_streak = None
+    return model
+
+
+def test_empty_history_input_still_resets_shaping_state_on_done():
+    model = _success_potential_state_machine()
+    model._previous_potentials = torch.tensor([0.4, 0.8])
+    model._success_fired = torch.tensor([True, True])
+    model._success_streak = torch.tensor([3, 1], dtype=torch.int32)
+
+    rewards = model.compute_reward(
+        {
+            "history_input": {},
+            "dones": torch.tensor([True, False]),
+        }
+    )
+
+    assert rewards.tolist() == pytest.approx([0.0, 0.0])
+    assert torch.isnan(model._previous_potentials[0])
+    assert float(model._previous_potentials[1]) == pytest.approx(0.8)
+    assert model._success_fired.tolist() == [False, True]
+    assert model._success_streak.tolist() == [0, 1]
+
+
 VALUE_CLIP = 0.2
 HUBER_DELTA = 10.0
 

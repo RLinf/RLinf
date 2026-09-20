@@ -43,9 +43,11 @@ class VLMBaseDataset(Dataset):
         data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
+        eval_dataset: bool = False,
     ) -> None:
         super().__init__()
         self.cfg = config
+        self.eval_dataset = eval_dataset
         raw_paths = [data_paths] if isinstance(data_paths, str) else list(data_paths)
         # Expand directories into file lists recursively (json/jsonl/parquet)
         self.data_paths = self._expand_data_paths(raw_paths)
@@ -223,6 +225,9 @@ class VLMBaseDataset(Dataset):
             )
 
             inputs.pop("attention_mask", None)
+            # transformers 5 adds this per-token (1, prompt_len) tensor, which the
+            # actor cannot batch; it only feeds M-RoPE, and actors pass position_ids.
+            inputs.pop("mm_token_type_ids", None)
 
             if self.cfg.rollout.rollout_backend == "sglang":
                 ids = inputs.pop("input_ids")

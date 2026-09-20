@@ -120,7 +120,7 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
       rlinf/rlinf:agentic-rlinf0.4-robotwin
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-robotwin
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robotwin
 
 在镜像中切换到对应虚拟环境：
 

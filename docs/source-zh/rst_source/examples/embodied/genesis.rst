@@ -88,7 +88,7 @@
       rlinf/rlinf:agentic-rlinf0.4-genesis
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-genesis
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-genesis
 
 **自定义环境**
 
