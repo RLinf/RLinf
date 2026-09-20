@@ -23,8 +23,10 @@ from diffsynth.pipelines.wan_video_new import ModelConfig, WanVideoPipeline
 from PIL import Image
 
 from rlinf.envs.sim.world_model.registry import register_backend
+from rlinf.utils.patcher import Patcher
 
 from . import FrameQueue, autocast
+from .npu_patches import apply_npu_patches
 
 __all__ = ["WanBackend"]
 
@@ -77,6 +79,9 @@ class WanBackend:
         return instructions
 
     def _build_pipeline(self) -> WanVideoPipeline:
+        Patcher.clear()
+        apply_npu_patches(Patcher)
+        Patcher.apply()
         # diffsynth takes the device as a string, torch.device stringifies to one.
         pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,

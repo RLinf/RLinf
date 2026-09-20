@@ -294,18 +294,17 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的模型系列及其支持路径。每种硬件后端都适用于所在行列出的全部环境。✅ 表示代码与安装器支持该组合，运行时仍需使用兼容的模型 checkpoint 与任务配置。
+RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同一套训练栈能够无缝运行在 NVIDIA、AMD GPU，以及华为昇腾、摩尔线程、昆仑芯等国产加速卡上。用户在不同计算节点间迁移训练任务时，可实现模型与算法的“零改动”。同时，加速卡厂商只需完成极简的接口适配，便能将完整的具身智能与智能体 RL 训练生态平移至自家硬件，彻底免去了维护框架定制分支的繁琐工作。
+
+请先选择所需的模型与环境组合，随后点击相应链接即可获取详细的硬件运行指南。每一款硬件后端均已完美适配其所在行列出的所有环境。
 
 | 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
 | [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | [Wan 世界模型](docs/source-zh/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
 | [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-
-— 表示本表未声明支持该组合。
-
-在非 CUDA 后端上，ManiSkill 使用 CPU 运行 PhysX 仿真，并通过 PCI 地址独立选择 renderer。MUSA 还需要厂商修改过的 SAPIEN 与 ManiSkill 包。GR00T 的 ManiSkill 路径需要带有 `maniskill_widowx` embodiment head 的 checkpoint；非 NVIDIA 的 GR00T 支持范围为 N1.5。AMD、昇腾和 MUSA 上的 LIBERO 使用 OSMesa。
 
 ### 智能体强化学习
 

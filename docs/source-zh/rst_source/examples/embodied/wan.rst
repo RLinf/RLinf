@@ -42,7 +42,7 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · GPU
+      NVIDIA CUDA · :ref:`华为昇腾 CANN <wan-hardware>` （Wan backend）
 
 | **你将完成：** 安装 → 下载 VLA 模型 → 下载 Wan 世界模型权重与初始化数据 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 OpenVLA-OFT SFT checkpoint · Wan 世界模型权重与初始化数据集（见下文）。
@@ -95,6 +95,8 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
 
 安装
 ----------------------------------------
+
+NVIDIA 用户按以下步骤安装；在 NPU 上运行 Wan 世界模型推理时，请参考 :ref:`昇腾配置步骤 <wan-hardware>`。
 
 .. include:: _setup_common.rst
 
@@ -309,3 +311,47 @@ OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/wan_libero_spatial_grpo_o
       - **+16.3%**
       - **+41.2%**
       - **+11.9%**
+
+.. _wan-hardware:
+
+在不同硬件后端上运行
+----------------------------------------
+
+上文的安装步骤面向 NVIDIA CUDA。在华为昇腾 CANN 上运行 Wan 世界模型推理时，先按以下步骤配置环境，再沿用上文的 checkpoint 和任务配置流程。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用已配置 CANN 和 NPU 驱动的昇腾宿主机或容器。Wan 直接通过世界模型生成观测，该训练流程无需 LIBERO 仿真器，也无需配置 OSMesa 渲染。
+
+创建包含 OpenVLA-OFT policy 与 Wan 世界模型依赖的环境：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env wan
+   source .venv/bin/activate
+
+中国大陆用户可添加 ``--use-mirror``。安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，但不会安装 MindIE-SD。请在已激活的环境中单独安装与 CANN、PyTorch 版本兼容的 MindIE-SD。
+
+检查 NPU 是否可用，以及所需的 MindIE-SD 算子能否导入：
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import torch
+   import torch_npu
+   from mindiesd import rotary_position_embedding
+   from mindiesd.layers.flash_attn.attention_forward import attention_forward
+
+   assert torch.npu.is_available(), "No Ascend NPU is available"
+   PY
+
+Wan backend 在 NPU 上运行时，RLinf 会在构建 pipeline 前自动启用加速 attention、旋转位置编码和 RMSNorm。如果依赖无法导入，则记录警告并保留 diffsynth 原有算子。这里配置的是 Wan backend，policy checkpoint 在目标硬件上的数值表现仍需单独验证。
+
+按上文下载 checkpoint 和初始化数据后，在 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` 中设置 policy 与世界模型路径。保留配置默认的 ``runner.val_check_interval: -1`` 和 ``runner.only_eval: False``，即可使用 Wan 训练而不启用仿真器评估。
+
+在仓库根目录启动 Wan LIBERO-Spatial GRPO 配方：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
