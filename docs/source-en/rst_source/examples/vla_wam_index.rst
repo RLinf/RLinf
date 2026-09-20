@@ -29,7 +29,7 @@ renderer independently.
      - LIBERO · ManiSkill with a ``maniskill_widowx`` checkpoint
    * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
      - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>`
-     - LIBERO · ManiSkill
+     - LIBERO · ManiSkill · :ref:`RoboTwin on ROCm <robotwin-hardware>`
 
 Model Recipes
 -------------

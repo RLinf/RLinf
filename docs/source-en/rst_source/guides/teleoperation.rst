@@ -198,9 +198,9 @@ instead of receiving malformed motion.
 
 Lag has a second cause that a higher rate does not fix. If the follower reaches
 its targets smoothly but settles behind the leader, the arm's compliance gains
-are too soft. :doc:`Dual Franka PICO Collection and DAgger
-<../examples/embodied/dual_franka_pico_dagger>` lists the Franka settings and
-the values tuned for teleoperation.
+may be too soft. :ref:`Configure Arm Motion <franka-motion-settings>` explains
+the Franky defaults shared by teleoperation and policy execution, and how to
+override them.
 
 Add a Device
 ------------
