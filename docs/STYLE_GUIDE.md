@@ -23,6 +23,16 @@ These apply to every page:
 - **Outcome first.** After stating the page's purpose, explain what the reader
   gets and how. Open each section with the result it establishes.
 - **No throat-clearing.** Cut "This section provides a comprehensive guide to … within the RLinf framework, focusing on…". Start with the verb or the result.
+- **Describe what exists, not what is absent or gone.** Document the current
+  requirements, commands, and contents. Cut sentences whose only content is that
+  something is not needed, not included, or no longer used: "ROS is not
+  required", "the image does not include the ROS backend", "no separate
+  installation is needed", "不需要 ROS". A reader who never used the old setup
+  learns nothing from them, and they go stale with the history they point to.
+  When the underlying fact matters, state it positively: "The ROS backend runs
+  on Ubuntu 20.04 and installs on the host." Keep a negative only when it answers
+  a decision the reader is making now, such as "the controller computer needs no
+  GPU". Record removals and migrations in release notes and PR descriptions.
 - **Annotate commands.** After any non-trivial command, say what it does ("What this does: 1… 2…") and point to where to configure it further.
 - **Name what you mean.** Prefer `Robot.connect`, `PartGroup`, `Placement` to "the
   common layer", "the robotics machinery", "the rest of the system".
@@ -185,7 +195,7 @@ question, not by the team that owns the feature.
 | **Get Started** | Install, quickstarts, requirements, cheat sheet. |
 | **Examples** | The recipe galleries (simulators, robots, models, SFT, algorithms, agents, systems). |
 | **Evaluation** | Eval onboarding, benchmark eval guides, eval CLI / config / results reference. |
-| **Guides** | Operational how-tos: configure, launch & scale, data & checkpoints, performance, hardware backends, agent workflows. |
+| **Guides** | Operational how-tos: configure, launch & scale, data & checkpoints, performance, agent workflows. |
 | **Concepts** | The mental model: execution flow, workers, channels, cluster, placement, execution modes, replay buffer. |
 | **Reference** | Exact specs: APIs, algorithm specs, configuration keys & metrics, evaluation reference. |
 | **Extending** | Contributor how-tos: new env / model / SFT, advanced integrations. |
@@ -203,6 +213,15 @@ simulators / benchmarks → `simulators_index`; physical hardware →
 policies such as ``MLP``) → `vla_wam_index` (Models); training recipes /
 algorithms → `methods_index`; SFT-only workflows → `sft_index`. Do not duplicate
 the same page in multiple gallery indexes.
+
+**Hardware setup ownership.** Model example pages own backend-specific
+installation and launch steps under `Run on Different Hardware Backends`. List
+supported backends and model/environment limits in the `Hardware` card. Route
+readers from the README support matrix, Models gallery, installation guide, and
+simulator pages directly to those sections. Shared setup commands belong in
+underscore-prefixed includes. Distinguish hardware e2e coverage from installer
+options or compatibility patches; support applies to a specific model,
+environment, and backend combination.
 
 **Evaluation ownership.** Evaluation is a first-class top-level section, not an
 Examples subsection. `rst_source/evaluations/get_started/` owns eval onboarding,
@@ -230,7 +249,7 @@ cards or `list-table`s (not prose). Preserve page filenames when regrouping to
 avoid link churn, and update both EN and ZH toctrees in the same change. The
 established groupings:
 
-- **Guides:** Configure · Launch & Scale · Data & Checkpoints · Performance · Hardware Backends · Agent Workflows.
+- **Guides:** Configure · Launch & Scale · Data & Checkpoints · Performance · Agent Workflows.
 - **Reference:** API · Algorithms · Configuration · Evaluation Reference.
 - **Concepts:** Execution · Scheduling.
 - **Extending:** keep the primary add-component pages (New Environment, New Model with FSDP, New Model with Megatron, New SFT Model) as immediate children; group only advanced topics under Advanced Integrations (Megatron-Bridge, weight synchronization, reward-model workflow).
@@ -340,6 +359,31 @@ Every benchmark (env) or model example page must:
    Suites` / `LIBERO-Pro & LIBERO-Plus Suites`) and its own card grid. Don't repeat
    the H1 in a subtitle, and give any `:ref:` that points at a renamed section
    explicit link text so it still reads right.
+
+### Non-CUDA hardware sections
+
+A recipe page that runs on more than one accelerator gets one dedicated section
+for the non-CUDA platforms, not notes scattered through the CUDA instructions.
+
+- **One section, one anchor.** Put it after the CUDA install and launch steps,
+  name it `Run on Different Hardware Backends`, and give it a `:ref:` anchor
+  (`_<recipe>-hardware`) so the Hardware card and the support table can link to
+  it. Inside, use one H3 per platform, named for the vendor stack: `AMD ROCm`,
+  `Huawei Ascend CANN`, `Moore Threads MUSA`.
+- **Each platform subsection covers the same four things**, in this order: how to
+  start the container or install natively, what the platform changes about the
+  run (device flags, rendering, simulator backend), the launch command, and the
+  limits a reader would otherwise discover at runtime.
+- **Container and install blocks are partials.** The commands repeat across
+  recipes, so they live in `_<platform>_<env>.rst` (`_amd_libero.rst`,
+  `_ascend_libero.rst`, `_musa_maniskill.rst`) and are pulled in with
+  `.. include::`. Recipe-specific tokens (`--model`, config name, checkpoint)
+  stay on the page.
+- **State the hardware the page was verified on**, and say what is untested
+  rather than implying every platform behaves alike.
+- **Keep the support table honest.** Every platform with a subsection appears in
+  the `vla_wam_index` hardware row for that recipe, and every platform in that
+  row has a subsection.
 
 ### Page anatomy (recipe / example pages)
 
@@ -535,6 +579,8 @@ merging, and rewrite if any of these are true:
 - The ZH page tracks the EN sentence for sentence.
 - The page introduction does not establish a result, scope, and reading order.
 - The first prose sentence does not state the page's purpose directly.
+- A sentence tells the reader what is not required, not included, or no longer
+  used instead of what the current setup needs.
 - A section can be moved elsewhere without changing the surrounding
   explanation, or begins with code or an API name before stating why it is
   needed.

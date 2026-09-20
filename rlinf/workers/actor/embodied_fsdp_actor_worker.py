@@ -20,6 +20,7 @@ from torch import nn
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
@@ -54,7 +55,6 @@ from rlinf.utils.placement import (
 from rlinf.utils.utils import (
     clear_memory,
     masked_mean,
-    reshape_entropy,
 )
 
 
@@ -481,7 +481,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return self._opd_teacher_model
 
     def _build_sft_data_loader(self):
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENPI,
+            SupportedModel.OPENPI_RLINF,
+        ]:
             repo_id = resolve_lerobot_repo_id(self.cfg.actor.get("sft_data_path"))
             if repo_id is None:
                 raise ValueError(
@@ -493,11 +496,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
-            if "config_name" not in self.cfg.actor:
+            training_config_name = OmegaConf.select(
+                self.cfg.actor.model, "openpi.config_name", default=None
+            )
+            if not training_config_name:
                 raise ValueError(
-                    "config_name is required when enable_sft_co_train=True"
+                    "enable_sft_co_train=True requires actor.model.openpi.config_name."
                 )
-            training_config_name = self.cfg.actor.config_name
             data_loader_config = get_openpi_config(
                 training_config_name,
                 model_path=self.cfg.actor.model.model_path,
@@ -755,14 +760,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if self.cfg.algorithm.entropy_bonus > 0 and not loss_kwargs["critic_warmup"]:
-            entropy = output_dict["entropy"]
-            entropy = reshape_entropy(
-                entropy,
+            entropy_loss = compute_entropy_loss(
+                output_dict["entropy"],
                 entropy_type=self.cfg.algorithm.entropy_type,
+                loss_mask=loss_mask,
                 action_dim=self.cfg.actor.model.get("action_dim", 7),
                 batch_size=output_dict["logprobs"].shape[0],
             )
-            entropy_loss = masked_mean(entropy, mask=loss_mask)
             loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 

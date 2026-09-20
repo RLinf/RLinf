@@ -35,7 +35,7 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
 
 .. important::
 
-   - 控制节点需预先安装 Franka 相关依赖（ROS、libfranka 等），详见 :doc:`../examples/embodied/franka`。
+   - 控制节点需预先安装 Franka 控制环境（默认为内置 libfranka 的 Franky），详见 :doc:`../examples/embodied/franka`。
    - Ray 在 ``ray start`` 时冻结 Python 与环境变量；请在 **每个节点** 安装好依赖后再启动 Ray。
    - 可使用 ``ray_utils/realworld/setup_before_ray.sh`` 统一设置各节点环境，再执行 ``ray start``。
 
@@ -57,11 +57,11 @@ Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码�
    # 多网卡时指定对外可达的网卡，例如：
    # export RLINF_COMM_NET_DEVICES=eth0
 
-控制节点还需 source ROS / franka 工作空间（若未写入 ``setup_before_ray.sh``）：
+若 ``setup_before_ray.sh`` 未激活 Franka 环境，控制节点还需手动激活：
 
 .. code-block:: bash
 
-   source <your_catkin_ws>/devel/setup.bash
+   source .venv/bin/activate
 
 步骤 2：启动 Ray
 ~~~~~~~~~~~~~~~~

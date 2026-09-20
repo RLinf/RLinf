@@ -694,3 +694,49 @@ def test_infer_obs_batch_size_images_only():
 def test_infer_obs_batch_size_raises_when_unbatched():
     with pytest.raises(ValueError, match="Cannot infer batch size"):
         infer_obs_batch_size({"obs": {}})
+
+
+def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
+    pytest.importorskip("transformers.video_utils")
+    from transformers.video_utils import VideoMetadata
+
+    from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+
+    captured = {}
+
+    class _Processor:
+        video_token = "<|video_pad|>"
+
+        def apply_chat_template(self, *args, **kwargs):
+            return "prompt"
+
+        def __call__(self, **kwargs):
+            captured["videos_kwargs"] = kwargs["videos_kwargs"]
+            batch = len(kwargs["text"])
+            return {
+                "input_ids": torch.zeros(batch, 4, dtype=torch.long),
+                "attention_mask": torch.ones(batch, 4, dtype=torch.long),
+            }
+
+    VLMTrendRewardSFTDataset.process_inputs(
+        processor=_Processor(),
+        system_prompt=None,
+        use_chat_template=True,
+        prompt_texts=[["task a"], ["task b"]],
+        videos=[
+            [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]],
+            [[10, 11, 12, 13, 14], [15, 16, 17, 18, 19]],
+        ],
+        answer_text=None,
+        video_fps=24.0,
+    )
+
+    metadata = captured["videos_kwargs"]["video_metadata"]
+    assert len(metadata) == 2
+    assert all(len(sample) == 2 for sample in metadata)
+    assert all(
+        isinstance(item, VideoMetadata) for sample in metadata for item in sample
+    )
+    assert metadata[0][0].total_num_frames == 5
+    assert metadata[0][0].frames_indices == [0, 1, 2, 3, 4]
+    assert metadata[1][1].total_num_frames == 5

@@ -54,7 +54,10 @@ The following example is available under ``evaluations/behavior/``:
      - Model
    * - ``behavior_openpi_pi05_eval.yaml``
      - ``behavior_r1pro``
-     - π₀.₅
+     - π₀.₅ (``openpi``)
+   * - ``behavior_openpi_pi05_rlinf_eval.yaml``
+     - ``behavior_r1pro``
+     - π₀.₅ (``openpi_rlinf``)
 
 If ``evaluations/behavior/<config>.yaml`` is missing, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` with the same name (e.g. ``behavior_ppo_openpi_pi05_eval``). Fallback configs include ``actor`` / ``algorithm`` sections but still work for evaluation when ``runner.only_eval: True``.
 
@@ -80,7 +83,7 @@ Recommended checkpoint: `RLinf/RLinf-Pi0-Behavior <https://huggingface.co/RLinf/
 
 Copy or edit the target YAML and set at least ``rollout.model.model_path``. Generic ``env.eval`` fields are documented in :doc:`../reference/configuration` (:ref:`env-eval-fields`); BEHAVIOR-specific fields and the evaluation protocol are covered in :ref:`behavior-eval-config` below.
 
-The OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` must match training (``action_dim: 23``, ``num_action_chunks: 32``, ``openpi.config_name: pi05_behavior``, etc.).
+The OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` and ``behavior_openpi_pi05_rlinf_eval.yaml`` must match training (``action_dim: 23``, ``num_action_chunks: 32``, ``openpi.config_name: pi05_behavior``, etc.). For both OpenPI implementations (``openpi`` and ``openpi_rlinf``), ``num_action_chunks`` is the env-executed chunk; the network horizon comes from official ``TrainConfig.model.action_horizon`` for ``pi05_behavior`` (**32**) unless ``openpi.action_horizon`` is set.
 
 **Step 4: Launch evaluation**
 

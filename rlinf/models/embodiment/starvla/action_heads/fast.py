@@ -23,6 +23,7 @@ import torch
 
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import vlm_preprocess as vlm_input_utils
+from ..utils.accelerator import accelerator_autocast
 from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import (
     RL_BATCH_TENSOR_KEYS_TO_IGNORE,
@@ -321,7 +322,7 @@ def run_rollout_fast(
         elif max_length is not None:
             gen_kwargs["max_length"] = int(max_length)
 
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with accelerator_autocast(torch.bfloat16):
             gen_out = vlm_interface.model.generate(
                 **prompt_inputs,
                 **gen_kwargs,

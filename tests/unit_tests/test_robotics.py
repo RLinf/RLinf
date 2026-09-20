@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import ctypes
 import os
+import pickle
 import re
 import runpy
 import subprocess
@@ -668,7 +669,7 @@ def test_an_arm_backend_is_selected_from_the_registry_like_any_driver():
     assert {"franka_ros", "franky"} <= set(Arm.backends())
 
     # The robot selects the backend by its registry name.
-    assert FrankaRobot.BACKEND == "franka_ros"
+    assert FrankaRobot.BACKEND == "franky"
     assert DualFrankaRobot.BACKEND == "franky"
     for robot in (FrankaRobot, DualFrankaRobot):
         assert Arm.backend(robot.BACKEND) is not None
@@ -692,6 +693,17 @@ def test_a_backend_maps_the_robot_settings_onto_its_own_constructor():
     )
     assert type(franky).__name__ == "FrankyArm"
     assert franky.node_rank == 2
+
+    # franka_control takes its real-time mode from its launch config, so the
+    # ROS backend refuses the setting instead of dropping it.
+    with pytest.raises(TypeError, match="FRANKA_REALTIME_CONFIG"):
+        FrankaRobot.declare_arm(
+            "10.0.0.2",
+            node_rank=1,
+            name="arm",
+            backend="franka_ros",
+            realtime_config="ignore",
+        )
 
     # An end effector is declared on its own, and takes its own placement.
     hand = FrankaRobot.declare_end_effector(
@@ -884,7 +896,7 @@ def test_a_robot_composes_an_arm_and_gets_what_rides_on_it():
         # Readings preserve the composed tree structure.
         assert set(robot.observation_features["arm"]) >= {"tcp_pose"}
         assert set(robot.observation_features["end_effector"]) == {"state"}
-        assert set(robot.action_features["arm"]) == {"tcp_pose"}
+        assert set(robot.action_features["arm"]) == {"tcp_pose", "joint_position"}
         assert set(robot.action_features["end_effector"]) == {"target"}
 
         config = {
@@ -1313,7 +1325,7 @@ def test_dual_franka_inherits_declaration_from_franka():
         "only the arm count differs, and that is what build_arms says"
     )
     # The backend selection applies independently of arm count.
-    assert (FrankaRobot.BACKEND, DualFrankaRobot.BACKEND) == ("franka_ros", "franky")
+    assert (FrankaRobot.BACKEND, DualFrankaRobot.BACKEND) == ("franky", "franky")
     # Arm construction contains the remaining single/dual distinction.
     overridden = [
         name
@@ -3709,10 +3721,66 @@ def franky_arm(
 _FRANKY_TEST_JOINTS = [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0]
 
 
+def test_franky_realtime_mode_follows_the_arm_setting(franky_arm):
+    arm, sdk = franky_arm
+    # Without the setting, libfranka runs on a kernel without PREEMPT_RT.
+    assert sdk.Robot.instances[-1].realtime_config is sdk.RealtimeConfig.Ignore
+    arm.disconnect()
+
+    strict = FrankyArm.declare("10.0.0.1", realtime_config="enforce")
+    strict.connect()
+    try:
+        assert sdk.Robot.instances[-1].realtime_config is sdk.RealtimeConfig.Enforce
+    finally:
+        strict.disconnect()
+
+    with pytest.raises(ValueError, match="realtime_config"):
+        FrankyArm.declare("10.0.0.1", realtime_config="best_effort")
+
+
 def _franky_target(mode: str) -> dict[str, np.ndarray]:
     if mode == "joint":
         return {"joint_position": np.array(_FRANKY_TEST_JOINTS)}
     return {"tcp_pose": np.array([0.4, 0.0, 0.3, 0.0, 1.0, 0.0, 0.0])}
+
+
+@pytest.mark.parametrize("custom_limits", [False, True])
+def test_franky_limits_cartesian_targets_after_task_reconfiguration(
+    franky_arm, custom_limits
+):
+    from scipy.spatial.transform import Rotation
+
+    original, sdk = franky_arm
+    original.disconnect()
+    max_step, max_angle = (0.02, 0.05) if custom_limits else (0.03, 0.1)
+    arm = FrankyArm(
+        "10.0.0.1",
+        compliance={"max_step": max_step, "max_step_rad": max_angle}
+        if custom_limits
+        else None,
+    )
+    arm.connect()
+    try:
+        pose = arm.get_observation()["tcp_pose"]
+        start_rotation = Rotation.from_quat(pose[3:])
+        target = pose.copy()
+        target[:3] += [0.12, 0.16, 0.0]
+        target[3:] = (Rotation.from_rotvec([0.0, 0.0, 0.5]) * start_rotation).as_quat()
+        arm.reconfigure_compliance_params(
+            {"translational_stiffness": 2000, "translational_clip_x": 0.003}
+        )
+        for step in (1, 2):
+            arm.send_action({"tcp_pose": target})
+            command = sdk.Robot.instances[-1].trackers[-1].targets[-1][0].matrix
+            np.testing.assert_allclose(
+                command[:3, 3], pose[:3] + step * max_step * np.array([0.6, 0.8, 0.0])
+            )
+            rotation = Rotation.from_matrix(command[:3, :3])
+            assert (rotation * start_rotation.inv()).magnitude() == pytest.approx(
+                step * max_angle
+            )
+    finally:
+        arm.disconnect()
 
 
 def _fail_franky_controller(robot: Any) -> RuntimeError:
@@ -4431,9 +4499,9 @@ def test_a_robot_composes_the_hand_its_config_names():
 
         # The built-in hand is one device with two drivers, and the arm backend
         # the robot is built on decides which of them reaches it.
-        assert isinstance(hand_of(gripper_type="franka"), FrankaGripper)
+        assert isinstance(hand_of(gripper_type="franka"), FrankyGripper)
         assert isinstance(
-            hand_of(gripper_type="franka", backend="franky"), FrankyGripper
+            hand_of(gripper_type="franka", backend="franka_ros"), FrankaGripper
         )
         # A config that names a driver outright is taken at its word.
         assert isinstance(hand_of(end_effector_type="franky_gripper"), FrankyGripper)
@@ -4444,21 +4512,24 @@ def test_a_robot_composes_the_hand_its_config_names():
 
 
 @pytest.mark.placement
-def test_a_franka_robot_composes_the_backend_and_hand_it_is_given():
+@pytest.mark.parametrize("backend", [None, "franky", "franka_ros"])
+def test_a_franka_robot_composes_the_backend_and_hand_it_is_given(backend):
     from robot_mocks import mocked_sdks
 
     with mocked_sdks():
-        from rlinf.robotics.parts.end_effectors import FrankyGripper
+        from rlinf.robotics.parts.end_effectors import FrankaGripper, FrankyGripper
         from rlinf.robotics.robots import FrankaRobot
 
         robot = FrankaRobot.build(
             robot_ip="10.0.0.1",
             node_rank=0,
-            backend="franky",
+            backend=backend,
             gripper_type="franka",
         )
-        assert type(robot.child("arm")).__name__ == "FrankyArm"
-        assert isinstance(robot.child("end_effector"), FrankyGripper)
+        expected_arm = "FrankaROSArm" if backend == "franka_ros" else "FrankyArm"
+        expected_hand = FrankaGripper if backend == "franka_ros" else FrankyGripper
+        assert type(robot.child("arm")).__name__ == expected_arm
+        assert isinstance(robot.child("end_effector"), expected_hand)
 
         robot.connect()
         assert set(robot.get_observation()) == {"arm", "end_effector"}
@@ -4699,6 +4770,66 @@ def test_a_stalled_camera_is_reopened_before_the_caller_sees_the_error():
             with pytest.raises(queue.Empty, match="after 3 attempts"):
                 camera.get_frame(timeout=0.01, attempts=3)
             assert len(reopens) == 3
+        finally:
+            camera.disconnect()
+
+
+@pytest.mark.parametrize("enable_depth", [False, True])
+def test_camera_can_reuse_recent_observations_without_waiting(enable_depth):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+    with mocked_sdks():
+        camera = Camera.of(
+            CameraInfo(
+                name="wrist", serial_number="MOCK0001", enable_depth=enable_depth
+            )
+        )
+        camera.connect()
+        try:
+            first = camera.get_observation()
+            for _ in range(10):
+                observation = camera.get_observation(timeout=0, max_age=0.5)
+                np.testing.assert_array_equal(observation["frame"], first["frame"])
+                if enable_depth:
+                    np.testing.assert_array_equal(observation["depth"], first["depth"])
+            observation["frame"][:] = 99
+            assert np.any(camera.get_frame(timeout=0, max_age=0.5) != 99)
+        finally:
+            camera.disconnect()
+
+
+def test_camera_rejects_expired_buffered_frames_and_reconnects(monkeypatch):
+    import queue
+    import threading
+
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.cameras import Camera, CameraInfo
+
+    with mocked_sdks() as made:
+        sdk = made["pyrealsense2"]
+        stopped = threading.Event()
+        original_read = sdk.pipeline.wait_for_frames
+
+        def one_frame(pipeline):
+            if getattr(pipeline, "delivered", False):
+                stopped.set()
+                raise RuntimeError("camera stopped delivering frames")
+            pipeline.delivered = True
+            return original_read(pipeline)
+
+        monkeypatch.setattr(sdk.pipeline, "wait_for_frames", one_frame)
+        camera = Camera.of(CameraInfo(name="wrist", serial_number="MOCK0001"))
+        camera.connect()
+        try:
+            assert stopped.wait(2)
+            assert camera.get_frame(timeout=0, max_age=1).shape[-1] == 3
+            with pytest.raises(queue.Empty):
+                camera.get_frame(timeout=0, max_age=1e-9)
+            assert camera.is_connected
+            assert camera.get_frame(timeout=1).shape[-1] == 3
         finally:
             camera.disconnect()
 
@@ -4969,6 +5100,139 @@ def test_so101_stops_pushing_jaws_that_cannot_close():
         arm.disconnect()
 
 
+def test_so101_continuous_gripper_commands_do_not_wait_for_travel():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        follower.jaw_step = 1.0
+        arm = SO101Arm("/dev/mock-so101")
+        robot = Robot(arm=arm)
+        robot.connect()
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(
+                    robot.send_action,
+                    {
+                        "arm": {
+                            "joint_position": np.zeros(5),
+                            "end_effector": {"target": [1.0]},
+                        }
+                    },
+                ).result(timeout=1)
+            state = robot.get_observation()["arm"]
+            assert state["end_effector"]["state"][0] < 0.5
+            robot.send_action({"arm": {"joint_position": np.ones(5) * 0.1}})
+        finally:
+            robot.disconnect()
+
+
+@pytest.mark.parametrize("opening", [0.0, 1.0])
+@pytest.mark.parametrize("travel_per_read,seconds_per_read", [(0.5, 0.05), (3.0, 1.0)])
+def test_so101_gripper_keeps_moving_while_feedback_progresses(
+    monkeypatch, opening, travel_per_read, seconds_per_read
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms import so101
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        follower.jaw_step = travel_per_read
+        follower.jaw_lag = 0
+        clock = [0.0]
+        original_read = follower.get_observation
+
+        def read(device):
+            clock[0] += seconds_per_read
+            return original_read(device)
+
+        monkeypatch.setattr(follower, "get_observation", read)
+        monkeypatch.setattr(so101, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        arm = so101.SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = follower.instances[-1]
+        device.positions["gripper.pos"] = 70.0 if opening else 30.0
+        try:
+            if opening:
+                arm.open_gripper()
+            else:
+                arm.close_gripper()
+            assert arm.get_state().gripper_position[0] == pytest.approx(
+                opening, abs=0.02
+            )
+            assert device.sent == [{"gripper.pos": opening * 100.0}]
+        finally:
+            arm.disconnect()
+
+
+def test_so101_repeated_targets_preserve_stall_relief_until_reversed():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        follower.jaw_limit = 30.0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = follower.instances[-1]
+        try:
+            arm.close_gripper()
+            assert device.sent[-1] == {"gripper.pos": 30.0}
+            sent = len(device.sent)
+            for target in (0.0, 0.01, 0.2, 0.0):
+                arm.children["end_effector"].command(np.array([target]))
+            assert len(device.sent) == sent
+            arm.open_gripper()
+            assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
+            arm.close_gripper()
+            assert device.sent[-1] == {"gripper.pos": 30.0}
+            assert len(device.sent) > sent
+        finally:
+            arm.disconnect()
+
+
+def test_so101_monitor_failures_surface_and_reconnect_clears_them(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        original_read = follower.get_observation
+
+        def failed_read(device):
+            raise OSError("servo read failed")
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        monkeypatch.setattr(follower, "get_observation", failed_read)
+        try:
+            with pytest.raises(
+                RuntimeError, match="gripper monitoring failed"
+            ) as error:
+                arm.open_gripper()
+            assert isinstance(error.value.__cause__, OSError)
+            with pytest.raises(RuntimeError, match="gripper monitoring failed"):
+                arm.get_state()
+            with pytest.raises(RuntimeError, match="gripper monitoring failed"):
+                arm.move_joints(np.zeros(5))
+        finally:
+            arm.disconnect()
+        monkeypatch.setattr(follower, "get_observation", original_read)
+        arm.connect()
+        try:
+            arm.open_gripper()
+            assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
+        finally:
+            arm.disconnect()
+
+
 def test_so101_frees_the_gripper_before_closing_the_bus():
     """lerobot releases the gripper last; this frees it first."""
     from robot_mocks import mocked_sdks
@@ -5015,6 +5279,92 @@ def test_so101_reset_waits_for_the_servos_to_stop_moving():
         assert len(seen) == 5
 
         arm.disconnect()
+
+
+@pytest.mark.parametrize("write_delay", [0.0, 0.2])
+def test_so101_reset_paces_joint_targets_from_measured_feedback(
+    monkeypatch, write_delay
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms import so101
+
+    with mocked_sdks() as made:
+        follower = made["lerobot.robots.so_follower"].SO101Follower
+        arm = so101.SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = follower.instances[-1]
+        initial = np.array([15.0, -45.0, 60.0, -25.0, 10.0])
+        target = np.array([-20.0, -99.0, 95.0, 65.0, -30.0])
+        device.positions.update(
+            {f"{motor}.pos": value for motor, value in zip(arm.MOTORS, initial)}
+        )
+        clock = [0.0]
+        writes = [(0.0, initial)]
+        original_send = follower.send_action
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        def send(device, action):
+            writes.append(
+                (clock[0], np.array([action[f"{motor}.pos"] for motor in arm.MOTORS]))
+            )
+            if len(writes) % 10 == 0:
+                clock[0] += write_delay
+            return original_send(device, action)
+
+        monkeypatch.setattr(
+            so101, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep)
+        )
+        monkeypatch.setattr(follower, "send_action", send)
+        try:
+            arm.reset_joint(
+                np.deg2rad(target), duration=3.0, max_velocity=np.deg2rad(20.0)
+            )
+            times = np.array([entry[0] for entry in writes])
+            commanded = np.array([entry[1] for entry in writes])
+            assert len(writes) > 3
+            assert times[-1] >= 3.0
+            assert np.all(np.diff(times) > 0)
+            speeds = np.abs(np.diff(commanded, axis=0)) / np.diff(times)[:, None]
+            assert np.max(speeds) <= 20.0 + 1e-8
+            assert np.max(speeds[0]) < 0.1 * np.max(speeds)
+            assert np.max(speeds[-1]) < 0.1 * np.max(speeds)
+            assert np.all(commanded >= np.minimum(initial, target) - 1e-8)
+            assert np.all(commanded <= np.maximum(initial, target) + 1e-8)
+            np.testing.assert_allclose(commanded[-1], target)
+            np.testing.assert_allclose(
+                arm.get_state().arm_joint_position, np.deg2rad(target)
+            )
+        finally:
+            arm.disconnect()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"duration": 0.0},
+        {"duration": float("nan")},
+        {"max_velocity": -1.0},
+        {"max_velocity": float("inf")},
+    ],
+)
+def test_so101_reset_rejects_invalid_pacing_before_sending_targets(settings):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    with mocked_sdks() as made:
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        try:
+            with pytest.raises(ValueError, match="finite and positive"):
+                arm.reset_joint(np.ones(5), **settings)
+            assert device.sent == []
+        finally:
+            arm.disconnect()
 
 
 def test_piper_reset_waits_for_the_arm_to_stop_moving():
@@ -5409,103 +5759,122 @@ def test_so101_takes_no_separately_wired_end_effector():
         SO101Arm.declare("/dev/mock-so101", gripper_connection="/dev/ttyUSB0")
 
 
-def test_an_arm_takes_the_compliance_its_robot_was_configured_with():
-    from robot_mocks import mocked_sdks
+def test_franky_preserves_a_complete_compliance_object(franky_arm):
+    from rlinf.robotics.parts.arms.base import CartesianCompliance
 
-    with mocked_sdks():
-        from rlinf.robotics.parts.arms.base import CartesianCompliance
-        from rlinf.robotics.robots import FrankaRobot
+    original, sdk = franky_arm
+    original.disconnect()
+    settings = CartesianCompliance(translational_stiffness=900.0, max_step=0.02)
+    arm = FrankyArm.declare("10.0.0.1", compliance=settings)
+    arm.connect()
+    try:
+        pose = arm.get_observation()["tcp_pose"]
+        target = pose.copy()
+        target[0] += 0.2
+        arm.send_action({"tcp_pose": target})
+        tracker = sdk.Robot.instances[-1].trackers[-1]
+        assert tracker.settings["translational_stiffness"] == 900.0
+        assert tracker.settings["rotational_stiffness"] == 40.0
+        np.testing.assert_allclose(tracker.settings["translational_error_clip"], 0.05)
+        assert tracker.targets[-1][0].matrix[0, 3] == pytest.approx(pose[0] + 0.02)
+    finally:
+        arm.disconnect()
 
-        settings = CartesianCompliance(translational_stiffness=900.0, max_step=0.02)
-        robot = FrankaRobot.build(
-            robot_ip="10.0.0.1",
-            node_rank=0,
-            backend="franky",
-            gripper_type="franka",
-            compliance=settings,
-        )
-        arm = robot.child("arm")
-        # The settings belong to the arm, so a second arm may hold others and a
-        # remotely placed one carries them to the node it opens on.
-        assert arm._compliance is settings
-        assert arm._cart_k_t == 900.0
-
-        # An arm whose controller owns its gains is offered the same settings
-        # and ignores them, rather than refusing to be built.
-        ros = FrankaRobot.declare_arm(
-            "10.0.0.1",
-            node_rank=0,
-            name="arm",
-            backend="franka_ros",
-            compliance=settings,
-        )
-        assert type(ros).__name__ == "FrankaROSArm"
+    ros = FrankaRobot.declare_arm(
+        "10.0.0.1",
+        node_rank=0,
+        name="arm",
+        backend="franka_ros",
+        compliance=settings,
+    )
+    assert isinstance(ros, FrankaROSArm)
 
 
-def test_a_compliance_request_is_held_to_what_the_backend_can_run():
-    from robot_mocks import mocked_sdks
-
-    with mocked_sdks():
-        from rlinf.robotics.parts.arms.base import CartesianCompliance
-        from rlinf.robotics.parts.arms.franky import FrankyArm
-
-        arm = FrankyArm.declare(
-            "10.0.0.1",
-            compliance=CartesianCompliance(stiffness_cap=1200.0, clip_floor=0.005),
-        )
-        arm.connect()
-        try:
-            # A task written for a real-time controller asks for more stiffness
-            # and tighter clips than a client-side loop can hold.
-            arm.reconfigure_compliance_params(
-                {
-                    "translational_stiffness": 2000,
-                    "rotational_stiffness": 150,
-                    "translational_clip_x": 0.003,
-                    "translational_clip_neg_x": 0.001,
-                    "rotational_clip_x": 0.001,
-                }
-            )
-            assert arm._cart_k_t == 1200.0
-            assert arm._cart_k_r == 80.0
-            # The looser of each direction pair, floored.
-            assert arm._cart_trans_clip[0] == pytest.approx(0.005)
-            assert arm._cart_rot_clip[0] == pytest.approx(0.02)
-
-            # Nothing asked for, nothing changed.
-            before = arm._cart_k_t
-            arm.reconfigure_compliance_params({})
-            assert arm._cart_k_t == before
-        finally:
-            arm.disconnect()
+def test_a_compliance_request_is_held_to_what_the_backend_can_run(franky_arm):
+    arm, sdk = franky_arm
+    pose = arm.get_observation()["tcp_pose"]
+    arm.send_action({"tcp_pose": pose})
+    arm.reconfigure_compliance_params(
+        {
+            "translational_stiffness": 2000,
+            "rotational_stiffness": 150,
+            "translational_clip_x": 0.003,
+            "translational_clip_neg_x": 0.001,
+            "rotational_clip_x": 0.001,
+        }
+    )
+    arm.send_action({"tcp_pose": pose})
+    tracker = sdk.Robot.instances[-1].trackers[-1]
+    assert tracker.settings["translational_stiffness"] == 1200.0
+    assert tracker.settings["rotational_stiffness"] == 80.0
+    np.testing.assert_allclose(
+        tracker.settings["translational_error_clip"], [0.005, 0.008, 0.008]
+    )
+    np.testing.assert_allclose(
+        tracker.settings["rotational_error_clip"], [0.02, 0.04, 0.04]
+    )
+    arm.reconfigure_compliance_params({})
+    arm.send_action({"tcp_pose": pose})
+    assert sdk.Robot.instances[-1].trackers[-1] is tracker
+    assert tracker.gains == []
 
 
-def test_a_yaml_compliance_mapping_becomes_settings():
+@pytest.mark.parametrize("through_hardware", [False, True])
+@pytest.mark.parametrize("kind", ["unset", "empty", "mapping", "omegaconf"])
+def test_franky_resolves_compliance_with_its_own_defaults(
+    franky_arm, through_hardware, kind
+):
     from omegaconf import OmegaConf
 
-    from rlinf.robotics.parts.arms.base import CartesianCompliance
-    from rlinf.robotics.robots.franka import FrankaConfig
-
-    default = FrankaConfig(node_rank=0, robot_ip="172.16.0.2")
-    assert isinstance(default.compliance, CartesianCompliance)
-
-    for mapping in (
-        {"translational_stiffness": 1000, "rotational_stiffness": 50},
-        OmegaConf.create({"translational_stiffness": 1000, "rotational_stiffness": 50}),
-    ):
-        config = FrankaConfig(node_rank=0, robot_ip="172.16.0.2", compliance=mapping)
-        assert isinstance(config.compliance, CartesianCompliance)
-        assert config.compliance.translational_stiffness == pytest.approx(1000)
-        assert config.compliance.rotational_stiffness == pytest.approx(50)
-        # Unstated settings keep their defaults.
-        assert config.compliance.max_step == pytest.approx(
-            CartesianCompliance().max_step
+    original, sdk = franky_arm
+    original.disconnect()
+    mapping = {"translational_stiffness": 700}
+    requested = {
+        "unset": None,
+        "empty": {},
+        "mapping": mapping,
+        "omegaconf": OmegaConf.create(mapping),
+    }[kind]
+    before = pickle.dumps(requested)
+    if through_hardware:
+        hardware = NodeHardwareConfig(
+            type="Franka",
+            configs=[{"node_rank": 0, "robot_ip": "10.0.0.1", "compliance": requested}],
         )
+        config = pickle.loads(pickle.dumps(hardware.configs[0]))
+        arm = Arm.backend(config.backend or FrankaRobot.BACKEND).declare(
+            config.robot_ip,
+            compliance=config.compliance,
+        )
+    else:
+        arm = FrankyArm("10.0.0.1", compliance=requested)
+    arm.connect()
+    try:
+        pose = arm.get_observation()["tcp_pose"]
+        target = pose.copy()
+        target[0] += 0.2
+        target[3:] = (R.from_rotvec([0, 0, 0.5]) * R.from_quat(pose[3:])).as_quat()
+        arm.send_action({"tcp_pose": target})
+        tracker = sdk.Robot.instances[-1].trackers[-1]
+        assert tracker.settings["translational_stiffness"] == (
+            700 if requested else 1000
+        )
+        assert tracker.settings["rotational_stiffness"] == 50
+        np.testing.assert_allclose(tracker.settings["translational_error_clip"], 0.008)
+        np.testing.assert_allclose(tracker.settings["rotational_error_clip"], 0.04)
+        command = tracker.targets[-1][0].matrix
+        assert command[0, 3] == pytest.approx(pose[0] + 0.03)
+        rotation = R.from_matrix(command[:3, :3]) * R.from_quat(pose[3:]).inv()
+        assert rotation.magnitude() == pytest.approx(0.1)
+        assert pickle.dumps(requested) == before
+    finally:
+        arm.disconnect()
 
+
+def test_franky_rejects_unknown_compliance_before_connecting():
     with pytest.raises(KeyError, match="translational_stifness"):
-        FrankaConfig(
-            node_rank=0,
-            robot_ip="172.16.0.2",
+        FrankyArm.declare(
+            "172.16.0.2",
             compliance={"translational_stifness": 1000},
         )
 
@@ -5686,8 +6055,9 @@ def test_shared_gripper_views_report_their_capability():
     assert not fingers.is_gripper
 
 
+@pytest.mark.parametrize("backend", [None, "franky", "franka_ros"])
 def test_controller_cli_accepts_registered_driver_and_settings(
-    registered_tool, monkeypatch
+    registered_tool, monkeypatch, backend
 ):
     from toolkits.realworld_check.test_franka_controller import _parse_args
 
@@ -5700,9 +6070,12 @@ def test_controller_cli_accepts_registered_driver_and_settings(
             "pose_tool",
             "--end-effector-config",
             '{"gain": 2}',
-        ],
+        ]
+        + (["--backend", backend] if backend else []),
     )
     args = _parse_args()
+    assert args.backend == (backend or "franky")
+    assert args.realtime_config is None
     tool = EndEffector.of(args.end_effector_type, **args.end_effector_config)
     assert tool.gain == 2
     assert args.hand_baudrate is None

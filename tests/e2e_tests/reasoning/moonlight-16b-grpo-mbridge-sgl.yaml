@@ -25,7 +25,7 @@ runner:
   val_check_interval: 1
   save_interval: 3
 
-  seq_length: 2048
+  seq_length: 1024
 
   enable_dynamic_batch_size: True
   max_tokens_per_mbs: 2048
@@ -79,7 +79,7 @@ rollout:
   weight_reload: sync
 
   model:
-    model_path: /workspace/models/Moonlight-16B-A3B-Instruct
+    model_path: /workspace/dataset/Moonlight-16B-A3B-Instruct-8L
     model_type: deepseek_v3
     precision: ${actor.model.precision}
   enforce_eager: False
@@ -108,7 +108,7 @@ rollout:
 
   return_logprobs: ${not:${algorithm.recompute_logprobs}}
 
-  tensor_parallel_size: 8
+  tensor_parallel_size: 4
   pipeline_parallel_size: 1
 
   validate_weight: False
@@ -155,9 +155,9 @@ actor:
     precision: bf16
     add_bias_linear: False
 
-    tensor_model_parallel_size: 8
+    tensor_model_parallel_size: 4
     pipeline_model_parallel_size: 1
-    expert_model_parallel_size: 8
+    expert_model_parallel_size: 4
     expert_tensor_parallel_size: 1
     moe_grouped_gemm: te
 
@@ -223,7 +223,7 @@ actor:
     lr_decay_iters: 10
 
   tokenizer:
-    tokenizer_model: /workspace/models/Moonlight-16B-A3B-Instruct
+    tokenizer_model: /workspace/dataset/Moonlight-16B-A3B-Instruct-8L
     use_fast: False
     trust_remote_code: True
     padding_side: 'right'

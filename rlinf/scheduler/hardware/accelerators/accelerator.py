@@ -122,6 +122,7 @@ class AcceleratorType(str, Enum):
     NO_ACCEL = "NO_ACCEL"
     MUSA_GPU = "MUSA_GPU"
     KUNLUN_XPU = "KUNLUN_XPU"
+    BIREN_GPU = "BIREN_GPU"
 
 
 class AcceleratorManager:
@@ -359,6 +360,8 @@ class AcceleratorUtil:
         AcceleratorType.NV_GPU,
         AcceleratorType.AMD_GPU,
         AcceleratorType.MUSA_GPU,
+        AcceleratorType.KUNLUN_XPU,
+        AcceleratorType.BIREN_GPU,
     ]
 
     @staticmethod

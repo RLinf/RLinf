@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Any, Callable, Iterable, Literal, Optional
+from typing import Any, Callable, Iterable, Literal
 
 import numpy as np
 import torch
@@ -427,33 +427,6 @@ def get_loss_agg_func(
         raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
 
 
-def reshape_entropy(
-    entropy: Optional[torch.Tensor],
-    entropy_type: str,
-    action_dim: int = 7,
-    batch_size: int = 1,
-) -> Optional[torch.Tensor]:
-    """
-    Reshape entropy based on the entropy type.If entropy is None, return None.
-    If entropy_type is "action_level", reshape entropy to [batch_size, seq_len] by summing over action_dim.
-    If entropy_type is "chunk_level", reshape entropy to [batch_size, seq_len]
-
-    Args:
-        entropy(Optional[torch.Tensor]): [B, seq_len * action_dim] or [B, seq_len] or None
-        entropy_type(str): "action_level" or "chunk_level"
-        action_dim(int): action dimension, default is 7
-
-    Returns:
-        entropy(Optional[torch.Tensor]): reshaped entropy or None
-    """
-    if entropy is not None:
-        if entropy_type == "action_level":
-            entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
-        elif entropy_type == "chunk_level":
-            entropy = entropy.sum(dim=-1)
-    return entropy
-
-
 def logprobs_from_logits_flash_attn(
     logits: torch.Tensor, labels: torch.Tensor, inplace_backward: bool = True
 ) -> torch.Tensor:
@@ -594,6 +567,15 @@ class DualOutput:
 
 
 def output_redirector(func):
+    """Tee an entrypoint's output into ``main.log`` and end the process after it.
+
+    When the entrypoint returns, the process exits 0 at once, without running
+    interpreter teardown: on the torch 2.11 stack ray's core worker can
+    segfault there after the run has finished. When it raises, the exception
+    propagates and the process exits through the normal path with its own
+    exit code.
+    """
+
     @wraps(func)
     def wrapper(cfg, *args, **kwargs):
         log_path = os.path.join(
@@ -619,7 +601,7 @@ def output_redirector(func):
         try:
             sys.stdout = dual_out
             sys.stderr = dual_err
-            return func(cfg, *args, **kwargs)
+            func(cfg, *args, **kwargs)
 
         except Exception as e:
             import traceback
@@ -633,6 +615,11 @@ def output_redirector(func):
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+
+        # Only a run that returned gets here, so exiting 0 cannot hide a
+        # failure. Skipping teardown also skips atexit, so close the log first.
+        close()
+        os._exit(0)
 
     return wrapper
 

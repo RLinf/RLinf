@@ -30,11 +30,12 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/09] 🔥 RLinf 支持 [FastWAM](https://github.com/yuantianyuan01/FastWAM) 的 FSDP 监督微调与 LIBERO 批量评测。文档：[FastWAM 评测与监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html)。
 - [2026/08] 🔥 RLinf 支持对英伟达全模态世界模型 Cosmos3 做 SFT 及基于 SGLang 的评测。文档：[Cosmos3 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html)、[SGLang 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/cosmos3_sglang.html)。
 - [2026/08] 🎉 RLinf 正式入选 **PyTorch 生态**！我们将继续把可扩展的具身与智能体强化学习带给 PyTorch 用户，推动模型智能走进真实世界。博客：[PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/)。
 - [2026/08] 🎉 Isaac Lab v3.0.0 正式采用 RLinf 作为其强化学习（RL）训练基础设施。文档：[Isaac Lab 中的 RLinf](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf)。
 - [2026/08] 🔥 RLinf 集成 Diffusion-NFT，支持 SD3 和 Wan2.2 视频生成模型的强化学习。文档：[视频生成模型的强化学习](docs/source-zh/rst_source/examples/video_models.rst)。
-- [2026/08] 🔥 RLinf 正式支持三款新的加速卡：摩尔线程（MUSA）、华为昇腾（CANN）与 AMD（ROCm）。文档：[摩尔线程 MUSA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/moore_threads_musa.html)、[华为昇腾 CANN](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/ascend_cann.html)、[AMD ROCm](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/amd_rocm.html)。
+- [2026/08] 🔥 RLinf 支持摩尔线程（MUSA）、华为昇腾（CANN）与 AMD（ROCm）。支持的模型与环境组合及运行步骤见[硬件支持矩阵](#硬件支持)。
 - [2026/08] 🔥 RLinf 支持 Moonlight-16B-A3B（DeepSeek-V3 MLA + MoE）的 GRPO 训练。文档：[Moonlight-16B GRPO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/moonlight.html)。
 - [2026/08] 🔥 RLinf 支持在 LIBERO 上评测 MolmoAct2。文档：[MolmoAct2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html)。
 - [2026/08] 🎉 两篇论文被 **OSDI 2026** 接收：[RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) 与 [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing)。DynaRL 在异构 RL 组件之间动态重分配计算、内存与通信资源，提升端到端训练吞吐。文档：[DynaRL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/dynarl.html)。
@@ -165,7 +166,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅（OpenPI-PyTorch）</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_rlinf.html">π₀ / π₀.₅（OpenPI_RLinf）</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html">OpenVLA-OFT</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html">OpenVLA-OFT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
@@ -199,6 +200,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           </ul>
           <li><b>世界动作模型</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
           </ul>
@@ -289,6 +291,20 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
     </tr>
   </tbody>
 </table>
+
+#### 硬件支持
+
+RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同一套训练栈能够无缝运行在 NVIDIA、AMD GPU，以及华为昇腾、摩尔线程、昆仑芯等国产加速卡上。用户在不同计算节点间迁移训练任务时，可实现模型与算法的“零改动”。同时，加速卡厂商只需完成极简的接口适配，便能将完整的具身智能与智能体 RL 训练生态平移至自家硬件，彻底免去了维护框架定制分支的繁琐工作。
+
+请先选择所需的模型与环境组合，随后点击相应链接即可获取详细的硬件运行指南。每一款硬件后端均已完美适配其所在行列出的所有环境。
+
+| 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
+|---|---|:---:|:---:|:---:|:---:|
+| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | [Wan 世界模型](docs/source-zh/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
+| [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
 
 ### 智能体强化学习
 

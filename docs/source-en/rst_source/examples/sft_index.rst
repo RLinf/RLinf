@@ -26,9 +26,9 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_openpi_rlinf.html" style="text-decoration: underline; color: blue;">
-           <b>OpenPI Mixed-Precision SFT</b>
+           <b>OpenPI_RLinf Supervised Fine-Tuning</b>
          </a><br>
-         Run mixed-precision supervised fine-tuning with OpenPI_RLinf
+         Run supervised fine-tuning with the JAX-aligned OpenPI_RLinf implementation
        </p>
      </div>
 
@@ -40,6 +40,17 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
            <b>DreamZero Supervised Fine-Tuning</b>
          </a><br>
          Full-parameter and mixture SFT for DreamZero (WAN2.1 / WAN2.2 backbones)
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_fastwam.html" style="display: block;"><img src="https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_fastwam.html" style="text-decoration: underline; color: blue;">
+           <b>FastWAM Evaluation and SFT</b>
+         </a><br>
+         Evaluate FastWAM on LIBERO and run full-parameter FSDP SFT
        </p>
      </div>
 
@@ -85,6 +96,7 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
    OpenPI <embodied/sft_openpi>
    OpenPI_RLinf <embodied/sft_openpi_rlinf>
    DreamZero <embodied/sft_dreamzero>
+   FastWAM <embodied/sft_fastwam>
    Cosmos3 <embodied/sft_cosmos3>
    Qwen-VL <embodied/sft_vlm>
    DAgger <embodied/dagger>

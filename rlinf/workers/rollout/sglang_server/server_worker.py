@@ -181,7 +181,7 @@ class SGLangServerWorker(Worker):
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
-        On failure the subprocess is torn down via ``shutdown`` before
+        On failure the subprocess is torn down via ``stop`` before
         ``RuntimeError`` is re-raised, so the caller can retry or fail fast
         without leaking a zombie sglang process.
 
@@ -259,7 +259,7 @@ class SGLangServerWorker(Worker):
             )
         except RuntimeError as e:
             self.log_error(f"sglang server failed to become healthy: {e!r}")
-            self.shutdown()
+            self.stop()
             raise
         self.log_info(f"sglang server ready at {self.get_server_url()}")
 
@@ -283,12 +283,12 @@ class SGLangServerWorker(Worker):
         except requests.exceptions.RequestException:
             return False
 
-    def shutdown(self) -> None:
+    def stop(self) -> None:
         """Terminate the sglang server subprocess (and its process group)."""
         proc = self._server_proc
         if proc is None:
             return
-        self.log_info(f"Shutting down sglang server pid={proc.pid}.")
+        self.log_info(f"Stopping sglang server pid={proc.pid}.")
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):

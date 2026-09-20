@@ -87,8 +87,7 @@ Hardware Setup
 
 .. note::
 
-   Unlike the Franka setup, GimArm does **not** require a real-time kernel or ROS.
-   Communication uses the Linux SocketCAN interface directly.
+   GimArm communicates through the Linux SocketCAN interface directly.
 
 Installation
 ------------
@@ -227,7 +226,7 @@ Use Docker image for the experiment.
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 **Option 2: Custom Environment**
 

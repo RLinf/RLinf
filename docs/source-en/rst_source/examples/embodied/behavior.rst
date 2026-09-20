@@ -102,7 +102,7 @@ matches the model you intend to train (there is no ``switch_env`` between them):
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-behavior
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-behavior
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
 
    # OpenPI model (separate image):
    docker run -it --rm --gpus all \
@@ -111,7 +111,7 @@ matches the model you intend to train (there is no ``switch_env`` between them):
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
 
    # In either image the matching virtual environment is already activated by default.
 

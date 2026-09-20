@@ -46,7 +46,7 @@ Moonlight-16B-A3B-Instruct is a DeepSeek-V3 architecture Mixture-of-Experts mode
 - **MTP**: a Multi-Token-Prediction head (``num_nextn_predict_layers=1``); not trained in RL.
 - Trained with the **precision-aware optimizer** (Float8 master weights) for memory efficiency.
 
-The actor uses Megatron-Bridge (``rlinf-megatron-bridge``) to convert HuggingFace
+The actor uses Megatron-Bridge (``megatron-bridge``) to convert HuggingFace
 weights into Megatron-Core sharded checkpoints; the rollout uses SGLang (DeepSeek-V2
 backend, ``model_type: deepseek_v3``) with expert parallelism (``ep_size == tp_size``).
 
@@ -77,15 +77,15 @@ Dependency Installation
 .. code-block:: bash
 
    cd /path/to/RLinf
-   MEGATRON_PATH=/path/to/Megatron-LM-core0.17 \
+   MEGATRON_PATH=/path/to/Megatron-LM-core0.18 \
    bash requirements/install.sh agentic \
      --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 \
      --no-apex --platform nvidia --use-mirror \
      --venv /opt/venv/reason_0512_v3
 
-This installs the agentic stack — sglang 0.5.12 + torch 2.11+cu130 + TransformerEngine 2.17 +
-transformers 5.6 + the py3.11-compatible ``rlinf-megatron-bridge`` 0.4.2 wheel + flash-attn —
-and reuses the Megatron-Core 0.17 clone via ``MEGATRON_PATH``.
+This creates a Python 3.12 venv and installs the agentic stack — sglang 0.5.12 + torch 2.11+cu130 +
+TransformerEngine 2.17 + transformers 5.6 + the ``megatron-bridge`` 0.5.0 wheel + flash-attn —
+and reuses the Megatron-Core 0.18 clone via ``MEGATRON_PATH``.
 
 Run It
 ------

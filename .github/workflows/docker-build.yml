@@ -1044,7 +1044,7 @@ jobs:
           outputs: type=cacheonly
           tags: rlinf:embodied-genesis
 
-  build-embodied-libero:
+  build-embodied-maniskill_libero-ascend-amd64:
     runs-on: ubuntu-latest
     steps:
       - name: Maximize storage space
@@ -1092,13 +1092,138 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build embodied-libero
+      - name: Build embodied-maniskill_libero (Ascend, amd64)
         uses: docker/build-push-action@v6
         with:
           file: ./docker/Dockerfile
           push: false
           build-args: |
-            BUILD_TARGET=embodied-libero
+            BUILD_TARGET=embodied-maniskill_libero
+            PLATFORM=ascend
+            CANN_VER=9.1.1-910b
             NO_MIRROR=1
           outputs: type=cacheonly
-          tags: rlinf:embodied-libero
+          tags: rlinf:embodied-maniskill_libero-ascend-amd64
+
+  build-embodied-maniskill_libero-ascend-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Maximize storage space
+        run: |
+          # Remove Java (JDKs)
+          sudo rm -rf /usr/lib/jvm
+
+          # Remove .NET SDKs
+          sudo rm -rf /usr/share/dotnet
+
+          # Remove Swift toolchain
+          sudo rm -rf /usr/share/swift
+
+          # Remove Haskell (GHC)
+          sudo rm -rf /usr/local/.ghcup
+
+          # Remove Julia
+          sudo rm -rf /usr/local/julia*
+
+          # Remove Android SDKs
+          sudo rm -rf /usr/local/lib/android
+
+          # Remove Chromium (optional if not using for browser tests)
+          sudo rm -rf /usr/local/share/chromium
+
+          # Remove Microsoft/Edge and Google Chrome builds
+          sudo rm -rf /opt/microsoft /opt/google
+
+          # Remove Azure CLI
+          sudo rm -rf /opt/az
+
+          # Remove PowerShell
+          sudo rm -rf /usr/local/share/powershell
+
+          # Remove CodeQL and other toolcaches
+          sudo rm -rf /opt/hostedtoolcache
+
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build embodied-maniskill_libero (Ascend, arm64)
+        uses: docker/build-push-action@v6
+        with:
+          file: ./docker/Dockerfile
+          push: false
+          build-args: |
+            BUILD_TARGET=embodied-maniskill_libero
+            PLATFORM=ascend
+            CANN_VER=9.1.1-910b
+            NO_MIRROR=1
+          outputs: type=cacheonly
+          tags: rlinf:embodied-maniskill_libero-ascend-arm64
+
+  build-embodied-maniskill_libero-rocm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize storage space
+        run: |
+          # Remove Java (JDKs)
+          sudo rm -rf /usr/lib/jvm
+
+          # Remove .NET SDKs
+          sudo rm -rf /usr/share/dotnet
+
+          # Remove Swift toolchain
+          sudo rm -rf /usr/share/swift
+
+          # Remove Haskell (GHC)
+          sudo rm -rf /usr/local/.ghcup
+
+          # Remove Julia
+          sudo rm -rf /usr/local/julia*
+
+          # Remove Android SDKs
+          sudo rm -rf /usr/local/lib/android
+
+          # Remove Chromium (optional if not using for browser tests)
+          sudo rm -rf /usr/local/share/chromium
+
+          # Remove Microsoft/Edge and Google Chrome builds
+          sudo rm -rf /opt/microsoft /opt/google
+
+          # Remove Azure CLI
+          sudo rm -rf /opt/az
+
+          # Remove PowerShell
+          sudo rm -rf /usr/local/share/powershell
+
+          # Remove CodeQL and other toolcaches
+          sudo rm -rf /opt/hostedtoolcache
+
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build embodied-maniskill_libero (ROCm)
+        uses: docker/build-push-action@v6
+        with:
+          file: ./docker/Dockerfile
+          push: false
+          build-args: |
+            BUILD_TARGET=embodied-maniskill_libero
+            PLATFORM=amd
+            ROCM_VER=7.2
+            ROCM_ARCHS=gfx90a;gfx942
+            NO_MIRROR=1
+          outputs: type=cacheonly
+          tags: rlinf:embodied-maniskill_libero-rocm

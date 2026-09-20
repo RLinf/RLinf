@@ -20,8 +20,8 @@ try:
     from megatron.core import parallel_state
     from megatron.core.packed_seq_params import PackedSeqParams
 
-except (ImportError, ModuleNotFoundError):
-    raise "Megatron core was not found."
+except (ImportError, ModuleNotFoundError) as e:
+    raise ImportError("Megatron core was not found.") from e
 
 
 def preprocess_packed_seqs(
