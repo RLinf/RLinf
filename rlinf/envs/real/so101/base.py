@@ -54,6 +54,15 @@ _DEFAULT_JOINT_LIMIT_HIGH = np.array([1.91, 1.75, 1.69, 1.66, 2.79])
 _DOF = len(SO101Arm.MOTORS)
 
 
+def _zero_observation(space: gym.Space) -> Any:
+    """Build a deterministic zero value matching a Gymnasium space."""
+    if isinstance(space, gym.spaces.Dict):
+        return {key: _zero_observation(value) for key, value in space.spaces.items()}
+    if isinstance(space, gym.spaces.Box):
+        return np.zeros(space.shape, dtype=space.dtype)
+    raise TypeError(f"Zero dummy observations do not support {type(space).__name__}.")
+
+
 @dataclass
 class SO101EnvConfig:
     """Task, control, and observation settings for an SO-101 environment."""
@@ -63,6 +72,9 @@ class SO101EnvConfig:
 
     is_dummy: bool = False
     """Run without hardware, sampling observations from the space."""
+
+    zero_dummy_observation: bool = False
+    """Return deterministic zero observations for local integration tests."""
 
     step_frequency: float = 10.0
     """Control rate in Hz. A step sleeps for the remainder of its period."""
@@ -470,6 +482,8 @@ class SO101Env(gym.Env):
     def _get_observation(self) -> dict[str, Any]:
         """Return the joint state and any camera frames."""
         if self.config.is_dummy:
+            if self.config.zero_dummy_observation:
+                return _zero_observation(self._base_observation_space)
             return self._base_observation_space.sample()
         reading = self._state_parts.get_observation()["arm"]
 
