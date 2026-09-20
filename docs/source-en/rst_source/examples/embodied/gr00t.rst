@@ -118,7 +118,7 @@ Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <gr00t-ha
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -601,6 +601,8 @@ Add ``--use-mirror`` for downloads from mainland China. The installer builds
 ``decord`` from source when needed on aarch64, applies the Ascend TensorFlow
 pins, and skips CUDA flash-attention. RLinf applies the N1.5 NPU patches when
 loading the model.
+
+.. include:: _ascend_torch.rst
 
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~

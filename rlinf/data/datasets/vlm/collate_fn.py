@@ -106,9 +106,11 @@ def collate_fn(data_list: list[Any]) -> dict[str, Any]:
     if multi_modal_list:
         for key in multi_modal_list[0].keys():
             vals = [m[key] for m in multi_modal_list]
-            if key == "pixel_values":
+            if key in ("pixel_values", "pixel_values_videos"):
+                # Keep per-sample tensors as a list; Qwen VL video/image
+                # processors emit variable-length vision tokens.
                 multi_modal_inputs[key] = vals
-            elif key == "image_grid_thw":
+            elif key in ("image_grid_thw", "video_grid_thw"):
                 multi_modal_inputs[key] = (
                     torch.cat(vals, dim=0)
                     if isinstance(vals[0], torch.Tensor)

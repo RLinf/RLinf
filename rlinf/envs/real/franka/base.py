@@ -296,6 +296,7 @@ class FrankaEnv(gym.Env):
             backend=self.hardware.backend,
             gripper_type=self.hardware.gripper_type,
             compliance=hardware.compliance,
+            realtime_config=hardware.realtime_config,
             end_effector_type=self.hardware.end_effector_type,
             end_effector_config=self.hardware.end_effector_config,
             gripper_connection=self.hardware.gripper_connection,

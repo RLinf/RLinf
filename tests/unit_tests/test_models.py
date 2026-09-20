@@ -24,6 +24,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -35,6 +36,7 @@ from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
@@ -294,6 +296,301 @@ def test_value_model_does_not_rescale_gemma3_language_embeddings(monkeypatch):
     )
 
 
+_STARVLA_UTILS_DIR = (
+    Path(__file__).resolve().parents[2] / "rlinf/models/embodiment/starvla/utils"
+)
+_FRANKA_ACTION_STATS = {
+    "q01": [-0.5] * 7,
+    "q99": [0.5] * 7,
+    "min": [-1.0] * 7,
+    "max": [1.0] * 7,
+    "mask": [True] * 6 + [False],
+}
+
+
+def _load_starvla_util(name: str) -> ModuleType:
+    # The starvla package __init__ imports starVLA, which only its venv has.
+    spec = importlib.util.spec_from_file_location(
+        f"starvla_{name}_under_test", _STARVLA_UTILS_DIR / f"{name}.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(("source", "bound"), [("q01q99", 0.5), ("minmax", 1.0)])
+def test_starvla_action_stats_follow_the_configured_source(source, bound):
+    action_space = _load_starvla_util("action_space")
+    model = SimpleNamespace(norm_stats={"franka": {"action": _FRANKA_ACTION_STATS}})
+
+    stats = action_space.resolve_action_norm_stats(
+        model, "franka", action_dim=7, action_stats_source=source
+    )
+
+    np.testing.assert_array_equal(stats["q99"], [bound] * 7)
+    np.testing.assert_array_equal(stats["q01"], [-bound] * 7)
+    np.testing.assert_array_equal(stats["mask"], [True] * 6 + [False])
+
+
+def test_starvla_action_stats_name_the_available_keys_for_an_unknown_key():
+    action_space = _load_starvla_util("action_space")
+    model = SimpleNamespace(norm_stats={"franka": {"action": _FRANKA_ACTION_STATS}})
+
+    with pytest.raises(RuntimeError, match=r"available keys: \['franka'\]"):
+        action_space.resolve_action_norm_stats(model, "libero_spatial", action_dim=7)
+
+
+def test_starvla_action_stats_require_a_norm_stats_mapping():
+    action_space = _load_starvla_util("action_space")
+
+    with pytest.raises(RuntimeError, match="no usable 'norm_stats' mapping"):
+        action_space.resolve_action_norm_stats(
+            SimpleNamespace(norm_stats=None), "franka", action_dim=7
+        )
+
+
+def test_starvla_env_actions_keep_their_shape_and_map_the_libero_gripper(monkeypatch):
+    action_space = _load_starvla_util("action_space")
+    received_shapes = []
+
+    def unnormalize_actions(actions, action_norm_stats):
+        received_shapes.append(actions.shape)
+        return actions
+
+    tools = ModuleType("starVLA.model.tools")
+    tools.FrameworkTools = SimpleNamespace(unnormalize_actions=unnormalize_actions)
+    monkeypatch.setitem(sys.modules, "starVLA.model.tools", tools)
+
+    normalized = np.zeros((2, 3, 7), dtype=np.float32)
+    normalized[..., 0] = 0.25
+    normalized[0, :, 6] = 1.0
+    stats = {"q99": np.ones(7), "q01": -np.ones(7), "mask": np.ones(7, dtype=bool)}
+
+    env_actions = action_space.unnormalize_actions_for_env(
+        normalized, stats, policy_setup="libero"
+    )
+
+    # starVLA unnormalizes [T, action_dim]; the chunk layout comes back intact.
+    assert received_shapes == [(6, 7)]
+    assert env_actions.shape == (2, 3, 7)
+    np.testing.assert_array_equal(env_actions[..., 0], 0.25)
+    # LIBERO wants the 0/1 gripper as -1 (open) / +1 (closed).
+    np.testing.assert_array_equal(env_actions[0, :, 6], -1.0)
+    np.testing.assert_array_equal(env_actions[1, :, 6], 1.0)
+
+
+def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
+    accelerator = _load_starvla_util("accelerator")
+    # CPU stands in for a non-CUDA accelerator such as an Ascend NPU.
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+
+    with accelerator.accelerator_autocast(torch.bfloat16):
+        assert torch.is_autocast_enabled("cpu")
+        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+
+
+def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
+    accelerator = _load_starvla_util("accelerator")
+    monkeypatch.setattr(Worker, "torch_device_type", None)
+
+    with accelerator.accelerator_autocast(torch.bfloat16):
+        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_enabled("cuda")
+
+
+def test_starvla_gaussian_is_float32_and_keeps_the_gradient_path():
+    accelerator = _load_starvla_util("accelerator")
+    mean = torch.zeros(2, 3, dtype=torch.bfloat16, requires_grad=True)
+    log_std = torch.nn.Parameter(torch.zeros(3))
+
+    dist = accelerator.build_gaussian(mean, log_std.exp())
+    sample = dist.rsample()
+
+    assert dist.loc.dtype == dist.scale.dtype == sample.dtype == torch.float32
+    dist.log_prob(sample.detach()).sum().backward()
+    assert mean.grad is not None and mean.grad.dtype == torch.bfloat16
+    assert log_std.grad is not None
+
+
+class _QwenVisionPatchEmbed(torch.nn.Module):
+    """Shape contract of Qwen2.5-VL PatchEmbed: Conv3d kernel == stride."""
+
+    def __init__(self, in_channels=3, temporal=2, patch=4, embed_dim=8):
+        super().__init__()
+        self.in_channels = in_channels
+        self.temporal_patch_size = temporal
+        self.patch_size = patch
+        kernel = (temporal, patch, patch)
+        self.proj = torch.nn.Conv3d(
+            in_channels, embed_dim, kernel_size=kernel, stride=kernel, bias=False
+        )
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states = hidden_states.view(
+            -1,
+            self.in_channels,
+            self.temporal_patch_size,
+            self.patch_size,
+            self.patch_size,
+        )
+        hidden_states = self.proj(hidden_states.to(self.proj.weight.dtype))
+        return hidden_states.view(-1, self.proj.out_channels)
+
+
+def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        _linear_patch_embed_forward,
+    )
+
+    torch.manual_seed(0)
+    module = _QwenVisionPatchEmbed()
+    patches = torch.randn(5, 3 * 2 * 4 * 4, requires_grad=True)
+
+    conv_out = module(patches)
+    linear_out = _linear_patch_embed_forward(module, patches)
+    torch.testing.assert_close(linear_out, conv_out, rtol=1e-5, atol=1e-5)
+
+    linear_out.sum().backward()
+    assert module.proj.weight.grad is not None
+    assert patches.grad is not None
+
+
+def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        _linear_patch_embed_forward,
+        patch_vision_patch_embed,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    model = torch.nn.Sequential(_QwenVisionPatchEmbed())
+    original_forward = model[0].forward
+
+    assert patch_vision_patch_embed(model) == 1
+    assert model[0].forward.__func__ is _linear_patch_embed_forward
+    assert original_forward.__func__ is not _linear_patch_embed_forward
+
+
+def test_qwen_vl_linear_patch_embed_is_left_alone_on_nvidia(monkeypatch):
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        patch_vision_patch_embed,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    model = torch.nn.Sequential(_QwenVisionPatchEmbed())
+
+    assert patch_vision_patch_embed(model) == 0
+    assert model[0].forward.__func__ is _QwenVisionPatchEmbed.forward
+
+
+_WAN_NPU_PATCHES = "rlinf.envs.sim.world_model.backend.npu_patches"
+
+
+@pytest.fixture
+def wan_dit(monkeypatch):
+    """diffsynth's Wan DiT module, whose operators the NPU patches rebind."""
+    from rlinf.utils.patcher import Patcher
+
+    def flash_attention(q, k, v, num_heads, compatibility_mode=False):
+        return q
+
+    def rope_apply(x, freqs, num_heads):
+        return x
+
+    class RMSNorm(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    dit = ModuleType("diffsynth.models.wan_video_dit")
+    dit.flash_attention, dit.rope_apply, dit.RMSNorm = (
+        flash_attention,
+        rope_apply,
+        RMSNorm,
+    )
+    for name in ("diffsynth", "diffsynth.models"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, dit.__name__, dit)
+    yield dit
+    Patcher.clear()
+
+
+def _import_wan_npu_patches(monkeypatch, *, mindiesd: bool) -> ModuleType:
+    """Import the Wan NPU patches on an Ascend stack with or without MindIE-SD."""
+    vendor = {"torch_npu": ModuleType("torch_npu"), "mindiesd": None}
+    if mindiesd:
+        names = (
+            "mindiesd",
+            "mindiesd.layers",
+            "mindiesd.layers.flash_attn",
+            "mindiesd.layers.flash_attn.attention_forward",
+        )
+        vendor.update({name: ModuleType(name) for name in names})
+        vendor["mindiesd"].rotary_position_embedding = lambda *args, **kwargs: None
+        vendor[names[-1]].attention_forward = lambda *args, **kwargs: None
+    for name, module in vendor.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    spec = importlib.util.find_spec(_WAN_NPU_PATCHES)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, _WAN_NPU_PATCHES, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _patch_like_wan_backend(npu_patches: ModuleType) -> None:
+    """Run the patch sequence ``WanBackend._build_pipeline`` runs."""
+    from rlinf.utils.patcher import Patcher
+
+    Patcher.clear()
+    npu_patches.apply_npu_patches(Patcher)
+    Patcher.apply()
+
+
+def _wan_operators(dit: ModuleType) -> tuple:
+    return dit.flash_attention, dit.rope_apply, dit.RMSNorm.forward
+
+
+def test_wan_npu_patches_leave_diffsynth_alone_on_nvidia(wan_dit, monkeypatch):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=True)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    operators = _wan_operators(wan_dit)
+
+    _patch_like_wan_backend(npu_patches)
+    assert _wan_operators(wan_dit) == operators
+
+
+def test_wan_npu_patches_log_why_mindiesd_is_unavailable(wan_dit, monkeypatch, caplog):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=False)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    operators = _wan_operators(wan_dit)
+
+    _patch_like_wan_backend(npu_patches)
+    assert _wan_operators(wan_dit) == operators
+    assert "import of mindiesd halted" in caplog.text
+
+
+def test_wan_npu_patches_rebind_the_dit_operators_on_every_build(wan_dit, monkeypatch):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=True)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    kernels = (
+        npu_patches.npu_flash_attention,
+        npu_patches.npu_rope_apply,
+        npu_patches.npu_rmsnorm_forward,
+    )
+
+    # Every WanBackend in the process repeats the sequence on the patched module.
+    for _ in range(2):
+        _patch_like_wan_backend(npu_patches)
+        assert _wan_operators(wan_dit) == kernels
+
+
 def _history_cfg():
     return OmegaConf.create(
         {
@@ -351,6 +648,47 @@ def test_build_history_input_emits_on_interval_tick():
         torch.tensor([12]),
         torch.tensor([13]),
     ]
+
+
+def _success_potential_state_machine():
+    from rlinf.models.embodiment.reward.vlm_reward_model import (
+        ShapedVLMRewardModel,
+    )
+
+    model = ShapedVLMRewardModel.__new__(ShapedVLMRewardModel)
+    model.potential_gamma = 1.0
+    model.potential_scale = 1.0
+    model.potential_ema_alpha = 0.5
+    model.potential_clip = 0.0
+    model.success_threshold = 0.5
+    model.success_bonus = 1.0
+    model.success_confirmation_windows = 1
+    model.gt_success_bonus = 0.0
+    model.infer_micro_batch_size = 0
+    model._previous_potentials = None
+    model._success_fired = None
+    model._success_streak = None
+    return model
+
+
+def test_empty_history_input_still_resets_shaping_state_on_done():
+    model = _success_potential_state_machine()
+    model._previous_potentials = torch.tensor([0.4, 0.8])
+    model._success_fired = torch.tensor([True, True])
+    model._success_streak = torch.tensor([3, 1], dtype=torch.int32)
+
+    rewards = model.compute_reward(
+        {
+            "history_input": {},
+            "dones": torch.tensor([True, False]),
+        }
+    )
+
+    assert rewards.tolist() == pytest.approx([0.0, 0.0])
+    assert torch.isnan(model._previous_potentials[0])
+    assert float(model._previous_potentials[1]) == pytest.approx(0.8)
+    assert model._success_fired.tolist() == [False, True]
+    assert model._success_streak.tolist() == [0, 1]
 
 
 VALUE_CLIP = 0.2

@@ -227,8 +227,6 @@ env 侧仲裁能够保持清晰，前提是设备读取与动作映射分开。�
      - ``task_factory`` 与 ``register_tasks``。
    * - ``real/env.py``
      - ``RealWorldEnv``，框架根据 ``env_type: real`` 创建的向量化环境类。
-   * - ``real/task_env.py``
-     - ``RobotTask`` 和 ``RobotTaskEnv`` 划定任务逻辑与硬件代码的边界。
 
 后续阅读
 --------

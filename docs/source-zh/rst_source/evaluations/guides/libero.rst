@@ -3,7 +3,7 @@ LIBERO 评测
 
 LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA 策略并输出任务级成功率。
 
-相关训练文档：:doc:`../../examples/embodied/libero`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
+相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
 
 环境准备
 --------
@@ -13,7 +13,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
+使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
+
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -39,6 +41,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_dreamzero_eval_sglang.yaml``
      - Spatial
      - DreamZero（SGLang backend）
+   * - ``libero_spatial_fastwam_eval.yaml``
+     - Spatial
+     - FastWAM
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2
@@ -48,6 +53,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_object_openvlaoft_eval.yaml``
      - Object
      - OpenVLA-OFT
+   * - ``libero_object_fastwam_eval.yaml``
+     - Object
+     - FastWAM
    * - ``libero_object_molmoact2_eval.yaml``
      - Object
      - MolmoAct2
@@ -57,15 +65,24 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_goal_openvlaoft_eval.yaml``
      - Goal
      - OpenVLA-OFT
+   * - ``libero_goal_fastwam_eval.yaml``
+     - Goal
+     - FastWAM
    * - ``libero_goal_molmoact2_eval.yaml``
      - Goal
      - MolmoAct2
    * - ``libero_10_openpi_pi05_eval.yaml``
      - Long (libero_10)
      - π₀.₅
+   * - ``libero_10_apxinf_pi05_eval.yaml``
+     - Long (libero_10)
+     - π₀.₅（ApxInf backend）
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+   * - ``libero_10_fastwam_eval.yaml``
+     - Long (libero_10)
+     - FastWAM
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2
@@ -97,6 +114,29 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 **Step 4：查看结果**
 
 终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
+
+ApxInf 推理后端
+---------------
+
+ApxInf 接入仅用于评测。先在 RLinf 运行环境中安装官方
+`ApxInf <https://github.com/infinigence/ApxInf>`_ Python 前端与 CUDA binding，
+再将 ``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、
+``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的 checkpoint：
+
+.. code-block:: bash
+
+   export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
+   bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+
+该配置保持原生 OpenPI 语义：两路已经完成方向处理的 LIBERO 图像、8 维
+state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。
+resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI
+transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认
+负责初始高斯 noise 采样。做成对数值对齐时，可设置
+``rollout.model.apxinf.noise_source=observation``，并传入显式的
+``[B,10,32]`` noise tensor。
+默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测
+10 个 reset state，共 100 条轨迹。
 
 .. _libero-eval-config:
 
