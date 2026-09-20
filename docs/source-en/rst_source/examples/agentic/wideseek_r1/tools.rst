@@ -7,9 +7,6 @@ Prepare the RLinf environment, search backends, and judge model before
 WideSeek-R1 training or evaluation. This page also covers multi-node launches
 when a single eight-GPU machine is too slow.
 
-In the standard workflow, offline tools are used for training and standard QA
-evaluation, while online tools are used for WideSearch evaluation.
-
 Overview
 --------
 
@@ -63,6 +60,19 @@ If you prefer a local environment, install the agentic stack:
 
    bash requirements/install.sh agentic
 
+.. note::
+   If you run the prebuilt image on a GPU older than ``sm90`` (such as an
+   ``A100``), you may hit an architecture-not-supported error. Uninstall
+   ``flash-attn-4`` first:
+
+   .. code-block:: bash
+
+      uv pip uninstall flash-attn-4
+
+   If you installed the stack locally with
+   ``bash requirements/install.sh agentic``, this is handled automatically
+   and you do not need to uninstall it.
+
 Startup scripts and configuration files are in ``examples/agent/wideseek_r1``.
 
 .. list-table::
@@ -87,7 +97,10 @@ WideSeek-R1 provides two search backends:
 - ``online`` mode for live web search and webpage access.
 - ``offline`` mode for retrieval against a local Qdrant-based knowledge base.
 
-Configure one backend before launching training or evaluation.
+In the standard workflow, offline tools are used for training and standard QA
+evaluation, while online tools are used for WideSearch evaluation. Choose one
+backend and start the corresponding service before launching training or
+evaluation.
 
 .. _wideseek-r1-online-tools:
 
@@ -249,10 +262,10 @@ Judge Model
 
 Before running either training or evaluation, start the judge model.
 WideSeek-R1 uses an LLM judge to provide more reliable feedback than exact-match
-scoring alone.
+scoring alone. You can use an external judge server or the built-in judge.
 
-Judge Model Server
-~~~~~~~~~~~~~~~~~~
+External Judge Model Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The default setup uses
 `Qwen3-30B-A3B-Instruct-2507 <https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507>`__

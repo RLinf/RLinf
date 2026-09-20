@@ -5,7 +5,6 @@
 
 在 WideSeek-R1 训练或评测之前，先准备 RLinf 环境、搜索后端和评判模型。单机 8 卡过慢时，本页也说明如何做多节点启动。
 
-在标准工作流中，离线工具用于训练和标准 QA 评测，在线工具用于 WideSearch 评测。
 
 概述
 ----
@@ -58,6 +57,15 @@
 
    bash requirements/install.sh agentic
 
+.. note::
+   若您在早于 ``sm90`` 的 GPU（如 ``A100``）上运行预构建镜像，则可能会出现架构不支持相关报错，此时需要先卸载 ``flash-attn-4``：
+
+   .. code-block:: bash
+
+      uv pip uninstall flash-attn-4
+
+   若您是在本地环境用 ``bash requirements/install.sh agentic`` 安装的依赖，则上述问题会自动解决，无需手动卸载。
+
 启动脚本和配置文件位于 ``examples/agent/wideseek_r1``。
 
 .. list-table::
@@ -82,7 +90,7 @@ WideSeek-R1 提供两种搜索后端：
 - ``online`` 模式，用于实时网页搜索和网页访问。
 - ``offline`` 模式，用于基于本地 Qdrant 知识库的检索。
 
-启动训练或评测前，先配置其中一个后端。
+在标准工作流中，离线工具用于训练和标准 QA 评测，在线工具用于 WideSearch 评测。启动训练或评测前，请先选择一种后端启动相应的服务。
 
 .. _wideseek-r1-online-tools:
 
@@ -231,10 +239,10 @@ API 密钥
 评判模型
 --------
 
-在运行训练或评测之前，请先启动评判模型。WideSeek-R1 使用 LLM 评判器，相比仅依赖精确匹配打分，能够提供更可靠的反馈。
+在运行训练或评测之前，请先启动评判模型。WideSeek-R1 使用 LLM 评判器，相比仅依赖精确匹配打分，能够提供更可靠的反馈。我们提供外部评判模型服务和内置评判模型两种选择。
 
-评判模型服务
-~~~~~~~~~~~~
+外部评判模型服务
+~~~~~~~~~~~~~~~~
 
 默认配置使用 `Qwen3-30B-A3B-Instruct-2507 <https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507>`__ 作为评判模型。
 
