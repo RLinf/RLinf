@@ -9,7 +9,7 @@ WideSeek-R1 是一个面向广域信息检索任务的主智能体与子智能�
 
 有关完整方法和实验结果，请参见 :doc:`WideSeek-R1 论文页面 <../../../resources/publications/wideseek_r1>`、`项目主页 <https://wideseek-r1.github.io>`__、`arXiv 论文 <https://arxiv.org/abs/2602.04634>`__，以及 `RLinf 中的示例代码 <https://github.com/RLinf/RLinf/tree/main/examples/agent/wideseek_r1>`__。
 
-本页介绍该示例，并引导你进入工具配置、训练与评测。请先安装 agentic 依赖栈，参见 :doc:`安装指南 <../../../start/installation>`，再打开与当前步骤对应的页面。
+本页介绍该示例，并引导你进入环境与工具配置、训练与评测。请先完成 :doc:`环境与工具配置 <tools>`，再打开与当前步骤对应的页面。
 
 概述
 ----
@@ -43,17 +43,17 @@ WideSeek-R1 是一个面向广域信息检索任务的主智能体与子智能�
 .. grid:: 1 2 2 3
    :gutter: 3
 
-   .. grid-item-card:: 工具配置
+   .. grid-item-card:: 环境与工具配置
       :link: tools
       :link-type: doc
 
-      配置离线 Qdrant 检索或在线 Serper/Jina 搜索。
+      安装依赖栈、配置搜索后端、启动评判模型，并做多节点扩展。
 
    .. grid-item-card:: 训练
       :link: train
       :link-type: doc
 
-      安装依赖栈、启动评判模型、准备数据，然后启动 hybrid 多智能体强化学习。
+      准备模型和数据，然后启动 hybrid 多智能体强化学习。
 
    .. grid-item-card:: 评测
       :link: eval
@@ -65,6 +65,6 @@ WideSeek-R1 是一个面向广域信息检索任务的主智能体与子智能�
    :hidden:
    :maxdepth: 2
 
-   tools
-   train
-   eval
+   环境与工具配置 <tools>
+   训练 <train>
+   评测 <eval>

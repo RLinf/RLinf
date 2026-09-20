@@ -18,10 +18,10 @@ For the full method and results, see the
 `paper on arXiv <https://arxiv.org/abs/2602.04634>`__, and the
 `example code in RLinf <https://github.com/RLinf/RLinf/tree/main/examples/agent/wideseek_r1>`__.
 
-This page introduces the example and routes you to tool setup, training, and
-evaluation. Install the agentic stack first — see the
-:doc:`installation guide <../../../start/installation>` — then open the page
-that matches the step you are on.
+This page introduces the example and routes you to environment and tool setup,
+training, and evaluation. Start with
+:doc:`Environment and Tool Setup <tools>`, then open the page that matches the
+step you are on.
 
 Overview
 --------
@@ -55,18 +55,18 @@ Choose a Page
 .. grid:: 1 2 2 3
    :gutter: 3
 
-   .. grid-item-card:: Tool Setup
+   .. grid-item-card:: Environment and Tool Setup
       :link: tools
       :link-type: doc
 
-      Configure offline Qdrant retrieval or online Serper/Jina search.
+      Install the stack, configure search backends, start a judge, and scale
+      across nodes.
 
    .. grid-item-card:: Training
       :link: train
       :link-type: doc
 
-      Install the stack, start a judge, prepare data, and launch hybrid
-      multi-agent RL.
+      Prepare the model and data, then launch hybrid multi-agent RL.
 
    .. grid-item-card:: Evaluation
       :link: eval
@@ -78,6 +78,6 @@ Choose a Page
    :hidden:
    :maxdepth: 2
 
-   tools
-   train
-   eval
+   Environment and Tool Setup <tools>
+   Training <train>
+   Evaluation <eval>
