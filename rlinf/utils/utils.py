@@ -464,24 +464,36 @@ def compute_entropy_loss(
     """
     Reshape entropy for ``entropy_type`` and average it over the valid entries.
 
-    Two shape mismatches have to be reconciled before the average is a mean.
-    ``reshape_entropy`` can return one rank less than ``loss_mask``: models that
-    already reduce entropy to [bsz, 1] leave the "chunk_level" branch as [bsz],
-    and a [bsz] value tensor against a [bsz, 1] mask is an outer product rather
-    than a mask. And ``masked_mean`` divides by the sum of the mask it is handed
-    while its numerator sums the broadcast product, so a mask narrower than
-    ``entropy`` inflates the result by the broadcast factor.
+    ``entropy`` and ``loss_mask`` need not agree on shape, and the scalar means
+    something different depending on how they differ. A wider mask weights each
+    sample by its number of valid steps: a per-sample [bsz, 1] entropy against a
+    [bsz, num_action_chunks] mask averages over steps rather than over samples.
+    A narrower mask is broadcast over the entries it covers, so those entries
+    are averaged individually rather than summed.
 
     Args:
-        entropy(Optional[torch.Tensor]): entropy as the model produced it.
-        entropy_type(str): "action_level", "chunk_level" or "token_level".
+        entropy(Optional[torch.Tensor]): entropy as the model produced it. The
+            parameter is optional because models that compute no entropy return
+            None, which is an error here rather than a silent zero.
+        entropy_type(str): the reshaping applied first. "action_level" sums over
+            the action dimension and "chunk_level" over the last one; any other
+            value, "token_level" included, leaves the entropy as it is.
         loss_mask(Optional[torch.Tensor]): valid-entry mask, or None to average all.
         action_dim(int): action dimension, default is 7.
         batch_size(int): batch size used to reshape action-level entropy.
 
     Returns:
         torch.Tensor: scalar mean entropy over the valid entries.
+
+    Raises:
+        ValueError: if ``entropy`` is None.
     """
+    if entropy is None:
+        raise ValueError(
+            "The model returned entropy=None, so it has no entropy to regularize. "
+            "Set algorithm.entropy_bonus to 0 for this model."
+        )
+
     entropy = reshape_entropy(
         entropy,
         entropy_type=entropy_type,
