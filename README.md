@@ -294,7 +294,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 #### Hardware Support
 
-RLinf hides hardware differences behind a single accelerator abstraction, so the same training stack runs on NVIDIA and AMD GPUs and on domestic accelerators including Huawei Ascend, Moore Threads, and Kunlunxin. Users can train on whatever chips they have, without changing models, algorithms, or configs. Accelerator vendors can bring a full embodied and agentic RL stack to their hardware by implementing one small interface, instead of maintaining a fork of the framework.
+RLinf hides hardware differences behind a single accelerator abstraction, so the same training stack runs on NVIDIA and AMD GPUs and on domestic accelerators including Huawei Ascend, Moore Threads, and Kunlunxin. Users can train on different chips, without changing models, algorithms, or configs. Accelerator vendors can bring a full embodied and agentic RL stack to their hardware by implementing one small interface, instead of maintaining a fork of the framework.
 
 Choose a model and environment together, then follow its links for hardware setup. Each hardware backend applies to every environment listed in its row.
 
