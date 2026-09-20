@@ -808,9 +808,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         )
                         while env_mask.ndim > 1 and env_mask.shape[-1] == 1:
                             env_mask = env_mask.squeeze(-1)
-                    while env_mask.ndim < entropy_mask.ndim:
-                        env_mask = env_mask.unsqueeze(-1)
-                    entropy_mask = entropy_mask & env_mask
+                        while env_mask.ndim < entropy_mask.ndim:
+                            env_mask = env_mask.unsqueeze(-1)
+                        entropy_mask = entropy_mask & env_mask
                 entropy_loss = compute_entropy_loss(
                     entropy,
                     entropy_type=self.cfg.algorithm.entropy_type,

@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal, Optional
 
 import numpy as np
 import torch
