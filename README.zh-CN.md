@@ -294,14 +294,14 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-RLinf 在 NVIDIA、AMD GPU 以及华为昇腾 NPU、摩尔线程 GPU、昆仑芯 XPU 等国产加速卡上运行同一套训练代码。每种硬件只描述一次：由一个 manager 类给出节点上的设备数量、worker 如何获得这些设备、使用哪种集合通信 backend 与网卡，以及对应的 torch 设备命名空间。调度器、worker、placement 与权重 resharding 都经由这一层接口访问硬件，因此把任务迁移到另一种加速卡只需改配置；新增一种加速卡也只需注册一个 manager 类与一条安装路径，不必改动训练主流程。`requirements/install.sh --platform <name>` 与 Docker 构建参数 `PLATFORM` 会安装对应厂商的 torch 栈。
+RLinf 将硬件差异收敛在同一层加速卡抽象之下，同一套训练栈可以运行在 NVIDIA、AMD GPU 以及华为昇腾、摩尔线程、昆仑芯等国产加速卡上。用户手上有什么卡就用什么卡，模型、算法与配置都无需改动。加速卡厂商只需实现一层很小的接口，就能把完整的具身与智能体 RL 训练栈带到自家硬件上，而不必维护框架的分支。
 
-先选择模型与环境组合，再点击模型链接查看硬件运行步骤。前面的表格分别列出各类组件；下表记录硬件示例所覆盖的模型系列及其支持路径，每种硬件后端都适用于所在行列出的全部环境。
+先选择模型与环境组合，再点击其中的链接查看硬件运行步骤。每种硬件后端都适用于所在行列出的全部环境。
 
 | 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
 | [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/wan.rst#wan-hardware) | Wan | ✅ | ✅ | — | — |
+| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | [Wan 世界模型](docs/source-zh/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
 | [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
