@@ -433,8 +433,8 @@ class SO101Arm(BaseArm):
                 self._gripper_error = error
                 self._gripper_condition.notify_all()
 
-    def _wait_for_gripper(self) -> None:
-        """Wait for a discrete open or close to finish or relieve a stall."""
+    def wait_for_gripper(self) -> None:
+        """Wait for the current gripper command to finish or relieve a stall."""
         with self._gripper_condition:
             while self._gripper_target is not None:
                 self._check_gripper_monitor()
@@ -444,12 +444,12 @@ class SO101Arm(BaseArm):
     def open_gripper(self) -> None:
         """Open the gripper fully."""
         self.move_gripper([1.0])
-        self._wait_for_gripper()
+        self.wait_for_gripper()
 
     def close_gripper(self) -> None:
         """Close the gripper fully."""
         self.move_gripper([0.0])
-        self._wait_for_gripper()
+        self.wait_for_gripper()
 
     def reset_joint(
         self,

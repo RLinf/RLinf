@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
@@ -996,6 +997,79 @@ def validate_weight_sync_overlap_cfg(cfg):
     )
 
 
+def validate_grpc_rollout_cfg(cfg) -> None:
+    """Reject unsupported remote-evaluation settings before creating workers."""
+    rollout = cfg.get("rollout", {})
+    if rollout.get("use_grpc_backend", False) or rollout.get("backend") == "grpc":
+        raise ValueError(
+            "Use rollout.rollout_backend=grpc and rollout.grpc; legacy gRPC flags are unsupported."
+        )
+    if rollout.get("rollout_backend") != "grpc":
+        return
+    if cfg.runner.get("task_type") != "embodied_eval":
+        raise ValueError(
+            "gRPC supports fixed-checkpoint evaluation via evaluations/run_eval.sh, not training."
+        )
+    if not cfg.runner.get("only_eval", False):
+        raise ValueError("gRPC requires runner.only_eval=true.")
+    grpc_cfg = rollout.get("grpc", {})
+    mode = grpc_cfg.get("mode")
+    if mode not in {"managed", "external"}:
+        raise ValueError("rollout.grpc.mode must be managed or external.")
+    if not isinstance(grpc_cfg.get("policy_id"), str) or not grpc_cfg.policy_id.strip():
+        raise ValueError("rollout.grpc.policy_id must identify the fixed policy.")
+    for key in ("timeout_s", "startup_timeout_s"):
+        value = grpc_cfg.get(key)
+        if (
+            not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError(f"rollout.grpc.{key} must be finite and positive.")
+    for key in (
+        "enable_offload",
+        "enable_cuda_graph",
+        "enable_torch_compile",
+        "collect_transitions",
+    ):
+        if rollout.get(key, False):
+            raise ValueError(f"rollout.{key} is unsupported on the gRPC client.")
+    for key in ("expert_model", "rlt_feature_model", "sampling_params"):
+        if rollout.get(key):
+            raise ValueError(f"rollout.{key} is unsupported by gRPC evaluation.")
+    if cfg.runner.get("enable_decoupled_mode", False) or cfg.runner.get("rtc", {}).get(
+        "enabled", False
+    ):
+        raise ValueError("gRPC currently supports synchronous evaluation without RTC.")
+    if cfg.get("reward", {}).get("use_reward_model", False):
+        raise ValueError("gRPC evaluation does not support a separate reward model.")
+    if mode == "external":
+        if (
+            not isinstance(grpc_cfg.get("server_address"), str)
+            or not grpc_cfg.server_address.strip()
+        ):
+            raise ValueError("External gRPC requires rollout.grpc.server_address.")
+        if cfg.runner.get("ckpt_path"):
+            raise ValueError(
+                "External checkpoints are owned by the server; runner.ckpt_path must be null."
+            )
+    else:
+        if grpc_cfg.get("server_address"):
+            raise ValueError(
+                "Managed endpoints are discovered at runtime; server_address must be null."
+            )
+        if "policy_server" not in cfg.cluster.get("component_placement", {}):
+            raise ValueError(
+                "Managed gRPC requires cluster.component_placement.policy_server."
+            )
+        if not grpc_cfg.get("server") or not grpc_cfg.get("group_name"):
+            raise ValueError("Managed gRPC requires server settings and group_name.")
+    for key in ("action_dim", "num_action_chunks"):
+        value = rollout.model.get(key)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"rollout.model.{key} must be a positive integer.")
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1596,6 +1670,7 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def validate_cfg(cfg: DictConfig) -> DictConfig:
+    validate_grpc_rollout_cfg(cfg)
     OmegaConf.set_struct(cfg, True)
 
     with open_dict(cfg):

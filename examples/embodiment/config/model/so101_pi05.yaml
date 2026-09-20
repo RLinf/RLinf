@@ -1,0 +1,16 @@
+# The same model specification is used by local eval and the policy server.
+defaults:
+  - pi0_5_rlinf
+  - _self_
+
+num_action_chunks: 20
+action_dim: 6
+openpi:
+  task: eval
+  config_name: pi05_so101_joint
+  num_images_in_input: 1
+  train_expert_only: false
+  discrete_state_input: false
+openpi_data:
+  repo_id: id_0
+  norm_stats_path: null

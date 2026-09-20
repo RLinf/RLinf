@@ -51,7 +51,11 @@ class SO101Outputs(transforms.DataTransformFn):
     joint_dim: int = SO101_ACTION_DIM
 
     def __call__(self, data: dict) -> dict:
-        return {"actions": np.asarray(data["actions"][:, : self.joint_dim])}
+        actions = np.asarray(data["actions"][:, : self.joint_dim], dtype=np.float32)
+        # Dataset/model units are degrees * 0.01; the real env consumes radians.
+        actions = actions.copy()
+        actions[:, :5] *= 100.0 * np.pi / 180.0
+        return {"actions": actions}
 
 
 @dataclasses.dataclass(frozen=True)

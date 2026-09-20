@@ -1,12 +1,41 @@
-# SO-101 evaluation with gRPC backend for policy inference
-# Inherits base eval config and only overrides gRPC-specific settings
-
+# Robot-side Ray only; the GPU server is external (direct network or SSH).
 defaults:
   - realworld_so101_eval_openpi
-  - override rollout/grpc_policy@rollout.grpc_policy
+  - _self_
+
+cluster:
+  component_placement:
+    rollout:
+      node_group: inference
+      placement: 0
+  node_groups:
+    - label: inference
+      node_ranks: 0
+      ignore_hardware: true
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - node_rank: 0
+            serial_port: /dev/ttyACM0
+            calibration_id: FOLLOWER_CALIB
+            max_relative_target: 5
+            camera_type: uvc
+            camera_serials: [/dev/video0]
 
 rollout:
-  backend: grpc
-  grpc_policy:
-    server_address: SERVER_ADDRESS  # Replace: gRPC server address (e.g., localhost:50051)
-    timeout: 30.0
+  rollout_backend: grpc
+  grpc:
+    mode: external
+    server_address: 127.0.0.1:50051
+    policy_id: so101-pi05
+    timeout_s: 30.0
+    startup_timeout_s: 180.0
+    group_name: PolicyServerGroup
+    server:
+      host: 127.0.0.1
+      port: 0
+      device: cuda:0
+      enable_torch_compile: false
+      torch_compile_mode: max-autotune-no-cudagraphs

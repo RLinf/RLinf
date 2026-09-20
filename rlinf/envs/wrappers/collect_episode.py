@@ -386,6 +386,10 @@ class CollectEpisode(gym.Wrapper):
             if pre_record:
                 continue
 
+            if self._bool_from_env_info(env_info, "intervene_buffer"):
+                self._update_success(env_idx, env_info)
+                continue
+
             if self._bool_from_env_info(env_info, "segment_advance"):
                 self._segment_ids[env_idx] += 1
 
@@ -432,7 +436,7 @@ class CollectEpisode(gym.Wrapper):
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
                 else:
-                    if done_by_trunc:
+                    if done_by_trunc or done_by_term:
                         self._reset_env_buffer(env_idx)
             else:
                 if done_by_term or done_by_trunc:

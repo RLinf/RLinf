@@ -55,6 +55,12 @@ class EmbodiedEvalRunner:
 
     def init_workers(self):
         rollout_handle = self.rollout.init_worker()
+        if self.cfg.rollout.get("rollout_backend") == "grpc":
+            # Real environments can move during construction/reset. A failed
+            # remote handshake must be observed before initializing hardware.
+            rollout_handle.wait()
+            self.env.init_worker().wait()
+            return
         env_handle = self.env.init_worker()
 
         rollout_handle.wait()

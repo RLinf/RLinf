@@ -14,9 +14,10 @@
 
 import errno
 import os
+import select
 import threading
-import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 from rlinf.utils.logging import get_logger
@@ -25,11 +26,50 @@ _logger = get_logger()
 
 
 class KeyboardListener:
-    """Headless keyboard listener backed by Linux evdev input devices."""
+    """Read operator commands from a control file or Linux input device.
+
+    ``RLINF_KEYBOARD_CONTROL_FILE`` selects an append-and-consume text file for
+    hosts such as WSL that do not expose ``/dev/input``. Without it, the
+    listener reads a physical keyboard through evdev.
+    """
 
     REQUIRED_KEY_NAMES = ("KEY_A", "KEY_B", "KEY_C", "KEY_Q")
+    CONTROL_ALIASES = {
+        "start": "a",
+        "abort": "a",
+        "segment": "b",
+        "failure": "b",
+        "success": "c",
+        "end": "c",
+        "intervene": "Key.space",
+        "takeover": "Key.space",
+        "trigger": "Key.space",
+        "space": "Key.space",
+        "key.space": "Key.space",
+        "release": "r",
+    }
 
     def __init__(self) -> None:
+        control_file = os.environ.get("RLINF_KEYBOARD_CONTROL_FILE")
+        self._control_file = Path(control_file) if control_file else None
+        self.state_lock = threading.Lock()
+        self.latest_data = {"key": None}
+        self._press_events: deque[str] = deque()
+        self._stop = threading.Event()
+        self.device = None
+        self.listener = None
+        self.last_intervene = 0
+
+        if self._control_file is not None:
+            try:
+                self._control_file.touch(exist_ok=True)
+            except OSError as exc:
+                raise RuntimeError(
+                    "KeyboardListener could not create the control file set by "
+                    f"RLINF_KEYBOARD_CONTROL_FILE='{self._control_file}': {exc}"
+                ) from exc
+            return
+
         try:
             from evdev import InputDevice, ecodes, list_devices
         except ImportError as exc:
@@ -42,10 +82,6 @@ class KeyboardListener:
         self._ecodes = ecodes
         self._list_devices = list_devices
 
-        self.state_lock = threading.Lock()
-        self.latest_data = {"key": None}
-        # Queue press edges so short taps are not lost between polls.
-        self._press_events: deque[str] = deque()
         self.device = self._open_keyboard_device()
 
         self.listener = threading.Thread(
@@ -54,7 +90,23 @@ class KeyboardListener:
             daemon=True,
         )
         self.listener.start()
-        self.last_intervene = 0
+
+    def _read_control_file(self) -> list[str]:
+        """Consume commands appended to the configured control file."""
+        if self._control_file is None:
+            return []
+        import fcntl
+
+        try:
+            with self._control_file.open("r+", encoding="utf-8") as file_obj:
+                fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX)
+                commands = [line.strip() for line in file_obj if line.strip()]
+                file_obj.seek(0)
+                file_obj.truncate()
+        except FileNotFoundError:
+            return []
+        normalized = [command.lower() for command in commands]
+        return [self.CONTROL_ALIASES.get(command, command) for command in normalized]
 
     def _open_keyboard_device(self) -> Any:
         override_path = os.environ.get("RLINF_KEYBOARD_DEVICE")
@@ -152,57 +204,61 @@ class KeyboardListener:
     def _listen_loop(self) -> None:
         # Retain the path so the listener can recover after USB disconnects.
         device_path = self.device.path
-        while True:
-            try:
-                for event in self.device.read_loop():
-                    if event.type != self._ecodes.EV_KEY:
-                        continue
-
-                    key = self._event_to_key(event.code)
-                    if key is None:
-                        continue
-
-                    if event.value == 1:
-                        # Enqueue the initial press only, not key-repeat events.
-                        with self.state_lock:
-                            self.latest_data["key"] = key
-                            self._press_events.append(key)
-                    elif event.value == 2:
-                        with self.state_lock:
-                            self.latest_data["key"] = key
-                    elif event.value == 0:
-                        with self.state_lock:
-                            if self.latest_data["key"] == key:
-                                self.latest_data["key"] = None
-            except OSError as exc:
-                if exc.errno != errno.ENODEV:
-                    _logger.error(
-                        "Keyboard device %s read failed (errno=%s): %s",
-                        device_path,
-                        exc.errno,
-                        exc,
-                    )
-                    raise
-                _logger.warning(
-                    "Keyboard device %s disconnected (errno=ENODEV); "
-                    "reopening until it returns.",
-                    device_path,
-                )
-                with self.state_lock:
-                    self.latest_data["key"] = None
+        try:
+            while not self._stop.is_set():
                 try:
-                    self.device.close()
-                except Exception:
-                    pass
-                # Keep retrying until the device returns or the process exits.
-                while True:
-                    time.sleep(0.5)
-                    try:
-                        self.device = self._input_device_cls(device_path)
-                        break
-                    except (FileNotFoundError, OSError):
+                    readable, _, _ = select.select([self.device], [], [], 0.1)
+                    if not readable:
                         continue
-                _logger.info("Keyboard device %s reopened.", device_path)
+                    for event in self.device.read():
+                        if event.type != self._ecodes.EV_KEY:
+                            continue
+                        key = self._event_to_key(event.code)
+                        if key is None:
+                            continue
+                        with self.state_lock:
+                            if event.value == 1:
+                                self.latest_data["key"] = key
+                                self._press_events.append(key)
+                            elif event.value == 2:
+                                self.latest_data["key"] = key
+                            elif event.value == 0 and self.latest_data["key"] == key:
+                                self.latest_data["key"] = None
+                except BlockingIOError:
+                    continue
+                except OSError as exc:
+                    if exc.errno != errno.ENODEV:
+                        _logger.exception("Keyboard device %s read failed", device_path)
+                        return
+                    _logger.warning(
+                        "Keyboard device %s disconnected; reopening", device_path
+                    )
+                    with self.state_lock:
+                        self.latest_data["key"] = None
+                        self._press_events.clear()
+                    self.device.close()
+                    while not self._stop.wait(0.5):
+                        try:
+                            self.device = self._input_device_cls(device_path)
+                            break
+                        except OSError:
+                            continue
+                    else:
+                        return
+                    _logger.info("Keyboard device %s reopened.", device_path)
+        finally:
+            self.device.close()
+
+    def close(self) -> None:
+        """Stop listening and reconnecting, then release the input device."""
+        if self._control_file is not None:
+            return
+        self._stop.set()
+        assert self.listener is not None
+        self.listener.join()
+        with self.state_lock:
+            self.latest_data["key"] = None
+            self._press_events.clear()
 
     def _event_to_key(self, key_code: int) -> str | None:
         key_name = self._ecodes.bytype[self._ecodes.EV_KEY].get(key_code)
@@ -224,6 +280,9 @@ class KeyboardListener:
         Only reflects held state; fast taps may be missed between polls.
         Use :meth:`pop_pressed_keys` when you need lossless press detection.
         """
+        if self._control_file is not None:
+            commands = self._read_control_file()
+            return commands[-1] if commands else None
         with self.state_lock:
             return self.latest_data["key"]
 
@@ -233,6 +292,8 @@ class KeyboardListener:
         Key-repeat events are omitted. The operation is thread-safe and
         non-blocking.
         """
+        if self._control_file is not None:
+            return self._read_control_file()
         with self.state_lock:
             if not self._press_events:
                 return []

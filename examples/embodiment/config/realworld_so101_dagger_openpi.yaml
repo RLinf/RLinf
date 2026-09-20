@@ -23,7 +23,7 @@ cluster:
     actor,rollout,env: all
   node_groups:
     - label: so101_node
-      node_ranks: [0]
+      node_ranks: 0
       hardware:
         type: SO101
         configs:
@@ -79,6 +79,8 @@ env:
     teleop_intervention:
       mode: explicit
       hold_buffer_seconds: 3.0
+      takeover_key: space
+      release_key: r
     ignore_terminations: false
     auto_reset: true
     no_gripper: false
@@ -86,15 +88,28 @@ env:
       - so101_leader:
           port: /dev/ttyACM1
           calibration_id: LEADER_CALIB
+          align_duration_s: 3.0
+          align_fps: 30.0
+          reset_hold_seconds: 3.0
     keyboard_reward_wrapper: eval_control
     max_episode_steps: 10000
     max_steps_per_rollout_epoch: 10000
     override_cfg:
       max_num_steps: 10000
-      task_description: "TASK_DESCRIPTION"  # Replace with actual task prompt
+      task_description: "reach a joint configuration"  # Override for the task being collected
       success_hold_steps: 1
       use_dense_reward: false
       enable_camera_player: false
+      reset_on_init: false
+      reset_joint_qpos:
+        [-0.06981317, -1.11317483, 0.58689094, 1.45993915, -1.60263420]
+      reset_gripper_position: 0.01265823
+      reset_duration: 5.0
+      reset_joint_speed: 0.5235987756
+      park_joint_qpos:
+        [0.02685122, -1.74072619, 1.66400842, -1.65633664, -2.78408785]
+      park_gripper_position: 0.01661392
+      park_duration: 5.0
 
   eval:
     rollout_epoch: 1
@@ -112,6 +127,13 @@ env:
       success_hold_steps: 1
       use_dense_reward: false
       enable_camera_player: false
+      reset_joint_qpos: ${env.train.override_cfg.reset_joint_qpos}
+      reset_gripper_position: ${env.train.override_cfg.reset_gripper_position}
+      reset_duration: ${env.train.override_cfg.reset_duration}
+      reset_joint_speed: ${env.train.override_cfg.reset_joint_speed}
+      park_joint_qpos: ${env.train.override_cfg.park_joint_qpos}
+      park_gripper_position: ${env.train.override_cfg.park_gripper_position}
+      park_duration: ${env.train.override_cfg.park_duration}
 
 rollout:
   group_name: "RolloutGroup"
@@ -126,7 +148,8 @@ rollout:
   model:
     # SFT checkpoint layout:
     #   <model_path>/actor/model_state_dict/full_weights.pt
-    #   <model_path>/<openpi_data.repo_id>/norm_stats.json
+    # Norm stats remain in the external OpenPI assets tree configured below;
+    # FSDP SFT checkpoints do not copy that file automatically.
     model_path: /path/to/sft_checkpoint/global_step_N
     precision: ${actor.model.precision}
 
@@ -142,10 +165,14 @@ actor:
     model_path: ${rollout.model.model_path}
     precision: null
     num_action_chunks: 20
-    action_dim: 12  # SO-101 leader + follower: (5 joints + gripper) × 2
+    action_dim: 6  # SO-101 follower: 5 joints + 1 gripper
     add_value_head: false
 
     openpi:
+      # The embodied_dagger worker requires the Pi0DAgger task wrapper.
+      # pi0_5_rlinf defaults to the on-policy RL wrapper, so keep this
+      # selection explicit in the experiment config.
+      task: dagger
       config_name: "pi05_so101_joint"
       action_horizon: 20
       discrete_state_input: false
@@ -157,6 +184,7 @@ actor:
 
     openpi_data:
       repo_id: "id_0"
+      norm_stats_path: ${actor.model.openpi.assets_dir}/${actor.model.openpi.asset_id}/norm_stats.json
 
   optim:
     lr: 1.0e-5

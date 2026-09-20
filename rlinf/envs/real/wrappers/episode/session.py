@@ -69,6 +69,13 @@ class KeyboardSession(gym.Wrapper):
         """Return the unwrapped environment."""
         return getattr(self.env, "unwrapped", self.env)
 
+    def close(self) -> None:
+        """Release the owned keyboard listener and wrapped environment."""
+        try:
+            self.listener.close()
+        finally:
+            super().close()
+
     def log(self, message: str, *args: Any) -> None:
         """Write an informational message through the environment logger."""
         logger = getattr(self.base_env(), "_logger", None)

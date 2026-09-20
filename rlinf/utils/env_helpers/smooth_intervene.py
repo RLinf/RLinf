@@ -23,6 +23,7 @@ module owns PolicyOutput dummy construction and per-stage continue/skip state.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -142,9 +143,18 @@ def build_smooth_intervene_policy_output(
 class SmoothInterveneController:
     """Per-stage state for realworld smooth intervention."""
 
-    def __init__(self, stage_num: int, enabled: bool = False):
+    def __init__(
+        self,
+        stage_num: int,
+        enabled: bool = False,
+        *,
+        mode: str = "activity",
+        hold_buffer_seconds: float = 0.0,
+    ):
         self.enabled = bool(enabled)
         self.stage_num = int(stage_num)
+        self.mode = mode
+        self.hold_buffer_seconds = float(hold_buffer_seconds)
         self.next_intervene_flags = [False for _ in range(self.stage_num)]
         self.last_policy_outputs: list[PolicyOutput | None] = [
             None for _ in range(self.stage_num)
@@ -163,6 +173,21 @@ class SmoothInterveneController:
             enable_train
             and OmegaConf.select(cfg, "env.train.smooth_intervene", default=False)
         )
+        mode = str(
+            OmegaConf.select(
+                cfg, "env.train.teleop_intervention.mode", default="activity"
+            )
+        ).lower()
+        hold_buffer_seconds = float(
+            OmegaConf.select(
+                cfg, "env.train.teleop_intervention.hold_buffer_seconds", default=0.0
+            )
+        )
+        if not math.isfinite(hold_buffer_seconds) or hold_buffer_seconds < 0:
+            raise ValueError(
+                "env.train.teleop_intervention.hold_buffer_seconds must be "
+                "finite and nonnegative"
+            )
         if enabled:
             if (
                 SupportedEnvType(OmegaConf.select(cfg, "env.train.env_type"))
@@ -185,11 +210,6 @@ class SmoothInterveneController:
             # Every registered device, so a config naming a real one that this
             # check then rejects says why -- rather than reporting it as a
             # device that does not exist.
-            mode = str(
-                OmegaConf.select(
-                    cfg, "env.train.teleop_intervention.mode", default="activity"
-                )
-            ).lower()
             if mode not in {"activity", "explicit"}:
                 raise ValueError(
                     "env.train.teleop_intervention.mode must be 'activity' or "
@@ -208,7 +228,12 @@ class SmoothInterveneController:
                     f"env.train.teleop entry to be pico (got {named!r}); use "
                     "teleop_intervention.mode: explicit for stateful devices"
                 )
-        return cls(stage_num=stage_num, enabled=enabled)
+        return cls(
+            stage_num=stage_num,
+            enabled=enabled,
+            mode=mode,
+            hold_buffer_seconds=hold_buffer_seconds,
+        )
 
     def active_stage_ids(self) -> set[int]:
         if not self.enabled:

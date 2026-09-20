@@ -90,6 +90,8 @@ agentic = [
     "mcp",
 ]
 embodied = [
+    "grpcio>=1.60,<2",
+    "msgpack>=1.0,<2",
     "transformers<=4.57.6",
     "torchcodec",
     "peft",
@@ -235,4 +237,3 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = true
 docstring-code-line-length = "dynamic"
-

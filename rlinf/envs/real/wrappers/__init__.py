@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 import gymnasium as gym
@@ -30,6 +31,7 @@ from rlinf.envs.real.wrappers.episode import (
 from rlinf.envs.real.wrappers.teleop.builder import build_teleop
 from rlinf.envs.real.wrappers.teleop.config import NO_DEVICE, resolve_teleop_devices
 from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+from rlinf.envs.real.wrappers.teleop.trigger import build_intervention_trigger
 from rlinf.envs.real.wrappers.transforms import (
     GripperCloseEnv,
     Quat2EulerWrapper,
@@ -108,11 +110,49 @@ class WrapperStack:
         )
         if not devices or getattr(self.inner.config, "is_dummy", False):
             return
-        self.env = TeleopIntervention(
-            self.env,
-            build_teleop(self.env, self.cfg, devices),
-            mark_flag=bool(getattr(self.inner, "TELEOP_MARK_FLAG", False)),
-        )
+        intervention_cfg = self.cfg.get("teleop_intervention", {}) or {}
+        timeout = None
+        mode = str(intervention_cfg.get("mode", "activity")).lower()
+        if mode not in {"activity", "explicit"}:
+            raise ValueError(
+                "teleop_intervention.mode must be 'activity' or 'explicit'"
+            )
+        if mode == "explicit":
+            timeout = float(intervention_cfg.get("hold_buffer_seconds", 0.0))
+            if not math.isfinite(timeout) or timeout < 0:
+                raise ValueError(
+                    "teleop_intervention.hold_buffer_seconds must be finite "
+                    "and nonnegative"
+                )
+            trigger_cfg = {
+                key: value
+                for key, value in intervention_cfg.items()
+                if key != "hold_buffer_seconds"
+            }
+        else:
+            trigger_cfg = dict(intervention_cfg)
+        # Build the trigger before opening robot hardware. A missing keyboard or
+        # invalid trigger configuration must not leave a connected teleop rig.
+        trigger = build_intervention_trigger(trigger_cfg)
+        device = None
+        try:
+            device = build_teleop(self.env, self.cfg, devices, timeout=timeout)
+            self.env = TeleopIntervention(
+                self.env,
+                device,
+                mark_flag=bool(getattr(self.inner, "TELEOP_MARK_FLAG", False)),
+                mode=mode,
+                trigger=trigger,
+                buffer_seconds=timeout or 0.0,
+            )
+        except BaseException:
+            try:
+                if device is not None:
+                    device.close()
+            finally:
+                if trigger is not None:
+                    trigger.close()
+            raise
 
     def _apply_keyboard_reward(self) -> None:
         """Let an operator score the episode from the keyboard."""

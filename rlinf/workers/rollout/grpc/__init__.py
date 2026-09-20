@@ -12,8 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""gRPC policy adapter for remote inference during training."""
-
-from rlinf.workers.rollout.grpc.grpc_policy_adapter import GRPCPolicyAdapter
-
-__all__ = ["GRPCPolicyAdapter"]
+"""Fixed-checkpoint gRPC policy serving and embodied evaluation."""

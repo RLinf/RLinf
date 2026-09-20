@@ -42,8 +42,6 @@ def build_openpi_transforms(
     """
     import openpi.shared.download as download
     import openpi.transforms as transforms
-    from openpi.training import checkpoints as _checkpoints
-
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
     train_config = get_openpi_config(
@@ -82,6 +80,11 @@ def build_openpi_transforms(
             stats_dir = str(norm_stats_dir_path.parent)
         else:
             stats_dir = download.maybe_download(str(model_path))
+        # Importing checkpoints also imports OpenPI's training data loader.
+        # Keep that dependency out of the explicit-stats path, which is used
+        # by real-world assets and only needs the normalization file.
+        from openpi.training import checkpoints as _checkpoints
+
         norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
     if norm_stats is None:
         raise FileNotFoundError(

@@ -491,6 +491,34 @@ def lerobot() -> dict[str, types.ModuleType]:
             self.id = id
             self.use_degrees = use_degrees
 
+    class FakeSO101LeaderBus:
+        def __init__(self, owner: Any) -> None:
+            self.owner = owner
+            self.events: list[Any] = []
+            self.torque_enabled = False
+            self.goals: dict[str, float] = {}
+
+        def enable_torque(self) -> None:
+            self.events.append("enable_torque")
+            self.torque_enabled = True
+            self.owner.positions.update(
+                {f"{name}.pos": value for name, value in self.goals.items()}
+            )
+
+        def disable_torque(self) -> None:
+            self.events.append("disable_torque")
+            self.torque_enabled = False
+
+        def sync_write(self, register: str, values: dict[str, float]) -> None:
+            self.events.append((register, dict(values)))
+            if getattr(self.owner, "sync_write_error", None) is not None:
+                raise self.owner.sync_write_error
+            self.goals.update({name: float(value) for name, value in values.items()})
+            if self.torque_enabled:
+                self.owner.positions.update(
+                    {f"{name}.pos": value for name, value in self.goals.items()}
+                )
+
     class FakeSO101Leader:
         #: Set false to model a leader whose calibration file is missing.
         calibrated = True
@@ -500,6 +528,8 @@ def lerobot() -> dict[str, types.ModuleType]:
             self.is_connected = False
             self.is_calibrated = type(self).calibrated
             self.calibrate_calls = 0
+            self.bus = FakeSO101LeaderBus(self)
+            self.sync_write_error: Exception | None = None
             # lerobot's base class always sets this, from the arm's id.
             self.calibration_fpath = (
                 Path.home()

@@ -203,7 +203,9 @@ def keyboard() -> types.ModuleType:
     keyboard is only incidental.
     """
     import os
-    import time
+    import socket
+    import threading
+    from collections import deque
 
     codes = types.SimpleNamespace(EV_KEY=1, KEY_A=30, KEY_B=48, KEY_C=46, KEY_Q=16)
     by_name = {"a": codes.KEY_A, "b": codes.KEY_B, "c": codes.KEY_C, "q": codes.KEY_Q}
@@ -217,37 +219,67 @@ def keyboard() -> types.ModuleType:
             self.name = "fake keyboard"
             self.path = path
             self.closed = False
+            self._reader, self._writer = socket.socketpair()
+            self._reader.setblocking(False)
+            self._events = deque()
+            self._stop = threading.Event()
+            devices.append(self)
+            self._script = threading.Thread(target=self._type_keys, daemon=True)
+            self._script.start()
 
         def capabilities(self, verbose: bool = False) -> dict[int, list[int]]:
             # Every key the listener requires, so it accepts this as a keyboard.
             return {codes.EV_KEY: [codes.KEY_A, codes.KEY_B, codes.KEY_C, codes.KEY_Q]}
 
-        def read_loop(self):
+        def fileno(self):
+            return self._reader.fileno()
+
+        def emit(self, code, value):
+            self._events.append(
+                types.SimpleNamespace(type=codes.EV_KEY, code=code, value=value)
+            )
+            self._writer.send(b"k")
+
+        def read(self):
+            self._reader.recv(4096)
+            events = []
+            while self._events:
+                events.append(self._events.popleft())
+            return events
+
+        def _type_keys(self):
             keys = [
                 by_name[name.strip().lower()]
                 for name in os.environ.get("RLINF_FAKE_KEYS", "").split(",")
                 if name.strip().lower() in by_name
             ]
             if not keys:
-                # No script: block rather than spin, as a quiet keyboard does.
-                while not self.closed:
-                    time.sleep(0.05)
                 return
             # A consumer may read the held key rather than the press edge, so
             # each key is held for a beat before it is released.
             dwell = float(os.environ.get("RLINF_FAKE_KEY_DWELL", "0.3"))
-            while not self.closed:
+            while not self._stop.is_set():
                 for code in keys:
-                    yield types.SimpleNamespace(type=codes.EV_KEY, code=code, value=1)
-                    time.sleep(dwell)
-                    yield types.SimpleNamespace(type=codes.EV_KEY, code=code, value=0)
-                    time.sleep(0.02)
+                    self.emit(code, 1)
+                    if self._stop.wait(dwell):
+                        return
+                    self.emit(code, 0)
+                    if self._stop.wait(0.02):
+                        return
 
         def close(self) -> None:
+            if self.closed:
+                return
             self.closed = True
+            self._stop.set()
+            self._script.join()
+            self._reader.close()
+            self._writer.close()
 
+    devices = []
     return module(
         "evdev",
+        devices=devices,
         InputDevice=Device,
         list_devices=lambda: ["/dev/input/event-fake"],
         ecodes=codes,

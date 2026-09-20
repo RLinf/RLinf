@@ -94,6 +94,33 @@ def test_custom_model_registration_smoke():
     assert received["torch_dtype"] == torch.float32
 
 
+def test_so101_dagger_config_selects_dagger_task():
+    """SO-101 DAgger composes the model wrapper expected by its actor worker."""
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "examples/embodiment/config/realworld_so101_dagger_openpi.yaml"
+    )
+    cfg = OmegaConf.load(config_path)
+
+    assert cfg.algorithm.loss_type == "embodied_dagger"
+    assert cfg.actor.model.openpi.task == "dagger"
+    assert cfg.actor.model.action_dim == 6
+
+
+def test_so101_policy_server_uses_openpi_rlinf_factory():
+    """The standalone server must load the checkpoint-compatible model path."""
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).resolve().parents[2] / "examples/embodiment/config")
+    with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+        cfg = compose(config_name="realworld_so101_policy_server")
+
+    assert cfg.model.model_type == "openpi_rlinf"
+    assert cfg.model.openpi.task == "eval"
+    assert cfg.model.openpi.config_name == "pi05_so101_joint"
+    assert cfg.model.action_dim == 6
+
+
 def test_custom_model_registration_with_fsdp_wrap_policy():
     model_type = f"custom_model_fsdp_{int(time.time() * 1000)}"
 
@@ -644,3 +671,52 @@ def test_delay_metrics_report_every_sample():
 
     assert metrics.tolist() == pytest.approx([0.03, 0.03])
     assert env.insert_delay_metrics().numel() == 0
+
+
+def test_grpc_policy_round_trip_preserves_batch_and_action_units():
+    """The gRPC boundary returns the same absolute actions as local inference."""
+    import numpy as np
+
+    from rlinf.models.embodiment.base_policy import BasePolicy
+    from rlinf.workers.rollout.grpc.grpc_policy_adapter import GRPCPolicyAdapter
+    from rlinf.workers.rollout.grpc.policy_server import PolicyServer
+
+    class FakePolicy(BasePolicy):
+        def default_forward(self, **kwargs):
+            raise NotImplementedError
+
+        def predict_action_batch(self, env_obs, mode="eval", **kwargs):
+            batch_size = env_obs["states"].shape[0]
+            actions = torch.full((batch_size, 2, 6), 7.5)
+            actions[:, :, -1] = 0.25
+            return actions, {}
+
+    server = PolicyServer(
+        FakePolicy(),
+        action_dim=6,
+        num_action_chunks=2,
+        policy_id="test-policy",
+        port=0,
+    )
+    server.start()
+    client = GRPCPolicyAdapter(
+        f"127.0.0.1:{server.port}",
+        action_dim=6,
+        num_action_chunks=2,
+        policy_id="test-policy",
+        timeout=2,
+    )
+    try:
+        actions, _ = client.predict_action_batch(
+            {
+                "states": np.zeros((2, 6), dtype=np.float32),
+                "main_images": np.zeros((2, 8, 8, 3), dtype=np.uint8),
+                "task_descriptions": ["first", "second"],
+            }
+        )
+        assert actions.shape == (2, 2, 6)
+        assert np.allclose(actions[:, :, :5].numpy(), 7.5)
+        assert np.allclose(actions[:, :, -1].numpy(), 0.25)
+    finally:
+        client.close()
+        server.close()

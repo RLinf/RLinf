@@ -1,0 +1,22 @@
+# Standalone service; no Ray cluster or robot is created.
+defaults:
+  - model/so101_pi05@model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+model:
+  model_path: /path/to/checkpoint
+
+ckpt_path: null
+server:
+  host: 127.0.0.1
+  port: 50051
+  device: cuda:0
+  policy_id: so101-pi05
+  enable_torch_compile: false
+  torch_compile_mode: max-autotune-no-cudagraphs

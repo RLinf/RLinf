@@ -73,6 +73,9 @@ class SO101EnvConfig:
     reset_joint_qpos: list[float] = field(default_factory=lambda: [0.0] * _DOF)
     """Rest configuration, in radians."""
 
+    reset_gripper_position: float = 0.0
+    """Gripper opening at reset, from ``0`` closed to ``1`` open."""
+
     reset_duration: float = 3.0
     """Minimum reset trajectory duration in seconds."""
 
@@ -81,6 +84,15 @@ class SO101EnvConfig:
 
     reset_on_init: bool = True
     """Whether construction moves the arm to its reset pose."""
+
+    park_joint_qpos: Optional[list[float]] = None
+    """Joint configuration used by an explicit :meth:`SO101Env.park` call."""
+
+    park_gripper_position: Optional[float] = None
+    """Gripper opening used by an explicit :meth:`SO101Env.park` call."""
+
+    park_duration: float = 3.0
+    """Minimum park trajectory duration in seconds."""
 
     joint_limit_low: np.ndarray = field(
         default_factory=lambda: _DEFAULT_JOINT_LIMIT_LOW.copy()
@@ -130,6 +142,8 @@ class SO101Env(gym.Env):
     # The leader arm is the same five joints and gripper as this follower.
     TELEOP = ("so101_leader",)
     TELEOP_DEFAULT = "none"
+    # Online DAgger and smooth intervention use this flag to mark expert steps.
+    TELEOP_MARK_FLAG = True
     # The gripper is continuous, so the one-axis binary wrapper does not fit.
     ACTION_WRAPPERS = ()
     TRANSFORMS = ()
@@ -147,10 +161,21 @@ class SO101Env(gym.Env):
             raise ValueError("step_frequency must be finite and positive.")
         if not np.isfinite(config.camera_max_age) or config.camera_max_age < 0:
             raise ValueError("camera_max_age must be finite and nonnegative.")
-        for name in ("reset_duration", "reset_joint_speed"):
+        for name in ("reset_duration", "reset_joint_speed", "park_duration"):
             value = getattr(config, name)
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
+        self._validate_configured_pose(
+            "reset", config.reset_joint_qpos, config.reset_gripper_position
+        )
+        if (config.park_joint_qpos is None) != (config.park_gripper_position is None):
+            raise ValueError(
+                "park_joint_qpos and park_gripper_position must be configured together."
+            )
+        if config.park_joint_qpos is not None:
+            self._validate_configured_pose(
+                "park", config.park_joint_qpos, config.park_gripper_position
+            )
         self.hardware = get_hardware_config(
             SO101Config, robot_info, is_dummy=config.is_dummy
         )
@@ -165,6 +190,7 @@ class SO101Env(gym.Env):
         self._num_steps = 0
         self._success_hold_counter = 0
         self._last_gripper: Optional[float] = None
+        self._gripper_position = np.zeros(1, dtype=np.float32)
         self._joints = np.zeros(_DOF)
         self.robot: Optional[SO101Robot] = None
 
@@ -188,6 +214,20 @@ class SO101Env(gym.Env):
             self.go_to_rest()
         self._open_cameras()
         self.camera_player = VideoPlayer(self.config.enable_camera_player)
+
+    def _validate_configured_pose(
+        self, name: str, joints: list[float], gripper: Optional[float]
+    ) -> None:
+        """Validate a configured joint and gripper target."""
+        target = np.asarray(joints, dtype=np.float64)
+        if target.shape != (_DOF,) or not np.all(np.isfinite(target)):
+            raise ValueError(f"{name}_joint_qpos must contain {_DOF} finite values.")
+        if np.any(target < self.config.joint_limit_low) or np.any(
+            target > self.config.joint_limit_high
+        ):
+            raise ValueError(f"{name}_joint_qpos must lie within the joint limits.")
+        if gripper is None or not np.isfinite(gripper) or not 0.0 <= gripper <= 1.0:
+            raise ValueError(f"{name}_gripper_position must be between 0 and 1.")
 
     # Hardware setup.
 
@@ -312,6 +352,10 @@ class SO101Env(gym.Env):
         """Arm joints as ``(1, 5)``, the shape teleop bindings index by arm."""
         return self._joints.reshape(1, -1).copy()
 
+    def get_gripper_position(self) -> np.ndarray:
+        """Current gripper opening as ``(1, 1)`` for teleop context."""
+        return self._gripper_position.reshape(1, -1).copy()
+
     @property
     def num_steps(self) -> int:
         """Steps taken in the current episode."""
@@ -336,12 +380,69 @@ class SO101Env(gym.Env):
         return self._get_observation(), {}
 
     def go_to_rest(self) -> None:
-        """Move to :pyattr:`SO101EnvConfig.reset_joint_qpos`."""
-        self._arm.reset_joint(
+        """Move the joints and gripper to the configured reset state."""
+        self._move_to_configured_pose(
             self.config.reset_joint_qpos,
-            duration=self.config.reset_duration,
+            self.config.reset_gripper_position,
+            self.config.reset_duration,
+        )
+
+    def park(self) -> None:
+        """Move to the configured park state when explicitly requested."""
+        if self.config.park_joint_qpos is None:
+            raise RuntimeError(
+                "Configure park_joint_qpos and park_gripper_position before parking."
+            )
+        assert self.config.park_gripper_position is not None
+        self._move_to_configured_pose(
+            self.config.park_joint_qpos,
+            self.config.park_gripper_position,
+            self.config.park_duration,
+        )
+
+    def _move_to_configured_pose(
+        self, joints: list[float], gripper: float, duration: float
+    ) -> None:
+        """Move all six servos to one configured state."""
+        self._arm.move_gripper([gripper])
+        self._arm.reset_joint(
+            joints,
+            duration=duration,
             max_velocity=self.config.reset_joint_speed,
         )
+        self._arm.wait_for_gripper()
+
+    def get_reset_joint_positions(self) -> np.ndarray:
+        """Return the reset joint target for coordinated teleoperation reset."""
+        return np.asarray(self.config.reset_joint_qpos, dtype=np.float64)[None, :]
+
+    def get_reset_gripper_position(self) -> np.ndarray:
+        """Return the reset gripper target for coordinated teleoperation reset."""
+        return np.asarray([[self.config.reset_gripper_position]], dtype=np.float64)
+
+    def get_reset_duration(self) -> float:
+        """Return the minimum reset trajectory duration in seconds."""
+        return float(self.config.reset_duration)
+
+    def get_reset_joint_speed(self) -> float:
+        """Return the maximum reset joint speed in radians per second."""
+        return float(self.config.reset_joint_speed)
+
+    def get_park_joint_positions(self) -> Optional[np.ndarray]:
+        """Return the configured park joint target."""
+        if self.config.park_joint_qpos is None:
+            return None
+        return np.asarray(self.config.park_joint_qpos, dtype=np.float64)[None, :]
+
+    def get_park_gripper_position(self) -> Optional[np.ndarray]:
+        """Return the configured park gripper target."""
+        if self.config.park_gripper_position is None:
+            return None
+        return np.asarray([[self.config.park_gripper_position]], dtype=np.float64)
+
+    def get_park_duration(self) -> float:
+        """Return the minimum park trajectory duration in seconds."""
+        return float(self.config.park_duration)
 
     # Reward.
 
@@ -375,13 +476,16 @@ class SO101Env(gym.Env):
         # The driver works in float64; the declared space is float32, and an
         # observation outside its own space fails Gymnasium's env checker.
         self._joints = np.asarray(reading["arm_joint_position"], dtype=float)
+        self._gripper_position = np.asarray(
+            reading["end_effector"]["state"], dtype=np.float32
+        ).reshape(1)
         observation: dict[str, Any] = {
             "state": {
                 "arm_joint_position": np.asarray(
                     reading["arm_joint_position"], dtype=np.float32
                 ),
                 "gripper_position": np.asarray(
-                    reading["end_effector"]["state"], dtype=np.float32
+                    self._gripper_position, dtype=np.float32
                 ),
             }
         }

@@ -2,7 +2,7 @@
 # Human demonstration collection via leader arm
 
 defaults:
-  - env/so101_reach@env.train
+  - env/so101_reach@env.eval
   - override hydra/job_logging: stdout
   - _self_
 
@@ -43,31 +43,45 @@ runner:
   max_steps: -1
   only_eval: false
   num_data_episodes: 10
-  record_task_description: false
+  record_task_description: true
 
 env:
   group_name: "EnvGroup"
   enable_offload: false
 
-  train:
+  eval:
     rollout_epoch: 1
     total_num_envs: 1
     auto_reset: false
-    ignore_terminations: true
+    ignore_terminations: false
     no_gripper: false
     teleop:
       - so101_leader:
           port: /dev/ttyACM1
           calibration_id: LEADER_CALIB  # Replace: leader arm calibration ID
-    keyboard_reward_wrapper: eval_control
-    max_episode_steps: 10000
+          align_duration_s: 3.0
+          align_fps: 30.0
+          reset_hold_seconds: 3.0
+    keyboard_reward_wrapper: start_end
+    max_episode_steps: null
     max_steps_per_rollout_epoch: 10000
     override_cfg:
       max_num_steps: 10000
-      task_description: TASK_DESCRIPTION  # Replace: task prompt
+      task_description: "抓取青色目标物体并放到盒子里面"
       success_hold_steps: 1
       use_dense_reward: false
       enable_camera_player: false
+      step_frequency: 15.0
+      reset_on_init: false
+      reset_joint_qpos:
+        [-0.06981317, -1.11317483, 0.58689094, 1.45993915, -1.60263420]
+      reset_gripper_position: 0.01265823
+      reset_duration: 5.0
+      reset_joint_speed: 0.5235987756
+      park_joint_qpos:
+        [0.02685122, -1.74072619, 1.66400842, -1.65633664, -2.78408785]
+      park_gripper_position: 0.01661392
+      park_duration: 5.0
     data_collection:
       enabled: true
       save_dir: ${runner.logger.log_path}/collected_data
@@ -79,6 +93,3 @@ env:
       robot_type: so101
       fps: 15
       finalize_interval: 1
-
-algorithm:
-  collect_only: true

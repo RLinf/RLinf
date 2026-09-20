@@ -837,6 +837,16 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                 if self._bool_from_env_info(env_info, "pre_record"):
                     continue
 
+                if self._bool_from_env_info(env_info, "intervene_buffer"):
+                    self._update_episode_success(env_idx, env_info)
+                    if env_done:
+                        self._maybe_flush_env(
+                            env_idx,
+                            done_by_term=done_by_term,
+                            done_by_trunc=done_by_trunc,
+                        )
+                    continue
+
                 if self._bool_from_env_info(env_info, "segment_advance"):
                     self._segment_ids[env_idx] += 1
 

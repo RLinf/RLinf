@@ -197,10 +197,31 @@ class LeRobotDatasetWriter:
         for frame_data in episode_data:
             add_frame_to_dataset(self.dataset, frame_data)
 
+        self._coerce_scalar_episode_features()
         self.dataset.save_episode()
         self.logger.info(
             f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'"
         )
+
+    def _coerce_scalar_episode_features(self) -> None:
+        """Convert one-element arrays when the installed schema expects scalars."""
+        try:
+            from datasets import Value
+        except ImportError:
+            return
+
+        hf_features = getattr(self.dataset, "hf_features", None)
+        episode_buffer = getattr(self.dataset, "episode_buffer", None)
+        if hf_features is None or not isinstance(episode_buffer, dict):
+            return
+
+        for name, feature in hf_features.items():
+            values = episode_buffer.get(name)
+            if not isinstance(feature, Value) or not isinstance(values, list):
+                continue
+            for index, value in enumerate(values):
+                if hasattr(value, "size") and value.size == 1:
+                    values[index] = value.item()
 
     def finalize(self) -> None:
         """Finalize the dataset and properly clean up all resources."""

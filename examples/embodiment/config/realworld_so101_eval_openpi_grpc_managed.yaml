@@ -1,0 +1,33 @@
+# Start Ray head on the robot host (rank 0); GPU host joins as rank 1.
+defaults:
+  - realworld_so101_eval_openpi_grpc
+  - _self_
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    policy_server:
+      node_group: policy_gpu
+      placement: 0
+  node_groups:
+    - label: inference
+      node_ranks: 0
+      ignore_hardware: true
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - node_rank: 0
+            serial_port: /dev/ttyACM0
+            calibration_id: FOLLOWER_CALIB
+            max_relative_target: 5
+            camera_type: uvc
+            camera_serials: [/dev/video0]
+    - label: policy_gpu
+      node_ranks: 1
+
+rollout:
+  grpc:
+    mode: managed
+    server_address: null

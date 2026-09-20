@@ -1,8 +1,8 @@
 SO101 Setup and Control
 =======================
 
-This doc walks you through setting up an SO101 arm and running the RLinf
-hardware test script to read feedback and check joint and gripper movement.
+This page shows you how to set up an SO101 follower and leader, check both arms,
+and collect joint-space demonstrations with a repeatable episode reset.
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center
@@ -13,9 +13,10 @@ hardware test script to read feedback and check joint and gripper movement.
 Overview
 --------
 
-The test runs on the Linux machine connected to the arm. It requires no GPU or
-model checkpoint. RLinf does not yet provide a supported real-world task or
-training workflow for SO101; this guide covers hardware checks only.
+Hardware checks and demonstration collection run on the Linux machine connected
+to the arms. They require no GPU or model checkpoint. Start with the follower,
+add the leader after both arms are calibrated, then use the collection config to
+record episodes with the same joint and gripper reset state.
 
 Hardware Setup
 --------------
@@ -136,12 +137,13 @@ gripper. The script may start a local Ray instance to communicate with the arm.
 
 .. warning::
 
-   On hardware, startup moves the arm to the folded rest pose
-   ``[0, -99, 95, 65, 0]`` degrees along a paced joint trajectory. Clear that
-   motion path before launching the toolkit. Pass ``--no-reset`` to connect
+   On hardware, startup moves all six servos to the standard state. The joint
+   target is approximately ``[-4, -63.8, 33.6, 83.6, -91.8]`` degrees and the
+   gripper target is ``0.013`` on the ``0..1`` opening scale. Clear both arms'
+   motion paths before launching the toolkit. Pass ``--no-reset`` to connect
    without commanding startup movement.
 
-With the follower calibrated and room for the initial fold, run:
+With the follower calibrated and room for the reset trajectory, run:
 
 .. code-block:: bash
 
@@ -151,12 +153,13 @@ With the follower calibrated and room for the initial fold, run:
 Replace the port with your device and use the ID from calibration.
 ``CAMERA_SERIALS=''`` disables camera discovery so the check uses only the arm.
 
-Startup reset and the ``home`` command use a smooth trajectory from the measured
-joint positions, with a default commanded speed limit of 30 degrees per second.
-Use ``--reset-speed 10`` for a slower reset. The driver extends the trajectory
-for large moves and does not issue catch-up commands after a delayed write.
-In an environment config, ``reset_joint_speed`` uses radians per second and
-``reset_duration`` sets the minimum trajectory duration (default 3 seconds).
+Startup reset and the ``home`` command move the joints and gripper to the
+standard state. They use a smooth trajectory from the measured joint positions,
+with a default commanded speed limit of 30 degrees per second. Use
+``--reset-speed 10`` for a slower reset. In an environment config,
+``reset_joint_qpos`` and ``reset_gripper_position`` define the complete state,
+``reset_joint_speed`` uses radians per second, and ``reset_duration`` sets the
+minimum trajectory duration.
 
 Enter these commands one at a time, allowing each move to finish:
 
@@ -167,12 +170,15 @@ Enter these commands one at a time, allowing each move to finish:
    down
    open
    close
+   park
    quit
 
 ``up`` and ``down`` change the shoulder angle by two degrees, rather than moving
 the tool vertically. Joint feedback is printed after each move; ``open`` and
-``close`` test the gripper. ``quit`` closes the environment and its arm worker.
-Use ``help`` for the other joint directions.
+``close`` test the gripper. Run ``park`` when you want to move to the configured
+folded state, then use ``quit`` to close the environment and its arm worker.
+Closing a session only releases its resources. Use ``help`` for the other joint
+directions.
 
 To use the arm in your own program or attach cameras, see
 :doc:`Robotics Interface </rst_source/concepts/robotics>`.
@@ -200,7 +206,7 @@ Start the check with both arms configured. Camera discovery is enabled when
      --leader /dev/ttyACM1 --leader-id rlinf_leader \
      --fps 30 --enable-camera-player
 
-After the follower folds, place the leader in a matching pose and enter
+After the follower reaches its standard state, place the leader in a matching pose and enter
 ``teleop``. The follower tracks both the joints and gripper continuously.
 Press Ctrl-C once to return to the prompt, then enter ``quit`` to disconnect.
 
@@ -214,6 +220,58 @@ so slow or sustained movement can continue while it makes progress.
 Move the leader's gripper away from that opening before retrying
 motion into the obstruction. The driver's ``open_gripper()`` and
 ``close_gripper()`` methods still wait for travel or stall relief.
+
+Collect Demonstrations
+----------------------
+
+Once both arms pass the checks, use the SO-101 collection config to give every
+recorded episode the same starting state. Edit the follower and leader ports and
+calibration IDs in
+``examples/embodiment/config/realworld_so101_collect_data_joint.yaml``, then run:
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh \
+     realworld_so101_collect_data_joint
+
+Linux hosts without ``/dev/input``, including WSL, can use a control file
+instead of an evdev keyboard. Set the file before launching collection:
+
+.. code-block:: bash
+
+   export RLINF_KEYBOARD_CONTROL_FILE=/tmp/rlinf_so101_control
+   : > "$RLINF_KEYBOARD_CONTROL_FILE"
+   bash examples/embodiment/collect_data.sh \
+     realworld_so101_collect_data_joint
+
+Append commands from another terminal. Each command is consumed once:
+
+.. code-block:: bash
+
+   echo start >> /tmp/rlinf_so101_control
+   echo segment >> /tmp/rlinf_so101_control
+   echo success >> /tmp/rlinf_so101_control
+
+``abort`` stops the current recording without moving the robot. The same input
+backend accepts ``failure`` during evaluation and ``intervene`` / ``release``
+for explicit DAgger control.
+
+The first reset and every episode reset start the leader and follower
+trajectories together. Both arms move their five joints and grippers to the
+configured standard state. After both trajectories finish, the leader holds
+that state for ``reset_hold_seconds`` and then releases torque for the operator.
+The foot-pedal ``start_end`` controls recording: ``a`` starts or aborts the
+current recording, ``b`` advances the segment, and ``c`` saves the episode as a
+success. The config writes the finalized LeRobot dataset below the run's
+``collected_data`` directory.
+
+If collection raises an error, the runner moves the leader and follower to
+their configured park state together, then closes both connections and releases
+torque. A failure during that safety motion is logged while cleanup continues.
+
+The park state is an explicit operation. Use ``park`` in the interactive check
+when you need it; ending collection or calling ``close()`` only releases the
+devices.
 
 New Real-World Tasks
 --------------------

@@ -62,6 +62,9 @@ from rlinf.envs.real.wrappers.teleop.intervention import (  # noqa: E402
     TeleopIntervention,
     TeleopSample,
 )
+from rlinf.envs.real.wrappers.teleop.trigger import (  # noqa: E402
+    InterventionTrigger,
+)
 from rlinf.envs.real.xsquare.base import Turtle2Env, Turtle2EnvConfig
 from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.robotics import (
@@ -404,6 +407,80 @@ def test_depth_reaches_the_policy_split_like_the_frames_beside_it():
     # The extra views stack on axis 1, as the extra images do.
     assert observation["extra_view_depths"].shape == (1, 1, 4, 4)
     assert torch.allclose(observation["extra_view_depths"], torch.tensor(1.5))
+
+
+def test_data_collector_preserves_batched_task_descriptions():
+    from examples.embodiment.collect_real_data import DataCollector
+
+    collector = DataCollector.__new__(DataCollector)
+    collector.cfg = SimpleNamespace(
+        runner=SimpleNamespace(record_task_description=True)
+    )
+
+    processed = collector._process_obs(
+        {
+            "states": np.zeros((1, 6), dtype=np.float32),
+            "task_descriptions": ["pick up the cube"],
+        }
+    )
+
+    assert isinstance(processed["states"], torch.Tensor)
+    assert processed["states"].device.type == "cpu"
+    assert processed["task_descriptions"] == ["pick up the cube"]
+
+
+def test_data_collector_parks_then_closes_after_failure():
+    from examples.embodiment.collect_real_data import DataCollector
+
+    events = []
+
+    class Env:
+        def get_wrapper_attr(self, name):
+            assert name == "park"
+            return lambda: events.append("park")
+
+        def close(self):
+            events.append("close")
+
+    collector = DataCollector.__new__(DataCollector)
+    collector.env = Env()
+
+    def fail():
+        raise RuntimeError("collection failed")
+
+    collector._collect = fail
+
+    with pytest.raises(RuntimeError, match="collection failed"):
+        collector.run()
+
+    assert events == ["park", "close"]
+
+
+def test_real_world_env_forwards_park_and_close_to_owned_envs():
+    from rlinf.envs.real.env import RealWorldEnv
+
+    events = []
+
+    class Child:
+        def get_wrapper_attr(self, name):
+            assert name == "park"
+            return lambda: events.append("park")
+
+    class VectorEnv:
+        envs = [Child()]
+
+        def close(self):
+            events.append("close")
+
+    env = RealWorldEnv.__new__(RealWorldEnv)
+    env.env = VectorEnv()
+    env._closed = False
+
+    env.park()
+    env.close()
+    env.close()
+
+    assert events == ["park", "close"]
 
 
 def test_franka_dummy_preserves_legacy_policy_schema():
@@ -904,6 +981,8 @@ class ScriptedDevice(TeleopDevice):
         self.resets = 0
         self.closed = False
         self.before_steps = 0
+        self.intervention_starts = 0
+        self.intervention_ends = 0
         self.fallback_action: Optional[np.ndarray] = None
 
     def read(self, env: Any, policy_action: np.ndarray) -> TeleopSample:
@@ -916,6 +995,12 @@ class ScriptedDevice(TeleopDevice):
 
     def before_step(self, env: Any) -> None:
         self.before_steps += 1
+
+    def on_intervention_start(self, env: Any) -> None:
+        self.intervention_starts += 1
+
+    def on_intervention_end(self, env: Any) -> None:
+        self.intervention_ends += 1
 
     def fallback(self, env: Any, policy_action: np.ndarray) -> np.ndarray:
         if self.fallback_action is not None:
@@ -973,6 +1058,230 @@ def test_control_is_held_between_samples_then_released():
     device.timeout = 0.0  # Hold window expires.
     wrapper.step(POLICY)
     assert np.array_equal(env.stepped[2], POLICY)
+
+
+class ScriptedTrigger(InterventionTrigger):
+    """Return one configured batch of ownership events per poll."""
+
+    def __init__(self, events: list[list[str]]) -> None:
+        self.events = list(events)
+
+    def poll(self) -> list[str]:
+        return self.events.pop(0) if self.events else []
+
+    def reset(self) -> None:
+        self.events.clear()
+
+
+def test_explicit_intervention_holds_before_and_after_operator_control(monkeypatch):
+    import rlinf.envs.real.wrappers.teleop.intervention as intervention
+
+    hold = np.array([0.25, 0.25, 0.25])
+
+    class HoldingDevice(ScriptedDevice):
+        def get_hold_action(self, env, fallback_action=None):
+            return hold.copy()
+
+    clock = [0.0]
+    monkeypatch.setattr(intervention.time, "monotonic", lambda: clock[0])
+    device = HoldingDevice(
+        [
+            TeleopSample(action=EXPERT, active=False),
+            TeleopSample(action=EXPERT, active=False),
+            TeleopSample(action=None, active=False),
+            TeleopSample(action=None, active=False),
+        ]
+    )
+    trigger = ScriptedTrigger([["takeover"], [], ["release"], []])
+    env = FakeEnv()
+    wrapper = TeleopIntervention(
+        env,
+        device,
+        mode="explicit",
+        trigger=trigger,
+        buffer_seconds=3.0,
+    )
+
+    _, _, _, _, entering = wrapper.step(POLICY)
+    clock[0] = 3.1
+    _, _, _, _, active = wrapper.step(POLICY)
+    clock[0] = 3.2
+    _, _, _, _, exiting = wrapper.step(POLICY)
+    clock[0] = 6.3
+    _, _, _, _, released = wrapper.step(POLICY)
+    wrapper.on_action_chunk_begin()
+    wrapper.step(POLICY)
+
+    assert np.array_equal(env.stepped[0], hold)
+    assert entering["intervene_buffer"].all()
+    assert np.array_equal(env.stepped[1], EXPERT)
+    assert "intervene_buffer" not in active
+    assert np.array_equal(env.stepped[2], hold)
+    assert exiting["intervene_buffer"].all()
+    assert np.array_equal(env.stepped[3], hold)
+    assert released["intervene_buffer"].all()
+    assert "intervene_action" not in released
+    assert np.array_equal(env.stepped[4], POLICY)
+    assert device.intervention_starts == 1
+    assert device.intervention_ends == 1
+
+
+def test_explicit_mode_with_zero_buffer_does_not_fall_back_to_activity():
+    env = FakeEnv()
+
+    class HoldingDevice(ScriptedDevice):
+        def get_hold_action(self, env, fallback_action=None):
+            return np.full_like(POLICY, 0.25)
+
+    wrapper = TeleopIntervention(
+        env,
+        HoldingDevice([TeleopSample(action=EXPERT, active=False)]),
+        mode="explicit",
+        trigger=ScriptedTrigger([["takeover"]]),
+        buffer_seconds=0.0,
+    )
+
+    wrapper.step(POLICY)
+    wrapper.step(POLICY)
+
+    assert np.array_equal(env.stepped[1], EXPERT)
+
+
+def test_explicit_mode_requires_a_trigger():
+    with pytest.raises(ValueError, match="requires a trigger"):
+        TeleopIntervention(FakeEnv(), ScriptedDevice([]), mode="explicit")
+
+
+@pytest.mark.parametrize(
+    "failed_hook",
+    ["prepare_intervention", "on_intervention_start", "on_intervention_end"],
+)
+def test_explicit_handover_failure_blocks_actions_until_reset(failed_hook):
+    class Device(ScriptedDevice):
+        def get_hold_action(self, env, fallback_action=None):
+            return POLICY.copy()
+
+    device = Device([TeleopSample(action=EXPERT, active=True)])
+    env = FakeEnv()
+    trigger = ScriptedTrigger([["takeover"], [], ["release"]])
+    wrapper = TeleopIntervention(env, device, mode="explicit", trigger=trigger)
+    original = getattr(device, failed_hook)
+
+    def fail(env):
+        raise OSError("handover failed")
+
+    setattr(device, failed_hook, fail)
+    with pytest.raises(OSError, match="handover failed"):
+        for _ in range(3):
+            wrapper.step(POLICY)
+    count = len(env.stepped)
+    with pytest.raises(RuntimeError, match="needs reset"):
+        wrapper.step(EXPERT)
+    assert len(env.stepped) == count
+
+    setattr(device, failed_hook, original)
+    wrapper.reset()
+    wrapper.step(POLICY)
+    assert np.array_equal(env.stepped[-1], POLICY)
+    wrapper.close()
+    wrapper.close()
+    assert device.closed and env.closed
+
+
+def test_keyboard_trigger_maps_press_edges_and_discards_unrelated_keys(monkeypatch):
+    import rlinf.envs.real.wrappers.teleop.trigger as trigger_module
+
+    class FakeListener:
+        def __init__(self):
+            self.batches = [["a", "Key.space", "r"], ["Key.space"]]
+            self.closed = False
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(trigger_module, "KeyboardListener", FakeListener)
+    trigger = trigger_module.KeyboardInterventionTrigger()
+
+    assert trigger.poll() == ["takeover", "release"]
+    trigger.reset()
+    assert trigger.poll() == []
+    trigger.close()
+    assert trigger.listener.closed
+
+
+def test_keyboard_listener_closes_a_quiet_device(monkeypatch):
+    from robot_mocks.teleop import keyboard
+
+    from rlinf.envs.real.wrappers.episode.keyboard import KeyboardListener
+
+    monkeypatch.delenv("RLINF_FAKE_KEYS", raising=False)
+    monkeypatch.delenv("RLINF_KEYBOARD_DEVICE", raising=False)
+    sdk = keyboard()
+    monkeypatch.setitem(sys.modules, "evdev", sdk)
+    listener = KeyboardListener()
+    listener.close()
+    listener.close()
+
+    assert all(device.closed for device in sdk.devices)
+    assert listener.get_key() is None
+    assert listener.pop_pressed_keys() == []
+
+
+def test_keyboard_listener_supports_wsl_control_file(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.episode.keyboard import KeyboardListener
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    listener = KeyboardListener()
+
+    control_file.write_text(
+        "start\nsegment\nsuccess\nintervene\nrelease\n",
+        encoding="utf-8",
+    )
+
+    assert listener.pop_pressed_keys() == ["a", "b", "c", "Key.space", "r"]
+    assert control_file.read_text(encoding="utf-8") == ""
+    listener.close()
+    listener.close()
+
+
+def test_start_end_wrapper_accepts_wsl_control_commands(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    wrapper = KeyboardStartEndWrapper(FakeEnv())
+    wrapper.reset()
+
+    control_file.write_text("start\n", encoding="utf-8")
+    assert wrapper.step(POLICY)[4]["keyboard_event"] == "start"
+
+    control_file.write_text("success\n", encoding="utf-8")
+    _, reward, terminated, _, info = wrapper.step(POLICY)
+    assert reward == 1.0
+    assert terminated
+    assert info["keyboard_event"] == "end_success"
+    wrapper.close()
+
+
+def test_intervention_trigger_accepts_wsl_control_commands(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.teleop.trigger import (
+        RELEASE,
+        TAKEOVER,
+        KeyboardInterventionTrigger,
+    )
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    trigger = KeyboardInterventionTrigger()
+
+    control_file.write_text("intervene\nrelease\n", encoding="utf-8")
+
+    assert trigger.poll() == [TAKEOVER, RELEASE]
+    trigger.close()
 
 
 class _StubDevice:
@@ -1079,6 +1388,143 @@ class _FakeLayoutEnv:
 
     def get_wrapper_attr(self, name):
         raise AttributeError(name)
+
+
+class _ResetGroup:
+    """Synchronize a teleop reset with the environment reset in tests."""
+
+    parts = ()
+
+    def __init__(self, barrier: threading.Barrier) -> None:
+        self.barrier = barrier
+        self.leader_finished = threading.Event()
+        self.follower_finished = threading.Event()
+        self.handed_over = False
+        self.aborted = False
+        self.disconnected = False
+        self.prepared_context = None
+
+    def prepare_reset(self, context):
+        self.prepared_context = context
+        self.barrier.wait(timeout=1.0)
+        self.leader_finished.set()
+
+    def reset(self, context):
+        assert self.leader_finished.is_set()
+        assert self.follower_finished.is_set()
+        self.handed_over = True
+
+    def abort_reset(self, context):
+        self.aborted = True
+
+    def disconnect(self):
+        self.disconnected = True
+
+
+class _ConcurrentResetEnv(FakeEnv):
+    """Expose an SO-101 reset contract and meet the leader at a barrier."""
+
+    def __init__(self, group: _ResetGroup, fail: bool = False) -> None:
+        super().__init__()
+        self.group = group
+        self.fail = fail
+
+    def get_reset_joint_positions(self):
+        return np.zeros((1, 5))
+
+    def get_reset_gripper_position(self):
+        return np.asarray([[0.4]])
+
+    def get_reset_duration(self):
+        return 1.0
+
+    def get_reset_joint_speed(self):
+        return 0.5
+
+    def reset(self, **kwargs):
+        self.group.barrier.wait(timeout=1.0)
+        self.group.follower_finished.set()
+        if self.fail:
+            raise RuntimeError("follower reset failed")
+        return super().reset(**kwargs)
+
+
+class _ConcurrentParkEnv(_ConcurrentResetEnv):
+    """Expose a park contract and meet the leader at the same barrier."""
+
+    def get_park_joint_positions(self):
+        return np.ones((1, 5))
+
+    def get_park_gripper_position(self):
+        return np.asarray([[0.7]])
+
+    def get_park_duration(self):
+        return 2.0
+
+    def park(self):
+        self.group.barrier.wait(timeout=1.0)
+        self.group.follower_finished.set()
+
+
+def test_composed_teleop_resets_leader_and_follower_concurrently():
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    barrier = threading.Barrier(2)
+    group = _ResetGroup(barrier)
+    wrapper = TeleopIntervention(
+        _ConcurrentResetEnv(group), ComposedTeleop(group, layout={})
+    )
+
+    wrapper.reset()
+
+    np.testing.assert_allclose(
+        group.prepared_context["reset_gripper_position"], [[0.4]]
+    )
+    assert group.handed_over
+    assert not group.aborted
+    wrapper.close()
+    assert group.disconnected
+
+
+def test_composed_teleop_aborts_leader_when_follower_reset_fails():
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    barrier = threading.Barrier(2)
+    group = _ResetGroup(barrier)
+    wrapper = TeleopIntervention(
+        _ConcurrentResetEnv(group, fail=True), ComposedTeleop(group, layout={})
+    )
+
+    with pytest.raises(RuntimeError, match="follower reset failed"):
+        wrapper.reset()
+
+    assert group.aborted
+    assert not group.handed_over
+    wrapper.close()
+
+
+def test_composed_teleop_parks_leader_and_follower_concurrently():
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    barrier = threading.Barrier(2)
+    group = _ResetGroup(barrier)
+    wrapper = TeleopIntervention(
+        _ConcurrentParkEnv(group), ComposedTeleop(group, layout={})
+    )
+
+    wrapper.park()
+
+    np.testing.assert_allclose(
+        group.prepared_context["reset_joint_positions"], np.ones((1, 5))
+    )
+    np.testing.assert_allclose(
+        group.prepared_context["reset_gripper_position"], [[0.7]]
+    )
+    assert group.prepared_context["reset_duration"] == 2.0
+    assert group.handed_over
+    assert not group.aborted
+    wrapper.close()
+    assert group.disconnected
 
 
 def test_mark_flag_is_opt_in():
@@ -1437,6 +1883,9 @@ def _keyboard_session(monkeypatch, queued):
         def get_key(self):
             batch = self.pop_pressed_keys()
             return batch[0] if batch else None
+
+        def close(self):
+            self.batches.clear()
 
     monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
 
@@ -2613,6 +3062,22 @@ def test_so101_reach_refuses_a_target_that_is_not_five_joints():
         SO101ReachEnv({"is_dummy": True, "target_joint_qpos": [0.0] * 6})
 
 
+def test_so101_reach_exposes_the_configured_task_description():
+    from rlinf.envs.real.so101 import SO101ReachEnv
+
+    env = SO101ReachEnv(
+        {
+            "is_dummy": True,
+            "target_joint_qpos": [0.0] * 5,
+            "task_description": "move the arm to the marked pose",
+        }
+    )
+    try:
+        assert env.task_description == "move the arm to the marked pose"
+    finally:
+        env.close()
+
+
 def test_so101_task_is_registered_with_gymnasium():
     import gymnasium as gym
 
@@ -2701,6 +3166,33 @@ def test_so101_env_can_connect_without_resetting_then_reset_explicitly():
             np.testing.assert_allclose(
                 observation["state"]["arm_joint_position"], [0.2] * 5
             )
+        finally:
+            env.close()
+
+
+def test_so101_reset_and_park_include_the_gripper():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(
+            reset_on_init=False,
+            reset_joint_qpos=[0.2] * 5,
+            reset_gripper_position=0.4,
+            park_joint_qpos=[-0.1] * 5,
+            park_gripper_position=0.7,
+            park_duration=0.02,
+        )
+        try:
+            observation, _ = env.reset()
+            np.testing.assert_allclose(
+                observation["state"]["arm_joint_position"], [0.2] * 5
+            )
+            np.testing.assert_allclose(observation["state"]["gripper_position"], [0.4])
+
+            env.park()
+            state = env.robot.get_observation()["arm"]
+            np.testing.assert_allclose(state["arm_joint_position"], [-0.1] * 5)
+            np.testing.assert_allclose(state["end_effector"]["state"], [0.7])
         finally:
             env.close()
 
@@ -3081,7 +3573,10 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
 
     binding = SO101Leader(port="/dev/unused", movement_epsilon=0.01)
     at_rest = {"joint_position": np.zeros(5), "grip": np.array([0.0])}
-    context = {"joint_positions": np.zeros((1, 5))}
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_position": np.zeros((1, 1)),
+    }
 
     assert not binding.action(at_rest, context).driving
 
@@ -3092,6 +3587,188 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
     assert sample.parts["arm"] == pytest.approx(moved["joint_position"])
     # And the grip stays on the 0..1 axis the SO-101 env opens over.
     assert sample.parts["end_effector"][0] == pytest.approx(0.7)
+
+
+def test_so101_leader_gripper_motion_triggers_takeover():
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    binding = SO101Leader(port="/dev/unused", movement_epsilon=0.01)
+    reading = {"joint_position": np.zeros(5), "grip": np.array([0.5])}
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_position": np.zeros((1, 1)),
+    }
+
+    assert binding.action(reading, context).driving
+
+
+def test_so101_leader_hold_includes_the_gripper():
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    binding = SO101Leader(port="/dev/unused")
+    context = {
+        "joint_positions": np.arange(5, dtype=np.float32).reshape(1, 5),
+        "gripper_position": np.array([[0.4]], dtype=np.float32),
+    }
+
+    held = binding.hold(context)
+
+    assert held["arm"] == pytest.approx(np.arange(5, dtype=np.float32))
+    assert held["end_effector"] == pytest.approx(np.array([0.4], dtype=np.float32))
+
+
+def test_so101_explicit_takeover_aligns_all_servos_and_holds_until_started(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        leader = SO101Leader(
+            port="/dev/mock-leader", align_duration_s=0.1, align_fps=20.0
+        )
+        leader.connect()
+        monkeypatch.setattr(
+            "rlinf.robotics.parts.teleop.so101_leader.time.sleep", lambda _: None
+        )
+        try:
+            leader.prepare_intervention(
+                {
+                    "joint_positions": np.asarray([[np.pi / 2, 0, 0, 0, 0]]),
+                    "gripper_position": np.asarray([[0.4]]),
+                }
+            )
+
+            events = leader._device.bus.events
+            assert events[0][0] == "Goal_Position"
+            assert events[1] == "enable_torque"
+            assert leader._device.bus.torque_enabled
+            assert "disable_torque" not in events
+            writes = [event for event in events if isinstance(event, tuple)]
+            final = writes[-1][1]
+            assert final["shoulder_pan"] == pytest.approx(90.0)
+            assert final["gripper"] == pytest.approx(40.0)
+            leader.on_intervention_start({})
+            assert not leader._device.bus.torque_enabled
+        finally:
+            leader.disconnect()
+
+
+def test_so101_reset_holds_the_leader_before_releasing_torque(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        sleeps = []
+        leader = SO101Leader(
+            port="/dev/mock-leader",
+            align_duration_s=0.0,
+            reset_hold_seconds=2.5,
+        )
+        leader.connect()
+        monkeypatch.setattr(
+            "rlinf.robotics.parts.teleop.so101_leader.time.sleep", sleeps.append
+        )
+        try:
+            leader.prepare_reset(
+                {
+                    "reset_joint_positions": np.zeros((1, 5)),
+                    "reset_gripper_position": np.asarray([[0.4]]),
+                    "reset_duration": 0.0,
+                    "reset_joint_speed": 1.0,
+                }
+            )
+
+            assert leader._device.bus.torque_enabled
+            writes = [
+                event for event in leader._device.bus.events if isinstance(event, tuple)
+            ]
+            assert writes[-1][1]["gripper"] == pytest.approx(40.0)
+
+            leader.on_reset({})
+
+            assert sleeps == [2.5]
+            assert not leader._device.bus.torque_enabled
+        finally:
+            leader.disconnect()
+
+
+def test_so101_aborted_reset_releases_leader_torque(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        leader = SO101Leader(port="/dev/mock-leader", align_duration_s=0.0)
+        leader.connect()
+        monkeypatch.setattr(
+            "rlinf.robotics.parts.teleop.so101_leader.time.sleep", lambda _: None
+        )
+        try:
+            leader.prepare_reset(
+                {
+                    "reset_joint_positions": np.zeros((1, 5)),
+                    "reset_gripper_position": np.zeros((1, 1)),
+                    "reset_duration": 0.0,
+                    "reset_joint_speed": 1.0,
+                }
+            )
+            leader.abort_reset({})
+            leader.abort_reset({})
+
+            assert not leader._device.bus.torque_enabled
+            assert leader._device.bus.events.count("disable_torque") == 1
+        finally:
+            leader.disconnect()
+
+
+def test_so101_explicit_release_holds_the_leader_pose():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        leader = SO101Leader(port="/dev/mock-leader")
+        leader.connect()
+        try:
+            leader._device.positions.update(
+                {"shoulder_pan.pos": 12.0, "gripper.pos": 35.0}
+            )
+            leader.on_intervention_end({})
+
+            write, enable = leader._device.bus.events[-2:]
+            assert enable == "enable_torque"
+            assert write[0] == "Goal_Position"
+            assert write[1]["shoulder_pan"] == pytest.approx(12.0)
+            assert write[1]["gripper"] == pytest.approx(35.0)
+        finally:
+            leader.disconnect()
+
+
+def test_so101_failed_goal_write_does_not_enable_a_stale_target(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        leader = SO101Leader(port="/dev/mock-leader", align_duration_s=0.0)
+        leader.connect()
+        monkeypatch.setattr(
+            "rlinf.robotics.parts.teleop.so101_leader.time.sleep", lambda _: None
+        )
+        leader._device.sync_write_error = RuntimeError("write failed")
+        try:
+            with pytest.raises(RuntimeError, match="write failed"):
+                leader.prepare_intervention(
+                    {
+                        "joint_positions": np.zeros((1, 5)),
+                        "gripper_position": np.zeros((1, 1)),
+                    }
+                )
+            assert "enable_torque" not in leader._device.bus.events
+            assert "disable_torque" not in leader._device.bus.events
+        finally:
+            leader.disconnect()
 
 
 def test_so101_env_is_driven_by_its_leader():
@@ -3108,11 +3785,21 @@ def test_so101_env_is_driven_by_its_leader():
             override_cfg={
                 "step_frequency": 1000.0,
                 "enable_camera_player": False,
+                "reset_duration": 0.02,
+                "reset_joint_speed": 10.0,
             },
             worker_info=None,
             env_idx=0,
             env_cfg={
-                "teleop": [{"so101_leader": {"port": "/dev/mock-leader"}}],
+                "teleop": [
+                    {
+                        "so101_leader": {
+                            "port": "/dev/mock-leader",
+                            "align_duration_s": 0.0,
+                            "reset_hold_seconds": 0.0,
+                        }
+                    }
+                ],
                 "no_gripper": False,
                 "use_relative_frame": False,
             },
@@ -3140,6 +3827,110 @@ def test_so101_env_is_driven_by_its_leader():
                 np.deg2rad(45.0), abs=1e-4
             )
             assert observation["state"]["gripper_position"][0] == pytest.approx(0.8)
+        finally:
+            env.close()
+
+
+@pytest.mark.parametrize("buffer_seconds", [0.0, 3.0])
+def test_so101_explicit_takeover_ignores_motion_until_triggered(
+    monkeypatch, buffer_seconds
+):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import gymnasium as gym
+
+        import rlinf.envs.real as real
+
+        trigger = ScriptedTrigger([])
+        clock = [0.0]
+        monkeypatch.setattr(
+            "rlinf.envs.real.wrappers.teleop.intervention.time.monotonic",
+            lambda: clock[0],
+        )
+        monkeypatch.setattr(
+            "rlinf.envs.real.wrappers.build_intervention_trigger", lambda _: trigger
+        )
+        real.load_tasks()
+        env = gym.make(
+            "SO101ReachEnv-v1",
+            override_cfg={
+                "step_frequency": 1000.0,
+                "enable_camera_player": False,
+                "reset_duration": 0.02,
+                "reset_joint_speed": 10.0,
+            },
+            worker_info=None,
+            env_idx=0,
+            env_cfg={
+                "teleop": [
+                    {
+                        "so101_leader": {
+                            "port": "/dev/mock-leader",
+                            "align_duration_s": 0.0,
+                            "reset_hold_seconds": 0.0,
+                        }
+                    }
+                ],
+                "teleop_intervention": {
+                    "mode": "explicit",
+                    "hold_buffer_seconds": buffer_seconds,
+                },
+                "no_gripper": False,
+                "use_relative_frame": False,
+            },
+            robot_info=_robot_info(
+                SO101Config(
+                    node_rank=0, serial_port="/dev/mock-so101", calibration_id="bench"
+                )
+            ),
+        )
+        try:
+            env.reset()
+            leader = list(env.get_wrapper_attr("device").group.devices)[0]
+            leader._device.positions.update({"shoulder_pan.pos": 45.0})
+            policy_action = np.zeros(6, dtype=np.float32)
+
+            observation, _, _, _, policy_info = env.step(policy_action)
+            assert observation["state"]["arm_joint_position"][0] == pytest.approx(0.0)
+            assert "intervene_flag" not in policy_info
+
+            trigger.events = [["takeover"]]
+            _, _, _, _, entering_info = env.step(policy_action)
+            assert leader._device.bus.torque_enabled
+            assert entering_info["intervene_buffer"].all()
+            assert leader.get_observation()["joint_position"] == pytest.approx(
+                np.zeros(5)
+            )
+
+            if buffer_seconds:
+                clock[0] = buffer_seconds - 0.1
+                env.step(policy_action)
+                assert leader._device.bus.torque_enabled
+            clock[0] = buffer_seconds + 0.1
+            _, _, _, _, expert_info = env.step(policy_action)
+            assert not leader._device.bus.torque_enabled
+            assert expert_info["intervene_flag"] == pytest.approx(np.ones(1))
+
+            leader._device.positions.update(
+                {"shoulder_pan.pos": 30.0, "gripper.pos": 80.0}
+            )
+            moved, *_ = env.step(policy_action)
+            expected = moved["state"]["arm_joint_position"].copy()
+            trigger.events = [["release"]]
+            released, *_ = env.step(policy_action)
+            assert leader._device.bus.torque_enabled
+            assert leader.get_observation()["joint_position"] == pytest.approx(expected)
+            assert released["state"]["arm_joint_position"] == pytest.approx(expected)
+            clock[0] += buffer_seconds + 0.1
+            held, _, _, _, waiting_info = env.step(policy_action)
+            assert held["state"]["arm_joint_position"] == pytest.approx(expected)
+            assert held["state"]["gripper_position"][0] == pytest.approx(0.8)
+            assert waiting_info["intervene_buffer"].all()
+            assert "intervene_flag" not in waiting_info
+            env.get_wrapper_attr("on_action_chunk_begin")()
+            resumed, *_ = env.step(policy_action)
+            assert resumed["state"]["arm_joint_position"] == pytest.approx(np.zeros(5))
         finally:
             env.close()
 
@@ -3181,6 +3972,17 @@ def test_pnp_examples_discover_cameras_without_serial_placeholders(path):
                 config.node_rank, [config]
             )
             assert resources.infos[0].config.camera_serials == discovered
+
+
+def test_uvc_camera_discovery_preserves_configured_device_path(monkeypatch):
+    from rlinf.robotics.parts.cameras import BaseCamera
+
+    monkeypatch.setattr(
+        "rlinf.robotics.parts.cameras.uvc.glob.glob",
+        lambda pattern: ["/dev/video0"] if pattern == "/dev/video*" else [],
+    )
+
+    assert BaseCamera.backend("uvc").discover() == {"/dev/video0"}
 
 
 def test_shipped_realworld_task_overrides_contain_no_hardware_fields():
@@ -3431,6 +4233,50 @@ def test_worker_passes_robot_descriptors_and_allows_dummy_cpu_placement(has_robo
         assert env.unwrapped.robot_info is (allocated if has_robot else None)
     finally:
         env.close()
+
+
+def test_so101_openpi_eval_uses_safe_hardware_and_training_prompt():
+    """The deployment config limits joint steps and preserves SFT conditioning."""
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).resolve().parents[2] / "examples/embodiment/config")
+    for config_name in (
+        "realworld_so101_eval_openpi_grpc",
+        "realworld_so101_eval_openpi_grpc_managed",
+    ):
+        with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+            cfg = compose(config_name=config_name)
+
+        hardware = next(
+            group for group in cfg.cluster.node_groups if group.label == "so101"
+        ).hardware.configs[0]
+        assert hardware.max_relative_target == 5
+        assert (
+            cfg.env.eval.override_cfg.task_description
+            == "抓取青色目标物体并放到盒子里面"
+        )
+
+
+def test_so101_collection_uses_coordinated_complete_reset_state(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).resolve().parents[2] / "examples/embodiment/config")
+    monkeypatch.setenv(
+        "EMBODIED_PATH",
+        str(Path(__file__).resolve().parents[2] / "examples/embodiment"),
+    )
+    with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+        cfg = compose(config_name="realworld_so101_collect_data_joint")
+
+    assert "train" not in cfg.env
+    assert cfg.runner.record_task_description
+    assert cfg.env.eval.keyboard_reward_wrapper == "start_end"
+    assert cfg.env.eval.max_episode_steps is None
+    assert not cfg.env.eval.override_cfg.reset_on_init
+    assert len(cfg.env.eval.override_cfg.reset_joint_qpos) == 5
+    assert 0.0 <= cfg.env.eval.override_cfg.reset_gripper_position <= 1.0
+    leader = cfg.env.eval.teleop[0].so101_leader
+    assert leader.reset_hold_seconds == pytest.approx(3.0)
 
 
 @pytest.fixture

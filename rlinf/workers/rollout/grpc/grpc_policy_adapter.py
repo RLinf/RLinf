@@ -12,209 +12,132 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""gRPC policy adapter that implements BasePolicy interface for remote inference."""
+"""Inference-only client for the RLinf policy service."""
 
 from __future__ import annotations
 
+import math
+import uuid
 from typing import Any
 
-import numpy as np
+import grpc
 import torch
 
 from rlinf.models.embodiment.base_policy import BasePolicy
 
+from .protocol import (
+    OPTIONS,
+    SERVICE,
+    VERSION,
+    pack_message,
+    unpack_message,
+    validate_actions,
+    validate_observations,
+)
+
 
 class GRPCPolicyAdapter(BasePolicy):
-    """
-    A policy adapter that forwards predict_action_batch calls to a remote
-    gRPC policy server (LeRobot protocol).
+    """Connect to one fixed policy; close() releases only the client channel.
 
-    This adapter implements the BasePolicy interface, so it can be used as a
-    drop-in replacement for local models in MultiStepRolloutWorker.
+    Initialization checks protocol, policy identity and action shape. Inference
+    has a deadline and is not retried: a late result must not replace fresh data.
     """
 
-    def __init__(self, server_address: str, timeout: float = 30.0, device: str = "cuda"):
-        """
-        Args:
-            server_address: gRPC server address (e.g., "localhost:50051")
-            timeout: Request timeout in seconds
-            device: Device for tensor operations
-        """
-        super().__init__()
-        self.server_address = server_address
+    def __init__(
+        self,
+        server_address: str,
+        *,
+        action_dim: int,
+        num_action_chunks: int,
+        policy_id: str,
+        timeout: float = 30.0,
+    ) -> None:
+        if not server_address or not policy_id:
+            raise ValueError("server_address and policy_id are required")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be finite and positive")
         self.timeout = timeout
-        self._device = device
-
-        # gRPC client initialization
-        self._grpc_channel = None
-        self._grpc_stub = None
-        self._init_grpc_client()
-
-    def _init_grpc_client(self):
-        """Initialize the gRPC client."""
-        import grpc
-
+        self._closed = False
+        self._expected = {
+            "version": VERSION,
+            "action_dim": action_dim,
+            "num_action_chunks": num_action_chunks,
+            "policy_id": policy_id,
+        }
+        self._channel = grpc.insecure_channel(server_address, options=OPTIONS)
+        self._predict_rpc = self._channel.unary_unary(
+            f"/{SERVICE}/Predict",
+            request_serializer=pack_message,
+            response_deserializer=unpack_message,
+        )
         try:
-            from lerobot.common.policies.policy_protocol_pb2_grpc import PolicyStub
-        except ImportError as e:
-            raise ImportError(
-                "LeRobot gRPC protocol not available. "
-                "Please install LeRobot with: pip install lerobot"
-            ) from e
+            health = self._channel.unary_unary(
+                f"/{SERVICE}/Health",
+                request_serializer=pack_message,
+                response_deserializer=unpack_message,
+            )({"version": VERSION}, timeout=timeout)
+            self._check_metadata(health)
+        except BaseException:
+            self.close()
+            raise
 
-        self._grpc_channel = grpc.insecure_channel(self.server_address)
-        self._grpc_stub = PolicyStub(self._grpc_channel)
-        print(f"[GRPCPolicyAdapter] Connected to gRPC server at {self.server_address}")
+    def _check_metadata(self, metadata: dict[str, Any]) -> None:
+        for key, expected in self._expected.items():
+            if metadata.get(key) != expected:
+                raise ValueError(
+                    f"Policy service {key} mismatch: expected {expected!r}, got {metadata.get(key)!r}"
+                )
+
+    def default_forward(self, **kwargs: Any) -> Any:
+        """Training forwards are deliberately unsupported."""
+        raise NotImplementedError(
+            "gRPC policy supports fixed-checkpoint evaluation only"
+        )
 
     def predict_action_batch(
         self,
         env_obs: dict[str, Any],
         mode: str = "eval",
-        **kwargs,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
-        """
-        Predict action batch via gRPC call.
-
-        Args:
-            env_obs: Environment observations
-            mode: "train" or "eval" (ignored for gRPC)
-            **kwargs: Additional arguments (ignored for gRPC)
-
-        Returns:
-            Tuple of (actions, result_dict)
-        """
-        batch_size = self._infer_batch_size(env_obs)
-        actions_list = []
-
-        # Process each observation in the batch
-        for i in range(batch_size):
-            obs_i = self._extract_single_obs(env_obs, i)
-            action = self._predict_single(obs_i)
-            actions_list.append(action)
-
-        # Stack actions into batch
-        actions = np.stack(actions_list, axis=0)
-
-        # Build result dict (minimal, matching BasePolicy interface)
-        result = {
-            "forward_inputs": {
-                "action": torch.from_numpy(actions).to(self._device),
-                "model_action": None,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Return CPU action chunks with unchanged model output units."""
+        if self._closed:
+            raise RuntimeError("gRPC policy client is closed")
+        if mode != "eval" or kwargs:
+            raise ValueError(
+                "Only evaluation without training/RTC arguments is supported"
+            )
+        batch = validate_observations(env_obs)
+        request_id = uuid.uuid4().hex
+        response = self._predict_rpc(
+            {
+                "version": VERSION,
+                "policy_id": self._expected["policy_id"],
+                "request_id": request_id,
+                "observations": env_obs,
             },
-            "expert_label_flag": False,
-        }
-
-        return actions, result
-
-    def _predict_single(self, obs: dict[str, Any]) -> np.ndarray:
-        """Call gRPC server for a single observation."""
-        import grpc
-
-        request = self._build_grpc_request(obs)
-
-        try:
-            response = self._grpc_stub.GetActionChunk(request, timeout=self.timeout)
-            action = np.array(response.action.data, dtype=np.float32).reshape(
-                response.action.shape.dimensions
-            )
-            return action
-        except grpc.RpcError as e:
-            raise RuntimeError(f"gRPC inference failed: {e}") from e
-
-    def _build_grpc_request(self, obs: dict[str, Any]):
-        """Build a gRPC ActionChunkRequest from an observation dict."""
-        from lerobot.common.policies.policy_protocol_pb2 import (
-            ActionChunkRequest,
-            Image,
-            Observation,
-            Tensor,
-            TensorShape,
+            timeout=self.timeout,
         )
+        self._check_metadata(response)
+        if response.get("request_id") != request_id:
+            raise ValueError("Policy response does not match the observation request")
+        actions = response["actions"]
+        validate_actions(
+            actions,
+            batch,
+            self._expected["num_action_chunks"],
+            self._expected["action_dim"],
+        )
+        return torch.from_numpy(actions), {}
 
-        grpc_obs = Observation()
+    def close(self) -> None:
+        """Release the channel without stopping the external policy server."""
+        if not self._closed:
+            self._closed = True
+            self._channel.close()
 
-        # Add images (main_images, wrist_images, extra_view_images)
-        for key in ["main_images", "wrist_images", "extra_view_images"]:
-            if key in obs and obs[key] is not None:
-                img_tensor = obs[key]
-                if isinstance(img_tensor, torch.Tensor):
-                    img_np = img_tensor.cpu().numpy()
-                else:
-                    img_np = np.asarray(img_tensor)
-
-                # Convert to uint8 HWC format
-                if img_np.dtype != np.uint8:
-                    img_np = (img_np * 255).astype(np.uint8)
-                if img_np.ndim == 3 and img_np.shape[0] == 3:  # CHW -> HWC
-                    img_np = np.transpose(img_np, (1, 2, 0))
-
-                # Create Image message
-                img_msg = Image(
-                    data=img_np.tobytes(),
-                    shape=TensorShape(dimensions=list(img_np.shape)),
-                    encoding="rgb8",
-                )
-                grpc_obs.images[key].CopyFrom(img_msg)
-
-        # Add state
-        if "states" in obs and obs["states"] is not None:
-            state_tensor = obs["states"]
-            if isinstance(state_tensor, torch.Tensor):
-                state_np = state_tensor.cpu().numpy().astype(np.float32)
-            else:
-                state_np = np.asarray(state_tensor, dtype=np.float32)
-
-            grpc_obs.state.CopyFrom(
-                Tensor(
-                    data=state_np.tobytes(),
-                    shape=TensorShape(dimensions=list(state_np.shape)),
-                    dtype="float32",
-                )
-            )
-
-        # Create request
-        request = ActionChunkRequest(observation=grpc_obs)
-
-        # Add task description if available
-        task = obs.get("task_description") or obs.get("language_instruction")
-        if task:
-            request.task = task
-
-        return request
-
-    def _infer_batch_size(self, obs: dict[str, Any]) -> int:
-        """Infer the batch size from an observation dictionary."""
-        for value in obs.values():
-            if isinstance(value, torch.Tensor) and value.ndim > 0:
-                return value.shape[0]
-            elif isinstance(value, np.ndarray) and value.ndim > 0:
-                return value.shape[0]
-            elif isinstance(value, (list, tuple)) and len(value) > 0:
-                return len(value)
-        return 1
-
-    def _extract_single_obs(self, obs: dict[str, Any], index: int) -> dict:
-        """Extract a single observation from a batched observation dict."""
-        single_obs = {}
-        for key, value in obs.items():
-            if isinstance(value, (torch.Tensor, np.ndarray)) and value.ndim > 0:
-                single_obs[key] = value[index]
-            elif isinstance(value, (list, tuple)):
-                single_obs[key] = value[index]
-            else:
-                single_obs[key] = value
-        return single_obs
-
-    def eval(self):
-        """No-op for compatibility with BasePolicy interface."""
+    def __enter__(self) -> GRPCPolicyAdapter:
         return self
 
-    def to(self, device):
-        """Update device for tensor operations."""
-        self._device = device
-        return self
-
-    def __del__(self):
-        """Clean up gRPC resources."""
-        if self._grpc_channel is not None:
-            self._grpc_channel.close()
+    def __exit__(self, *args: Any) -> None:
+        self.close()

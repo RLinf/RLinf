@@ -59,10 +59,10 @@ actor:
 
   model:
     model_path: /path/to/pi05_base_pytorch_new
-    # SO-101 joint-space: 12-dim training data
-    # [leader(5 joints + gripper), follower(5 joints + gripper)], 20-step window.
+    # SO-101 follower action space: five joints plus one continuous gripper.
+    # The leader is an input device, not a second policy action vector.
     num_action_chunks: 20
-    action_dim: 12
+    action_dim: 6
     openpi:
       config_name: "pi05_so101_joint"
       # Network prediction horizon (Pi0Config.action_horizon). Matches official
@@ -74,6 +74,11 @@ actor:
       discrete_state_input: false
       assets_dir: /path/to/openpi_assets
       asset_id: "<repo_id>"
+    openpi_data:
+      # The SO-101 statistics are external to the base model checkpoint. Keep
+      # this path explicit so the official OpenPI loader and the RLinf model
+      # factory consume the same normalization file.
+      norm_stats_path: ${actor.model.openpi.assets_dir}/${actor.model.openpi.asset_id}/norm_stats.json
 
   optim:
     lr: 2.5e-5

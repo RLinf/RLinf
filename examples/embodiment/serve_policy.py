@@ -12,26 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera interfaces and registered hardware backends.
+"""Start a fixed-checkpoint policy service without a Ray cluster or robot."""
 
-Importing this package registers the built-in drivers. Vendor SDKs are loaded
-only when a driver opens or discovers hardware.
-"""
+import hydra
+from omegaconf import DictConfig
 
-from .base import BaseCamera, Camera, CameraInfo
+from rlinf.workers.rollout.grpc.policy_server import serve_policy
 
-# Import built-in drivers to populate the camera registry.
-from .lumos import LumosCamera
-from .realsense import RealSenseCamera
-from .uvc import UVCCamera
-from .zed import ZEDCamera
 
-__all__ = [
-    "BaseCamera",
-    "Camera",
-    "CameraInfo",
-    "LumosCamera",
-    "RealSenseCamera",
-    "ZEDCamera",
-    "UVCCamera",
-]
+@hydra.main(
+    version_base="1.1",
+    config_path="config",
+    config_name="realworld_so101_policy_server",
+)
+def main(cfg: DictConfig) -> None:
+    """Serve the policy configured by the YAML, until interrupted."""
+    try:
+        serve_policy(cfg)
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

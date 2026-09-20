@@ -16,18 +16,26 @@
 
 import copy
 import json
+import pickle
 import random
 import time
 from unittest import mock
 
+import gymnasium as gym
+import numpy as np
 import pytest
 import torch
 from omegaconf import DictConfig
 
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
-from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
+from rlinf.data.schema.embodied_trajectory_builder import (
+    EmbodiedLerobotTrajectoryBuilder,
+    EmbodiedTrajectoryBuilder,
+)
+from rlinf.data.schema.embodied_types import PolicyOutput
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
     _CODEC_KEY,
@@ -37,6 +45,109 @@ from rlinf.utils.obs_compression import (
     is_compressed_image,
     is_compression_enabled,
 )
+
+
+@pytest.mark.parametrize("online", [False, True], ids=["disk", "online"])
+@pytest.mark.parametrize("only_success", [False, True])
+def test_episode_collection_excludes_handover_frames_but_keeps_outcome(
+    tmp_path, online, only_success
+):
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            return {"states": np.zeros((1, 6))}, {}
+
+        def step(self, action):
+            value = int(action[0, 0])
+            step = value % 10
+            return (
+                {"states": action.copy()},
+                np.zeros(1),
+                np.array([step == 2]),
+                np.zeros(1, dtype=bool),
+                {
+                    "intervene_buffer": np.array([step != 1]),
+                    "success": np.array([value == 12]),
+                },
+            )
+
+    env = Env()
+    if online:
+        collector = EmbodiedLerobotTrajectoryBuilder(
+            num_action_chunks=3, action_dim=6, only_success=only_success
+        )
+    else:
+        collector = CollectEpisode(env, str(tmp_path), only_success=only_success)
+        collector.reset()
+
+    try:
+        for episode in range(2):
+            actions = np.stack(
+                [np.full((1, 6), episode * 10 + i) for i in range(3)], axis=1
+            )
+            if online:
+                outputs = [env.step(actions[:, i]) for i in range(3)]
+                collector.append_chunk_episode_data(
+                    policy_output=PolicyOutput(),
+                    chunk_actions=actions,
+                    obs_list=[o[0] for o in outputs],
+                    terminations=np.stack([o[2] for o in outputs], axis=1),
+                    truncations=np.stack([o[3] for o in outputs], axis=1),
+                    infos_list=[o[4] for o in outputs],
+                )
+            else:
+                for i in range(3):
+                    collector.step(actions[:, i])
+    finally:
+        if not online:
+            collector.close()
+
+    if online:
+        episodes = collector.drain_episodes()
+        saved_actions = [[frame["actions"][0] for frame in ep] for ep in episodes]
+        successes = [bool(ep[-1]["is_success"][0]) for ep in episodes]
+        assert all(ep[-1]["done"].all() for ep in episodes)
+        assert collector.drain_episodes() == []
+    else:
+        episodes = []
+        for path in sorted(tmp_path.glob("*.pkl")):
+            with path.open("rb") as file:
+                episodes.append(pickle.load(file))
+        saved_actions = [[action[0] for action in ep["actions"]] for ep in episodes]
+        successes = [ep["success"] for ep in episodes]
+
+    assert saved_actions == ([[11]] if only_success else [[1], [11]])
+    assert successes == ([True] if only_success else [False, True])
+
+
+def test_openpi_rlinf_sft_dispatches_so101_to_official_loader(monkeypatch):
+    """SO-101 uses the canonical OpenPI LeRobot SFT loader."""
+    import rlinf.data.datasets.openpi_rlinf as openpi_sft
+
+    sentinel = object()
+    monkeypatch.setitem(
+        openpi_sft._SFT_DATALOADER_BUILDERS,
+        "so101",
+        lambda: lambda *args: sentinel,
+    )
+    cfg = DictConfig(
+        {
+            "actor": {
+                "model": {
+                    "openpi": {
+                        "config_name": "pi05_so101_joint",
+                        "use_rlt": False,
+                    }
+                }
+            }
+        }
+    )
+
+    assert (
+        openpi_sft.build_openpi_rlinf_sft_dataloader(
+            cfg, world_size=1, rank=0, data_paths="/tmp/so101"
+        )
+        is sentinel
+    )
 
 
 class TestMathDatasetMultithread:
@@ -373,6 +484,33 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _ScalarFeatureDataset(_LegacyDataset):
+    """Mimic LeRobot 0.4's scalar HF schema and deferred episode buffer."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {"done": [], "segment_id": []}
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -412,6 +550,26 @@ def test_post_revert_dataset_keeps_task_in_frame():
     _make_writer(dataset).add_episode(_episode())
 
     assert [f["task"] for f in dataset.frames] == ["pick up the cube"] * 2
+    assert dataset.saved_episodes == 1
+
+
+def test_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _ScalarFeatureDataset()
+    episode = [
+        {
+            "done": np.array([done], dtype=bool),
+            "segment_id": np.array([index], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+        for index, done in enumerate((False, True))
+    ]
+
+    _make_writer(dataset).add_episode(episode)
+
+    assert dataset.episode_buffer == {
+        "done": [False, True],
+        "segment_id": [0, 1],
+    }
     assert dataset.saved_episodes == 1
 
 

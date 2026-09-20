@@ -53,7 +53,11 @@ class MultiStepRolloutWorker(Worker):
             if cfg.get("actor", None) is not None
             else None
         )
-        self.device = self.torch_platform.current_device()
+        self.device = (
+            self.torch_platform.current_device()
+            if self.has_accelerator
+            else torch.device("cpu")
+        )
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.rollout.get("enable_offload", False)
@@ -139,34 +143,14 @@ class MultiStepRolloutWorker(Worker):
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
     def init_worker(self):
-        # Check if using gRPC backend for remote inference
-        use_grpc = self.cfg.rollout.get("use_grpc_backend", False)
+        rollout_model_config = copy.deepcopy(self.model_cfg)
+        with open_dict(rollout_model_config):
+            rollout_model_config.precision = self.cfg.rollout.model.precision
+            rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
-        if use_grpc:
-            # Use gRPC policy adapter for remote inference
-            from rlinf.workers.rollout.grpc.grpc_policy_adapter import GRPCPolicyAdapter
+        self.hf_model: BasePolicy = get_model(rollout_model_config)
 
-            grpc_cfg = self.cfg.rollout.get("grpc", {})
-            server_address = grpc_cfg.get("server_address", "localhost:50051")
-            timeout = grpc_cfg.get("timeout", 30.0)
-
-            self.hf_model: BasePolicy = GRPCPolicyAdapter(
-                server_address=server_address,
-                timeout=timeout,
-                device=self.device,
-            )
-            self.log(f"Using gRPC backend at {server_address}")
-        else:
-            # Standard local model loading
-            rollout_model_config = copy.deepcopy(self.model_cfg)
-            with open_dict(rollout_model_config):
-                rollout_model_config.precision = self.cfg.rollout.model.precision
-                rollout_model_config.model_path = self.cfg.rollout.model.model_path
-
-            self.hf_model: BasePolicy = get_model(rollout_model_config)
-
-        # Load checkpoint (only for local model, not gRPC)
-        if not use_grpc and self.cfg.runner.get("ckpt_path", None):
+        if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
@@ -200,18 +184,16 @@ class MultiStepRolloutWorker(Worker):
         if self.rlt_feature_model is not None:
             self.rlt_feature_model.eval()
 
-        # Optimizations (only for local model, not gRPC)
-        if not use_grpc:
-            if self.cfg.rollout.get("enable_torch_compile", False):
-                mode = self.cfg.rollout.get(
-                    "torch_compile_mode", "max-autotune-no-cudagraphs"
-                )
-                self.hf_model.enable_torch_compile(mode=mode)
-            if self.enable_cuda_graph and not self.enable_offload:
-                self.hf_model.capture_cuda_graph(
-                    train_batch_size=self.per_node_train_batch_size,
-                    eval_batch_size=self.per_node_eval_batch_size,
-                )
+        if self.cfg.rollout.get("enable_torch_compile", False):
+            mode = self.cfg.rollout.get(
+                "torch_compile_mode", "max-autotune-no-cudagraphs"
+            )
+            self.hf_model.enable_torch_compile(mode=mode)
+        if self.enable_cuda_graph and not self.enable_offload:
+            self.hf_model.capture_cuda_graph(
+                train_batch_size=self.per_node_train_batch_size,
+                eval_batch_size=self.per_node_eval_batch_size,
+            )
 
         self.setup_sample_params()
         if self.enable_offload:

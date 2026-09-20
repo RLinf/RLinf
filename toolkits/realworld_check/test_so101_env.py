@@ -24,9 +24,9 @@ Add --leader to hand the arm over to an SO-101 leader, then type "teleop"::
     python -m toolkits.realworld_check.test_so101_env \\
         --port /dev/ttyACM1 --leader /dev/ttyACM0
 
-It starts by folding the arm to :pydata:`WRAP_POSE_DEG`, so a session always
-begins from the same place. Pass --no-reset to leave it where it stands, for
-when it is holding something or parked against a fixture.
+It starts by moving the arm to :pydata:`STANDARD_POSE_DEG`, so a session always
+begins from the same state. Pass --no-reset to leave it where it stands. The
+``park`` command moves it to :pydata:`PARK_POSE_DEG` before shutdown.
 
 Pass --enable-camera-player to enable the camera preview window. It is
 disabled by default.
@@ -49,10 +49,11 @@ from pathlib import Path
 
 import numpy as np
 
-# The pose the arm folds into when parked: upper arm laid back, forearm
-# folded over it. A couple of degrees short of the pose it ships in, which
-# sits just outside the configured shoulder limit.
-WRAP_POSE_DEG = (0.0, -99.0, 95.0, 65.0, 0.0)
+# Reset and park states recorded for the SO-101 data-collection rig.
+STANDARD_POSE_DEG = (-4.0, -63.78021962, 33.6263739, 83.64835164, -91.82417576)
+STANDARD_GRIPPER = 0.01265823
+PARK_POSE_DEG = (1.53846158, -99.73626397, 95.34065954, -94.90109892, -159.5164836)
+PARK_GRIPPER = 0.01661392
 
 # shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll
 COMMANDS = {
@@ -75,7 +76,8 @@ HELP = """
   tilt / untilt    bend the wrist
   roll / unroll    turn the wrist
   open / close     the gripper
-  home             back to the rest pose
+  home             move to the standard reset state
+  park             fold into the configured park state
   where            print the joint angles
   teleop           follow the leader arm until Ctrl-C (needs --leader)
   quit
@@ -179,9 +181,12 @@ def main() -> None:
             {
                 "enable_camera_player": args.enable_camera_player,
                 "step_frequency": args.fps,
-                "reset_joint_qpos": list(np.deg2rad(WRAP_POSE_DEG)),
+                "reset_joint_qpos": list(np.deg2rad(STANDARD_POSE_DEG)),
+                "reset_gripper_position": STANDARD_GRIPPER,
                 "reset_joint_speed": float(np.deg2rad(args.reset_speed)),
                 "reset_on_init": False,
+                "park_joint_qpos": list(np.deg2rad(PARK_POSE_DEG)),
+                "park_gripper_position": PARK_GRIPPER,
             },
             robot_info=resources.infos[0],
         )
@@ -304,6 +309,11 @@ def drive(
             continue
         if name == "home":
             env.reset()
+            target, grip = _read_pose(env)
+            print("  joints:", np.round(np.rad2deg(target), 1), "deg")
+            continue
+        if name == "park":
+            env.park()
             target, grip = _read_pose(env)
             print("  joints:", np.round(np.rad2deg(target), 1), "deg")
             continue

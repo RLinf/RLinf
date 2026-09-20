@@ -174,8 +174,39 @@ class TeleopGroup:
 
     def reset(self, context: Mapping[str, Any] = MappingProxyType({})) -> None:
         """Re-align every device to the robot after it resets."""
-        for entry in self.entries:
-            entry.device.on_reset(context)
+        for device in self.devices:
+            device.on_reset(context)
+
+    def prepare_reset(self, context: Mapping[str, Any]) -> None:
+        """Prepare each device while the robot moves to its reset state."""
+        prepared = []
+        try:
+            for device in self.devices:
+                device.prepare_reset(context)
+                prepared.append(device)
+        except BaseException:
+            self._abort_reset(prepared, context)
+            raise
+
+    def abort_reset(self, context: Mapping[str, Any]) -> None:
+        """Release every device after an incomplete reset."""
+        self._abort_reset(list(self.devices), context)
+
+    @staticmethod
+    def _abort_reset(devices: list[Any], context: Mapping[str, Any]) -> None:
+        """Roll back reset preparation in reverse declaration order."""
+        failures: list[BaseException] = []
+        for device in reversed(devices):
+            try:
+                device.abort_reset(context)
+            except BaseException as error:  # noqa: BLE001 - reported below
+                failures.append(error)
+                get_logger().exception(
+                    "%s failed to abort reset; continuing with the rest",
+                    type(device).__name__,
+                )
+        if failures:
+            raise failures[-1]
 
     def action(
         self, context: Mapping[str, Any]
@@ -290,6 +321,31 @@ class TeleopGroup:
         """Notify devices that a new policy-action chunk has started."""
         for entry in self.entries:
             entry.device.on_action_chunk_begin()
+
+    def prepare_intervention(self, context: Mapping[str, Any]) -> None:
+        """Align and hold each device before the entry buffer."""
+        for device in self.devices:
+            device.prepare_intervention(context)
+
+    def on_intervention_start(self, context: Mapping[str, Any]) -> None:
+        """Hand each prepared device to the operator."""
+        for device in self.devices:
+            device.on_intervention_start(context)
+
+    def on_intervention_end(self, context: Mapping[str, Any]) -> None:
+        """Release each distinct device after an operator takeover."""
+        errors = []
+        for device in reversed(self.devices):
+            try:
+                device.on_intervention_end(context)
+            except Exception as error:
+                errors.append(error)
+                get_logger().exception(
+                    "%s failed to end intervention; continuing with the rest",
+                    type(device).__name__,
+                )
+        if errors:
+            raise errors[-1]
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
         """Return named action parts that hold the current robot state."""

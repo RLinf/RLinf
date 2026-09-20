@@ -1412,6 +1412,61 @@ def test_declaring_cameras_needs_no_config_class():
         BaseCamera.backend("no-such-camera")
 
 
+def test_uvc_camera_requests_mjpg_before_stream_dimensions(monkeypatch):
+    from rlinf.robotics.parts.cameras import CameraInfo, UVCCamera
+
+    mjpg = int.from_bytes(b"MJPG", byteorder="little")
+
+    class Capture:
+        def __init__(self):
+            self.settings = []
+            self.values = {}
+            self.released = False
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            self.settings.append((prop, value))
+            self.values[prop] = value
+            return True
+
+        def get(self, prop):
+            return self.values.get(prop, 0)
+
+        def release(self):
+            self.released = True
+
+    capture = Capture()
+    cv2 = SimpleNamespace(
+        CAP_V4L2=200,
+        CAP_PROP_FOURCC=6,
+        CAP_PROP_FRAME_WIDTH=3,
+        CAP_PROP_FRAME_HEIGHT=4,
+        CAP_PROP_FPS=5,
+        CAP_PROP_BUFFERSIZE=38,
+        VideoCapture=lambda device, backend: capture,
+        VideoWriter_fourcc=lambda *chars: int.from_bytes(
+            "".join(chars).encode(), byteorder="little"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "cv2", cv2)
+    camera = UVCCamera(
+        CameraInfo(name="wrist", serial_number="/dev/video0", camera_type="uvc")
+    )
+
+    device = camera._open()
+    camera._release(device)
+
+    assert capture.settings[0] == (cv2.CAP_PROP_FOURCC, mjpg)
+    assert capture.settings[1:4] == [
+        (cv2.CAP_PROP_FRAME_WIDTH, 640),
+        (cv2.CAP_PROP_FRAME_HEIGHT, 480),
+        (cv2.CAP_PROP_FPS, 15),
+    ]
+    assert capture.released
+
+
 def test_failed_connect_can_be_retried():
     opened: list[str] = []
     state = {"failing": True}

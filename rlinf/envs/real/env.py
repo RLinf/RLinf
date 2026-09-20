@@ -144,6 +144,19 @@ class RealWorldEnv(gym.Env):
         self.task_descriptions = list(
             self.env.call("get_wrapper_attr", "task_description")
         )
+        self._closed = False
+
+    def park(self) -> None:
+        """Move each physical environment to its configured park state."""
+        for env in self.env.envs:
+            env.get_wrapper_attr("park")()
+
+    def close(self) -> None:
+        """Close the vector environment and all hardware it owns."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        self.env.close()
 
     def get_hold_actions(
         self, fallback_actions: np.ndarray | None = None
