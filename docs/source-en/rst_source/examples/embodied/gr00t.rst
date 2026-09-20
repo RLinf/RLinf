@@ -602,6 +602,8 @@ Add ``--use-mirror`` for downloads from mainland China. The installer builds
 pins, and skips CUDA flash-attention. RLinf applies the N1.5 NPU patches when
 loading the model.
 
+.. include:: _ascend_torch.rst
+
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~
 

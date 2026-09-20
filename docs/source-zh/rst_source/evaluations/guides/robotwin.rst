@@ -17,6 +17,9 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``，安装时替换 ``--model`` 参数即可。
 
+在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，
+详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
+
 **RoboTwin 仓库与 Assets**
 
 评测前需克隆 RLinf 适配分支并下载仿真资产（详见训练文档）：
