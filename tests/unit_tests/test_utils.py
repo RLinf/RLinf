@@ -26,9 +26,9 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
-from rlinf.utils.utils import compute_entropy_loss
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():

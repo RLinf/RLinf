@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
 from rlinf.data.storage.replay import PriorityStore
@@ -35,7 +36,7 @@ from rlinf.utils.metric_utils import (
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory, compute_entropy_loss
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
