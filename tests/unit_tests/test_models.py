@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Model registration, embeddings, and the reward-model helpers."""
+"""Model registration, embeddings, inference adapters, and reward helpers."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -35,6 +36,11 @@ from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
+from rlinf.models.embodiment.openpi.apxinf_adapter import (
+    OpenPIApxInfAdapter,
+    _active_token_ids,
+)
+from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
@@ -292,6 +298,301 @@ def test_value_model_does_not_rescale_gemma3_language_embeddings(monkeypatch):
         prefix_pad_masks,
         torch.tensor([[True, True, True, True, False]]),
     )
+
+
+_STARVLA_UTILS_DIR = (
+    Path(__file__).resolve().parents[2] / "rlinf/models/embodiment/starvla/utils"
+)
+_FRANKA_ACTION_STATS = {
+    "q01": [-0.5] * 7,
+    "q99": [0.5] * 7,
+    "min": [-1.0] * 7,
+    "max": [1.0] * 7,
+    "mask": [True] * 6 + [False],
+}
+
+
+def _load_starvla_util(name: str) -> ModuleType:
+    # The starvla package __init__ imports starVLA, which only its venv has.
+    spec = importlib.util.spec_from_file_location(
+        f"starvla_{name}_under_test", _STARVLA_UTILS_DIR / f"{name}.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(("source", "bound"), [("q01q99", 0.5), ("minmax", 1.0)])
+def test_starvla_action_stats_follow_the_configured_source(source, bound):
+    action_space = _load_starvla_util("action_space")
+    model = SimpleNamespace(norm_stats={"franka": {"action": _FRANKA_ACTION_STATS}})
+
+    stats = action_space.resolve_action_norm_stats(
+        model, "franka", action_dim=7, action_stats_source=source
+    )
+
+    np.testing.assert_array_equal(stats["q99"], [bound] * 7)
+    np.testing.assert_array_equal(stats["q01"], [-bound] * 7)
+    np.testing.assert_array_equal(stats["mask"], [True] * 6 + [False])
+
+
+def test_starvla_action_stats_name_the_available_keys_for_an_unknown_key():
+    action_space = _load_starvla_util("action_space")
+    model = SimpleNamespace(norm_stats={"franka": {"action": _FRANKA_ACTION_STATS}})
+
+    with pytest.raises(RuntimeError, match=r"available keys: \['franka'\]"):
+        action_space.resolve_action_norm_stats(model, "libero_spatial", action_dim=7)
+
+
+def test_starvla_action_stats_require_a_norm_stats_mapping():
+    action_space = _load_starvla_util("action_space")
+
+    with pytest.raises(RuntimeError, match="no usable 'norm_stats' mapping"):
+        action_space.resolve_action_norm_stats(
+            SimpleNamespace(norm_stats=None), "franka", action_dim=7
+        )
+
+
+def test_starvla_env_actions_keep_their_shape_and_map_the_libero_gripper(monkeypatch):
+    action_space = _load_starvla_util("action_space")
+    received_shapes = []
+
+    def unnormalize_actions(actions, action_norm_stats):
+        received_shapes.append(actions.shape)
+        return actions
+
+    tools = ModuleType("starVLA.model.tools")
+    tools.FrameworkTools = SimpleNamespace(unnormalize_actions=unnormalize_actions)
+    monkeypatch.setitem(sys.modules, "starVLA.model.tools", tools)
+
+    normalized = np.zeros((2, 3, 7), dtype=np.float32)
+    normalized[..., 0] = 0.25
+    normalized[0, :, 6] = 1.0
+    stats = {"q99": np.ones(7), "q01": -np.ones(7), "mask": np.ones(7, dtype=bool)}
+
+    env_actions = action_space.unnormalize_actions_for_env(
+        normalized, stats, policy_setup="libero"
+    )
+
+    # starVLA unnormalizes [T, action_dim]; the chunk layout comes back intact.
+    assert received_shapes == [(6, 7)]
+    assert env_actions.shape == (2, 3, 7)
+    np.testing.assert_array_equal(env_actions[..., 0], 0.25)
+    # LIBERO wants the 0/1 gripper as -1 (open) / +1 (closed).
+    np.testing.assert_array_equal(env_actions[0, :, 6], -1.0)
+    np.testing.assert_array_equal(env_actions[1, :, 6], 1.0)
+
+
+def test_starvla_autocast_targets_the_worker_accelerator(monkeypatch):
+    accelerator = _load_starvla_util("accelerator")
+    # CPU stands in for a non-CUDA accelerator such as an Ascend NPU.
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+
+    with accelerator.accelerator_autocast(torch.bfloat16):
+        assert torch.is_autocast_enabled("cpu")
+        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+
+
+def test_starvla_autocast_is_a_noop_without_an_accelerator(monkeypatch):
+    accelerator = _load_starvla_util("accelerator")
+    monkeypatch.setattr(Worker, "torch_device_type", None)
+
+    with accelerator.accelerator_autocast(torch.bfloat16):
+        assert not torch.is_autocast_enabled("cpu")
+        assert not torch.is_autocast_enabled("cuda")
+
+
+def test_starvla_gaussian_is_float32_and_keeps_the_gradient_path():
+    accelerator = _load_starvla_util("accelerator")
+    mean = torch.zeros(2, 3, dtype=torch.bfloat16, requires_grad=True)
+    log_std = torch.nn.Parameter(torch.zeros(3))
+
+    dist = accelerator.build_gaussian(mean, log_std.exp())
+    sample = dist.rsample()
+
+    assert dist.loc.dtype == dist.scale.dtype == sample.dtype == torch.float32
+    dist.log_prob(sample.detach()).sum().backward()
+    assert mean.grad is not None and mean.grad.dtype == torch.bfloat16
+    assert log_std.grad is not None
+
+
+class _QwenVisionPatchEmbed(torch.nn.Module):
+    """Shape contract of Qwen2.5-VL PatchEmbed: Conv3d kernel == stride."""
+
+    def __init__(self, in_channels=3, temporal=2, patch=4, embed_dim=8):
+        super().__init__()
+        self.in_channels = in_channels
+        self.temporal_patch_size = temporal
+        self.patch_size = patch
+        kernel = (temporal, patch, patch)
+        self.proj = torch.nn.Conv3d(
+            in_channels, embed_dim, kernel_size=kernel, stride=kernel, bias=False
+        )
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states = hidden_states.view(
+            -1,
+            self.in_channels,
+            self.temporal_patch_size,
+            self.patch_size,
+            self.patch_size,
+        )
+        hidden_states = self.proj(hidden_states.to(self.proj.weight.dtype))
+        return hidden_states.view(-1, self.proj.out_channels)
+
+
+def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        _linear_patch_embed_forward,
+    )
+
+    torch.manual_seed(0)
+    module = _QwenVisionPatchEmbed()
+    patches = torch.randn(5, 3 * 2 * 4 * 4, requires_grad=True)
+
+    conv_out = module(patches)
+    linear_out = _linear_patch_embed_forward(module, patches)
+    torch.testing.assert_close(linear_out, conv_out, rtol=1e-5, atol=1e-5)
+
+    linear_out.sum().backward()
+    assert module.proj.weight.grad is not None
+    assert patches.grad is not None
+
+
+def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        _linear_patch_embed_forward,
+        patch_vision_patch_embed,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    model = torch.nn.Sequential(_QwenVisionPatchEmbed())
+    original_forward = model[0].forward
+
+    assert patch_vision_patch_embed(model) == 1
+    assert model[0].forward.__func__ is _linear_patch_embed_forward
+    assert original_forward.__func__ is not _linear_patch_embed_forward
+
+
+def test_qwen_vl_linear_patch_embed_is_left_alone_on_nvidia(monkeypatch):
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        patch_vision_patch_embed,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    model = torch.nn.Sequential(_QwenVisionPatchEmbed())
+
+    assert patch_vision_patch_embed(model) == 0
+    assert model[0].forward.__func__ is _QwenVisionPatchEmbed.forward
+
+
+_WAN_NPU_PATCHES = "rlinf.envs.sim.world_model.backend.npu_patches"
+
+
+@pytest.fixture
+def wan_dit(monkeypatch):
+    """diffsynth's Wan DiT module, whose operators the NPU patches rebind."""
+    from rlinf.utils.patcher import Patcher
+
+    def flash_attention(q, k, v, num_heads, compatibility_mode=False):
+        return q
+
+    def rope_apply(x, freqs, num_heads):
+        return x
+
+    class RMSNorm(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    dit = ModuleType("diffsynth.models.wan_video_dit")
+    dit.flash_attention, dit.rope_apply, dit.RMSNorm = (
+        flash_attention,
+        rope_apply,
+        RMSNorm,
+    )
+    for name in ("diffsynth", "diffsynth.models"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, dit.__name__, dit)
+    yield dit
+    Patcher.clear()
+
+
+def _import_wan_npu_patches(monkeypatch, *, mindiesd: bool) -> ModuleType:
+    """Import the Wan NPU patches on an Ascend stack with or without MindIE-SD."""
+    vendor = {"torch_npu": ModuleType("torch_npu"), "mindiesd": None}
+    if mindiesd:
+        names = (
+            "mindiesd",
+            "mindiesd.layers",
+            "mindiesd.layers.flash_attn",
+            "mindiesd.layers.flash_attn.attention_forward",
+        )
+        vendor.update({name: ModuleType(name) for name in names})
+        vendor["mindiesd"].rotary_position_embedding = lambda *args, **kwargs: None
+        vendor[names[-1]].attention_forward = lambda *args, **kwargs: None
+    for name, module in vendor.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    spec = importlib.util.find_spec(_WAN_NPU_PATCHES)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, _WAN_NPU_PATCHES, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _patch_like_wan_backend(npu_patches: ModuleType) -> None:
+    """Run the patch sequence ``WanBackend._build_pipeline`` runs."""
+    from rlinf.utils.patcher import Patcher
+
+    Patcher.clear()
+    npu_patches.apply_npu_patches(Patcher)
+    Patcher.apply()
+
+
+def _wan_operators(dit: ModuleType) -> tuple:
+    return dit.flash_attention, dit.rope_apply, dit.RMSNorm.forward
+
+
+def test_wan_npu_patches_leave_diffsynth_alone_on_nvidia(wan_dit, monkeypatch):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=True)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    operators = _wan_operators(wan_dit)
+
+    _patch_like_wan_backend(npu_patches)
+    assert _wan_operators(wan_dit) == operators
+
+
+def test_wan_npu_patches_log_why_mindiesd_is_unavailable(wan_dit, monkeypatch, caplog):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=False)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    operators = _wan_operators(wan_dit)
+
+    _patch_like_wan_backend(npu_patches)
+    assert _wan_operators(wan_dit) == operators
+    assert "import of mindiesd halted" in caplog.text
+
+
+def test_wan_npu_patches_rebind_the_dit_operators_on_every_build(wan_dit, monkeypatch):
+    from rlinf.scheduler import AcceleratorType
+
+    npu_patches = _import_wan_npu_patches(monkeypatch, mindiesd=True)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    kernels = (
+        npu_patches.npu_flash_attention,
+        npu_patches.npu_rope_apply,
+        npu_patches.npu_rmsnorm_forward,
+    )
+
+    # Every WanBackend in the process repeats the sequence on the patched module.
+    for _ in range(2):
+        _patch_like_wan_backend(npu_patches)
+        assert _wan_operators(wan_dit) == kernels
 
 
 def _history_cfg():
@@ -685,3 +986,289 @@ def test_delay_metrics_report_every_sample():
 
     assert metrics.tolist() == pytest.approx([0.03, 0.03])
     assert env.insert_delay_metrics().numel() == 0
+
+
+class _FakeApxInfModel:
+    action_horizon = 10
+    action_dim = 32
+    num_views = 2
+    image_size = 224
+
+    def __init__(self, output_shape=(10, 32)):
+        self.output_shape = output_shape
+        self.calls = []
+        self.closed = False
+
+    def infer_rgb(self, rgb_u8, layout, token_ids, *, noise=None):
+        self.calls.append((rgb_u8, layout, token_ids, noise))
+        offset = len(self.calls) * 1000
+        return (
+            np.arange(np.prod(self.output_shape), dtype=np.float32).reshape(
+                self.output_shape
+            )
+            + offset
+        )
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeApxInfProcessor:
+    def __init__(self):
+        self.preprocess_calls = []
+        self.postprocess_calls = []
+
+    def preprocess_batch(self, env_obs, *, num_views, image_size):
+        self.preprocess_calls.append((env_obs, num_views, image_size))
+        prepared = []
+        for index in range(len(env_obs["task_descriptions"])):
+            prepared.append(
+                {
+                    "rgb_u8": np.full(
+                        (num_views, image_size, image_size, 3),
+                        index,
+                        dtype=np.uint8,
+                    ),
+                    "token_ids": np.array([index, index + 1], dtype=np.uint32),
+                    "state": np.full(32, index, dtype=np.float32),
+                }
+            )
+        return prepared
+
+    def postprocess_batch(self, normalized_actions, prepared):
+        self.postprocess_calls.append((normalized_actions.copy(), prepared))
+        return torch.from_numpy(normalized_actions[:, :5, :7].copy())
+
+
+def _apxinf_model_cfg(**apxinf_overrides):
+    apxinf = {
+        "action_horizon": 10,
+        "num_flow_steps": 5,
+        "noise_source": "apxinf",
+        "seed": 0,
+        **apxinf_overrides,
+    }
+    return OmegaConf.create(
+        {
+            "model_type": "openpi",
+            "model_path": "/not/loaded/in/unit/test",
+            "num_action_chunks": 5,
+            "action_dim": 7,
+            "openpi": {
+                "config_name": "pi05_libero",
+                "num_steps": 5,
+                "noise_method": "flow_sde",
+                "noise_level": 0.3,
+            },
+            "apxinf": apxinf,
+        }
+    )
+
+
+def _apxinf_env_obs(batch_size=2):
+    return {
+        "main_images": torch.zeros(batch_size, 8, 8, 3, dtype=torch.uint8),
+        "wrist_images": torch.ones(batch_size, 8, 8, 3, dtype=torch.uint8),
+        "extra_view_images": None,
+        "states": torch.zeros(batch_size, 8),
+        "task_descriptions": [f"task {index}" for index in range(batch_size)],
+    }
+
+
+def _apxinf_adapter(*, model=None, processor=None, **apxinf_overrides):
+    return OpenPIApxInfAdapter(
+        _apxinf_model_cfg(**apxinf_overrides),
+        "cpu",
+        model=model or _FakeApxInfModel(),
+        processor=processor or _FakeApxInfProcessor(),
+    )
+
+
+def test_apxinf_strips_openpi_prompt_padding_before_l1_inference():
+    transformed = {
+        "tokenized_prompt": np.array([2, 42, 108, 0, 0], dtype=np.int32),
+        "tokenized_prompt_mask": np.array([True, True, True, False, False]),
+    }
+
+    tokens = _active_token_ids(transformed)
+
+    np.testing.assert_array_equal(tokens, np.array([2, 42, 108], dtype=np.uint32))
+    assert tokens.flags.c_contiguous
+
+
+def test_apxinf_calls_l1_infer_rgb_and_delegates_pre_and_postprocessing():
+    model = _FakeApxInfModel()
+    processor = _FakeApxInfProcessor()
+    adapter = _apxinf_adapter(model=model, processor=processor)
+    env_obs = _apxinf_env_obs()
+
+    actions, result = adapter.predict_action_batch(env_obs, mode="eval")
+
+    assert actions.shape == (2, 5, 7)
+    assert actions.dtype == torch.float32
+    assert processor.preprocess_calls == [(env_obs, 2, 224)]
+    assert len(model.calls) == 2
+    assert model.calls[0][0].shape == (2, 224, 224, 3)
+    assert model.calls[0][0].dtype == np.uint8
+    assert model.calls[0][1] == "nhwc"
+    assert model.calls[0][2].dtype == np.uint32
+    assert model.calls[0][3] is None
+    normalized = processor.postprocess_calls[0][0]
+    assert normalized.shape == (2, 10, 32)
+    assert len(result["apxinf_timing"]) == 2
+
+
+def test_apxinf_explicit_noise_is_split_and_forwarded_exactly():
+    model = _FakeApxInfModel()
+    adapter = _apxinf_adapter(model=model, noise_source="observation")
+    env_obs = _apxinf_env_obs()
+    env_obs["noise"] = torch.arange(2 * 10 * 32, dtype=torch.float32).reshape(2, 10, 32)
+
+    adapter.predict_action_batch(env_obs)
+
+    np.testing.assert_array_equal(model.calls[0][3], env_obs["noise"][0].numpy())
+    np.testing.assert_array_equal(model.calls[1][3], env_obs["noise"][1].numpy())
+
+
+def test_apxinf_observation_noise_is_required():
+    adapter = _apxinf_adapter(noise_source="observation")
+    with pytest.raises(ValueError, match="requires env_obs"):
+        adapter.predict_action_batch(_apxinf_env_obs())
+
+
+def test_apxinf_observation_noise_does_not_override_other_noise_sources():
+    env_obs = _apxinf_env_obs()
+    explicit_noise = torch.full((2, 10, 32), 123.0)
+    env_obs["noise"] = explicit_noise
+
+    apxinf_model = _FakeApxInfModel()
+    _apxinf_adapter(model=apxinf_model, noise_source="apxinf").predict_action_batch(
+        env_obs
+    )
+    assert all(call[3] is None for call in apxinf_model.calls)
+
+    torch_model = _FakeApxInfModel()
+    torch_adapter = _apxinf_adapter(model=torch_model, noise_source="torch")
+    torch_adapter.predict_action_batch(env_obs)
+    assert all(call[3] is not None for call in torch_model.calls)
+    for index, call in enumerate(torch_model.calls):
+        assert not np.array_equal(call[3], explicit_noise[index].numpy())
+
+
+def test_apxinf_torch_noise_is_reproducible_and_has_model_shape():
+    model_a = _FakeApxInfModel()
+    model_b = _FakeApxInfModel()
+    adapter_a = _apxinf_adapter(model=model_a, noise_source="torch", seed=7)
+    adapter_b = _apxinf_adapter(model=model_b, noise_source="torch", seed=7)
+
+    adapter_a.predict_action_batch(_apxinf_env_obs())
+    adapter_b.predict_action_batch(_apxinf_env_obs())
+
+    assert model_a.calls[0][3].shape == (10, 32)
+    np.testing.assert_array_equal(model_a.calls[0][3], model_b.calls[0][3])
+    np.testing.assert_array_equal(model_a.calls[1][3], model_b.calls[1][3])
+
+
+def test_apxinf_rejects_bad_normalized_action_shape():
+    adapter = _apxinf_adapter(model=_FakeApxInfModel(output_shape=(10, 7)))
+    with pytest.raises(ValueError, match="normalized actions have shape"):
+        adapter.predict_action_batch(_apxinf_env_obs(batch_size=1))
+
+
+def test_apxinf_rejects_mismatched_openpi_and_apxinf_flow_steps():
+    with pytest.raises(ValueError, match="must match OpenPI num_steps"):
+        _apxinf_adapter(num_flow_steps=10)
+
+
+def test_apxinf_rejects_training_mode():
+    adapter = _apxinf_adapter()
+    with pytest.raises(ValueError, match="eval-only"):
+        adapter.predict_action_batch(_apxinf_env_obs(), mode="train")
+
+
+def test_apxinf_close_delegates_to_model():
+    model = _FakeApxInfModel()
+    adapter = _apxinf_adapter(model=model)
+    adapter.close()
+    assert model.closed
+
+
+def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
+    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
+    seen = {}
+
+    def load_bare_model(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return _FakeApxInfModel()
+
+    def resolve_tactics(device, precision, **kwargs):
+        seen["resolve"] = {"device": device, "precision": precision, **kwargs}
+        return resolved_tactics
+
+    module = ModuleType("apxinf_robo")
+    module.load_bare_model = load_bare_model
+    engine = ModuleType("apxinf_robo.engine")
+    engine.resolve_tactics = resolve_tactics
+    module.engine = engine
+    monkeypatch.setitem(sys.modules, "apxinf_robo", module)
+    monkeypatch.setitem(sys.modules, "apxinf_robo.engine", engine)
+    return seen
+
+
+def test_apxinf_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(_apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor())
+
+    assert seen["path"] == Path("/not/loaded/in/unit/test")
+    kwargs = seen["kwargs"]
+    assert kwargs["model"] == "pi05"
+    assert kwargs["device"] == "cpu"
+    assert kwargs["precision"] == "bf16"
+    assert kwargs["action_horizon"] == 10
+    assert kwargs["num_flow_steps"] == 5
+    assert kwargs["sampling_seed"] == 0
+    # Left out so load_bare_model selects the tuned tactics.
+    assert "tactics" not in kwargs
+    assert "resolve" not in seen
+
+
+def test_apxinf_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(
+        _apxinf_model_cfg(tactics="/mine.json"), "cpu", processor=_FakeApxInfProcessor()
+    )
+
+    assert seen["kwargs"]["tactics"] == "/mine.json"
+    assert "resolve" not in seen
+
+
+def test_apxinf_an_explicit_weights_file_resolves_tactics_from_the_checkpoint_dir(
+    monkeypatch,
+):
+    seen = _stub_apxinf_robo(monkeypatch, resolved_tactics="/ckpt/tactics.json")
+
+    OpenPIApxInfAdapter(
+        _apxinf_model_cfg(checkpoint="/ckpt/model-00001-of-00002.safetensors"),
+        "cpu",
+        processor=_FakeApxInfProcessor(),
+    )
+
+    # The weights file goes to the loader, the directory to the tactics lookup:
+    # keying the lookup on the file would miss a checkpoint-local tactics.json.
+    assert seen["path"] == Path("/ckpt/model-00001-of-00002.safetensors")
+    assert seen["resolve"]["model_dir"] == Path("/not/loaded/in/unit/test")
+    assert seen["resolve"]["precision"] == "bf16"
+    assert seen["kwargs"]["tactics"] == "/ckpt/tactics.json"
+
+
+def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
+    # ``None`` in sys.modules is how CPython marks an import as unavailable.
+    monkeypatch.setitem(sys.modules, "apxinf_robo", None)
+
+    with pytest.raises(ImportError, match="apxinf_robo"):
+        OpenPIApxInfAdapter(
+            _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
+        )

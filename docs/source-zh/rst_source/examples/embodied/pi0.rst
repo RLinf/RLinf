@@ -461,6 +461,8 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的
 
 中国大陆用户可添加 ``--use-mirror``。安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，OpenPI 随后使用共用的 NPU worker 与 collective 路径。
 
+.. include:: _ascend_torch.rst
+
 摩尔线程 MUSA
 ~~~~~~~~~~~~~
 

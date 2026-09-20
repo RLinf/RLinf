@@ -150,16 +150,16 @@ Franka 属于另一种情况。它的末端执行器自行打开 session，因�
 
 直接调用构造函数时，解析出 class 已经足够。如果某类设备具有固定的配置结构，还可以提供构建入口：``Camera.of()`` 接收 ``CameraInfo`` 并从中读出 backend；``EndEffector.of()`` 接收名称，以及安装它的机械臂所能提供的接入方式；``Arm.declare()`` 把机器人层面的机械臂配置映射到某个 backend 自己的构造函数上。这些映射都写在驱动里、紧挨着它所服务的构造函数，因此新增一个 backend 不需要改动负责选择 backend 的代码。
 
-机械臂尤其适合采用这套机制，因为同一套硬件可能支持多种 backend。Franka 可以通过 libfranka 或 ROS 控制，因此两种实现都注册到 ``Arm``，机器人只需指定其中一种：
+机械臂尤其适合采用这套机制，因为同一套硬件可能支持多种 backend。Franka 可以通过 libfranka 或 ROS 控制，因此两种实现都注册到 ``Arm``，机器人只需指定其中一种。``FrankaRobot`` 指定的是 Franky；若某个子类需要使用 ROS，只需覆盖 backend 名称：
 
 .. code-block:: python
 
    class FrankaRobot(Robot):
-       BACKEND = "franka_ros"
-
-
-   class DualFrankaRobot(FrankaRobot):
        BACKEND = "franky"
+
+
+   class FrankaRosRobot(FrankaRobot):  # 假设的子类
+       BACKEND = "franka_ros"
 
 切换时只需修改 backend 名称。每个 backend 在自己的 ``declare()`` 中，将标准机械臂配置映射到相应构造函数；机器人无需了解某套实现启动 ROS package，而另一套实现打开 libfranka session。机械臂只接受机械臂自身的配置：向 ``declare()`` 传入 ``gripper_type`` 会被直接拒绝，而不是静默丢弃，因为这类配置属于与它并列组合的末端执行器。
 

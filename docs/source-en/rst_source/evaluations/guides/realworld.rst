@@ -22,16 +22,17 @@ Install dependencies separately on the control node and the GPU node:
 
 .. code-block:: bash
 
-   # Robot control node (Franka + cameras + ROS)
+   # Robot control node (Franka + cameras)
    bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
-   source <your_catkin_ws>/devel/setup.bash
 
 .. code-block:: bash
 
    # GPU / rollout node (π₀ evaluation)
    bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
+
+The control node uses the default Franky backend. To drive the arm through ROS instead, follow the Legacy ROS Backend (Optional) section in :doc:`../../examples/embodied/franka`.
 
 DreamZero real-robot evaluation also requires DreamZero dependencies on the GPU node; see :doc:`../../examples/embodied/sft_dreamzero`.
 
@@ -131,11 +132,11 @@ On **each node**, before ``ray start``, align environment variables (you can use
    # On multi-NIC hosts, pin the reachable interface:
    # export RLINF_COMM_NET_DEVICES=<network_interface>
 
-On the control node, also source the ROS / franka workspace (unless already in the setup script):
+On the control node, also activate the Franka environment (unless the setup script already does):
 
 .. code-block:: bash
 
-   source <your_catkin_ws>/devel/setup.bash
+   source .venv/bin/activate
 
 Then start Ray (let ``<head_ip>`` be the head node IP):
 
@@ -151,7 +152,7 @@ Then start Ray (let ``<head_ip>`` be the head node IP):
 
 .. important::
 
-   ``ray start`` freezes the Python interpreter and environment variables at launch time. Complete venv, ROS, and ``PYTHONPATH`` setup on every node **before** starting Ray.
+   ``ray start`` freezes the Python interpreter and environment variables at launch time. Complete venv and ``PYTHONPATH`` setup on every node **before** starting Ray.
 
 End-to-End Workflow (PnP / π₀)
 --------------------------------

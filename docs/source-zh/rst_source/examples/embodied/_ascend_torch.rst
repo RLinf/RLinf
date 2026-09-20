@@ -1,0 +1,1 @@
+在昇腾 950 NPU 上本地安装时，在 ``embodied`` 之前添加 ``--torch 2.11.0``。昇腾安装脚本默认使用 PyTorch 和 ``torch-npu`` 2.6.0，而 ``torch-npu`` 2.6.0 初始化 950 NPU 时会报 ``Unsupported soc version``。PyTorch 和 ``torch-npu`` 2.11.0 已在 NPU 驱动 25.7.rc1、CANN 9.1.1 的昇腾 950 上验证通过。

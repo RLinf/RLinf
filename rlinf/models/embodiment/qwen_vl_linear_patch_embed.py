@@ -12,11 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ROCm workarounds for the VLM reward model.
+"""Rewrite Qwen-VL Conv3d PatchEmbed as a matmul on accelerators that need it.
 
-Qwen-VL's vision patch embedding is a Conv3d that segfaults the process on ROCm
-6.4, on transformers 4.57 and 5.16 alike. Run it as a matmul, which ROCm survives.
+Qwen-VL's patch embedding is a Conv3d whose kernel covers a whole patch
+(``kernel_size == stride``). That is mathematically a matmul, but the Conv3d
+form breaks on some accelerators:
+
+* ROCm 6.4 segfaults in the Conv3d kernel.
+* Ascend Conv3DBackpropFilter requires 5D NCDHW; the 2D view after the conv
+  makes filter backward fail with ``format size must be 5``.
+
+Rewrite matching modules to ``F.linear`` on those devices. Exact, not an
+approximation: the caller already lays out one block per patch.
 """
+
+from __future__ import annotations
 
 import types
 
@@ -27,11 +37,19 @@ import torch.nn.functional as F
 from rlinf.utils.logging import get_logger
 
 
-def _is_rocm() -> bool:
-    """Whether this worker runs on an AMD GPU, per the Worker device API."""
+def _needs_linear_patch_embed() -> bool:
+    """Whether this worker's accelerator cannot run Qwen-VL Conv3d safely."""
     from rlinf.scheduler import AcceleratorType, Worker
 
-    return Worker.accelerator_type == AcceleratorType.AMD_GPU
+    return Worker.accelerator_type in (AcceleratorType.AMD_GPU, AcceleratorType.NPU)
+
+
+def _linear_patch_embed_reason() -> str:
+    from rlinf.scheduler import AcceleratorType, Worker
+
+    if Worker.accelerator_type == AcceleratorType.NPU:
+        return "Ascend Conv3DBackpropFilter requires 5D NCDHW"
+    return "ROCm segfaults on its Conv3d"
 
 
 def _is_patch_embed(module: nn.Module) -> bool:
@@ -57,7 +75,7 @@ def _linear_patch_embed_forward(self, hidden_states: torch.Tensor) -> torch.Tens
 
 
 def patch_vision_patch_embed(model: torch.nn.Module) -> int:
-    """Rebind ``model``'s patch embeddings to the matmul form on ROCm.
+    """Rebind ``model``'s patch embeddings to the matmul form on ROCm/Ascend.
 
     A no-op returning 0 on every other accelerator. The rewrite bypasses the
     ``proj`` submodule, so forward hooks and wrappers attached to it stop
@@ -66,22 +84,24 @@ def patch_vision_patch_embed(model: torch.nn.Module) -> int:
     Returns:
         How many modules were rebound.
     """
-    if not _is_rocm():
+    if not _needs_linear_patch_embed():
         return 0
 
     patched = 0
+    reason = _linear_patch_embed_reason()
     for name, module in model.named_modules():
         if not _is_patch_embed(module):
             continue
         # Bound per instance, so models built elsewhere and state_dict stay untouched.
         module.forward = types.MethodType(_linear_patch_embed_forward, module)
         patched += 1
-        get_logger().info("Running %s as a matmul: ROCm segfaults on its Conv3d", name)
+        get_logger().info("Running %s as a matmul: %s", name, reason)
 
     if patched == 0:
         get_logger().warning(
             "No Qwen-VL patch embedding found in %s; its Conv3d will run as-is "
-            "and may segfault on ROCm",
+            "and may fail (%s)",
             type(model).__name__,
+            reason,
         )
     return patched
