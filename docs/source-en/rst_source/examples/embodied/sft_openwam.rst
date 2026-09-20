@@ -27,7 +27,7 @@ Overview
    .. grid-item-card:: Hardware
       :text-align: center
 
-      4 GPUs recommended with FSDP2
+      8 GPUs by default with FSDP2
 
 The OpenWAM checkpoint supplies the model and dataloader settings. Set ``data.train_data_paths`` to the dataset root (or a list of roots: each is read with the same dataloader settings and the windows are concatenated, so the mixture is sampled in proportion to size); the loader reads ``config.yaml`` from ``actor.model.model_path`` and keeps the native frame, action, and normalization conventions.
 
@@ -44,7 +44,9 @@ Install the OpenWAM environment and RLinf:
 Run It
 ------
 
-Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to GPUs ``0-3``. Four ranks are recommended because OpenWAM keeps its trainable DiT/action parameters in the root FSDP2 unit; a two-card run can exceed the memory budget of 80-GiB GPUs.
+Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to eight GPUs (``0-7``) to leave more memory headroom for OpenWAM's trainable DiT/action parameters and optimizer state. The other OpenWAM SFT recipes inherit this placement.
+
+The fourth review measured LIBERO training on H200 GPUs with ``micro_batch_size: 1`` and ``global_batch_size: 8``: four ranks peaked at 72.3 GiB allocated and 113.3 GiB reserved per GPU; eight ranks peaked at 55.5 GiB allocated and 83.7 GiB reserved. These H200 measurements motivate the eight-GPU default; they do not establish that the recipe fits on 80-GiB GPUs. Validate memory use for your checkpoint and hardware.
 
 The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. One recipe per OpenWAM reader ships under ``examples/sft/config/``; each inherits ``libero_sft_openwam.yaml`` and only sets the paths and the experiment name:
 
@@ -91,7 +93,7 @@ Start the Ray-managed FSDP runner:
 
 Override ``cluster.component_placement.actor`` and keep ``actor.global_batch_size`` divisible by the actor world size when you change the GPU count.
 
-The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single root FSDP2 unit because OpenWAM's joint denoising driver reads block weights outside their forward. ``reshard_after_forward`` only applies to the frozen ``ResidualBlock`` subunits named by the wrap policy; the trainable root parameters remain resident for the joint forward and backward. The checked-in four-rank placement and gradient checkpointing are therefore part of the memory budget, rather than a guarantee that a two-card 80-GiB run will fit. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
+The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single root FSDP2 unit because OpenWAM's joint denoising driver reads block weights outside their forward. ``reshard_after_forward`` only applies to the frozen ``ResidualBlock`` subunits named by the wrap policy; the trainable root parameters remain resident for the joint forward and backward. Gradient checkpointing remains enabled, but the fourth review found no reduction in peak memory at ``micro_batch_size: 1`` when comparing four-rank runs with it on and off. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
 
 Validation and resuming
 -----------------------

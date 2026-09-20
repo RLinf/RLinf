@@ -13,9 +13,9 @@ cluster:
   num_nodes: 1
   component_placement:
     # OpenWAM's trainable DiT/action parameters stay in the root FSDP2 unit.
-    # Use four ranks by default so the root unit's full-parameter forward does
-    # not exceed the memory budget on 80-GiB class GPUs.
-    actor: 0-3
+    # Use eight ranks by default for more per-GPU memory headroom.
+    # See the SFT docs for measured memory use and hardware limits.
+    actor: 0-7
 
 runner:
   task_type: sft

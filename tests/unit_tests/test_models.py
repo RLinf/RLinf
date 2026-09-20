@@ -1960,7 +1960,7 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
     ):
         cfg = hydra.compose(config_name="libero_sft_openwam")
     assert cfg.actor.model.load_to_device is False
-    assert cfg.cluster.component_placement.actor == "0-3"
+    assert cfg.cluster.component_placement.actor == "0-7"
     assert cfg.runner.strict_resume is True
     assert cfg.actor.global_batch_size == 8
     assert cfg.actor.fsdp_config.gradient_checkpointing is True

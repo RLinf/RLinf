@@ -27,7 +27,7 @@ OpenWAM 监督微调
    .. grid-item-card:: 硬件
       :text-align: center
 
-      推荐 4 张 GPU 与 FSDP2
+      默认 8 张 GPU 与 FSDP2
 
 OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_paths`` 指向数据集根目录（也可以是多个根目录的列表，各数据集用同一套 dataloader 设置读取后按样本数比例拼接）；loader 会读取 ``actor.model.model_path`` 下的 ``config.yaml``，并保留原生的帧数、动作和归一化约定。
 
@@ -44,7 +44,9 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 运行
 ----
 
-在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认将 actor 放到 GPU ``0-3``。由于 OpenWAM 的可训练 DiT/action 参数保留在根 FSDP2 单元中，推荐使用 4 个 rank；在 80 GiB GPU 上使用两张卡可能超出显存预算。
+在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认使用 8 张 GPU（``0-7``），为 OpenWAM 的可训练 DiT/action 参数和优化器状态留出更多显存余量。其他 OpenWAM SFT 配方也继承这一默认卡数。
+
+第四轮审查在 H200 上使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 测得：4 卡时每卡峰值已分配显存为 72.3 GiB、保留显存为 113.3 GiB；8 卡时分别为 55.5 GiB 和 83.7 GiB。默认改为 8 卡是依据这组 H200 数据，并不代表已经验证能在 80 GiB 显卡上运行；实际显存需求仍需结合 checkpoint 和硬件确认。
 
 数据读取器由 checkpoint 的 ``config.yaml`` 决定，因此配方要把 checkpoint 和同类型的数据配对。``examples/sft/config/`` 下每种 OpenWAM 读取器各有一份配方，都继承 ``libero_sft_openwam.yaml``，只改路径和实验名：
 
@@ -91,7 +93,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 
 修改 GPU 数量时，同时修改 ``cluster.component_placement.actor``，并确保 ``actor.global_batch_size`` 能被 actor world size 整除。
 
-预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。由于 OpenWAM 的联合去噪驱动会在块的 forward 之外直接读取块权重，policy 使用一个根 FSDP2 单元。``reshard_after_forward`` 只作用于 wrap policy 指定的冻结 ``ResidualBlock`` 子单元；可训练的根参数在联合 forward 和 backward 期间仍需驻留。因此，配方默认使用四个 rank 并启用 gradient checkpointing；这并不保证两张 80 GiB GPU 一定能够运行。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
+预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。由于 OpenWAM 的联合去噪驱动会在块的 forward 之外直接读取块权重，policy 使用一个根 FSDP2 单元。``reshard_after_forward`` 只作用于 wrap policy 指定的冻结 ``ResidualBlock`` 子单元；可训练的根参数在联合 forward 和 backward 期间仍需驻留。配方仍默认启用 gradient checkpointing，但第四轮审查的 4 卡开关对比显示，在 ``micro_batch_size: 1`` 下它未降低峰值显存。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
 
 验证与断点续训
 --------------
