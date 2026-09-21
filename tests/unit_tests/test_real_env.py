@@ -3686,6 +3686,24 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
     assert sample.parts["end_effector"][0] == pytest.approx(0.7)
 
 
+def test_so101_leader_ignores_settling_motion_after_manual_release():
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    binding = SO101Leader(port="/dev/unused", movement_epsilon=0.01)
+    reading = {"joint_position": np.array([0.5, 0, 0, 0, 0]), "grip": np.array([0.7])}
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_position": np.zeros((1, 1)),
+    }
+
+    binding._manual_release_pending = True
+    settling = binding.action(reading, context)
+    assert not settling.driving
+
+    deliberate = binding.action(reading, context)
+    assert deliberate.driving
+
+
 def test_so101_leader_gripper_motion_triggers_takeover():
     from rlinf.robotics.parts.teleop import SO101Leader
 

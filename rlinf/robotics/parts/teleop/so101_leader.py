@@ -103,6 +103,7 @@ class SO101Leader(TeleopDevice):
         self._calibrate = calibrate
         self._serial_lock = threading.RLock()
         self._reset_prepared = False
+        self._manual_release_pending = False
 
     @classmethod
     def from_config(
@@ -241,6 +242,9 @@ class SO101Leader(TeleopDevice):
         with self._serial_lock:
             self._device.bus.disable_torque()
             self._reset_prepared = False
+            # The arm can settle by gravity when torque is disabled. Ignore
+            # that first reading instead of treating it as operator motion.
+            self._manual_release_pending = True
 
     def hold_for_reset(self, context: Mapping[str, Any]) -> None:
         """Hold the current leader pose before the robot is reset or parked."""
@@ -357,6 +361,9 @@ class SO101Leader(TeleopDevice):
             float(np.linalg.norm(target - current)) > self.MOVEMENT_EPSILON
             or float(np.linalg.norm(grip - current_grip)) > self.MOVEMENT_EPSILON
         )
+        if self._manual_release_pending:
+            self._manual_release_pending = False
+            moved = False
         return TeleopAction(parts={"arm": target, "end_effector": grip}, driving=moved)
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
