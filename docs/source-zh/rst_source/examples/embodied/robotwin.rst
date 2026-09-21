@@ -154,6 +154,8 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
    source .venv/bin/activate
 
+在 AMD ROCm 上需加 ``--platform``，具体见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
+
 克隆 RoboTwin 并下载资产：
 
 .. code:: bash
@@ -264,6 +266,33 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
    提供的配置使用
    ``rlinf/envs/sim/robotwin/seeds/`` 下的 train/eval seed 文件。
+
+.. _robotwin-hardware:
+
+在不同硬件后端上运行
+----------------------------------------
+
+NVIDIA 使用上面的安装与启动方式。RoboTwin 同样可以安装在 AMD ROCm 上，只需修改 task config 中的一项设置。
+
+AMD ROCm
+~~~~~~~~~~~~~~~~~~~~
+
+在已安装 ROCm 的宿主机上安装：
+
+.. code:: bash
+
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env robotwin
+   source .venv/bin/activate
+
+省略 ``--rocm`` 可自动检测已安装版本；中国大陆用户可加 ``--use-mirror``；``--model`` 也可替换为 ``openvla-oft`` 或 ``lingbotvla``。
+
+``pytorch3d``、``warp-lang`` 与 ``curobo`` 仅支持 CUDA，安装脚本会跳过它们。这三个包服务于 ``curobo`` 运动规划器，因此 RoboTwin 需要改用另一种规划器：在 task config 中设置 ``planner_backend: mplib``，默认的 ``curobo`` 会在构造环境时失败。环境中的其余部分与 CUDA 上一致，训练启动命令也相同：
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
+
+RLinf 未发布 ROCm 版 RoboTwin 镜像，因此上面的 Docker 步骤仅适用于 CUDA 宿主机。
 
 可视化与结果
 ----------------------------------------

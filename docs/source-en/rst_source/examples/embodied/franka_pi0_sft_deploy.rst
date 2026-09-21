@@ -80,29 +80,32 @@ Hardware Requirements
 - **Robot arm**: Franka Emika Panda.
 - **Camera**: Intel RealSense camera (wrist camera for observation).
 - **Compute node**: A GPU-equipped machine for SFT training and rollout.
-- **Robot control node**: A small computer on the same LAN as the robot
-  (no GPU required) for controlling the Franka arm.
+- **Robot computer**: The machine wired to the arm, which runs the Franka
+  controller and data collection. By default this is the GPU machine itself;
+  in the multi-node setup it is a separate controller node without a GPU.
 - **SpaceMouse (optional)**: For remote teleoperation during data collection.
 
 .. note::
 
-   For detailed hardware setup instructions (ROS Noetic, libfranka,
-   serl_franka_controllers, etc.), refer to the **Hardware Setup** and
-   **Dependency Installation** sections in :doc:`franka`.
+   For Franky installation, firmware compatibility, and real-time kernel setup
+   on the robot computer, see the Installation section in :doc:`franka`.
 
 Software Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The **control node** (data collection) requires Franka control dependencies;
-see the dependency installation section in :doc:`franka`.
+The **robot computer** (data collection and the env worker during deployment)
+needs the Franka controller environment; follow the Installation section in
+:doc:`franka`.
 
-The **training / rollout node** (SFT training + deployment) requires OpenPI
-model dependencies:
+The **training / rollout node** (SFT training + deployment) needs the OpenPI
+model environment. Adding ``--env franka`` also installs the Franky dependencies,
+so when the robot computer is the GPU machine itself, this one environment serves
+both roles:
 
 .. code:: bash
 
    # For mainland China users, you can add `--use-mirror` to the install.sh command.
-   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
 
 .. note::
@@ -138,15 +141,15 @@ workspace region is carved out around the target pose to limit the robot's
 range of motion. See ``rlinf/envs/real/franka/bin_relocation.py``
 for details.
 
-Follow the **Obtain the target pose** section in :doc:`franka` and use the
+Follow the target pose steps in :doc:`franka` and use the
 ``toolkits.realworld_check.test_franka_controller`` script to obtain the
 target pose. Record this pose for use in subsequent configuration steps.
 
 Step 2: Collect Expert Data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Follow the **Data Collection** section in :doc:`franka` to collect expert
-data on the control node.
+Follow the demonstration collection steps in :doc:`franka` to collect expert
+data on the robot computer.
 
 In addition to the base configuration, make the following modifications for
 the Bin-relocation pick-and-place task:
@@ -226,8 +229,9 @@ Following the **Normalization statistics for new LeRobot datasets** section in
 :doc:`sft_openpi`, you must compute normalization statistics for your newly
 collected LeRobot dataset before launching SFT.
 
-First, upload the data from the control node to the training node's data
-directory, e.g. ``/path/to/lerobot_data``. The file structure should be:
+First, copy the data from the robot computer to the training node's data
+directory, e.g. ``/path/to/lerobot_data``; skip the copy when both roles run on
+the same machine. The file structure should be:
 
 .. code::
 
@@ -339,8 +343,8 @@ config:
      model:
        model_path: "/path/to/pi0-model"
 
-After starting the Ray cluster (see the **Cluster configuration** section in
-:doc:`franka`), run deployment through the :doc:`real-world evaluation guide
+After starting the Ray cluster as described in :doc:`franka`, run deployment
+through the :doc:`real-world evaluation guide
 <../../evaluations/guides/realworld>` with ``realworld_pnp_eval``. The policy
 will autonomously control the robot to complete the Bin-relocation task.
 

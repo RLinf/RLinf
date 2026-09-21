@@ -589,6 +589,8 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 GR00T N1.5 可直接使用共�
 
 中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用 N1.5 的 NPU 补丁。
 
+.. include:: _ascend_torch.rst
+
 摩尔线程 MUSA
 ~~~~~~~~~~~~~
 

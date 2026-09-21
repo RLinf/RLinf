@@ -27,6 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 from rlinf.robotics import FrankaConfig
 from rlinf.scheduler import (
     AcceleratorType,
+    AcceleratorUtil,
     Cluster,
     ComponentPlacement,
     NodePlacementStrategy,
@@ -1042,6 +1043,10 @@ def test_cluster_env_configs_applied_in_worker_launch():
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux-specific argv limit")
+@pytest.mark.skipif(
+    AcceleratorUtil.get_accelerator_type() == AcceleratorType.NPU,
+    reason="Ascend CI runs against a pre-started Ray head, whose workers do not inherit this environment",
+)
 def test_worker_launch_with_large_inherited_environment(monkeypatch):
     inherited_env = {
         f"RLINF_TEST_INHERITED_{index:04d}": "x" * 64 for index in range(3000)
