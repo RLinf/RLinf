@@ -4958,6 +4958,19 @@ def test_so101_reports_joints_in_radians_and_the_gripper_as_a_fraction():
         arm.disconnect()
 
 
+def test_so101_normalizes_integer_relative_target_for_lerobot():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101", max_relative_target=5)
+        assert arm._max_relative_target == 5.0
+        arm.connect()
+        assert arm._robot.config.max_relative_target == 5.0
+        arm.disconnect()
+
+
 def test_so101_commands_are_converted_back_to_degrees():
     from robot_mocks import mocked_sdks
 

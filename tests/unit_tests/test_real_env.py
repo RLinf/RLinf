@@ -1399,6 +1399,20 @@ def test_start_end_abort_terminates_for_runner_reset(monkeypatch, tmp_path):
     wrapper.close()
 
 
+def test_manual_release_clears_activity_window():
+    device = ScriptedDevice([TeleopSample(action=EXPERT, active=False)])
+    wrapper = TeleopIntervention(FakeEnv(), device)
+    wrapper._last_active = time.monotonic()
+
+    wrapper.release_for_manual()
+
+    assert wrapper._last_active == -float("inf")
+    _, _, _, _, info = wrapper.step(POLICY)
+    assert np.array_equal(wrapper.env.stepped[0], POLICY)
+    assert "intervene_action" not in info
+    wrapper.close()
+
+
 def test_env_worker_shutdown_parks_and_closes_once():
     from rlinf.workers.env.env_worker import EnvWorker
 

@@ -116,13 +116,17 @@ class SO101Arm(BaseArm):
         port: str,
         *,
         calibration_id: Optional[str] = None,
-        max_relative_target: Optional[int] = None,
+        max_relative_target: Optional[float] = None,
         cameras: Optional[dict[str, Any]] = None,
     ) -> None:
         self._logger = get_logger()
         self._port = port
         self._calibration_id = calibration_id
-        self._max_relative_target = max_relative_target
+        self._max_relative_target = (
+            None
+            if max_relative_target is None
+            else float(max_relative_target)
+        )
         self._cameras = dict(cameras or {})
         self._robot: "Optional[SO101Follower]" = None
         self._gripper_condition = threading.Condition(threading.RLock())

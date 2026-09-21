@@ -200,7 +200,13 @@ class TeleopIntervention(gym.Wrapper):
 
     def release_for_manual(self) -> None:
         """Release the teleop device after the manual-control buffer."""
-        self.device.release_for_manual(self)
+        # A start handover begins a fresh activity window. Do not let motion
+        # observed before the handover keep overriding the follower hold.
+        self._last_active = -float("inf")
+        self._takeover_active = False
+        release = getattr(self.device, "release_for_manual", None)
+        if release is not None:
+            release(self)
 
     def hold_for_reset(self) -> None:
         """Hold the teleop device before the wrapped robot is reset."""

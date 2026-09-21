@@ -40,7 +40,7 @@ class SO101Robot(Robot):
         port: str,
         node_rank: int,
         calibration_id: Optional[str] = None,
-        max_relative_target: Optional[int] = None,
+        max_relative_target: Optional[float] = None,
         worker_rank: int = 0,
         env_idx: int = 0,
     ) -> dict[str, Any]:
@@ -73,7 +73,7 @@ class SO101Robot(Robot):
         port: str,
         node_rank: int,
         calibration_id: Optional[str] = None,
-        max_relative_target: Optional[int] = None,
+        max_relative_target: Optional[float] = None,
         env_idx: int = 0,
         worker_rank: int = 0,
         cameras: Optional[Mapping[str, Any]] = None,
@@ -107,7 +107,7 @@ class SO101Config(RobotConfig):
     already: calibrating asks the operator to move the arm by hand, which a
     worker cannot do."""
 
-    max_relative_target: Optional[int] = None
+    max_relative_target: Optional[float] = None
     """Per-step joint limit in degrees, applied by lerobot. ``None`` disables
     clamping, which lets a large action step move the arm at full speed."""
 
