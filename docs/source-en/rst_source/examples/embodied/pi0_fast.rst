@@ -145,7 +145,7 @@ detokenize path; eval does not collect replay log-probabilities.
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_eval_pi0_fast
+   bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval
 
 The pinned runtime and artifacts produced the following development result:
 

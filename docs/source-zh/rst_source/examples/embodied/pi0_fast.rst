@@ -141,7 +141,7 @@ log-probability。
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_eval_pi0_fast
+   bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval
 
 固定运行时和依赖坐标后，开发阶段得到以下结果：
 
