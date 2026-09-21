@@ -34,7 +34,6 @@ class AsyncEnvWorker(EnvWorker):
         input_channel: Channel,
         rollout_channel: Channel,
         reward_channel: Channel | None,
-        actor_channel: Channel | None,
         metric_channel: Channel,
     ):
         assert self._interact_task is None or self._interact_task.done(), (
@@ -45,7 +44,6 @@ class AsyncEnvWorker(EnvWorker):
                 input_channel,
                 rollout_channel,
                 reward_channel,
-                actor_channel,
                 metric_channel,
             )
         )
@@ -59,7 +57,6 @@ class AsyncEnvWorker(EnvWorker):
         input_channel: Channel,
         rollout_channel: Channel,
         reward_channel: Channel | None,
-        actor_channel: Channel | None,
         metric_channel: Channel,
     ):
         while True:
@@ -67,7 +64,6 @@ class AsyncEnvWorker(EnvWorker):
                 input_channel,
                 rollout_channel,
                 reward_channel,
-                actor_channel,
                 cooperative_yield=True,
             )
 
