@@ -46,6 +46,11 @@ ensemble progress critic and steering with classifier-free guidance.
 | **You'll do:** SFT an ensemble progress critic → compute ensemble advantages → CFG-train the policy → evaluate.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SigLIP + Gemma3 + π₀.₅ checkpoints · LeRobot-format datasets (steps below).
 
+.. toctree::
+   :hidden:
+
+   RLT Runtime Progress Routing <steam/rlt_progress_estimation>
+
 Pipeline
 --------
 
