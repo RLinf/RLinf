@@ -59,6 +59,8 @@ Installation
 
 Install RLinf first, then add the lightweight HTTP client dependencies used by this recipe:
 
+For the offline FSDP2 and SGLang recipe on Ascend CANN, see :doc:`Run RLinf on Ascend CANN <../../guides/ascend_cann>`.
+
 .. code-block:: bash
 
    # Install additional dependencies

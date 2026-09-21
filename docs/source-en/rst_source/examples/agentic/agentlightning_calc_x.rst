@@ -36,6 +36,8 @@ RLinf's distributed trainer.
 Installation
 ------------
 
+For the FSDP2 and SGLang recipe on Ascend CANN, see :doc:`Run RLinf on Ascend CANN <../../guides/ascend_cann>`.
+
 AgentLightning 0.3.0 requires the OpenTelemetry versions constrained by RLinf
 because OpenTelemetry 1.45 changed the exporter implementation used to route
 rollout spans to the Lightning Store. After creating the base environment,
