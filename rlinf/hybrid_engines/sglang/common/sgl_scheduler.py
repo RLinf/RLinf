@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import fields
 from importlib.metadata import version
 from typing import Any, Callable, Literal
 
@@ -52,6 +53,10 @@ from .io_struct import (
     TaskMethodInput,
     TaskMethodOutput,
 )
+
+_MEMORY_REQUEST_SUPPORTS_TAGS = "tags" in {
+    field.name for field in fields(ResumeMemoryOccupationReqInput)
+}
 
 logger.setLevel(logging.WARNING)
 
@@ -149,9 +154,10 @@ class Scheduler(_Scheduler):
 
         sglang treats tags=None/[] as "all GPU memory types".
         """
-        if recv_req.tags is None or len(recv_req.tags) == 0:
+        tags = getattr(recv_req, "tags", None)
+        if tags is None or len(tags) == 0:
             return set(GPU_MEMORY_ALL_TYPES)
-        return set(recv_req.tags)
+        return set(tags)
 
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):
         requested_tags = self.resolve_memory_tags(recv_req)
@@ -281,12 +287,13 @@ class Scheduler(_Scheduler):
             assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
-            # Resume model weights only. KV cache and cuda graph are deferred
-            # to onload_kv_cudagraph() in the runner, which runs after the
-            # actor offloads its model, so the two models are never both
-            # resident. Large MoE models OOM otherwise.
+            # Tagged SGLang releases resume model weights first and defer KV cache
+            # and CUDA graphs until after actor offload. Older SGLang releases
+            # only support whole-engine resume, which is already complete here.
             self.resume_memory_occupation(
                 ResumeMemoryOccupationReqInput(tags=["weights"])
+                if _MEMORY_REQUEST_SUPPORTS_TAGS
+                else ResumeMemoryOccupationReqInput()
             )
 
         self.batch_load_hf_weight(state_dict)
