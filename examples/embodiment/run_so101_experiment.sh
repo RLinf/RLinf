@@ -33,6 +33,11 @@ case "${command}" in
         control_file="${RLINF_KEYBOARD_CONTROL_FILE:-/tmp/rlinf-so101.keys}"
         : > "${control_file}"
         export RLINF_KEYBOARD_CONTROL_FILE="${control_file}"
+        device_env="${SO101_DEVICE_ENV:-${HOME}/.config/so101/devices.env}"
+        if [[ -r "${device_env}" ]]; then
+            # shellcheck disable=SC1090
+            source "${device_env}"
+        fi
         server_address="${SO101_SERVER_ADDRESS:-127.0.0.1:50052}"
         policy_id="${SO101_POLICY_ID:-so101-pi05-openpi-rlinf-step10000}"
         follower_port="${SO101_FOLLOWER_PORT:-/dev/ttyACM1}"
