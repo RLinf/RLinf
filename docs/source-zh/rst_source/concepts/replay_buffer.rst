@@ -26,7 +26,7 @@ Replay Buffer 使用教程
 
 - `enable_cache` / `cache_size`：启用并控制缓存数量，用于提升采样吞吐。
 - `sample_window_size`：仅在最近 N 条轨迹内采样；0 表示全量。
-- `auto_save`：是否自动落盘；为 `False` 时仅缓存并在保存 checkpoint 时落盘。
+- ``auto_save``：是否在收到轨迹时自动落盘。设为 ``False`` 时，buffer 会强制启用内存缓存，即使配置了 ``enable_cache=False``，并以 ``sample_window_size`` 作为缓存容量。请将 ``sample_window_size`` 设为正数，保留采样所需的最近轨迹，再通过 ``save_checkpoint()`` 将轨迹保存到磁盘。
 - `auto_save_path`：开启 auto_save 时的轨迹存储目录。
 - `trajectory_format`：`pt`（默认）或 `pkl`。
 
