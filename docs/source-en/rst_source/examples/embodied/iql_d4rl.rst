@@ -159,6 +159,8 @@ RLinf provides default IQL configs for different D4RL task families:
 
 Set ``data.dataset_type`` to ``d4rl`` , ``data.task_name`` and ``env.eval.task_name`` to the desired D4RL task (e.g. ``antmaze-large-play-v0``).
 
+Leave ``data.dataset_path`` as ``null`` to use D4RL's default dataset cache. To load an existing standard D4RL HDF5 file, set it to the file path. RLinf passes an optional ``timeouts`` field through D4RL's transition conversion so that an episode-ending observation is not paired with the next episode.
+
 **3. Launch Script**
 
 - Script: ``examples/embodiment/run_offline_rl.sh``

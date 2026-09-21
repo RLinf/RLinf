@@ -159,6 +159,8 @@ RLinf 为不同 D4RL 任务族提供默认 IQL 配置：
 
 将 ``data.dataset_type`` 设为 ``d4rl``，并将 ``data.task_name`` 和 ``env.eval.task_name`` 设为所需的 D4RL 任务（如 ``antmaze-large-play-v0``）。
 
+``data.dataset_path`` 为 ``null`` 时使用 D4RL 的默认数据缓存；若要读取已有的标准 D4RL HDF5 文件，则将它设为文件路径。文件包含可选的 ``timeouts`` 字段时，RLinf 会交由 D4RL 的 transition 转换处理，避免将 episode 末尾的 observation 与下一条 episode 错误配对。
+
 **3. 启动脚本**
 
 - 脚本：``examples/embodiment/run_offline_rl.sh``

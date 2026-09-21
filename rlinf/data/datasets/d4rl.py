@@ -207,14 +207,6 @@ class D4RLDataset(Dataset):
                 + ". Please install them to load D4RL datasets."
             )
 
-        try:
-            import h5py  # type: ignore
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "Loading D4RL dataset from path requires 'h5py'. "
-                "Install it or use env-based construction."
-            ) from exc
-
         if not os.path.exists(path):
             env = gym.make(task_name)
             try:
@@ -227,12 +219,22 @@ class D4RLDataset(Dataset):
                 except Exception:
                     pass
 
-        with h5py.File(path, "r") as f:
-            observations = np.asarray(f["observations"], dtype=np.float32)
-            actions = np.asarray(f["actions"], dtype=np.float32)
-            rewards = np.asarray(f["rewards"], dtype=np.float32)
-            terminals = np.asarray(f["terminals"], dtype=np.float32)
-            next_observations = np.asarray(f["next_observations"], dtype=np.float32)
+        env = gym.make(task_name)
+        try:
+            raw = env.get_dataset(h5path=path)
+            if "next_observations" not in raw:
+                raw = d4rl.qlearning_dataset(env, dataset=raw)
+        finally:
+            try:
+                env.close()
+            except Exception:
+                pass
+
+        observations = np.asarray(raw["observations"], dtype=np.float32)
+        actions = np.asarray(raw["actions"], dtype=np.float32)
+        rewards = np.asarray(raw["rewards"], dtype=np.float32)
+        terminals = np.asarray(raw["terminals"], dtype=np.float32)
+        next_observations = np.asarray(raw["next_observations"], dtype=np.float32)
 
         if clip_to_eps:
             lim = 1 - eps

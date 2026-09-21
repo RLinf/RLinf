@@ -20,10 +20,13 @@ import random
 import time
 from unittest import mock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import DictConfig
 
+import rlinf.data.datasets.d4rl as d4rl_dataset_module
+from rlinf.data.datasets.d4rl import D4RLDataset
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
@@ -37,6 +40,85 @@ from rlinf.utils.obs_compression import (
     is_compressed_image,
     is_compression_enabled,
 )
+
+
+class TestD4RLDataset:
+    """Tests for loading D4RL transition datasets."""
+
+    def test_from_path_converts_standard_hdf5_dataset(self, tmp_path, monkeypatch):
+        """A standard D4RL file does not need ``next_observations``."""
+        dataset_path = tmp_path / "standard-d4rl.hdf5"
+        dataset_path.touch()
+        raw = {
+            "observations": np.array([[0.0], [1.0], [10.0], [11.0], [12.0]]),
+            "actions": np.array([[-1.5], [0.25], [0.5], [0.75], [1.5]]),
+            "rewards": np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
+            "terminals": np.array([False, False, False, False, True]),
+            "timeouts": np.array([False, True, False, False, False]),
+        }
+        converted = {
+            "observations": raw["observations"][[0, 2, 3]],
+            "actions": raw["actions"][[0, 2, 3]],
+            "rewards": raw["rewards"][[0, 2, 3]],
+            "terminals": raw["terminals"][[0, 2, 3]],
+            "next_observations": raw["observations"][[1, 3, 4]],
+        }
+
+        env = mock.Mock()
+        env.get_dataset.return_value = raw
+        gym_api = mock.Mock()
+        gym_api.make.return_value = env
+
+        def qlearning_dataset(actual_env, *, dataset):
+            assert actual_env is env
+            assert dataset is raw
+            assert "timeouts" in dataset
+            return converted
+
+        d4rl_api = mock.Mock(qlearning_dataset=qlearning_dataset)
+        monkeypatch.setattr(d4rl_dataset_module, "gym", gym_api)
+        monkeypatch.setattr(d4rl_dataset_module, "d4rl", d4rl_api)
+
+        dataset = D4RLDataset.from_path(dataset_path, task_name="antmaze-test-v0")
+
+        np.testing.assert_allclose(dataset.observations[:, 0], [0.0, 10.0, 11.0])
+        np.testing.assert_allclose(dataset.next_observations[:, 0], [1.0, 11.0, 12.0])
+        np.testing.assert_allclose(dataset.actions[:, 0], [-0.99999, 0.5, 0.75])
+        np.testing.assert_allclose(dataset.rewards, [0.0, 2.0, 3.0])
+        np.testing.assert_allclose(dataset.dones_float, [1.0, 0.0, 1.0])
+        env.get_dataset.assert_called_once_with(h5path=str(dataset_path))
+        env.close.assert_called_once_with()
+
+    def test_from_path_preserves_materialized_transition_dataset(
+        self, tmp_path, monkeypatch
+    ):
+        """Existing files with next observations remain supported."""
+        dataset_path = tmp_path / "materialized-d4rl.hdf5"
+        dataset_path.touch()
+        raw = {
+            "observations": np.array([[1.0], [2.0]]),
+            "actions": np.array([[-0.25], [0.25]]),
+            "rewards": np.array([3.0, 4.0]),
+            "terminals": np.array([False, True]),
+            "next_observations": np.array([[2.0], [3.0]]),
+        }
+
+        env = mock.Mock()
+        env.get_dataset.return_value = raw
+        gym_api = mock.Mock()
+        gym_api.make.return_value = env
+        d4rl_api = mock.Mock()
+        monkeypatch.setattr(d4rl_dataset_module, "gym", gym_api)
+        monkeypatch.setattr(d4rl_dataset_module, "d4rl", d4rl_api)
+
+        dataset = D4RLDataset.from_path(dataset_path, task_name="custom-test-v0")
+
+        np.testing.assert_array_equal(dataset.observations, raw["observations"])
+        np.testing.assert_array_equal(
+            dataset.next_observations, raw["next_observations"]
+        )
+        d4rl_api.qlearning_dataset.assert_not_called()
+        env.close.assert_called_once_with()
 
 
 class TestMathDatasetMultithread:
