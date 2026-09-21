@@ -21,7 +21,6 @@ import typing
 
 import numpy as np
 import torch
-from openpi.transforms import DataTransformFn, compose
 
 from rlinf.data.datasets.openpi_rlinf.behavior.behavior_sft_dataset import (
     BehaviorSftDataset,
@@ -54,9 +53,10 @@ _LEROBOT_STATE_KEY = "observation.state"
 
 
 @dataclasses.dataclass(frozen=True)
-class _Repack(DataTransformFn):
+class _Repack:
     """Map raw LeRobot frame keys to the ``observation/*`` names openpi's
-    ``BehaviorInputs`` expects (an ``openpi.transforms`` transform, so it composes
+    ``BehaviorInputs`` expects (a transform implementing the ``openpi.transforms`` call
+    protocol, so it composes
     directly in front of the shared pipeline).
 
     The two wrist views are stacked into a single ``observation/wrist_image``
@@ -236,6 +236,10 @@ def create_behavior_sft_data_loader(
     Returns:
         A loader whose iteration yields ``(Observation, actions)`` 2-tuples.
     """
+    # openpi pulls in JAX/Flax at import time; keep the top-level module a plain
+    # numpy/torch path by deferring the import (same pattern as pipeline.py).
+    from openpi.transforms import compose
+
     dataset = BehaviorSftDataset(
         repo_id=repo_id,
         root=behavior_dataset_root,
