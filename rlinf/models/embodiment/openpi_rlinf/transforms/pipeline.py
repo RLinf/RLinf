@@ -82,13 +82,14 @@ def build_openpi_transforms(
             stats_dir = str(norm_stats_dir_path.parent)
         else:
             stats_dir = download.maybe_download(str(model_path))
-        norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
-    if norm_stats is None:
-        raise FileNotFoundError(
-            f"openpi_rlinf: norm_stats not found at {stats_dir}/{asset_id}/"
-            "norm_stats.json. For eval/RL the checkpoint dir must bundle them; "
-            "for SFT set actor.model.openpi.assets_dir/asset_id to the stats dir."
-        )
+        try:
+            norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"openpi_rlinf: norm_stats not found at {stats_dir}/{asset_id}/"
+                "norm_stats.json. For eval/RL the checkpoint dir must bundle them; "
+                "for SFT set actor.model.openpi.assets_dir/asset_id to the stats dir."
+            ) from None
 
     input_transforms = [
         transforms.InjectDefaultPrompt(None),
