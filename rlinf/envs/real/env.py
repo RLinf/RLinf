@@ -28,7 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
 from rlinf.envs.real.venv import NoAutoResetSyncVectorEnv
-from rlinf.envs.utils import to_tensor
+from rlinf.envs.utils import get_env_attr, to_tensor
 from rlinf.robotics.discovery import RobotInfo
 from rlinf.scheduler import WorkerInfo
 
@@ -149,7 +149,9 @@ class RealWorldEnv(gym.Env):
     def park(self) -> None:
         """Move each physical environment to its configured park state."""
         for env in self.env.envs:
-            env.get_wrapper_attr("park")()
+            park = get_env_attr(env, "park")
+            if callable(park):
+                park()
 
     def close(self) -> None:
         """Close the vector environment and all hardware it owns."""

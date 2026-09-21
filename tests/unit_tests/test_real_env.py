@@ -483,6 +483,31 @@ def test_real_world_env_forwards_park_and_close_to_owned_envs():
     assert events == ["park", "close"]
 
 
+def test_real_world_env_skips_park_for_env_without_park_capability():
+    from rlinf.envs.real.env import RealWorldEnv
+
+    events = []
+
+    class Child:
+        def get_wrapper_attr(self, name):
+            raise AttributeError(name)
+
+    class VectorEnv:
+        envs = [Child()]
+
+        def close(self):
+            events.append("close")
+
+    env = RealWorldEnv.__new__(RealWorldEnv)
+    env.env = VectorEnv()
+    env._closed = False
+
+    env.park()
+    env.close()
+
+    assert events == ["close"]
+
+
 def test_franka_dummy_preserves_legacy_policy_schema():
     env = FrankaEnv(
         override_cfg={
