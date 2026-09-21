@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/09] 🔥 RLinf 支持基于 ApxInf 加速的 π₀.₅ LIBERO 评测：resize、tokenize、归一化等仍由 RLinf 原生 OpenPI transforms 负责，仅经由 ApxInf 的 L1 推理接口接入引擎。文档：[ApxInf LIBERO 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/libero.html#apxinf-backend)。
 - [2026/09] 🔥 RLinf 支持 [FastWAM](https://github.com/yuantianyuan01/FastWAM) 的 FSDP 监督微调与 LIBERO 批量评测。文档：[FastWAM 评测与监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html)。
 - [2026/08] 🔥 RLinf 支持对英伟达全模态世界模型 Cosmos3 做 SFT 及基于 SGLang 的评测。文档：[Cosmos3 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_cosmos3.html)、[SGLang 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/cosmos3_sglang.html)。
 - [2026/08] 🎉 RLinf 正式入选 **PyTorch 生态**！我们将继续把可扩展的具身与智能体强化学习带给 PyTorch 用户，推动模型智能走进真实世界。博客：[PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/)。
@@ -401,7 +402,7 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 | 调度器测试 | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
 
 ## 贡献指南
-我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://github.com/RLinf/RLinf?tab=contributing-ov-file#contributing-to-rlinf)。感谢以下贡献者，并诚邀更多开发者加入我们的开源项目，共建具身智能与强化学习系统。
+我们欢迎您为 RLinf 作出贡献。提交 PR 前，请阅读 [贡献指南](CONTRIBUTING.md)，并在每个 commit 中添加 `Signed-off-by`，确认该贡献符合 [Developer Certificate of Origin（DCO）](DCO)。感谢所有为项目作出贡献的开发者。
 
 <a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://stg.contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 

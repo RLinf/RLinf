@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Model registration, embeddings, and the reward-model helpers."""
+"""Model registration, embeddings, inference adapters, and reward helpers."""
 
 from __future__ import annotations
 
@@ -35,6 +35,10 @@ from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
+)
+from rlinf.models.embodiment.openpi.apxinf_adapter import (
+    OpenPIApxInfAdapter,
+    _active_token_ids,
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
@@ -982,3 +986,289 @@ def test_delay_metrics_report_every_sample():
 
     assert metrics.tolist() == pytest.approx([0.03, 0.03])
     assert env.insert_delay_metrics().numel() == 0
+
+
+class _FakeApxInfModel:
+    action_horizon = 10
+    action_dim = 32
+    num_views = 2
+    image_size = 224
+
+    def __init__(self, output_shape=(10, 32)):
+        self.output_shape = output_shape
+        self.calls = []
+        self.closed = False
+
+    def infer_rgb(self, rgb_u8, layout, token_ids, *, noise=None):
+        self.calls.append((rgb_u8, layout, token_ids, noise))
+        offset = len(self.calls) * 1000
+        return (
+            np.arange(np.prod(self.output_shape), dtype=np.float32).reshape(
+                self.output_shape
+            )
+            + offset
+        )
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeApxInfProcessor:
+    def __init__(self):
+        self.preprocess_calls = []
+        self.postprocess_calls = []
+
+    def preprocess_batch(self, env_obs, *, num_views, image_size):
+        self.preprocess_calls.append((env_obs, num_views, image_size))
+        prepared = []
+        for index in range(len(env_obs["task_descriptions"])):
+            prepared.append(
+                {
+                    "rgb_u8": np.full(
+                        (num_views, image_size, image_size, 3),
+                        index,
+                        dtype=np.uint8,
+                    ),
+                    "token_ids": np.array([index, index + 1], dtype=np.uint32),
+                    "state": np.full(32, index, dtype=np.float32),
+                }
+            )
+        return prepared
+
+    def postprocess_batch(self, normalized_actions, prepared):
+        self.postprocess_calls.append((normalized_actions.copy(), prepared))
+        return torch.from_numpy(normalized_actions[:, :5, :7].copy())
+
+
+def _apxinf_model_cfg(**apxinf_overrides):
+    apxinf = {
+        "action_horizon": 10,
+        "num_flow_steps": 5,
+        "noise_source": "apxinf",
+        "seed": 0,
+        **apxinf_overrides,
+    }
+    return OmegaConf.create(
+        {
+            "model_type": "openpi",
+            "model_path": "/not/loaded/in/unit/test",
+            "num_action_chunks": 5,
+            "action_dim": 7,
+            "openpi": {
+                "config_name": "pi05_libero",
+                "num_steps": 5,
+                "noise_method": "flow_sde",
+                "noise_level": 0.3,
+            },
+            "apxinf": apxinf,
+        }
+    )
+
+
+def _apxinf_env_obs(batch_size=2):
+    return {
+        "main_images": torch.zeros(batch_size, 8, 8, 3, dtype=torch.uint8),
+        "wrist_images": torch.ones(batch_size, 8, 8, 3, dtype=torch.uint8),
+        "extra_view_images": None,
+        "states": torch.zeros(batch_size, 8),
+        "task_descriptions": [f"task {index}" for index in range(batch_size)],
+    }
+
+
+def _apxinf_adapter(*, model=None, processor=None, **apxinf_overrides):
+    return OpenPIApxInfAdapter(
+        _apxinf_model_cfg(**apxinf_overrides),
+        "cpu",
+        model=model or _FakeApxInfModel(),
+        processor=processor or _FakeApxInfProcessor(),
+    )
+
+
+def test_apxinf_strips_openpi_prompt_padding_before_l1_inference():
+    transformed = {
+        "tokenized_prompt": np.array([2, 42, 108, 0, 0], dtype=np.int32),
+        "tokenized_prompt_mask": np.array([True, True, True, False, False]),
+    }
+
+    tokens = _active_token_ids(transformed)
+
+    np.testing.assert_array_equal(tokens, np.array([2, 42, 108], dtype=np.uint32))
+    assert tokens.flags.c_contiguous
+
+
+def test_apxinf_calls_l1_infer_rgb_and_delegates_pre_and_postprocessing():
+    model = _FakeApxInfModel()
+    processor = _FakeApxInfProcessor()
+    adapter = _apxinf_adapter(model=model, processor=processor)
+    env_obs = _apxinf_env_obs()
+
+    actions, result = adapter.predict_action_batch(env_obs, mode="eval")
+
+    assert actions.shape == (2, 5, 7)
+    assert actions.dtype == torch.float32
+    assert processor.preprocess_calls == [(env_obs, 2, 224)]
+    assert len(model.calls) == 2
+    assert model.calls[0][0].shape == (2, 224, 224, 3)
+    assert model.calls[0][0].dtype == np.uint8
+    assert model.calls[0][1] == "nhwc"
+    assert model.calls[0][2].dtype == np.uint32
+    assert model.calls[0][3] is None
+    normalized = processor.postprocess_calls[0][0]
+    assert normalized.shape == (2, 10, 32)
+    assert len(result["apxinf_timing"]) == 2
+
+
+def test_apxinf_explicit_noise_is_split_and_forwarded_exactly():
+    model = _FakeApxInfModel()
+    adapter = _apxinf_adapter(model=model, noise_source="observation")
+    env_obs = _apxinf_env_obs()
+    env_obs["noise"] = torch.arange(2 * 10 * 32, dtype=torch.float32).reshape(2, 10, 32)
+
+    adapter.predict_action_batch(env_obs)
+
+    np.testing.assert_array_equal(model.calls[0][3], env_obs["noise"][0].numpy())
+    np.testing.assert_array_equal(model.calls[1][3], env_obs["noise"][1].numpy())
+
+
+def test_apxinf_observation_noise_is_required():
+    adapter = _apxinf_adapter(noise_source="observation")
+    with pytest.raises(ValueError, match="requires env_obs"):
+        adapter.predict_action_batch(_apxinf_env_obs())
+
+
+def test_apxinf_observation_noise_does_not_override_other_noise_sources():
+    env_obs = _apxinf_env_obs()
+    explicit_noise = torch.full((2, 10, 32), 123.0)
+    env_obs["noise"] = explicit_noise
+
+    apxinf_model = _FakeApxInfModel()
+    _apxinf_adapter(model=apxinf_model, noise_source="apxinf").predict_action_batch(
+        env_obs
+    )
+    assert all(call[3] is None for call in apxinf_model.calls)
+
+    torch_model = _FakeApxInfModel()
+    torch_adapter = _apxinf_adapter(model=torch_model, noise_source="torch")
+    torch_adapter.predict_action_batch(env_obs)
+    assert all(call[3] is not None for call in torch_model.calls)
+    for index, call in enumerate(torch_model.calls):
+        assert not np.array_equal(call[3], explicit_noise[index].numpy())
+
+
+def test_apxinf_torch_noise_is_reproducible_and_has_model_shape():
+    model_a = _FakeApxInfModel()
+    model_b = _FakeApxInfModel()
+    adapter_a = _apxinf_adapter(model=model_a, noise_source="torch", seed=7)
+    adapter_b = _apxinf_adapter(model=model_b, noise_source="torch", seed=7)
+
+    adapter_a.predict_action_batch(_apxinf_env_obs())
+    adapter_b.predict_action_batch(_apxinf_env_obs())
+
+    assert model_a.calls[0][3].shape == (10, 32)
+    np.testing.assert_array_equal(model_a.calls[0][3], model_b.calls[0][3])
+    np.testing.assert_array_equal(model_a.calls[1][3], model_b.calls[1][3])
+
+
+def test_apxinf_rejects_bad_normalized_action_shape():
+    adapter = _apxinf_adapter(model=_FakeApxInfModel(output_shape=(10, 7)))
+    with pytest.raises(ValueError, match="normalized actions have shape"):
+        adapter.predict_action_batch(_apxinf_env_obs(batch_size=1))
+
+
+def test_apxinf_rejects_mismatched_openpi_and_apxinf_flow_steps():
+    with pytest.raises(ValueError, match="must match OpenPI num_steps"):
+        _apxinf_adapter(num_flow_steps=10)
+
+
+def test_apxinf_rejects_training_mode():
+    adapter = _apxinf_adapter()
+    with pytest.raises(ValueError, match="eval-only"):
+        adapter.predict_action_batch(_apxinf_env_obs(), mode="train")
+
+
+def test_apxinf_close_delegates_to_model():
+    model = _FakeApxInfModel()
+    adapter = _apxinf_adapter(model=model)
+    adapter.close()
+    assert model.closed
+
+
+def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
+    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
+    seen = {}
+
+    def load_bare_model(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return _FakeApxInfModel()
+
+    def resolve_tactics(device, precision, **kwargs):
+        seen["resolve"] = {"device": device, "precision": precision, **kwargs}
+        return resolved_tactics
+
+    module = ModuleType("apxinf_robo")
+    module.load_bare_model = load_bare_model
+    engine = ModuleType("apxinf_robo.engine")
+    engine.resolve_tactics = resolve_tactics
+    module.engine = engine
+    monkeypatch.setitem(sys.modules, "apxinf_robo", module)
+    monkeypatch.setitem(sys.modules, "apxinf_robo.engine", engine)
+    return seen
+
+
+def test_apxinf_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(_apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor())
+
+    assert seen["path"] == Path("/not/loaded/in/unit/test")
+    kwargs = seen["kwargs"]
+    assert kwargs["model"] == "pi05"
+    assert kwargs["device"] == "cpu"
+    assert kwargs["precision"] == "bf16"
+    assert kwargs["action_horizon"] == 10
+    assert kwargs["num_flow_steps"] == 5
+    assert kwargs["sampling_seed"] == 0
+    # Left out so load_bare_model selects the tuned tactics.
+    assert "tactics" not in kwargs
+    assert "resolve" not in seen
+
+
+def test_apxinf_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(
+        _apxinf_model_cfg(tactics="/mine.json"), "cpu", processor=_FakeApxInfProcessor()
+    )
+
+    assert seen["kwargs"]["tactics"] == "/mine.json"
+    assert "resolve" not in seen
+
+
+def test_apxinf_an_explicit_weights_file_resolves_tactics_from_the_checkpoint_dir(
+    monkeypatch,
+):
+    seen = _stub_apxinf_robo(monkeypatch, resolved_tactics="/ckpt/tactics.json")
+
+    OpenPIApxInfAdapter(
+        _apxinf_model_cfg(checkpoint="/ckpt/model-00001-of-00002.safetensors"),
+        "cpu",
+        processor=_FakeApxInfProcessor(),
+    )
+
+    # The weights file goes to the loader, the directory to the tactics lookup:
+    # keying the lookup on the file would miss a checkpoint-local tactics.json.
+    assert seen["path"] == Path("/ckpt/model-00001-of-00002.safetensors")
+    assert seen["resolve"]["model_dir"] == Path("/not/loaded/in/unit/test")
+    assert seen["resolve"]["precision"] == "bf16"
+    assert seen["kwargs"]["tactics"] == "/ckpt/tactics.json"
+
+
+def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
+    # ``None`` in sys.modules is how CPython marks an import as unavailable.
+    monkeypatch.setitem(sys.modules, "apxinf_robo", None)
+
+    with pytest.raises(ImportError, match="apxinf_robo"):
+        OpenPIApxInfAdapter(
+            _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
+        )
