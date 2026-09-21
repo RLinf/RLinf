@@ -52,7 +52,7 @@ RLinf collocates actor, rollout, and environment Ray workers on every GPU. Qwen3
    OpenVLA-OFT ── 8 actions ──> Wan world model ── 8 frames ──> Qwen3-VL
         ^                         │                               │
         │                         └── last frame = next obs       │
-        └──── GRPO update <──── log P(" True") ≥ 0.46 → 0/1 ─────┘
+       └──── GRPO update <──── P(" True") ≥ 0.46 → 0/1 ─────┘
 
 Thresholding produces the same binary shape as the original ResNet reward after ``round()``. WoVR's reward differencing, termination handling, ``loss_mask`` truncation, and within-group GRPO normalization are reused without changing the RL algorithm.
 
