@@ -97,13 +97,32 @@ Here documents the general guidelines that all contributors should follow to ens
 
 ### Commit Messages and Signed-off-by
 
-All Commits must include a `Signed-off-by:` line at the end of the commit message.
-Using the `-s` flag will automatically achieve this:
+All contributions to RLinf must comply with the [Developer Certificate of Origin (DCO) 1.1](DCO). By adding a `Signed-off-by:` line to a commit message, you certify that the contribution meets the DCO's requirements. This applies to all contributors, including maintainers, and to code, documentation, and other changes.
+
+Read the DCO before signing off. For commits you author, use your Git author name and email address in the sign-off. Create each commit with `-s` to append this information automatically:
+
 ```bash
 git add .
 git commit -s
 ```
+
+The resulting commit message includes a trailer in this form:
+
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
+
 You can enable automatic sign-off in your IDE. In VSCode, you can open the [settings editor](https://code.visualstudio.com/docs/configure/settings) and enable the option `Git: Always Sign Off`.
+
+If you authored the latest commit and can certify it under the DCO, add a missing sign-off without changing its contents:
+
+```bash
+git commit --amend --no-edit --signoff --only
+```
+
+If you have already pushed that commit, update your PR branch with `git push --force-with-lease`. For a PR with several unsigned commits, each affected commit needs its author's sign-off; adding a signed commit at the end does not sign off earlier commits. Ask the original author to sign off their own work.
+
+Maintainers must preserve contributors' `Signed-off-by:` trailers when squashing or otherwise rewriting commits for merge.
 
 The commit message should follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) standard, which looks like this:
 ```

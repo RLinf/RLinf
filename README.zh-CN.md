@@ -401,7 +401,7 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 | 调度器测试 | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
 
 ## 贡献指南
-我们欢迎对 RLinf 的贡献。在参与之前，请先阅读 [贡献指南](https://github.com/RLinf/RLinf?tab=contributing-ov-file#contributing-to-rlinf)。感谢以下贡献者，并诚邀更多开发者加入我们的开源项目，共建具身智能与强化学习系统。
+我们欢迎您为 RLinf 作出贡献。提交 PR 前，请阅读 [贡献指南](CONTRIBUTING.md)，并在每个 commit 中添加 `Signed-off-by`，确认该贡献符合 [Developer Certificate of Origin（DCO）](DCO)。感谢所有为项目作出贡献的开发者。
 
 <a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://stg.contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 

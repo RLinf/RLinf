@@ -203,6 +203,17 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
     from robot_mocks import mocked_sdks
     from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE, SERIAL
 
+    from rlinf.scheduler import AcceleratorType, AcceleratorUtil
+
+    # get_accelerator_type returns the type as a plain string, so compare by
+    # value; `is` against the enum member is never true.
+    if AcceleratorUtil.get_accelerator_type() == AcceleratorType.MUSA_GPU:
+        # This test builds a second rig after closing the first, and MUSA
+        # reserves so much address space per process that the second placement
+        # cannot allocate its worker. The unit-test workflow already runs
+        # placement tests one per process for the same reason.
+        pytest.skip("MUSA cannot place a second rig in one process")
+
     with mocked_sdks():
         from rlinf.envs.real.franka.base import FrankaEnv
 

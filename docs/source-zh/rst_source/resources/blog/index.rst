@@ -12,3 +12,4 @@
    compare_with_verl
    build_a_coding_online_rl_case
    behavior_system_optimization
+   cosmos3_sft_and_sglang_evaluate

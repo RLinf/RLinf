@@ -402,7 +402,7 @@ Below is the summary of the CI test status of the main branch:
 | scheduler-tests | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
 
 ## Contribution Guidelines
-We welcome contributions to RLinf. Please read [contribution guide](https://github.com/RLinf/RLinf?tab=contributing-ov-file#contributing-to-rlinf) before taking action. Thank the following contributors and welcome more developers to join us on this open source project.
+We welcome contributions to RLinf. Before opening a pull request, read the [contribution guide](CONTRIBUTING.md) and add `Signed-off-by` to each commit to certify compliance with the [Developer Certificate of Origin (DCO)](DCO). Thank you to everyone who contributes to the project.
 
 <a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://stg.contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 
