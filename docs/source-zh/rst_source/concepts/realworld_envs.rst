@@ -36,7 +36,7 @@
 将硬件设置保留在机器人描述中
 ----------------------------
 
-任务决定目标、复位动作、奖励、动作限制和图像处理方式。机器人的地址、相机序列号与 backend、夹爪配置及 placement 则描述真机设备，应写在 ``cluster.node_groups[].hardware.configs`` 中。``env.train.override_cfg`` 和 ``env.eval.override_cfg`` 只接受环境与任务设置。例如，``enable_camera_player`` 控制图像显示，仍属于环境配置。省略 ``camera_serials`` 时，系统通过选定的 backend（默认为 RealSense）发现相机，并按序列号排序。只有需要选择部分相机或指定顺序时才填写序列号；对于支持无相机运行的机器人，显式空列表表示不使用相机。
+任务决定目标、复位动作、奖励、动作限制和图像处理方式。机器人的地址、相机序列号与 backend、夹爪配置及 placement 则描述真机设备，应写在 ``cluster.node_groups[].hardware.configs`` 中。``env.train.override_cfg`` 和 ``env.eval.override_cfg`` 只接受环境与任务设置。例如，``enable_camera_player`` 控制图像显示，仍属于环境配置。省略 ``camera_serials`` 时，系统通过选定的 backend（默认为 RealSense；普通 USB/V4L2 相机使用 ``camera_type: uvc``）发现相机，并按 backend 标识排序。只有需要选择部分相机或指定顺序时才填写序列号；对于支持无相机运行的机器人，显式空列表表示不使用相机。
 
 独立检查工具与 scheduler 启动使用相同的枚举流程。下面的示例从节点本地环境变量读取 SO-101 设置，解析相机序列号并验证相机设备，然后创建环境：
 

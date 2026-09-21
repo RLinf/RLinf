@@ -116,7 +116,7 @@ class SO101Config(RobotConfig):
     ``[]`` explicitly selects no cameras."""
 
     camera_type: str = "realsense"
-    """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
+    """Camera backend, for example ``"realsense"`` or ``"uvc"``."""
 
     controller_node_rank: Optional[int] = None
     """Node rank where the arm part should run.

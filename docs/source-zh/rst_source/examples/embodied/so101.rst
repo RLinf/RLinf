@@ -1,7 +1,7 @@
 SO101 配置与控制
 ================
 
-本文介绍如何配置 SO101 机械臂，并运行 RLinf 硬件测试脚本，读取反馈、检查关节运动与夹爪开合。
+本页介绍 SO101 的完整使用流程：配置与标定机械臂，检查关节和夹爪，运行 PI05 推理，采集 DAgger 数据，再启动 SFT。
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center
@@ -12,7 +12,7 @@ SO101 配置与控制
 概览
 ----
 
-测试在连接机械臂的 Linux 主机上运行，无需 GPU 或模型 checkpoint。RLinf 目前尚未提供适用于 SO101 的真机任务或训练流程；本指南仅介绍硬件检查。
+先在连接机械臂的 Linux 主机上配置电机、标定 follower，并检查关节和夹爪。随后可通过 example 入口在本机 GPU 或远程 gRPC server 上运行 PI05 checkpoint，记录 DAgger 接管数据，并使用生成的 LeRobot 数据集启动 SFT。
 
 硬件配置
 --------
@@ -74,7 +74,7 @@ SO101 配置与控制
 
 在 Ubuntu 上，如果串口属于 ``dialout`` 组，运行程序的账号也需要加入该组。若尚未加入，执行 ``sudo usermod -aG dialout "$USER"``，退出登录并重新登录，然后回到仓库目录，重新激活 ``.venv``。USB 重新接入后，应再次确认串口路径。
 
-新电机或更换后的电机需要按上游指南的接线顺序，逐个设置 ID 与波特率；此步骤通常只需执行一次：
+新电机或更换后的电机需要按上游指南的接线顺序，逐个设置 ID 与波特率；每组电机执行一次该步骤：
 
 .. code-block:: bash
 
@@ -82,7 +82,7 @@ SO101 配置与控制
      --robot.type=so101_follower \
      --robot.port=/dev/ttyACM0
 
-每次仅将提示中指定的电机连接到控制板。工具设置该电机的 ID 和波特率后，才会提示连接下一个。6 个电机全部配置完成后，按指南完成组装并恢复串联接线。已配置好的机械臂可跳过电机配置，但仍需使用 RLinf 将采用的 ID 完成标定。
+每次将提示中指定的电机连接到控制板。工具设置该电机的 ID 和波特率后，再提示连接下一个。6 个电机全部配置完成后，按指南完成组装并恢复串联接线。已配置好的机械臂可跳过电机配置，并使用 RLinf 将采用的 ID 完成标定。
 
 标定 Follower
 ^^^^^^^^^^^^^
@@ -96,11 +96,11 @@ SO101 配置与控制
      --robot.port=/dev/ttyACM0 \
      --robot.id=rlinf_follower
 
-将串口替换为实际设备。按照指南将关节移到中间位置并确认提示，再按要求逐个移动关节，覆盖其运动范围。工具会报告保存的标定文件；请保留在运行 RLinf 的账号下，并使用相同的 ``--id rlinf_follower``。follower 不能使用 leader 的标定文件。
+将串口替换为实际设备。按照指南将关节移到中间位置并确认提示，再按要求逐个移动关节，覆盖其运动范围。工具会报告保存的标定文件；请保留在运行 RLinf 的账号下，并使用相同的 ``--id rlinf_follower``。leader 使用独立的 calibration ID。
 
 .. warning::
 
-   RLinf worker 不会交互式标定 follower。标定缺失或与硬件不一致时，连接会失败。启动 worker 前，先用运行机械臂的账号完成标定。
+   先用运行机械臂的账号完成 follower 标定。RLinf worker 会按照 ``--id`` 加载对应的标定文件。
 
 运行
 ----
@@ -109,7 +109,7 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 
 .. warning::
 
-   在硬件模式下，启动时会通过限速的关节轨迹，将机械臂移至关节角为 ``[0, -99, 95, 65, 0]`` 度的折叠姿态。启动前请清空这条运动路径。添加 ``--no-reset`` 可仅建立连接，不发送启动运动命令。
+   在硬件模式下，启动时会通过限速的关节轨迹，将机械臂移至关节角为 ``[0, -99, 95, 65, 0]`` 度的折叠姿态。启动前请清空这条运动路径。添加 ``--no-reset`` 可保留实测的启动姿态。
 
 确认 follower 已标定，且初始折叠动作的路径无遮挡后，运行：
 
@@ -118,9 +118,9 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
    CAMERA_SERIALS='' python -m toolkits.realworld_check.test_so101_env \
      --port /dev/ttyACM0 --id rlinf_follower --step 2
 
-将串口替换为实际设备，ID 使用标定时的值。``CAMERA_SERIALS=''`` 关闭相机发现，使测试只使用机械臂。
+将串口替换为实际设备，ID 使用标定时的值。``CAMERA_SERIALS=''`` 选择机械臂专项检查。
 
-启动复位和 ``home`` 命令均从实测关节位置生成平滑轨迹，默认将目标关节速度限制为每秒 30 度。使用 ``--reset-speed 10`` 可降低复位速度。移动幅度较大时，驱动会延长轨迹时间；写入延迟后也不会连续补发命令。在环境配置中，``reset_joint_speed`` 的单位为弧度每秒，``reset_duration`` 设置轨迹的最短时间，默认为 3 秒。
+启动复位和 ``home`` 命令均从实测关节位置生成平滑轨迹，默认将目标关节速度限制为每秒 30 度。使用 ``--reset-speed 10`` 可降低复位速度。移动幅度较大时，驱动会延长轨迹时间；写入延迟后会丢弃过期的补发命令。在环境配置中，``reset_joint_speed`` 的单位为弧度每秒，``reset_duration`` 设置轨迹的最短时间，默认为 3 秒。
 
 逐条输入以下指令，每次运动完成后再继续：
 
@@ -133,7 +133,7 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
    close
    quit
 
-``up`` 和 ``down`` 分别将肩关节角度增加或减少 2 度，并非让末端沿竖直方向移动。每次关节运动后会打印反馈；``open`` 与 ``close`` 用于测试夹爪。``quit`` 关闭环境及其机械臂 worker。输入 ``help`` 可查看其他关节方向。
+``up`` 和 ``down`` 分别将肩关节角度增加或减少 2 度。每次关节运动后会打印反馈；``open`` 与 ``close`` 用于测试夹爪。``quit`` 关闭环境及其机械臂 worker。输入 ``help`` 可查看其他关节方向。
 
 在自己的程序中控制机械臂或接入相机，请参考 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
@@ -160,9 +160,65 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 
 follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``teleop``。follower 会持续跟随关节和夹爪运动。按一次 Ctrl-C 返回命令提示符，再输入 ``quit`` 断开连接。
 
-``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），无需每步等待新图像。连续夹爪命令不等待运动完成。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
+``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），控制循环可在相邻图像帧之间继续执行。连续夹爪命令异步返回。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
+
+采集示范数据
+------------
+
+通过 RLinf 的数采入口记录 leader 控制的示范轨迹：
+
+.. code-block:: bash
+
+   SO101_FOLLOWER_PORT=/dev/ttyACM0 \
+   SO101_FOLLOWER_ID=rlinf_follower \
+   SO101_LEADER_PORT=/dev/ttyACM1 \
+   SO101_LEADER_ID=rlinf_leader \
+   SO101_CAMERA=/dev/video0 \
+   examples/embodiment/collect_so101.sh 10
+
+该命令通过 ``collect_real_data.py`` 以 30 Hz 运行 SO101 控制循环，将完成的 episode 以 LeRobot 格式写入 ``../results/so101-collect/collected_data``，同时将 RLinf trajectory 文件保存在 ``../results/so101-collect/demos``。
+
+运行 PI05 推理与 DAgger
+-----------------------
+
+follower 与相机能够协同工作后，再选择 PI05 的运行位置。local backend 在机器人主机加载 checkpoint；gRPC backend 保留同一套控制循环，将推理放到 GPU server。先用 ``--dry-run`` 打印解析后的本机配置：
+
+.. code-block:: bash
+
+   examples/embodiment/run_so101_inference.sh \
+     --inference-backend local \
+     --task "Pick up the object and place it in the container." \
+     --local-checkpoint /path/to/actor-checkpoint \
+     --local-norm-stats /path/to/norm_stats.json \
+     --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
+     --camera /dev/video0 --dry-run
+
+运行硬件时，将 ``--dry-run`` 替换为 ``--pose-file /path/to/poses.json --allow-hardware-motion``。pose JSON 包含 ``joint_order``、``units: "lerobot_native"``、``standard_position`` 和 ``fold_position``；两个 position 都按 6 个 SO101 关节名称记录当前设备采用的值。远程 GPU 使用 ``--inference-backend grpc``，通过 ``--server-address`` 指定 service endpoint。在 GPU 主机上，将 ``examples/embodiment/so101/lerobot_grpc_policy.env.example`` 复制为 ``examples/embodiment/so101/lerobot_grpc_policy.env``，填写 checkpoint 与 norm-stats 路径，然后启动 service。service 默认只绑定 loopback；只有在直连 endpoint 位于可信 tunnel 或网络内时，才将 ``SO101_GRPC_ALLOW_INSECURE_REMOTE=1``：
+
+.. code-block:: bash
+
+   examples/embodiment/so101/lerobot_grpc_policy_service.sh start
+
+DAgger 使用相同的 backend 选项，并增加已标定的 leader：
+
+.. code-block:: bash
+
+   examples/embodiment/run_so101_dagger.sh \
+     --inference-backend grpc --server-address <host>:<port> \
+     --task "Pick up the object and place it in the container." \
+     --serial-port /dev/ttyACM0 --robot-id rlinf_follower \
+     --leader-port /dev/ttyACM1 --leader-id rlinf_leader \
+     --camera /dev/video0 --dry-run
+
+DAgger 入口将 policy、expert 和实际执行的动作写入 LeRobot 数据集。启动 SFT 前，可通过 ``toolkits/realworld_check/check_so101_episode.py`` 校验完整数据集。首次训练需设置 ``SO101_DATASET_PATH``、``PI05_BASE_CHECKPOINT`` 和 ``SO101_NORM_STATS_PATH``，然后运行：
+
+.. code-block:: bash
+
+   examples/embodiment/so101/run_sft.sh
+
+DAgger 轮次还需设置 ``SO101_DAGGER_DATASET_PATH`` 与 ``SO101_SFT_CHECKPOINT``，再运行 ``examples/embodiment/so101/run_dagger_sft.sh``。
 
 新增真机任务
 ------------
 
-硬件检查通过后，参考 :doc:`新增真机任务 </rst_source/extending/new_task>` 定义任务的复位流程、观测、动作、奖励和成功条件。开始训练前，需要先实现可运行的真机任务。
+如需围绕机械臂构建其他 RLinf 环境，请参考 :doc:`新增真机任务 </rst_source/extending/new_task>` 定义任务的复位流程、观测、动作、奖励和成功条件。启动在线 RL 训练前，需要先实现可运行的真机任务。

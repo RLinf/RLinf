@@ -514,6 +514,19 @@ class CollectEpisode(gym.Wrapper):
             image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
                 obs
             )
+            if (
+                image is None
+                and wrist_image is not None
+                and str(self.robot_type).lower() == "so101"
+            ):
+                # The SO-101 public env exposes its only camera as ``frames``.
+                # Store that view as the standard LeRobot ``image`` feature so
+                # the existing OpenPI flat-schema loader can consume collected
+                # episodes without a robot-specific loader fork.
+                wrist_views = self._expand_multi_view_images("wrist_image", wrist_image)
+                if wrist_views:
+                    image = next(iter(wrist_views.values()))
+                    wrist_image = None
             # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
             raw_info = buf["infos"][i + 1]
@@ -539,9 +552,20 @@ class CollectEpisode(gym.Wrapper):
                 continue
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)
             seg_id = int(seg_ids[i]) if i < len(seg_ids) else 0
+            state_array = np.asarray(state, dtype=np.float32).reshape(-1)
+            action_array = np.asarray(np_action, dtype=np.float32).reshape(-1)
+            if str(self.robot_type).lower() == "so101":
+                state_array = self._so101_to_model_units(state_array)
+                action_array = self._so101_to_model_units(action_array)
+                if image is not None:
+                    image = self._bgr_to_rgb(image)
+                if wrist_image is not None:
+                    wrist_image = self._bgr_to_rgb(wrist_image)
+                if extra_view_image is not None:
+                    extra_view_image = self._bgr_to_rgb(extra_view_image)
             frame: dict[str, Any] = {
-                "state": np.asarray(state).astype(np.float32),
-                "actions": np.asarray(np_action).astype(np.float32).flatten(),
+                "state": state_array,
+                "actions": action_array,
                 "task": task_desc,
                 "is_success": np.array([is_success], dtype=bool),
                 "done": np.array([False], dtype=bool),
@@ -567,6 +591,26 @@ class CollectEpisode(gym.Wrapper):
         steps = steps[:end]
         steps[-1]["done"] = np.array([True], dtype=bool)
         return steps
+
+    @staticmethod
+    def _so101_to_model_units(values: np.ndarray) -> np.ndarray:
+        """Convert SO-101 env radians/fraction values to PI05 model units."""
+        values = np.asarray(values, dtype=np.float32).reshape(-1)
+        if values.shape != (6,):
+            raise ValueError(f"SO-101 vectors must have shape (6,), got {values.shape}")
+        if not np.isfinite(values).all():
+            raise ValueError("SO-101 vectors contain non-finite values")
+        result = values.copy()
+        result[:-1] = np.rad2deg(result[:-1]) / 100.0
+        return result
+
+    @staticmethod
+    def _bgr_to_rgb(image: np.ndarray) -> np.ndarray:
+        """Convert an OpenCV BGR frame to the RGB contract used by OpenPI."""
+        image = np.asarray(image)
+        if image.ndim == 3 and image.shape[-1] == 3:
+            return image[..., ::-1].copy()
+        return image
 
     def _ensure_lerobot_writer(self, ep_data: dict):
         """Get-or-create the LeRobot writer. Must be called under ``_lerobot_lock``."""
@@ -784,7 +828,28 @@ class CollectEpisode(gym.Wrapper):
         image = obs.get("main_images", obs.get("image", obs.get("full_image")))
         wrist_image = obs.get("wrist_images", obs.get("wrist_image"))
         extra_view_image = obs.get("extra_view_images", obs.get("extra_view_image"))
+        # Real-world environments expose camera frames under ``frames``.
+        # SO-101's UVC camera is declared as ``wrist_1``; map the first frame
+        # to the writer's wrist view when no explicit image alias is present.
+        frames = obs.get("frames")
+        if wrist_image is None and isinstance(frames, dict) and frames:
+            wrist_image = next(iter(frames.values()))
         state = obs.get("states", obs.get("state"))
+        # SO-101 exposes its arm and gripper as a structured state dict.  The
+        # LeRobot writer stores one flat six-dimensional vector, so normalize
+        # this known public contract at the collection boundary.
+        if isinstance(state, dict) and {
+            "arm_joint_position",
+            "gripper_position",
+        }.issubset(state):
+            state = np.concatenate(
+                [
+                    np.asarray(state["arm_joint_position"], dtype=np.float32).reshape(
+                        -1
+                    ),
+                    np.asarray(state["gripper_position"], dtype=np.float32).reshape(-1),
+                ]
+            )
         return (
             self._to_numpy(image),
             self._to_numpy(wrist_image),

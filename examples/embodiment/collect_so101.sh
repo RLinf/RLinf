@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,26 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera interfaces and registered hardware backends.
 
-Importing this package registers the built-in drivers. Vendor SDKs are loaded
-only when a driver opens or discovers hardware.
-"""
+set -euo pipefail
 
-from .base import BaseCamera, Camera, CameraInfo
+EMBODIED_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_PATH="$(dirname "$(dirname "${EMBODIED_PATH}")")"
+PYTHON_BIN="${PYTHON_BIN:-${REPO_PATH}/.venv/bin/python}"
+EPISODES="${1:-1}"
 
-# Import built-in drivers to populate the camera registry.
-from .lumos import LumosCamera
-from .realsense import RealSenseCamera
-from .uvc import UVCCamera
-from .zed import ZEDCamera
+export EMBODIED_PATH REPO_PATH
+export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
+export HYDRA_FULL_ERROR=1
 
-__all__ = [
-    "BaseCamera",
-    "Camera",
-    "CameraInfo",
-    "LumosCamera",
-    "RealSenseCamera",
-    "UVCCamera",
-    "ZEDCamera",
-]
+exec "${PYTHON_BIN}" "${EMBODIED_PATH}/collect_real_data.py" \
+  --config-path "${EMBODIED_PATH}/config" \
+  --config-name realworld_so101_collect_data \
+  "runner.num_data_episodes=${EPISODES}"

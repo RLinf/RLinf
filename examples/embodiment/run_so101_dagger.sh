@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,26 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera interfaces and registered hardware backends.
+set -euo pipefail
 
-Importing this package registers the built-in drivers. Vendor SDKs are loaded
-only when a driver opens or discovers hardware.
-"""
-
-from .base import BaseCamera, Camera, CameraInfo
-
-# Import built-in drivers to populate the camera registry.
-from .lumos import LumosCamera
-from .realsense import RealSenseCamera
-from .uvc import UVCCamera
-from .zed import ZEDCamera
-
-__all__ = [
-    "BaseCamera",
-    "Camera",
-    "CameraInfo",
-    "LumosCamera",
-    "RealSenseCamera",
-    "UVCCamera",
-    "ZEDCamera",
-]
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+python_bin="${PYTHON_BIN:-${repo_dir}/.venv/bin/python}"
+export PYTHONPATH="${repo_dir}:${PYTHONPATH:-}"
+exec "${python_bin}" -m examples.embodiment.so101.run_policy --dagger "$@"
