@@ -105,6 +105,8 @@ def test_so101_dagger_config_selects_dagger_task():
     assert cfg.algorithm.loss_type == "embodied_dagger"
     assert cfg.actor.model.openpi.task == "dagger"
     assert cfg.actor.model.action_dim == 6
+    assert cfg.cluster.node_groups[0].hardware.configs[0].serial_port == "/dev/ttyACM1"
+    assert cfg.env.train.teleop[0].so101_leader.port == "/dev/ttyACM0"
 
 
 def test_so101_policy_server_uses_openpi_rlinf_factory():

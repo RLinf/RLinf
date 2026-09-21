@@ -111,8 +111,16 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        # Async runners stop their interaction loop, but the environment still
+        # owns physical devices and must park before those handles are closed.
+        try:
+            env_group.stop().wait()
+        finally:
+            env_group.shutdown().wait()
 
 
 if __name__ == "__main__":
