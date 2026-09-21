@@ -1530,6 +1530,8 @@ def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
         OpenPIApxInfAdapter(
             _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
         )
+
+
 # --- OpenWAM checkpoint export ---------------------------------------------
 
 
