@@ -99,6 +99,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # respective dispatchers below.
 SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren")
 TEST_BUILD=${TEST_BUILD:-0}
+UNINSTALL_FA4=${UNINSTALL_FA4:-0}
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
@@ -3618,12 +3619,19 @@ install_mbridge() {
     echo "[install.sh] megatron-bridge ${mbridge_ver} + nvidia-modelopt ${modelopt_ver} installed."
 }
 
-# FA4 backward is sm90+ only; on sm<9 drop it so TE falls back to FA2.
+# FA4 backward is sm90+ only; on sm<90 drop it so TE falls back to FA2.
+# Docker builds usually have no GPU, so detection cannot run; set
+# UNINSTALL_FA4=1 to drop it without probing the device.
 uninstall_fa4_conditional() {
+    if [ "$UNINSTALL_FA4" -eq 1 ]; then
+        echo "[install.sh] UNINSTALL_FA4=1: uninstalling flash-attn-4 → TE will use FA2."
+        uv pip uninstall flash-attn-4 || true
+        return 0
+    fi
     local gpu_cc
     gpu_cc=$(python -c "import torch;print(torch.cuda.get_device_capability(0)[0])" 2>/dev/null || true)
     if [ -z "$gpu_cc" ]; then
-        echo "[install.sh] WARNING: Could not detect GPU compute capability; keeping FA4."
+        echo "[install.sh] WARNING: Could not detect GPU compute capability; keeping FA4. Set UNINSTALL_FA4=1 to drop it (needed for sm<90 images)."
         return 0
     fi
     if [ "$gpu_cc" -lt 9 ]; then

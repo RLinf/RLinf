@@ -43,13 +43,13 @@ WideSeek-R1 评测
    :local:
 
 前置条件
-----------------------------------------
+--------
 
-评测前，请确保以下组件已准备就绪：
+评测前，请先完成 :doc:`环境与工具配置 <tools>`：
 
-- RLinf 环境已安装。参见 :doc:`../../../start/installation`。
-- 评判模型服务已启动。参见 :doc:`index`。
-- 已配置相应的工具后端。参见 :doc:`tools`。
+- RLinf 环境已安装。
+- 评判模型已启动。
+- 已配置相应的工具后端。
 
 下载模型
 ----------------------------------------
@@ -133,7 +133,7 @@ WideSearch 基准
 - ``rollout.model.model_path`` 指向你要评测的模型。
 - ``data.val_data_paths`` 指向正确的数据集。
 - ``agentloop.llm_ip`` 设置正确。
-- 所需工具已配置完成。参见 :doc:`tools`。
+- 所需工具已配置完成。参见 :doc:`环境与工具配置 <tools>`。
 
 然后运行以下命令之一：
 
@@ -141,6 +141,8 @@ WideSearch 基准
 
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+
+多节点启动请参见 :ref:`wideseek-r1-multinode`。
 
 输出文件
 ----------------------------------------

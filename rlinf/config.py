@@ -1600,6 +1600,32 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def adv_requires_group_baseline(
+    adv_type: Optional[str], use_reinpp_baseline: bool = False
+) -> bool:
+    """Whether an advantage estimator draws its baseline from within-group
+    statistics and therefore requires ``algorithm.group_size > 1``.
+
+    GRPO and GRPO-dynamic always normalize each reward against its group, so a
+    group of one leaves nothing to compare against. ReinForce++ only subtracts a
+    per-group mean when its baseline mode is enabled (``use_reinpp_baseline``);
+    plain ReinForce++ normalizes over the whole batch and is exempt.
+
+    ``adv_type`` is lower-cased to match how :func:`get_adv_and_returns`
+    dispatches, so a differently-cased name cannot slip past the guard and still
+    reach the group-based estimator. Offline configs leave it unset, which
+    selects no estimator and therefore needs no group.
+    """
+    if not adv_type:
+        return False
+    adv_type = adv_type.lower()
+    if adv_type in ("grpo", "grpo_dynamic"):
+        return True
+    if adv_type == "reinpp":
+        return bool(use_reinpp_baseline)
+    return False
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -1665,8 +1691,15 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_offline_cfg(cfg)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
-        if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
-            assert cfg.algorithm.group_size > 1
+        if adv_requires_group_baseline(
+            cfg.algorithm.adv_type,
+            cfg.algorithm.get("use_reinpp_baseline", False),
+        ):
+            assert cfg.algorithm.group_size > 1, (
+                f"algorithm.adv_type={cfg.algorithm.adv_type!r} uses a "
+                f"within-group baseline and requires algorithm.group_size > 1, "
+                f"got {cfg.algorithm.group_size}."
+            )
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
         f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
