@@ -293,13 +293,34 @@ class CollectEpisode(gym.Wrapper):
         if self._closed:
             return None
         self._closed = True
-        self._finalize_lerobot()
-        self._wait_futures()
+        close_error = None
+        try:
+            self._finalize_lerobot()
+        except BaseException as exc:  # noqa: BLE001 - close hardware below
+            close_error = exc
+        try:
+            self._wait_futures()
+        except BaseException as exc:  # noqa: BLE001 - close hardware below
+            if close_error is None:
+                close_error = exc
         if self._executor is not None:
-            self._executor.shutdown(wait=True)
-            self._executor = None
-        if hasattr(self.env, "close"):
-            return self.env.close()
+            try:
+                self._executor.shutdown(wait=True)
+            except BaseException as exc:  # noqa: BLE001 - close hardware below
+                if close_error is None:
+                    close_error = exc
+            finally:
+                self._executor = None
+
+        try:
+            if hasattr(self.env, "close"):
+                self.env.close()
+        except BaseException as exc:  # noqa: BLE001 - preserve earlier failure
+            if close_error is None:
+                close_error = exc
+
+        if close_error is not None:
+            raise close_error
         return None
 
     def _new_buffer(self) -> dict[str, list]:

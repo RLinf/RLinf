@@ -292,6 +292,52 @@ class EnvWorker(Worker):
 
         self._init_env()
 
+    def shutdown(self) -> None:
+        """Park and close every environment owned by this worker.
+
+        Real-world environments must be parked before their device handles are
+        released.  The method is intentionally idempotent so entrypoints can
+        call it from an ``ExitStack`` after either normal completion or an
+        exception.
+        """
+        if getattr(self, "_shutdown_complete", False):
+            return
+        self._shutdown_complete = True
+
+        cleanup_errors: list[BaseException] = []
+        seen: set[int] = set()
+        environments = [
+            *getattr(self, "env_list", []),
+            *getattr(self, "eval_env_list", []),
+        ]
+        for env in environments:
+            if id(env) in seen:
+                continue
+            seen.add(id(env))
+
+            park = get_env_attr(env, "park")
+            if callable(park):
+                try:
+                    park()
+                except BaseException as exc:  # noqa: BLE001 - preserve close path
+                    cleanup_errors.append(exc)
+                    self.log_error(f"Failed to park environment during shutdown: {exc}")
+
+            close = get_env_attr(env, "close")
+            if callable(close):
+                try:
+                    close()
+                except BaseException as exc:  # noqa: BLE001 - best-effort cleanup
+                    cleanup_errors.append(exc)
+                    self.log_error(
+                        f"Failed to close environment during shutdown: {exc}"
+                    )
+
+        if cleanup_errors:
+            self.log_warning(
+                f"Environment shutdown completed with {len(cleanup_errors)} cleanup error(s)."
+            )
+
     def update_env_cfg(self):
         if self.enable_train:
             # train env

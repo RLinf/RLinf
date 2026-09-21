@@ -1248,6 +1248,23 @@ def test_keyboard_listener_supports_wsl_control_file(monkeypatch, tmp_path):
     listener.close()
 
 
+def test_keyboard_eval_control_aborts_on_quit(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.episode.eval_control import (
+        KeyboardAbort,
+        KeyboardEvalControlWrapper,
+    )
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    wrapper = KeyboardEvalControlWrapper(FakeEnv())
+    wrapper._running = True
+    control_file.write_text("quit\n", encoding="utf-8")
+
+    with pytest.raises(KeyboardAbort, match="evaluation shutdown"):
+        wrapper.step(POLICY)
+    wrapper.close()
+
+
 def test_start_end_wrapper_accepts_wsl_control_commands(monkeypatch, tmp_path):
     from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
 
@@ -1258,13 +1275,37 @@ def test_start_end_wrapper_accepts_wsl_control_commands(monkeypatch, tmp_path):
 
     control_file.write_text("start\n", encoding="utf-8")
     assert wrapper.step(POLICY)[4]["keyboard_event"] == "start"
-
     control_file.write_text("success\n", encoding="utf-8")
     _, reward, terminated, _, info = wrapper.step(POLICY)
     assert reward == 1.0
     assert terminated
     assert info["keyboard_event"] == "end_success"
     wrapper.close()
+
+
+def test_env_worker_shutdown_parks_and_closes_once():
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    class FakeEnvironment:
+        def __init__(self):
+            self.parked = 0
+            self.closed = 0
+
+        def park(self):
+            self.parked += 1
+
+        def close(self):
+            self.closed += 1
+
+    worker = object.__new__(EnvWorker)
+    env = FakeEnvironment()
+    worker.env_list = [env]
+    worker.eval_env_list = [env]
+    worker.shutdown()
+    worker.shutdown()
+
+    assert env.parked == 1
+    assert env.closed == 1
 
 
 def test_intervention_trigger_accepts_wsl_control_commands(monkeypatch, tmp_path):

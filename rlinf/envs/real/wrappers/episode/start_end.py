@@ -18,14 +18,16 @@ from typing import Any, SupportsFloat
 
 from gymnasium.core import ActType, Env, ObsType
 
-from .session import KeyboardSession
+from .session import KeyboardAbort, KeyboardSession
 
 
 class KeyboardStartEndWrapper(KeyboardSession):
     """Control data-collection episodes with a three-key foot pedal.
 
     ``a`` starts or aborts recording, ``b`` advances the segment, and ``c``
-    ends the episode successfully. Aborting preserves the current robot pose.
+    ends the episode successfully. ``q`` requests a controlled shutdown that
+    lets the owning runner park and close the hardware. Aborting preserves the
+    current robot pose.
 
     Adds ``keyboard_phase`` / ``keyboard_event`` / ``pre_record`` /
     ``record_reset`` / ``segment_advance`` to ``info`` for ``CollectEpisode``.
@@ -46,6 +48,10 @@ class KeyboardStartEndWrapper(KeyboardSession):
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        pressed = list(self.presses())
+        if any(key in {"q", "quit"} for key in pressed):
+            raise KeyboardAbort("Operator requested collection shutdown.")
+
         obs, reward, terminated, truncated, info = self.env.step(action)
 
         # The pedal owns episode boundaries; start and abort do not reset the env.
@@ -56,8 +62,7 @@ class KeyboardStartEndWrapper(KeyboardSession):
         segment_advance = False
         event: str | None = None
 
-        for key in self.presses():
-            now = time.monotonic()
+        for key in pressed:
             if key == "a":
                 if self._recording:
                     # Abort recording without moving the robot.
@@ -72,6 +77,7 @@ class KeyboardStartEndWrapper(KeyboardSession):
                     record_reset = True
                     self._last_segment_ts = -math.inf
             elif key == "b" and self._recording:
+                now = time.monotonic()
                 if now - self._last_segment_ts >= self.SEGMENT_DEBOUNCE_S:
                     event = "segment"
                     segment_advance = True

@@ -14,8 +14,9 @@
 """Foot-pedal-gated wrapper for autonomous policy eval.
 
 Pedal: ``a`` starts a rollout from idle; ``c`` ends with reward=1
-("success"); ``b`` ends with reward=0 ("failure"). On end, returns
-``terminated=True`` so the outer ``auto_reset`` can return the robot home.
+("success"); ``b`` ends with reward=0 ("failure"). ``q`` requests a
+controlled shutdown. On end, returns ``terminated=True`` so the outer
+``auto_reset`` can return the robot home.
 """
 
 import time
@@ -23,7 +24,7 @@ from typing import Any, Optional, SupportsFloat
 
 from gymnasium.core import ActType, Env, ObsType
 
-from .session import KeyboardSession
+from .session import KeyboardAbort, KeyboardSession
 
 
 class KeyboardEvalControlWrapper(KeyboardSession):
@@ -57,6 +58,8 @@ class KeyboardEvalControlWrapper(KeyboardSession):
                 last_heartbeat = now
                 self.log("Still waiting for pedal 'a' to start the rollout...")
             for key in self.listener.pop_pressed_keys():
+                if key in {"q", "quit"}:
+                    raise KeyboardAbort("Operator requested evaluation shutdown.")
                 if key == "a":
                     self._running = True
                     self.log("Pedal 'a' pressed; starting rollout.")
@@ -74,6 +77,10 @@ class KeyboardEvalControlWrapper(KeyboardSession):
                     return self._idle_response(event="start")
             return self._idle_response(event=None)
 
+        pressed = list(self.presses())
+        if any(key in {"q", "quit"} for key in pressed):
+            raise KeyboardAbort("Operator requested evaluation shutdown.")
+
         # Forward policy actions until the operator reports an outcome.
         obs, reward, terminated, truncated, info = self.env.step(action)
         self._last_obs = obs
@@ -82,7 +89,7 @@ class KeyboardEvalControlWrapper(KeyboardSession):
         truncated = False
 
         result: str | None = None
-        for key in self.presses():
+        for key in pressed:
             if key == "c":
                 terminated = True
                 reward = 1.0

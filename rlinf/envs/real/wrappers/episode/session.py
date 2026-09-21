@@ -25,6 +25,10 @@ import gymnasium as gym
 from .keyboard import KeyboardListener
 
 
+class KeyboardAbort(RuntimeError):
+    """Signal a controlled operator abort to the owning runner."""
+
+
 class KeyboardSession(gym.Wrapper):
     """Base wrapper for debounced operator key input.
 

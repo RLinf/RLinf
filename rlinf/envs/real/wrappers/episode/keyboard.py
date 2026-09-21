@@ -47,6 +47,8 @@ class KeyboardListener:
         "space": "Key.space",
         "key.space": "Key.space",
         "release": "r",
+        "quit": "q",
+        "stop": "q",
     }
 
     def __init__(self) -> None:

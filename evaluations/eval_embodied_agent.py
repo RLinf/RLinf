@@ -107,6 +107,9 @@ def main(cfg) -> None:
         env_group = env_worker_cls.create_group(cfg).launch(
             cluster, name=cfg.env.group_name, placement_strategy=env_placement
         )
+        # Real-world environments must park before their devices are closed.
+        # Register this after launch so it also runs when evaluation fails.
+        stack.callback(lambda: env_group.shutdown().wait())
 
         # launch the sglang server
         if rollout_backend == "sglang":

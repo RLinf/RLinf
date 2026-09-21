@@ -852,3 +852,50 @@ def test_infer_obs_batch_size_images_only():
 def test_infer_obs_batch_size_raises_when_unbatched():
     with pytest.raises(ValueError, match="Cannot infer batch size"):
         infer_obs_batch_size({"obs": {}})
+
+
+def test_collector_abort_parks_before_close():
+    from examples.embodiment.collect_real_data import DataCollector
+    from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
+
+    class FakeEnvironment:
+        def __init__(self):
+            self.calls = []
+
+        def get_wrapper_attr(self, name):
+            return getattr(self, name)
+
+        def park(self):
+            self.calls.append("park")
+
+        def close(self):
+            self.calls.append("close")
+
+    collector = object.__new__(DataCollector)
+    collector.env = FakeEnvironment()
+    collector.log_info = lambda _: None
+    collector._collect = lambda: (_ for _ in ()).throw(KeyboardAbort("quit"))
+
+    collector.run()
+
+    assert collector.env.calls == ["park", "close"]
+
+
+def test_episode_close_releases_env_when_finalize_fails(tmp_path):
+    class Env(gym.Env):
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    env = Env()
+    collector = CollectEpisode(env, str(tmp_path), export_format="pickle")
+
+    def fail_finalize():
+        raise RuntimeError("writer failed")
+
+    collector._finalize_lerobot = fail_finalize
+    with pytest.raises(RuntimeError, match="writer failed"):
+        collector.close()
+    assert env.closed

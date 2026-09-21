@@ -26,6 +26,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.real import RealWorldEnv
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 from rlinf.utils.logging import get_logger
 
@@ -120,6 +121,15 @@ class DataCollector(Worker):
         failed = False
         try:
             return self._collect()
+        except KeyboardAbort:
+            self.log_info("Operator requested collection shutdown.")
+            try:
+                self.env.get_wrapper_attr("park")()
+            except BaseException:  # noqa: BLE001 - preserve controlled shutdown
+                get_logger().exception(
+                    "Failed to park real-world hardware after operator shutdown"
+                )
+            return None
         except BaseException:  # noqa: BLE001 - hardware cleanup includes interrupts
             failed = True
             try:
