@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import math
+import os
 import time
-from typing import Any, SupportsFloat
+from pathlib import Path
+from typing import Any, Optional, SupportsFloat
 
 from gymnasium.core import ActType, Env, ObsType
 
@@ -44,6 +46,16 @@ class KeyboardStartEndWrapper(KeyboardSession):
         """Clear segment history before recording a new episode."""
         self._recording = False
         self._last_segment_ts = -math.inf
+
+    def reset(
+        self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
+    ) -> tuple[ObsType, dict[str, Any]]:
+        """Reset the episode and announce readiness to local launchers."""
+        result = super().reset(seed=seed, options=options)
+        ready_file = os.environ.get("RLINF_KEYBOARD_READY_FILE")
+        if ready_file:
+            Path(ready_file).touch()
+        return result
 
     def _teleop_attr(self, name: str) -> Any:
         """Return an optional lifecycle hook from the wrapped teleop stack."""
@@ -109,7 +121,6 @@ class KeyboardStartEndWrapper(KeyboardSession):
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         pressed = list(self.presses())
         if any(key in {"q", "quit"} for key in pressed):
-            self._hold_before_reset()
             raise KeyboardAbort("Operator requested collection shutdown.")
 
         record_reset = False

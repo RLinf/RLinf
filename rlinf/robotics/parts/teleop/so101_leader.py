@@ -249,6 +249,8 @@ class SO101Leader(TeleopDevice):
     def hold_for_reset(self, context: Mapping[str, Any]) -> None:
         """Hold the current leader pose before the robot is reset or parked."""
         del context
+        if self._reset_prepared:
+            return
         names = (*MOTORS, GRIPPER)
         with self._serial_lock:
             reading = self._device.get_action()

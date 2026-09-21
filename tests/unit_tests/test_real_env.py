@@ -1336,6 +1336,23 @@ def test_start_end_handover_releases_before_first_recorded_step(monkeypatch, tmp
     wrapper.close()
 
 
+def test_start_end_quit_does_not_run_episode_reset_buffer(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.episode.start_end import (
+        KeyboardAbort,
+        KeyboardStartEndWrapper,
+    )
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    wrapper = KeyboardStartEndWrapper(FakeEnv())
+    wrapper.reset()
+    control_file.write_text("quit\n", encoding="utf-8")
+
+    with pytest.raises(KeyboardAbort):
+        wrapper.step(POLICY)
+    wrapper.close()
+
+
 def test_env_worker_shutdown_parks_and_closes_once():
     from rlinf.workers.env.env_worker import EnvWorker
 
