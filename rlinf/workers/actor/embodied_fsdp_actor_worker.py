@@ -771,8 +771,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "logprob_mask": output_dict.get("logprob_mask", None),
             "loss_agg_func": self.loss_agg_func,
             "log_logprob_diagnostics": self.cfg.algorithm.get(
-                "log_logprob_diagnostics",
-                self.cfg.algorithm.get("logprob_type") == "sequence_token_level",
+                "log_logprob_diagnostics", False
             ),
         }
 
