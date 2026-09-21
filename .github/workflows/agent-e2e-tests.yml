@@ -409,6 +409,41 @@ jobs:
           pkill redis-server 2>/dev/null || true
           rm -rf code-judge/
 
+  searchr1-qwen-fsdp-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend Agentic environment
+        run: |
+          unset PYTHONPATH
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform ascend agentic
+
+      - name: Train SearchR1 with SGLang MA-FSDP on Ascend
+        timeout-minutes: 30
+        env:
+          HCCL_HOST_SOCKET_PORT_RANGE: 60000-60050
+          HCCL_NPU_SOCKET_PORT_RANGE: 61000-61050
+          RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES: 1
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-fsdp-ascend
+
+      - name: Clean up
+        run: |
+          ray stop --force 2>/dev/null || true
+          rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+
   searchr1-qwen-grpo-test:
     runs-on: reason
     steps:

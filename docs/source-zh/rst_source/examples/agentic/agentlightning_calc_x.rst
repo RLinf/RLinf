@@ -36,6 +36,7 @@ agent 会读取题目，生成推理过程与答案，并根据反馈做强化�
 ----------------------------------------
 
 RLinf 基础环境请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
+如需在 Ascend CANN 上使用 FSDP2 和 SGLang，请参阅 :doc:`在 Ascend CANN 上运行 RLinf <../../guides/ascend_cann>`\ 。
 
 安装本示例依赖：
 

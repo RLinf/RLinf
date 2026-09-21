@@ -185,7 +185,6 @@ class FSDPStrategy(FSDPStrategyBase):
             use_orig_params=self.cfg.fsdp_config.use_orig_params,
             cpu_offload=cpu_offload,
         )
-
         return fsdp_model
 
     @classmethod

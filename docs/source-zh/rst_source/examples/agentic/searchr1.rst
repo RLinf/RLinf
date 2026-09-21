@@ -38,6 +38,7 @@ RLinf环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 RLinf 环境配置参照 :doc:`RLinf Installation </rst_source/start/installation>`。
+如需在 Ascend CANN 上使用 FSDP2 和 SGLang，请参阅 :doc:`在 Ascend CANN 上运行 RLinf <../../guides/ascend_cann>`\ 。
 
 Local Wiki Server运行环境
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
