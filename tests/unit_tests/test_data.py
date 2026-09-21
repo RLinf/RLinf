@@ -899,3 +899,27 @@ def test_episode_close_releases_env_when_finalize_fails(tmp_path):
     with pytest.raises(RuntimeError, match="writer failed"):
         collector.close()
     assert env.closed
+
+
+def test_episode_close_skips_uncreated_lerobot_writer(tmp_path):
+    class Env(gym.Env):
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class UncreatedWriter:
+        dataset = None
+
+        def finalize(self):  # pragma: no cover - must not be called
+            raise AssertionError("an uncreated writer cannot be finalized")
+
+    env = Env()
+    collector = CollectEpisode(env, str(tmp_path), export_format="lerobot")
+    collector._lerobot_writer = UncreatedWriter()
+
+    collector.close()
+
+    assert env.closed
+    assert collector._lerobot_writer is None

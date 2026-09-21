@@ -658,9 +658,17 @@ class CollectEpisode(gym.Wrapper):
             return
         self._wait_futures()
         with self._lerobot_lock:
-            if self._lerobot_writer is not None:
-                self._lerobot_writer.finalize()
+            writer = self._lerobot_writer
+            if writer is None:
+                return
+            # The writer object can remain after its dataset was finalized by
+            # ``finalize_interval`` or before any episode created a schema.
+            # LeRobot's ``finalize`` requires an active dataset.
+            if getattr(writer, "dataset", None) is None:
                 self._lerobot_writer = None
+                return
+            writer.finalize()
+            self._lerobot_writer = None
 
     def _write_pickle(self, save_path: str, episode_data: dict) -> None:
         with open(save_path, "wb") as f:
