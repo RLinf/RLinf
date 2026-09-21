@@ -1765,7 +1765,7 @@ def test_robotwin_env_eef_proprio_and_action_type_binding():
 
 def test_env_output_keeps_native_proprio():
     """EnvOutput's observation schema carries the checkpoint-native proprio."""
-    from rlinf.data.schema.embodied_types import EnvOutput
+    from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
 
     obs = {
         "main_images": torch.zeros(2, 4, 4, 3, dtype=torch.uint8),
@@ -1774,12 +1774,13 @@ def test_env_output_keeps_native_proprio():
         "native_proprio": torch.arange(40, dtype=torch.float32).view(2, 20),
         "task_descriptions": ["a", "b"],
     }
-    packed = EnvOutput(obs=obs, dones=torch.zeros(2, 1, dtype=torch.bool)).to_dict()
+    transition = EnvTransition(dones=torch.zeros(2, 1, dtype=torch.bool))
+    packed = EnvOutput(obs=obs, transition=transition).to_dict()
     assert torch.equal(packed["obs"]["native_proprio"], obs["native_proprio"])
     assert packed["obs"]["extra_view_images"] is None
     without = EnvOutput(
         obs={k: v for k, v in obs.items() if k != "native_proprio"},
-        dones=torch.zeros(2, 1, dtype=torch.bool),
+        transition=transition,
     ).to_dict()
     assert without["obs"]["native_proprio"] is None
 
