@@ -74,7 +74,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self._opd_teacher_model = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
-        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
+        self.loss_agg_func = get_loss_agg_func(
+            self.cfg.algorithm.get("loss_agg_func", "token-mean")
+        )
         self._group_success_metrics: dict[str, float] = {}
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
