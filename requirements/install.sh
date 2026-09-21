@@ -1287,11 +1287,6 @@ restore_pyproject() {
     fi
 }
 
-cleanup_install() {
-    restore_pyproject
-    unset_mirror
-}
-
 AGENTIC_DEFAULT_ENGINE="sglang"
 
 agentic_latest_version() {
@@ -1459,7 +1454,7 @@ apply_torch_override() {
 
     PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-torch-bak.$$"
     cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
-    trap 'cleanup_install' EXIT INT TERM HUP
+    trap 'restore_pyproject' EXIT INT TERM HUP
 
     if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ] && [ -n "$_torchcodec_spec" ]; then
         sed -i -E "s/\"torchcodec[<>=!][^\"]*\"/\"${_torchcodec_spec}\"/" "$PYPROJECT_FILE"
