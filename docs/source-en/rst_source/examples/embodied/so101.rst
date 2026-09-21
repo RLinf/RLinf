@@ -258,12 +258,14 @@ for explicit DAgger control.
 
 The first reset and every episode reset start the leader and follower
 trajectories together. Both arms move their five joints and grippers to the
-configured standard state. After both trajectories finish, the leader holds
-that state for ``reset_hold_seconds`` and then releases torque for the operator.
-The foot-pedal ``start_end`` controls recording: ``a`` starts or aborts the
-current recording, ``b`` advances the segment, and ``c`` saves the episode as a
-success. The config writes the finalized LeRobot dataset below the run's
-``collected_data`` directory.
+configured standard state, and the leader keeps torque enabled while waiting
+for the next recording. The foot-pedal ``start_end`` controls recording:
+``a`` starts a handover countdown, then releases the leader for manual control;
+``a`` during recording aborts, ``b`` advances the segment, and ``c`` holds the
+leader, gives the operator time to clear the arm, and saves the episode as a
+success. The handover duration is configured by
+``manual_start_hold_seconds``. The config writes the finalized LeRobot dataset
+below the run's ``collected_data`` directory.
 
 If collection raises an error, the runner moves the leader and follower to
 their configured park state together, then closes both connections and releases

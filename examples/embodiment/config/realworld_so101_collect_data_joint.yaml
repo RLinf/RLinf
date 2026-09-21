@@ -61,7 +61,7 @@ env:
           calibration_id: LEADER_CALIB  # Replace: leader arm calibration ID
           align_duration_s: 3.0
           align_fps: 30.0
-          reset_hold_seconds: 3.0
+          manual_start_hold_seconds: 3.0
     keyboard_reward_wrapper: start_end
     max_episode_steps: null
     max_steps_per_rollout_epoch: 10000

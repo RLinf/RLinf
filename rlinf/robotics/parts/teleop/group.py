@@ -347,6 +347,24 @@ class TeleopGroup:
         if errors:
             raise errors[-1]
 
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the longest configured manual-control handover buffer."""
+        return max(
+            (float(device.manual_start_hold_seconds) for device in self.devices),
+            default=0.0,
+        )
+
+    def release_for_manual(self, context: Mapping[str, Any]) -> None:
+        """Release every teleop device to the operator."""
+        for device in self.devices:
+            device.release_for_manual(context)
+
+    def hold_for_reset(self, context: Mapping[str, Any]) -> None:
+        """Hold every teleop device before a reset or park operation."""
+        for device in self.devices:
+            device.hold_for_reset(context)
+
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
         """Return named action parts that hold the current robot state."""
         parts: dict[str, np.ndarray] = {}

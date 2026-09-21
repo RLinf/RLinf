@@ -1283,6 +1283,42 @@ def test_start_end_wrapper_accepts_wsl_control_commands(monkeypatch, tmp_path):
     wrapper.close()
 
 
+def test_start_end_handover_releases_before_first_recorded_step(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+
+    class HandoverEnv(FakeEnv):
+        manual_start_hold_seconds = 0.0
+
+        def __init__(self):
+            super().__init__()
+            self.lifecycle = []
+
+        def release_for_manual(self):
+            self.lifecycle.append("release")
+
+        def hold_for_reset(self):
+            self.lifecycle.append("hold")
+
+        def step(self, action):
+            self.lifecycle.append("step")
+            return super().step(action)
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    env = HandoverEnv()
+    wrapper = KeyboardStartEndWrapper(env)
+    wrapper.reset()
+
+    control_file.write_text("start\n", encoding="utf-8")
+    wrapper.step(POLICY)
+    assert env.lifecycle == ["release", "step"]
+
+    control_file.write_text("success\n", encoding="utf-8")
+    wrapper.step(POLICY)
+    assert env.lifecycle == ["release", "step", "step", "hold"]
+    wrapper.close()
+
+
 def test_env_worker_shutdown_parks_and_closes_once():
     from rlinf.workers.env.env_worker import EnvWorker
 
@@ -1457,6 +1493,9 @@ class _ResetGroup:
 
     def abort_reset(self, context):
         self.aborted = True
+
+    def hold_for_reset(self, context):
+        pass
 
     def disconnect(self):
         self.disconnected = True
@@ -3694,22 +3733,18 @@ def test_so101_explicit_takeover_aligns_all_servos_and_holds_until_started(monke
             leader.disconnect()
 
 
-def test_so101_reset_holds_the_leader_before_releasing_torque(monkeypatch):
+def test_so101_reset_keeps_the_leader_until_manual_handover():
     from robot_mocks import mocked_sdks
 
     with mocked_sdks():
         from rlinf.robotics.parts.teleop import SO101Leader
 
-        sleeps = []
         leader = SO101Leader(
             port="/dev/mock-leader",
             align_duration_s=0.0,
-            reset_hold_seconds=2.5,
+            manual_start_hold_seconds=2.5,
         )
         leader.connect()
-        monkeypatch.setattr(
-            "rlinf.robotics.parts.teleop.so101_leader.time.sleep", sleeps.append
-        )
         try:
             leader.prepare_reset(
                 {
@@ -3728,7 +3763,8 @@ def test_so101_reset_holds_the_leader_before_releasing_torque(monkeypatch):
 
             leader.on_reset({})
 
-            assert sleeps == [2.5]
+            assert leader._device.bus.torque_enabled
+            leader.release_for_manual({})
             assert not leader._device.bus.torque_enabled
         finally:
             leader.disconnect()
@@ -3837,7 +3873,7 @@ def test_so101_env_is_driven_by_its_leader():
                         "so101_leader": {
                             "port": "/dev/mock-leader",
                             "align_duration_s": 0.0,
-                            "reset_hold_seconds": 0.0,
+                            "manual_start_hold_seconds": 0.0,
                         }
                     }
                 ],
@@ -3909,7 +3945,7 @@ def test_so101_explicit_takeover_ignores_motion_until_triggered(
                         "so101_leader": {
                             "port": "/dev/mock-leader",
                             "align_duration_s": 0.0,
-                            "reset_hold_seconds": 0.0,
+                            "manual_start_hold_seconds": 0.0,
                         }
                     }
                 ],
@@ -4317,7 +4353,7 @@ def test_so101_collection_uses_coordinated_complete_reset_state(monkeypatch):
     assert len(cfg.env.eval.override_cfg.reset_joint_qpos) == 5
     assert 0.0 <= cfg.env.eval.override_cfg.reset_gripper_position <= 1.0
     leader = cfg.env.eval.teleop[0].so101_leader
-    assert leader.reset_hold_seconds == pytest.approx(3.0)
+    assert leader.manual_start_hold_seconds == pytest.approx(3.0)
 
 
 @pytest.fixture

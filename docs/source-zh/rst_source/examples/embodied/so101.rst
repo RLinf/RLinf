@@ -192,7 +192,7 @@ WSL 等没有 ``/dev/input`` 的 Linux 环境可以用控制文件代替 evdev �
 
 ``abort`` 会停止当前录制，但不会移动机械臂。同一输入入口在评测时接受 ``failure``，在显式 DAgger 控制中接受 ``intervene`` 和 ``release``。
 
-首次 reset 以及每个 episode reset 都会同时启动 leader 和 follower 轨迹，两台机械臂的 5 个关节与夹爪一起移动到配置的标准状态。两条轨迹均完成后，leader 在 ``reset_hold_seconds`` 指定的时间内保持该状态，随后关闭扭矩并交给操作员。脚踏板使用 ``start_end`` 流程控制录制：``a`` 开始或放弃当前录制，``b`` 切换 segment，``c`` 将 episode 标记为成功并保存。配置会把最终的 LeRobot 数据集写入本次运行目录下的 ``collected_data``。
+首次 reset 以及每个 episode reset 都会同时启动 leader 和 follower 轨迹，两台机械臂的 5 个关节与夹爪一起移动到配置的标准状态；等待下一条录制时 leader 保持扭矩。脚踏板使用 ``start_end`` 流程控制录制：``a`` 触发交接倒计时，倒计时结束后 leader 卸力并交给操作员；录制中再次按 ``a`` 会放弃当前录制，``b`` 切换 segment，``c`` 会先让 leader 保持当前位置并给操作员清空机械臂的时间，再将 episode 标记为成功并保存。交接时间由 ``manual_start_hold_seconds`` 配置。配置会把最终的 LeRobot 数据集写入本次运行目录下的 ``collected_data``。
 
 采集发生异常时，runner 会让 leader 与 follower 同时进入配置的 park 状态，然后关闭两侧连接并卸力。如果安全运动本身失败，系统会记录该错误并继续执行关闭流程。
 

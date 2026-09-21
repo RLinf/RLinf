@@ -194,6 +194,10 @@ class ComposedTeleop(TeleopDevice):
         )
         errors: list[BaseException] = []
 
+        # Re-establish a stable leader target before any park trajectory starts.
+        # This protects an actively held leader when park follows an exception.
+        self.group.hold_for_reset(context)
+
         def prepare() -> None:
             try:
                 self.group.prepare_reset(context)
@@ -288,6 +292,19 @@ class ComposedTeleop(TeleopDevice):
     def on_intervention_end(self, env: gym.Env) -> None:
         """Release all devices after an operator takeover."""
         self.group.on_intervention_end(self.context_from(env))
+
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the handover buffer required by the composed devices."""
+        return self.group.manual_start_hold_seconds
+
+    def release_for_manual(self, env: gym.Env) -> None:
+        """Release all devices after the manual-control handover buffer."""
+        self.group.release_for_manual(self.context_from(env))
+
+    def hold_for_reset(self, env: gym.Env) -> None:
+        """Hold all devices before resetting or parking the robot."""
+        self.group.hold_for_reset(self.context_from(env))
 
     def get_hold_action(
         self, env: gym.Env, fallback_action: Optional[np.ndarray] = None

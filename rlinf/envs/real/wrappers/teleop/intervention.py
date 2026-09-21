@@ -193,6 +193,19 @@ class TeleopIntervention(gym.Wrapper):
             self._faulted = True
             raise
 
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the handover buffer configured by the teleop device."""
+        return float(getattr(self.device, "manual_start_hold_seconds", 0.0))
+
+    def release_for_manual(self) -> None:
+        """Release the teleop device after the manual-control buffer."""
+        self.device.release_for_manual(self)
+
+    def hold_for_reset(self) -> None:
+        """Hold the teleop device before the wrapped robot is reset."""
+        self.device.hold_for_reset(self)
+
     def reset(self, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
         """Reset the environment and synchronize the device afterward."""
         kwargs = self.device.before_reset(self, kwargs)

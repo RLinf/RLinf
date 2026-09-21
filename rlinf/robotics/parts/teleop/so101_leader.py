@@ -55,8 +55,8 @@ class SO101Leader(TeleopDevice):
         align_duration_s: Seconds spent moving the leader to the follower pose
             before manual control starts.
         align_fps: Command frequency used while aligning the leader.
-        reset_hold_seconds: Seconds to hold the reset pose before releasing the
-            leader to the operator.
+        manual_start_hold_seconds: Seconds to hold the reset pose before
+            releasing the leader to the operator.
         calibrate: Whether to run lerobot's calibration when the arm has none.
             It asks the operator to move the arm through its range, so only a
             caller holding a terminal should turn it on.
@@ -83,21 +83,23 @@ class SO101Leader(TeleopDevice):
         movement_epsilon: float = 0.01,
         align_duration_s: float = 3.0,
         align_fps: float = 30.0,
-        reset_hold_seconds: float = 3.0,
+        manual_start_hold_seconds: float = 3.0,
         calibrate: bool = False,
     ) -> None:
         if not np.isfinite(align_duration_s) or align_duration_s < 0:
             raise ValueError("SO-101 align_duration_s must be finite and nonnegative")
         if not np.isfinite(align_fps) or align_fps <= 0:
             raise ValueError("SO-101 align_fps must be finite and positive")
-        if not np.isfinite(reset_hold_seconds) or reset_hold_seconds < 0:
-            raise ValueError("SO-101 reset_hold_seconds must be finite and nonnegative")
+        if not np.isfinite(manual_start_hold_seconds) or manual_start_hold_seconds < 0:
+            raise ValueError(
+                "SO-101 manual_start_hold_seconds must be finite and nonnegative"
+            )
         self._port = port
         self._calibration_id = calibration_id
         self.MOVEMENT_EPSILON = movement_epsilon
         self._align_duration_s = float(align_duration_s)
         self._align_fps = float(align_fps)
-        self._reset_hold_seconds = float(reset_hold_seconds)
+        self._manual_start_hold_seconds = float(manual_start_hold_seconds)
         self._calibrate = calibrate
         self._serial_lock = threading.RLock()
         self._reset_prepared = False
@@ -120,6 +122,9 @@ class SO101Leader(TeleopDevice):
                 "teleop device 'so101_leader' requires a 'port', or "
                 "'so101_leader_port' in the env config."
             )
+        manual_start_hold_seconds = options.get(
+            "manual_start_hold_seconds", options.get("reset_hold_seconds", 3.0)
+        )
         return TeleopEntry(
             cls(
                 port=port,
@@ -128,7 +133,7 @@ class SO101Leader(TeleopDevice):
                 movement_epsilon=float(options.get("movement_epsilon", 0.01)),
                 align_duration_s=float(options.get("align_duration_s", 3.0)),
                 align_fps=float(options.get("align_fps", 30.0)),
-                reset_hold_seconds=float(options.get("reset_hold_seconds", 3.0)),
+                manual_start_hold_seconds=float(manual_start_hold_seconds),
             ),
             drives=options.get("drives"),
         )
@@ -221,15 +226,32 @@ class SO101Leader(TeleopDevice):
         self._reset_prepared = True
 
     def on_reset(self, context: Mapping[str, Any]) -> None:
-        """Hold the reset state briefly, then release the leader."""
+        """Keep the leader at the reset pose until manual handover."""
         if not self._reset_prepared:
             return
-        try:
-            time.sleep(self._reset_hold_seconds)
-        finally:
-            with self._serial_lock:
-                self._device.bus.disable_torque()
-                self._reset_prepared = False
+
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the operator handover buffer configured for this leader."""
+        return self._manual_start_hold_seconds
+
+    def release_for_manual(self, context: Mapping[str, Any]) -> None:
+        """Disable leader torque after the operator handover countdown."""
+        del context
+        with self._serial_lock:
+            self._device.bus.disable_torque()
+            self._reset_prepared = False
+
+    def hold_for_reset(self, context: Mapping[str, Any]) -> None:
+        """Hold the current leader pose before the robot is reset or parked."""
+        del context
+        names = (*MOTORS, GRIPPER)
+        with self._serial_lock:
+            reading = self._device.get_action()
+            current = {name: float(reading[f"{name}.pos"]) for name in names}
+            self._device.bus.sync_write("Goal_Position", current)
+            self._device.bus.enable_torque()
+            self._reset_prepared = True
 
     def abort_reset(self, context: Mapping[str, Any]) -> None:
         """Release the leader after an incomplete reset."""
@@ -304,8 +326,7 @@ class SO101Leader(TeleopDevice):
 
     def on_intervention_start(self, context: Mapping[str, Any]) -> None:
         """Release torque only after the operator has had time to grasp the arm."""
-        with self._serial_lock:
-            self._device.bus.disable_torque()
+        self.release_for_manual(context)
 
     def on_intervention_end(self, context: Mapping[str, Any]) -> None:
         """Hold the leader where the operator returned policy control."""

@@ -319,6 +319,17 @@ class TeleopDevice(TeleopPart):
     def on_intervention_end(self, context: Mapping[str, Any]) -> None:
         """Release device-specific state when policy control resumes."""
 
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Seconds to hold a reset pose before manual control is released."""
+        return 0.0
+
+    def release_for_manual(self, context: Mapping[str, Any]) -> None:
+        """Release device state after the operator handover buffer."""
+
+    def hold_for_reset(self, context: Mapping[str, Any]) -> None:
+        """Hold the device safely before the robot is reset or parked."""
+
     def on_reset(self, context: Mapping[str, Any] = MappingProxyType({})) -> None:
         """Re-align to the robot after it resets.
 
