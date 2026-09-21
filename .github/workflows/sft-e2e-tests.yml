@@ -4,6 +4,52 @@ on:
   workflow_call:
 
 jobs:
+
+  sft-openwam-config-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create OpenWAM SFT environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openwam --env libero
+
+      - name: Validate OpenWAM SFT recipes
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          python - <<'PY'
+          from pathlib import Path
+
+          from hydra import compose, initialize_config_dir
+
+          repo = Path.cwd()
+          config_dir = repo / "examples" / "sft" / "config"
+          recipes = sorted(config_dir.glob("*_sft_openwam.yaml"))
+          assert recipes, "No OpenWAM SFT recipes found"
+          for recipe in recipes:
+              with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+                  cfg = compose(config_name=recipe.stem)
+              assert cfg.actor.model.model_type == "openwam", recipe.name
+              assert cfg.runner.task_type == "sft", recipe.name
+              assert cfg.cluster.component_placement.actor == "0-7", recipe.name
+              assert cfg.actor.global_batch_size % 8 == 0, recipe.name
+          print(f"Validated {len(recipes)} OpenWAM SFT recipes without a dataset mount.")
+          PY
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
   sft-dreamzero-droid-wan22-test:
     runs-on: embodied
     steps:

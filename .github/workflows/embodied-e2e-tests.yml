@@ -4,6 +4,50 @@ on:
   workflow_call:
 
 jobs:
+
+  embodied-openwam-config-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create OpenWAM evaluation environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openwam --env libero
+
+      - name: Validate OpenWAM LIBERO evaluation config
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export EMBODIED_PATH=$PWD/examples/embodiment
+          source .venv/bin/activate
+          python - <<'PY'
+          from pathlib import Path
+
+          from hydra import compose, initialize_config_dir
+
+          repo = Path.cwd()
+          config_dir = repo / "tests" / "e2e_tests" / "evaluations"
+          with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+              cfg = compose(config_name="libero_spatial_openwam_eval")
+          assert cfg.runner.task_type == "embodied_eval"
+          assert cfg.rollout.model.model_type == "openwam"
+          assert cfg.env.eval.openwam_action_representation == "native_delta_eef10"
+          assert cfg.rollout.model.num_action_chunks == 10
+          print("Validated the OpenWAM LIBERO evaluation config without a checkpoint or dataset.")
+          PY
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
   embodied-mlp-sac-maniskill-test:
     runs-on: embodied
     steps:

@@ -98,7 +98,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 验证与断点续训
 --------------
 
-设置 ``data.val_data_paths``（一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。``actor.eval_batch_size`` 是每个 rank 的验证 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的验证 batch 数。LeRobot 风格的读取器按 split 选取 episode：验证默认读 ``val`` split，如果验证集是一个只有 train split 的独立数据集，请设置 ``data.openwam_val_split: train``（验证集为空时会在启动阶段直接报错）。
+设置 ``data.val_data_paths``\ （一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。``actor.eval_batch_size`` 是每个 rank 的验证 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的验证 batch 数。LeRobot 风格的读取器按 split 选取 episode：验证默认读 ``val`` split，如果验证集是一个只有 train split 的独立数据集，请设置 ``data.openwam_val_split: train``\ （验证集为空时会在启动阶段直接报错）。
 
 checkpoint 会把 dataloader、sampler（含 shuffle 的 epoch）和随机数状态与模型权重一起保存，因此 ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` 会从下一个未见过的 batch 继续，而不是重头开始这一轮数据。OpenWAM 配方设置了 ``runner.strict_resume: true``，缺少 ``data.pt`` 或 ``rng.pt`` 的旧 checkpoint 会直接报错；只有明确接受重新开始数据流时才应取消该设置。
 
@@ -110,7 +110,7 @@ checkpoint 会把 dataloader、sampler（含 shuffle 的 epoch）和随机数状
 导出部署 checkpoint
 -------------------
 
-FSDP worker 会把完整的 ``OpenWAMPolicy`` state dict 保存在 ``<log_path>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``（只有分片的 ``dcp_checkpoint`` 目录时，导出脚本会自动合并）。用下面的命令把它重建为自包含的 OpenWAM checkpoint 目录：
+FSDP worker 会把完整的 ``OpenWAMPolicy`` state dict 保存在 ``<log_path>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``\ （只有分片的 ``dcp_checkpoint`` 目录时，导出脚本会自动合并）。用下面的命令把它重建为自包含的 OpenWAM checkpoint 目录：
 
 .. code-block:: bash
 
@@ -119,12 +119,12 @@ FSDP worker 会把完整的 ``OpenWAMPolicy`` state dict 保存在 ``<log_path>/
        --source-checkpoint /path/to/openwam-libero-sft-30000 \
        --output /path/to/openwam-libero-sft-rlinf-step1000 --link-assets --verify cuda
 
-导出脚本去掉 ``architecture.`` 前缀、丢弃 ``vlm_backbone.*``（OpenWAM 以目录形式保存 VLM）、校验键集合与源 checkpoint 一致，并写出 ``checkpoint_step_<N>.safetensors``；config、tokenizer 和归一化文件从 ``--source-checkpoint`` 复制（``--link-assets`` 时为软链）。``--verify`` 用 ``openwam.deploy.load_from_checkpoint_dir`` 重新加载核对。导出目录既可以交给 OpenWAM 自身的工具，也可以作为下文评测配方的 ``rollout.model.model_path``。
+导出脚本去掉 ``architecture.`` 前缀、丢弃 ``vlm_backbone.*``\ （OpenWAM 以目录形式保存 VLM）、校验键集合与源 checkpoint 一致，并写出 ``checkpoint_step_<N>.safetensors``；config、tokenizer 和归一化文件从 ``--source-checkpoint`` 复制（``--link-assets`` 时为软链）。``--verify`` 用 ``openwam.deploy.load_from_checkpoint_dir`` 重新加载核对。导出目录既可以交给 OpenWAM 自身的工具，也可以作为下文评测配方的 ``rollout.model.model_path``。
 
 评估
 ----
 
-LIBERO 评估配方与本配方使用同一套 checkpoint 约定。``evaluations/libero/`` 提供 ``libero_{spatial,object,goal,10}_openwam_eval.yaml``（见 :doc:`../../evaluations/guides/libero`）；每条 episode 会记录 ``[libero eval] task_id=.., trial_id=.., success=..``，可以按任务拆分成功率。RoboTwin checkpoint 使用 ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml``，覆盖全部 50 个任务（见 :doc:`../../evaluations/guides/robotwin`）。
+LIBERO 评估配方与本配方使用同一套 checkpoint 约定。``evaluations/libero/`` 提供 ``libero_{spatial,object,goal,10}_openwam_eval.yaml``\ （见 :doc:`../../evaluations/guides/libero`）；每条 episode 会记录 ``[libero eval] task_id=.., trial_id=.., success=..``，可以按任务拆分成功率。RoboTwin checkpoint 使用 ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml``，覆盖全部 50 个任务（见 :doc:`../../evaluations/guides/robotwin`）。
 
 设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl`` 后，可以先运行 smoke 配方（1 个环境、30 步，即三次 10 步生成）。配方把 env worker 与 rollout worker 分到不同 GPU，避免 EGL 渲染和 OpenWAM 推理争用同一张卡：
 
@@ -133,7 +133,7 @@ LIBERO 评估配方与本配方使用同一套 checkpoint 约定。``evaluations
    python evaluations/eval_embodied_agent.py \
      --config-path ../tests/e2e_tests/evaluations --config-name libero_spatial_openwam_eval
 
-自行缩短配方时，``env.eval.max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks``（默认 ``openwam.inference_horizon`` 下为 10）整除。
+自行缩短配方时，``env.eval.max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks``\ （默认 ``openwam.inference_horizon`` 下为 10）整除。
 
 配方默认面向用 native delta EEF10 动作训练的 checkpoint（``env.eval.openwam_action_representation: native_delta_eef10``）。如果 checkpoint 按标准 LIBERO 数据训练、输出绝对 EEF10 目标位姿，请改为 ``absolute_eef10``：RLinf 会在每个环境 step 根据当前实际位姿计算目标差值，再发送 7D OSC 动作。该值必须与被评估 checkpoint 的数据 metadata 一致。
 
