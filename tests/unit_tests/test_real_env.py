@@ -3201,6 +3201,77 @@ def test_so101_env_clips_an_action_to_the_joint_limits():
             env.close()
 
 
+def test_so101_camera_reuses_last_frame_after_bounded_retries():
+    """A stalled camera must not recurse forever or block the control loop."""
+    from queue import Empty
+
+    from rlinf.envs.real.so101.base import SO101Env
+
+    class Camera:
+        name = "wrist_1"
+
+        def __init__(self):
+            self.calls = []
+
+        def get_frame(self, **kwargs):
+            self.calls.append(kwargs)
+            raise Empty
+
+    env = SO101Env.__new__(SO101Env)
+    camera = Camera()
+    env._cameras = [camera]
+    env._last_camera_frame = {
+        "wrist_1": np.zeros((8, 8, 3), dtype=np.uint8),
+    }
+    env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    env.camera_player = SimpleNamespace(put_frame=lambda frames: None)
+    env.config = SimpleNamespace(camera_max_age=0.5)
+    env.observation_space = gym.spaces.Dict(
+        {
+            "frames": gym.spaces.Dict(
+                {"wrist_1": gym.spaces.Box(0, 255, shape=(4, 4, 3), dtype=np.uint8)}
+            )
+        }
+    )
+
+    frames = env._get_camera_frames()
+
+    assert frames["wrist_1"].shape == (4, 4, 3)
+    assert len(camera.calls) == 1
+    assert camera.calls[0]["timeout"] < 5.0
+    assert camera.calls[0]["attempts"] > 1
+
+
+def test_so101_camera_failure_before_first_frame_is_explicit():
+    """A camera that never produced a frame fails instead of returning zeros."""
+    from queue import Empty
+
+    from rlinf.envs.real.so101.base import SO101Env
+
+    class Camera:
+        name = "wrist_1"
+
+        def get_frame(self, **kwargs):
+            raise Empty
+
+    env = SO101Env.__new__(SO101Env)
+    env._cameras = [Camera()]
+    env._last_camera_frame = {}
+    env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    env.camera_player = SimpleNamespace(put_frame=lambda frames: None)
+    env.config = SimpleNamespace(camera_max_age=0.5)
+    env.observation_space = gym.spaces.Dict(
+        {
+            "frames": gym.spaces.Dict(
+                {"wrist_1": gym.spaces.Box(0, 255, shape=(4, 4, 3), dtype=np.uint8)}
+            )
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="no cached frame"):
+        env._get_camera_frames()
+
+
 def test_so101_env_runs_without_hardware_when_dummy():
     """A dummy env samples its own space, so it needs no lerobot at all."""
     from rlinf.envs.real.so101 import SO101ReachEnv

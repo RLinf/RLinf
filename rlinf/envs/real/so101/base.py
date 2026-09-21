@@ -21,6 +21,7 @@ quantities has to add forward kinematics of its own.
 """
 
 import copy
+import queue
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -52,6 +53,11 @@ _DEFAULT_JOINT_LIMIT_HIGH = np.array([1.91, 1.75, 1.69, 1.66, 2.79])
 
 #: Arm joints, matching :pyattr:`SO101Arm.MOTORS`.
 _DOF = len(SO101Arm.MOTORS)
+
+# Keep camera reads shorter than the 10 Hz control period. BaseCamera reopens
+# the device between attempts, so the environment only needs one bounded read.
+_CAMERA_FRAME_TIMEOUT_S = 0.5
+_CAMERA_REOPEN_ATTEMPTS = 3
 
 
 def _zero_observation(space: gym.Space) -> Any:
@@ -202,6 +208,7 @@ class SO101Env(gym.Env):
         self._num_steps = 0
         self._success_hold_counter = 0
         self._last_gripper: Optional[float] = None
+        self._last_camera_frame: dict[str, np.ndarray] = {}
         self._gripper_position = np.zeros(1, dtype=np.float32)
         self._joints = np.zeros(_DOF)
         self.robot: Optional[SO101Robot] = None
@@ -541,9 +548,13 @@ class SO101Env(gym.Env):
         return cv2.resize(frame[top : top + side, left : left + side], size)
 
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Read one frame per camera, reopening a camera that has stalled."""
-        import queue
+        """Read camera frames, reusing the latest frame during recovery.
 
+        ``BaseCamera.get_frame`` performs a bounded number of reconnect
+        attempts. Once those attempts are exhausted, an existing frame keeps
+        the control loop moving; a camera that has never produced a frame
+        fails explicitly instead of recursing forever.
+        """
         declared = self.observation_space["frames"]
         frames: dict[str, np.ndarray] = {}
         for camera in getattr(self, "_cameras", []):
@@ -552,18 +563,26 @@ class SO101Env(gym.Env):
             try:
                 # Cameras deliver their native resolution; the space fixes one.
                 size = declared[name].shape[:2][::-1]
-                frames[name] = self._crop_frame(
-                    camera.get_frame(max_age=self.config.camera_max_age), size
+                raw_frame = camera.get_frame(
+                    timeout=_CAMERA_FRAME_TIMEOUT_S,
+                    attempts=_CAMERA_REOPEN_ATTEMPTS,
+                    max_age=self.config.camera_max_age,
                 )
             except queue.Empty:
+                raw_frame = self._last_camera_frame.get(name)
+                if raw_frame is None:
+                    raise RuntimeError(
+                        f"Camera {name} did not produce a frame after "
+                        f"{_CAMERA_REOPEN_ATTEMPTS} attempts and has no cached frame."
+                    ) from None
                 self._logger.warning(
-                    f"Camera {name} is not producing frames. Waiting 5s and retrying."
+                    "Camera %s stalled after %d attempts; using the last frame.",
+                    name,
+                    _CAMERA_REOPEN_ATTEMPTS,
                 )
-                time.sleep(5)
-                # Reopen this camera rather than rebuilding the declarations,
-                # which would drop the placement the robot gave it.
-                camera.reopen()
-                return self._get_camera_frames()
+
+            self._last_camera_frame[name] = np.asarray(raw_frame).copy()
+            frames[name] = self._crop_frame(raw_frame, size)
 
         if hasattr(self, "camera_player"):
             self.camera_player.put_frame(frames)
