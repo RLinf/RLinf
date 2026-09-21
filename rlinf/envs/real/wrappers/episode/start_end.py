@@ -91,6 +91,19 @@ class KeyboardStartEndWrapper(KeyboardSession):
             if seconds:
                 self._countdown("Keep hands clear; reset starts in", seconds)
 
+    def _hold_action(self, action: ActType) -> ActType:
+        """Use the current robot pose while the recording pedal is idle."""
+        try:
+            hold = self.env.get_wrapper_attr("get_hold_action")
+        except AttributeError:
+            return action
+        try:
+            return hold(action)
+        except AttributeError:
+            # Delta-only teleop devices have no absolute pose to hold; their
+            # zero action is already the stable idle command.
+            return action
+
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
@@ -105,12 +118,16 @@ class KeyboardStartEndWrapper(KeyboardSession):
 
         # Start handover before stepping the wrapped environment. The buffer
         # therefore produces no transition that can enter the recorded episode.
-        if "a" in pressed and not self._recording:
+        started = "a" in pressed and not self._recording
+        if started:
             self._release_for_manual()
             event = "start"
             self._recording = True
             record_reset = True
             self._last_segment_ts = -math.inf
+
+        if not self._recording or started:
+            action = self._hold_action(action)
 
         obs, reward, terminated, truncated, info = self.env.step(action)
 

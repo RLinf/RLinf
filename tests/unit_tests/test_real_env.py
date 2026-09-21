@@ -1299,6 +1299,10 @@ def test_start_end_handover_releases_before_first_recorded_step(monkeypatch, tmp
         def hold_for_reset(self):
             self.lifecycle.append("hold")
 
+        def get_hold_action(self, action):
+            self.lifecycle.append("hold_action")
+            return np.full_like(action, 0.5)
+
         def step(self, action):
             self.lifecycle.append("step")
             return super().step(action)
@@ -1309,13 +1313,26 @@ def test_start_end_handover_releases_before_first_recorded_step(monkeypatch, tmp
     wrapper = KeyboardStartEndWrapper(env)
     wrapper.reset()
 
-    control_file.write_text("start\n", encoding="utf-8")
     wrapper.step(POLICY)
-    assert env.lifecycle == ["release", "step"]
+    assert env.lifecycle == ["hold_action", "step"]
+
+    control_file.write_text("start\n", encoding="utf-8")
+    _, _, _, _, info = wrapper.step(POLICY)
+    assert info["keyboard_event"] == "start"
+    assert env.lifecycle == ["hold_action", "step", "release", "hold_action", "step"]
+    assert np.array_equal(env.stepped[-1], np.full(3, 0.5))
 
     control_file.write_text("success\n", encoding="utf-8")
     wrapper.step(POLICY)
-    assert env.lifecycle == ["release", "step", "step", "hold"]
+    assert env.lifecycle == [
+        "hold_action",
+        "step",
+        "release",
+        "hold_action",
+        "step",
+        "step",
+        "hold",
+    ]
     wrapper.close()
 
 
