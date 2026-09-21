@@ -326,6 +326,8 @@ actor:
 
   model:
     model_type: "rlt_mlp_policy"
+    # Empty: Stage2 MLP is trained from scratch. Do not point this at Stage1.
+    model_path: ""
     # RLT AC keeps the small Stage2 head in fp32 for Q-learning stability.
     precision: fp32
     policy_setup: "panda-qpos"

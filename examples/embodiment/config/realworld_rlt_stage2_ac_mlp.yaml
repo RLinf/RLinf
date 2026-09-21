@@ -224,10 +224,11 @@ actor:
   seed: 1234
   enable_offload: False
 
-  # Do not add actor.model.model_path for Stage1; this block only defines the
-  # Stage2 head. Stage2 resume/load is controlled by runner.resume_dir/ckpt_path.
+  # Stage2 head only. Keep model_path null for scratch training; resume/load
+  # uses runner.resume_dir or runner.ckpt_path, not the Stage1 OpenPI ckpt.
   model:
     model_type: "rlt_mlp_policy"
+    model_path: null
 
     # RLT AC defaults to fp32 for Q-learning and target-update stability.
     precision: fp32
