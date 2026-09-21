@@ -20,6 +20,8 @@ workers exchange work.
      - The cluster abstraction and resource model.
    * - :doc:`Channel <../channel>`
      - Asynchronous channels for inter-worker data exchange.
+   * - :doc:`Trajectory Collector <../trajectory_collector>`
+     - Chunk ownership, accumulation, and Actor output for embodied algorithms.
    * - :doc:`Collective Communication <../collective>`
      - Collective operations and asynchronous work handles.
 
@@ -31,4 +33,5 @@ workers exchange work.
    Worker and WorkerGroup <../worker>
    Cluster <../cluster>
    Channel <../channel>
+   Trajectory Collector <../trajectory_collector>
    Collective Communication <../collective>
