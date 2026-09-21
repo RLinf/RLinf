@@ -130,31 +130,45 @@ class KeyboardStartEndWrapper(KeyboardSession):
         # Start handover before stepping the wrapped environment. The buffer
         # therefore produces no transition that can enter the recorded episode.
         started = "a" in pressed and not self._recording
+        aborted = "a" in pressed and self._recording
         if started:
             self._release_for_manual()
             event = "start"
             self._recording = True
             record_reset = True
             self._last_segment_ts = -math.inf
+        elif aborted:
+            # Match the native LeRobot recorder: discard, give the operator
+            # time to clear the leader, then let the runner reset both arms.
+            self._hold_before_reset()
+            event = "abort"
+            self._recording = False
+            record_reset = True
+            self._last_segment_ts = -math.inf
 
-        if not self._recording or started:
+        if not self._recording or started or aborted:
             action = self._hold_action(action)
 
         obs, reward, terminated, truncated, info = self.env.step(action)
 
         # The pedal owns episode boundaries; start and abort do not reset the env.
-        terminated = False
+        terminated = aborted
         truncated = False
 
         for key in pressed:
             if key == "a":
-                if self._recording:
+                if aborted:
+                    terminated = True
+                    reward = 0.0
+                elif self._recording:
                     if event != "start":
                         # Abort recording without moving the robot.
                         event = "abort"
                         self._recording = False
                         record_reset = True
                         self._last_segment_ts = -math.inf
+                        terminated = True
+                        reward = 0.0
                 else:
                     # The start event was handled before the environment step.
                     continue

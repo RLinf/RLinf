@@ -1353,6 +1353,27 @@ def test_start_end_quit_does_not_run_episode_reset_buffer(monkeypatch, tmp_path)
     wrapper.close()
 
 
+def test_start_end_abort_terminates_for_runner_reset(monkeypatch, tmp_path):
+    from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+
+    control_file = tmp_path / "so101-control"
+    monkeypatch.setenv("RLINF_KEYBOARD_CONTROL_FILE", str(control_file))
+    wrapper = KeyboardStartEndWrapper(FakeEnv())
+    wrapper.reset()
+
+    control_file.write_text("start\n", encoding="utf-8")
+    wrapper.step(POLICY)
+    time.sleep(0.21)
+    control_file.write_text("abort\n", encoding="utf-8")
+    _, reward, terminated, _, info = wrapper.step(POLICY)
+
+    assert reward == 0.0
+    assert terminated
+    assert info["keyboard_event"] == "abort"
+    assert info["keyboard_phase"] == "pre"
+    wrapper.close()
+
+
 def test_env_worker_shutdown_parks_and_closes_once():
     from rlinf.workers.env.env_worker import EnvWorker
 
