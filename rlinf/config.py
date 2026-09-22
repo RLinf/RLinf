@@ -90,6 +90,7 @@ SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -138,6 +139,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
         SupportedModel.OPENPI_RLINF,
+        SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -475,6 +477,22 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     return cfg
 
 
+def validate_fp32_master_adamw_config(
+    *,
+    strategy: str,
+    sharding_strategy: str,
+    is_lora: bool,
+) -> None:
+    """Validate the FSDP configurations exercised by FP32 master AdamW."""
+    strategy = str(strategy).lower()
+    sharding_strategy = str(sharding_strategy).lower()
+    if strategy != "fsdp" or sharding_strategy != "no_shard" or not is_lora:
+        raise ValueError(
+            "use_fp32_master_params currently supports only FSDP1 LoRA training "
+            "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
+        )
+
+
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     def validate_amp_cfg(config: DictConfig) -> DictConfig:
         """Validate AMP configuration and ensure mutual exclusivity with FSDP mixed_precision."""
@@ -608,6 +626,14 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
                 f"buffer_dtype={mp.buffer_dtype!r}). "
                 "Set mixed_precision param/reduce/buffer dtype to null "
                 "(OpenPI default) or fp32."
+            )
+
+        if cfg.get("optim", {}).get("use_fp32_master_params", False):
+            model_cfg = cfg.get("model", {}) or {}
+            validate_fp32_master_adamw_config(
+                strategy=cfg.fsdp_config.strategy,
+                sharding_strategy=cfg.fsdp_config.sharding_strategy,
+                is_lora=bool(model_cfg.get("is_lora", False)),
             )
 
     return cfg
