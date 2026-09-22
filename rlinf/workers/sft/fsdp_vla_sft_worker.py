@@ -164,6 +164,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return super().run_eval()
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
         max_batches = self.cfg.actor.get("eval_max_batches", None)
+        from rlinf.data.datasets.openwam.dataloader import ValidationSample
+
         with self.worker_timer():
             self.model.eval()
             # Native losses are already means over each local batch. Accumulate
@@ -176,11 +178,21 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             for index, batch in enumerate(self.eval_data_loader):
                 if max_batches is not None and index >= int(max_batches):
                     break
-                batch_size = len(batch)
-                outputs = self.get_eval_model_output(batch)
-                for key in loss_keys:
-                    sums[key] += float(outputs.get(key, 0.0)) * batch_size
-                num_samples += batch_size
+                # The validation sampler pads short shards so every rank executes
+                # the same number of FSDP forwards. Run one sample per forward: a
+                # padded sample still participates in FSDP collectives, while
+                # its loss is excluded from the global metric.
+                for item in batch:
+                    if isinstance(item, ValidationSample):
+                        sample, is_padding = item.sample, item.is_padding
+                    else:
+                        sample, is_padding = item, False
+                    outputs = self.get_eval_model_output([sample])
+                    if is_padding:
+                        continue
+                    for key in loss_keys:
+                        sums[key] += float(outputs.get(key, 0.0))
+                    num_samples += 1
                 num_batches += 1
             self.model.train()
             reduced = all_reduce_dict(

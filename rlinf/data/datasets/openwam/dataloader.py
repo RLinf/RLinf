@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -42,8 +44,36 @@ def _normalization_stats_paths(dataset: Any) -> list[str]:
     return list(dict.fromkeys(paths))
 
 
-class UnevenDistributedSampler(torch.utils.data.Sampler[int]):
-    """Shard validation indices without padding or dropping tail samples."""
+@dataclass(frozen=True)
+class ValidationSample:
+    """One validation sample, marked when it only keeps ranks synchronized."""
+
+    sample: Any
+    is_padding: bool = False
+
+
+class PaddedValidationDataset(torch.utils.data.Dataset):
+    """Pad a validation dataset by repeating its first sample when necessary."""
+
+    def __init__(self, dataset: Any, total_size: int):
+        if len(dataset) == 0:
+            raise ValueError("Cannot pad an empty validation dataset.")
+        self.dataset = dataset
+        self.total_size = int(total_size)
+
+    def __len__(self) -> int:
+        return self.total_size
+
+    def __getitem__(self, index: int) -> ValidationSample:
+        dataset_size = len(self.dataset)
+        is_padding = index >= dataset_size
+        return ValidationSample(
+            self.dataset[index % dataset_size], is_padding=is_padding
+        )
+
+
+class PaddedValidationSampler(torch.utils.data.Sampler[int]):
+    """Shard validation indices evenly, padding only for collective alignment."""
 
     def __init__(self, dataset: Any, num_replicas: int, rank: int):
         if num_replicas <= 0:
@@ -53,16 +83,14 @@ class UnevenDistributedSampler(torch.utils.data.Sampler[int]):
         self.dataset = dataset
         self.num_replicas = int(num_replicas)
         self.rank = int(rank)
+        self.num_samples = math.ceil(len(dataset) / self.num_replicas)
+        self.total_size = self.num_samples * self.num_replicas
 
     def __iter__(self):
-        return iter(range(self.rank, len(self.dataset), self.num_replicas))
+        return iter(range(self.rank, self.total_size, self.num_replicas))
 
     def __len__(self) -> int:
-        if self.rank >= len(self.dataset):
-            return 0
-        return (
-            len(self.dataset) - self.rank + self.num_replicas - 1
-        ) // self.num_replicas
+        return self.num_samples
 
 
 class EpochStatefulDistributedSampler(StatefulDistributedSampler):
@@ -183,9 +211,10 @@ def build_openwam_sft_dataloader(
         datasets[0] if len(datasets) == 1 else torch.utils.data.ConcatDataset(datasets)
     )
     if eval_dataset:
-        sampler = UnevenDistributedSampler(
+        sampler = PaddedValidationSampler(
             dataset, num_replicas=int(world_size), rank=int(rank)
         )
+        loader_dataset = PaddedValidationDataset(dataset, sampler.total_size)
     else:
         sampler = EpochStatefulDistributedSampler(
             dataset,
@@ -195,6 +224,7 @@ def build_openwam_sft_dataloader(
             drop_last=True,
             seed=int(OmegaConf.select(cfg, "actor.seed", default=0)),
         )
+        loader_dataset = dataset
     batch_size = (
         int(cfg.actor.get("eval_batch_size", cfg.actor.micro_batch_size))
         if eval_dataset
@@ -203,7 +233,7 @@ def build_openwam_sft_dataloader(
     num_workers = int(OmegaConf.select(cfg, "data.num_workers", default=0))
     prefetch_factor = int(OmegaConf.select(cfg, "data.prefetch_factor", default=2))
     loader = StatefulDataLoader(
-        dataset,
+        loader_dataset,
         batch_size=batch_size,
         sampler=sampler,
         num_workers=num_workers,

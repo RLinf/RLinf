@@ -2259,7 +2259,9 @@ def test_openwam_sft_validation_split_is_configurable_and_never_empty(
     from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
 
     cfg, calls = _openwam_fake_dataset_cfg(
-        tmp_path, monkeypatch, {"/train": 6, "/held-out": 4, "/no-val": 0, "/tiny": 1}
+        tmp_path,
+        monkeypatch,
+        {"/train": 6, "/held-out": 4, "/no-val": 0, "/tiny": 1, "/tail": 3},
     )
     build_openwam_sft_dataloader(cfg, 1, 0, "/train")
     build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
@@ -2273,15 +2275,26 @@ def test_openwam_sft_validation_split_is_configurable_and_never_empty(
     _, info = build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
     assert calls[-1] == ("/held-out", "train") and info["num_samples"] == 4
 
-    # Validation shards are intentionally uneven: rank 0 receives the one
-    # sample and rank 1 has an empty local loader, while global aggregation can
-    # still account for the sample.
+    # Validation shards are padded to equal lengths so every rank executes the
+    # same number of FSDP forwards; the padded sample is marked and excluded
+    # from the reduced metric.
     eval_loader, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tiny", eval_dataset=True)
     empty_eval_loader, _ = build_openwam_sft_dataloader(
         cfg, 2, 1, "/tiny", eval_dataset=True
     )
     assert len(eval_loader) == 1
-    assert len(empty_eval_loader) == 0
+    assert len(empty_eval_loader) == 1
+    assert not next(iter(eval_loader))[0].is_padding
+    assert next(iter(empty_eval_loader))[0].is_padding
+
+    # A tail batch also stays equal-sized when the validation batch is larger
+    # than one sample.
+    cfg.actor.eval_batch_size = 2
+    tail_rank0, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tail", eval_dataset=True)
+    tail_rank1, _ = build_openwam_sft_dataloader(cfg, 2, 1, "/tail", eval_dataset=True)
+    assert len(tail_rank0) == len(tail_rank1) == 1
+    assert [item.is_padding for item in next(iter(tail_rank0))] == [False, False]
+    assert [item.is_padding for item in next(iter(tail_rank1))] == [False, True]
 
 
 def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
@@ -2336,6 +2349,53 @@ def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
     stub.cfg.actor.model.model_type = "openpi"
     with pytest.raises(NotImplementedError, match="eval is not supported"):
         FSDPVlaSftWorker.get_eval_model_output(stub, [{"v": 1.0}])
+
+
+def test_openwam_sft_eval_forwards_padding_but_excludes_it_from_metrics(monkeypatch):
+    """Padded validation samples keep FSDP calls aligned without biasing loss."""
+    pytest.importorskip("torchdata")
+    import contextlib
+
+    from rlinf.data.datasets.openwam.dataloader import ValidationSample
+    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    class _Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def forward(self, forward_type, data):
+            self.calls += 1
+            return {"loss": torch.tensor(float(data[0]["v"]))}
+
+    stub = SimpleNamespace(
+        cfg=OmegaConf.create(
+            {"actor": {"model": {"model_type": "openwam"}, "eval_max_batches": 1}}
+        ),
+        eval_data_loader=[
+            [
+                ValidationSample({"v": 2.0}),
+                ValidationSample({"v": 99.0}, is_padding=True),
+            ]
+        ],
+        model=_Model(),
+        amp_context=contextlib.nullcontext(),
+        worker_timer=contextlib.nullcontext,
+    )
+    stub._is_openwam = lambda: FSDPVlaSftWorker._is_openwam(stub)
+    stub.get_eval_model_output = lambda batch: FSDPVlaSftWorker.get_eval_model_output(
+        stub, batch
+    )
+    monkeypatch.setattr(
+        worker_module, "all_reduce_dict", lambda metrics, op=None: metrics
+    )
+
+    metrics = FSDPVlaSftWorker.run_eval(stub)
+
+    assert metrics["loss"] == 2.0
+    assert metrics["num_batches"] == 1.0
+    assert stub.model.calls == 2
 
 
 def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
