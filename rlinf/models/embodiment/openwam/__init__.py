@@ -27,7 +27,7 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None) -> OpenWA
     """Load an OpenWAM policy from a self-contained checkpoint directory."""
     model_path = cfg.get("model_path")
     if not model_path:
-        raise ValueError("OpenWAM requires actor.model.model_path to be set.")
+        raise ValueError("OpenWAM requires model_path to be set in the model config.")
     openwam_cfg = cfg.get("openwam", {}) or {}
     # Rollout/eval recipes load straight onto ``device``. The FSDP SFT recipe
     # sets ``load_to_device: false``: the policy is then built on the CPU and

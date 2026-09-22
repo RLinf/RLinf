@@ -54,7 +54,7 @@ env:
     is_eval: true
     # Only the final frame of each action chunk is consumed by eval; disabling
     # intermediate EGL renders keeps multi-process LIBERO stable.
-    skip_intermediate_renders: false
+    skip_intermediate_renders: true
     openwam_action_representation: native_delta_eef10
     video_cfg:
       save_video: false

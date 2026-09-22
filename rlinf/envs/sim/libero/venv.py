@@ -228,7 +228,10 @@ def _worker(
             else:
                 p.close()
                 raise NotImplementedError
-    except BaseException:
+    except KeyboardInterrupt:
+        # Preserve the worker's existing shutdown behavior for interrupts.
+        p.close()
+    except Exception:
         # A LIBERO child can otherwise disappear silently, leaving the Ray
         # worker with only an opaque EOFError. Preserve the original traceback
         # in the worker log before closing the pipe so multi-env failures are

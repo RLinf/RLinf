@@ -168,6 +168,7 @@ def test_openwam_libero_eval_smoke_recipe_validates(openwam_eval_recipe):
     assert env.max_episode_steps == env.max_steps_per_rollout_epoch == 30
     assert env.max_steps_per_rollout_epoch % cfg.rollout.model.num_action_chunks == 0
     assert cfg.rollout.model.openwam.inference_horizon == 10
+    assert env.skip_intermediate_renders is True
 
 
 def test_openwam_observation_adapter_smoke():
@@ -2028,6 +2029,14 @@ def test_openwam_dataset_sft_recipes_inherit_the_libero_recipe(name):
     assert cfg.actor.model.load_to_device is False
     assert cfg.actor.fsdp_config.strategy == "fsdp2"
     assert cfg.actor.optim.lr == base.actor.optim.lr
+
+
+def test_openwam_get_model_requires_model_config_path():
+    """The model factory reports a role-neutral missing checkpoint field."""
+    from rlinf.models.embodiment.openwam import get_model
+
+    with pytest.raises(ValueError, match="model_path.*model config"):
+        get_model(OmegaConf.create({}))
 
 
 def test_openwam_get_model_honors_load_to_device(monkeypatch):
