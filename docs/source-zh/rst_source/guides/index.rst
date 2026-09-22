@@ -54,3 +54,4 @@
    性能 <performance/index>
    智能体工作流 <agent-workflows/index>
    Rollout 引擎 <rollout-engines/index>
+   Ascend CANN <ascend_cann>
