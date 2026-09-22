@@ -1,7 +1,7 @@
 支持的模型
 ==========
 
-评测配置通过 ``defaults`` 引用 ``examples/embodiment/config/model/`` 下的模型 preset，并在 ``rollout.model`` 中覆盖 ``model_path`` 等字段。当前 ``evaluations/`` 中已有示例的模型如下：
+评测配置通过 ``defaults`` 引用 ``examples/embodiment/config/model/`` 下的模型 preset，并在 ``rollout.model`` 中覆盖 ``model_path`` 等字段；OpenWAM 配方则把整个 ``rollout.model`` 块内联写出，因为模型设置来自 checkpoint 自带的 ``config.yaml``。当前 ``evaluations/`` 中已有示例的模型如下：
 
 .. list-table::
    :header-rows: 1

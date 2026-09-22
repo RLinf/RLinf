@@ -46,7 +46,7 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 
 在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认使用 8 张 GPU（``0-7``），为 OpenWAM 的可训练 DiT/action 参数和优化器状态留出更多显存余量。其他 OpenWAM SFT 配方也继承这一默认卡数。
 
-第四轮审查在 H200 上使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 测得：4 卡时每卡峰值已分配显存为 72.3 GiB、保留显存为 113.3 GiB；8 卡时分别为 55.5 GiB 和 83.7 GiB。默认改为 8 卡是依据这组 H200 数据，并不代表已经验证能在 80 GiB 显卡上运行；实际显存需求仍需结合 checkpoint 和硬件确认。
+在 H200 上使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 实测：4 卡时每卡峰值已分配显存为 72.3 GiB、保留显存为 113.3 GiB；8 卡时分别为 55.5 GiB 和 83.7 GiB。8 卡默认值依据这组数据，并不代表已经验证能在 80 GiB 显卡上运行；实际显存需求仍需结合 checkpoint 和硬件确认。
 
 数据读取器由 checkpoint 的 ``config.yaml`` 决定，因此配方要把 checkpoint 和同类型的数据配对。``examples/sft/config/`` 下每种 OpenWAM 读取器各有一份配方，都继承 ``libero_sft_openwam.yaml``，只改路径和实验名：
 
@@ -95,12 +95,12 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 
 修改 GPU 数量时，同时修改 ``cluster.component_placement.actor``，并确保 ``actor.global_batch_size`` 能被 actor world size 整除。
 
-预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。由于 OpenWAM 的联合去噪驱动会在块的 forward 之外直接读取块权重，policy 使用一个根 FSDP2 单元。``reshard_after_forward`` 只作用于 wrap policy 指定的冻结 ``ResidualBlock`` 子单元；可训练的根参数在联合 forward 和 backward 期间仍需驻留。配方仍默认启用 gradient checkpointing，但第四轮审查的 4 卡开关对比显示，在 ``micro_batch_size: 1`` 下它未降低峰值显存。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
+预设以 fp32 加载权重（``precision: fp32``），优化器持有 fp32 主权重，FSDP 用 bf16 计算（``mixed_precision.param_dtype``）；若主权重是 bf16，``lr: 1e-6`` 下几乎所有更新都会被舍入掉。由于 OpenWAM 的联合去噪驱动会在块的 forward 之外直接读取块权重，policy 使用一个根 FSDP2 单元。``reshard_after_forward`` 只作用于 wrap policy 指定的冻结 ``ResidualBlock`` 子单元；可训练的根参数在联合 forward 和 backward 期间仍需驻留。配方仍默认启用 gradient checkpointing，不过 4 卡开关对比显示，在 ``micro_batch_size: 1`` 下它并未降低峰值显存。模型预设同时保持 ``load_to_device: false``：每个 rank 先在 CPU 上构建模型，FSDP 在包装时把各自的分片搬到 GPU。评测配方则用 ``load_to_device: true`` 直接加载到 GPU。
 
 验证与断点续训
 --------------
 
-设置 ``data.val_data_paths``\ （一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。``actor.eval_batch_size`` 是每个 rank 的验证 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的验证 batch 数。LeRobot 风格的读取器按 split 选取 episode：验证默认读 ``val`` split，如果验证集是一个只有 train split 的独立数据集，请设置 ``data.openwam_val_split: train``\ （验证集为空时会在启动阶段直接报错）。多卡验证遇到短 shard 时，会重复一个样本仅用于对齐各 rank 的 FSDP forward 次数；补齐样本不会计入最终 loss。
+设置 ``data.val_data_paths``\ （一个或多个数据集根目录，用同一套 dataloader 设置读取）和 ``runner.val_check_interval`` 后，会在验证集上平均 OpenWAM 的原生 loss，记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。验证时逐个样本 forward；``actor.eval_batch_size`` 只决定 loader 把多少样本分为一个 batch，``actor.eval_max_batches`` 可以限制大数据集上每个 rank 跑的 batch 数。LeRobot 风格的读取器按 split 选取 episode：验证默认读 ``val`` split，如果验证集是一个只有 train split 的独立数据集，请设置 ``data.openwam_val_split: train``\ （验证集为空时会在启动阶段直接报错）。多卡验证遇到短 shard 时，会重复一个样本仅用于对齐各 rank 的 FSDP forward 次数；补齐样本不会计入最终 loss。
 
 checkpoint 会把 dataloader、sampler（含 shuffle 的 epoch）和随机数状态与模型权重一起保存，因此 ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` 会从下一个未见过的 batch 继续，而不是重头开始这一轮数据。OpenWAM 配方设置了 ``runner.strict_resume: true``，缺少 ``data.pt`` 或 ``rng.pt`` 的旧 checkpoint 会直接报错；只有明确接受重新开始数据流时才应取消该设置。
 
@@ -128,12 +128,13 @@ FSDP worker 会把完整的 ``OpenWAMPolicy`` state dict 保存在 ``<log_path>/
 
 LIBERO 评估配方与本配方使用同一套 checkpoint 约定。``evaluations/libero/`` 提供 ``libero_{spatial,object,goal,10}_openwam_eval.yaml``\ （见 :doc:`../../evaluations/guides/libero`）；每条 episode 会记录 ``[libero eval] task_id=.., trial_id=.., success=..``，可以按任务拆分成功率。RoboTwin checkpoint 使用 ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml``，覆盖全部 50 个任务（见 :doc:`../../evaluations/guides/robotwin`）。
 
-设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl`` 后，可以先运行 smoke 配方（1 个环境、30 步，即三次 10 步生成）。配方把 env worker 与 rollout worker 分到不同 GPU，避免 EGL 渲染和 OpenWAM 推理争用同一张卡：
+通过 e2e 启动脚本运行短 smoke 配方（一个环境、30 步，即三次 10 步生成）；该脚本会导出配方所需的 ``EMBODIED_PATH`` 搜索路径，并设置 ``MUJOCO_GL=egl`` 和 ``PYOPENGL_PLATFORM=egl``。配方把 env worker 和 rollout worker 放在不同 GPU 上，避免 EGL 渲染与 OpenWAM 推理共用一张卡：
 
 .. code-block:: bash
 
-   python evaluations/eval_embodied_agent.py \
-     --config-path ../tests/e2e_tests/evaluations --config-name libero_spatial_openwam_eval
+   bash tests/e2e_tests/evaluations/run.sh libero_spatial_openwam_eval
+
+完整 suite 用 ``bash evaluations/run_eval.sh libero libero_spatial_openwam_eval`` 以及另外三个 suite 配方运行。它们都遵循 OpenWAM 的 LIBERO 协议：每次 reset 后先空转 30 步（``env.eval.num_steps_wait``），``libero_spatial``、``libero_object`` 和 ``libero_goal`` 每个 episode 600 步，``libero_10`` 为 700 步。
 
 自行缩短配方时，``env.eval.max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks``\ （默认 ``openwam.inference_horizon`` 下为 10）整除。
 

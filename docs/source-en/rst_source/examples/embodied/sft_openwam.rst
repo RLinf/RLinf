@@ -46,7 +46,7 @@ Run It
 
 Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to eight GPUs (``0-7``) to leave more memory headroom for OpenWAM's trainable DiT/action parameters and optimizer state. The other OpenWAM SFT recipes inherit this placement.
 
-The fourth review measured LIBERO training on H200 GPUs with ``micro_batch_size: 1`` and ``global_batch_size: 8``: four ranks peaked at 72.3 GiB allocated and 113.3 GiB reserved per GPU; eight ranks peaked at 55.5 GiB allocated and 83.7 GiB reserved. These H200 measurements motivate the eight-GPU default; they do not establish that the recipe fits on 80-GiB GPUs. Validate memory use for your checkpoint and hardware.
+Measured on H200 GPUs with LIBERO data, ``micro_batch_size: 1`` and ``global_batch_size: 8``, four ranks peaked at 72.3 GiB allocated and 113.3 GiB reserved per GPU; eight ranks peaked at 55.5 GiB allocated and 83.7 GiB reserved. These measurements motivate the eight-GPU default; they do not establish that the recipe fits on 80-GiB GPUs. Validate memory use for your checkpoint and hardware.
 
 The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. One recipe per OpenWAM reader ships under ``examples/sft/config/``; each inherits ``libero_sft_openwam.yaml`` and only sets the paths and the experiment name:
 
@@ -95,12 +95,12 @@ Start the Ray-managed FSDP runner:
 
 Override ``cluster.component_placement.actor`` and keep ``actor.global_batch_size`` divisible by the actor world size when you change the GPU count.
 
-The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single root FSDP2 unit because OpenWAM's joint denoising driver reads block weights outside their forward. ``reshard_after_forward`` only applies to the frozen ``ResidualBlock`` subunits named by the wrap policy; the trainable root parameters remain resident for the joint forward and backward. Gradient checkpointing remains enabled, but the fourth review found no reduction in peak memory at ``micro_batch_size: 1`` when comparing four-rank runs with it on and off. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
+The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single root FSDP2 unit because OpenWAM's joint denoising driver reads block weights outside their forward. ``reshard_after_forward`` only applies to the frozen ``ResidualBlock`` subunits named by the wrap policy; the trainable root parameters remain resident for the joint forward and backward. Gradient checkpointing remains enabled, although four-rank runs with it on and off showed no reduction in peak memory at ``micro_batch_size: 1``. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
 
 Validation and resuming
 -----------------------
 
-Set ``data.val_data_paths`` (one dataset root or a list, read with the same dataloader settings) and ``runner.val_check_interval`` to report ``eval/loss``, ``eval/loss_video`` and ``eval/loss_action`` averaged over the validation loader. ``actor.eval_batch_size`` sets the per-rank validation batch and ``actor.eval_max_batches`` caps the number of validation batches per rank for large datasets. LeRobot-style readers select episodes by split: validation reads the ``val`` split by default, so set ``data.openwam_val_split`` to ``train`` when the validation root is a separate held-out dataset that only ships a train split (an empty validation set is rejected at start-up). On multiple ranks, short shards are padded by repeating a sample only to keep FSDP forward counts aligned; padded samples are excluded from the reported loss.
+Set ``data.val_data_paths`` (one dataset root or a list, read with the same dataloader settings) and ``runner.val_check_interval`` to report ``eval/loss``, ``eval/loss_video`` and ``eval/loss_action`` averaged over the validation loader. Validation forwards one sample at a time; ``actor.eval_batch_size`` only sets how many samples the loader groups into one batch, and ``actor.eval_max_batches`` caps the number of such batches per rank for large datasets. LeRobot-style readers select episodes by split: validation reads the ``val`` split by default, so set ``data.openwam_val_split`` to ``train`` when the validation root is a separate held-out dataset that only ships a train split (an empty validation set is rejected at start-up). On multiple ranks, short shards are padded by repeating a sample only to keep FSDP forward counts aligned; padded samples are excluded from the reported loss.
 
 Checkpoints store the data loader, sampler (including the shuffle epoch) and RNG states next to the model weights, so ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` continues with the next unseen batch instead of restarting the epoch. The OpenWAM recipe sets ``runner.strict_resume: true`` and fails if an older checkpoint has no ``data.pt`` or ``rng.pt``; unset it only when restarting the data stream is intentional.
 
@@ -128,12 +128,13 @@ Evaluation
 
 The LIBERO evaluation recipes use the same checkpoint contract as this recipe. ``evaluations/libero/`` ships ``libero_{spatial,object,goal,10}_openwam_eval.yaml`` (see :doc:`../../evaluations/guides/libero`); each episode is logged as ``[libero eval] task_id=.., trial_id=.., success=..`` so success can be split per task. RoboTwin checkpoints use ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml`` for all 50 tasks (see :doc:`../../evaluations/guides/robotwin`).
 
-Run the short smoke recipe (one environment, 30 steps, i.e. three 10-step generations) after setting ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``. The recipes place the env worker and rollout worker on separate GPUs so EGL rendering does not share a GPU with OpenWAM inference:
+Run the short smoke recipe (one environment, 30 steps, i.e. three 10-step generations) through the e2e launcher, which exports the ``EMBODIED_PATH`` search path the recipe needs and sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``. The recipes place the env worker and rollout worker on separate GPUs so EGL rendering does not share a GPU with OpenWAM inference:
 
 .. code-block:: bash
 
-   python evaluations/eval_embodied_agent.py \
-     --config-path ../tests/e2e_tests/evaluations --config-name libero_spatial_openwam_eval
+   bash tests/e2e_tests/evaluations/run.sh libero_spatial_openwam_eval
+
+The full suites run through ``bash evaluations/run_eval.sh libero libero_spatial_openwam_eval`` and the other three suite recipes. All of them follow OpenWAM's LIBERO protocol: 30 settling steps after each reset (``env.eval.num_steps_wait``), 600 steps per episode for ``libero_spatial``, ``libero_object`` and ``libero_goal``, and 700 for ``libero_10``.
 
 Keep ``env.eval.max_steps_per_rollout_epoch`` divisible by ``rollout.model.num_action_chunks`` (10 with the default ``openwam.inference_horizon``) when you shorten a recipe.
 
