@@ -542,6 +542,11 @@ def _wrist_frames(value: Any) -> list[Image.Image]:
     return [_to_pil(array)]
 
 
+# ``assemble_multiview_layout`` default: the head camera takes the top two
+# thirds of the canvas, the wrist cameras split the bottom third.
+_MULTIVIEW_TOP_HEIGHT_RATIO = 2.0 / 3.0
+
+
 def _compose_observation_image(
     main_image: Image.Image,
     wrist_image: Any,
@@ -568,15 +573,31 @@ def _compose_observation_image(
         # center-crop a square environment frame and discard its vertical view.
         return main_image.resize((width, height), Image.Resampling.LANCZOS)
 
-    frames = {camera_layout[0]: main_image}
+    # The training readers decode the head camera at the top-slot size and the
+    # wrist cameras at the bottom-slot size with LANCZOS before composition, so
+    # the BILINEAR stretch inside ``assemble_multiview_layout`` is a no-op there.
+    # Pre-resizing the environment frames the same way keeps eval pixels on the
+    # training distribution instead of bilinear-stretching raw frames.
+    top_h = int(round(height * _MULTIVIEW_TOP_HEIGHT_RATIO))
+    head_size = (width, top_h)
+    wrist_size = (width // 2, height - top_h)
+    frames = {camera_layout[0]: _resize_for_slot(main_image, head_size)}
     for slot, frame in zip(camera_layout[1:], _wrist_frames(wrist_image)):
-        frames[slot] = frame
+        frames[slot] = _resize_for_slot(frame, wrist_size)
     return assemble_multiview_layout(
         frames,
         camera_layout=camera_layout,
         out_h=height,
         out_w=width,
+        top_height_ratio=_MULTIVIEW_TOP_HEIGHT_RATIO,
     )
+
+
+def _resize_for_slot(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """LANCZOS-resize ``image`` to ``size`` ``(width, height)`` like the readers."""
+    if image.size == size:
+        return image
+    return image.resize(size, Image.Resampling.LANCZOS)
 
 
 def _observation_proprio(env_obs: dict[str, Any], index: int) -> np.ndarray | None:
