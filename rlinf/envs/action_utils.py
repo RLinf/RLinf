@@ -15,7 +15,11 @@
 import numpy as np
 import torch
 
-from rlinf.config import SupportedModel
+from rlinf.config import (
+    OPENWAM_LIBERO_ACTION_REPRESENTATIONS,
+    OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
+    SupportedModel,
+)
 from rlinf.envs import SupportedEnvType
 
 
@@ -72,9 +76,6 @@ def prepare_actions_for_maniskill(
     return chunk_actions
 
 
-OPENWAM_ROBOTWIN_REPRESENTATIONS = ("absolute_eef20",)
-
-
 def _openwam_eef20_to_robotwin_ee16(chunk_actions) -> np.ndarray:
     """Convert OpenWAM's 20-D dual-arm EEF actions to RoboTwin's 16-D ``ee`` actions.
 
@@ -118,10 +119,10 @@ def prepare_actions_for_robotwin(
     representation = (
         None if env_cfg is None else env_cfg.get("openwam_action_representation", None)
     )
-    if representation not in OPENWAM_ROBOTWIN_REPRESENTATIONS:
+    if representation not in OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS:
         raise ValueError(
             "OpenWAM RoboTwin requires env.<split>.openwam_action_representation "
-            f"to be one of {OPENWAM_ROBOTWIN_REPRESENTATIONS}, got {representation!r}. "
+            f"to be one of {OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS}, got {representation!r}. "
             "It switches RoboTwinEnv to end-effector control and 20-D native proprio."
         )
     return _openwam_eef20_to_robotwin_ee16(raw_chunk_actions)
@@ -139,10 +140,11 @@ def prepare_actions_for_libero(
             if env_cfg is None
             else env_cfg.get("openwam_action_representation", None)
         )
-        if representation not in ("absolute_eef10", "native_delta_eef10"):
+        if representation not in OPENWAM_LIBERO_ACTION_REPRESENTATIONS:
             raise ValueError(
                 "OpenWAM LIBERO requires env.eval.openwam_action_representation "
-                "to be 'absolute_eef10' or 'native_delta_eef10'."
+                f"to be one of {OPENWAM_LIBERO_ACTION_REPRESENTATIONS}, "
+                f"got {representation!r}."
             )
         if representation == "absolute_eef10":
             raw = np.asarray(chunk_actions, dtype=np.float32)

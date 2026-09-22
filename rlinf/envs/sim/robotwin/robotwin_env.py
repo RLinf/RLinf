@@ -24,13 +24,13 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from PIL import Image
 
+from rlinf.config import OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS
 from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.envs.utils import center_crop_image, list_of_dict_to_dict_of_list
 
 __all__ = ["RoboTwinEnv"]
 
 
-OPENWAM_ROBOTWIN_REPRESENTATIONS = ("absolute_eef20",)
 _ACTION_TYPE_MARKER = "_rlinf_robotwin_action_type"
 
 
@@ -121,13 +121,13 @@ def execute_robotwin_ee_chunk(task: Any, chunk_actions: Any):
 def step_robotwin_venv(venv: Any, actions: Any, timeout_s: float | None):
     """``VectorEnv.step`` with a configurable per-sub-environment timeout.
 
-    RoboTwin's ``VectorEnv.step`` waits ``future.result(timeout=120)`` on each
-    sub-environment. End-effector chunks are planned target by target, and a
-    few hard targets make the motion planner retry for tens of seconds, so a
-    32-step chunk can legitimately exceed two minutes; the resulting
-    ``TimeoutError`` surfaces as an empty "SubEnv i step error". Re-implement the
-    fan-out with the caller's budget (``None`` waits indefinitely). Falls back
-    to ``venv.step`` when the VectorEnv does not expose its thread pool.
+    RoboTwin's ``VectorEnv.step`` waits ``future.result(timeout=1200)`` on
+    each sub-environment. End-effector chunks are planned target by target, and
+    a few hard targets make the motion planner retry for tens of seconds, so a
+    long chunk can exceed that fixed budget; the resulting ``TimeoutError``
+    surfaces as an empty "SubEnv i step error". Re-implement the fan-out with
+    the caller's budget (``None`` waits indefinitely). Falls back to
+    ``venv.step`` when the VectorEnv does not expose its thread pool.
     """
     envs = getattr(venv, "envs", None)
     pool = getattr(venv, "env_thread_pool", None)
@@ -221,18 +221,26 @@ class RoboTwinEnv(gym.Env):
         )
         if self.openwam_action_representation not in (
             None,
-            *OPENWAM_ROBOTWIN_REPRESENTATIONS,
+            *OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
         ):
             raise ValueError(
                 "RoboTwin openwam_action_representation must be one of "
-                f"{OPENWAM_ROBOTWIN_REPRESENTATIONS} or null, "
+                f"{OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS} or null, "
                 f"got {self.openwam_action_representation!r}"
             )
         self.robotwin_action_type = (
             "ee" if self.openwam_action_representation is not None else "qpos"
         )
+        # RoboTwin samples each episode's language instruction from the task's
+        # ``seen`` or ``unseen`` pool; ``seen`` is RoboTwin's own default.
+        self.instruction_type = str(cfg.get("instruction_type", "seen"))
+        if self.instruction_type not in ("seen", "unseen"):
+            raise ValueError(
+                "RoboTwin instruction_type must be 'seen' or 'unseen', "
+                f"got {self.instruction_type!r}"
+            )
         # Per-chunk wait for one sub-environment; null waits indefinitely. Only
-        # used for ee control, joint chunks keep VectorEnv's own 120 s.
+        # used for ee control, joint chunks keep VectorEnv's own 1200 s.
         timeout = cfg.get("robotwin_step_timeout_s", 1800)
         self.robotwin_step_timeout_s = None if timeout is None else float(timeout)
         self._init_reset_state_ids()
@@ -260,6 +268,7 @@ class RoboTwinEnv(gym.Env):
             task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),
             n_envs=self.num_envs,
             env_seeds=env_seeds,
+            instruction_type=self.instruction_type,
         )
         self._bind_action_type()
 

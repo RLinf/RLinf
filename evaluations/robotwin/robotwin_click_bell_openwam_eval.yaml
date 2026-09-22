@@ -43,11 +43,10 @@ env:
   # Override the default values in env/robotwin_openwam_aloha
   eval:
     rollout_epoch: 1
-    # RoboTwin's VectorEnv.step waits at most 120 s per sub-environment and the
-    # sub-environments of one env worker run under a shared lock, at roughly 1 s
-    # per planned ee target: keep envs-per-worker x 32 x 1 s under that budget
-    # (2 per worker is safe; 4 times out). Scale trajectories with rollout_epoch
-    # or more env GPUs instead.
+    # The sub-environments of one env worker plan their ee targets under a
+    # shared lock (about 25 to 30 s per 32-step chunk each), so more envs per
+    # worker only serialize; scale trajectories with rollout_epoch or more env
+    # GPUs instead. robotwin_step_timeout_s (preset) bounds each chunk wait.
     total_num_envs: 2
     use_custom_reward: False
     use_rel_reward: True

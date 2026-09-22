@@ -216,7 +216,8 @@ OpenWAM（RoboTwin study checkpoint，demo_randomized 协议）
 - ``task_config.data_type.endpose: true``，让 RoboTwin 发布末端位姿
 - ``rollout.model.num_action_chunks: 32``、``openwam.inference_horizon: null``：与 OpenWAM 自己的 RoboTwin 客户端一样整块执行 32 步；``max_episode_steps`` 与 ``step_lim`` 取 RoboTwin ``_eval_step_limit.yml`` 的步数向上取到 32 的倍数（如 click_bell 400→416、place_empty_cup 500→512）；共享 preset 为 ``env/robotwin_openwam_aloha.yaml``，没有 RLinf 评测 seeds 的任务用随机 seeds
 - prompt 会自动套上 checkpoint 训练时的固定前缀，无需在配置里写
-- 每个末端目标都经 RoboTwin 的 ``take_action(..., action_type="ee")`` 单独规划（mplib），一个 32 步 chunk 约 25 到 30 秒；RoboTwin ``VectorEnv.step`` 对每个子环境只等 120 秒，同一 env worker 的子环境共用一把锁，所以每个 env GPU 上最多放 2 个环境（4 个会超时），要更多轨迹用 ``rollout_epoch`` 或更多 env GPU；SAPIEN 需要 ``DISPLAY``（无头机器先起 ``Xvfb :99``），并按 ``requirements/install.sh`` 的 ``install_robotwin_env`` 给 sapien/mplib 打补丁
+- 每个末端目标都经 RoboTwin 的 ``take_action(..., action_type="ee")``\ （mplib）单独规划，一个 32 步 chunk 约 25 到 30 秒；同一 env worker 的子环境共用一把锁，多放环境只会串行执行，所以配方每个 env GPU 上放 2 个环境，要更多轨迹用 ``rollout_epoch`` 或更多 env GPU；每个 chunk 的等待上限由 ``env.eval.robotwin_step_timeout_s``\ （preset 中为 1800 秒）控制；SAPIEN 需要 ``DISPLAY``\ （无头机器先起 ``Xvfb :99``\ ），并按 ``requirements/install.sh`` 的 ``install_robotwin_env`` 给 sapien/mplib 打补丁
+- ``env.eval.instruction_type: unseen`` 让每个 episode 从 RoboTwin 的 unseen 指令池采样，与 OpenWAM 自己的 RoboTwin 协议一致；RoboTwin 的默认值（以及 RLinf 其他 RoboTwin 配方）是 ``seen``
 - 域随机化沿用 preset 默认（对应 OpenWAM 论文的 randomized 设置）；要复现 clean 协议时关闭全部 ``task_config.domain_randomization``
 
 覆盖完整测试集

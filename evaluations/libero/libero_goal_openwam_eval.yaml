@@ -41,6 +41,8 @@ env:
     render_gpu_ids: [0, 1, 2] # one EGL renderer per GPU, none on the rollout GPU (3)
     auto_reset: true
     ignore_terminations: true
+    # OpenWAM's LIBERO protocol settles each reset for 30 zero-action steps.
+    num_steps_wait: 30
     # OpenWAM's native LIBERO client caps every suite at 600 steps (benchmarks/libero/policy_config.yml).
     max_episode_steps: 600
     max_steps_per_rollout_epoch: 600

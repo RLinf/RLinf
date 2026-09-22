@@ -26,6 +26,9 @@ seeds_path: null
 # The checkpoint predicts 20-D absolute dual-arm EEF poses; RoboTwinEnv runs the
 # ``ee`` controller and publishes a matching 20-D native_proprio.
 openwam_action_representation: absolute_eef20
+# OpenWAM's RoboTwin protocol samples instructions from the unseen pool;
+# RoboTwin's own default is seen.
+instruction_type: unseen
 
 video_cfg:
   save_video: False

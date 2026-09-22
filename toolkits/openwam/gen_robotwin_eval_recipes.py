@@ -115,6 +115,9 @@ seeds_path: null
 # The checkpoint predicts 20-D absolute dual-arm EEF poses; RoboTwinEnv runs the
 # ``ee`` controller and publishes a matching 20-D native_proprio.
 openwam_action_representation: absolute_eef20
+# OpenWAM's RoboTwin protocol samples instructions from the unseen pool;
+# RoboTwin's own default is seen.
+instruction_type: unseen
 
 video_cfg:
   save_video: False
@@ -209,11 +212,10 @@ env:
   # Override the default values in env/robotwin_openwam_aloha
   eval:
     rollout_epoch: 1
-    # RoboTwin's VectorEnv.step waits at most 120 s per sub-environment and the
-    # sub-environments of one env worker run under a shared lock, at roughly 1 s
-    # per planned ee target: keep envs-per-worker x 32 x 1 s under that budget
-    # (2 per worker is safe; 4 times out). Scale trajectories with rollout_epoch
-    # or more env GPUs instead.
+    # The sub-environments of one env worker plan their ee targets under a
+    # shared lock (about 25 to 30 s per 32-step chunk each), so more envs per
+    # worker only serialize; scale trajectories with rollout_epoch or more env
+    # GPUs instead. robotwin_step_timeout_s (preset) bounds each chunk wait.
     total_num_envs: 2
     use_custom_reward: False
     use_rel_reward: True
@@ -264,10 +266,11 @@ def rounded_steps(limit: int, chunk: int = CHUNK) -> int:
     return ((limit + chunk - 1) // chunk) * chunk
 
 
-def main() -> None:
-    repo = Path(__file__).resolve().parents[2]
-    preset = repo / "examples/embodiment/config/env/robotwin_openwam_aloha.yaml"
-    preset.write_text(PRESET)
+def render_recipes(repo: Path) -> dict[Path, str]:
+    """Return the env preset and the 50 task recipes keyed by their repo path."""
+    files = {
+        repo / "examples/embodiment/config/env/robotwin_openwam_aloha.yaml": PRESET
+    }
     seeds_file = repo / "rlinf/envs/sim/robotwin/seeds/eval_seeds.json"
     seeded = set(json.loads(seeds_file.read_text()).keys())
     out_dir = repo / "evaluations/robotwin"
@@ -277,16 +280,22 @@ def main() -> None:
             if task in seeded
             else "null   # no RLinf eval seeds for this task yet: random RoboTwin seeds"
         )
-        (out_dir / f"robotwin_{task}_openwam_eval.yaml").write_text(
-            RECIPE.format(
-                task=task,
-                limit=limit,
-                steps=rounded_steps(limit),
-                seeds=seeds,
-                checkpoint=CHECKPOINT,
-            )
+        files[out_dir / f"robotwin_{task}_openwam_eval.yaml"] = RECIPE.format(
+            task=task,
+            limit=limit,
+            steps=rounded_steps(limit),
+            seeds=seeds,
+            checkpoint=CHECKPOINT,
         )
-    print(f"wrote {preset.relative_to(repo)} and {len(STEP_LIMITS)} recipes")
+    return files
+
+
+def main() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    files = render_recipes(repo)
+    for path, text in files.items():
+        path.write_text(text)
+    print(f"wrote {len(files) - 1} recipes and the env preset")
 
 
 if __name__ == "__main__":
