@@ -429,7 +429,7 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
             ),
             "psi0_execution_source_slots": source_slots,
             "psi0_execution_source_indices": source_indices,
-            "psi0_execution_mask": torch.ones(
+            "executed_mask": torch.ones(
                 (batch_size, self.execution_horizon),
                 dtype=torch.bool,
                 device=actions.device,
@@ -576,7 +576,7 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
         batch_indices = torch.arange(batch_size, device=velocity.device)[:, None]
         logprobs = slot_logprobs[batch_indices, source_slots, source_indices]
         entropy = slot_entropy[batch_indices, source_slots, source_indices]
-        execution_mask = forward_inputs["psi0_execution_mask"].bool()[..., None]
+        execution_mask = forward_inputs["executed_mask"].bool()[..., None]
         result = {
             "logprobs": logprobs * execution_mask,
             "entropy": entropy * execution_mask,

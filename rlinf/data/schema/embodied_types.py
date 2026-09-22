@@ -145,6 +145,8 @@ class EnvTransition:
     terminations: torch.Tensor | None = None
     # Time-limit/external truncation mask, bool [B, C].
     truncations: torch.Tensor | None = None
+    # Actually executed action slots, bool [B, C]; None leaves statistics unchanged.
+    executed_mask: torch.Tensor | None = None
     # Expert actions for intervened slots, float [B, C, A] or [B, D].
     intervene_actions: torch.Tensor | None = None
     # Environment-side intervention mask, bool [B, C].
@@ -164,6 +166,7 @@ class EnvTransition:
             "dones",
             "terminations",
             "truncations",
+            "executed_mask",
             "intervene_actions",
             "intervene_flags",
             "rlt_switch_flags",
@@ -172,6 +175,11 @@ class EnvTransition:
             value = getattr(self, field_name)
             if value is not None:
                 setattr(self, field_name, value.cpu().contiguous())
+
+        if self.executed_mask is not None and (
+            self.executed_mask.ndim != 2 or self.executed_mask.dtype != torch.bool
+        ):
+            raise ValueError("executed_mask must be a bool tensor of shape [B, C].")
 
     def with_trajectory_data(
         self,
@@ -684,6 +692,8 @@ class TrajectoryStep:
 
         This is the single conversion boundary for policy statistics,
         environment boundaries, interventions, and optional transitions.
+        An execution mask requires logprobs shaped [B, C, ...]. Models receive
+        it in forward_inputs and must also mask their recomputed statistics.
         """
         output = policy.output
         if output is None:
@@ -710,6 +720,18 @@ class TrajectoryStep:
                 else None
             ),
         )
+        if env.transition.executed_mask is not None:
+            mask = env.transition.executed_mask
+            if step.prev_logprobs is not None:
+                if step.prev_logprobs.shape[:2] != mask.shape:
+                    raise ValueError(
+                        "executed_mask requires logprobs with matching [B, C, ...] dimensions."
+                    )
+                expanded_mask = mask.reshape(
+                    *mask.shape, *((1,) * (step.prev_logprobs.ndim - 2))
+                )
+                step.prev_logprobs = step.prev_logprobs.masked_fill(~expanded_mask, 0)
+            step.forward_inputs["executed_mask"] = mask
         if env.transition.intervene_actions is not None:
             step.apply_interventions(
                 env.transition.intervene_actions,
