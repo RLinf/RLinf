@@ -81,6 +81,11 @@ def _register_builtin_models():
 
     def _build_psi0(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.psi0 import get_model
+      
+        return get_model(cfg, torch_dtype)
+      
+    def _build_pi0_fast(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.pi0_fast import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -227,6 +232,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.PSI0.value,
         _build_psi0,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.PI0_FAST.value,
+        _build_pi0_fast,
         category="embodied",
         force=True,
     )
@@ -384,14 +395,17 @@ def get_model(cfg: DictConfig):
         model = model.to(Worker.torch_device_type)
 
     if cfg.is_lora:
-        from peft import LoraConfig, PeftModel, get_peft_model
+        from peft import (
+            LoraConfig,
+            PeftModel,
+            get_peft_model,
+            inject_adapter_in_model,
+        )
 
         if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
-            lora_config = LoraConfig(
-                r=cfg.lora_rank,
-                lora_alpha=cfg.lora_rank,
-                lora_dropout=0.0,
-                target_modules=[
+            target_scope = cfg.get("lora_target_scope")
+            if target_scope is None:
+                target_modules = [
                     "proj",
                     "qkv",
                     "fc1",
@@ -408,10 +422,23 @@ def get_model(cfg: DictConfig):
                     "up_proj",
                     "down_proj",
                     "lm_head",  # llm
-                ],
+                ]
+            elif str(target_scope).lower().replace("-", "_") == "all_linear":
+                target_modules = "all-linear"
+            else:
+                raise ValueError(f"Unsupported lora_target_scope: {target_scope!r}")
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha=cfg.lora_rank,
+                lora_dropout=0.0,
+                target_modules=target_modules,
                 init_lora_weights="gaussian",
             )
-            if SupportedModel(model_type) in (
+            if target_modules == "all-linear":
+                for param in model.parameters():
+                    param.requires_grad_(False)
+                model = inject_adapter_in_model(lora_config, model)
+            elif SupportedModel(model_type) in (
                 SupportedModel.OPENPI,
                 SupportedModel.CFG_MODEL,
             ):

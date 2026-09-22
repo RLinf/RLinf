@@ -15,7 +15,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -86,6 +86,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2
+   * - ``libero_10_pi0_fast_eval.yaml``
+     - Long (libero_10)
+     - PI0-FAST
 
 DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend 见 :doc:`cosmos3_sglang`。
 

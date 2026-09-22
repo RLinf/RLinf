@@ -2077,3 +2077,37 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-pi0-fast-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PI0-Fast environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export UV_TORCH_BACKEND=cu128
+          bash requirements/install.sh embodied --model pi0_fast --env libero \
+            --python 3.12.12 --torch 2.11.0 --no-flash-attn
+
+      - name: PI0-Fast LIBERO GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export PI0FAST_MODEL_PATH=/workspace/dataset/pi0_fast/pi0fast-libero
+          export PI0FAST_TEXT_TOKENIZER=/workspace/dataset/pi0_fast/paligemma-3b-pt-224
+          export PI0FAST_ACTION_TOKENIZER=/workspace/dataset/pi0_fast/tokenizer-lib-mean
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_pi0_fast egl
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
