@@ -16,10 +16,8 @@ from rlinf.workers.rollout.grpc.grpc_policy_adapter import GRPCPolicyAdapter
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server-address", default="127.0.0.1:50052")
-    parser.add_argument(
-        "--policy-id", default="so101-pi05-openpi-rlinf-step10000"
-    )
+    parser.add_argument("--server-address", default="127.0.0.1:50051")
+    parser.add_argument("--policy-id", default="so101-pi05")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument(
         "--task-description",
