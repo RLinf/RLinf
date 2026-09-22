@@ -24,8 +24,7 @@ case "${command}" in
             c|success) command_name="success"; target_file="${control_file}" ;;
             a|abort|failure) command_name="failure"; target_file="${control_file}" ;;
             r|release) command_name="release"; target_file="${intervention_file}" ;;
-            q|quit) command_name="quit"; target_file="${control_file}" ;;
-            *) echo "usage: $0 control {s|space|c|a|r|q}" >&2; exit 2 ;;
+            *) echo "usage: $0 control {s|space|c|a|r}" >&2; exit 2 ;;
         esac
         printf '%s\n' "${command_name}" >> "${target_file}"
         echo "sent ${key} -> ${command_name} (${target_file})"

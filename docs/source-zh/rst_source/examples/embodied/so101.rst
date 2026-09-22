@@ -241,9 +241,12 @@ Policy 部署与远程 gRPC 采集
    export SO101_LEADER_ID=rlinf_leader
    export SO101_CAMERA=/dev/video0
    export SO101_EVAL_CONFIG=realworld_so101_grpc_dagger_offline
-   bash examples/embodiment/run_so101_experiment.sh eval
+   bash examples/embodiment/run_so101_experiment.sh eval \
+     env.eval.rollout_epoch=10
 
 服务端必须返回与本地配置一致的 policy ID、动作维度 ``6`` 和 action horizon ``20``。入口复用 RLinf 现有 evaluation runner 和 LeRobot writer。OpenPI 在 policy 主机运行，机器人主机只运行 gRPC client 和硬件环境。WSL 没有键盘设备时，可以通过入口脚本的控制文件发送命令：
+
+基础评测配置将单个 episode 限制为 ``1800`` 个硬件步；在默认 15 Hz 控制频率下约为两分钟，并且这个上限可以被 policy 的 20 步 action chunk 整除。通过命令行覆盖 ``env.eval.rollout_epoch`` 可以指定本次运行的 episode 数量，同一份配置适用于任意数量。评测会在达到该数量后正常结束，因此评测控制接口不提供 ``q`` 命令；只有需要提前中断时才使用进程级中断。
 
 .. code-block:: bash
 
@@ -251,9 +254,8 @@ Policy 部署与远程 gRPC 采集
    bash examples/embodiment/run_so101_experiment.sh control space
    bash examples/embodiment/run_so101_experiment.sh control r
    bash examples/embodiment/run_so101_experiment.sh control c
-   bash examples/embodiment/run_so101_experiment.sh control q
 
-``s`` 启动 policy rollout，``space`` 请求显式接管 leader，``r`` 将 leader 交还给 policy，``c`` 保存成功 episode，``q`` 请求结束评测。接管和交还 leader 时都会使用三秒 handover buffer，让操作员有时间握稳或移开 leader。生成的 LeRobot 数据写入本次运行目录下的 ``collected_data``。上传 episode 并执行离线训练属于后续步骤；固定 checkpoint service 在本次运行中保持已部署权重不变。
+``s`` 启动 policy rollout，``space`` 请求显式接管 leader，``r`` 将 leader 交还给 policy，``c`` 保存成功 episode。接管和交还 leader 时都会使用三秒 handover buffer，让操作员有时间握稳或移开 leader。生成的 LeRobot 数据写入本次运行目录下的 ``collected_data``。上传 episode 并执行离线训练属于后续步骤；固定 checkpoint service 在本次运行中保持已部署权重不变。
 
 新增真机任务
 ------------
