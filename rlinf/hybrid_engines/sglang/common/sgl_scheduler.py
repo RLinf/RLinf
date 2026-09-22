@@ -74,6 +74,8 @@ def patch_glm4_moe_lite_shared_expert_tp1():
         return
     if not hasattr(Glm4MoeLiteSparseMoeBlock, "_shared_expert_tp1"):
         Glm4MoeLiteSparseMoeBlock._shared_expert_tp1 = False
+
+
 def _platform_call(platform, method_name: str, device=None, default=None):
     """Call a torch platform method with an optional device argument."""
     if not hasattr(platform, method_name):

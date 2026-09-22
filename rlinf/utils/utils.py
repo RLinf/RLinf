@@ -678,7 +678,6 @@ def warmup_optimizer_state(optimizer: Optimizer) -> None:
         p.grad = saved_grads[p]
 
 
-
 def get_rng_state() -> dict:
     """
     Get the current RNG state for both CPU and CUDA (if available).
