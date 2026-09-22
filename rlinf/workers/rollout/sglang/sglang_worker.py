@@ -18,10 +18,6 @@ import dataclasses
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
-from sglang.srt.managers.io_struct import (
-    ReleaseMemoryOccupationReqInput,
-    ResumeMemoryOccupationReqInput,
-)
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
@@ -34,10 +30,10 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.workers.rollout.sglang import Engine, io_struct
+from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang.backends import SGLangEngineBackend, make_backend
 from rlinf.workers.rollout.utils import (
     MetaInfoStatsCollector,
-    RolloutEngineStats,
     RunningStatusManager,
     print_sglang_outputs,
 )
@@ -64,6 +60,8 @@ class SGLangWorker(Worker):
             config_rollout = self._cfg.rollout
         self._cfg_rollout = config_rollout
         self._placement = placement
+        # Set in init_worker(); declared here so RPC methods can check it.
+        self._backend = None
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._cfg_rollout.model.model_path,
@@ -144,7 +142,12 @@ class SGLangWorker(Worker):
             }
         return sampling_params
 
-    def _init_engine(self):
+    def _build_server_args(self) -> dict:
+        """Build the shared sglang ServerArgs kwargs for the rollout backend.
+
+        Engine and Server backends consume the same product (plan decision
+        1.3), so version-compatibility branches live here only once.
+        """
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
         load_format = "dummy"  # dummy means randomize init weight
@@ -231,7 +234,23 @@ class SGLangWorker(Worker):
         )
 
         self.log_on_first_rank(f"{server_args=}")
-        self._engine = Engine(**dataclasses.asdict(server_args))
+        return dataclasses.asdict(server_args)
+
+    @property
+    def _engine(self):
+        """Compat property: only available with the Engine backend.
+
+        Kept for `SGLangAgentWorkerWithHTTPServer` (sglang_agent_worker.py:118,144).
+        Temporary state: remove it together with the subclass rework once the
+        worker_http path has test coverage.
+        """
+        if not isinstance(self._backend, SGLangEngineBackend):
+            raise RuntimeError(
+                "self._engine is only available with "
+                "rollout.sglang.backend_type=engine; serving_mode=worker_http "
+                "does not support backend_type=server"
+            )
+        return self._backend.engine
 
     def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
@@ -240,7 +259,8 @@ class SGLangWorker(Worker):
             self.async_meta_stats_collector.finalize()
 
         self.log_info(f"Stopping SGLang worker {self._rank} ...")
-        self._engine.shutdown()
+        if self._backend is not None:
+            self._backend.shutdown()
         self.log_info(f"SGLang worker {self._rank} stopped.")
 
     async def _validate_weight_at_first(self):
@@ -269,10 +289,10 @@ class SGLangWorker(Worker):
         Asynchronously generate text using the underlying SGLang engine and return
         the engine result together with the original input_ids, answers, and idx.
 
-        This wrapper calls self._engine.async_generate(...) and forwards the provided
-        arguments. Because the SGLang engine does not include the original input_ids
-        in its response, this method returns the input_ids alongside the engine
-        result for downstream use.
+        This wrapper calls the rollout backend's async_generate(...) and forwards
+        the provided arguments. Because the backend does not include the original
+        input_ids in its response, this method returns the request_info alongside
+        the engine result for downstream use.
 
         Args:
             prompt (List[str] | str | None): Same as SGLang engine's prompt argument.
@@ -285,7 +305,7 @@ class SGLangWorker(Worker):
         Returns:
             Tuple[Dict, Any | None]: A tuple containing the engine result and the original request_info.
         """
-        result = await self._engine.async_generate(
+        result = await self._backend.async_generate(
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
@@ -297,61 +317,48 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
-        self._init_engine()
+        assert self.weight_reload in ("sync", "cpu", None), (
+            f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
+        )
+        self._backend = make_backend(
+            self._cfg_rollout.sglang.get("backend_type", "engine"),
+            server_args=self._build_server_args(),
+            rlinf_ctx=RlinfContext(
+                parent_address=self.worker_address,
+                weight_reload=self.weight_reload,
+                placement=self._placement,
+                cfg=self._cfg,
+            ),
+            acquire_free_port=self.acquire_free_port,
+            log_info=self.log_info,
+            log_error=self.log_error,
+        )
+        await self._backend.initialize()
+        self.log_info(f"SGLang worker {self._rank} initialized.")
         if self.weight_reload == "sync":
-            await self._engine.tokenizer_manager.run_task_method(
-                io_struct.TaskMethodInput(
-                    method_name="init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        self.weight_reload,
-                        self._placement,
-                        self._cfg,
-                    ),
-                )
-            )
-            self.log_info(f"SGLang worker {self._rank} initialized.")
             if self._cfg_rollout.validate_weight:
                 await self._validate_weight_at_first()
             if self._placement.is_collocated:
                 await self.offload_engine()
             if self._use_auto_scheduler:
                 asyncio.create_task(self._scheduler.main_loop())
-        elif self.weight_reload == "cpu" or self.weight_reload is None:
-            await self._engine.tokenizer_manager.run_task_method(
-                io_struct.TaskMethodInput(
-                    method_name="init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        self.weight_reload,
-                    ),
-                )
-            )
-            self.log_info(f"SGLang worker {self._rank} initialized.")
-            if self.weight_reload == "cpu" and self._placement.is_collocated:
+        elif self.weight_reload == "cpu":
+            if self._placement.is_collocated:
                 await self.offload_engine()
-        else:
-            assert False, (
-                f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
-            )
 
     async def offload_engine(self):
         """
         Release the model weights from the SGLang engine.
         """
         assert self.weight_reload is not None
-        await self._engine.tokenizer_manager.release_memory_occupation(
-            obj=ReleaseMemoryOccupationReqInput()
-        )
+        await self._backend.offload()
 
     async def onload_engine(self):
         """
         Onload the model weights from cpu to the SGLang engine.
         """
         assert self.weight_reload == "cpu"
-        await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput()
-        )
+        await self._backend.onload()
 
     async def onload_kv_cudagraph(self):
         """
@@ -362,27 +369,18 @@ class SGLangWorker(Worker):
         the actor has offloaded its model (avoids both models on GPU
         simultaneously).
         """
-        await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
-        )
+        await self._backend.onload(tags=["kv_cache", "cuda_graph"])
 
     async def abort_generation(self):
         """Abort the generation."""
-        await self._engine.tokenizer_manager.abort_generation(
-            obj=io_struct.AbortGenerationInput()
-        )
+        await self._backend.abort_generation()
 
     async def sync_model_from_actor(self):
         """Update the weights of the SGLang engine."""
-        await self._engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput()
-        )
+        await self._backend.sync_weights()
 
     async def check_running_state(self):
-        state = await self._engine.tokenizer_manager.run_task_method(
-            io_struct.TaskMethodInput(method_name="get_scheduler_running_state")
-        )
-        state = RolloutEngineStats(**state)
+        state = await self._backend.get_running_state()
 
         return state
 
@@ -528,9 +526,10 @@ class SGLangWorker(Worker):
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        result = await self._engine.async_generate(
+        result = await self._backend.async_generate(
             input_ids=prompt_ids,
             sampling_params=final_sampling_params,
+            image_data=None,
             return_logprob=self._return_logprobs,
         )
         # sglang will trim matched stop in result text, so we should only return output_ids
