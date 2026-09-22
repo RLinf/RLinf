@@ -353,11 +353,13 @@ necessary.
    bash examples/embodiment/run_so101_experiment.sh control space
    bash examples/embodiment/run_so101_experiment.sh control r
    bash examples/embodiment/run_so101_experiment.sh control c
+   bash examples/embodiment/run_so101_experiment.sh control a
 
 ``s`` starts policy rollout, ``space`` requests explicit leader takeover,
-``r`` releases the leader back to policy control, and ``c`` records a
-successful episode. The three-second handover buffers hold the follower while
-the operator takes or releases the leader. The resulting LeRobot data is
+``r`` releases the leader back to policy control, ``c`` records a successful
+episode, and ``a`` records a failed episode. The three-second handover buffers
+hold the follower while the operator takes or releases the leader. The resulting
+LeRobot data is
 written below the run's ``collected_data`` directory. Upload the episodes and
 run the offline training workflow separately; this fixed-checkpoint service
 keeps its deployed weights unchanged.

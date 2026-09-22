@@ -254,8 +254,9 @@ Policy 部署与远程 gRPC 采集
    bash examples/embodiment/run_so101_experiment.sh control space
    bash examples/embodiment/run_so101_experiment.sh control r
    bash examples/embodiment/run_so101_experiment.sh control c
+   bash examples/embodiment/run_so101_experiment.sh control a
 
-``s`` 启动 policy rollout，``space`` 请求显式接管 leader，``r`` 将 leader 交还给 policy，``c`` 保存成功 episode。接管和交还 leader 时都会使用三秒 handover buffer，让操作员有时间握稳或移开 leader。生成的 LeRobot 数据写入本次运行目录下的 ``collected_data``。上传 episode 并执行离线训练属于后续步骤；固定 checkpoint service 在本次运行中保持已部署权重不变。
+``s`` 启动 policy rollout，``space`` 请求显式接管 leader，``r`` 将 leader 交还给 policy，``c`` 保存成功 episode，``a`` 标记失败 episode。接管和交还 leader 时都会使用三秒 handover buffer，让操作员有时间握稳或移开 leader。生成的 LeRobot 数据写入本次运行目录下的 ``collected_data``。上传 episode 并执行离线训练属于后续步骤；固定 checkpoint service 在本次运行中保持已部署权重不变。
 
 新增真机任务
 ------------

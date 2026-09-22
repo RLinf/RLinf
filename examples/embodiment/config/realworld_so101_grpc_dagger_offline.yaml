@@ -44,7 +44,7 @@ env:
       hold_buffer_seconds: 3.0
       takeover_key: space
       release_key: r
-    # s starts policy control; c saves success; a marks failure; q exits.
+    # s starts policy control; c saves success; a marks failure.
     # space/r are consumed by the explicit teleop trigger, not this wrapper.
     keyboard_reward_wrapper: eval_control
     data_collection:
