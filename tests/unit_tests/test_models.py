@@ -109,6 +109,32 @@ def test_so101_dagger_config_selects_dagger_task():
     assert cfg.env.train.teleop[0].so101_leader.port == "/dev/ttyACM0"
 
 
+def test_so101_configs_use_one_follower_and_leader_port_profile():
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    config_names = (
+        "realworld_so101_collect_data_joint.yaml",
+        "realworld_so101_dagger_openpi.yaml",
+        "realworld_so101_eval_openpi.yaml",
+        "realworld_so101_eval_openpi_grpc.yaml",
+        "realworld_so101_eval_openpi_grpc_managed.yaml",
+        "realworld_so101_grpc_dagger_offline.yaml",
+    )
+    for name in config_names:
+        cfg = OmegaConf.load(config_dir / name)
+        hardware_group = next(
+            group for group in cfg.cluster.node_groups if group.get("hardware")
+        )
+        hardware_cfg = hardware_group.hardware.configs[0]
+        follower_port = hardware_cfg.serial_port
+        assert follower_port == "/dev/ttyACM1"
+        env_root = cfg.get("env")
+        if env_root is None:
+            continue
+        env_cfg = env_root.get("train", env_root.get("eval"))
+        if env_cfg.teleop != "none":
+            assert env_cfg.teleop[0].so101_leader.port == "/dev/ttyACM0"
+
+
 def test_so101_policy_server_uses_openpi_rlinf_factory():
     """The standalone server must load the checkpoint-compatible model path."""
     from hydra import compose, initialize_config_dir

@@ -254,6 +254,15 @@ class CollectEpisode(gym.Wrapper):
         )
 
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
+        chunk_intervention = self._chunk_intervention_frames(
+            infos_list[-1] if isinstance(infos_list, (list, tuple)) and infos_list else {},
+            num_envs=self.num_envs,
+            action_dim=(
+                chunk_actions.shape[-1]
+                if getattr(chunk_actions, "ndim", 0) >= 3
+                else np.asarray(chunk_actions).size
+            ),
+        )
         for step_idx in range(chunk_size):
             step_action = (
                 chunk_actions[:, step_idx]
@@ -282,12 +291,92 @@ class CollectEpisode(gym.Wrapper):
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
+            # RealWorldEnv keeps the complete chunk in the final info for the
+            # rollout worker. Re-expand it for the per-frame episode writer;
+            # the returned infos_list remains unchanged for the rollout path.
+            if step_idx < chunk_size - 1 and chunk_intervention:
+                if not isinstance(step_info, dict):
+                    step_info = {}
+                for key, values in chunk_intervention.items():
+                    step_info[key] = values[:, step_idx]
+            self._normalize_chunk_intervention_info(
+                step_info,
+                step_idx=step_idx,
+                num_envs=self.num_envs,
+                action_dim=(
+                    step_action.shape[-1]
+                    if getattr(step_action, "ndim", 0) > 1
+                    else np.asarray(step_action).size
+                ),
+            )
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
             self._maybe_flush(step_term, step_trunc)
 
         return obs_list, rewards, terminations, truncations, infos_list
+
+    @classmethod
+    def _chunk_intervention_frames(
+        cls, info: Any, *, num_envs: int, action_dim: int
+    ) -> dict[str, np.ndarray]:
+        """Extract per-frame intervention arrays from a rollout chunk info."""
+        if not isinstance(info, dict) or action_dim <= 0:
+            return {}
+        action = cls._to_numpy(info.get("intervene_action"))
+        flags = cls._to_numpy(info.get("intervene_flag"))
+        if action is None or flags is None:
+            return {}
+        if action.size % (num_envs * action_dim) != 0:
+            return {}
+        horizon = action.size // (num_envs * action_dim)
+        if horizon <= 1 or flags.size != num_envs * horizon:
+            return {}
+        return {
+            "intervene_action": action.reshape(num_envs, horizon, action_dim),
+            "intervene_flag": flags.reshape(num_envs, horizon),
+        }
+
+    @classmethod
+    def _normalize_chunk_intervention_info(
+        cls, info: Any, *, step_idx: int, num_envs: int, action_dim: int
+    ) -> None:
+        """Reduce chunk-level intervention metadata to the current frame.
+
+        ``RealWorldEnv.chunk_step`` keeps the full intervention sequence in the
+        last info so the rollout path can relabel a policy chunk.  Episode
+        recording, however, stores one info/action per frame.  Normalize both
+        the direct info and an auto-reset ``final_info`` copy before recording.
+        """
+        if not isinstance(info, dict) or action_dim <= 0:
+            return
+        targets = [info]
+        final_info = info.get("final_info")
+        if isinstance(final_info, dict):
+            targets.append(final_info)
+        for target in targets:
+            action = target.get("intervene_action")
+            if action is None:
+                continue
+            action_array = cls._to_numpy(action)
+            if action_array is None or action_array.size == 0:
+                continue
+            if action_array.size % (num_envs * action_dim) != 0:
+                continue
+            horizon = action_array.size // (num_envs * action_dim)
+            if horizon <= 1:
+                continue
+            action_array = action_array.reshape(num_envs, horizon, action_dim)
+            index = min(step_idx, horizon - 1)
+            target["intervene_action"] = action_array[:, index]
+
+            flags = target.get("intervene_flag")
+            if flags is not None:
+                flag_array = cls._to_numpy(flags)
+                if flag_array is not None and flag_array.size == num_envs * horizon:
+                    target["intervene_flag"] = flag_array.reshape(num_envs, horizon)[
+                        :, index
+                    ]
 
     def close(self):
         if self._closed:
@@ -558,8 +647,21 @@ class CollectEpisode(gym.Wrapper):
                 "intervene_flag" in info_with_intervene
                 and "intervene_action" in info_with_intervene
             ):
-                if info_with_intervene["intervene_flag"].all():
-                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
+                if self._intervene_flag_from_info(info_with_intervene):
+                    intervene_action = self._to_numpy(
+                        info_with_intervene["intervene_action"]
+                    )
+                    # The public chunk path expands metadata before recording.
+                    # Keep this defensive reshape for callers that construct a
+                    # buffer directly with an unexpanded chunk action.
+                    action_dim = np_action.size
+                    if action_dim == 0 or intervene_action.size % action_dim:
+                        raise ValueError(
+                            "Intervention action does not match the recorded "
+                            f"frame action: intervention shape={intervene_action.shape}, "
+                            f"frame shape={np_action.shape}"
+                        )
+                    np_action = intervene_action.reshape(-1, action_dim)[-1]
             if state is None or np_action is None:
                 continue
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)

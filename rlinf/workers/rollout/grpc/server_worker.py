@@ -93,6 +93,6 @@ class PolicyServerWorker(Worker):
             if process.is_alive():
                 process.kill()
                 process.join(timeout=5)
-            process.close()
+        process.close()
         self._process = None
         self._address = None

@@ -37,6 +37,31 @@ from .worker import Worker, WorkerAddress, WorkerClsType
 ClsType = TypeVar("ClsType")
 
 
+def _is_controlled_worker_abort(error: BaseException) -> bool:
+    """Return whether a Ray-wrapped worker error is an operator abort.
+
+    Real-world episode wrappers use ``KeyboardAbort`` to request a normal
+    operator shutdown. Ray may re-raise the original exception directly or
+    wrap it in ``RayTaskError`` with a ``cause`` attribute, so inspect both
+    standard exception links and Ray's cause chain without importing the
+    real-world environment package into the scheduler.
+    """
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if current.__class__.__name__ == "KeyboardAbort":
+            return True
+        for name in ("cause", "__cause__", "__context__"):
+            nested = getattr(current, name, None)
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return False
+
+
 class WorkerGroup(Generic[WorkerClsType]):
     """The class that enables a worker to become a group of workers that can be executed collectively."""
 
@@ -498,6 +523,11 @@ class WorkerGroupFuncResult:
             # the signal below reaching the main thread first.
             self._wait_error = e
             self._wait_done = True
+            if _is_controlled_worker_abort(e):
+                # Operator-requested episode termination is a normal control
+                # path. Let the runner observe the exception and perform its
+                # ordinary cleanup instead of killing the driver process.
+                return
             # Send suicide signal if one thread failed, the handler is registered in cluster
             Cluster._run_failed = True
             os.kill(self._pid, signal.SIGUSR1)

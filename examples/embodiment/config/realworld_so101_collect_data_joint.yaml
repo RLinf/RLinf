@@ -26,7 +26,7 @@ cluster:
         type: SO101
         configs:
           - node_rank: 0
-            serial_port: /dev/ttyACM0
+            serial_port: /dev/ttyACM1
             calibration_id: FOLLOWER_CALIB  # Replace: follower arm calibration ID
             camera_type: uvc
             camera_serials: [/dev/video0]
@@ -57,7 +57,7 @@ env:
     no_gripper: false
     teleop:
       - so101_leader:
-          port: /dev/ttyACM1
+          port: /dev/ttyACM0
           calibration_id: LEADER_CALIB  # Replace: leader arm calibration ID
           align_duration_s: 3.0
           align_fps: 30.0

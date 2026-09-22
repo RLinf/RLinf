@@ -24,7 +24,7 @@ import time
 import traceback
 import warnings
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, TypeVar
 
 import ray
 import ray.util.state
@@ -811,6 +811,7 @@ class Worker(metaclass=WorkerMeta):
         distributed: bool = False,
         node_rank: int = 0,
         local: bool = False,
+        transport: Literal["collective", "ray"] = "collective",
     ):
         """Create a new channel with the specified placement rank and maximum size.
 
@@ -820,6 +821,7 @@ class Worker(metaclass=WorkerMeta):
             distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
             node_rank (int): The node rank of the current worker. Only valid when distributed is False.
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
+            transport (Literal["collective", "ray"]): Transport used by the channel.
 
         Returns:
             Channel: A new instance of the Channel class.
@@ -833,13 +835,19 @@ class Worker(metaclass=WorkerMeta):
             distributed=distributed,
             node_rank=node_rank,
             local=local,
+            transport=transport,
         )
 
-    def connect_channel(self, channel_name: str):
+    def connect_channel(
+        self,
+        channel_name: str,
+        transport: Literal["collective", "ray"] = "collective",
+    ):
         """Connect to an existing channel.
 
         Args:
             channel_name (str): The name of the channel to connect to.
+            transport (Literal["collective", "ray"]): Transport used by the channel.
 
         Returns:
             Channel: An instance of the Channel class connected to the specified channel.
@@ -847,7 +855,9 @@ class Worker(metaclass=WorkerMeta):
         """
         from ..channel.channel import Channel
 
-        return Channel.connect(name=channel_name, current_worker=self)
+        return Channel.connect(
+            name=channel_name, current_worker=self, transport=transport
+        )
 
     def send_to(
         self,
@@ -1055,6 +1065,7 @@ class Worker(metaclass=WorkerMeta):
         options: Optional["CollectiveGroupOptions"] = None,
         decoupled_mode: bool = False,
         recv_queue_size: int = 0,
+        timeout: float | None = None,
     ):
         """Receive routed payload shards from another worker group.
 
@@ -1096,6 +1107,9 @@ class Worker(metaclass=WorkerMeta):
                 ``batch_index`` metadata from channel items.
             recv_queue_size: Number of receive queue entries used when building the
                 decoupled receive plan.
+            timeout: Optional bounded wait for queue-backed receives. This is
+                useful for cooperative stop checks; it is incompatible with
+                ``async_op=True``.
 
         Returns:
             If ``async_op`` is True, an ``AsyncRouteWork``. Otherwise, returns ``None``
@@ -1121,6 +1135,8 @@ class Worker(metaclass=WorkerMeta):
 
         if not enable_p2p and channel is None:
             raise ValueError("recv_from requires ``channel`` when enable_p2p is False.")
+        if timeout is not None and async_op:
+            raise ValueError("timeout is not supported with async_op=True")
 
         world_size = get_group_world_size(self._manager_proxy, group_name)
 
@@ -1236,7 +1252,10 @@ class Worker(metaclass=WorkerMeta):
                 for entry in plan.entries
             ]
         else:
-            received_items = [channel.get(key=entry.key) for entry in plan.entries]
+                received_items = [
+                    channel.get(key=entry.key, timeout=timeout)
+                    for entry in plan.entries
+                ]
         return _finalize(received_items)
 
     def get_name(self) -> str:

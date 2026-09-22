@@ -1,0 +1,57 @@
+# SO-101 HG-DAgger collection with a fixed remote gRPC policy.
+# The recorded episodes are uploaded for offline training after the run.
+
+defaults:
+  - realworld_so101_eval_openpi_grpc
+  - _self_
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  logger:
+    project_name: so101-grpc-dagger
+    experiment_name: so101-grpc-dagger-offline
+
+cluster:
+  node_groups:
+    - label: inference
+      node_ranks: 0
+      ignore_hardware: true
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - node_rank: 0
+            serial_port: /dev/ttyACM1
+            calibration_id: FOLLOWER_CALIB
+            max_relative_target: 5
+            camera_type: uvc
+            camera_serials: [/dev/video0]
+
+env:
+  eval:
+    auto_reset: true
+    teleop:
+      - so101_leader:
+          port: /dev/ttyACM0
+          calibration_id: LEADER_CALIB
+          align_duration_s: 3.0
+          align_fps: 30.0
+          manual_start_hold_seconds: 3.0
+    teleop_intervention:
+      mode: explicit
+      hold_buffer_seconds: 3.0
+      takeover_key: space
+      release_key: r
+    # s starts policy control; c saves success; a marks failure; q exits.
+    # space/r are consumed by the explicit teleop trigger, not this wrapper.
+    keyboard_reward_wrapper: eval_control
+    data_collection:
+      enabled: true
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: lerobot
+      only_success: true
+      robot_type: so101
+      fps: 15
+      finalize_interval: 1

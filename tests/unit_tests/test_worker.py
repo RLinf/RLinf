@@ -49,6 +49,10 @@ from rlinf.scheduler.hardware.accelerators.intel_gpu import IntelGPUManager
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
 from rlinf.scheduler.manager.coll_manager import CollectiveManager
 from rlinf.scheduler.manager.manager import Manager
+from rlinf.scheduler.worker.worker_group import (
+    WorkerGroupFuncResult,
+    _is_controlled_worker_abort,
+)
 
 
 def accelerator_is_available():
@@ -58,6 +62,43 @@ def accelerator_is_available():
         and hasattr(Worker.torch_platform, "is_available")
         and Worker.torch_platform.is_available()
     )
+
+
+def test_controlled_worker_abort_is_detected_without_scheduler_dependency():
+    """Ray-wrapped operator aborts must not trigger the driver suicide path."""
+    keyboard_abort = type("KeyboardAbort", (RuntimeError,), {})
+    direct = keyboard_abort("operator requested shutdown")
+    wrapped = RuntimeError("ray task failed")
+    wrapped.__cause__ = direct
+
+    assert _is_controlled_worker_abort(direct)
+    assert _is_controlled_worker_abort(wrapped)
+    assert not _is_controlled_worker_abort(RuntimeError("hardware failure"))
+
+
+def test_worker_group_result_does_not_kill_driver_for_controlled_abort(monkeypatch):
+    """A controlled operator exit is surfaced to the caller without SIGUSR1."""
+    keyboard_abort = type("KeyboardAbort", (RuntimeError,), {})
+    error = RuntimeError("ray task failed")
+    error.__cause__ = keyboard_abort("operator requested shutdown")
+    result = object.__new__(WorkerGroupFuncResult)
+    result._remote_results = []
+    result._local_results = None
+    result._wait_error = None
+    result._func_name = "evaluate"
+    result._pid = os.getpid()
+    result._cls_name = "EnvWorker"
+    result._wait_done = False
+
+    def raise_abort(_):
+        raise error
+
+    monkeypatch.setattr(ray, "get", raise_abort)
+    monkeypatch.setattr(os, "kill", lambda *_args: pytest.fail("driver killed"))
+    result._wait_for_results()
+
+    assert result._wait_done
+    assert result._wait_error is error
 
 
 # Fixture to provide a ClusterResource instance for the test session

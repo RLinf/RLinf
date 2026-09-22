@@ -1237,6 +1237,33 @@ def test_keyboard_trigger_maps_press_edges_and_discards_unrelated_keys(monkeypat
     assert trigger.listener.closed
 
 
+def test_keyboard_intervention_trigger_uses_separate_control_file(
+    monkeypatch, tmp_path
+):
+    import rlinf.envs.real.wrappers.teleop.trigger as trigger_module
+
+    intervention_file = tmp_path / "so101-intervention"
+
+    class FakeListener:
+        def __init__(self, control_file=None):
+            self.control_file = control_file
+
+        def pop_pressed_keys(self):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv(
+        "RLINF_KEYBOARD_INTERVENTION_CONTROL_FILE", str(intervention_file)
+    )
+    monkeypatch.setattr(trigger_module, "KeyboardListener", FakeListener)
+
+    trigger = trigger_module.KeyboardInterventionTrigger()
+
+    assert trigger.listener.control_file == str(intervention_file)
+
+
 def test_keyboard_listener_closes_a_quiet_device(monkeypatch):
     from robot_mocks.teleop import keyboard
 
@@ -1436,6 +1463,37 @@ def test_env_worker_shutdown_parks_and_closes_once():
 
     assert env.parked == 1
     assert env.closed == 1
+
+
+def test_env_worker_shutdown_retries_failed_park_before_close():
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    class FlakyEnvironment:
+        def __init__(self):
+            self.park_calls = 0
+            self.closed = 0
+
+        def park(self):
+            self.park_calls += 1
+            if self.park_calls == 1:
+                raise ConnectionError("transient park failure")
+
+        def close(self):
+            self.closed += 1
+
+    worker = object.__new__(EnvWorker)
+    worker.env_list = [FlakyEnvironment()]
+    worker.eval_env_list = []
+    worker.log_error = lambda _message: None
+    worker.log_warning = lambda _message: None
+
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        worker.shutdown()
+    assert worker.env_list[0].closed == 0
+
+    worker.shutdown()
+    assert worker.env_list[0].park_calls == 2
+    assert worker.env_list[0].closed == 1
 
 
 def test_intervention_trigger_accepts_wsl_control_commands(monkeypatch, tmp_path):
@@ -3237,6 +3295,7 @@ def test_so101_camera_reuses_last_frame_after_bounded_retries():
     env._last_camera_frame = {
         "wrist_1": np.zeros((8, 8, 3), dtype=np.uint8),
     }
+    env._last_camera_frame_at = {"wrist_1": time.monotonic()}
     env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
     env.camera_player = SimpleNamespace(put_frame=lambda frames: None)
     env.config = SimpleNamespace(camera_max_age=0.5)
@@ -3271,6 +3330,7 @@ def test_so101_camera_failure_before_first_frame_is_explicit():
     env = SO101Env.__new__(SO101Env)
     env._cameras = [Camera()]
     env._last_camera_frame = {}
+    env._last_camera_frame_at = {}
     env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
     env.camera_player = SimpleNamespace(put_frame=lambda frames: None)
     env.config = SimpleNamespace(camera_max_age=0.5)
@@ -3282,7 +3342,40 @@ def test_so101_camera_failure_before_first_frame_is_explicit():
         }
     )
 
-    with pytest.raises(RuntimeError, match="no cached frame"):
+    with pytest.raises(RuntimeError, match="fresh frame"):
+        env._get_camera_frames()
+
+
+def test_so101_camera_does_not_reuse_stale_cached_frame():
+    from queue import Empty
+
+    from rlinf.envs.real.so101.base import SO101Env
+
+    class Camera:
+        name = "wrist_1"
+
+        def get_frame(self, **kwargs):
+            del kwargs
+            raise Empty
+
+    env = SO101Env.__new__(SO101Env)
+    env._cameras = [Camera()]
+    env._last_camera_frame = {
+        "wrist_1": np.zeros((8, 8, 3), dtype=np.uint8),
+    }
+    env._last_camera_frame_at = {"wrist_1": time.monotonic() - 1.0}
+    env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    env.camera_player = SimpleNamespace(put_frame=lambda frames: None)
+    env.config = SimpleNamespace(camera_max_age=0.5)
+    env.observation_space = gym.spaces.Dict(
+        {
+            "frames": gym.spaces.Dict(
+                {"wrist_1": gym.spaces.Box(0, 255, shape=(4, 4, 3), dtype=np.uint8)}
+            )
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="camera_max_age"):
         env._get_camera_frames()
 
 
@@ -3953,6 +4046,43 @@ def test_so101_reset_keeps_the_leader_until_manual_handover():
             leader.disconnect()
 
 
+def test_so101_leader_retries_transient_torque_write(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        leader = SO101Leader(port="/dev/mock-leader", align_duration_s=0.0)
+        leader.connect()
+        monkeypatch.setattr(
+            "rlinf.robotics.parts.teleop.so101_leader.time.sleep", lambda _: None
+        )
+        original_enable = leader._device.bus.enable_torque
+        attempts = 0
+
+        def flaky_enable():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ConnectionError("no status packet")
+            original_enable()
+
+        monkeypatch.setattr(leader._device.bus, "enable_torque", flaky_enable)
+        try:
+            leader.prepare_reset(
+                {
+                    "reset_joint_positions": np.zeros((1, 5)),
+                    "reset_gripper_position": np.zeros((1, 1)),
+                    "reset_duration": 0.0,
+                    "reset_joint_speed": 1.0,
+                }
+            )
+            assert attempts == 2
+            assert leader._device.bus.torque_enabled
+        finally:
+            leader.disconnect()
+
+
 def test_so101_aborted_reset_releases_leader_torque(monkeypatch):
     from robot_mocks import mocked_sdks
 
@@ -4515,6 +4645,21 @@ def test_so101_openpi_eval_uses_safe_hardware_and_training_prompt():
             cfg.env.eval.override_cfg.task_description
             == "抓取青色目标物体并放到盒子里面"
         )
+
+
+def test_so101_grpc_dagger_uses_policy_first_explicit_takeover():
+    from hydra import compose, initialize_config_dir
+
+    config_dir = str(Path(__file__).resolve().parents[2] / "examples/embodiment/config")
+    with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+        cfg = compose(config_name="realworld_so101_grpc_dagger_offline")
+
+    assert cfg.rollout.rollout_backend == "grpc"
+    assert cfg.env.eval.keyboard_reward_wrapper == "eval_control"
+    assert cfg.env.eval.teleop_intervention.mode == "explicit"
+    assert cfg.env.eval.teleop_intervention.takeover_key == "space"
+    assert cfg.env.eval.teleop_intervention.release_key == "r"
+    assert cfg.env.eval.data_collection.export_format == "lerobot"
 
 
 def test_so101_collection_uses_coordinated_complete_reset_state(monkeypatch):

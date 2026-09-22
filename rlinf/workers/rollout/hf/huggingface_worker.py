@@ -15,6 +15,7 @@
 import asyncio
 import copy
 import gc
+import threading
 import time
 from typing import Any, Callable, Literal, Optional
 
@@ -44,6 +45,7 @@ class MultiStepRolloutWorker(Worker):
 
         self.cfg = cfg
         self.should_stop = False
+        self._evaluation_stop = threading.Event()
 
         self.only_eval = cfg.runner.get("only_eval", False)
         self.algorithm_cfg = cfg.get("algorithm", {})
@@ -809,10 +811,18 @@ class MultiStepRolloutWorker(Worker):
 
     @Worker.timer("evaluate")
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
+        self._evaluation_stop.clear()
+        receive_timeout = (
+            0.2 if self.cfg.rollout.get("rollout_backend") == "grpc" else None
+        )
         if self.enable_offload:
             self.reload_model()
         if self.env_decoupled_mode:
             while True:
+                if self._evaluation_stop.is_set():
+                    if self.enable_offload:
+                        self.offload_model()
+                    return
                 (
                     env_output,
                     split_sizes,
@@ -826,6 +836,10 @@ class MultiStepRolloutWorker(Worker):
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
+                if self._evaluation_stop.is_set():
+                    if self.enable_offload:
+                        self.offload_model()
+                    return
                 actions, _ = self._predict_rollout_actions(
                     env_output["obs"],
                     mode="eval",
@@ -849,17 +863,42 @@ class MultiStepRolloutWorker(Worker):
                 disable=(self._rank != 0),
             ):
                 for _ in range(self.n_eval_chunk_steps):
+                    if self._evaluation_stop.is_set():
+                        if self.enable_offload:
+                            self.offload_model()
+                        return
                     for stage_id in range(self.num_pipeline_stages):
-                        env_output = await self.recv_from(
-                            group_name=self.cfg.env.group_name,
-                            channel=input_channel,
-                            tag="eval_rollout_results",
-                            route_key=stage_id,
-                            async_op=True,
-                            batch_size=self.eval_batch_size,
-                            merge_fn=self._merge_obs_batches,
-                            infer_batch_size_fn=self._infer_env_batch_size,
-                        ).async_wait()
+                        if receive_timeout is None:
+                            env_output = await self.recv_from(
+                                group_name=self.cfg.env.group_name,
+                                channel=input_channel,
+                                tag="eval_rollout_results",
+                                route_key=stage_id,
+                                async_op=True,
+                                batch_size=self.eval_batch_size,
+                                merge_fn=self._merge_obs_batches,
+                                infer_batch_size_fn=self._infer_env_batch_size,
+                            ).async_wait()
+                        else:
+                            while True:
+                                if self._evaluation_stop.is_set():
+                                    if self.enable_offload:
+                                        self.offload_model()
+                                    return
+                                try:
+                                    env_output = self.recv_from(
+                                        group_name=self.cfg.env.group_name,
+                                        channel=input_channel,
+                                        tag="eval_rollout_results",
+                                        route_key=stage_id,
+                                        batch_size=self.eval_batch_size,
+                                        merge_fn=self._merge_obs_batches,
+                                        infer_batch_size_fn=self._infer_env_batch_size,
+                                        timeout=receive_timeout,
+                                    )
+                                    break
+                                except TimeoutError:
+                                    continue
                         actions, _ = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",
@@ -881,6 +920,10 @@ class MultiStepRolloutWorker(Worker):
 
             if self.enable_offload:
                 self.offload_model()
+
+    def request_evaluation_stop(self) -> None:
+        """Ask a running evaluation loop to return at its next safe boundary."""
+        self._evaluation_stop.set()
 
     def offload_model(self):
         if self.enable_cuda_graph:

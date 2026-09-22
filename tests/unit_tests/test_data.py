@@ -923,3 +923,167 @@ def test_episode_close_skips_uncreated_lerobot_writer(tmp_path):
 
     assert env.closed
     assert collector._lerobot_writer is None
+
+
+def test_lerobot_collection_reduces_chunk_intervention_to_one_frame_action(tmp_path):
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            del seed, options
+            return {"states": np.zeros((1, 6), dtype=np.float32)}, {}
+
+        def close(self):
+            pass
+
+    collector = CollectEpisode(
+        Env(), str(tmp_path), export_format="lerobot", num_envs=1
+    )
+    try:
+        frame_action = np.arange(6, dtype=np.float32)
+        chunk_intervention = np.arange(120, dtype=np.float32).reshape(1, 120)
+        collector._buffers[0] = {
+            "observations": [
+                {"states": np.zeros((1, 6), dtype=np.float32)},
+                {"states": np.ones((1, 6), dtype=np.float32)},
+            ],
+            "actions": [frame_action],
+            "rewards": [0.0],
+            "terminated": [True],
+            "truncated": [False],
+            "infos": [
+                {},
+                {
+                    "intervene_flag": np.ones((1, 20), dtype=bool),
+                    "intervene_action": chunk_intervention,
+                },
+            ],
+            "segment_ids": [0],
+        }
+
+        episode = collector._buffer_to_lerobot_ep(
+            collector._buffers[0], env_idx=0, is_success=True
+        )
+        assert episode is not None
+        assert episode[0]["actions"].shape == (6,)
+        np.testing.assert_array_equal(episode[0]["actions"], chunk_intervention[0, -6:])
+    finally:
+        collector.close()
+
+
+def test_lerobot_collection_preserves_partial_chunk_intervention_labels(tmp_path):
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            del seed, options
+            return {"states": np.zeros((1, 6), dtype=np.float32)}, {}
+
+        def chunk_step(self, chunk_actions):
+            del chunk_actions
+            horizon = 4
+            observations = [
+                {"states": np.full((1, 6), step, dtype=np.float32)}
+                for step in range(horizon)
+            ]
+            expert_actions = [
+                np.full((1, 6), 200 + step, dtype=np.float32)
+                for step in range(horizon)
+            ]
+            flags = np.array([[False, True, True, False]])
+            infos = [
+                {
+                    "intervene_action": expert_actions[step],
+                    "intervene_flag": flags[:, step],
+                }
+                for step in range(horizon)
+            ]
+            # Match RealWorldEnv: the final info carries the chunk aggregate
+            # needed by the rollout relabeling path.
+            infos[-1] = {
+                "intervene_action": np.concatenate(expert_actions, axis=-1),
+                "intervene_flag": flags,
+            }
+            shape = (1, horizon)
+            return (
+                observations,
+                np.zeros(shape, dtype=np.float32),
+                np.zeros(shape, dtype=bool),
+                np.zeros(shape, dtype=bool),
+                infos,
+            )
+
+        def close(self):
+            pass
+
+    collector = CollectEpisode(
+        Env(), str(tmp_path), export_format="lerobot", num_envs=1
+    )
+    try:
+        collector.reset()
+        actions = np.stack(
+            [np.full((1, 6), 100 + step, dtype=np.float32) for step in range(4)],
+            axis=1,
+        )
+        collector.chunk_step(actions)
+
+        episode = collector._buffer_to_lerobot_ep(
+            collector._buffers[0], env_idx=0, is_success=True
+        )
+        assert episode is not None
+        saved = [frame["actions"][0] for frame in episode]
+        assert saved == [100.0, 201.0, 202.0, 103.0]
+        assert [bool(frame["intervene_flag"][0]) for frame in episode] == [
+            False,
+            True,
+            True,
+            False,
+        ]
+    finally:
+        collector.close()
+
+
+def test_lerobot_collection_expands_realworld_chunk_intervention_metadata(tmp_path):
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            del seed, options
+            return {"states": np.zeros((1, 6), dtype=np.float32)}, {}
+
+        def chunk_step(self, chunk_actions):
+            horizon = chunk_actions.shape[1]
+            observations = [
+                {"states": np.full((1, 6), step, dtype=np.float32)}
+                for step in range(horizon)
+            ]
+            expert_actions = np.stack(
+                [np.full((1, 6), 300 + step, dtype=np.float32) for step in range(horizon)],
+                axis=1,
+            )
+            flags = np.array([[False, True, True, False]])
+            infos = [{} for _ in range(horizon)]
+            infos[-1] = {
+                "intervene_action": expert_actions.reshape(1, -1),
+                "intervene_flag": flags,
+            }
+            rewards = np.zeros((1, horizon), dtype=np.float32)
+            dones = np.zeros((1, horizon), dtype=bool)
+            return observations, rewards, dones, dones, infos
+
+        def close(self):
+            pass
+
+    collector = CollectEpisode(
+        Env(), str(tmp_path), export_format="lerobot", num_envs=1
+    )
+    try:
+        collector.reset()
+        collector.chunk_step(np.zeros((1, 4, 6), dtype=np.float32))
+        episode = collector._buffer_to_lerobot_ep(
+            collector._buffers[0], env_idx=0, is_success=False
+        )
+        assert episode is not None
+        assert [frame["intervene_flag"][0] for frame in episode] == [
+            False,
+            True,
+            True,
+            False,
+        ]
+        assert [frame["actions"][0] for frame in episode] == [0.0, 301.0, 302.0, 0.0]
+    finally:
+        collector.close()

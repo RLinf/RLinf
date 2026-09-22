@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import asyncio
+import time
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import ray
 import ray.actor
@@ -147,6 +148,7 @@ class Channel:
         node_rank: int = 0,
         local: bool = False,
         disable_distributed_log: bool = True,
+        transport: Literal["collective", "ray"] = "collective",
     ) -> "Channel":
         """Create a new channel with the specified name, node ID, and accelerator ID.
 
@@ -157,12 +159,21 @@ class Channel:
             node_rank (int): The node rank of the current worker. Only valid when distributed is False.
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
             disable_distributed_log (bool): Whether to disable distributed log for the channel.
+            transport (Literal["collective", "ray"]): Communication transport used by
+                workers. ``collective`` uses the worker's torch distributed path;
+                ``ray`` uses the channel actor's Ray queue methods. Use ``ray`` for
+                small CPU payloads when avoiding lazy process-group setup is important.
 
         Returns:
             Channel: A new instance of the Channel class.
 
         """
         from .channel_worker import ChannelWorker, LocalChannel
+
+        if transport not in ("collective", "ray"):
+            raise ValueError(
+                f"Unsupported channel transport {transport!r}; expected 'collective' or 'ray'."
+            )
 
         cluster = Cluster()
         channel = cls()
@@ -176,6 +187,7 @@ class Channel:
                 Worker.current_worker,
                 local_channel=local_channel,
                 maxsize=maxsize,
+                transport=transport,
             )
             return channel
 
@@ -195,7 +207,7 @@ class Channel:
             )
         except ValueError:
             Worker.logger.warning(f"Channel {name} already exists, connecting to it.")
-            return cls.connect(name, Worker.current_worker)
+            return cls.connect(name, Worker.current_worker, transport=transport)
 
         # Distributed channel actors
         channel_actors: dict[int, ray.actor.ActorHandle] = {
@@ -210,22 +222,35 @@ class Channel:
             current_worker=Worker.current_worker,
             maxsize=maxsize,
             channel_actors=channel_actors,
+            transport=transport,
         )
         return channel
 
     @classmethod
-    def connect(cls, name: str, current_worker: Worker) -> "Channel":
+    def connect(
+        cls,
+        name: str,
+        current_worker: Worker,
+        transport: Literal["collective", "ray"] = "collective",
+    ) -> "Channel":
         """Connect to an existing channel.
 
         Args:
             name (str): The name of the channel to connect to.
             current_worker (Worker): The current worker that is connecting to the channel.
+            transport (Literal["collective", "ray"]): Communication transport used by
+                workers connected through this handle.
 
         Returns:
             Channel: An instance of the Channel class connected to the specified channel.
 
         """
         from .channel_worker import ChannelWorker
+
+        if transport not in ("collective", "ray"):
+            raise ValueError(
+                f"Unsupported channel transport {transport!r}; expected 'collective' or 'ray'."
+            )
 
         channel_worker_group = WorkerGroup.from_group_name(ChannelWorker, name)
         channel_actors: dict[int, ray.actor.ActorHandle] = {
@@ -242,6 +267,7 @@ class Channel:
             current_worker=current_worker,
             channel_actors=channel_actors,
             maxsize=maxsize,
+            transport=transport,
         )
         return channel
 
@@ -254,6 +280,7 @@ class Channel:
         local_channel: Optional["LocalChannel"] = None,
         maxsize: int = 0,
         channel_actors: Optional[dict[int, ray.actor.ActorHandle]] = None,
+        transport: Literal["collective", "ray"] = "collective",
     ):
         self._channel_name = channel_name
         self._channel_worker_group = channel_worker_group
@@ -261,6 +288,7 @@ class Channel:
         self._current_worker = current_worker
         self._local_channel = local_channel
         self._maxsize = maxsize
+        self._transport = transport
         self._distributed = (
             len(channel_actors) > 1 if channel_actors is not None else False
         )
@@ -385,7 +413,15 @@ class Channel:
         target_actor = self._get_channel_actor(target_rank)
 
         # First run async put to avoid send blocking put
-        if self._current_worker is not None:
+        if self._transport == "ray":
+            put_kwargs = {"item": item, "weight": weight, "key": key}
+            async_channel_work = AsyncRayWork(
+                target_actor.put_via_ray.remote(**put_kwargs)
+            )
+            if async_op:
+                return async_channel_work
+            async_channel_work.wait()
+        elif self._current_worker is not None:
             # Inside a worker, use send/recv
             put_kwargs = {
                 "src_addr": self._current_worker.worker_address,
@@ -441,7 +477,13 @@ class Channel:
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
 
-        if self._current_worker is not None:
+        if self._transport == "ray":
+            put_kwargs = {"item": item, "weight": weight, "key": key, "nowait": True}
+            try:
+                ray.get(target_actor.put_via_ray.remote(**put_kwargs))
+            except asyncio.QueueFull:
+                raise asyncio.QueueFull
+        elif self._current_worker is not None:
             put_kwargs = {
                 "src_addr": self._current_worker.worker_address,
                 "nowait": True,
@@ -471,18 +513,45 @@ class Channel:
             except asyncio.QueueFull:
                 raise asyncio.QueueFull
 
-    def get(self, key: Any = DEFAULT_KEY, async_op: bool = False) -> AsyncWork | Any:
+    def get(
+        self,
+        key: Any = DEFAULT_KEY,
+        async_op: bool = False,
+        timeout: float | None = None,
+    ) -> AsyncWork | Any:
         """Get an item from the channel queue.
 
         Args:
             key (Any): The key to get the item from. A unique identifier for a specific set of items.
             When a key is given, the channel will look for the item in the queue associated with that key.
             async_op (bool): Whether to perform the operation asynchronously.
+            timeout (float | None): Maximum seconds to wait for an item. The
+                bounded polling path is intended for cooperative stop checks;
+                asynchronous gets do not support a timeout.
 
         Returns:
             Any: The item retrieved from the channel queue.
 
         """
+        if timeout is not None:
+            if timeout <= 0:
+                raise ValueError("timeout must be positive when provided")
+            if async_op:
+                raise ValueError("timeout is not supported with async_op=True")
+            if self._local_channel is None and self._transport != "ray":
+                raise ValueError(
+                    "timeout is supported only for local or Ray-backed channels"
+                )
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    return self.get_nowait(key)
+                except asyncio.QueueEmpty:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Timed out waiting for a channel item")
+                    time.sleep(min(0.01, remaining))
+
         if self._local_channel is not None:
             assert async_op is False, "Local channel does not support async get."
             return self._local_channel.get(key)
@@ -490,6 +559,14 @@ class Channel:
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
 
+        if self._transport == "ray":
+            get_kwargs = {"key": key}
+            async_channel_work = AsyncRayWork(
+                target_actor.get_via_ray.remote(**get_kwargs)
+            )
+            if async_op:
+                return async_channel_work
+            return async_channel_work.wait()
         if self._current_worker is not None:
             # Inside a worker, use send/recv
             query_id = uuid.uuid4().int
@@ -543,6 +620,9 @@ class Channel:
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
 
+        if self._transport == "ray":
+            get_kwargs = {"key": key, "nowait": True}
+            return ray.get(target_actor.get_via_ray.remote(**get_kwargs))
         if self._current_worker is not None:
             query_id = uuid.uuid4().int
             get_kwargs = {
@@ -587,6 +667,14 @@ class Channel:
         target_rank = self._get_channel_rank_by_key(key)
         target_actor = self._get_channel_actor(target_rank)
 
+        if self._transport == "ray":
+            get_kwargs = {"target_weight": target_weight, "key": key}
+            async_channel_work = AsyncRayWork(
+                target_actor.get_batch_via_ray.remote(**get_kwargs)
+            )
+            if async_op:
+                return async_channel_work
+            return async_channel_work.wait()
         if self._current_worker is not None:
             query_id = uuid.uuid4().int
             get_kwargs = {

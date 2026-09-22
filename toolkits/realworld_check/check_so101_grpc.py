@@ -21,6 +21,11 @@ def main() -> None:
         "--policy-id", default="so101-pi05-openpi-rlinf-step10000"
     )
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--task-description",
+        default="抓取青色目标物体并放到盒子里面",
+        help="Task text sent with the deterministic policy request.",
+    )
     args = parser.parse_args()
 
     policy = GRPCPolicyAdapter(
@@ -35,7 +40,7 @@ def main() -> None:
             {
                 "states": np.zeros((1, 6), dtype=np.float32),
                 "main_images": np.zeros((1, 224, 224, 3), dtype=np.uint8),
-                "task_descriptions": ["抓取青色目标物体并放到盒子里面"],
+                "task_descriptions": [args.task_description],
             }
         )
         values = actions.numpy()

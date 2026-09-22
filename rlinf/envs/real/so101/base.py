@@ -209,6 +209,7 @@ class SO101Env(gym.Env):
         self._success_hold_counter = 0
         self._last_gripper: Optional[float] = None
         self._last_camera_frame: dict[str, np.ndarray] = {}
+        self._last_camera_frame_at: dict[str, float] = {}
         self._gripper_position = np.zeros(1, dtype=np.float32)
         self._joints = np.zeros(_DOF)
         self.robot: Optional[SO101Robot] = None
@@ -570,10 +571,16 @@ class SO101Env(gym.Env):
                 )
             except queue.Empty:
                 raw_frame = self._last_camera_frame.get(name)
-                if raw_frame is None:
+                captured_at = self._last_camera_frame_at.get(name)
+                if (
+                    raw_frame is None
+                    or captured_at is None
+                    or time.monotonic() - captured_at > self.config.camera_max_age
+                ):
                     raise RuntimeError(
-                        f"Camera {name} did not produce a frame after "
-                        f"{_CAMERA_REOPEN_ATTEMPTS} attempts and has no cached frame."
+                        f"Camera {name} did not produce a fresh frame after "
+                        f"{_CAMERA_REOPEN_ATTEMPTS} attempts or exceeded "
+                        f"camera_max_age={self.config.camera_max_age:.3f}s."
                     ) from None
                 self._logger.warning(
                     "Camera %s stalled after %d attempts; using the last frame.",
@@ -582,6 +589,7 @@ class SO101Env(gym.Env):
                 )
 
             self._last_camera_frame[name] = np.asarray(raw_frame).copy()
+            self._last_camera_frame_at[name] = time.monotonic()
             frames[name] = self._crop_frame(raw_frame, size)
 
         if hasattr(self, "camera_player"):
@@ -590,10 +598,29 @@ class SO101Env(gym.Env):
 
     def close(self) -> None:
         """Release the cameras and disconnect the robot."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        close_error: Optional[BaseException] = None
         if hasattr(self, "_cameras"):
-            self._close_cameras()
+            try:
+                self._close_cameras()
+            except BaseException as exc:  # noqa: BLE001 - continue hardware cleanup
+                close_error = exc
         if hasattr(self, "camera_player"):
-            self.camera_player.stop()
+            try:
+                self.camera_player.stop()
+            except BaseException as exc:  # noqa: BLE001 - continue hardware cleanup
+                if close_error is None:
+                    close_error = exc
         if self.robot is not None:
-            self.robot.disconnect()
+            robot = self.robot
             self.robot = None
+            try:
+                robot.disconnect()
+            except BaseException as exc:  # noqa: BLE001 - preserve first failure
+                if close_error is None:
+                    close_error = exc
+        if close_error is not None:
+            self._closed = False
+            raise close_error

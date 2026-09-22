@@ -451,6 +451,22 @@ class DistributedChannel(Channel):
         return channel
 
 
+def test_local_channel_get_timeout_is_bounded():
+    """A queue-backed channel can poll without blocking evaluation cleanup."""
+    from rlinf.scheduler.channel.channel_worker import LocalChannel
+
+    channel = Channel()
+    channel._initialize(
+        channel_name="local-timeout",
+        channel_worker_group=None,
+        channel_worker_actor=None,
+        current_worker=None,
+        local_channel=LocalChannel(),
+    )
+    with pytest.raises(TimeoutError):
+        channel.get(timeout=0.01)
+
+
 @pytest.fixture(scope="module")
 def regular_channel():
     """Create a regular (non-distributed) channel once per module."""
@@ -592,6 +608,22 @@ class TestChannel:
             ),
         )
         self._assert_equal(received_item, item_to_send)
+
+    def test_put_get_with_ray_transport(self, worker_groups):
+        """Worker-side channel operations can use the Ray queue transport."""
+        channel = Channel.create(
+            f"ray_transport_test_{uuid.uuid4().hex[:8]}", transport="ray"
+        )
+        producer, consumer = worker_groups
+        received_item = self._run_test(
+            producer,
+            consumer,
+            "put_item",
+            (channel, "ray transport", 1, 0, True),
+            "get_item",
+            (channel, True),
+        )
+        assert received_item == "ray transport"
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])

@@ -65,6 +65,9 @@ def main(cfg) -> None:
                 cluster,
                 name=cfg.rollout.group_name,
                 placement_strategy=rollout_placement,
+                # Keep a stop request callable while evaluate waits for a
+                # channel item or a bounded gRPC request.
+                max_concurrency=2,
             )
             stack.callback(lambda: rollout_group.shutdown().wait())
             rollout_group.set_server_address(grpc_endpoint).wait()
@@ -105,7 +108,10 @@ def main(cfg) -> None:
         # Create env worker group
         env_placement = component_placement.get_strategy("env")
         env_group = env_worker_cls.create_group(cfg).launch(
-            cluster, name=cfg.env.group_name, placement_strategy=env_placement
+            cluster,
+            name=cfg.env.group_name,
+            placement_strategy=env_placement,
+            max_concurrency=2 if rollout_backend == "grpc" else None,
         )
         # Real-world environments must park before their devices are closed.
         # Register this after launch so it also runs when evaluation fails.

@@ -65,7 +65,7 @@ Choose a guide for hardware checks, teleoperation, data collection, sim-to-real 
 Piper and SO101 Setup
 ---------------------
 
-Use these guides to connect an arm and run its hardware test script. Piper and SO101 do not yet have supported real-world tasks or training workflows.
+Use these guides to connect an arm and run its hardware test script. SO101 also includes the ``SO101ReachEnv-v1`` task, local OpenPI evaluation, and fixed-checkpoint gRPC collection for offline training. Piper currently has the hardware setup path only.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -80,7 +80,7 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
       :link: embodied/so101
       :link-type: doc
 
-      Set up motors, calibrate an SO-101, and run the joint and gripper test script.
+      Set up motors, calibrate an SO-101, run the joint and gripper test script, and start the supported evaluation workflows.
 
 .. toctree::
    :hidden:

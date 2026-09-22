@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -51,7 +52,12 @@ class KeyboardInterventionTrigger(InterventionTrigger):
             raise ValueError("takeover_key and release_key must be different")
         self.takeover_key = takeover_key
         self.release_key = release_key
-        self.listener = KeyboardListener()
+        control_file = os.environ.get("RLINF_KEYBOARD_INTERVENTION_CONTROL_FILE")
+        self.listener = (
+            KeyboardListener(control_file=control_file)
+            if control_file
+            else KeyboardListener()
+        )
 
     @staticmethod
     def _normalize_key(key: str) -> str:

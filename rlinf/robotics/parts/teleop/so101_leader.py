@@ -20,6 +20,8 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 
+from rlinf.utils.logging import get_logger
+
 from ...actions import ActionKind
 from ..base import Features, Observation
 from .base import TeleopAction, TeleopDevice
@@ -75,6 +77,10 @@ class SO101Leader(TeleopDevice):
     CLIPS_TO_ACTION_SPACE = True
 
     MOVEMENT_EPSILON = 0.01
+    SERIAL_CONNECT_RETRIES = 3
+    SERIAL_RETRY_DELAY_S = 0.1
+    TORQUE_WRITE_RETRIES = 3
+    TORQUE_RETRY_DELAY_S = 0.05
 
     def __init__(
         self,
@@ -95,6 +101,7 @@ class SO101Leader(TeleopDevice):
                 "SO-101 manual_start_hold_seconds must be finite and nonnegative"
             )
         self._port = port
+        self._logger = get_logger()
         self._calibration_id = calibration_id
         self.MOVEMENT_EPSILON = movement_epsilon
         self._align_duration_s = float(align_duration_s)
@@ -102,6 +109,7 @@ class SO101Leader(TeleopDevice):
         self._manual_start_hold_seconds = float(manual_start_hold_seconds)
         self._calibrate = calibrate
         self._serial_lock = threading.RLock()
+        self._torque_enabled = False
         self._reset_prepared = False
         self._manual_release_pending = False
 
@@ -161,29 +169,54 @@ class SO101Leader(TeleopDevice):
                 port=self._port, id=self._calibration_id, use_degrees=True
             )
         )
-        leader.connect(calibrate=False)
-        if not leader.is_calibrated:
-            if not self._calibrate:
-                where = leader.calibration_fpath
-                leader.disconnect()
-                raise RuntimeError(
-                    f"The SO-101 leader on {self._port!r} has no calibration at "
-                    f"{where}. Calibrating asks the operator to move the arm "
-                    "through its range, so it does not run on its own here. "
-                    "Calibrate it once from a terminal with:\n\n"
-                    "    python -m rlinf.robotics.parts.teleop.so101_leader "
-                    f"--port {self._port} "
-                    f"--id {self._calibration_id or '<name-for-this-arm>'} "
-                    "--calibrate"
-                )
-            leader.calibrate()
-        return leader
+        accepted = False
+        try:
+            for attempt in range(1, self.SERIAL_CONNECT_RETRIES + 1):
+                try:
+                    leader.connect(calibrate=False)
+                    break
+                except ConnectionError:
+                    if attempt == self.SERIAL_CONNECT_RETRIES:
+                        raise
+                    self._logger.warning(
+                        "SO-101 leader connection did not receive a status packet; "
+                        "retrying (%d/%d)",
+                        attempt + 1,
+                        self.SERIAL_CONNECT_RETRIES,
+                    )
+                    try:
+                        leader.disconnect()
+                    except Exception:  # noqa: BLE001 - retry the original connection
+                        pass
+                    time.sleep(self.SERIAL_RETRY_DELAY_S)
+            if not leader.is_calibrated:
+                if not self._calibrate:
+                    where = leader.calibration_fpath
+                    raise RuntimeError(
+                        f"The SO-101 leader on {self._port!r} has no calibration at "
+                        f"{where}. Calibrating asks the operator to move the arm "
+                        "through its range, so it does not run on its own here. "
+                        "Calibrate it once from a terminal with:\n\n"
+                        "    python -m rlinf.robotics.parts.teleop.so101_leader "
+                        f"--port {self._port} "
+                        f"--id {self._calibration_id or '<name-for-this-arm>'} "
+                        "--calibrate"
+                    )
+                leader.calibrate()
+            accepted = True
+            return leader
+        finally:
+            if not accepted:
+                try:
+                    leader.disconnect()
+                except Exception:  # noqa: BLE001 - preserve startup failure
+                    pass
 
     def _release(self, device: Any) -> None:
         """lerobot spells this ``disconnect``, which the base does not try."""
         with self._serial_lock:
-            if self._reset_prepared:
-                device.bus.disable_torque()
+            if self._reset_prepared or self._torque_enabled:
+                self._set_torque(False)
                 self._reset_prepared = False
             device.disconnect()
 
@@ -240,7 +273,7 @@ class SO101Leader(TeleopDevice):
         """Disable leader torque after the operator handover countdown."""
         del context
         with self._serial_lock:
-            self._device.bus.disable_torque()
+            self._set_torque(False)
             self._reset_prepared = False
             # The arm can settle by gravity when torque is disabled. Ignore
             # that first reading instead of treating it as operator motion.
@@ -256,7 +289,7 @@ class SO101Leader(TeleopDevice):
             reading = self._device.get_action()
             current = {name: float(reading[f"{name}.pos"]) for name in names}
             self._device.bus.sync_write("Goal_Position", current)
-            self._device.bus.enable_torque()
+            self._set_torque(True)
             self._reset_prepared = True
 
     def abort_reset(self, context: Mapping[str, Any]) -> None:
@@ -264,7 +297,7 @@ class SO101Leader(TeleopDevice):
         if not self._reset_prepared:
             return
         with self._serial_lock:
-            self._device.bus.disable_torque()
+            self._set_torque(False)
             self._reset_prepared = False
 
     def _move_to(
@@ -311,7 +344,7 @@ class SO101Leader(TeleopDevice):
             )
             torque_enabled = False
             try:
-                self._device.bus.enable_torque()
+                self._set_torque(True)
                 torque_enabled = True
                 deadline = time.monotonic()
                 for index in range(1, steps + 1):
@@ -327,7 +360,7 @@ class SO101Leader(TeleopDevice):
                         time.sleep(max(0.0, deadline - time.monotonic()))
             except BaseException:
                 if torque_enabled:
-                    self._device.bus.disable_torque()
+                    self._set_torque(False)
                 raise
 
     def on_intervention_start(self, context: Mapping[str, Any]) -> None:
@@ -341,7 +374,32 @@ class SO101Leader(TeleopDevice):
             reading = self._device.get_action()
             current = {name: float(reading[f"{name}.pos"]) for name in names}
             self._device.bus.sync_write("Goal_Position", current)
-            self._device.bus.enable_torque()
+            self._set_torque(True)
+
+    def _set_torque(self, enabled: bool) -> None:
+        """Set leader torque with a short retry for transient bus timeouts."""
+        operation = (
+            self._device.bus.enable_torque
+            if enabled
+            else self._device.bus.disable_torque
+        )
+        action = "enable" if enabled else "disable"
+        for attempt in range(1, self.TORQUE_WRITE_RETRIES + 1):
+            try:
+                operation()
+                self._torque_enabled = enabled
+                return
+            except ConnectionError:
+                if attempt == self.TORQUE_WRITE_RETRIES:
+                    raise
+                self._logger.warning(
+                    "SO-101 leader torque %s did not receive a status packet; "
+                    "retrying (%d/%d)",
+                    action,
+                    attempt + 1,
+                    self.TORQUE_WRITE_RETRIES,
+                )
+                time.sleep(self.TORQUE_RETRY_DELAY_S)
 
     # Driving the robot.
 

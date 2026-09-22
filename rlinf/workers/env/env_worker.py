@@ -14,6 +14,7 @@
 
 import asyncio
 import gc
+import threading
 from collections import defaultdict
 from typing import Any
 
@@ -73,6 +74,7 @@ class EnvWorker(Worker):
         self.train_video_cnt = 0
         self.eval_video_cnt = 0
         self.should_stop = False
+        self._evaluation_stop = threading.Event()
 
         self.env_list = []
         self.eval_env_list = []
@@ -302,7 +304,6 @@ class EnvWorker(Worker):
         """
         if getattr(self, "_shutdown_complete", False):
             return
-        self._shutdown_complete = True
 
         cleanup_errors: list[BaseException] = []
         seen: set[int] = set()
@@ -316,13 +317,20 @@ class EnvWorker(Worker):
             seen.add(id(env))
 
             park = get_env_attr(env, "park")
+            parked = True
             if callable(park):
                 try:
                     park()
                 except BaseException as exc:  # noqa: BLE001 - preserve close path
+                    parked = False
                     cleanup_errors.append(exc)
                     self.log_error(f"Failed to park environment during shutdown: {exc}")
 
+            # Do not release a hardware owner after a failed park.  The worker
+            # remains retryable so a later shutdown call can complete the
+            # safety operation instead of silently abandoning a live pose.
+            if not parked:
+                continue
             close = get_env_attr(env, "close")
             if callable(close):
                 try:
@@ -335,8 +343,18 @@ class EnvWorker(Worker):
 
         if cleanup_errors:
             self.log_warning(
-                f"Environment shutdown completed with {len(cleanup_errors)} cleanup error(s)."
+                f"Environment shutdown has {len(cleanup_errors)} cleanup error(s); "
+                "retry is still available."
             )
+            raise RuntimeError(
+                f"Environment shutdown failed with {len(cleanup_errors)} cleanup error(s)."
+            ) from cleanup_errors[0]
+
+        self._shutdown_complete = True
+
+    def request_evaluation_stop(self) -> None:
+        """Ask a running evaluation loop to return at its next safe boundary."""
+        self._evaluation_stop.set()
 
     def update_env_cfg(self):
         if self.enable_train:
@@ -1461,8 +1479,14 @@ class EnvWorker(Worker):
 
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        self._evaluation_stop.clear()
         eval_metrics = defaultdict(list)
+        receive_timeout = (
+            0.2 if self.cfg.rollout.get("rollout_backend") == "grpc" else None
+        )
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
+            if self._evaluation_stop.is_set():
+                break
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
                     self.eval_env_list[stage_id].is_start = True
@@ -1492,18 +1516,32 @@ class EnvWorker(Worker):
                     )
 
             for eval_step in range(self.n_eval_chunk_steps):
+                if self._evaluation_stop.is_set():
+                    break
                 for stage_id in range(self.stage_num):
-                    policy_output = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.eval_batch_size,
-                        infer_batch_size_fn=self._infer_rollout_batch_size
-                        if self.env_decoupled_mode
-                        else None,
-                        decoupled_mode=self.env_decoupled_mode,
-                    )
+                    while True:
+                        if self._evaluation_stop.is_set():
+                            break
+                        try:
+                            policy_output = self.recv_from(
+                                group_name=self.cfg.rollout.group_name,
+                                channel=input_channel,
+                                tag="eval_rollout_results",
+                                route_key=stage_id
+                                if not self.env_decoupled_mode
+                                else None,
+                                batch_size=self.eval_batch_size,
+                                infer_batch_size_fn=self._infer_rollout_batch_size
+                                if self.env_decoupled_mode
+                                else None,
+                                decoupled_mode=self.env_decoupled_mode,
+                                timeout=receive_timeout,
+                            )
+                            break
+                        except TimeoutError:
+                            continue
+                    if self._evaluation_stop.is_set():
+                        break
                     raw_chunk_actions = (
                         policy_output.actions
                         if hasattr(policy_output, "actions")
@@ -1540,6 +1578,8 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+                if self._evaluation_stop.is_set():
+                    break
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):

@@ -41,9 +41,14 @@ class EmbodiedEvalRunner:
         self.rollout = rollout
         self.env = env
 
-        # Data channels
-        self.env_channel = Channel.create("Env")
-        self.rollout_channel = Channel.create("Rollout")
+        # gRPC evaluation exchanges small CPU observations/actions. Route those
+        # channels through Ray so the first rollout does not lazily initialize
+        # torch.distributed process groups in every worker.
+        channel_transport = (
+            "ray" if cfg.rollout.get("rollout_backend") == "grpc" else "collective"
+        )
+        self.env_channel = Channel.create("Env", transport=channel_transport)
+        self.rollout_channel = Channel.create("Rollout", transport=channel_transport)
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -79,10 +84,36 @@ class EmbodiedEvalRunner:
             output_channel=self.env_channel,
         )
 
-        env_results = env_handle.wait()
+        try:
+            env_results = env_handle.wait()
+        except BaseException:
+            # The environment can terminate first when an operator aborts or
+            # a hardware fault is raised. Wake a rollout worker that may still
+            # be waiting for its next observation before stack cleanup tries
+            # to call shutdown on the actor.
+            try:
+                self.rollout.request_evaluation_stop().wait()
+            except BaseException as stop_error:  # noqa: BLE001 - preserve root error
+                self.logger.warning(
+                    "Could not request rollout evaluation stop: %s", stop_error
+                )
+            try:
+                rollout_handle.wait()
+            except BaseException:
+                pass
+            raise
         env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
         if not env_decoupled_mode:
-            rollout_results = rollout_handle.wait()
+            try:
+                rollout_results = rollout_handle.wait()
+            except BaseException:
+                try:
+                    self.env.request_evaluation_stop().wait()
+                except BaseException as stop_error:  # noqa: BLE001 - preserve root error
+                    self.logger.warning(
+                        "Could not request environment evaluation stop: %s", stop_error
+                    )
+                raise
             rollout_metrics_list = [
                 results for results in rollout_results if results is not None
             ]

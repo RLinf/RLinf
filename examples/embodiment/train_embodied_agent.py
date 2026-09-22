@@ -168,8 +168,16 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        # Real-world environments own physical devices and must complete their
+        # park-first cleanup before Ray tears down the worker group.
+        try:
+            env_group.stop().wait()
+        finally:
+            env_group.shutdown().wait()
 
     if reward_group is not None:
         reward_group.stop().wait()

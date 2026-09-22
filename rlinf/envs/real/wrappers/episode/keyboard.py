@@ -51,8 +51,8 @@ class KeyboardListener:
         "stop": "q",
     }
 
-    def __init__(self) -> None:
-        control_file = os.environ.get("RLINF_KEYBOARD_CONTROL_FILE")
+    def __init__(self, control_file: str | os.PathLike[str] | None = None) -> None:
+        control_file = control_file or os.environ.get("RLINF_KEYBOARD_CONTROL_FILE")
         self._control_file = Path(control_file) if control_file else None
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}

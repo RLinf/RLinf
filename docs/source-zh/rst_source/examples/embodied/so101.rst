@@ -72,7 +72,7 @@ SO101 配置与控制
    ls -l /dev/ttyACM0
    id -nG
 
-在 Ubuntu 上，如果串口属于 ``dialout`` 组，运行程序的账号也需要加入该组。若尚未加入，执行 ``sudo usermod -aG dialout "$USER"``，退出登录并重新登录，然后回到仓库目录，重新激活 ``.venv``。USB 重新接入后，应再次确认串口路径。
+在 Ubuntu 上，如果串口属于 dialout 组，运行程序的账号也需要加入该组。若尚未加入，执行 ``sudo usermod -aG dialout "$USER"``，退出登录并重新登录，然后回到仓库目录，重新激活 ``.venv``。USB 重新接入后，应再次确认串口路径。
 
 新电机或更换后的电机需要按上游指南的接线顺序，逐个设置 ID 与波特率；此步骤通常只需执行一次：
 
@@ -96,11 +96,11 @@ SO101 配置与控制
      --robot.port=/dev/ttyACM0 \
      --robot.id=rlinf_follower
 
-将串口替换为实际设备。按照指南将关节移到中间位置并确认提示，再按要求逐个移动关节，覆盖其运动范围。工具会报告保存的标定文件；请保留在运行 RLinf 的账号下，并使用相同的 ``--id rlinf_follower``。follower 不能使用 leader 的标定文件。
+将串口替换为实际设备。按照指南将关节移到中间位置并确认提示，再按要求逐个移动关节，覆盖其运动范围。工具会报告保存的标定文件；请保留在运行 RLinf 的账号下，并使用相同的 ``--id rlinf_follower``。leader 使用独立的 calibration ID 和文件。
 
 .. warning::
 
-   RLinf worker 不会交互式标定 follower。标定缺失或与硬件不一致时，连接会失败。启动 worker 前，先用运行机械臂的账号完成标定。
+   标定由操作员在启动 worker 前完成。RLinf worker 会读取配置 ID 对应的标定文件，因此请使用运行机械臂的账号保存标定结果。
 
 运行
 ----
@@ -116,7 +116,7 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 .. code-block:: bash
 
    CAMERA_SERIALS='' python -m toolkits.realworld_check.test_so101_env \
-     --port /dev/ttyACM0 --id rlinf_follower --step 2
+     --port /dev/ttyACM1 --id rlinf_follower --step 2
 
 将串口替换为实际设备，ID 使用标定时的值。``CAMERA_SERIALS=''`` 关闭相机发现，使测试只使用机械臂。
 
@@ -134,7 +134,7 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
    park
    quit
 
-``up`` 和 ``down`` 分别将肩关节角度增加或减少 2 度，并非让末端沿竖直方向移动。每次关节运动后会打印反馈；``open`` 与 ``close`` 用于测试夹爪。需要折叠机械臂时，先运行 ``park`` 移动到配置的 park 状态，再运行 ``quit`` 关闭环境及其机械臂 worker。关闭 session 只释放资源。输入 ``help`` 可查看其他关节方向。
+``up`` 和 ``down`` 分别将肩关节角度增加或减少 2 度。每次关节运动后会打印反馈；``open`` 与 ``close`` 用于测试夹爪。需要折叠机械臂时，先运行 ``park`` 移动到配置的 park 状态，再运行 ``quit`` 关闭环境及其机械臂 worker。关闭 session 只释放资源。输入 ``help`` 可查看其他关节方向。
 
 在自己的程序中控制机械臂或接入相机，请参考 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
@@ -147,7 +147,7 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 
    lerobot-calibrate \
      --teleop.type=so101_leader \
-     --teleop.port=/dev/ttyACM1 \
+     --teleop.port=/dev/ttyACM0 \
      --teleop.id=rlinf_leader
 
 为两台机械臂配置端口后启动检查。未设置 ``CAMERA_SERIALS`` 时会自动发现相机；添加 ``--enable-camera-player`` 可显示图像：
@@ -155,13 +155,13 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 .. code-block:: bash
 
    python -m toolkits.realworld_check.test_so101_env \
-     --port /dev/ttyACM0 --id rlinf_follower \
-     --leader /dev/ttyACM1 --leader-id rlinf_leader \
+     --port /dev/ttyACM1 --id rlinf_follower \
+     --leader /dev/ttyACM0 --leader-id rlinf_leader \
      --fps 30 --enable-camera-player
 
 follower 到达标准状态后，将 leader 放到相同姿态，再输入 ``teleop``。follower 会持续跟随关节和夹爪运动。按一次 Ctrl-C 返回命令提示符，再输入 ``quit`` 断开连接。
 
-``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），无需每步等待新图像。连续夹爪命令不等待运动完成。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
+``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），每个控制 step 不等待新的图像。连续夹爪命令不等待运动完成。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
 
 采集示范数据
 ------------
@@ -173,7 +173,7 @@ follower 到达标准状态后，将 leader 放到相同姿态，再输入 ``tel
    bash examples/embodiment/collect_data.sh \
      realworld_so101_collect_data_joint
 
-WSL 等没有 ``/dev/input`` 的 Linux 环境可以用控制文件代替 evdev 键盘。启动采集前设置文件：
+WSL 等没有 ``/dev/input`` 的 Linux 环境可以为 keyboard wrapper 使用控制文件。启动采集前设置文件：
 
 .. code-block:: bash
 
@@ -197,6 +197,63 @@ WSL 等没有 ``/dev/input`` 的 Linux 环境可以用控制文件代替 evdev �
 采集发生异常时，runner 会让 leader 与 follower 同时进入配置的 park 状态，然后关闭两侧连接并卸力。如果安全运动本身失败，系统会记录该错误并继续执行关闭流程。
 
 park 状态通过显式命令触发。需要 park 时，在交互检查中运行 ``park``；结束采集或调用 ``close()`` 只释放设备。
+
+Policy 部署与远程 gRPC 采集
+----------------------------
+
+启动机器人侧评测前，先选择 policy 的部署位置：
+
+* 本地 OpenPI checkpoint 通过标准 embodied evaluation 入口运行。checkpoint 位于机器人主机时，设置 ``rollout.model.model_path``：
+
+  .. code-block:: bash
+
+     python evaluations/eval_embodied_agent.py \
+       --config-path examples/embodiment/config \
+       --config-name realworld_so101_eval_openpi \
+       rollout.model.model_path=/path/to/checkpoint
+
+* 外部 GPU 主机运行 standalone service。先在 GPU 主机启动服务，并确保机器人主机可以访问监听地址：
+
+  .. code-block:: bash
+
+     python examples/embodiment/serve_policy.py \
+       --config-name realworld_so101_policy_server \
+       model.model_path=/path/to/checkpoint \
+       server.host=0.0.0.0 server.port=50052 \
+       server.policy_id=so101-pi05
+
+  机器人主机进行固定 checkpoint 评测时使用 ``realworld_so101_eval_openpi_grpc``；需要同时保存人工干预 episode 供后续离线训练时使用 ``realworld_so101_grpc_dagger_offline``。
+
+本地 OpenPI 入口要求机器人主机安装 OpenPI 并能读取 checkpoint。gRPC 入口把 OpenPI 保留在 policy 主机；机器人侧进程发送观测，接收 6 维绝对关节动作。
+
+远程 gRPC DAgger
+----------------
+
+固定 checkpoint 的 gRPC 流程将 policy 放在 GPU 主机上，而 SO-101 硬件环境仍在本地运行。先在 GPU 主机启动 policy service，再在本地显式设置 service 地址、policy ID、follower 串口、leader 串口和 calibration ID，启动评测入口：
+
+.. code-block:: bash
+
+   export SO101_SERVER_ADDRESS="${GPU_HOST}:50052"
+   export SO101_POLICY_ID=so101-pi05
+   export SO101_FOLLOWER_PORT=/dev/ttyACM1
+   export SO101_LEADER_PORT=/dev/ttyACM0
+   export SO101_FOLLOWER_ID=rlinf_follower
+   export SO101_LEADER_ID=rlinf_leader
+   export SO101_CAMERA=/dev/video0
+   export SO101_EVAL_CONFIG=realworld_so101_grpc_dagger_offline
+   bash examples/embodiment/run_so101_experiment.sh eval
+
+服务端必须返回与本地配置一致的 policy ID、动作维度 ``6`` 和 action horizon ``20``。入口复用 RLinf 现有 evaluation runner 和 LeRobot writer。OpenPI 在 policy 主机运行，机器人主机只运行 gRPC client 和硬件环境。WSL 没有键盘设备时，可以通过入口脚本的控制文件发送命令：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_so101_experiment.sh control s
+   bash examples/embodiment/run_so101_experiment.sh control space
+   bash examples/embodiment/run_so101_experiment.sh control r
+   bash examples/embodiment/run_so101_experiment.sh control c
+   bash examples/embodiment/run_so101_experiment.sh control q
+
+``s`` 启动 policy rollout，``space`` 请求显式接管 leader，``r`` 将 leader 交还给 policy，``c`` 保存成功 episode，``q`` 请求结束评测。接管和交还 leader 时都会使用三秒 handover buffer，让操作员有时间握稳或移开 leader。生成的 LeRobot 数据写入本次运行目录下的 ``collected_data``。上传 episode 并执行离线训练属于后续步骤；固定 checkpoint service 在本次运行中保持已部署权重不变。
 
 新增真机任务
 ------------

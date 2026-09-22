@@ -19,7 +19,7 @@ cluster:
         type: SO101
         configs:
           - node_rank: 0
-            serial_port: /dev/ttyACM0
+            serial_port: /dev/ttyACM1
             calibration_id: FOLLOWER_CALIB
             max_relative_target: 5
             camera_type: uvc

@@ -108,6 +108,10 @@ class SO101Arm(BaseArm):
     #: where they stand.
     GRIPPER_STALL_POLLS: int = 3
 
+    #: Transient serial failures during startup are retried before surfacing.
+    SERIAL_CONNECT_RETRIES: int = 3
+    SERIAL_RETRY_DELAY_S: float = 0.1
+
     #: The SO-101 reports joints only; it carries no pose or force sensing.
     STATE_FIELDS = ("arm_joint_position",)
 
@@ -220,30 +224,69 @@ class SO101Arm(BaseArm):
                 use_degrees=True,
             )
         )
+        accepted = False
         try:
-            robot.connect(calibrate=False)
+            for attempt in range(1, self.SERIAL_CONNECT_RETRIES + 1):
+                try:
+                    robot.connect(calibrate=False)
+                    break
+                except ConnectionError:
+                    if attempt == self.SERIAL_CONNECT_RETRIES:
+                        raise
+                    self._logger.warning(
+                        "SO-101 follower connection did not receive a status packet; "
+                        "retrying (%d/%d)",
+                        attempt + 1,
+                        self.SERIAL_CONNECT_RETRIES,
+                    )
+                    try:
+                        robot.disconnect()
+                    except Exception:  # noqa: BLE001 - retry the original connection
+                        pass
+                    time.sleep(self.SERIAL_RETRY_DELAY_S)
         except RuntimeError as error:
-            faulted = self._faulted_motors()
-            if not faulted:
-                raise
-            raise RuntimeError(
-                f"The SO-101 on {self._port!r} cannot start: motor(s) "
-                f"{faulted} report a latched fault, which lerobot reports as "
-                "a missing motor. The gripper reaches this by being held "
-                "shut against something until its overload protection trips. "
-                "Power-cycle the arm's supply to clear it"
-            ) from error
-        if not robot.is_calibrated:
-            robot.disconnect()
-            raise RuntimeError(
-                f"The SO-101 on {self._port!r} is not calibrated, and "
-                "calibrating it asks the operator to move the arm, which "
-                "cannot be done from here. Run lerobot's calibration for "
-                f"id={self._calibration_id!r} once, then start again."
-            )
-        self._logger.info("SO-101 connected on %s", self._port)
-        self._robot = robot
-        return robot
+            try:
+                faulted = self._faulted_motors()
+                if not faulted:
+                    raise
+                raise RuntimeError(
+                    f"The SO-101 on {self._port!r} cannot start: motor(s) "
+                    f"{faulted} report a latched fault, which lerobot reports as "
+                    "a missing motor. The gripper reaches this by being held "
+                    "shut against something until its overload protection trips. "
+                    "Power-cycle the arm's supply to clear it"
+                ) from error
+            finally:
+                if not accepted:
+                    try:
+                        robot.disconnect()
+                    except Exception:  # noqa: BLE001 - preserve startup failure
+                        pass
+        except BaseException:
+            if not accepted:
+                try:
+                    robot.disconnect()
+                except Exception:  # noqa: BLE001 - preserve startup failure
+                    pass
+            raise
+        try:
+            if not robot.is_calibrated:
+                raise RuntimeError(
+                    f"The SO-101 on {self._port!r} is not calibrated, and "
+                    "calibrating it asks the operator to move the arm, which "
+                    "cannot be done from here. Run lerobot's calibration for "
+                    f"id={self._calibration_id!r} once, then start again."
+                )
+            self._logger.info("SO-101 connected on %s", self._port)
+            self._robot = robot
+            accepted = True
+            return robot
+        finally:
+            if not accepted:
+                try:
+                    robot.disconnect()
+                except Exception:  # noqa: BLE001 - preserve startup failure
+                    pass
 
     def _faulted_motors(self) -> dict[int, int]:
         """Return ``{motor id: error byte}`` for servos answering with a fault.
