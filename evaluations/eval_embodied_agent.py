@@ -125,6 +125,9 @@ def main(cfg) -> None:
 
     runner.init_workers()
     runner.run()
+    if cfg.env.eval.env_type == "simple":
+        # Results and videos are complete; avoid Isaac's unsafe exit teardown.
+        env_group._close()
 
 
 if __name__ == "__main__":

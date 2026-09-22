@@ -175,6 +175,9 @@ def main(cfg) -> None:
 
     runner.init_workers()
     runner.run()
+    if cfg.env.train.env_type == "simple":
+        # Results and videos are complete; avoid Isaac's unsafe exit teardown.
+        env_group._close()
 
     if reward_group is not None:
         reward_group.stop().wait()
