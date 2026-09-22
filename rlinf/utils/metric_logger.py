@@ -13,15 +13,43 @@
 # limitations under the License.
 
 import os
+import sys
 
 from omegaconf import DictConfig, OmegaConf
 
 
-class _TensorboardLogger:
-    def __init__(self, log_path):
+def _import_summary_writer():
+    """Import torch SummaryWriter without dlopening TensorFlow.
+
+    ``torch.utils.tensorboard._embedding`` accesses ``tensorboard.compat.tf``,
+    which imports TensorFlow whenever it is installed. TensorFlow's bundled
+    protobuf/absl then collides with Ray's protobuf 6.x and SIGSEGVs in
+    ``ExtensionSet::RegisterMessageExtension``. This is systematic on Ascend:
+    CPU TensorFlow actually loads, whereas CUDA TensorFlow often fails earlier
+    with ``ImportError`` and TensorBoard falls back to its stub.
+    """
+    loaded_tensorflow = sys.modules.get("tensorflow")
+    if loaded_tensorflow is not None:
         from torch.utils.tensorboard import SummaryWriter
 
-        self.writer = SummaryWriter(log_path)
+        return SummaryWriter
+
+    blocked = "tensorflow" not in sys.modules
+    if blocked:
+        # Official way to make ``import tensorflow`` raise ModuleNotFoundError.
+        sys.modules["tensorflow"] = None
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+
+        return SummaryWriter
+    finally:
+        if blocked:
+            sys.modules.pop("tensorflow", None)
+
+
+class _TensorboardLogger:
+    def __init__(self, log_path):
+        self.writer = _import_summary_writer()(log_path)
 
     def log(self, data: dict[str, float], step: int) -> None:
         for key, value in data.items():

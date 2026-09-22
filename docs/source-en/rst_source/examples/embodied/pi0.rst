@@ -116,7 +116,7 @@ Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <pi0-hard
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -508,6 +508,8 @@ inside that container, or run the same command directly on an Ascend host:
 Add ``--use-mirror`` for downloads from mainland China. The installer adds the
 matching ``torch-npu`` package and skips CUDA flash-attention; OpenPI then uses
 the common NPU worker and collective paths.
+
+.. include:: _ascend_torch.rst
 
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~

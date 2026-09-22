@@ -115,7 +115,7 @@
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -460,6 +460,8 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的
    source .venv/bin/activate
 
 中国大陆用户可添加 ``--use-mirror``。安装器会添加匹配的 ``torch-npu`` 并跳过 CUDA flash-attention，OpenPI 随后使用共用的 NPU worker 与 collective 路径。
+
+.. include:: _ascend_torch.rst
 
 摩尔线程 MUSA
 ~~~~~~~~~~~~~

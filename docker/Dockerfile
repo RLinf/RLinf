@@ -1,16 +1,20 @@
 ARG BUILD_TARGET=embodied
 ARG TARGETARCH
 # Hardware platform for the install: nvidia (default), amd (ROCm), ascend (CANN),
-# or musa (Moore Threads).
+# musa (Moore Threads) or kunlun (Kunlunxin).
 ARG PLATFORM=nvidia
 # Per-platform runtime versions. Override these for common CUDA/ROCm/CANN bumps, or
 # override the full base-image args below for a different image family/Ubuntu.
 ARG CUDA_VER=12.8.1
-ARG ROCM_VER=6.4
+ARG ROCM_VER=7.2
 ARG ROCM_ARCHS=gfx90a;gfx942
-ARG CANN_VER=9.0.0-910b
+ARG CANN_VER=9.1.1-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
+ARG KUNLUN_VER=v1.7.2
 ARG UBUNTU_VER=22.04
+# Reason-image only. FA4 backward is sm90+; Docker builds cannot probe the GPU.
+# Pass --build-arg UNINSTALL_FA4=1 when the image will run on Ampere (e.g. A100).
+ARG UNINSTALL_FA4=0
 # Registry prefix for the Docker Hub base images, with a trailing slash.
 # Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=m.daocloud.io/docker.io/ when it is unreachable.
 ARG REGISTRY_MIRROR=
@@ -20,7 +24,8 @@ ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-c
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
 # MUSA lives on the Moore Threads registry, not Docker Hub.
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
-ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
+# KUNLUN lives on the Kunlunxin registry, not Docker Hub.
+ARG KUNLUN_BASE_IMAGE=hub.kunlunxin.com/public/kunlita/xav-rlinf:${KUNLUN_VER}
 
 
 ##################################################################################################
@@ -37,6 +42,7 @@ ENV AMD_VISIBLE_DEVICES=all
 FROM ${ASCEND_BASE_IMAGE} AS base-image-platform-ascend
 ENV ASCEND_VISIBLE_DEVICES=all
 FROM ${MUSA_BASE_IMAGE} AS base-image-platform-musa
+FROM ${KUNLUN_BASE_IMAGE} AS base-image-platform-kunlun
 ENV MTHREADS_VISIBLE_DEVICES=all
 ENV MTHREADS_DRIVER_CAPABILITIES=all
 
@@ -56,7 +62,6 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-wan
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-libero
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberopro
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
@@ -64,11 +69,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
-
-
-# Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
-# bypasses the platform switch and always uses a plain Ubuntu base.
-FROM ${FRANKA_BASE_IMAGE} AS base-image-embodied-franka
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
 ##################################################################################################
@@ -177,6 +178,8 @@ FROM base-image AS reason-image
 # (nvidia-cutlass-dsl, flashinfer, tilelang, tokenspeed-mla) to different
 # versions, so sharing a venv means whichever is installed second downgrades the
 # other's kernels. Activate `reason-vllm` for vLLM rollout.
+ARG UNINSTALL_FA4
+ENV UNINSTALL_FA4=${UNINSTALL_FA4}
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason --engine sglang && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason-vllm --engine vllm
 
@@ -229,7 +232,8 @@ RUN chmod +x /usr/local/bin/download_assets
 ##################################################################################################
 FROM embodied-common-image AS embodied-maniskill_libero-image
 
-# Install openvla env
+# Install the model envs; every platform builds the same image. FastWAM supports
+# LIBERO but not ManiSkill.
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env maniskill_libero && \
@@ -238,7 +242,11 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t_n1d7 --model gr00t_n1d7 --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dexbotic --model dexbotic --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env libero
 
 RUN source switch_env openvla && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
@@ -352,29 +360,22 @@ RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################
-# Embodied: Franka (Ubuntu 20.04, ROS Noetic)
+# Embodied: Franka
 ##################################################################################################
 FROM embodied-common-image AS embodied-franka-image
 
-# Install multiple Franka environments with different libfranka versions
-# franka uses ubuntu:20.04 with no GPU stack regardless of build-arg platform,
-# so always invoke install.sh with --platform nvidia to skip ROCm detection.
-RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
-            LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka; \
-        done
+# franky-control ships libfranka inside a prebuilt wheel and bundles the
+# installer's default libfranka (0.19.0), and every Franky install carries the
+# dexterous-hand dependencies. Each model venv adds that policy to the same
+# Franky stack. The legacy ROS Noetic backend needs Ubuntu 20.04, so it is not
+# part of this image; install it natively with --env franka-ros.
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env franka && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env franka
 
-# Franky environments. franky-control ships libfranka inside a prebuilt wheel,
-# so these need no ROS/catkin build and are kept in separate venvs from the
-# franka-$v ones above. Only the libfranka versions with published wheels are
-# built: https://github.com/Brunch-Life/franky/releases
-RUN for v in 0.15.0 0.19.0; do \
-            LIBFRANKA_VERSION="$v" bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franky-$v" --env franka-franky; \
-        done
-
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv franka-dexhand --env franka-dexhand
-
-# Set default env (recommended libfranka 0.15.0)
-RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
+RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################
@@ -437,28 +438,6 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
-# Embodied: LIBERO
-##################################################################################################
-FROM embodied-common-image AS embodied-libero-image
-
-# Ascend supports the openvla, openvla-oft and gr00t models only.
-RUN if [ "${RLINF_PLATFORM}" = "ascend" ]; then \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero; \
-    else \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env libero && \
-        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero; \
-    fi
-
-# Set default env
-RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
-
-##################################################################################################
 # Embodied: LIBERO-Pro
 ##################################################################################################
 FROM embodied-common-image AS embodied-liberopro-image
@@ -474,8 +453,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-liberoplus-image
 
-# Install openvla-oft env for LIBERO-Plus
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus
+# Install openvla-oft and fastwam envs for LIBERO-Plus
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env liberoplus
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc

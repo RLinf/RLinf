@@ -842,7 +842,10 @@ class LiberoEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         self._reconfigure(reset_state_ids, env_idx)
-        for _ in range(15):
+        # Preserve LIBERO's existing 15-step settling behavior unless a model
+        # explicitly requests a different reset wait (FastWAM uses 30).
+        num_steps_wait = int(self.cfg.get("num_steps_wait", 15))
+        for _ in range(num_steps_wait):
             zero_actions = np.zeros((len(env_idx), 7))
             if self.cfg.reset_gripper_open:
                 zero_actions[:, -1] = -1

@@ -51,7 +51,6 @@ from rlinf.envs.real.franka.dual_franka_joint import (
     DualFrankaJointEnv,
 )
 from rlinf.envs.real.gim_arm.base import GimArmEnv, GimArmEnvConfig
-from rlinf.envs.real.task_env import RobotTask, RobotTaskEnv
 from rlinf.envs.real.wrappers.teleop.config import (  # noqa: E402
     NO_DEVICE,
     resolve_teleop_device,
@@ -65,12 +64,9 @@ from rlinf.envs.real.wrappers.teleop.intervention import (  # noqa: E402
 from rlinf.envs.real.xsquare.base import Turtle2Env, Turtle2EnvConfig
 from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.robotics import (
-    ControllablePart,
     DualFrankaConfig,
     FrankaConfig,
-    PartGroup,
     PiperConfig,
-    Robot,
     SO101Config,
 )
 from rlinf.robotics.discovery import RobotDiscovery
@@ -103,114 +99,6 @@ def _robot_info(config):
     return RobotInfo(
         type=robot_type, model=config.hardware_model(robot_type), config=config
     )
-
-
-class DummyDriver(ControllablePart):
-    def __init__(self) -> None:
-        self.connected = False
-        self.last_action: dict[str, Any] | None = None
-
-    @property
-    def is_connected(self) -> bool:
-        return self.connected
-
-    @property
-    def observation_features(self) -> dict[str, Any]:
-        return {"position": {"shape": (1,)}}
-
-    @property
-    def action_features(self) -> dict[str, Any]:
-        return {"target": {"shape": (1,)}}
-
-    def connect(self) -> None:
-        self.connected = True
-
-    def reset(self) -> None:
-        self.last_action = None
-
-    def get_observation(self) -> dict[str, Any]:
-        return {"position": np.zeros(1)}
-
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        self.last_action = action
-        return action
-
-    def disconnect(self) -> None:
-        self.connected = False
-
-
-class DummyTask(RobotTask):
-    @property
-    def description(self) -> str:
-        return "Move the test arm."
-
-    @property
-    def observation_space(self) -> gym.Space:
-        return gym.spaces.Dict(
-            {"position": gym.spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)}
-        )
-
-    @property
-    def action_space(self) -> gym.Space:
-        return gym.spaces.Dict(
-            {
-                "arms": gym.spaces.Dict(
-                    {
-                        "arm": gym.spaces.Dict(
-                            {
-                                "arm": gym.spaces.Dict(
-                                    {
-                                        "target": gym.spaces.Box(
-                                            -1.0,
-                                            1.0,
-                                            shape=(1,),
-                                            dtype=np.float32,
-                                        )
-                                    }
-                                )
-                            }
-                        )
-                    }
-                )
-            }
-        )
-
-    def reset(
-        self,
-        robot: Robot,
-        *,
-        seed: Optional[int] = None,
-        options: Optional[dict[str, Any]] = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        del seed, options
-        robot.reset()
-        return {"position": np.zeros(1, dtype=np.float32)}, {}
-
-    def step(
-        self,
-        robot: Robot,
-        action: dict[str, Any],
-    ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
-        robot.send_action(action)
-        return {"position": np.ones(1, dtype=np.float32)}, 1.0, True, False, {}
-
-
-def test_robot_task_env_composes_task_and_robot_lifecycles():
-    driver = DummyDriver()
-    robot = Robot(arm=PartGroup(arm=driver))
-    env = RobotTaskEnv(robot, DummyTask())
-    action = {"arm": {"arm": {"target": np.array([0.5])}}}
-
-    observation, _ = env.reset(seed=3)
-    transition = env.step(action)
-
-    assert env.task_description == "Move the test arm."
-    assert observation["position"].tolist() == [0.0]
-    assert transition[0]["position"].tolist() == [1.0]
-    assert driver.last_action is not None
-    assert driver.last_action["target"].tolist() == [0.5]
-    env.close()
-    assert not driver.is_connected
 
 
 def _assert_legacy_transition(env) -> None:
@@ -304,6 +192,7 @@ def test_a_franka_observation_comes_from_one_snapshot():
     )
 
 
+@pytest.mark.placement
 def test_franka_depth_reaches_the_observation_only_when_asked_for():
     """A rig without a depth camera keeps the schema a policy already reads.
 
@@ -314,6 +203,17 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
     from robot_mocks import mocked_sdks
     from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE, SERIAL
 
+    from rlinf.scheduler import AcceleratorType, AcceleratorUtil
+
+    # get_accelerator_type returns the type as a plain string, so compare by
+    # value; `is` against the enum member is never true.
+    if AcceleratorUtil.get_accelerator_type() == AcceleratorType.MUSA_GPU:
+        # This test builds a second rig after closing the first, and MUSA
+        # reserves so much address space per process that the second placement
+        # cannot allocate its worker. The unit-test workflow already runs
+        # placement tests one per process for the same reason.
+        pytest.skip("MUSA cannot place a second rig in one process")
+
     with mocked_sdks():
         from rlinf.envs.real.franka.base import FrankaEnv
 
@@ -322,7 +222,6 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
                 override_cfg={
                     "enable_camera_depth": enable_camera_depth,
                     "enable_camera_player": False,
-                    "step_frequency": 10000.0,
                 },
                 worker_info=None,
                 env_idx=0,
@@ -1370,7 +1269,7 @@ def test_wrappers_are_split_by_what_they_change():
     loose = sorted(
         path.stem for path in real.glob("*.py") if path.name != "__init__.py"
     )
-    assert loose == ["env", "registry", "task_env", "venv"], loose
+    assert loose == ["env", "registry", "venv"], loose
 
 
 def test_no_teleop_wrapper_is_left_outside_teleop():
@@ -2377,9 +2276,11 @@ def test_shipped_configs_give_the_policy_the_action_width_it_expects():
             continue
         if not isinstance(doc, dict):
             continue
-        action_dim = _resolved(
-            doc, ((doc.get("rollout") or {}).get("model") or {}).get("action_dim")
-        )
+        # A model section may itself be an interpolation, e.g. ${actor.model}.
+        model = _resolved(doc, (doc.get("rollout") or {}).get("model"))
+        if not isinstance(model, dict):
+            continue
+        action_dim = _resolved(doc, model.get("action_dim"))
         if not isinstance(action_dim, int):
             continue
         for name, section, env_id in _merged_sections(path, doc):
@@ -2478,6 +2379,8 @@ def _so101_env(robot_info=None, **overrides):
         "step_frequency": 1000.0,
         # Headless: there is no display to show frames on.
         "enable_camera_player": False,
+        "reset_duration": 0.02,
+        "reset_joint_speed": 10.0,
     }
     settings.update(overrides)
     return SO101ReachEnv(
@@ -2492,6 +2395,7 @@ def _so101_env(robot_info=None, **overrides):
     )
 
 
+@pytest.mark.placement
 def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
     from robot_mocks import mocked_sdks
 
@@ -2521,6 +2425,7 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
     """The env speaks radians; only the driver may speak lerobot's units.
 
@@ -2548,6 +2453,7 @@ def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_scores_the_distance_to_the_target_configuration():
     from robot_mocks import mocked_sdks
 
@@ -2570,6 +2476,7 @@ def test_so101_env_scores_the_distance_to_the_target_configuration():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_clips_an_action_to_the_joint_limits():
     from robot_mocks import mocked_sdks
 
@@ -2620,6 +2527,7 @@ def test_so101_task_is_registered_with_gymnasium():
     assert "SO101ReachEnv-v1" in gym.registry
 
 
+@pytest.mark.placement
 def test_so101_env_resizes_camera_frames_to_the_declared_shape():
     """A camera delivers its native resolution; the space fixes one size."""
     from robot_mocks import mocked_sdks
@@ -2646,6 +2554,7 @@ def test_so101_env_resizes_camera_frames_to_the_declared_shape():
             env.close()
 
 
+@pytest.mark.placement
 def test_so101_env_omits_frames_entirely_when_no_camera_is_configured():
     """Gymnasium rejects an empty Dict space, so the key is dropped instead."""
     from robot_mocks import mocked_sdks
@@ -2657,6 +2566,97 @@ def test_so101_env_omits_frames_entirely_when_no_camera_is_configured():
             assert "frames" not in env.observation_space.spaces
             assert "frames" not in observation
             assert observation in env.observation_space
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+def test_so101_env_control_can_run_faster_than_camera_capture():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(
+            step_frequency=60.0,
+            robot_info=_robot_info(
+                SO101Config(
+                    node_rank=0,
+                    serial_port="/dev/mock-so101",
+                    camera_serials=["MOCK0001"],
+                )
+            ),
+        )
+        try:
+            env.reset()
+            start = time.monotonic()
+            for _ in range(12):
+                observation, *_ = env.step(np.zeros(6, dtype=np.float32))
+                assert observation in env.observation_space
+            # Twelve fresh captures alone would take 0.8 s at the default 15 FPS.
+            assert time.monotonic() - start < 0.6
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+def test_so101_env_can_connect_without_resetting_then_reset_explicitly():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(reset_joint_qpos=[0.2] * 5, reset_on_init=False)
+        try:
+            state = env.robot.get_observation()["arm"]
+            np.testing.assert_allclose(state["arm_joint_position"], np.zeros(5))
+            observation, _ = env.reset()
+            np.testing.assert_allclose(
+                observation["state"]["arm_joint_position"], [0.2] * 5
+            )
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+def test_so101_tool_home_uses_the_environment_reset(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_so101_env import drive
+
+    commands = iter(["home", "quit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(commands))
+    with mocked_sdks():
+        env = _so101_env(reset_joint_qpos=[0.2] * 5, reset_on_init=False)
+        try:
+            drive(env, step=0.01, invert=False, reset=False)
+            assert env.num_steps == 0
+            state = env.robot.get_observation()["arm"]
+            np.testing.assert_allclose(state["arm_joint_position"], [0.2] * 5)
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+def test_so101_tool_teleop_forwards_gripper_only_and_stationary_commands(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_so101_env import teleop
+
+    with mocked_sdks() as made:
+        leader = made["lerobot.teleoperators.so_leader"].SO101Leader
+        openings = iter([25.0, 50.0, 50.0])
+
+        def get_action(device):
+            try:
+                opening = next(openings)
+            except StopIteration:
+                raise KeyboardInterrupt from None
+            return {**device.positions, "gripper.pos": opening}
+
+        monkeypatch.setattr(leader, "get_action", get_action)
+        env = _so101_env()
+        try:
+            teleop(env, "/dev/mock-leader", "leader")
+            assert env.num_steps == 3
+            state = env.robot.get_observation()["arm"]
+            assert state["end_effector"]["state"][0] == pytest.approx(0.5)
         finally:
             env.close()
 
@@ -2735,6 +2735,7 @@ def test_entry_points_reach_realworldenv_through_its_package():
     )
 
 
+@pytest.mark.placement
 def test_piper_env_runs_a_whole_episode_against_a_faked_arm():
     from robot_mocks import mocked_sdks
 
@@ -2766,6 +2767,7 @@ def test_piper_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_commands_reach_the_arm_in_radians():
     """pyAgxArm takes radians, so nothing on this path rescales them.
 
@@ -2794,6 +2796,7 @@ def test_piper_env_commands_reach_the_arm_in_radians():
             env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_clips_an_action_to_the_joint_limits():
     from robot_mocks import mocked_sdks
 
@@ -2815,6 +2818,7 @@ def test_piper_env_clips_an_action_to_the_joint_limits():
             env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_scores_the_distance_to_the_target_configuration():
     from robot_mocks import mocked_sdks
 
@@ -2851,6 +2855,7 @@ def test_piper_env_runs_without_hardware_when_dummy():
         env.close()
 
 
+@pytest.mark.placement
 def test_piper_env_without_a_gripper_has_a_six_wide_action():
     from robot_mocks import mocked_sdks
 
@@ -2885,6 +2890,7 @@ def test_piper_task_is_registered_with_gymnasium():
     assert "PiperReachEnv-v1" in gym.registry
 
 
+@pytest.mark.placement
 def test_piper_env_resizes_camera_frames_to_the_declared_shape():
     from robot_mocks import mocked_sdks
 
@@ -3005,6 +3011,7 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
     assert sample.parts["end_effector"][0] == pytest.approx(0.7)
 
 
+@pytest.mark.placement
 def test_so101_env_is_driven_by_its_leader():
     from robot_mocks import mocked_sdks
 
@@ -3269,8 +3276,9 @@ def test_real_env_requires_a_robot_descriptor(monkeypatch):
 
 
 @pytest.mark.parametrize("controller_node_rank", [None, 7])
+@pytest.mark.parametrize("compliance", [None, {}, {"max_step": 0.02}])
 def test_franka_preserves_hardware_and_placement_at_construction(
-    monkeypatch, controller_node_rank
+    monkeypatch, controller_node_rank, compliance
 ):
     from rlinf.envs.real.franka import FrankaEnv
     from rlinf.robotics import FrankaConfig, FrankaRobot, RobotInfo
@@ -3284,6 +3292,7 @@ def test_franka_preserves_hardware_and_placement_at_construction(
         camera_serials=["camera"],
         end_effector_type="ruiyan_hand",
         end_effector_config={"port": "/dev/hand"},
+        compliance=compliance,
     )
     info = RobotInfo(type="Franka", model="Franka", config=config)
     before = pickle.dumps(info)
@@ -3304,9 +3313,56 @@ def test_franka_preserves_hardware_and_placement_at_construction(
     assert kwargs["env_idx"] == 4
     assert kwargs["end_effector_type"] == "ruiyan_hand"
     assert kwargs["end_effector_config"] == {"port": "/dev/hand"}
+    assert kwargs["compliance"] == compliance
     camera = kwargs["cameras"]["wrist_1"]
     assert camera.serial_number == "camera"
     assert camera.camera_type == "zed"
+    assert pickle.dumps(info) == before
+
+
+@pytest.mark.parametrize(
+    "shared,left,right,expected_left,expected_right",
+    [
+        (None, None, None, None, None),
+        ({"max_step": 0.02}, None, None, {"max_step": 0.02}, {"max_step": 0.02}),
+        (
+            {"translational_stiffness": 900},
+            {"max_step": 0.02},
+            {},
+            {"max_step": 0.02},
+            {},
+        ),
+        ({"max_step": 0.02}, {}, None, {}, {"max_step": 0.02}),
+    ],
+)
+def test_dual_franka_preserves_shared_and_per_arm_compliance(
+    monkeypatch, shared, left, right, expected_left, expected_right
+):
+    from rlinf.envs.real.franka.dual_franka_tcp import DualFrankaTCPEnv
+    from rlinf.robotics import DualFrankaRobot
+    from rlinf.scheduler.hardware import NodeHardwareConfig
+
+    hardware = NodeHardwareConfig(
+        type="DualFranka",
+        configs=[
+            {
+                "node_rank": 0,
+                "left_robot_ip": "10.0.0.1",
+                "right_robot_ip": "10.0.0.2",
+                "compliance": shared,
+                "left_compliance": left,
+                "right_compliance": right,
+            }
+        ],
+    )
+    info = _robot_info(pickle.loads(pickle.dumps(hardware.configs[0])))
+    before = pickle.dumps(info)
+    build = Mock(side_effect=RuntimeError("stop before opening hardware"))
+    monkeypatch.setattr(DualFrankaRobot, "build", build)
+    with pytest.raises(RuntimeError, match="stop before opening hardware"):
+        DualFrankaTCPEnv({}, robot_info=info)
+    assert build.call_args.kwargs["left_compliance"] == expected_left
+    assert build.call_args.kwargs["right_compliance"] == expected_right
     assert pickle.dumps(info) == before
 
 
@@ -3393,7 +3449,39 @@ def test_so101_tool_enumerates_environment_and_cli_settings(
     assert config.camera_serials == ["MOCK0001", "MOCK0002"]
     assert config.max_relative_target == 12
     assert constructor.call_args.args[0]["enable_camera_player"] is player
+    assert constructor.call_args.args[0]["step_frequency"] == 30.0
+    assert constructor.call_args.args[0]["reset_on_init"] is False
+    assert constructor.call_args.args[0]["reset_joint_speed"] == pytest.approx(
+        np.deg2rad(30)
+    )
     constructor.return_value.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("fps", [15, 60])
+def test_so101_tool_passes_the_requested_control_rate(so101_tool, fps):
+    run, constructor = so101_tool
+    run("--fps", str(fps))
+    assert constructor.call_args.args[0]["step_frequency"] == fps
+
+
+def test_so101_tool_passes_reset_speed_and_skips_startup_reset(so101_tool):
+    from toolkits.realworld_check import test_so101_env as tool
+
+    run, constructor = so101_tool
+    run("--reset-speed", "10", "--no-reset")
+    config = constructor.call_args.args[0]
+    assert config["reset_joint_speed"] == pytest.approx(np.deg2rad(10))
+    assert config["reset_on_init"] is False
+    assert tool.drive.call_args.kwargs["reset"] is False
+
+
+@pytest.mark.parametrize("option", ["--fps", "--reset-speed"])
+@pytest.mark.parametrize("fps", ["0", "-1", "nan", "inf"])
+def test_so101_tool_rejects_invalid_control_rates(so101_tool, fps, option):
+    run, constructor = so101_tool
+    with pytest.raises(SystemExit, match="2"):
+        run(option, fps)
+    constructor.assert_not_called()
 
 
 @pytest.mark.parametrize("explicit_port", [False, True])

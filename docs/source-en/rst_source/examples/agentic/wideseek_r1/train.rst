@@ -41,11 +41,12 @@ Use this page to prepare the model, data, and config for WideSeek-R1 training.
 Prerequisites
 -------------
 
-Before launching training, make sure the following components are ready:
+Before launching training, complete
+:doc:`Environment and Tool Setup <tools>`:
 
-- The RLinf environment is installed. See :doc:`../../../start/installation`.
-- The judge model server is running. See :doc:`index`.
-- The offline retrieval tools are configured. See :doc:`tools`.
+- The RLinf environment is installed.
+- The judge model is running.
+- The offline retrieval tools are configured.
 
 Download the Base Model
 -----------------------
@@ -111,13 +112,15 @@ Before starting training, verify all of the following:
 - ``rollout.model.model_path`` points to the downloaded base model.
 - ``data.train_data_paths`` points to the training dataset.
 - ``agentloop.llm_ip`` is set correctly.
-- Offline tools are configured and reachable. See :doc:`tools`.
+- Offline tools are configured and reachable. See :doc:`Environment and Tool Setup <tools>`.
 
 Then run:
 
 .. code-block:: bash
 
    bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
+
+For multi-node launches, see :ref:`wideseek-r1-multinode`.
 
 Visualization and Results
 -------------------------
