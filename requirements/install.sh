@@ -2843,15 +2843,18 @@ install_openwam_deps() {
         git -C "$openwam_path" checkout "${OPENWAM_GIT_REF:-a8992b613fdb5b1c4649f53b3a914379c49e3892}" >&2
     fi
 
-    # Cosmos-Predict2.5 is a submodule under third_party/ and is only needed by the
-    # cosmos_predict25 video backbone; the Wan backbones (the default) do not use it.
-    git -C "$openwam_path" submodule update --init --recursive >&2 || \
-        echo "[install.sh] OpenWAM submodule init failed; cosmos_predict25 backbone will be unavailable." >&2
+    # Cosmos-Predict2.5 is a submodule under third_party/ that only the
+    # cosmos_predict25 video backbone needs; the default Wan backbones do not.
+    # Opt in with OPENWAM_WITH_COSMOS_PREDICT25=1 to avoid the extra clone.
+    if [ "${OPENWAM_WITH_COSMOS_PREDICT25:-0}" = "1" ]; then
+        git -C "$openwam_path" submodule update --init --recursive >&2 || \
+            echo "[install.sh] OpenWAM submodule init failed; cosmos_predict25 backbone will be unavailable." >&2
+    fi
 
     uv pip install -r "$SCRIPT_DIR/embodied/models/openwam.txt"
     # --no-deps: OpenWAM pins transformers>=5.5 and deepspeed<0.19, neither of which
     # it actually needs. See embodied/models/openwam.txt for the analysis.
-    python -m pip install -e "$openwam_path" --no-deps --ignore-requires-python
+    python -m pip install -e "$openwam_path" --no-deps
 }
 
 install_openwam_model() {

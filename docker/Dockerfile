@@ -228,7 +228,7 @@ RUN chmod +x /usr/local/bin/download_assets
 
 
 ##################################################################################################
-# Embodied: ManiSkill / Libero
+# Embodied: OpenWAM (LIBERO)
 ##################################################################################################
 FROM embodied-common-image AS embodied-openwam-image
 
@@ -239,6 +239,9 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 RUN echo "source ${UV_PATH}/openwam/bin/activate" >> ~/.bashrc
 
 
+##################################################################################################
+# Embodied: ManiSkill / Libero
+##################################################################################################
 FROM embodied-common-image AS embodied-maniskill_libero-image
 
 # Install the model envs; every platform builds the same image. FastWAM supports
