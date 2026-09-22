@@ -29,9 +29,9 @@ runner:
   save_interval: 1000
 
 data:
-  # Set this to your local BEHAVIOR streaming dataset folder (the
-  # 2025-challenge-demos repo folder). The streaming loader reads its remaining
-  # parameters from this section directly (no hidden defaults).
+  # Set these paths to the local BEHAVIOR dataset folder (the
+  # 2025-challenge-demos repo folder). The loader reads its remaining parameters
+  # from this section directly (no hidden defaults).
   train_data_paths: /path/to/2025-challenge-demos
   behavior_dataset_root: /path/to/2025-challenge-demos
   repo_id: "behavior-1k/2025-challenge-demos"
@@ -39,6 +39,10 @@ data:
   num_workers: 8
   fine_grained_level: 0
   tolerance_s: 1.0e-4
+  # false uses resumable indexed sampling with a distributed sampler; true
+  # streams contiguous keyframe chunks and partitions them inside the dataset
+  # across ranks and workers.
+  chunk_streaming_using_keyframe: false
   # BEHAVIOR task-0000. `use_skill: false` trains on the main-task text;
   # `true` trains on the per-frame REFERENCE skill text selected by the window
   # logic from `task_subtasks` below. The dataset's collapsed orchestrators are NOT

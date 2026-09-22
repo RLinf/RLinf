@@ -523,20 +523,6 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.sharding_strategy = cfg.fsdp_config.get(
             "sharding_strategy", "full_shard"
         )
-        model_type = OmegaConf.select(cfg, "model.model_type", default=None)
-        if (
-            model_type is not None
-            and str(model_type) == SupportedModel.OPENPI_RLINF.value
-        ):
-            sharding = (
-                str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
-            )
-            assert sharding == "no_shard", (
-                "openpi_rlinf only supports actor.fsdp_config.sharding_strategy="
-                f"'no_shard' (got {cfg.fsdp_config.sharding_strategy!r}). "
-                "Nested FSDP flattening (full_shard / shard_grad_op) is not supported."
-            )
-
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
             "forward_prefetch", False
         )
@@ -584,6 +570,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
 
+        model_type = OmegaConf.select(cfg, "model.model_type", default=None)
         if (
             model_type is not None
             and str(model_type) == SupportedModel.OPENPI_RLINF.value

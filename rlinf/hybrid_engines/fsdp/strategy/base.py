@@ -44,25 +44,41 @@ if TYPE_CHECKING:
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
 
 
+def _shard_dim_position(worker: Union["FSDPActor", "FSDPInference"]) -> tuple[int, int]:
+    """Where a worker sits in the dimension its parameters are sharded over.
+
+    A DTensor parameter is split only along the mesh's ``fsdp`` dimension, so its
+    shard offset follows that dimension rather than the worker's world size. The
+    two coincide for the one-dimensional mesh; under ``hybrid_shard`` the ``ddp``
+    dimension replicates instead of sharding, and using the world size there would
+    describe shards that no rank actually holds.
+
+    Returns:
+        The rank's index within the shard dimension and the size of that dimension.
+    """
+    shard_mesh = worker._device_mesh["fsdp"]
+    return shard_mesh.get_local_rank(), shard_mesh.size()
+
+
 class FSDPStrategyBase(ABC):
     def __init__(
         self,
         cfg: DictConfig,
         world_size: int,
-        dp_group: Optional[torch.distributed.ProcessGroup] = None,
+        shard_group: torch.distributed.ProcessGroup,
         logger: Optional[Logger] = None,
     ):
         self.cfg = cfg
         self.logger = logger
         self.world_size = world_size
-        self._dp_group = dp_group
+        self._shard_group = shard_group
 
     @classmethod
     def create(
         cls,
         cfg: DictConfig,
         world_size: int,
-        dp_group: Optional[torch.distributed.ProcessGroup] = None,
+        shard_group: torch.distributed.ProcessGroup,
         logger=None,
     ) -> "FSDPStrategyBase":
         """
@@ -75,7 +91,9 @@ class FSDPStrategyBase(ABC):
         Args:
             cfg: DictConfig that must contain fsdp_config.strategy
             world_size: actor distributed world size
-            dp_group: optional data parallel process group
+            shard_group: process group the model parameters are sharded over. It is
+                the whole world for the one-dimensional mesh, and the intra-node
+                group under ``hybrid_shard``, where the remaining ranks hold replicas.
             logger: optional logger, if none, a default logger will be created
 
         Returns:
@@ -92,7 +110,7 @@ class FSDPStrategyBase(ABC):
                 return FSDPStrategy(
                     cfg=cfg,
                     world_size=world_size,
-                    dp_group=dp_group,
+                    shard_group=shard_group,
                     logger=logger,
                 )
             case FSDPVersion.FSDP2:
@@ -101,7 +119,7 @@ class FSDPStrategyBase(ABC):
                 return FSDP2Strategy(
                     cfg=cfg,
                     world_size=world_size,
-                    dp_group=dp_group,
+                    shard_group=shard_group,
                     logger=logger,
                 )
             case _:
@@ -431,16 +449,15 @@ class FSDPStrategyBase(ABC):
         inference_model_state_dict = inference.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
         )
-        inference_world_size = inference._world_size
-        inference_rank = inference._rank
+        inference_shard_rank, inference_shard_size = _shard_dim_position(inference)
         for name, param in inference_model_state_dict.items():
             if isinstance(param, DTensor):
                 full_tensor_size = param.numel()
 
                 shard_size = (
-                    full_tensor_size + inference_world_size - 1
-                ) // inference_world_size
-                global_start = inference_rank * shard_size
+                    full_tensor_size + inference_shard_size - 1
+                ) // inference_shard_size
+                global_start = inference_shard_rank * shard_size
                 # last rank may have smaller shard
                 global_end = min(global_start + shard_size, full_tensor_size)
                 needed_size = global_end - global_start
@@ -491,8 +508,7 @@ class FSDPStrategyBase(ABC):
 
         inference_requests: list[dict] = [job.wait() for job in jobs]
 
-        actor_world_size = actor._world_size
-        actor_rank = actor._rank
+        actor_shard_rank, actor_shard_size = _shard_dim_position(actor)
 
         local_meta = {}
         actor_model_state_dict = actor.get_model_state_dict(
@@ -502,9 +518,9 @@ class FSDPStrategyBase(ABC):
             if isinstance(param, DTensor):
                 full_tensor_size = param.numel()
                 shard_size = (
-                    full_tensor_size + actor_world_size - 1
-                ) // actor_world_size
-                global_start = actor_rank * shard_size
+                    full_tensor_size + actor_shard_size - 1
+                ) // actor_shard_size
+                global_start = actor_shard_rank * shard_size
                 global_end = min(global_start + shard_size, full_tensor_size)
                 size = global_end - global_start
                 if size > 0:

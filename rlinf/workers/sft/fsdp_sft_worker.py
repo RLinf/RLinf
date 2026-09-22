@@ -29,7 +29,7 @@ from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, seed_everything
 
 
 class FSDPSftWorker(FSDPModelManager, Worker):
@@ -84,6 +84,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
     def init_worker(self):
         self._infer_total_training_steps()
         self.setup_model_and_optimizer()
+        seed_everything(self.cfg.actor.seed + self._rank)
 
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
