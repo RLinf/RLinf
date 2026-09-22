@@ -337,13 +337,15 @@ evaluation runner and LeRobot writer. OpenPI stays on the policy host; the
 robot host only runs the gRPC client and hardware environment. On WSL, send
 controls through the launcher's control-file interface:
 
-The base evaluation config caps each episode at ``1800`` hardware steps. At
-the default 15 Hz control rate this is about two minutes, and the horizon is
-divisible by the policy's 20-step action chunk. Set ``env.eval.rollout_epoch``
-on the command line to choose how many episodes to run; the same config works
-for any count. Normal evaluation ends after that count, so the evaluation
-control interface has no ``q`` command. Use the process interrupt mechanism
-only when an early stop is necessary.
+The base evaluation config caps each rollout window at ``1800`` hardware steps.
+At the default 15 Hz control rate this is about two minutes, and the limit is
+divisible by the policy's 20-step action chunk. Set
+``env.eval.rollout_epoch`` on the command line to choose how many rollout
+windows to run; the same config works for any count. End each episode with
+``c`` or ``a`` while the evaluation is running. Normal evaluation ends after
+the configured rollout count, so the evaluation control interface has no
+``q`` command. Use the process interrupt mechanism only when an early stop is
+necessary.
 
 .. code-block:: bash
 

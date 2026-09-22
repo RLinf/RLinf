@@ -246,7 +246,7 @@ Policy 部署与远程 gRPC 采集
 
 服务端必须返回与本地配置一致的 policy ID、动作维度 ``6`` 和 action horizon ``20``。入口复用 RLinf 现有 evaluation runner 和 LeRobot writer。OpenPI 在 policy 主机运行，机器人主机只运行 gRPC client 和硬件环境。WSL 没有键盘设备时，可以通过入口脚本的控制文件发送命令：
 
-基础评测配置将单个 episode 限制为 ``1800`` 个硬件步；在默认 15 Hz 控制频率下约为两分钟，并且这个上限可以被 policy 的 20 步 action chunk 整除。通过命令行覆盖 ``env.eval.rollout_epoch`` 可以指定本次运行的 episode 数量，同一份配置适用于任意数量。评测会在达到该数量后正常结束，因此评测控制接口不提供 ``q`` 命令；只有需要提前中断时才使用进程级中断。
+基础评测配置将单个 rollout window 限制为 ``1800`` 个硬件步；在默认 15 Hz 控制频率下约为两分钟，并且这个上限可以被 policy 的 20 步 action chunk 整除。通过命令行覆盖 ``env.eval.rollout_epoch`` 可以指定本次运行的 rollout window 数量，同一份配置适用于任意数量。运行过程中用 ``c`` 或 ``a`` 结束当前 episode。评测会在达到配置的 rollout 数量后正常结束，因此评测控制接口不提供 ``q`` 命令；只有需要提前中断时才使用进程级中断。
 
 .. code-block:: bash
 

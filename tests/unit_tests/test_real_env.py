@@ -1300,9 +1300,8 @@ def test_keyboard_listener_supports_wsl_control_file(monkeypatch, tmp_path):
     listener.close()
 
 
-def test_keyboard_eval_control_aborts_on_quit(monkeypatch, tmp_path):
+def test_keyboard_eval_control_ignores_quit(monkeypatch, tmp_path):
     from rlinf.envs.real.wrappers.episode.eval_control import (
-        KeyboardAbort,
         KeyboardEvalControlWrapper,
     )
 
@@ -1312,8 +1311,12 @@ def test_keyboard_eval_control_aborts_on_quit(monkeypatch, tmp_path):
     wrapper._running = True
     control_file.write_text("quit\n", encoding="utf-8")
 
-    with pytest.raises(KeyboardAbort, match="evaluation shutdown"):
-        wrapper.step(POLICY)
+    _, reward, terminated, truncated, info = wrapper.step(POLICY)
+    assert reward == 0.0
+    assert not terminated
+    assert not truncated
+    assert info["eval_phase"] == "rec"
+    assert info["eval_result"] is None
     wrapper.close()
 
 
