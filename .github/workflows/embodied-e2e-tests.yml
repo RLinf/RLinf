@@ -5,7 +5,11 @@ on:
 
 jobs:
 
-  embodied-openwam-config-test:
+  # OpenWAM has no checkpoint mount on the CI runners, so this job only proves
+  # that the OpenWAM + LIBERO venv installs and that the smoke recipe composes
+  # and validates; the LIBERO rollout itself needs a checkpoint mount
+  # (tests/e2e_tests/evaluations/run.sh libero_spatial_openwam_eval).
+  embodied-openwam-install-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -20,7 +24,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openwam --env libero
 
-      - name: Validate OpenWAM LIBERO evaluation config
+      - name: Import OpenWAM and validate the LIBERO smoke recipe
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -30,17 +34,19 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          import openwam.deploy  # noqa: F401  the adapter's import surface
           from hydra import compose, initialize_config_dir
 
-          repo = Path.cwd()
-          config_dir = repo / "tests" / "e2e_tests" / "evaluations"
+          import rlinf.models.embodiment.openwam  # noqa: F401
+          from rlinf.config import validate_openwam_eval_cfg
+
+          config_dir = Path.cwd() / "tests" / "e2e_tests" / "evaluations"
           with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
               cfg = compose(config_name="libero_spatial_openwam_eval")
           assert cfg.runner.task_type == "embodied_eval"
           assert cfg.rollout.model.model_type == "openwam"
-          assert cfg.env.eval.openwam_action_representation == "native_delta_eef10"
-          assert cfg.rollout.model.num_action_chunks == 10
-          print("Validated the OpenWAM LIBERO evaluation config without a checkpoint or dataset.")
+          validate_openwam_eval_cfg(cfg)
+          print("Installed OpenWAM and validated the LIBERO smoke recipe.")
           PY
 
       - name: Clean up

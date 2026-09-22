@@ -5,7 +5,11 @@ on:
 
 jobs:
 
-  sft-openwam-config-test:
+  # OpenWAM has no checkpoint or dataset mount on the CI runners, so this job
+  # only proves that the OpenWAM venv installs and that every SFT recipe
+  # composes; the unit tests in tests/unit_tests/test_models.py cover the
+  # recipe validation. A full SFT e2e needs an OpenWAM checkpoint mount.
+  sft-openwam-install-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -20,7 +24,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openwam --env libero
 
-      - name: Validate OpenWAM SFT recipes
+      - name: Import OpenWAM and compose the SFT recipes
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -29,10 +33,12 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          import openwam.deploy  # noqa: F401  the adapter's import surface
           from hydra import compose, initialize_config_dir
 
-          repo = Path.cwd()
-          config_dir = repo / "examples" / "sft" / "config"
+          import rlinf.models.embodiment.openwam  # noqa: F401
+
+          config_dir = Path.cwd() / "examples" / "sft" / "config"
           recipes = sorted(config_dir.glob("*_sft_openwam.yaml"))
           assert recipes, "No OpenWAM SFT recipes found"
           for recipe in recipes:
@@ -40,9 +46,7 @@ jobs:
                   cfg = compose(config_name=recipe.stem)
               assert cfg.actor.model.model_type == "openwam", recipe.name
               assert cfg.runner.task_type == "sft", recipe.name
-              assert cfg.cluster.component_placement.actor == "0-7", recipe.name
-              assert cfg.actor.global_batch_size % 8 == 0, recipe.name
-          print(f"Validated {len(recipes)} OpenWAM SFT recipes without a dataset mount.")
+          print(f"Installed OpenWAM and composed {len(recipes)} SFT recipes.")
           PY
 
       - name: Clean up
