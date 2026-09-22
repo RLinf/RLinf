@@ -83,6 +83,8 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
    * - ``vlabench_sft_openwam``
      - VLABench
 
+对 ``mixture`` checkpoint，``data.train_data_paths`` 只填一个根目录：checkpoint 的 mixture 配置中每个启用的数据源 ``datasets.<name>`` 都从 ``<root>/<name>`` 读取，单个数据源可用 ``data.openwam.datasets.<name>.dataset_dir`` 指向别处。各数据源各自保留归一化统计量，因此 mixture 训练不会在 checkpoint 旁保存 ``normalization_stats.npy``，导出时使用源 checkpoint 中的文件。
+
 基础配方默认启用 ``fsdp_config.gradient_checkpointing: true``，并将它转发给 OpenWAM 自己的分块 checkpointing（``use_gradient_checkpointing``）。同时使用 ``global_batch_size: 8`` 和 ``micro_batch_size: 1``，在不增加每个 rank 激活显存的情况下提高有效 batch。
 
 启动由 Ray 管理的 FSDP runner：

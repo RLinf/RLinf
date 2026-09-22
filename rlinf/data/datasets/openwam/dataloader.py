@@ -94,14 +94,22 @@ class PaddedValidationSampler(torch.utils.data.Sampler[int]):
 
 
 class EpochStatefulDistributedSampler(StatefulDistributedSampler):
-    """``StatefulDistributedSampler`` that also checkpoints the shuffle epoch.
+    """``StatefulDistributedSampler`` that checkpoints and forwards the shuffle epoch.
 
-    torchdata's sampler only records how many indices were yielded; the
-    permutation itself depends on ``set_epoch``, which a resumed process would
-    otherwise start again from epoch 0 and replay data it has already seen.
+    The permutation depends on ``set_epoch``, so the epoch is stored with the
+    sampler state and restored with it; a resumed process would otherwise start
+    again from epoch 0 and replay data it has already seen. Datasets that
+    reshuffle per epoch themselves (OpenWAM's ``MixtureDataset``) receive the
+    same epoch, both on ``set_epoch`` and when the loader applies a restored
+    state while building its iterator.
     """
 
     _EPOCH = "epoch"
+
+    def set_epoch(self, epoch: int) -> None:
+        super().set_epoch(epoch)
+        if hasattr(self.dataset, "set_epoch"):
+            self.dataset.set_epoch(epoch)
 
     def state_dict(self) -> dict[str, Any]:
         state = super().state_dict()
@@ -112,6 +120,33 @@ class EpochStatefulDistributedSampler(StatefulDistributedSampler):
         super().load_state_dict(state_dict)
         if self._EPOCH in state_dict:
             self.set_epoch(int(state_dict[self._EPOCH]))
+
+
+def _place_mixture_under_root(dl_cfg: Any, root: str) -> None:
+    """Point every enabled mixture source at ``<root>/<name>``.
+
+    OpenWAM's ``MixtureDataset.from_config`` reads ``datasets.<name>.dataset_dir``
+    (or ``datasets[i].dataset_dir`` with ``type`` as the name) and ignores a
+    top-level ``dataset_dir``, so RLinf's single data root maps to one
+    sub-directory per source, named after the source.
+    """
+    entries = dl_cfg.get("datasets", None)
+    if entries is None:
+        raise ValueError("OpenWAM mixture dataloader config has no datasets section.")
+    if isinstance(entries, ListConfig):
+        names = [str(sub.get("type", f"source_{i}")) for i, sub in enumerate(entries)]
+        if len(set(names)) != len(names):
+            raise ValueError(
+                "OpenWAM mixture sources must have distinct types to be placed "
+                f"under one root; got {names}. Use the dict layout instead."
+            )
+        items = list(zip(names, entries))
+    else:
+        items = [(str(name), sub) for name, sub in entries.items()]
+    for name, sub in items:
+        if sub is None or not sub.get("enabled", True):
+            continue
+        sub.dataset_dir = f"{root}/{name}"
 
 
 def build_openwam_sft_dataloader(
@@ -146,19 +181,39 @@ def build_openwam_sft_dataloader(
     # read with data.openwam_val_split=train.
     val_split = str(OmegaConf.select(cfg, "data.openwam_val_split", default="val"))
     native_dl.split = val_split if eval_dataset else "train"
+    split = str(native_dl.split)
     overrides = OmegaConf.select(cfg, "data.openwam", default=None)
-    if overrides is not None:
-        native_dl = OmegaConf.merge(native_dl, overrides)
+    is_mixture = str(native_dl.get("type", "")) == "mixture"
 
     from openwam.dataloader.registry import build_dataset
 
-    # Every path is read with the checkpoint's own dataloader settings and the
-    # windows are concatenated, so a mixture is sampled in proportion to size.
     datasets = []
-    for dataset_dir in dataset_dirs:
+    if is_mixture:
+        # A mixture checkpoint already mixes its sources with its own weights;
+        # the single RLinf root places every source at <root>/<name>, and an
+        # explicit data.openwam.datasets.<name>.dataset_dir override wins.
+        if len(dataset_dirs) != 1:
+            raise ValueError(
+                "OpenWAM mixture checkpoints take exactly one data root: each "
+                "source datasets.<name> is read from <root>/<name>. Got "
+                f"{dataset_dirs}; override single sources with "
+                "data.openwam.datasets.<name>.dataset_dir instead."
+            )
         dl_cfg = native_dl.copy()
-        dl_cfg.dataset_dir = dataset_dir
-        datasets.append(build_dataset(dl_cfg, split=str(native_dl.split)))
+        _place_mixture_under_root(dl_cfg, dataset_dirs[0])
+        if overrides is not None:
+            dl_cfg = OmegaConf.merge(dl_cfg, overrides)
+        datasets.append(build_dataset(dl_cfg, split=split))
+    else:
+        if overrides is not None:
+            native_dl = OmegaConf.merge(native_dl, overrides)
+        # Every path is read with the checkpoint's own dataloader settings and
+        # the windows are concatenated, so roots are sampled in proportion to
+        # size.
+        for dataset_dir in dataset_dirs:
+            dl_cfg = native_dl.copy()
+            dl_cfg.dataset_dir = dataset_dir
+            datasets.append(build_dataset(dl_cfg, split=split))
     per_dataset = {d: len(ds) for d, ds in zip(dataset_dirs, datasets)}
     stats_paths_by_dataset = [
         _normalization_stats_paths(dataset) for dataset in datasets
@@ -191,12 +246,21 @@ def build_openwam_sft_dataloader(
                     f"OpenWAM normalization stats artifact not found: {path}"
                 )
             digests.append(hashlib.sha256(path.read_bytes()).hexdigest())
-        if len(set(digests)) != 1:
+        if is_mixture:
+            # Every mixture source normalizes with its own <dataset_dir>/meta
+            # stats, so there is no single artifact to copy next to the
+            # checkpoint; the digest still pins the train/validation pairing.
+            stats_digest = hashlib.sha256(
+                "\n".join(sorted(digests)).encode()
+            ).hexdigest()
+            stats_paths = []
+        elif len(set(digests)) != 1:
             raise ValueError(
                 "OpenWAM SFT dataset roots use different normalization stats; "
                 "use one shared normalization_stats_path before mixing roots."
             )
-        stats_digest = digests[0]
+        else:
+            stats_digest = digests[0]
     if sum(per_dataset.values()) == 0:
         raise ValueError(
             f"OpenWAM {native_dl.split} dataset is empty: {per_dataset}. "
@@ -240,7 +304,9 @@ def build_openwam_sft_dataloader(
         collate_fn=list,
         pin_memory=True,
         drop_last=not eval_dataset,
-        persistent_workers=num_workers > 0,
+        # MixtureDataset reshuffles its index map in set_epoch, which forked
+        # persistent workers would never observe.
+        persistent_workers=num_workers > 0 and not is_mixture,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
     )
     if len(loader) == 0 and not eval_dataset:

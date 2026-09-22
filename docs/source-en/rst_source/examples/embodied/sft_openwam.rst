@@ -83,6 +83,8 @@ The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pair
    * - ``vlabench_sft_openwam``
      - VLABench
 
+For a ``mixture`` checkpoint, ``data.train_data_paths`` names one root directory: every enabled source ``datasets.<name>`` of the checkpoint's mixture config is read from ``<root>/<name>``, and ``data.openwam.datasets.<name>.dataset_dir`` points a single source elsewhere. Each source keeps its own normalization statistics, so a mixture run stores no ``normalization_stats.npy`` next to the checkpoint and the exporter takes the source checkpoint's file.
+
 The base recipe enables ``fsdp_config.gradient_checkpointing: true`` and forwards it to OpenWAM's own block checkpointing (``use_gradient_checkpointing``). It also uses ``global_batch_size: 8`` with ``micro_batch_size: 1`` so the effective batch grows without increasing per-rank activation memory.
 
 Start the Ray-managed FSDP runner:
