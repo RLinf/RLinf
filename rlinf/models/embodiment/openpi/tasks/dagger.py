@@ -135,6 +135,8 @@ class Pi0DAgger(EnvIO, Pi0):
             in [
                 "image",
                 "wrist_image",
+                "wrist_image-0",
+                "wrist_image-1",
                 "extra_view_image",
                 "extra_view_image-0",
                 "extra_view_image-1",
@@ -145,15 +147,25 @@ class Pi0DAgger(EnvIO, Pi0):
         merge_extra = "extra_view_image" not in raw_obs_keys and all(
             k in raw_obs_keys for k in merge_keys
         )
+        wrist_merge_keys = ["wrist_image-0", "wrist_image-1"]
+        merge_wrist = "wrist_image" not in raw_obs_keys and all(
+            k in raw_obs_keys for k in wrist_merge_keys
+        )
         obs_dict = {}
         for key in raw_obs_keys:
-            if merge_extra and key in merge_keys:
+            if (merge_extra and key in merge_keys) or (
+                merge_wrist and key in wrist_merge_keys
+            ):
                 continue
             obs_dict[f"observation/{key}"] = batch[key]
         if merge_extra:
             obs_dict["observation/extra_view_image"] = torch.stack(
                 [batch[k] for k in merge_keys], dim=1
             )
+        if merge_wrist:
+            obs_dict["observation/wrist_image"] = torch.stack(
+                [batch[k] for k in wrist_merge_keys], dim=1
+            ).permute(0, 1, 3, 4, 2)
 
         bsz = batch["actions"].shape[0]
         chunk = self.action_chunk or self.action_horizon

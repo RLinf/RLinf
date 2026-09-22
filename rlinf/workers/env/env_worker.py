@@ -394,6 +394,27 @@ class EnvWorker(Worker):
             return
         await env.wait_delay()
 
+    @staticmethod
+    def _valid_action_mask_from_infos(
+        infos: Any,
+        chunk_size: int,
+    ) -> torch.Tensor | None:
+        executed_counts = infos.pop("executed_action_count", None)
+        final_info = infos.get("final_info")
+        if executed_counts is None and isinstance(final_info, dict):
+            executed_counts = final_info.pop("executed_action_count", None)
+        if executed_counts is None:
+            return None
+
+        if isinstance(executed_counts, torch.Tensor):
+            raw_counts = executed_counts.detach().cpu()
+        else:
+            raw_counts = torch.as_tensor(np.asarray(executed_counts))
+
+        counts = raw_counts.to(dtype=torch.long)
+        action_indices = torch.arange(chunk_size, dtype=torch.long).unsqueeze(0)
+        return action_indices < counts.unsqueeze(1)
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
@@ -426,6 +447,10 @@ class EnvWorker(Worker):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
+        valid_action_mask = self._valid_action_mask_from_infos(
+            infos,
+            chunk_size=len(obs_list),
+        )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -485,6 +510,7 @@ class EnvWorker(Worker):
             "terminations": chunk_terminations,
             "truncations": chunk_truncations,
             "infos_list": infos_list,
+            "valid_action_mask": valid_action_mask,
         }
         return env_output, env_info, chunk_step_payload
 
@@ -1125,9 +1151,14 @@ class EnvWorker(Worker):
                     actions = self._recv_actions(input_channel, stage_id)
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
+                    curr_obs = env_outputs[stage_id].obs
                     env_output, env_info, chunk_step_data = self.env_interact_step(
                         actions, stage_id
                     )
+                    if chunk_step_data["valid_action_mask"] is not None:
+                        chunk_step_data["obs_list"] = [
+                            curr_obs, *chunk_step_data["obs_list"][:-1]
+                        ]
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)
 

@@ -1128,6 +1128,8 @@ class LeRobotStep:
     reset_observation: Any | None = None
     # Metadata accompanying ``reset_observation``.
     reset_info: Any | None = None
+    # Terminal metadata reported after a shortened action chunk.
+    completion_info: Any | None = None
 
     @property
     def done(self) -> bool:
@@ -1162,6 +1164,8 @@ class LeRobotChunk:
     intervention_actions: np.ndarray | None
     # Policy-side expert masks, bool [B, C].
     intervention_flags: np.ndarray | None
+    # Executed action slots, bool [B, C], or ``None`` for full chunks.
+    valid_action_mask: np.ndarray | None
     # Number of parallel environments represented by the leading batch B.
     num_envs: int
     # Single-action width A from ``actor.model.action_dim``.
@@ -1180,6 +1184,7 @@ class LeRobotChunk:
         num_envs: int,
         num_action_chunks: int,
         action_dim: int,
+        valid_action_mask: Any = None,
     ) -> "LeRobotChunk":
         """Normalize transport payloads to one canonical LeRobot chunk."""
         observations = (
@@ -1222,6 +1227,7 @@ class LeRobotChunk:
                 action_dim=action_dim,
             ),
             intervention_flags=intervention_flags,
+            valid_action_mask=cls._to_numpy(valid_action_mask),
             num_envs=num_envs,
             action_dim=action_dim,
         )
@@ -1231,16 +1237,33 @@ class LeRobotChunk:
         """Return the number of low-level steps represented by this chunk."""
         return len(self.observations)
 
-    def step(self, step_index: int, env_index: int) -> LeRobotStep:
+    def step(self, step_index: int, env_index: int) -> LeRobotStep | None:
         """Decode one environment step, including auto-reset terminal data."""
+        if (
+            self.valid_action_mask is not None
+            and not self.valid_action_mask[env_index, step_index]
+        ):
+            return None
         step_observation = self.observations[step_index]
         step_info = self._step_info(step_index)
-        terminated = self._flag_at(self.terminations, step_index, env_index)
-        truncated = self._flag_at(self.truncations, step_index, env_index)
+        if self.valid_action_mask is None:
+            terminated = self._flag_at(self.terminations, step_index, env_index)
+            truncated = self._flag_at(self.truncations, step_index, env_index)
+        else:
+            valid_length = int(self.valid_action_mask[env_index].sum())
+            is_last_valid = step_index == valid_length - 1
+            terminated = is_last_valid and bool(
+                np.asarray(self.terminations[env_index]).any()
+            )
+            truncated = is_last_valid and bool(
+                np.asarray(self.truncations[env_index]).any()
+            )
         done = terminated or truncated
 
         has_final_observation = (
-            isinstance(step_info, dict) and "final_observation" in step_info
+            self.valid_action_mask is None
+            and isinstance(step_info, dict)
+            and "final_observation" in step_info
         )
         if has_final_observation and done:
             info_without_reset = copy.deepcopy(step_info)
@@ -1261,6 +1284,11 @@ class LeRobotChunk:
                 info.pop("final_info", None)
             reset_observation = None
             reset_info = None
+        completion_info = (
+            self._completion_info(env_index)
+            if self.valid_action_mask is not None and done
+            else None
+        )
 
         action = None
         if self.actions is not None:
@@ -1274,7 +1302,15 @@ class LeRobotChunk:
             truncated=truncated,
             reset_observation=reset_observation,
             reset_info=reset_info,
+            completion_info=completion_info,
         )
+
+    def _completion_info(self, env_index: int) -> Any:
+        """Return terminal metadata for one shortened environment chunk."""
+        info = self.infos[-1]
+        if isinstance(info, dict) and isinstance(info.get("final_info"), dict):
+            info = info["final_info"]
+        return self._slice_env(info, env_index, self.num_envs)
 
     def _step_info(self, step_index: int) -> Any:
         """Copy one info batch and add missing policy intervention metadata."""
@@ -1911,22 +1947,25 @@ def split_episode_data(
                 chunk.append(split_item)
         return chunks
 
-    return [
+    chunks = [
         {
             "chunk_actions": chunk_actions,
             "obs_list": obs_list,
             "terminations": terminations,
             "truncations": truncations,
             "infos_list": infos_list,
+            "valid_action_mask": valid_action_mask,
         }
-        for chunk_actions, obs_list, terminations, truncations, infos_list in zip(
+        for chunk_actions, obs_list, terminations, truncations, infos_list, valid_action_mask in zip(
             split_batch_value(data["chunk_actions"], split_sizes),
             split_steps(data["obs_list"]),
             split_batch_value(data["terminations"], split_sizes),
             split_batch_value(data["truncations"], split_sizes),
             split_steps(data["infos_list"]),
+            split_batch_value(data.get("valid_action_mask"), split_sizes),
         )
     ]
+    return chunks
 
 
 def merge_episode_data(data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1940,13 +1979,17 @@ def merge_episode_data(data: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError("Cannot merge episode data with different chunk lengths.")
         return [merge_batch_values(list(items)) for items in zip(*values)]
 
-    return {
+    merged = {
         "chunk_actions": merge_batch_values([value["chunk_actions"] for value in data]),
         "obs_list": merge_steps([value["obs_list"] for value in data]),
         "terminations": merge_batch_values([value["terminations"] for value in data]),
         "truncations": merge_batch_values([value["truncations"] for value in data]),
         "infos_list": merge_steps([value["infos_list"] for value in data]),
+        "valid_action_mask": merge_batch_values(
+            [value["valid_action_mask"] for value in data]
+        ),
     }
+    return merged
 
 
 def _observation_batch_size(obs: dict[str, Any]) -> int:
