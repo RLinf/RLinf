@@ -60,6 +60,28 @@ from rlinf.utils.utils import (
 )
 
 
+def _recompute_logprob_kwargs(cfg: DictConfig) -> dict[str, float | int]:
+    """Return sampling kwargs required by a model's replay contract."""
+    model_type = SupportedModel(cfg.actor.model.model_type)
+    if model_type in (SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT):
+        return {
+            "temperature": cfg.rollout.sampling_params.temperature_train,
+            "top_k": cfg.rollout.sampling_params.top_k,
+        }
+    return {}
+
+
+def _reshape_recompute_logprob_gap(
+    logprob_gap: torch.Tensor, cfg: DictConfig
+) -> torch.Tensor:
+    """Restore the action-token layout used by OpenVLA loss masks."""
+    model_type = SupportedModel(cfg.actor.model.model_type)
+    if model_type in (SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT):
+        action_dim = cfg.actor.model.get("action_dim", 7)
+        return logprob_gap.reshape(*logprob_gap.shape[:-1], -1, action_dim)
+    return logprob_gap
+
+
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -425,10 +447,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_logprobs = self.rollout_batch["prev_logprobs"]
         rollout_size = rollout_logprobs.shape[0]
-        kwargs = {
-            "temperature": self.cfg.rollout.sampling_params.temperature_train,
-            "top_k": self.cfg.rollout.sampling_params.top_k,
-        }
+        kwargs = _recompute_logprob_kwargs(self.cfg)
 
         recomputed_logprobs = []
         with torch.no_grad():
@@ -460,23 +479,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         clear_memory()
 
-        # Logprobs are per action token, the mask and the advantages per action.
-        action_dim = self.cfg.actor.model.get("action_dim", 7)
-        log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
-            *rollout_logprobs.shape[:-1], -1, action_dim
+        log_ratio = _reshape_recompute_logprob_gap(
+            recomputed_logprobs - rollout_logprobs, self.cfg
         )
         loss_mask = self.rollout_batch.get("loss_mask", None)
-        mask = (
-            None
-            if loss_mask is None
-            else loss_mask.bool().unsqueeze(-1).expand_as(log_ratio)
-        )
+        mask = None
+        if loss_mask is not None:
+            mask = loss_mask.bool()
+            while mask.ndim < log_ratio.ndim:
+                mask = mask.unsqueeze(-1)
+            mask = mask.expand_as(log_ratio)
         metrics = {
             "actor/rollout_train_logprob_gap": masked_mean(
                 log_ratio.abs(), mask=mask
             ).item()
         }
 
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            self.rollout_batch["rollout_logprobs"] = rollout_logprobs
         self.rollout_batch["prev_logprobs"] = recomputed_logprobs
         return metrics
 
@@ -775,6 +795,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "log_logprob_diagnostics", False
             ),
         }
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
+            loss_kwargs["importance_sampling_clip"] = (
+                self.cfg.algorithm.importance_sampling_clip
+            )
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
