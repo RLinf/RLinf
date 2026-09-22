@@ -49,16 +49,18 @@ env:
   group_name: EnvGroup
   enable_offload: false
   eval:
+    # One episode is capped at about two minutes at the 15 Hz hardware rate.
+    # The horizon is divisible by the SO-101 policy's 20-step action chunk.
     rollout_epoch: 1
     total_num_envs: 1
     ignore_terminations: false
     auto_reset: true
     teleop: none
     keyboard_reward_wrapper: eval_control
-    max_episode_steps: 10000
-    max_steps_per_rollout_epoch: 10000
+    max_episode_steps: 1800
+    max_steps_per_rollout_epoch: 1800
     override_cfg:
-      max_num_steps: 10000
+      max_num_steps: 1800
       reset_joint_qpos:
         [-0.06981317, -1.11317483, 0.58689094, 1.45993915, -1.60263420]
       reset_gripper_position: 0.01265823

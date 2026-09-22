@@ -4626,7 +4626,7 @@ def test_worker_passes_robot_descriptors_and_allows_dummy_cpu_placement(has_robo
 
 
 def test_so101_openpi_eval_uses_safe_hardware_and_training_prompt():
-    """The deployment config limits joint steps and preserves SFT conditioning."""
+    """The deployment config caps episodes and preserves SFT conditioning."""
     from hydra import compose, initialize_config_dir
 
     config_dir = str(Path(__file__).resolve().parents[2] / "examples/embodiment/config")
@@ -4645,6 +4645,17 @@ def test_so101_openpi_eval_uses_safe_hardware_and_training_prompt():
             cfg.env.eval.override_cfg.task_description
             == "抓取青色目标物体并放到盒子里面"
         )
+        assert cfg.env.eval.max_episode_steps == 1800
+        assert cfg.env.eval.max_steps_per_rollout_epoch == 1800
+        assert cfg.env.eval.override_cfg.max_num_steps == 1800
+        assert cfg.rollout.model.num_action_chunks == 20
+
+        with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+            multi_episode_cfg = compose(
+                config_name=config_name,
+                overrides=["env.eval.rollout_epoch=10"],
+            )
+        assert multi_episode_cfg.env.eval.rollout_epoch == 10
 
 
 def test_so101_grpc_dagger_uses_policy_first_explicit_takeover():
