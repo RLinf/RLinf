@@ -24,6 +24,10 @@ cluster:
             camera_type: uvc
             camera_serials: [/dev/video0]
 
+runner:
+  rtc:
+    enabled: true
+
 rollout:
   rollout_backend: grpc
   grpc:

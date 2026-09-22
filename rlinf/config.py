@@ -1037,10 +1037,8 @@ def validate_grpc_rollout_cfg(cfg) -> None:
     for key in ("expert_model", "rlt_feature_model", "sampling_params"):
         if rollout.get(key):
             raise ValueError(f"rollout.{key} is unsupported by gRPC evaluation.")
-    if cfg.runner.get("enable_decoupled_mode", False) or cfg.runner.get("rtc", {}).get(
-        "enabled", False
-    ):
-        raise ValueError("gRPC currently supports synchronous evaluation without RTC.")
+    if cfg.runner.get("enable_decoupled_mode", False):
+        raise ValueError("gRPC evaluation does not support decoupled mode.")
     if cfg.get("reward", {}).get("use_reward_model", False):
         raise ValueError("gRPC evaluation does not support a separate reward model.")
     if mode == "external":

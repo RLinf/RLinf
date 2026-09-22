@@ -5,6 +5,7 @@ defaults:
 
 num_action_chunks: 20
 action_dim: 6
+rtc_enabled: true
 openpi:
   task: eval
   config_name: pi05_so101_joint

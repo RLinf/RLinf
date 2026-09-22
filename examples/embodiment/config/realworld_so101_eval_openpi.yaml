@@ -37,6 +37,11 @@ cluster:
 runner:
   task_type: embodied_eval
   only_eval: true
+  rtc:
+    enabled: false
+    min_exec_horizon: 2
+    initial_delay_steps: 1
+    delay_buffer_size: 8
   ckpt_path: null
   val_check_interval: -1
   logger:

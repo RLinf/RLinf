@@ -49,6 +49,7 @@ class GRPCPolicyAdapter(BasePolicy):
         *,
         action_dim: int,
         num_action_chunks: int,
+        model_action_dim: int,
         policy_id: str,
         timeout: float = 30.0,
     ) -> None:
@@ -62,6 +63,7 @@ class GRPCPolicyAdapter(BasePolicy):
             "version": VERSION,
             "action_dim": action_dim,
             "num_action_chunks": num_action_chunks,
+            "model_action_dim": model_action_dim,
             "policy_id": policy_id,
         }
         self._channel = grpc.insecure_channel(server_address, options=OPTIONS)
@@ -98,26 +100,29 @@ class GRPCPolicyAdapter(BasePolicy):
         self,
         env_obs: dict[str, Any],
         mode: str = "eval",
+        rtc_context: Any | None = None,
         **kwargs: Any,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Return CPU action chunks with unchanged model output units."""
         if self._closed:
             raise RuntimeError("gRPC policy client is closed")
         if mode != "eval" or kwargs:
-            raise ValueError(
-                "Only evaluation without training/RTC arguments is supported"
-            )
+            raise ValueError("Only evaluation is supported")
         batch = validate_observations(env_obs)
         request_id = uuid.uuid4().hex
-        response = self._predict_rpc(
-            {
-                "version": VERSION,
-                "policy_id": self._expected["policy_id"],
-                "request_id": request_id,
-                "observations": env_obs,
-            },
-            timeout=self.timeout,
-        )
+        request = {
+            "version": VERSION,
+            "policy_id": self._expected["policy_id"],
+            "request_id": request_id,
+            "observations": env_obs,
+        }
+        if rtc_context is not None:
+            request["rtc_context"] = {
+                "prev_model_actions": rtc_context.prev_model_actions,
+                "executed_horizon": int(rtc_context.executed_horizon),
+                "delay_steps": int(rtc_context.delay_steps),
+            }
+        response = self._predict_rpc(request, timeout=self.timeout)
         self._check_metadata(response)
         if response.get("request_id") != request_id:
             raise ValueError("Policy response does not match the observation request")
@@ -128,7 +133,17 @@ class GRPCPolicyAdapter(BasePolicy):
             self._expected["num_action_chunks"],
             self._expected["action_dim"],
         )
-        return torch.from_numpy(actions), {}
+        result: dict[str, Any] = {}
+        model_actions = response.get("model_actions")
+        if model_actions is not None:
+            if not isinstance(model_actions, type(actions)) or model_actions.shape != (
+                batch,
+                self._expected["num_action_chunks"],
+                self._expected["model_action_dim"],
+            ):
+                raise ValueError("Policy response model_actions has an invalid shape")
+            result["model_actions"] = torch.from_numpy(model_actions)
+        return torch.from_numpy(actions), result
 
     def close(self) -> None:
         """Release the channel without stopping the external policy server."""

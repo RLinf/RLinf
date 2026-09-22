@@ -28,7 +28,7 @@ import msgpack
 import numpy as np
 import torch
 
-VERSION = 1
+VERSION = 2
 SERVICE = "rlinf.policy.v1.Policy"
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 OPTIONS = (

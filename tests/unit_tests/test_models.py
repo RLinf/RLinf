@@ -723,6 +723,7 @@ def test_grpc_policy_round_trip_preserves_batch_and_action_units():
         FakePolicy(),
         action_dim=6,
         num_action_chunks=2,
+        model_action_dim=6,
         policy_id="test-policy",
         port=0,
     )
@@ -731,6 +732,7 @@ def test_grpc_policy_round_trip_preserves_batch_and_action_units():
         f"127.0.0.1:{server.port}",
         action_dim=6,
         num_action_chunks=2,
+        model_action_dim=6,
         policy_id="test-policy",
         timeout=2,
     )
@@ -745,6 +747,68 @@ def test_grpc_policy_round_trip_preserves_batch_and_action_units():
         assert actions.shape == (2, 2, 6)
         assert np.allclose(actions[:, :, :5].numpy(), 7.5)
         assert np.allclose(actions[:, :, -1].numpy(), 0.25)
+    finally:
+        client.close()
+        server.close()
+
+
+def test_grpc_policy_round_trip_preserves_rtc_context():
+    import numpy as np
+
+    from rlinf.models.embodiment.base_policy import BasePolicy
+    from rlinf.workers.rollout.grpc.grpc_policy_adapter import GRPCPolicyAdapter
+    from rlinf.workers.rollout.grpc.policy_server import PolicyServer
+
+    seen_context = {}
+
+    class FakePolicy(BasePolicy):
+        def default_forward(self, **kwargs):
+            raise NotImplementedError
+
+        def predict_action_batch(self, env_obs, mode="eval", rtc_context=None, **kwargs):
+            seen_context["value"] = rtc_context
+            batch_size = env_obs["states"].shape[0]
+            actions = torch.zeros((batch_size, 2, 6))
+            model_actions = torch.ones((batch_size, 2, 32))
+            return actions, {"model_actions": model_actions}
+
+    server = PolicyServer(
+        FakePolicy(),
+        action_dim=6,
+        num_action_chunks=2,
+        model_action_dim=32,
+        policy_id="rtc-policy",
+        port=0,
+    )
+    server.start()
+    client = GRPCPolicyAdapter(
+        f"127.0.0.1:{server.port}",
+        action_dim=6,
+        num_action_chunks=2,
+        model_action_dim=32,
+        policy_id="rtc-policy",
+        timeout=2,
+    )
+    try:
+        from rlinf.models.embodiment.openpi.rtc_guidance import RTCGuidanceContext
+
+        actions, result = client.predict_action_batch(
+            {
+                "states": np.zeros((1, 6), dtype=np.float32),
+                "main_images": np.zeros((1, 8, 8, 3), dtype=np.uint8),
+                "task_descriptions": ["test"],
+            },
+            rtc_context=RTCGuidanceContext(
+                prev_model_actions=torch.ones((1, 2, 32)),
+                executed_horizon=1,
+                delay_steps=2,
+            ),
+        )
+        assert actions.shape == (1, 2, 6)
+        assert result["model_actions"].shape == (1, 2, 32)
+        assert seen_context["value"].executed_horizon == 1
+        assert seen_context["value"].delay_steps == 2
+        assert torch.all(seen_context["value"].prev_model_actions == 1.0)
     finally:
         client.close()
         server.close()

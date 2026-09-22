@@ -162,9 +162,12 @@ class RTCEnvWorker(EnvWorker):
         self, env_action: torch.Tensor | np.ndarray, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
         """Execute exactly one real-world action during RTC evaluation."""
-        extracted_obs, step_reward, terminations, truncations, infos = (
-            self.eval_env_list[stage_id].step(env_action)
-        )
+        eval_env = self.eval_env_list[stage_id]
+        if SupportedEnvType(self.cfg.env.eval.env_type) is SupportedEnvType.REAL:
+            result = eval_env.step(env_action, auto_reset=False)
+        else:
+            result = eval_env.step(env_action)
+        extracted_obs, step_reward, terminations, truncations, infos = result
 
         env_info = {}
         dones = torch.logical_or(terminations, truncations)
@@ -360,6 +363,12 @@ class RTCEnvWorker(EnvWorker):
                     value = default_values.get(key, 0.0)
                     eval_metrics[key].append(torch.tensor([value], dtype=torch.float32))
             self.finish_rollout(mode="eval")
+            if eval_rollout_epoch == self.eval_rollout_epoch - 1:
+                # RTC disables per-step auto-reset for real hardware.  Return
+                # the robot to its reset pose once the final window ends.
+                self.eval_env_list[stage_id].reset(
+                    options={"rlinf_wait_for_start": False}
+                )
             if stop_eval_on_success and episode_success:
                 break
 

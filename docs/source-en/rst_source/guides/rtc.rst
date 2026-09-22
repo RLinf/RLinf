@@ -23,6 +23,13 @@ RTC uses **soft overlap guidance** to smooth chunk boundaries. When a new chunk 
 - **Soft mask**: subsequent steps, guided toward the new chunk's predictions with exponential decay.
 - Guidance strength is clipped by ``rtc_guidance_clip`` to avoid over-correction.
 
+Remote gRPC evaluation
+----------------------
+
+The same control loop can use a remote fixed-checkpoint policy. Set ``runner.rtc.enabled=True`` in the gRPC evaluation config and restart the policy service from the same RLinf revision. Each replan request carries the latest observation, the number of actions already executed from the previous chunk, the predicted inference delay, and the previous model-space chunk. The server uses this context for overlap guidance and returns the next chunk together with its model-space actions.
+
+Both the client and service must run the revision that implements protocol version 2 before this mode is enabled. A service process running the older version 1 protocol will reject the client's health check, so restart the service after deploying the new code. The ordinary synchronous gRPC path remains the default when ``runner.rtc.enabled=False``.
+
 Simulation Experiment
 ---------------------
 

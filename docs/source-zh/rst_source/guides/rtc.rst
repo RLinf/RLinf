@@ -23,6 +23,13 @@ RTC 使用 ``软重叠引导``（soft overlap guidance）来平滑 chunk 边界�
 - ``软掩码`` （soft mask）：后续若干步，通过指数衰减引导新 chunk 逐渐过渡到其自身预测。
 - 引导强度由 ``rtc_guidance_clip`` 限制，避免过度修正。
 
+远程 gRPC 评测
+--------------
+
+同一套控制循环也可以使用远程 fixed-checkpoint policy。在 gRPC 评测配置中设置 ``runner.rtc.enabled=True``，并使用同一 RLinf revision 重启 policy service。每次 replan 请求都会携带最新观测、上一段 chunk 已执行的 action 数量、预计推理延迟以及上一段 model-space chunk；服务端使用这些上下文进行 chunk overlap guidance，并返回下一段 chunk 及其 model-space actions。
+
+启用该模式前，客户端和服务端都必须运行支持 protocol version 2 的 revision。仍在运行旧 protocol version 1 的服务进程会拒绝客户端的 health check，因此部署新代码后需要重启服务。``runner.rtc.enabled=False`` 时仍使用默认的同步 gRPC 路径。
+
 仿真实验
 --------
 

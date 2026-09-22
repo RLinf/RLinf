@@ -52,15 +52,25 @@ def main(cfg) -> None:
     with ExitStack() as stack:
         grpc_endpoint = None
         if rollout_backend == "grpc":
-            from rlinf.workers.rollout.grpc.grpc_rollout_worker import (
-                GRPCRolloutWorker,
-            )
+            if cfg.runner.get("rtc", {}).get("enabled", False):
+                from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
+                from rlinf.workers.rollout.grpc.grpc_rollout_worker import (
+                    RTCGRPCRolloutWorker,
+                )
+
+                env_worker_cls = RTCEnvWorker
+                rollout_worker_cls = RTCGRPCRolloutWorker
+            else:
+                from rlinf.workers.rollout.grpc.grpc_rollout_worker import (
+                    GRPCRolloutWorker,
+                )
+
+                rollout_worker_cls = GRPCRolloutWorker
             from rlinf.workers.rollout.grpc.launcher import policy_server_endpoint
 
             grpc_endpoint = stack.enter_context(
                 policy_server_endpoint(cfg, cluster, component_placement)
             )
-            rollout_worker_cls = GRPCRolloutWorker
             rollout_group = rollout_worker_cls.create_group(cfg).launch(
                 cluster,
                 name=cfg.rollout.group_name,

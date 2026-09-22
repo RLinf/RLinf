@@ -55,11 +55,12 @@ class PolicyServer:
         *,
         action_dim: int,
         num_action_chunks: int,
+        model_action_dim: int,
         policy_id: str,
         host: str = "127.0.0.1",
         port: int = 50051,
     ) -> None:
-        if action_dim < 1 or num_action_chunks < 1 or not policy_id:
+        if action_dim < 1 or num_action_chunks < 1 or model_action_dim < 1 or not policy_id:
             raise ValueError("Positive action dimensions and a policy_id are required")
         if not 0 <= port <= 65535:
             raise ValueError("port must be between 0 and 65535")
@@ -68,6 +69,7 @@ class PolicyServer:
             "version": VERSION,
             "action_dim": action_dim,
             "num_action_chunks": num_action_chunks,
+            "model_action_dim": model_action_dim,
             "policy_id": policy_id,
         }
         self.host = host
@@ -118,6 +120,35 @@ class PolicyServer:
                 raise ValueError("request_id must be a nonempty string")
             obs = request["observations"]
             batch = validate_observations(obs)
+            rtc_payload = request.get("rtc_context")
+            rtc_context = None
+            if rtc_payload is not None:
+                if not isinstance(rtc_payload, dict):
+                    raise ValueError("rtc_context must be a mapping")
+                previous = rtc_payload.get("prev_model_actions")
+                if not isinstance(previous, np.ndarray) or previous.ndim != 3:
+                    raise ValueError(
+                        "rtc_context.prev_model_actions must be a rank-3 array"
+                    )
+                if previous.shape != (
+                    batch,
+                    self.metadata["num_action_chunks"],
+                    self.metadata["model_action_dim"],
+                ) or not np.isfinite(previous).all():
+                    raise ValueError("rtc_context.prev_model_actions has an invalid batch")
+                executed_horizon = int(rtc_payload.get("executed_horizon", 0))
+                delay_steps = int(rtc_payload.get("delay_steps", 0))
+                if executed_horizon < 0 or delay_steps < 0:
+                    raise ValueError("RTC horizons must be nonnegative")
+                from rlinf.models.embodiment.openpi.rtc_guidance import (
+                    RTCGuidanceContext,
+                )
+
+                rtc_context = RTCGuidanceContext(
+                    prev_model_actions=torch.from_numpy(previous),
+                    executed_horizon=executed_horizon,
+                    delay_steps=delay_steps,
+                )
         except (KeyError, TypeError, ValueError) as exc:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         # A timed-out queued request must never become new inference work.
@@ -132,8 +163,8 @@ class PolicyServer:
                     for key, value in obs.items()
                 }
                 with torch.inference_mode():
-                    actions, _ = self.policy.predict_action_batch(
-                        env_obs=env_obs, mode="eval"
+                    actions, result = self.policy.predict_action_batch(
+                        env_obs=env_obs, mode="eval", rtc_context=rtc_context
                     )
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().float().numpy()
@@ -148,7 +179,13 @@ class PolicyServer:
                 context.abort(
                     grpc.StatusCode.INTERNAL, "Policy inference failed; see server log"
                 )
-        return {**self.metadata, "request_id": request_id, "actions": actions}
+        response = {**self.metadata, "request_id": request_id, "actions": actions}
+        model_actions = result.get("model_actions")
+        if isinstance(model_actions, torch.Tensor):
+            model_actions = model_actions.detach().cpu().float().numpy()
+        if model_actions is not None:
+            response["model_actions"] = model_actions
+        return response
 
     def wait(self) -> None:
         """Block until the started service terminates."""
@@ -210,6 +247,11 @@ def serve_policy(config: Any, host: str | None = None, ready_pipe: Any = None) -
             policy,
             action_dim=config.model.action_dim,
             num_action_chunks=config.model.num_action_chunks,
+            model_action_dim=int(
+                config.model.get(
+                    "openpi", {}
+                ).get("model_action_dim", config.model.action_dim)
+            ),
             policy_id=config.server.policy_id,
             host=host or config.server.host,
             port=config.server.port,
