@@ -494,7 +494,6 @@ class MultiStepRolloutWorker(Worker):
         model_type = SupportedModel(self.model_cfg.model_type)
         if model_type in [
             SupportedModel.OPENPI,
-            SupportedModel.OPENPI_RLINF,
             SupportedModel.PI0_FAST,
             SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
@@ -619,7 +618,9 @@ class MultiStepRolloutWorker(Worker):
             forward_inputs=result["forward_inputs"],
             versions=torch.full_like(
                 result["prev_logprobs"], float(self.version), dtype=torch.float32
-            ),
+            )
+            if self.collect_prev_infos
+            else None,
         )
 
     @Worker.timer("sync_model_from_actor")

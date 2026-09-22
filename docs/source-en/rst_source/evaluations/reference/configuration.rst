@@ -7,7 +7,7 @@ Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core s
 
    defaults:
      - env/libero_spatial@env.eval      # Environment preset
-     - model/pi0_5@rollout.model        # Model preset
+     - model/pi0_5@rollout.model  # Model preset
      - override hydra/job_logging: stdout
 
    hydra:

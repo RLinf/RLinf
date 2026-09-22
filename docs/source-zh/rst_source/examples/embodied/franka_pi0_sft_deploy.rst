@@ -47,7 +47,7 @@
      - ``pi0_realworld``
      - 用 OpenPI 数据格式表示 Franka 数据。
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - 在 Franka 真机数据上微调 π₀。
    * - Deployment
      - ``realworld_pnp_eval`` / ``realworld_eval``
@@ -196,7 +196,7 @@
 本步骤参考 :doc:`sft_openpi` 中的「支持的数据集」章节。针对真机Franka环境，
 可以创建出 ``pi0_realworld`` 数据格式，其定义在以下文件：
 
-1. ``rlinf/models/embodiment/openpi/__init__.py``
+1. ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``
 2. ``rlinf/models/embodiment/openpi/dataconfig/realworld_dataconfig.py``
 
 为了统一真机和各仿真环境对策略的调用接口，创建
@@ -222,7 +222,7 @@
         |-- meta
     |-- ...
 
-这里 ``realworld_franka_bin_relocation`` 对应在 ``rlinf/models/embodiment/openpi/__init__.py`` 中定义的 TrainConfig 字段中的 ``repo_id``。
+这里 ``realworld_franka_bin_relocation`` 对应在 ``rlinf/models/embodiment/openpi/dataconfig/__init__.py`` 中定义的 TrainConfig 字段中的 ``repo_id``。
 
 然后，在训练节点上运行：
 
@@ -247,7 +247,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
 运行 OpenPI SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-使用 ``pi0_realworld`` 数据格式，需要修改 SFT 训练配置文件 ``examples/sft/config/realworld_sft_openpi.yaml``：
+使用 ``pi0_realworld`` 数据格式，需要修改 SFT 训练配置文件 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``：
 
 .. code:: yaml
 
@@ -278,7 +278,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 SFT 导出的 checkpoint 会在后续章节中部署使用。
 更多 OpenPI 数据集及 SFT 训练说明可参考 :doc:`sft_openpi`。

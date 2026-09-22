@@ -53,7 +53,7 @@
      - ``realworld_collect_data_pico``
      - 使用 PICO 采集真机示教。
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - 训练 student 初始化。
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
@@ -237,7 +237,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 3. 运行 OpenPI SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-启动前，先修改 ``examples/sft/config/realworld_sft_openpi.yaml``：
+启动前，先修改 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``：
 
 .. code-block:: yaml
 
@@ -254,7 +254,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 OpenPI SFT 细节
 可参考 :doc:`sft_openpi`。

@@ -125,6 +125,7 @@ actor:
     num_action_chunks: 10
     add_value_head: False
     openpi:
+      task: dagger
       config_name: "pi0_libero_horizon10"
       train_expert_only: False
       detach_critic_input: True

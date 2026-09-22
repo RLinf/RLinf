@@ -53,7 +53,7 @@ Tasks
      - ``realworld_collect_data_pico``
      - Collect real-world demonstrations with PICO.
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - Train the student initialization.
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
@@ -244,7 +244,7 @@ OpenPI-specific dataset notes are documented in :doc:`sft_openpi`.
 3. Run OpenPI SFT
 ~~~~~~~~~~~~~~~~~
 
-Edit ``examples/sft/config/realworld_sft_openpi.yaml`` before launch:
+Edit ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` before launch:
 
 .. code-block:: yaml
 
@@ -261,7 +261,7 @@ Then run:
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 The SFT checkpoint is the student initialization for the online stage. For more
 OpenPI SFT details, see :doc:`sft_openpi`.

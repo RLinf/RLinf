@@ -78,6 +78,7 @@ rollout:
     add_value_head: False
 
     openpi:
+      task: eval
       config_name: "pi0_realworld"
       train_expert_only: False
       detach_critic_input: True

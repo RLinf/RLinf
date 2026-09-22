@@ -253,16 +253,13 @@ helps reproducibility and evaluation in RLinf.
 
 After conversion, update ``behavior_openpi_pi05_eval.yaml`` as follows:
 
-1. Set ``actor.model.model_path`` and ``rollout.model.model_path`` to the converted model directory.
-2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both
-   ``env.train`` and ``env.eval`` (for example, ``4096``).
+1. Set ``rollout.model.model_path`` to the converted model directory.
+2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in
+   ``env.eval`` if you need longer trajectories (for example, ``4096``).
 
 .. code-block:: yaml
 
    env:
-     train:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
      eval:
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
@@ -372,21 +369,20 @@ RLinf YAML directly and preserves ``activity_definition_id``.
 
 --------------
 
-**5. Evaluate with OpenPI_RLinf (Pi0.5)**
+**5. Evaluate a JAX-aligned Pi0.5 checkpoint**
 
-BEHAVIOR evaluation is also supported with the self-contained
-**OpenPI_RLinf** code (model ``model_type: openpi_rlinf``; see
-:doc:`sft_openpi_rlinf` for the matching SFT flow). The eval config is:
+BEHAVIOR evaluation uses ``model_type: openpi``. For weights from
+:doc:`sft_openpi` or the OpenPI checkpoint convertor, the eval config is:
 
-- ``evaluations/behavior/behavior_openpi_pi05_rlinf_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``
 
-This config runs in eval-only mode (``runner.only_eval: True``) and consumes an
-**OpenPI_RLinf** checkpoint, i.e. one produced by the OpenPI checkpoint
-convertor (``ckpt_convertor.openpi`` ``openpi_pytorch_to_openpi_rlinf`` /
-``sft_to_openpi_rlinf``). Set the model
+This config runs in eval-only mode (``runner.only_eval: True``) and consumes a
+converted checkpoint, i.e. one produced by the OpenPI checkpoint
+convertor (``ckpt_convertor.openpi`` ``openpi_pytorch_to_openpi`` /
+``sft_to_openpi``). Set the model
 paths directly in the config as ``/path/to/...`` placeholders:
 
-- ``rollout.model.model_path``: the OpenPI_RLinf eval checkpoint.
+- ``rollout.model.model_path``: the eval checkpoint.
 
 Normalization statistics are loaded from the converted checkpoint's bundled
 ``physical-intelligence/behavior/norm_stats.json`` asset.
@@ -395,7 +391,7 @@ Normalization statistics are loaded from the converted checkpoint's bundled
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
 

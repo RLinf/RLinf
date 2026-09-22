@@ -94,6 +94,7 @@ rollout:
     num_steps: 5
     add_value_head: False
     openpi:
+      task: eval
       config_name: "pi0_robocasa365_pretrain_human300"
       num_images_in_input: 2
       noise_level: 0.5
