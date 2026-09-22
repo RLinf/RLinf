@@ -21,7 +21,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from rlinf.config import SupportedModel, torch_dtype_from_precision
+from rlinf.config import SupportedModel
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.distributed import all_reduce_dict
@@ -56,14 +56,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             model_cfg.runtime_dtype = self.cfg.actor.fsdp_config.mixed_precision.get(
                 "param_dtype", None
             )
-            # Keep fp32 (or the configured master dtype) in parameter storage;
-            # OpenWAM's cached input/backbone runtime dtype is passed separately
-            # above so FSDP mixed precision can control compute without changing
-            # optimizer/master weights.
-            return get_model(
-                model_cfg,
-                torch_dtype=torch_dtype_from_precision(model_cfg.get("precision")),
-            )
+            # ``get_model`` derives the parameter dtype from ``precision`` (fp32
+            # master weights for the optimizer); ``runtime_dtype`` lets FSDP
+            # mixed precision control OpenWAM's cached compute dtype separately.
+            return get_model(model_cfg)
         return super().model_provider_func()
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
