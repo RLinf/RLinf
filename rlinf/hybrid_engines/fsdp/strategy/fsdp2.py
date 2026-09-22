@@ -26,7 +26,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import hf_rope_parameters, torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import (
     CPUOffloadPolicy,
     FSDPModule,

@@ -49,6 +49,8 @@ class _LazyParallelState:
 
 
 parallel_state = _LazyParallelState()
+
+
 def _get_metric_compute_device(
     reference_tensor: Optional[torch.Tensor] = None,
 ) -> torch.device:
