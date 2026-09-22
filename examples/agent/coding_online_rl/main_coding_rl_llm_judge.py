@@ -26,7 +26,7 @@ from rlinf.scheduler import Cluster
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor import get_actor_worker
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
@@ -60,7 +60,8 @@ def main(cfg) -> None:
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")
-        inference_group = MegatronInference.create_group(
+        inference_worker_cls = get_inference_backend_worker(cfg, "actor")
+        inference_group = inference_worker_cls.create_group(
             cfg, component_placement
         ).launch(
             cluster,
@@ -92,7 +93,7 @@ def main(cfg) -> None:
         train_dataset=train_ds,
         val_dataset=val_ds,
         rollout=rollout_group,
-        inference=inference_group,
+        actor_inference=inference_group,
         actor=actor_group,
         reward=reward_group,
     )

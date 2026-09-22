@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import fields
 from importlib.metadata import version
 from typing import Any, Callable, Literal
 
@@ -53,6 +54,10 @@ from .io_struct import (
     TaskMethodOutput,
 )
 
+_MEMORY_REQUEST_SUPPORTS_TAGS = "tags" in {
+    field.name for field in fields(ResumeMemoryOccupationReqInput)
+}
+
 logger.setLevel(logging.WARNING)
 
 
@@ -69,6 +74,15 @@ def patch_glm4_moe_lite_shared_expert_tp1():
         return
     if not hasattr(Glm4MoeLiteSparseMoeBlock, "_shared_expert_tp1"):
         Glm4MoeLiteSparseMoeBlock._shared_expert_tp1 = False
+def _platform_call(platform, method_name: str, device=None, default=None):
+    """Call a torch platform method with an optional device argument."""
+    if not hasattr(platform, method_name):
+        return default
+    method = getattr(platform, method_name)
+    try:
+        return method(device)
+    except TypeError:
+        return method()
 
 
 class Scheduler(_Scheduler):
@@ -113,12 +127,21 @@ class Scheduler(_Scheduler):
         self.patch_return_output_ids = sglang_version < parse("0.5.0")
 
     def cuda_info(self, text: str = ""):
-        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
-        free_gpu_memory /= 2**30
-        total_gpu_memory /= 2**30
+        platform = Worker.torch_platform
+        current_device = _platform_call(platform, "current_device")
+        free_gpu_memory, total_gpu_memory = (0.0, 0.0)
+        mem_info = _platform_call(platform, "mem_get_info", current_device)
+        if mem_info is not None:
+            free_gpu_memory, total_gpu_memory = mem_info
+            free_gpu_memory /= 2**30
+            total_gpu_memory /= 2**30
 
-        memory_allocated = torch.cuda.memory_allocated() / 2**30
-        memory_reserved = torch.cuda.memory_reserved() / 2**30
+        memory_allocated = (
+            _platform_call(platform, "memory_allocated", current_device, 0.0) / 2**30
+        )
+        memory_reserved = (
+            _platform_call(platform, "memory_reserved", current_device, 0.0) / 2**30
+        )
 
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-tp {self.tp_rank}] {text} "
@@ -131,9 +154,10 @@ class Scheduler(_Scheduler):
 
         sglang treats tags=None/[] as "all GPU memory types".
         """
-        if recv_req.tags is None or len(recv_req.tags) == 0:
+        tags = getattr(recv_req, "tags", None)
+        if tags is None or len(tags) == 0:
             return set(GPU_MEMORY_ALL_TYPES)
-        return set(recv_req.tags)
+        return set(tags)
 
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):
         requested_tags = self.resolve_memory_tags(recv_req)
@@ -223,7 +247,7 @@ class Scheduler(_Scheduler):
                 list_args = list(args)
                 # NOTE: the key is to change device id to the current device id
                 # in case two processes have different CUDA_VISIBLE_DEVICES
-                list_args[6] = torch.cuda.current_device()
+                list_args[6] = Worker.torch_platform.current_device()
                 new_weight = func(*list_args)
                 batch_weight.append((rename(name), new_weight))
         else:
@@ -263,12 +287,13 @@ class Scheduler(_Scheduler):
             assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
-            # Resume model weights only. KV cache and cuda graph are deferred
-            # to onload_kv_cudagraph() in the runner, which runs after the
-            # actor offloads its model, so the two models are never both
-            # resident. Large MoE models OOM otherwise.
+            # Tagged SGLang releases resume model weights first and defer KV cache
+            # and CUDA graphs until after actor offload. Older SGLang releases
+            # only support whole-engine resume, which is already complete here.
             self.resume_memory_occupation(
                 ResumeMemoryOccupationReqInput(tags=["weights"])
+                if _MEMORY_REQUEST_SUPPORTS_TAGS
+                else ResumeMemoryOccupationReqInput()
             )
 
         self.batch_load_hf_weight(state_dict)
@@ -393,7 +418,7 @@ class Scheduler(_Scheduler):
             for key, value in model.state_dict().items():
                 cpu_state_dict[key] = value.to("cpu", non_blocking=True)
             self.cpu_state_dict = cpu_state_dict
-            torch.cuda.synchronize()
+            Worker.torch_platform.synchronize()
 
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, tp rank {self.tp_rank}, load weight from cpu"
@@ -676,7 +701,7 @@ def validate_weight_init(model):
         weight_norm_dict[key] = posi_norm(value)
 
     # avoid release memory before norm kernel launch (gpu is async from cpu)
-    torch.cuda.synchronize()
+    Worker.torch_platform.synchronize()
     return weight_norm_dict
 
 

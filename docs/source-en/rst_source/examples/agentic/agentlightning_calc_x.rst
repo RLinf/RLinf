@@ -37,6 +37,7 @@ Installation
 ------------
 
 For the base RLinf environment, see :doc:`RLinf Installation </rst_source/start/installation>`.
+For the FSDP2 and SGLang recipe on Ascend CANN, see :doc:`Run RLinf on Ascend CANN <../../guides/ascend_cann>`.
 
 Install dependencies for this example:
 

@@ -87,6 +87,10 @@ PLATFORM_VENDOR_DISTS=()
 # ERE matching lines to drop from embodied/envs/common.txt, for platforms where
 # some of those wheels are unusable. Set by configure_<platform>.
 PLATFORM_COMMON_REQ_EXCLUDE_RE=""
+# Set after the dedicated Ascend Agentic installer has provided torch-npu and
+# the NPU SGLang stack. In that case install_ascend_extras must not attempt a
+# second, PyPI-based torch-npu installation.
+ASCEND_AGENTIC_INSTALLED=0
 # Default torch-backend per platform; user can override by exporting
 # UV_TORCH_BACKEND before invoking this script.
 DEFAULT_BACKEND_NVIDIA="auto"
@@ -1083,6 +1087,9 @@ EOF
 }
 
 install_ascend_extras() {
+    if [ "$ASCEND_AGENTIC_INSTALLED" -eq 1 ]; then
+        return 0
+    fi
     # Ascend NPU support comes from torch-npu, a side-car package that
     # registers an NPU backend on torch import. The package version must
     # match the installed torch (torch-npu 2.X.Y → torch 2.X.Y). Skip if
@@ -1399,9 +1406,22 @@ VLLM_VERSION=""
 
 apply_agentic_torch_default() {
     [ "$TARGET" = "agentic" ] || return 0
+    if [ "$PLATFORM" = "ascend" ] && [ "$(effective_engine)" = "sglang" ] && [ -z "$SGLANG_VERSION" ]; then
+        SGLANG_VERSION="0.5.2"
+        echo "[install.sh] agentic: Ascend defaults to SGLang ${SGLANG_VERSION}."
+    fi
     # --torch wins; on AMD, configure_amd derives torch from the ROCm version.
+
     [ -z "$TORCH_VERSION" ] || return 0
     [ "$PLATFORM" != "amd" ] || return 0
+
+    if [ "$PLATFORM" = "ascend" ] \
+        && [ "$(effective_engine)" = "sglang" ] \
+        && [ "$(effective_engine_version)" = "0.5.2" ]; then
+        TORCH_VERSION="2.6.0"
+        echo "[install.sh] agentic: Ascend SGLang 0.5.2 requires torch ${TORCH_VERSION}; pinning it (pass --torch to override)."
+        return 0
+    fi
     local torch_ver
     torch_ver=$(agentic_torch_for_engine)
     [ "$torch_ver" != "-" ] || return 0
@@ -1681,6 +1701,10 @@ EOF
     fi
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
+    fi
+    if [ "$TARGET" = "agentic" ] && [ "$PLATFORM" = "ascend" ]; then
+        echo "[install.sh] Deferring dependency sync to the Ascend Agentic installer."
+        return 0
     fi
     uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
@@ -3662,7 +3686,134 @@ EOF
     echo "[install.sh] NCCL LD_LIBRARY_PATH export added to $VENV_DIR/bin/activate."
 }
 
+download_ascend_wheel() {
+    local wheel_url="$1"
+    local wheel_dir="$2"
+    local wheel_name="${wheel_url##*/}"
+    wheel_name="${wheel_name//%2B/+}"
+    local wheel_path="${wheel_dir}/${wheel_name}"
+
+    mkdir -p "$wheel_dir"
+    if [ -f "$wheel_path" ]; then
+        printf "%s\n" "$wheel_path"
+        return 0
+    fi
+
+    echo "[install.sh] Downloading ${wheel_name}" >&2
+    if command -v wget >/dev/null 2>&1; then
+        wget --show-progress -O "${wheel_path}.part" "$wheel_url"
+    elif command -v curl >/dev/null 2>&1; then
+        curl --fail --location --retry 3 --output "${wheel_path}.part" "$wheel_url"
+    else
+        echo "[install.sh] wget or curl is required to download Ascend wheels." >&2
+        return 1
+    fi
+    mv "${wheel_path}.part" "$wheel_path"
+    printf "%s\n" "$wheel_path"
+}
+
+setup_ascend_environment() {
+    local ascend_env_script="${ASCEND_ENV_SCRIPT:-/usr/local/Ascend/ascend-toolkit/set_env.sh}"
+    if [ ! -f "$ascend_env_script" ]; then
+        echo "[install.sh] Cannot find CANN environment script: ${ascend_env_script}" >&2
+        echo "[install.sh] Install CANN first or set ASCEND_ENV_SCRIPT to its set_env.sh path." >&2
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    source "$ascend_env_script"
+    if ! grep -Fqx "source ${ascend_env_script}" "$VENV_DIR/bin/activate"; then
+        echo "source ${ascend_env_script}" >> "$VENV_DIR/bin/activate"
+    fi
+}
+
+install_ascend_agentic() {
+    local engine engine_ver
+    engine=$(effective_engine)
+    engine_ver=$(effective_engine_version)
+    if [ "$engine" != "sglang" ] || [ "$engine_ver" != "0.5.2" ]; then
+        echo "[install.sh] Ascend Agentic currently supports only --engine sglang --sglang 0.5.2." >&2
+        return 1
+    fi
+    if [ "$TORCH_VERSION" != "2.6.0" ]; then
+        echo "[install.sh] Ascend SGLang 0.5.2 requires torch 2.6.0; got ${TORCH_VERSION}." >&2
+        return 1
+    fi
+
+    setup_ascend_environment
+
+    local platform_tag
+    case "$(uname -m)" in
+        aarch64|arm64) platform_tag="aarch64" ;;
+        x86_64|amd64) platform_tag="x86_64" ;;
+        *)
+            echo "[install.sh] Unsupported Ascend host architecture: $(uname -m)." >&2
+            return 1
+            ;;
+    esac
+
+    local wheel_dir="${ASCEND_WHEEL_DIR:-${VENV_DIR}/wheels}"
+    local torch_wheel_url="${ASCEND_TORCH_WHEEL_URL:-https://download.pytorch.org/whl/cpu/torch-2.6.0%2Bcpu-cp311-cp311-manylinux_2_28_${platform_tag}.whl}"
+    local torch_npu_wheel_url="${ASCEND_TORCH_NPU_WHEEL_URL:-https://gitcode.com/Ascend/pytorch/releases/download/v7.3.0-pytorch2.6.0/torch_npu-2.6.0.post5-cp311-cp311-manylinux_2_28_${platform_tag}.whl}"
+    local torch_wheel torch_npu_wheel
+    torch_wheel=$(download_ascend_wheel "$torch_wheel_url" "$wheel_dir")
+    torch_npu_wheel=$(download_ascend_wheel "$torch_npu_wheel_url" "$wheel_dir")
+    uv pip install --no-deps "$torch_wheel" "$torch_npu_wheel"
+    uv pip install "torchvision==0.21.0" --index-url https://download.pytorch.org/whl/cpu
+
+    # These are the generic RLinf Agentic runtime dependencies. Example-only
+    # packages such as Qdrant and task-specific servers remain separate.
+    uv pip install \
+        "numpy==1.26.4" accelerate datasets sentencepiece torchdata scipy \
+        einops nvitop pybind11 ninja sortedcontainers huggingface_hub icmplib \
+        lz4 zstandard tensorboard "uvloop==0.21.0" mcp \
+        "wandb<0.25.1" word2number regex "peft==0.11.1" \
+        rlinf_latex2sympy2 "ray[default]>=2.47.0" \
+        "hydra-core==1.4.0.dev1" "omegaconf==2.4.0.dev4" \
+        "transformers==4.56.1" "decorator>=4.4.0" pyyaml
+
+    local triton_ascend_spec="${ASCEND_TRITON_ASCEND_SPEC:-triton-ascend==3.2.0.dev20260515}"
+    local triton_ascend_index="${ASCEND_TRITON_ASCEND_INDEX:-https://test.pypi.org/simple}"
+    uv pip uninstall triton triton-ascend pynvml || true
+    uv pip install --index-url "$triton_ascend_index" "$triton_ascend_spec"
+
+    local kernel_ref="${ASCEND_SGL_KERNEL_NPU_REF:-main}"
+    local kernel_dir
+    kernel_dir=$(clone_or_reuse_repo SGL_KERNEL_NPU_PATH "$VENV_DIR/src/sgl-kernel-npu" https://github.com/sgl-project/sgl-kernel-npu.git --recursive --branch "$kernel_ref")
+    if [ "$kernel_ref" = "main" ] && [ -z "${SGL_KERNEL_NPU_PATH:-}" ]; then
+        git -C "$kernel_dir" fetch origin main
+        git -C "$kernel_dir" checkout main
+        git -C "$kernel_dir" pull --ff-only origin main
+    fi
+    git -C "$kernel_dir" submodule update --init --recursive
+    (
+        cd "$kernel_dir"
+        bash build.sh
+        uv pip install output/sgl*.whl output/torch*.whl output/deepep*.whl
+    )
+
+    local deep_ep_site library
+    deep_ep_site=$(python -c "import os, deep_ep; print(os.path.dirname(os.path.dirname(deep_ep.__file__)))")
+    for library in "$deep_ep_site"/deep_ep/deep_ep_cpp*.so; do
+        [ -e "$library" ] || continue
+        ln -sf "$library" "$deep_ep_site/"
+    done
+
+    local sglang_dir
+    sglang_dir=$(clone_or_reuse_repo SGLANG_PATH "$VENV_DIR/src/sglang" https://github.com/sgl-project/sglang.git --branch "v${engine_ver}")
+    uv pip install -e "$sglang_dir/python[srt_npu]" --no-build-isolation
+    uv pip uninstall triton triton-ascend pynvml || true
+    uv pip install --index-url "$triton_ascend_index" "$triton_ascend_spec"
+
+    ASCEND_AGENTIC_INSTALLED=1
+    uv pip check || echo "[install.sh] WARNING: dependency conflicts reported above"
+}
+
 install_agentic() {
+    if [ "$PLATFORM" = "ascend" ]; then
+        install_ascend_agentic
+        return 0
+    fi
+
     local engine engine_ver torch211_stack=0
     engine=$(effective_engine)
     engine_ver=$(effective_engine_version)

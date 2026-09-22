@@ -27,6 +27,7 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.data.schema.reasoning_results import (
+    BatchResizingIterator,
     DynamicRolloutResult,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -42,7 +43,11 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     RolloutDataBalance,
+    all_reduce_dict,
     compute_rollout_metrics_dynamic,
+)
+from rlinf.utils.metric_utils import (
+    append_to_dict,
 )
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
@@ -50,7 +55,6 @@ from rlinf.utils.placement import (
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
     cpu_dict,
-    cpu_weight_swap,
 )
 from rlinf.workers.actor.fsdp_actor_worker import (
     FSDPActor,
@@ -58,12 +62,6 @@ from rlinf.workers.actor.fsdp_actor_worker import (
 
 
 class MAFSDPActor(FSDPActor):
-    """FSDP actor for Search-R1 multi-agent dynamic rollouts.
-
-    The actor requires collocated placement because dynamic rollout batches are
-    consumed and trained within the same actor group.
-    """
-
     def __init__(
         self,
         cfg: DictConfig,
@@ -72,9 +70,7 @@ class MAFSDPActor(FSDPActor):
     ) -> None:
         super().__init__(cfg, placement, cfg_fsdp)
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
-        assert self.is_dynamic_rollout_batch, (
-            "MAFSDPActor requires agentloop.is_dynamic_rollout_batch=True"
-        )
+        assert self.is_dynamic_rollout_batch
         assert self.enable_dp_load_balance, (
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
@@ -82,10 +78,6 @@ class MAFSDPActor(FSDPActor):
         assert self.placement.is_collocated, (
             "Only collocated placement is supported for multi-agent actor"
         )
-        if self.cfg.algorithm.get("importance_sampling_fix", False):
-            raise ValueError(
-                "importance_sampling_fix is not supported for dynamic rollout batch"
-            )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
@@ -101,6 +93,8 @@ class MAFSDPActor(FSDPActor):
 
     def get_rollout_metrics_group(self, batch: dict[str, torch.Tensor]):
         """Return the process group used to aggregate rollout metrics."""
+        if batch["input_ids"].shape[0] == 0:
+            return None
         return torch.distributed.group.WORLD
 
     def get_batch(
@@ -283,7 +277,7 @@ class MAFSDPActor(FSDPActor):
             assert self.ref_policy_state_dict is not None, (
                 "Reference policy state dict is None but compute_ref_logprobs is True"
             )
-            with cpu_weight_swap(self, self.ref_policy_state_dict, is_fsdp=True):
+            with self._swap_to_ref_policy():
                 ref_logprobs = torch.cat(
                     [self.forward_batch(batch) for batch in micro_batches]
                 ).cpu()
@@ -350,92 +344,141 @@ class MAFSDPActor(FSDPActor):
         for rollout_result in rollout_result_per_group:
             output_channel.put(rollout_result)
 
-    def get_response_loss_mask(self, m_batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Return the full response mask used by dynamic multi-agent rollouts."""
-        return m_batch["response_mask"]
+    def training_step(
+        self, batch: dict[str, torch.Tensor] | BatchResizingIterator
+    ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
+        if isinstance(batch, dict):
+            global_batch_size = batch["input_ids"].shape[0]
+            assert global_batch_size % self.micro_batch_size == 0, (
+                f"global batch size {global_batch_size} can not divide micro_batch_size {self.micro_batch_size}"
+            )
+            micro_batches_iter, micro_batch_cnt, _ = self._split_to_micro_batch(
+                batch,
+                self.enable_dynamic_batch_size,
+                max_tokens_per_mbs=self.max_tokens_per_mbs,
+                split_num=global_batch_size // self.micro_batch_size,
+            )
+            self.gradient_accumulation = micro_batch_cnt
+        else:
+            global_batch_size = self.total_batch_size_per_dp // self.n_mini_batches
+            micro_batch_cnt = global_batch_size // self.micro_batch_size
+            self.gradient_accumulation = micro_batch_cnt
 
-    def forward_backward_batch(
-        self,
-        idx: int,
-        m_batch: dict[str, torch.Tensor],
-        micro_batch_cnt: int,
-    ) -> dict[str, torch.Tensor]:
-        """Run one dynamic-rollout micro-batch with trajectory loss scaling."""
-        backward_ctx = self.before_micro_batch(
-            self.model,
-            is_last_micro_batch=(idx + 1) == micro_batch_cnt,
-        )
-        for k, v in m_batch.items():
-            m_batch[k] = (
-                v.to(Worker.torch_device_type) if isinstance(v, torch.Tensor) else v
+            def iterator_wrapper():
+                for _ in range(micro_batch_cnt):
+                    yield next(batch)
+
+            micro_batches_iter = iterator_wrapper()
+        self.optimizer.zero_grad()
+        mbs_metrics_list = {}
+        for idx, m_batch in enumerate(micro_batches_iter):
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == micro_batch_cnt,
+            )
+            for k, v in m_batch.items():
+                m_batch[k] = (
+                    v.to(Worker.torch_device_type) if isinstance(v, torch.Tensor) else v
+                )
+            if self.calculate_entropy:
+                logprobs, entropy = self.forward_batch(m_batch, True)
+            else:
+                logprobs = self.forward_batch(m_batch)
+                entropy = None
+
+            # batch for backward
+            old_logprobs = m_batch.get("recomputed_logprobs")
+            if old_logprobs is None:
+                old_logprobs = m_batch["rollout_logprobs"]
+            advantages = m_batch["advantages"] * m_batch["loss_scales"]
+            ref_logprobs = None
+            if "ref_logprobs" in m_batch:
+                ref_logprobs = m_batch["ref_logprobs"]
+
+            loss_mask = m_batch["response_mask"]
+
+            clip_ratio = self.cfg.algorithm.ratio_clip_eps
+            clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
+            clip_ratio_high = self.cfg.algorithm.get("clip_ratio_high", None)
+            clip_ratio_low = (
+                clip_ratio_low if clip_ratio_low is not None else clip_ratio
+            )
+            clip_ratio_high = (
+                clip_ratio_high if clip_ratio_high is not None else clip_ratio
+            )
+            clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+
+            if self.cfg.algorithm.get("importance_sampling_fix", False):
+                raise AssertionError(
+                    "importance_sampling_fix is not supported for dynamic rollout batch"
+                )
+
+            loss, mbs_metrics_data = policy_loss(
+                task_type=self.task_type,
+                loss_type=self.cfg.algorithm.loss_type,
+                loss_agg_func=self.loss_agg_func,
+                logprobs=logprobs,
+                old_logprobs=old_logprobs,
+                advantages=advantages,
+                clip_ratio_c=clip_ratio_c,
+                clip_ratio_low=clip_ratio_low,
+                clip_ratio_high=clip_ratio_high,
+                loss_mask=loss_mask,
+                clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
+                clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
+                fast_path_zero_loss_mask=True,
             )
 
-        # batch for forward
-        logprobs, entropy = self.forward_batch(m_batch, True)
+            entropy_loss = torch.tensor(
+                0.0, device=Worker.torch_platform.current_device()
+            )
+            if self.calculate_entropy:
+                entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+                if self.calculate_entropy_loss:
+                    loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-        # batch for backward
-        old_logprobs = m_batch.get("recomputed_logprobs")
-        if old_logprobs is None:
-            old_logprobs = m_batch["rollout_logprobs"]
-        advantages = m_batch["advantages"] * m_batch["loss_scales"]
-        ref_logprobs = None
-        if "ref_logprobs" in m_batch:
-            ref_logprobs = m_batch["ref_logprobs"]
+            kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+            if self.kl_beta > 0 and ref_logprobs is not None:
+                kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
+                kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
+                loss = loss + kl_loss * self.kl_beta
 
-        loss_mask = self.get_response_loss_mask(m_batch)
+            # add to log
+            # scale loss for gradient accumulation and backprop
+            final_loss_metric = loss.detach()
+            loss = loss / self.gradient_accumulation
 
-        clip_ratio = self.cfg.algorithm.ratio_clip_eps
-        clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
-        clip_ratio_high = self.cfg.algorithm.get("clip_ratio_high", None)
-        clip_ratio_low = clip_ratio_low if clip_ratio_low is not None else clip_ratio
-        clip_ratio_high = clip_ratio_high if clip_ratio_high is not None else clip_ratio
-        clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+            with backward_ctx:
+                self.grad_scaler.scale(loss).backward()
 
-        loss, mbs_metrics_data = policy_loss(
-            task_type=self.task_type,
-            loss_type=self.cfg.algorithm.loss_type,
-            loss_agg_func=self.loss_agg_func,
-            logprobs=logprobs,
-            old_logprobs=old_logprobs,
-            advantages=advantages,
-            clip_ratio_c=clip_ratio_c,
-            clip_ratio_low=clip_ratio_low,
-            clip_ratio_high=clip_ratio_high,
-            loss_mask=loss_mask,
-            clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
-            clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
-            fast_path_zero_loss_mask=True,
+            mbs_metrics_data.update(
+                {
+                    "actor/final_loss": final_loss_metric,
+                    "actor/entropy_loss": entropy_loss.detach(),
+                    "actor/kl_loss": kl_loss.detach(),
+                }
+            )
+
+            append_to_dict(mbs_metrics_list, mbs_metrics_data)
+
+        grad_norm, lr_list = self.optimizer_step()
+
+        if self.lr_sched_sync_with_optim:
+            self.lr_scheduler.step()
+
+        mean_metric_dict = {
+            key: torch.mean(torch.stack(value))
+            for key, value in mbs_metrics_list.items()
+        }
+
+        mean_metric_dict = all_reduce_dict(
+            mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
 
-        entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
-        if self.calculate_entropy:
-            entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
-            if self.calculate_entropy_loss:
-                loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+        mean_metric_dict["actor/grad_norm"] = float(grad_norm)
+        mean_metric_dict["actor/lr"] = lr_list[0]
 
-        kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
-        if self.kl_beta > 0 and ref_logprobs is not None:
-            kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
-            kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
-            loss = loss + kl_loss * self.kl_beta
-
-        # add to log
-        # scale loss for gradient accumulation and backprop
-        final_loss_metric = loss.detach()
-        loss = loss / self.gradient_accumulation
-
-        with backward_ctx:
-            self.grad_scaler.scale(loss).backward()
-
-        mbs_metrics_data.update(
-            {
-                "actor/final_loss": final_loss_metric,
-                "actor/entropy_loss": entropy_loss.detach(),
-                "actor/kl_loss": kl_loss.detach(),
-            }
-        )
-
-        return mbs_metrics_data
+        return mean_metric_dict
 
     def _dp_load_balance_dynamic(
         self,

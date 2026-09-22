@@ -34,7 +34,7 @@ except ImportError:
     except ImportError:
         AutoModelForVision2Seq = None
 
-from rlinf.config import SupportedModel, torch_dtype_from_precision
+from rlinf.config import SupportedModel, hf_rope_parameters, torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
@@ -158,8 +158,28 @@ class FSDPModelManager:
             model: the initialized model.
         """
         cfg = self._cfg
+        if (
+            Worker.torch_device_type == "npu"
+            and cfg.fsdp_config.get("strategy", "fsdp") != "fsdp2"
+        ):
+            raise ValueError(
+                "Ascend FSDP requires fsdp_config.strategy=fsdp2. "
+                "FSDP1 uses ShardedTensor state that is not supported by the "
+                "Ascend synchronization path."
+            )
         use_gptq = cfg.model.get("gptq_model", False)
         load_in_8bit = cfg.model.get("load_in_8bit", False)
+        init_model_with_meta_device = cfg.fsdp_config.get(
+            "init_model_with_meta_device", False
+        )
+        if init_model_with_meta_device and cfg.fsdp_config.strategy != "fsdp2":
+            raise ValueError(
+                "init_model_with_meta_device currently requires strategy=fsdp2."
+            )
+        if init_model_with_meta_device and (use_gptq or load_in_8bit):
+            raise ValueError(
+                "init_model_with_meta_device does not support quantized model loading."
+            )
 
         use_triton = cfg.get("use_triton", True)
 
@@ -169,10 +189,20 @@ class FSDPModelManager:
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         device = torch.device(f"{Worker.torch_device_type}:{local_rank}")
 
+        attn_implementation = cfg.model.get("attn_implementation", "flash_attention_2")
+        if attn_implementation == "ascend_fusion":
+            if Worker.torch_device_type != "npu":
+                raise ValueError("attn_implementation=ascend_fusion requires an NPU.")
+            from rlinf.hybrid_engines.fsdp.ascend_attention import (
+                register_ascend_fusion_attention,
+            )
+
+            register_ascend_fusion_attention()
+
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
             trust_remote_code=True,
-            attn_implementation="flash_attention_2",
+            attn_implementation=attn_implementation,
         )
 
         if use_gptq:
@@ -199,12 +229,19 @@ class FSDPModelManager:
             else:
                 auto_model_class = AutoModelForCausalLM
 
-            model = auto_model_class.from_pretrained(
-                cfg.model.model_path,
-                torch_dtype=self.torch_dtype,
-                config=model_config,
-                trust_remote_code=True,
-            )
+            if init_model_with_meta_device:
+                with torch.device("meta"):
+                    model = auto_model_class.from_config(
+                        model_config,
+                        trust_remote_code=True,
+                    )
+            else:
+                model = auto_model_class.from_pretrained(
+                    cfg.model.model_path,
+                    torch_dtype=self.torch_dtype,
+                    config=model_config,
+                    trust_remote_code=True,
+                )
 
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
@@ -310,6 +347,15 @@ class FSDPModelManager:
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+
+        if self._cfg.fsdp_config.get("init_model_with_meta_device", False):
+            self._strategy.load_hf_checkpoint_to_fsdp2_model(
+                model=self.model,
+                model_path=self._cfg.model.model_path,
+                device_mesh=self._device_mesh,
+                dtype=self.torch_dtype,
+            )
+
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )

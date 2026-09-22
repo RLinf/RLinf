@@ -43,6 +43,9 @@ from rlinf.workers.rollout.utils import (
 )
 
 _SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
+_MEMORY_REQUEST_SUPPORTS_TAGS = "tags" in {
+    field.name for field in dataclasses.fields(ResumeMemoryOccupationReqInput)
+}
 
 
 class SGLangWorker(Worker):
@@ -362,6 +365,9 @@ class SGLangWorker(Worker):
         the actor has offloaded its model (avoids both models on GPU
         simultaneously).
         """
+        if not _MEMORY_REQUEST_SUPPORTS_TAGS:
+            return
+
         await self._engine.tokenizer_manager.resume_memory_occupation(
             obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
         )
