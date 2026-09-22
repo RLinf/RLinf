@@ -400,8 +400,17 @@ class RealWorldEnv(gym.Env):
             if callable(on_begin):
                 on_begin()
 
-    def chunk_step(self, chunk_actions: np.ndarray) -> ChunkStepResult:
+    def chunk_step(
+        self, chunk_actions: np.ndarray, auto_reset: Optional[bool] = None
+    ) -> ChunkStepResult:
+        """Execute one action chunk, optionally deferring episode reset.
+
+        ``auto_reset=False`` is used by real-world evaluation so the worker can
+        discard the rest of the rollout window and perform one explicit
+        hardware reset at the boundary.
+        """
         # Shape: [num_envs, chunk_steps, action_dim].
+        should_auto_reset = self.auto_reset if auto_reset is None else auto_reset
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
@@ -457,12 +466,12 @@ class RealWorldEnv(gym.Env):
             )
             infos_list[-1] = infos_last
 
-        if past_dones.any() and self.auto_reset:
+        if past_dones.any() and should_auto_reset:
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(
                 past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
 
-        if self.auto_reset or self.ignore_terminations:
+        if should_auto_reset or self.ignore_terminations:
             chunk_terminations = torch.zeros_like(raw_chunk_terminations)
             chunk_terminations[:, -1] = past_terminations
 

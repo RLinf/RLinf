@@ -658,9 +658,15 @@ class EnvWorker(Worker):
         )
         env_info = {}
 
-        obs_list, _, chunk_terminations, chunk_truncations, infos_list = (
-            self.eval_env_list[stage_id].chunk_step(chunk_actions)
-        )
+        eval_env = self.eval_env_list[stage_id]
+        if SupportedEnvType(self.cfg.env.eval.env_type) is SupportedEnvType.REAL:
+            # Window boundaries own the physical reset.  Deferring the
+            # environment's automatic reset prevents a second homing motion
+            # and a second wait for the operator start signal.
+            chunk_result = eval_env.chunk_step(chunk_actions, auto_reset=False)
+        else:
+            chunk_result = eval_env.chunk_step(chunk_actions)
+        obs_list, _, chunk_terminations, chunk_truncations, infos_list = chunk_result
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):

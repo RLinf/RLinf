@@ -1348,6 +1348,42 @@ def test_keyboard_eval_control_can_reset_without_waiting_for_next_start(monkeypa
     wrapper.close()
 
 
+def test_real_world_chunk_step_can_defer_auto_reset():
+    from rlinf.envs.real.env import RealWorldEnv
+
+    env = RealWorldEnv.__new__(RealWorldEnv)
+    env.auto_reset = True
+    env.ignore_terminations = False
+    env.num_envs = 1
+    env.env = SimpleNamespace(envs=[])
+    env._handle_auto_reset = Mock(side_effect=AssertionError("unexpected reset"))
+
+    env.step = Mock(
+        side_effect=[
+            (
+                {"states": torch.zeros(1, 1)},
+                torch.zeros(1),
+                torch.ones(1, dtype=torch.bool),
+                torch.zeros(1, dtype=torch.bool),
+                {},
+            ),
+            (
+                {"states": torch.zeros(1, 1)},
+                torch.zeros(1),
+                torch.zeros(1, dtype=torch.bool),
+                torch.zeros(1, dtype=torch.bool),
+                {},
+            ),
+        ]
+    )
+
+    result = env.chunk_step(np.zeros((1, 2, 1), dtype=np.float32), auto_reset=False)
+
+    assert result[2][0, 0]
+    assert not result[2][0, 1]
+    env._handle_auto_reset.assert_not_called()
+
+
 def test_start_end_wrapper_accepts_wsl_control_commands(monkeypatch, tmp_path):
     from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
 
