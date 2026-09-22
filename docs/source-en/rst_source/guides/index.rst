@@ -55,3 +55,4 @@ Choose a Workflow
    Performance <performance/index>
    Agent Workflows <agent-workflows/index>
    Rollout Engines <rollout-engines/index>
+   Ascend CANN <ascend_cann>
