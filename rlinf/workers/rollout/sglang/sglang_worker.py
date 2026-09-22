@@ -233,6 +233,15 @@ class SGLangWorker(Worker):
             **version_dependent_args,
         )
 
+        if self._cfg_rollout.sglang.get("backend_type", "engine") == "server":
+            # Server-only: skip sglang's HTTP warmup. launch_server fires a
+            # deterministic batched greedy request before serving, which the
+            # Engine backend never runs; it leaves radix-cache/allocator state
+            # that makes the two backends non-comparable. RLinf does its own
+            # readiness check (_wait_for_http_health), so the warmup is
+            # redundant (plan decision 14.4).
+            server_args.skip_server_warmup = True
+
         self.log_on_first_rank(f"{server_args=}")
         return dataclasses.asdict(server_args)
 
