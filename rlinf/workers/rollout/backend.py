@@ -46,15 +46,16 @@ class RlinfContext:
     """Runtime context a backend needs to join the RLinf communication mesh.
 
     Fields mirror the real signature of the sglang-side entry point
-    (`init_rlinf_worker(parent_address, weight_reload, placement, config)`)
-    but are all RLinf-neutral types, so future backends (e.g. vLLM) can
-    consume the same data.
+    (`init_rlinf_worker(parent_address, weight_reload, placement, config,
+    model_instance_id)`) but are all RLinf-neutral types, so future backends
+    (e.g. vLLM) can consume the same data.
     """
 
     parent_address: WorkerAddress
     weight_reload: Literal["sync", "cpu", None]
     placement: ModelParallelComponentPlacement
     cfg: DictConfig
+    model_instance_id: int
 
 
 class RolloutBackend(ABC):
