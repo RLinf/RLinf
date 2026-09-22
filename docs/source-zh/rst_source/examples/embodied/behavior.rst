@@ -249,15 +249,12 @@ OpenPI-Comet 作为示例来源：
 
 转换完成后，按如下方式更新 ``behavior_openpi_pi05_eval.yaml``：
 
-1. 将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设置为转换后的模型目录。
-2. 在 ``env.train`` 和 ``env.eval`` 中提高 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
+1. 将 ``rollout.model.model_path`` 设置为转换后的模型目录。
+2. 如需更长轨迹，提高 ``env.eval`` 的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
 
 .. code-block:: yaml
 
    env:
-     train:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
      eval:
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
@@ -268,21 +265,19 @@ OpenPI-Comet 作为示例来源：
 
 --------------
 
-**5. 使用 OpenPI_RLinf (Pi0.5) 代码进行评估**
+**5. 评估 JAX 对齐的 Pi0.5 checkpoint**
 
-BEHAVIOR 评估同样支持自包含的 **OpenPI_RLinf** 代码（模型
-``model_type: openpi_rlinf``；对应的 SFT 流程参见 :doc:`sft_openpi_rlinf`）。
-评估配置为：
+BEHAVIOR 评估使用 ``model_type: openpi``。若权重来自 :doc:`sft_openpi` 或 OpenPI checkpoint 转换器，评估配置为：
 
-- ``evaluations/behavior/behavior_openpi_pi05_rlinf_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``
 
-该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **OpenPI_RLinf**
+该配置以纯评估模式运行（``runner.only_eval: True``），并消费转换后的
 checkpoint，即由 OpenPI checkpoint 转换器
-（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi_rlinf`` /
-``sft_to_openpi_rlinf``）产出的 checkpoint。
+（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi`` /
+``sft_to_openpi``）产出的权重。
 将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
 
-- ``rollout.model.model_path``：OpenPI_RLinf 评估 checkpoint。
+- ``rollout.model.model_path``：评估 checkpoint。
 
 归一化统计从转换后 checkpoint 中打包的
 ``physical-intelligence/behavior/norm_stats.json`` 读取。
@@ -291,7 +286,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
 

@@ -113,7 +113,7 @@ def test_compute_rollout_metrics_omits_loss_mask_fraction_without_mask(
 
 
 # The embodied actor's entropy bonus aggregation. The shapes below are the ones
-# the shipped models actually emit: openpi, openpi_rlinf, lingbotvla,
+# the shipped models actually emit: openpi, lingbotvla,
 # dexbotic_pi, dexbotic_dm0 and flow_policy all reduce entropy to [bsz, 1],
 # cnn_policy returns [bsz, action_dim], openvla_oft returns [bsz, seq_len], and
 # the StarVLA action heads return [bsz, num_action_chunks, action_dim].

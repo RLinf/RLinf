@@ -128,6 +128,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi05_maniskill"
       num_images_in_input: 1
       noise_level: 0.5

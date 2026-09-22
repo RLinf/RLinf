@@ -55,7 +55,7 @@
      - ``realworld_collect_data_gello_joint_dual_franka``
      - 采集双臂关节轨迹。
    * - SFT
-     - ``realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d``
+     - ``realworld_sft_openpi_dual_franka_tcp_rot6d``
      - 在 tcp_rot6d 动作上微调 π₀.₅。
    * - Deployment
      - ``realworld_eval_dual_franka``
@@ -157,7 +157,7 @@
      - 用途
    * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
      - GELLO 关节空间采集
-   * - ``examples/sft/config/realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d.yaml``
+   * - ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
      - 在转换后的 tcp_rot6d 数据上执行 π₀.₅ SFT
    * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
      - 真机策略部署
@@ -398,14 +398,13 @@ Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank �
        --config-name pi05_dualfranka_tcp_rot6d \
        --repo-id $SFT_REPO_ID
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d
+   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
 
-并在 ``examples/sft/config/realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d.yaml``
-中更新 ``train_data_paths``、``model_path``、``assets_dir``、``asset_id``、``logger`` 设置和集群放置。
+并在 ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml`` 中更新 ``train_data_paths``、``model_path``、``openpi_data.norm_stats_path``、``logger`` 设置和集群放置。
 Checkpoint 保存到
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
 
-其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为 ``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 ``sft_openpi_rlinf.rst``。
+其中 ``openpi_data.norm_stats_path`` 指向 ``calculate_norm_stats.py`` 写出的 ``norm_stats.json``（通常是 ``./assets/pi05_dualfranka_tcp_rot6d/<repo_id>/norm_stats.json``）。省略该字段时按 OpenPI TrainConfig 默认从 ``model_path`` 读取。``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 :doc:`sft_openpi`。
 
 使用代码为：
 

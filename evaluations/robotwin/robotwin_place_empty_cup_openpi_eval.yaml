@@ -72,6 +72,7 @@ rollout:
     add_value_head: True
     num_steps: 5
     openpi:
+      task: eval
       config_name: "pi0_aloha_robotwin"
       num_images_in_input: 3
       train_expert_only: True

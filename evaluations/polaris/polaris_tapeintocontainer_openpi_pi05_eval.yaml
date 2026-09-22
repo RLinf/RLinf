@@ -66,6 +66,7 @@ rollout:
     num_steps: 10
     add_value_head: True
     openpi:
+      task: eval
       config_name: "pi05_droid_polaris"
       num_images_in_input: 2
       noise_level: 0.5

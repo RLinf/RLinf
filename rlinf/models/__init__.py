@@ -438,10 +438,7 @@ def get_model(cfg: DictConfig):
                 for param in model.parameters():
                     param.requires_grad_(False)
                 model = inject_adapter_in_model(lora_config, model)
-            elif SupportedModel(model_type) in (
-                SupportedModel.OPENPI,
-                SupportedModel.CFG_MODEL,
-            ):
+            elif SupportedModel(model_type) == SupportedModel.CFG_MODEL:
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)

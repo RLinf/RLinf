@@ -113,6 +113,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi05_metaworld"
       num_images_in_input: 1
       value_after_vlm: True
