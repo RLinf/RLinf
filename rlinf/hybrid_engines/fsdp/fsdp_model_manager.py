@@ -34,7 +34,7 @@ except ImportError:
     except ImportError:
         AutoModelForVision2Seq = None
 
-from rlinf.config import SupportedModel, hf_rope_parameters, torch_dtype_from_precision
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
