@@ -128,7 +128,7 @@ Qwen3-VL and ResNet both score 0.348 at step 20, only 0.6 points above the base.
 
 Training-time reward readings cannot replace external evaluation. On Object, ResNet reports approximately 0.55 inside the world model against 0.348 in MuJoCo. The fixed Qwen3-VL reports approximately 0.35 inside the world model and 0.348 in MuJoCo. This agreement indicates calibration for this setting, not policy improvement.
 
-.. figure:: /_static/images/worldloop-results.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/worldloop-results.png
    :alt: WorldLoop training-time and MuJoCo results on LIBERO-Spatial and LIBERO-Object
    :align: center
    :width: 100%

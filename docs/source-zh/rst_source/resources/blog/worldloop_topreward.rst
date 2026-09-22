@@ -128,7 +128,7 @@ Qwen3-VL 与 ResNet 在 step 20 均为 0.348，只比起点高 0.6 个百分点�
 
 训练期奖励也不能替代外部评测：Object 实验中，ResNet 给出的世界模型内成功率约为 0.55，而 MuJoCo 结果为 0.348；修复后的 Qwen3-VL 内部成功率约为 0.35，MuJoCo 结果同为 0.348。该对齐只说明当前判分器完成了标定，最终 policy 能力仍需独立评测。
 
-.. figure:: /_static/images/worldloop-results.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/worldloop-results.png
    :alt: WorldLoop 在 LIBERO-Spatial 与 LIBERO-Object 上的训练期和 MuJoCo 评测结果
    :align: center
    :width: 100%
