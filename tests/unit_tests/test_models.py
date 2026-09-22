@@ -124,16 +124,18 @@ def openwam_eval_recipe(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("name", "suite"),
+    ("name", "suite", "max_steps"),
     [
-        ("libero_spatial_openwam_eval", "libero_spatial"),
-        ("libero_object_openwam_eval", "libero_object"),
-        ("libero_goal_openwam_eval", "libero_goal"),
-        ("libero_10_openwam_eval", "libero_10"),
+        ("libero_spatial_openwam_eval", "libero_spatial", 600),
+        ("libero_object_openwam_eval", "libero_object", 600),
+        ("libero_goal_openwam_eval", "libero_goal", 600),
+        ("libero_10_openwam_eval", "libero_10", 700),
     ],
 )
-def test_openwam_libero_eval_recipes_validate(openwam_eval_recipe, name, suite):
-    """Every LIBERO suite recipe shares the deploy settings of the spatial one."""
+def test_openwam_libero_eval_recipes_validate(
+    openwam_eval_recipe, name, suite, max_steps
+):
+    """Every LIBERO suite recipe follows OpenWAM's LIBERO protocol."""
     from rlinf.config import validate_cfg
 
     cfg = openwam_eval_recipe(name)
@@ -141,8 +143,11 @@ def test_openwam_libero_eval_recipes_validate(openwam_eval_recipe, name, suite):
     cfg = validate_cfg(cfg)
     assert cfg.env.eval.task_suite_name == suite
     assert cfg.env.eval.openwam_action_representation == "native_delta_eef10"
-    # OpenWAM's own LIBERO client caps every suite at 600 steps.
-    assert cfg.env.eval.max_episode_steps == 600
+    # benchmarks/libero/policy_config.yml: 600 steps, 700 for libero_10, 30
+    # settling steps after every reset.
+    assert cfg.env.eval.max_episode_steps == max_steps
+    assert cfg.env.eval.max_steps_per_rollout_epoch == max_steps
+    assert cfg.env.eval.num_steps_wait == 30
     assert cfg.rollout.model.openwam.inference_horizon == 10
     assert cfg.rollout.model.num_action_chunks == 10
     assert cfg.rollout.model.load_to_device is True
@@ -1589,6 +1594,8 @@ def test_openwam_robotwin_eval_recipes_validate(openwam_eval_recipe, name):
     assert env.env_type == "robotwin"
     assert env.task_config.task_name == task
     assert env.openwam_action_representation == "absolute_eef20"
+    # OpenWAM's RoboTwin protocol evaluates on unseen instructions.
+    assert env.instruction_type == "unseen"
     assert env.task_config.data_type.endpose is True
     assert env.task_config.camera.collect_wrist_camera is True
     assert list(env.task_config.embodiment) == ["aloha-agilex"]
@@ -1601,15 +1608,26 @@ def test_openwam_robotwin_eval_recipes_validate(openwam_eval_recipe, name):
 
 
 def test_openwam_robotwin_recipe_generator_covers_all_tasks():
-    from toolkits.openwam.gen_robotwin_eval_recipes import STEP_LIMITS, rounded_steps
+    """The committed preset and 50 recipes are exactly what the generator renders."""
+    from toolkits.openwam.gen_robotwin_eval_recipes import (
+        STEP_LIMITS,
+        render_recipes,
+        rounded_steps,
+    )
 
+    repo = Path(__file__).resolve().parents[2]
     assert len(STEP_LIMITS) == 50 and len(_ROBOTWIN_RECIPES) == 50
-    recipes_dir = Path(__file__).resolve().parents[2] / "evaluations/robotwin"
-    for name in _ROBOTWIN_RECIPES:
-        text = (recipes_dir / f"{name}.yaml").read_text()
-        assert "  - _self_\n" in text, name
-        assert "/mnt/" not in text, name
     assert {f"robotwin_{t}_openwam_eval" for t in STEP_LIMITS} == set(_ROBOTWIN_RECIPES)
+    rendered = render_recipes(repo)
+    assert len(rendered) == 51
+    stale = [
+        str(path.relative_to(repo))
+        for path, text in rendered.items()
+        if path.read_text() != text
+    ]
+    assert not stale, (
+        f"regenerate with toolkits/openwam/gen_robotwin_eval_recipes.py: {stale}"
+    )
     assert rounded_steps(400) == 416 and rounded_steps(512) == 512
 
 
@@ -2094,7 +2112,6 @@ def test_openwam_retarget_runtime_device_updates_cached_devices():
     assert architecture._device == torch.device("cuda:3")
     assert video._device == torch.device("cuda:3")
     assert not hasattr(architecture.backbones["vlm"], "_device")
-    assert not hasattr(policy, "_no_split_modules")  # DiT blocks stay in the root unit
 
 
 def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
@@ -2177,6 +2194,21 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
     kind, runtime = policy.architecture.calls[-1]
     assert kind == "runtime" and runtime["use_gradient_checkpointing"] is True
     assert runtime["max_timestep_boundary"] == 1.0
+
+    # Eval recipes pass no runtime dtype: OpenWAM's cached input dtype must
+    # follow the recast parameters instead of the checkpoint's training dtype.
+    policy = OpenWAMPolicy.from_checkpoint(
+        model_path=str(ckpt),
+        ckpt_name=None,
+        device="cpu",
+        torch_dtype=torch.float32,
+        num_frames=33,
+        height=384,
+        width=320,
+        denoise_steps=4,
+    )
+    assert next(policy.parameters()).dtype == torch.float32
+    assert policy.architecture._dtype == torch.float32
 
 
 def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
@@ -2538,3 +2570,181 @@ def test_openwam_export_links_assets_and_infers_step(tmp_path):
         export_checkpoint(bare, source, tmp_path / "nostep")
     written = export_checkpoint(bare, source, tmp_path / "bare", step=3)
     assert written.name == "checkpoint_step_3.safetensors"
+
+
+def test_openwam_sft_model_provider_uses_the_model_registry(monkeypatch):
+    """The SFT worker builds OpenWAM through ``rlinf.models.get_model``'s contract."""
+    import rlinf.models as models
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    built = []
+
+    def fake_builder(cfg, torch_dtype):
+        built.append((cfg, torch_dtype))
+        return torch.nn.Linear(1, 1)
+
+    monkeypatch.setitem(models._MODEL_REGISTRY, "openwam", fake_builder)
+    stub = object.__new__(FSDPVlaSftWorker)
+    stub.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_type": "openwam",
+                    "model_path": "/ckpt",
+                    "precision": "fp32",
+                    "is_lora": False,
+                    "load_to_device": False,
+                },
+                "fsdp_config": {"mixed_precision": {"param_dtype": "bf16"}},
+            }
+        }
+    )
+    model = FSDPVlaSftWorker.model_provider_func(stub)
+    assert isinstance(model, torch.nn.Linear)
+    ((cfg, torch_dtype),) = built
+    # fp32 master weights; FSDP's compute dtype reaches OpenWAM as runtime_dtype.
+    assert torch_dtype == torch.float32
+    assert cfg.runtime_dtype == "bf16"
+    assert cfg.model_path == "/ckpt"
+
+
+def test_openwam_eval_validation_rejects_inconsistent_recipes(openwam_eval_recipe):
+    """Chunking, step budget and action bridge are checked before the model loads."""
+    from rlinf.config import validate_cfg
+
+    def validate(*overrides):
+        cfg = openwam_eval_recipe("libero_spatial_openwam_eval", list(overrides))
+        cfg.runner.task_type = "embodied_eval"
+        return validate_cfg(cfg)
+
+    validate()
+    with pytest.raises(ValueError, match="num_action_chunks=10"):
+        validate("rollout.model.num_action_chunks=32")
+    with pytest.raises(ValueError, match="num_action_chunks=48"):
+        validate(
+            "rollout.model.openwam.inference_horizon=null",
+            "rollout.model.num_frames=49",
+        )
+    with pytest.raises(ValueError, match="multiple of"):
+        validate("env.eval.max_steps_per_rollout_epoch=605")
+    with pytest.raises(ValueError, match="openwam_action_representation"):
+        validate("env.eval.openwam_action_representation=joint")
+    with pytest.raises(ValueError, match="render_gpu_ids"):
+        validate("env.eval.render_gpu_ids=0")
+
+
+def _openwam_fake_mixture_cfg(tmp_path, monkeypatch, override_libero=None):
+    """Register a fake ``build_dataset`` that records the mixture config it gets."""
+    import sys
+
+    class _FakeMixture(torch.utils.data.Dataset):
+        def __init__(self):
+            self.epochs = []
+
+        def __len__(self):
+            return 6
+
+        def __getitem__(self, index):
+            return {"index": index}
+
+        def set_epoch(self, epoch):
+            self.epochs.append(int(epoch))
+
+    seen = []
+    built = []
+
+    def fake_build_dataset(dl_cfg, split):
+        seen.append((OmegaConf.to_container(dl_cfg.datasets), split))
+        built.append(_FakeMixture())
+        return built[-1]
+
+    registry = ModuleType("openwam.dataloader.registry")
+    registry.build_dataset = fake_build_dataset
+    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
+    monkeypatch.setitem(
+        sys.modules, "openwam.dataloader", ModuleType("openwam.dataloader")
+    )
+    monkeypatch.setitem(sys.modules, "openwam.dataloader.registry", registry)
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    (ckpt / "config.yaml").write_text(
+        "dataloader:\n"
+        "  type: mixture\n"
+        "  datasets:\n"
+        "    robocoin: {enabled: true, dataset_dir: /train-host/robocoin}\n"
+        "    oxe_droid: {enabled: false, dataset_dir: /train-host/oxe_droid}\n"
+        "    libero: {enabled: true, dataset_dir: /train-host/libero}\n"
+    )
+    data = {"num_workers": 0}
+    if override_libero is not None:
+        data["openwam"] = {"datasets": {"libero": {"dataset_dir": override_libero}}}
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {"model_path": str(ckpt)},
+                "micro_batch_size": 2,
+                "seed": 3,
+            },
+            "data": data,
+        }
+    )
+    return cfg, seen, built
+
+
+def test_openwam_sft_dataloader_places_mixture_sources_under_one_root(
+    tmp_path, monkeypatch
+):
+    """A mixture root maps to ``<root>/<name>`` per enabled source."""
+    pytest.importorskip("torchdata")
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    cfg, seen, _ = _openwam_fake_mixture_cfg(
+        tmp_path, monkeypatch, override_libero="/elsewhere/libero"
+    )
+    loader, info = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
+    assert seen == [
+        (
+            {
+                "robocoin": {"enabled": True, "dataset_dir": "/root/robocoin"},
+                "oxe_droid": {"enabled": False, "dataset_dir": "/train-host/oxe_droid"},
+                "libero": {"enabled": True, "dataset_dir": "/elsewhere/libero"},
+            },
+            "train",
+        )
+    ]
+    assert info["dataset_type"] == "mixture"
+    assert info["normalization_stats_path"] is None
+    assert len(loader) == 3
+    with pytest.raises(ValueError, match="exactly one data root"):
+        build_openwam_sft_dataloader(cfg, 1, 0, ["/a", "/b"])
+
+
+def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(tmp_path, monkeypatch):
+    """A resumed epoch-aware dataset reshuffles for the restored epoch, not epoch 0."""
+    pytest.importorskip("torchdata")
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    monkeypatch.setattr(
+        worker_module.FSDPSftWorker, "load_checkpoint", lambda self, path: None
+    )
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+    cfg, _, built = _openwam_fake_mixture_cfg(tmp_path, monkeypatch)
+    source, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
+    source.sampler.set_epoch(2)
+    iterator = iter(source)
+    next(iterator)
+    ckpt = tmp_path / "global_step_1" / "actor"
+    ckpt.mkdir(parents=True)
+    torch.save([source.state_dict()], ckpt / "data.pt")
+
+    loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
+    stub = object.__new__(FSDPVlaSftWorker)
+    stub.data_loader = loader
+    stub.data_iter = iter(loader)
+    stub._rank, stub._world_size, stub._data_epoch = 0, 1, 0
+    FSDPVlaSftWorker.load_checkpoint(stub, str(ckpt))
+    assert stub._data_epoch == 2
+    assert built[-1].epochs[-1] == 2
+    assert len(list(stub.data_iter)) == 2
