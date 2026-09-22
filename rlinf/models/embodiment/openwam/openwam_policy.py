@@ -183,13 +183,15 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
             lambda_action=lambda_action,
             inference_horizon=inference_horizon,
         )
-        model.to(
-            device=device, dtype=torch_dtype or next(architecture.parameters()).dtype
-        )
+        param_dtype = torch_dtype or next(architecture.parameters()).dtype
+        model.to(device=device, dtype=param_dtype)
         model._training_runtime = training_runtime
         model._frozen_module_names = tuple(frozen_module_names)
-        if runtime_dtype is not None:
-            model.set_runtime_dtype(runtime_dtype)
+        # ``load_from_checkpoint_dir`` caches the checkpoint's training dtype as
+        # the dtype OpenWAM builds noise, timesteps and proprio tensors in. Once
+        # the parameters are recast that cache must follow them, unless FSDP
+        # mixed precision names a separate compute dtype.
+        model.set_runtime_dtype(runtime_dtype or param_dtype)
         return model
 
     def set_runtime_dtype(self, dtype: torch.dtype | None) -> None:
