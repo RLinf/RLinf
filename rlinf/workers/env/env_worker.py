@@ -1559,10 +1559,12 @@ class EnvWorker(Worker):
                         eval_metrics[key].append(value)
 
                     if self.cfg.env.eval.auto_reset:
-                        if (
-                            eval_rollout_epoch == self.eval_rollout_epoch - 1
-                            and eval_step == self.n_eval_chunk_steps - 1
-                        ):
+                        # A rollout window ends at the last policy chunk.  Do
+                        # not feed that observation back into the policy: the
+                        # explicit reset below must discard the remaining
+                        # action state and return the hardware to its reset
+                        # pose before the next start signal.
+                        if eval_step == self.n_eval_chunk_steps - 1:
                             continue
                     else:
                         if eval_step == self.n_eval_chunk_steps - 1:
@@ -1582,6 +1584,37 @@ class EnvWorker(Worker):
                     break
 
             self.finish_rollout(mode="eval")
+            if self.cfg.env.eval.auto_reset:
+                is_final_window = eval_rollout_epoch == self.eval_rollout_epoch - 1
+                for stage_id in range(self.stage_num):
+                    self.eval_env_list[stage_id].is_start = True
+                    self.eval_prev_done[stage_id] = torch.zeros(
+                        self.eval_num_envs_per_stage, dtype=torch.bool
+                    )
+                    extracted_obs, infos = self.eval_env_list[stage_id].reset(
+                        options={"rlinf_wait_for_start": not is_final_window}
+                    )
+                    if is_final_window:
+                        continue
+                    env_output = EnvOutput(
+                        obs=extracted_obs,
+                        final_obs=(
+                            infos["final_observation"]
+                            if "final_observation" in infos
+                            else None
+                        ),
+                        env_infos=infos if isinstance(infos, dict) else None,
+                    )
+                    self.send_to(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=rollout_channel,
+                        data=self._build_rollout_input_data(env_output.to_dict()),
+                        split_fn=self._obs_split_fn,
+                        mode="eval",
+                        tag="rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        decoupled_mode=self.env_decoupled_mode,
+                    )
         for stage_id in range(self.stage_num):
             if self.eval_enable_offload:
                 get_env_attr(self.eval_env_list[stage_id], "offload")()

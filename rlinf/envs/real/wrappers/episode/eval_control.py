@@ -41,10 +41,21 @@ class KeyboardEvalControlWrapper(KeyboardSession):
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
     ) -> tuple[Any, dict[str, Any]]:
+        # The evaluator may reset the hardware after its final window without
+        # waiting for another operator start signal.
+        reset_options = None if options is None else dict(options)
+        wait_for_start = True
+        if reset_options is not None:
+            wait_for_start = bool(reset_options.pop("rlinf_wait_for_start", True))
+
         # Reset first, then wait for explicit operator confirmation.
         self.drain()
-        obs, info = self.env.reset(seed=seed, options=options)
+        obs, info = self.env.reset(seed=seed, options=reset_options)
         self._last_obs = obs
+        self._running = False
+        if not wait_for_start:
+            return obs, info
+
         # Emit a heartbeat while the homed robot waits for the start signal.
         self.log(
             "Arms homed and idle. Arrange the scene, then press pedal 'a' "

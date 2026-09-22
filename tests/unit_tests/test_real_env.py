@@ -1320,6 +1320,34 @@ def test_keyboard_eval_control_ignores_quit(monkeypatch, tmp_path):
     wrapper.close()
 
 
+def test_keyboard_eval_control_can_reset_without_waiting_for_next_start(monkeypatch):
+    import rlinf.envs.real.wrappers.episode.session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import (
+        KeyboardEvalControlWrapper,
+    )
+
+    class FakeListener:
+        def pop_pressed_keys(self):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+
+    env = FakeEnv()
+    wrapper = KeyboardEvalControlWrapper(env)
+    wrapper._running = True
+
+    observation, info = wrapper.reset(options={"rlinf_wait_for_start": False})
+
+    assert observation == {"obs": 1}
+    assert info == {}
+    assert env.reset_calls == 1
+    assert not wrapper._running
+    wrapper.close()
+
+
 def test_start_end_wrapper_accepts_wsl_control_commands(monkeypatch, tmp_path):
     from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
 

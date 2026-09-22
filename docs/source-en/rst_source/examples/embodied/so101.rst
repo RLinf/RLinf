@@ -345,7 +345,9 @@ windows to run; the same config works for any count. End each episode with
 ``c`` or ``a`` while the evaluation is running. Normal evaluation ends after
 the configured rollout count, so the evaluation control interface has no
 ``q`` command. Use the process interrupt mechanism only when an early stop is
-necessary.
+necessary. At each window boundary the current action chunk is discarded,
+the configured robot and teleoperation devices run their reset sequence, and
+the next window waits for ``s`` before requesting a new policy action.
 
 .. code-block:: bash
 
