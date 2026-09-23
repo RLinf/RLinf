@@ -225,3 +225,56 @@ def test_robodojo_action_passthrough():
 
     actions = np.zeros((2, 3, 14))
     assert prepare_actions(actions, "robodojo", "openpi", 1, 14) is actions
+
+
+def test_robodojo_installed_bridge_is_called(monkeypatch):
+    bridge = pytest.importorskip("robodojo_runtime.bridge")
+    calls = []
+
+    class Native:
+        def __init__(self, task_config):
+            calls.append(("create", task_config))
+            self.stub = StubVectorEnv(task_config, 1, [0])
+
+        def reset(self, seed):
+            calls.append(("reset", seed))
+            self.stub.reset(env_seeds=[seed])
+
+        def get_obs(self):
+            return self.stub.get_obs()[0]
+
+        def step(self, actions):
+            calls.append(("step", actions.shape))
+            obs, rewards, terminated, truncated, infos = self.stub.step(actions[None])
+            return obs[0], rewards[0], terminated[0], truncated[0], infos[0]
+
+        def close(self, clear_cache):
+            calls.append(("close", clear_cache))
+
+    monkeypatch.setattr(bridge, "NativeEnv", Native)
+    cfg = OmegaConf.create(
+        {
+            "seed": 0,
+            "group_size": 1,
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "use_rel_reward": False,
+            "use_custom_reward": False,
+            "use_fixed_reset_state_ids": True,
+            "max_episode_steps": 100,
+            "task_config": {"task_name": "test_task"},
+        }
+    )
+    env = RoboDojoEnv(cfg, 1, 0, 1, None)
+    assert isinstance(env.venv, bridge.VectorEnv)
+    obs, _ = env.reset(env_seeds=[7])
+    assert obs["states"].shape == (1, 14)
+    _, rewards, _, _, _ = env.step(np.zeros((1, 2, 14)))
+    assert rewards.tolist() == [2.0]
+    env.close(False)
+    assert calls == [
+        ("create", {"task_name": "test_task"}),
+        ("reset", 7),
+        ("step", (2, 14)),
+        ("close", False),
+    ]

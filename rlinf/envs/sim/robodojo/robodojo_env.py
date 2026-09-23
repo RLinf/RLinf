@@ -14,7 +14,7 @@
 
 """Adapt a RoboDojo runtime bridge to RLinf's vector environment contract.
 
-The optional rlinf-robodojo-runtime>=0.2.0 distribution exports
+The optional rlinf-robodojo-runtime>=0.3.0 distribution exports
 robodojo_runtime.bridge.VectorEnv:
 * VectorEnv(task_config: dict, n_envs: int, env_seeds: list[int]) owns simulator
   resources. ROBODOJO_ASSETS_ROOT is set from cfg.assets_path when provided;
