@@ -12,7 +12,7 @@ SO101 配置与控制
 概览
 ----
 
-测试在连接机械臂的 Linux 主机上运行，无需 GPU 或模型 checkpoint。RLinf 目前尚未提供适用于 SO101 的真机任务或训练流程；本指南仅介绍硬件检查。
+本文介绍连接机械臂的 Linux 主机上的完整基础流程：硬件检查、使用 leader 采集示范数据、SFT 训练，以及本地 fixed-checkpoint 推理。
 
 硬件配置
 --------
@@ -50,11 +50,11 @@ SO101 配置与控制
 .. code-block:: bash
 
    # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env so101
+   bash requirements/install.sh embodied --model openpi --env so101
    source .venv/bin/activate
    export REPO_PATH="$PWD"
 
-安装脚本包含 LeRobot 及 Feetech 支持。后续命令均在此仓库目录中运行，并保持环境已激活。平台要求见 :doc:`安装 </rst_source/start/installation>`。
+安装脚本包含 OpenPI、LeRobot 及 Feetech 电机依赖。后续命令均在此仓库目录中运行，并保持环境已激活。平台要求见 :doc:`安装 </rst_source/start/installation>`。
 
 查找串口并配置电机
 ^^^^^^^^^^^^^^^^^^
@@ -162,7 +162,37 @@ follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``
 
 ``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），无需每步等待新图像。连续夹爪命令不等待运动完成。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
 
-新增真机任务
-------------
+采集示范数据
+-------------
 
-硬件检查通过后，参考 :doc:`新增真机任务 </rst_source/extending/new_task>` 定义任务的复位流程、观测、动作、奖励和成功条件。开始训练前，需要先实现可运行的真机任务。
+两台机械臂通过硬件检查后，在 ``examples/embodiment/config/realworld_so101_collect_data_joint.yaml`` 中填写 follower、leader 的串口、calibration ID 和 ``task_description``。将占位文本 ``Finish the user's task.`` 替换为示范数据实际使用的 instruction。采集器会让两台机械臂回到配置的起始姿态，记录 leader 示范，并将可供 SO-101 SFT loader 使用的 LeRobot dataset 写入运行目录。
+
+在仓库根目录启动采集：
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh \
+     realworld_so101_collect_data_joint
+
+keyboard wrapper 使用 ``a`` 开始或放弃录制，使用 ``b`` 切换 segment，使用 ``c`` 保存成功 episode，使用 ``q`` 安全停止采集。运行账号必须有权读取选定的 Linux input device；如果主机上有多个键盘设备，请将 ``RLINF_KEYBOARD_DEVICE`` 设为稳定的 ``/dev/input/by-id/...`` 路径。
+
+数据会写入本次运行目录下的 ``collected_data``。训练前，将这个路径和 repository ID 填入 SFT YAML。
+
+数采与评测都复用 ``SO101ReachEnv-v1`` 提供 SO-101 的关节空间观测、动作和 reset 生命周期。评测配置中的 ``task_description`` 应与 SFT 使用的 instruction 保持一致，使 fixed checkpoint 收到训练时的任务指令；操作者通过 ``b`` 或 ``c`` 记录评测结果。
+
+本地训练与 fixed-checkpoint 推理
+--------------------------------
+
+RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配置。先在 ``examples/sft/config/realworld_sft_openpi_so101.yaml`` 中填写 dataset 路径、repository ID、基础 checkpoint 和 norm stats 路径，再通过统一 SFT 入口启动训练：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101
+
+本地推理前，在 ``examples/embodiment/config/model/so101_pi05.yaml`` 中填写 checkpoint 和 norm stats 路径，并在 ``examples/embodiment/config/realworld_so101_eval_openpi.yaml`` 中填写 follower 串口、calibration ID 和相机设备。将其中 ``task_description`` 的占位文本 ``Finish the user's task.`` 替换为 SFT 使用的相同 instruction，然后通过统一评测入口启动：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh realworld_so101_eval_openpi
+
+评测配置默认启用本地 RTC action-chunk 执行。按选定键盘上的 ``a`` 启动 episode，按 ``c`` 以成功结束，按 ``b`` 以失败结束。checkpoint 必须包含与 ``pi05_so101_joint`` 兼容的权重，以及配置的 asset ID 对应的 norm stats。

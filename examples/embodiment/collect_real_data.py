@@ -26,7 +26,9 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.real import RealWorldEnv
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
+from rlinf.utils.logging import get_logger
 
 
 class DataCollector(Worker):
@@ -100,11 +102,18 @@ class DataCollector(Worker):
         for key, val in obs.items():
             if isinstance(val, np.ndarray):
                 val = torch.from_numpy(val)
-            val = val.cpu()
+            if isinstance(val, torch.Tensor):
+                val = val.cpu()
+            elif key == "task_descriptions":
+                val = list(val)
+            else:
+                raise TypeError(
+                    f"Unsupported observation field {key!r}: {type(val).__name__}"
+                )
             if key == "images":
                 ret_obs["main_images"] = val.clone()
             else:
-                ret_obs[key] = val.clone()
+                ret_obs[key] = val.clone() if isinstance(val, torch.Tensor) else val
         return ret_obs
 
     @staticmethod
@@ -113,6 +122,38 @@ class DataCollector(Worker):
         return {key: value for key, value in obs.items() if key != "task_descriptions"}
 
     def run(self):
+        """Collect episodes and leave hardware safe after every exit path."""
+        failed = False
+        try:
+            return self._collect()
+        except KeyboardAbort:
+            self.log_info("Operator requested collection shutdown.")
+            try:
+                self.env.get_wrapper_attr("park")()
+            except BaseException:  # noqa: BLE001 - preserve controlled shutdown
+                get_logger().exception(
+                    "Failed to park real-world hardware after operator shutdown"
+                )
+            return None
+        except BaseException:  # noqa: BLE001 - hardware cleanup includes interrupts
+            failed = True
+            try:
+                self.env.get_wrapper_attr("park")()
+            except BaseException:  # noqa: BLE001 - preserve the collection failure
+                get_logger().exception("Failed to park real-world hardware after error")
+            raise
+        finally:
+            try:
+                self.env.close()
+            except BaseException:  # noqa: BLE001 - preserve the collection failure
+                if not failed:
+                    raise
+                get_logger().exception(
+                    "Failed to close real-world hardware after error"
+                )
+
+    def _collect(self) -> None:
+        """Run the collection loop while :meth:`run` owns hardware cleanup."""
         obs, _ = self.env.reset()
         # Seed from preexisting episodes so resume bar + stop target line up.
         success_cnt = self._preexisting_success
@@ -243,7 +284,6 @@ class DataCollector(Worker):
         self.log_info(
             f"Finished. Demos saved in: {os.path.join(self.cfg.runner.logger.log_path, 'demos')}"
         )
-        self.env.close()
 
 
 @hydra.main(

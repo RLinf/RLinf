@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Mapping, Optional
 
 import gymnasium as gym
 import numpy as np
 
 from rlinf.robotics.parts.teleop import TeleopGroup
+from rlinf.utils.logging import get_logger
 
 from .intervention import TeleopDevice, TeleopSample
 
@@ -56,6 +58,10 @@ class ComposedTeleop(TeleopDevice):
         self.group = group
         self.layout = dict(layout)
         self.streamer = streamer
+        self._reset_thread: Optional[threading.Thread] = None
+        self._reset_errors: list[BaseException] = []
+        self._reset_context: dict[str, Any] = {}
+        self._reset_completed = False
         if streamer is not None:
             unknown = set(getattr(streamer, "DELIVERS", ())) - set(self.layout)
             if unknown:
@@ -73,7 +79,15 @@ class ComposedTeleop(TeleopDevice):
         ("action_scale", "get_action_scale"),
         ("joint_positions", "get_joint_positions"),
         ("gripper_open", "get_gripper_open"),
+        ("gripper_position", "get_gripper_position"),
         ("hand_reset_pose", "get_hand_reset_pose"),
+        ("reset_joint_positions", "get_reset_joint_positions"),
+        ("reset_gripper_position", "get_reset_gripper_position"),
+        ("reset_duration", "get_reset_duration"),
+        ("reset_joint_speed", "get_reset_joint_speed"),
+        ("park_joint_positions", "get_park_joint_positions"),
+        ("park_gripper_position", "get_park_gripper_position"),
+        ("park_duration", "get_park_duration"),
     )
 
     @classmethod
@@ -86,25 +100,121 @@ class ComposedTeleop(TeleopDevice):
             except AttributeError:
                 continue
             if callable(value):
-                context[key] = value()
+                value = value()
+            if value is not None:
+                context[key] = value
         return context
 
     def before_reset(self, env: gym.Env, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Pause the streamer and allow it to adjust reset arguments."""
+        """Pause streaming and begin device reset alongside the robot reset."""
+        if self._reset_thread is not None:
+            raise RuntimeError("A teleop reset is already in progress")
         if self.streamer is not None:
-            return self.streamer.before_reset(env, kwargs)
+            kwargs = self.streamer.before_reset(env, kwargs)
+        self._reset_context = self.context_from(env)
+        self._reset_errors = []
+        self._reset_completed = False
+        started = threading.Event()
+
+        def prepare() -> None:
+            started.set()
+            try:
+                self.group.prepare_reset(self._reset_context)
+            except BaseException as error:  # noqa: BLE001 - re-raised on reset thread
+                self._reset_errors.append(error)
+
+        self._reset_thread = threading.Thread(
+            target=prepare,
+            name="teleop-reset",
+            daemon=True,
+        )
+        self._reset_thread.start()
+        started.wait()
         return kwargs
 
     def reset(self, env: gym.Env) -> None:
-        """Reset devices from the current robot state and realign the streamer."""
+        """Finish device reset, then hand the devices back to the operator."""
+        self._join_reset()
+        if self._reset_errors:
+            raise self._reset_errors[-1]
         self.group.reset(self.context_from(env))
         if self.streamer is not None:
             self.streamer.reset(env)
+        self._reset_completed = True
 
     def after_reset(self, env: gym.Env) -> None:
-        """Resume the streamer after reset cleanup."""
+        """Release incomplete reset state and resume the streamer."""
+        self._join_reset()
+        if not self._reset_completed:
+            try:
+                self.group.abort_reset(self._reset_context)
+            except BaseException:  # noqa: BLE001 - preserve the reset failure
+                get_logger().exception("Failed to release teleop devices after reset")
+            if self._reset_errors:
+                get_logger().error(
+                    "Teleop reset preparation failed: %s", self._reset_errors[-1]
+                )
+        self._reset_thread = None
+        self._reset_context = {}
+        self._reset_errors = []
+        self._reset_completed = False
         if self.streamer is not None:
             self.streamer.after_reset(env)
+
+    def _join_reset(self) -> None:
+        """Wait for device reset preparation if one is running."""
+        if self._reset_thread is not None:
+            self._reset_thread.join()
+
+    def park(self, env: gym.Env, park_env: Any) -> None:
+        """Move teleop devices and the robot to park concurrently."""
+        if self._reset_thread is not None:
+            raise RuntimeError("Cannot park while a teleop reset is in progress")
+        context = self.context_from(env)
+        required = {
+            "park_joint_positions",
+            "park_gripper_position",
+            "park_duration",
+            "reset_joint_speed",
+        }
+        missing = required - context.keys()
+        if missing:
+            raise RuntimeError(
+                f"Cannot park the teleop rig; missing context: {sorted(missing)}"
+            )
+        context.update(
+            {
+                "reset_joint_positions": context["park_joint_positions"],
+                "reset_gripper_position": context["park_gripper_position"],
+                "reset_duration": context["park_duration"],
+            }
+        )
+        errors: list[BaseException] = []
+
+        # Re-establish a stable leader target before any park trajectory starts.
+        # This protects an actively held leader when park follows an exception.
+        self.group.hold_for_reset(context)
+
+        def prepare() -> None:
+            try:
+                self.group.prepare_reset(context)
+            except BaseException as error:  # noqa: BLE001 - re-raised below
+                errors.append(error)
+
+        thread = threading.Thread(target=prepare, name="teleop-park", daemon=True)
+        thread.start()
+        completed = False
+        try:
+            park_env()
+            thread.join()
+            if errors:
+                raise errors[-1]
+            self.group.reset(context)
+            completed = True
+        finally:
+            thread.join()
+            if not completed:
+                self.group.abort_reset(context)
 
     def before_step(self, env: gym.Env) -> None:
         """Start the streamer when its prerequisites are satisfied."""
@@ -153,6 +263,19 @@ class ComposedTeleop(TeleopDevice):
             info=info,
         )
 
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the handover buffer required by the composed devices."""
+        return self.group.manual_start_hold_seconds
+
+    def release_for_manual(self, env: gym.Env) -> None:
+        """Release all devices after the manual-control handover buffer."""
+        self.group.release_for_manual(self.context_from(env))
+
+    def hold_for_reset(self, env: gym.Env) -> None:
+        """Hold all devices before resetting or parking the robot."""
+        self.group.hold_for_reset(self.context_from(env))
+
     def get_hold_action(
         self, env: gym.Env, fallback_action: Optional[np.ndarray] = None
     ) -> np.ndarray:
@@ -174,6 +297,13 @@ class ComposedTeleop(TeleopDevice):
 
     def close(self) -> None:
         """Stop the stream, then release every device in the group."""
-        if self.streamer is not None:
-            self.streamer.close()
-        self.group.disconnect()
+        try:
+            self._join_reset()
+            if self._reset_thread is not None and not self._reset_completed:
+                self.group.abort_reset(self._reset_context)
+        finally:
+            try:
+                if self.streamer is not None:
+                    self.streamer.close()
+            finally:
+                self.group.disconnect()

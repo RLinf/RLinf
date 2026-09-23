@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 import math
+import sys
 import time
 from typing import Any, Iterator, Optional
 
 import gymnasium as gym
 
 from .keyboard import KeyboardListener
+
+
+class KeyboardAbort(RuntimeError):
+    """Signal a controlled operator abort to the owning runner."""
 
 
 class KeyboardSession(gym.Wrapper):
@@ -69,8 +74,22 @@ class KeyboardSession(gym.Wrapper):
         """Return the unwrapped environment."""
         return getattr(self.env, "unwrapped", self.env)
 
+    def close(self) -> None:
+        """Release the owned keyboard listener and wrapped environment."""
+        try:
+            self.listener.close()
+        finally:
+            super().close()
+
     def log(self, message: str, *args: Any) -> None:
         """Write an informational message through the environment logger."""
         logger = getattr(self.base_env(), "_logger", None)
         if logger is not None:
             logger.info(message, *args)
+
+    def operator_log(self, message: str, *args: Any) -> None:
+        """Write an operator-facing message without Ray logger buffering."""
+        self.log(message, *args)
+        text = message % args if args else message
+        sys.stderr.write(f"[SO-101] {text}\n")
+        sys.stderr.flush()

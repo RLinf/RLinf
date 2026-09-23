@@ -35,6 +35,12 @@ def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
     return build_dual_franka_sft_dataloader
 
 
+def _load_so101_sft_dataloader() -> SftDataLoaderBuilder:
+    from rlinf.data.datasets.openpi.so101 import build_so101_sft_dataloader
+
+    return build_so101_sft_dataloader
+
+
 def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
     from rlinf.data.datasets.openpi.official_sft_data_loader import (
         build_official_openpi_sft_dataloader,
@@ -43,23 +49,24 @@ def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
     return build_official_openpi_sft_dataloader
 
 
-# Dedicated loaders first; unmatched LeRobot configs (LIBERO, realworld,
-# custom, ManiSkill, RoboTwin, …) use the official OpenPI map-style loader.
+# Environment name -> lazy SFT dataloader builder.
 _SFT_DATALOADER_BUILDERS = {
     "behavior": _load_behavior_sft_dataloader,
     "dualfranka": _load_dual_franka_sft_dataloader,
-    "official": _load_official_openpi_sft_dataloader,
+    "so101": _load_so101_sft_dataloader,
+    "robotwin": _load_official_openpi_sft_dataloader,
 }
-
-_DEDICATED_ENVS = ("behavior", "dualfranka")
 
 
 def _resolve_env(config_name: str) -> str:
-    """Pick a dedicated loader from ``config_name``, else the official LeRobot path."""
-    for env_type in _DEDICATED_ENVS:
+    """Resolve the registered environment named by ``config_name``."""
+    for env_type in _SFT_DATALOADER_BUILDERS:
         if env_type in config_name:
             return env_type
-    return "official"
+    raise ValueError(
+        f"No OpenPI SFT dataloader registered matching "
+        f"config_name={config_name!r}; known envs: {list(_SFT_DATALOADER_BUILDERS)}."
+    )
 
 
 def build_openpi_sft_dataloader(
@@ -69,7 +76,7 @@ def build_openpi_sft_dataloader(
     data_paths: Any,
     eval_dataset: bool = False,
 ) -> tuple[Any, Any]:
-    """Build the environment-specific openpi SFT dataloader."""
+    """Build the environment-specific OpenPI SFT dataloader."""
     if bool(cfg.actor.model.openpi.get("use_rlt", False)):
         return _load_official_openpi_sft_dataloader()(
             cfg, world_size, rank, data_paths, eval_dataset
@@ -87,7 +94,7 @@ def build_official_openpi_sft_dataloader(
     data_paths: Any,
     eval_dataset: bool = False,
 ) -> tuple[Any, Any]:
-    """Build the official OpenPI SFT loader (RoboTwin / RLT / LeRobot)."""
+    """Build the official OpenPI loader for the legacy OpenPI model type."""
     return _load_official_openpi_sft_dataloader()(
         cfg, world_size, rank, data_paths, eval_dataset
     )

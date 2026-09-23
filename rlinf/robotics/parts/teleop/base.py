@@ -66,7 +66,12 @@ CONTEXT_KEYS = (
     "action_scale",
     "joint_positions",
     "gripper_open",
+    "gripper_position",
     "hand_reset_pose",
+    "reset_joint_positions",
+    "reset_gripper_position",
+    "reset_duration",
+    "reset_joint_speed",
 )
 
 
@@ -298,6 +303,23 @@ class TeleopDevice(TeleopPart):
 
     def on_action_chunk_begin(self) -> None:
         """Let go of anything held only until the next chunk of actions."""
+
+    def prepare_reset(self, context: Mapping[str, Any]) -> None:
+        """Prepare this device while the robot moves to its reset state."""
+
+    def abort_reset(self, context: Mapping[str, Any]) -> None:
+        """Release state held by an incomplete reset."""
+
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Seconds to hold a reset pose before manual control is released."""
+        return 0.0
+
+    def release_for_manual(self, context: Mapping[str, Any]) -> None:
+        """Release device state after the operator handover buffer."""
+
+    def hold_for_reset(self, context: Mapping[str, Any]) -> None:
+        """Hold the device safely before the robot is reset or parked."""
 
     def on_reset(self, context: Mapping[str, Any] = MappingProxyType({})) -> None:
         """Re-align to the robot after it resets.

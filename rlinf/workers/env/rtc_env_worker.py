@@ -58,7 +58,7 @@ class RTCEnvWorker(EnvWorker):
         rtc_cfg = self.cfg.runner.get("rtc", {})
         if not rtc_cfg.get("enabled", False):
             return
-        assert str(self.cfg.actor.model.model_type) == "openpi", (
+        assert str(self.model_cfg.model_type) == "openpi", (
             "RTC real-world evaluation is currently integrated for the "
             "openpi policy path."
         )

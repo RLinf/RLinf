@@ -79,6 +79,7 @@ from rlinf.scheduler.manager.net_emulation import (
     NetEmulationConfig,
     NetEmulationManager,
 )
+from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -99,6 +100,22 @@ def _robot_info(config):
     return RobotInfo(
         type=robot_type, model=config.hardware_model(robot_type), config=config
     )
+
+
+def test_rtc_env_worker_uses_eval_model_config():
+    """RTC validation must accept an eval-only config without actor.model."""
+    worker = object.__new__(RTCEnvWorker)
+    worker.cfg = OmegaConf.create(
+        {
+            "runner": {"rtc": {"enabled": True}},
+            "env": {"eval": {"env_type": "real"}},
+        }
+    )
+    worker.model_cfg = OmegaConf.create({"model_type": "openpi"})
+    worker.stage_num = 1
+    worker.eval_num_envs_per_stage = 1
+
+    worker._assert_rtc_eval_supported()
 
 
 def _assert_legacy_transition(env) -> None:
