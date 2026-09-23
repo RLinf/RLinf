@@ -72,15 +72,12 @@ Available under ``evaluations/robotwin/``:
    * - ``robotwin_place_empty_cup_openpi_eval.yaml``
      - place_empty_cup
      - π₀
-   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
-     - adjust_bottle
-     - π₀
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
-   * - ``robotwin_adjust_bottle_openpi_rlinf_eval.yaml``
+   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
      - adjust_bottle
-     - OpenPI_RLinf π₀
+     - π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA

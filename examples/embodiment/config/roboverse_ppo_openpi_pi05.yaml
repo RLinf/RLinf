@@ -125,6 +125,7 @@ actor:
     num_action_chunks: 4
     add_value_head: True
     openpi:
+      task: rl
       config_name: "pi05_libero"
       num_images_in_input: 2
       value_after_vlm: True

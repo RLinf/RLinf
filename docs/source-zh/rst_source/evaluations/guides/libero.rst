@@ -15,7 +15,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -86,6 +86,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2
+   * - ``libero_10_pi0_fast_eval.yaml``
+     - Long (libero_10)
+     - PI0-FAST
 
 DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend 见 :doc:`cosmos3_sglang`。
 
@@ -115,12 +118,16 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 
 终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
 
+.. _apxinf-backend:
+
 ApxInf 推理后端
 ---------------
 
-ApxInf 接入仅用于评测。先在 RLinf 运行环境中安装官方
-`ApxInf <https://github.com/infinigence/ApxInf>`_ Python 前端与 CUDA binding，
-再将 ``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、
+ApxInf 接入仅用于评测。RLinf 通过
+`APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 接入引擎，它封装了
+`ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。先在 RLinf 运行
+环境中安装它以及它所封装的 ``apxinf_py`` CUDA binding，再将
+``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、
 ``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的 checkpoint：
 
 .. code-block:: bash
@@ -132,7 +139,9 @@ ApxInf 接入仅用于评测。先在 RLinf 运行环境中安装官方
 state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。
 resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI
 transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认
-负责初始高斯 noise 采样。做成对数值对齐时，可设置
+负责初始高斯 noise 采样。加载走 ``apxinf_robo.load_bare_model``，它会选中调优
+过的 GEMM tactics，使这个 bare handle 与 ApxInf 自身 policy 路径数值一致。做
+成对数值对齐时，可设置
 ``rollout.model.apxinf.noise_source=observation``，并传入显式的
 ``[B,10,32]`` noise tensor。
 默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测

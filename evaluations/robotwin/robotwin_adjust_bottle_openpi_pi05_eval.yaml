@@ -80,6 +80,7 @@ rollout:
     add_value_head: True
     num_steps: 5
     openpi:
+      task: eval
       config_name: "pi05_aloha_robotwin"
       num_images_in_input: 3
       noise_level: 0.3

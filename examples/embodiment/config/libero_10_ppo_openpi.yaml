@@ -114,6 +114,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       detach_critic_input: True
 
   optim:

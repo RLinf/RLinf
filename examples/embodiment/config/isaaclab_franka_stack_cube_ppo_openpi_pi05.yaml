@@ -115,6 +115,8 @@ actor:
     num_steps: 5
     add_value_head: True
     openpi:
+      torch_compile: False
+      task: rl
       config_name: "pi05_isaaclab_stack_cube"
       num_images_in_input: 2
       noise_level: 0.5

@@ -15,7 +15,7 @@ Environment Setup
 
 With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
+Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, ``molmoact2``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
 
 Example Configs
 ---------------
@@ -86,6 +86,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2
+   * - ``libero_10_pi0_fast_eval.yaml``
+     - Long (libero_10)
+     - PI0-FAST
 
 For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`. For the Cosmos3 SGLang backend, see :doc:`cosmos3_sglang`.
 
@@ -115,14 +118,17 @@ Copy or edit the target YAML and set at least ``rollout.model.model_path``. See 
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
 
+.. _apxinf-backend:
+
 ApxInf Backend
 --------------
 
-The ApxInf path is evaluation-only. Install the official
-`ApxInf <https://github.com/infinigence/ApxInf>`_ Python frontend and CUDA
-binding in the RLinf runtime, then point ``APXINF_PI05_MODEL_DIR`` at a
-checkpoint directory containing ``config.json``, ``model.safetensors``,
-``tokenizer.model``, and ``norm_stats.json``:
+The ApxInf path is evaluation-only. RLinf reaches the engine through
+`APXinf-robo <https://github.com/RLinf/APXinf-robo>`_, which wraps the L1
+interface of `ApxInf <https://github.com/infinigence/ApxInf>`_. Install it and
+the ``apxinf_py`` CUDA binding it wraps in the RLinf runtime, then point
+``APXINF_PI05_MODEL_DIR`` at a checkpoint directory containing ``config.json``,
+``model.safetensors``, ``tokenizer.model``, and ``norm_stats.json``:
 
 .. code-block:: bash
 
@@ -134,7 +140,9 @@ images, an 8-D state, a state-free PI0.5 prompt, 5 flow steps, a 10-action
 prediction horizon, and execution of only the first 5 actions. RLinf's OpenPI
 transforms own resize, tokenization, checkpoint normalization and action
 unnormalization. ApxInf's low-level ``Model.infer_rgb`` API owns only model
-inference and, by default, initial Gaussian noise sampling. Set
+inference and, by default, initial Gaussian noise sampling. Loading goes through
+``apxinf_robo.load_bare_model``, which selects the tuned GEMM tactics that keep
+that bare handle numerically equal to ApxInf's own policy path. Set
 ``rollout.model.apxinf.noise_source=observation`` and pass an explicit
 ``[B,10,32]`` noise tensor when doing paired numerical parity tests.
 The default 10 environments x 10 rollout epochs evaluate 10 reset states for

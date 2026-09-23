@@ -1,34 +1,49 @@
 model_type: "openpi"
 
-# Model path - should be set in specific config files
-model_path: "/path/to/model/openpi"
+# Default Pi0.5 SFT shape. Env-specific fields (config_name, action_dim,
+# num_action_chunks, discrete_state_input, …) are overridden in the experiment
+# YAML. Filesystem paths (model_path, openpi_data.norm_stats_path) also
+# live in the experiment config so this template stays path-free.
 
-precision: null # for openpi, precision is null, please do not change this value
+# OpenPI default: Gemma / SigLIP in bf16, action heads stay fp32.
+# openpi does not support FSDP mixed precision — keep
+# mixed_precision.* bound to this field (null or fp32).
+precision: null
 
-# Action and chunk settings
-num_action_chunks: 10
-action_dim: 7
-
-# LoRA settings
+# LoRA is not used, but the shared model factory reads these keys.
 is_lora: False
 lora_rank: 32
 
-# Training settings
+# Defaults match BEHAVIOR pi05; Dual-Franka / other SFT recipes override these.
+num_action_chunks: 32
+action_dim: 23
 use_proprio: True
+
+# Flow-matching denoising steps (used by the eval sampler; carried here so the
+# shared factory reads one uniform field).
 num_steps: 5
+
+# No value head in the SFT model.
 add_value_head: False
 
-# openpi specific parameters
+# openpi model-shape parameters (clean/minimal: no full_pi05, dsrl,
+# value-head, RL). get_model builds Pi0Config.action_horizon from official
+# TrainConfig for config_name (or openpi.action_horizon if set), plus the
+# openpi.* shape fields below; no config.json is read.
 openpi:
-  config_name: "pi05_libero"
-  num_images_in_input: 2
-  noise_level: 0.5
-  action_chunk: ${actor.model.num_action_chunks}
-  num_steps: ${actor.model.num_steps}
-  train_expert_only: True
-  action_env_dim: ${actor.model.action_dim}
-  noise_method: "flow_sde"
-  add_value_head: ${actor.model.add_value_head}
-  value_after_vlm: False
-  value_vlm_mode: "mean_token"
-  detach_critic_input: null
+  # Concrete openpi variant: eval / sft / rl. This template feeds SFT
+  # experiments, so it defaults to `sft`.
+  task: sft
+  # openpi TrainConfig key selecting the shared transform pipeline
+  # (rlinf.models.embodiment.openpi.dataconfig.get_openpi_config). Also the env
+  # selector for the SFT dataloader registry. The SFT data loader and the eval/RL
+  # model factory both build their transforms from it.
+  config_name: "pi05_behavior"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
+  # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200

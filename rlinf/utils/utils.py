@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal, Optional
 
 import numpy as np
 import torch
@@ -379,6 +379,40 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute sum of tensor with a masked values."""
     return _reduce_sum(values * mask, axis)
+
+
+def masked_reduce(
+    values: torch.Tensor,
+    mask: Optional[torch.Tensor],
+    reducer: Literal["mean", "std", "min", "max"],
+    empty_value: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Reduce masked values to a scalar.
+
+    Empty masks return ``empty_value`` (zeros with ``values`` dtype/device if
+    omitted). Callers that need NaN for "mask is non-empty but all-invalid"
+    should substitute after the fact.
+    """
+    if empty_value is None:
+        empty_value = values.new_zeros(())
+    if mask is None:
+        mask = torch.ones_like(values, dtype=torch.bool)
+    else:
+        mask = torch.broadcast_to(mask.bool(), values.shape)
+
+    if reducer == "mean":
+        value = masked_mean(values, mask)
+    elif reducer == "std":
+        mean = masked_mean(values, mask)
+        value = masked_mean((values - mean) ** 2, mask).sqrt()
+    elif reducer == "min":
+        value = torch.where(mask, values, values.new_full((), float("inf"))).amin()
+    elif reducer == "max":
+        value = torch.where(mask, values, values.new_full((), float("-inf"))).amax()
+    else:
+        raise ValueError(f"Unsupported reducer: {reducer}")
+
+    return torch.where(mask.any(), value, empty_value)
 
 
 def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):

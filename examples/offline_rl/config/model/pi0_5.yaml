@@ -1,9 +1,9 @@
-model_type: "openpi"
+model_type: "cfg_model"
 
 # Model path - should be set in specific config files
 model_path: "/path/to/model/openpi"
 
-precision: null # for openpi, precision is null, please do not change this value
+precision: null # for OpenPI-backed CFG, precision is null, please do not change this value
 
 # Action and chunk settings
 num_action_chunks: 10
