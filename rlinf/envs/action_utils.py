@@ -371,6 +371,8 @@ def prepare_actions(
         )
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
+    elif env_type == SupportedEnvType.ROBODOJO:
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.EMBODICHAIN:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
