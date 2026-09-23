@@ -86,6 +86,35 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
+def test_openpi_sft_dispatches_so101_to_registered_loader(monkeypatch):
+    """SO-101 selects its dedicated SFT loader through the public dispatcher."""
+    import rlinf.data.datasets.openpi as openpi_sft
+
+    sentinel = object()
+    monkeypatch.setitem(
+        openpi_sft._SFT_DATALOADER_BUILDERS,
+        "so101",
+        lambda: lambda *args: sentinel,
+    )
+    cfg = DictConfig(
+        {
+            "actor": {
+                "model": {
+                    "openpi": {
+                        "config_name": "pi05_so101_joint",
+                        "use_rlt": False,
+                    }
+                }
+            }
+        }
+    )
+
+    result = openpi_sft.build_openpi_sft_dataloader(
+        cfg, world_size=1, rank=0, data_paths="/tmp/so101"
+    )
+    assert result is sentinel
+
+
 class TestMathDatasetMultithread:
     """Tests for ReasoningDataset multithread processing consistency."""
 
@@ -386,6 +415,33 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _ScalarFeatureDataset(_LegacyDataset):
+    """Mimic LeRobot 0.4's scalar HF schema and deferred episode buffer."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {"done": [], "segment_id": []}
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -425,6 +481,26 @@ def test_post_revert_dataset_keeps_task_in_frame():
     _make_writer(dataset).add_episode(_episode())
 
     assert [f["task"] for f in dataset.frames] == ["pick up the cube"] * 2
+    assert dataset.saved_episodes == 1
+
+
+def test_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _ScalarFeatureDataset()
+    episode = [
+        {
+            "done": np.array([done], dtype=bool),
+            "segment_id": np.array([index], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+        for index, done in enumerate((False, True))
+    ]
+
+    _make_writer(dataset).add_episode(episode)
+
+    assert dataset.episode_buffer == {
+        "done": [False, True],
+        "segment_id": [0, 1],
+    }
     assert dataset.saved_episodes == 1
 
 

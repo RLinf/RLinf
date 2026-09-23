@@ -24,6 +24,8 @@ from typing import Any, Optional
 import gymnasium as gym
 import numpy as np
 
+from rlinf.envs.utils import get_env_attr
+
 
 @dataclass
 class TeleopSample:
@@ -166,6 +168,33 @@ class TeleopIntervention(gym.Wrapper):
     ) -> np.ndarray:
         """Return an action that holds the robot during a skipped chunk."""
         return self.device.get_hold_action(self, fallback_action)
+
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the handover delay required by the teleoperation device."""
+        return float(getattr(self.device, "manual_start_hold_seconds", 0.0))
+
+    def release_for_manual(self) -> None:
+        """Release teleoperation hardware after the operator handover delay."""
+        release = getattr(self.device, "release_for_manual", None)
+        if release is not None:
+            release(self)
+
+    def hold_for_reset(self) -> None:
+        """Hold teleoperation hardware before reset or episode abort."""
+        hold = getattr(self.device, "hold_for_reset", None)
+        if hold is not None:
+            hold(self)
+
+    def park(self) -> None:
+        """Park teleoperation hardware together with the physical robot."""
+        park = getattr(self.device, "park", None)
+        if park is None:
+            return
+        park_env = get_env_attr(self.env, "park")
+        if not callable(park_env):
+            raise RuntimeError("The wrapped environment does not provide park().")
+        park(self, park_env)
 
     def close(self) -> None:
         """Release the device, then the wrapped env."""

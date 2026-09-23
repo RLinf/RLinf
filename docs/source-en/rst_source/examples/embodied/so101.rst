@@ -13,9 +13,9 @@ hardware test script to read feedback and check joint and gripper movement.
 Overview
 --------
 
-The test runs on the Linux machine connected to the arm. It requires no GPU or
-model checkpoint. RLinf does not yet provide a supported real-world task or
-training workflow for SO101; this guide covers hardware checks only.
+The workflow runs on the Linux machine connected to the arm and covers the
+SO-101 path from hardware checks and leader demonstrations through SFT and
+local fixed-checkpoint evaluation.
 
 Hardware Setup
 --------------
@@ -57,12 +57,12 @@ Install the robot dependencies from the repository root:
 .. code-block:: bash
 
    # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env so101
+   bash requirements/install.sh embodied --model openpi --env so101
    source .venv/bin/activate
    export REPO_PATH="$PWD"
 
-The installer includes LeRobot with Feetech support. Run subsequent commands
-from this checkout with the environment activated. See
+The installer includes OpenPI, LeRobot, and the Feetech motor dependencies.
+Run subsequent commands from this checkout with the environment activated. See
 :doc:`Installation </rst_source/start/installation>` for platform prerequisites.
 
 Find the Port and Configure the Motors
@@ -215,10 +215,64 @@ Move the leader's gripper away from that opening before retrying
 motion into the obstruction. The driver's ``open_gripper()`` and
 ``close_gripper()`` methods still wait for travel or stall relief.
 
-New Real-World Tasks
---------------------
+Collect Demonstrations
+-----------------------
 
-After the hardware checks pass, follow
-:doc:`New Real-World Tasks </rst_source/extending/new_task>` to define a task's
-reset procedure, observations, actions, reward, and success condition. A working
-real-world task is required before starting training.
+After both arms pass the hardware checks, configure the follower and leader
+ports, calibration IDs, and ``task_description`` in
+``examples/embodiment/config/realworld_so101_collect_data_joint.yaml``. Replace
+the placeholder ``Finish the user's task.`` with the instruction used for your
+demonstrations. The collector resets both arms to the configured start pose,
+records the leader demonstration, and writes a LeRobot dataset that the SO-101
+SFT loader can consume.
+
+Launch collection from the repository root:
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh \
+     realworld_so101_collect_data_joint
+
+The keyboard wrapper uses ``a`` to start or discard a recording, ``b`` to
+advance a segment, ``c`` to save a successful episode, and ``q`` to stop the
+collector cleanly. The runtime user must be able to read the selected Linux
+input device. Set ``RLINF_KEYBOARD_DEVICE`` to a stable
+``/dev/input/by-id/...`` path when the machine exposes more than one keyboard.
+
+The dataset is written below the run's ``collected_data`` directory. Set its
+path and repository ID in the SFT YAML before training.
+
+Both collection and evaluation reuse ``SO101ReachEnv-v1`` for the SO-101
+joint-space observations, actions, and reset lifecycle. Set the same
+``task_description`` in the evaluation config so the fixed checkpoint receives
+the instruction it was trained on. The operator's ``b`` or ``c`` key records
+the evaluation outcome.
+
+Train and Evaluate a Local Policy
+----------------------------------
+
+RLinf provides an SO-101 joint-space SFT configuration and a local
+fixed-checkpoint evaluation configuration. Copy the dataset path, repository
+ID, base checkpoint, and normalization-statistics paths into
+``examples/sft/config/realworld_sft_openpi_so101.yaml``, then launch SFT through
+the shared entrypoint:
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_so101
+
+For local evaluation, set the checkpoint and normalization-statistics paths in
+``examples/embodiment/config/model/so101_pi05.yaml``. Set the follower port,
+calibration ID, and camera device in
+``examples/embodiment/config/realworld_so101_eval_openpi.yaml``. Replace its
+``task_description`` placeholder ``Finish the user's task.`` with the same
+instruction used during SFT, then launch the shared evaluation entrypoint:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh realworld_so101_eval_openpi
+
+The evaluation config enables local RTC action-chunk execution. Press ``a`` on
+the selected keyboard to start an episode, ``c`` to end it as success, or ``b``
+to end it as failure. The checkpoint must contain weights compatible with
+``pi05_so101_joint`` and normalization statistics for the configured asset ID.

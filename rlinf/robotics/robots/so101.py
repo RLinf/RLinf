@@ -40,7 +40,7 @@ class SO101Robot(Robot):
         port: str,
         node_rank: int,
         calibration_id: Optional[str] = None,
-        max_relative_target: Optional[int] = None,
+        max_relative_target: Optional[float] = None,
         worker_rank: int = 0,
         env_idx: int = 0,
     ) -> dict[str, Any]:
@@ -73,7 +73,7 @@ class SO101Robot(Robot):
         port: str,
         node_rank: int,
         calibration_id: Optional[str] = None,
-        max_relative_target: Optional[int] = None,
+        max_relative_target: Optional[float] = None,
         env_idx: int = 0,
         worker_rank: int = 0,
         cameras: Optional[Mapping[str, Any]] = None,
@@ -107,7 +107,7 @@ class SO101Config(RobotConfig):
     already: calibrating asks the operator to move the arm by hand, which a
     worker cannot do."""
 
-    max_relative_target: Optional[int] = None
+    max_relative_target: Optional[float] = None
     """Per-step joint limit in degrees, applied by lerobot. ``None`` disables
     clamping, which lets a large action step move the arm at full speed."""
 
@@ -116,7 +116,7 @@ class SO101Config(RobotConfig):
     ``[]`` explicitly selects no cameras."""
 
     camera_type: str = "realsense"
-    """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
+    """Camera backend: ``"realsense"``, ``"zed"``, ``"lumos"``, or ``"uvc"``."""
 
     controller_node_rank: Optional[int] = None
     """Node rank where the arm part should run.

@@ -2327,6 +2327,13 @@ install_openpi_model() {
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
+        so101)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install "rlinf-openpi==0.1.1"
+            install_so101_env
+            install_flash_attn
+            ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps

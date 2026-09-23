@@ -51,6 +51,33 @@ from rlinf.utils.env_helpers.delay_sampler import (
 )
 
 
+def test_so101_openpi_transforms_preserve_joint_contract():
+    """SO-101 transforms pad model tensors and convert joint action units."""
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.so101_policy import (
+        SO101Inputs,
+        SO101Outputs,
+    )
+
+    inputs = SO101Inputs(action_dim=32)
+    transformed = inputs(
+        {
+            "observation/state": np.arange(6, dtype=np.float32),
+            "observation/image": np.zeros((8, 10, 3), dtype=np.uint8),
+            "actions": np.ones((2, 6), dtype=np.float32),
+            "prompt": "pick up the object",
+        }
+    )
+    assert transformed["state"].shape == (32,)
+    assert transformed["actions"].shape == (2, 32)
+    assert transformed["image"]["base_0_rgb"].shape == (8, 10, 3)
+    assert transformed["prompt"] == "pick up the object"
+
+    output = SO101Outputs()({"actions": np.ones((2, 32), dtype=np.float32)})
+    np.testing.assert_allclose(output["actions"][:, :5], np.pi / 180.0 * 100.0)
+    np.testing.assert_allclose(output["actions"][:, 5], 1.0)
+
+
 class _DummyModel:
     def __init__(self):
         self.device = None
