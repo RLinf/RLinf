@@ -74,6 +74,16 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_openpi_rlinf(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.openpi_rlinf import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_psi0(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.psi0 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_pi0_fast(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.pi0_fast import get_model
 
@@ -210,6 +220,18 @@ def _register_builtin_models():
     register_model(
         SupportedModel.OPENPI.value,
         _build_openpi,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.OPENPI_RLINF.value,
+        _build_openpi_rlinf,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.PSI0.value,
+        _build_psi0,
         category="embodied",
         force=True,
     )

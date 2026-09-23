@@ -44,6 +44,8 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
+    # SIMPLE uses SimpleEnvWorker to keep Isaac Sim on Ray's main thread.
+    # New async methods here also need synchronous wrappers in that subclass.
     # Class-level default so the observation send path is safe even when the
     # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
     # unit tests). ``None`` means "use the scheduler's default split"; when
@@ -1244,6 +1246,7 @@ class EnvWorker(Worker):
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
+            simple_eval_finished = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
                     policy_output = self.recv_from(
@@ -1273,6 +1276,26 @@ class EnvWorker(Worker):
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)
 
+                    if (
+                        self.cfg.env.eval.env_type == "simple"
+                        and env_info
+                        and eval_step < self.n_eval_chunk_steps - 1
+                    ):
+                        env_batch = self._build_rollout_input_data(env_output.to_dict())
+                        env_batch["obs"]["eval_finished"] = [
+                            True
+                        ] * self.eval_num_envs_per_stage
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=env_batch,
+                            mode="eval",
+                            tag="rollout_results",
+                            route_key=stage_id,
+                        )
+                        simple_eval_finished = True
+                        break
+
                     if self.cfg.env.eval.auto_reset:
                         if (
                             eval_rollout_epoch == self.eval_rollout_epoch - 1
@@ -1293,6 +1316,9 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+
+                if simple_eval_finished:
+                    break
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
