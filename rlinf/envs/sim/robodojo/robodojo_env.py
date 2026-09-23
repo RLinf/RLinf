@@ -14,9 +14,11 @@
 
 """Adapt a RoboDojo runtime bridge to RLinf's vector environment contract.
 
-The optional runtime must export robodojo.envs.vector_env.VectorEnv:
+The optional rlinf-robodojo-runtime>=0.2.0 distribution exports
+robodojo_runtime.bridge.VectorEnv:
 * VectorEnv(task_config: dict, n_envs: int, env_seeds: list[int]) owns simulator
-  processes. ASSETS_PATH is set from cfg.assets_path before importing it.
+  resources. ROBODOJO_ASSETS_ROOT is set from cfg.assets_path when provided;
+  it names the directory containing Assets/, not Assets/ itself.
 * reset(env_idx=None, env_seeds=...) resets all or selected slots. Seeds always
   contain n_envs entries, indexed by global slot, even for a partial reset.
 * get_obs() returns n_envs dictionaries with full_image (H, W, 3 uint8),
@@ -42,8 +44,6 @@ occupy the last column. elapsed_steps counts submitted control steps, including
 the padded remainder after early termination; simulator step limits are conveyed
 through truncations. RLinf also enforces cfg.max_episode_steps.
 Keep enable_offload false: this adapter exposes terminal close, not suspend/resume.
-TODO(agent): Agree on the runtime distribution, version and task_config schema
-with maintainers before adding install commands or runnable training examples.
 """
 
 import json
@@ -130,8 +130,9 @@ class RoboDojoEnv(gym.Env):
         self._init_env()
 
     def _init_env(self) -> None:
-        os.environ["ASSETS_PATH"] = str(self.cfg.assets_path)
-        from robodojo.envs.vector_env import VectorEnv
+        if self.cfg.get("assets_path") is not None:
+            os.environ["ROBODOJO_ASSETS_ROOT"] = str(self.cfg.assets_path)
+        from robodojo_runtime.bridge import VectorEnv
 
         self.venv = VectorEnv(
             task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),

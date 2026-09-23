@@ -15,6 +15,7 @@
 """CPU contract tests for simulation environment adapters."""
 
 import importlib
+import os
 import subprocess
 import sys
 from types import ModuleType
@@ -75,12 +76,11 @@ class StubVectorEnv:
 
 @pytest.fixture
 def make_env(monkeypatch):
-    bridge = ModuleType("robodojo.envs.vector_env")
+    bridge = ModuleType("robodojo_runtime.bridge")
     bridge.VectorEnv = StubVectorEnv
-    monkeypatch.setitem(sys.modules, "robodojo", ModuleType("robodojo"))
-    monkeypatch.setitem(sys.modules, "robodojo.envs", ModuleType("robodojo.envs"))
-    monkeypatch.setitem(sys.modules, "robodojo.envs.vector_env", bridge)
-    monkeypatch.setenv("ASSETS_PATH", "")
+    monkeypatch.setitem(sys.modules, "robodojo_runtime", ModuleType("robodojo_runtime"))
+    monkeypatch.setitem(sys.modules, "robodojo_runtime.bridge", bridge)
+    monkeypatch.setenv("ROBODOJO_ASSETS_ROOT", "inherited-assets")
     environments = []
 
     def build(record_metrics=True, **overrides):
@@ -120,13 +120,20 @@ def test_robodojo_registration_and_lazy_import():
         [
             sys.executable,
             "-c",
-            "import sys; sys.modules['robodojo'] = None; "
+            "import sys; sys.modules['robodojo_runtime'] = None; "
+            "sys.modules['isaacsim'] = None; sys.modules['isaaclab'] = None; "
             "from rlinf.envs import get_env_cls; "
             "from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv; "
             "assert get_env_cls('robodojo') is RoboDojoEnv",
         ],
         check=True,
     )
+
+
+@pytest.mark.parametrize("assets_path", [None, "/data/scenes"])
+def test_robodojo_assets_root_preserves_environment_default(make_env, assets_path):
+    make_env(assets_path=assets_path)
+    assert os.environ["ROBODOJO_ASSETS_ROOT"] == (assets_path or "inherited-assets")
 
 
 @pytest.mark.parametrize("record_metrics", [True, False])
