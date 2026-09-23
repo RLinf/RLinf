@@ -30,6 +30,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 import rlinf.data.datasets.d4rl as d4rl_dataset_module
+import rlinf.utils.obs_compression as obs_compression
 from rlinf.data.datasets.d4rl import D4RLDataset
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory import (
