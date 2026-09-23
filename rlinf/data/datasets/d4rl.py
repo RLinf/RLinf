@@ -57,7 +57,20 @@ class D4RLDataset(Dataset):
         task_name: str,
         clip_to_eps: bool = True,
         eps: float = 1e-5,
+        h5path: str | None = None,
     ):
+        """Load transitions for ``env``.
+
+        Args:
+            env: D4RL environment that owns the dataset schema.
+            task_name: D4RL task id, used to select reward post-processing.
+            clip_to_eps: Whether to clip actions to ``[-1 + eps, 1 - eps]``.
+            eps: Clipping margin for ``clip_to_eps``.
+            h5path: Local HDF5 file to load instead of the env's default
+                dataset. A standard D4RL file is converted with
+                ``d4rl.qlearning_dataset``; a file that already holds
+                ``next_observations`` and has no ``timeouts`` is used as is.
+        """
         if d4rl is None or gym is None:  # pragma: no cover
             missing = []
             if gym is None:
@@ -70,20 +83,29 @@ class D4RLDataset(Dataset):
                 + ". Please install them to use D4RL offline datasets."
             )
 
-        raw = d4rl.qlearning_dataset(env)
+        raw = env.get_dataset(h5path=h5path)
+        is_transitions = (
+            h5path is not None and "next_observations" in raw and "timeouts" not in raw
+        )
+        if not is_transitions:
+            raw = d4rl.qlearning_dataset(env, dataset=raw)
+
+        observations = np.asarray(raw["observations"], dtype=np.float32)
+        actions = np.asarray(raw["actions"], dtype=np.float32)
+        terminals = np.asarray(raw["terminals"], dtype=np.float32)
+        next_observations = np.asarray(raw["next_observations"], dtype=np.float32)
         if clip_to_eps:
             lim = 1 - eps
-            raw["actions"] = np.clip(raw["actions"], -lim, lim)
+            actions = np.clip(actions, -lim, lim)
 
-        dones_float = self._compute_dones_float(
-            raw["observations"], raw["next_observations"], raw["terminals"]
+        self.observations = observations
+        self.actions = actions
+        self.rewards = np.asarray(raw["rewards"], dtype=np.float32)
+        self.masks = 1.0 - terminals
+        self.dones_float = self._compute_dones_float(
+            observations, next_observations, terminals
         )
-        self.observations = raw["observations"].astype(np.float32)
-        self.actions = raw["actions"].astype(np.float32)
-        self.rewards = raw["rewards"].astype(np.float32)
-        self.masks = 1.0 - raw["terminals"].astype(np.float32)
-        self.dones_float = dones_float.astype(np.float32)
-        self.next_observations = raw["next_observations"].astype(np.float32)
+        self.next_observations = next_observations
         self.size = len(self.observations)
 
         self._apply_reward_postprocess(task_name)
@@ -207,51 +229,20 @@ class D4RLDataset(Dataset):
                 + ". Please install them to load D4RL datasets."
             )
 
-        if not os.path.exists(path):
-            env = gym.make(task_name)
-            try:
-                return cls(
-                    env=env, task_name=task_name, clip_to_eps=clip_to_eps, eps=eps
-                )
-            finally:
-                try:
-                    env.close()
-                except Exception:
-                    pass
-
         env = gym.make(task_name)
         try:
-            raw = env.get_dataset(h5path=path)
-            if "next_observations" not in raw:
-                raw = d4rl.qlearning_dataset(env, dataset=raw)
+            return cls(
+                env=env,
+                task_name=task_name,
+                clip_to_eps=clip_to_eps,
+                eps=eps,
+                h5path=path if os.path.exists(path) else None,
+            )
         finally:
             try:
                 env.close()
             except Exception:
                 pass
-
-        observations = np.asarray(raw["observations"], dtype=np.float32)
-        actions = np.asarray(raw["actions"], dtype=np.float32)
-        rewards = np.asarray(raw["rewards"], dtype=np.float32)
-        terminals = np.asarray(raw["terminals"], dtype=np.float32)
-        next_observations = np.asarray(raw["next_observations"], dtype=np.float32)
-
-        if clip_to_eps:
-            lim = 1 - eps
-            actions = np.clip(actions, -lim, lim)
-
-        ds = cls.from_arrays(
-            observations=observations,
-            actions=actions,
-            rewards=rewards,
-            masks=1.0 - terminals,
-            dones_float=cls._compute_dones_float(
-                observations, next_observations, terminals
-            ),
-            next_observations=next_observations,
-        )
-        ds._apply_reward_postprocess(task_name)
-        return ds
 
     @classmethod
     def from_arrays(

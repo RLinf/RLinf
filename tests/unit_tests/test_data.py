@@ -91,8 +91,15 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 class TestD4RLDataset:
     """Tests for loading D4RL transition datasets."""
 
-    def test_from_path_converts_standard_hdf5_dataset(self, tmp_path, monkeypatch):
-        """A standard D4RL file does not need ``next_observations``."""
+    @pytest.mark.parametrize("has_next_observations", [False, True])
+    def test_from_path_converts_standard_hdf5_dataset(
+        self, tmp_path, monkeypatch, has_next_observations
+    ):
+        """Standard D4RL files go through ``qlearning_dataset``.
+
+        AntMaze files have no ``next_observations``; MuJoCo v2 files have both
+        ``next_observations`` and ``timeouts``.
+        """
         dataset_path = tmp_path / "standard-d4rl.hdf5"
         dataset_path.touch()
         raw = {
@@ -102,6 +109,8 @@ class TestD4RLDataset:
             "terminals": np.array([False, False, False, False, True]),
             "timeouts": np.array([False, True, False, False, False]),
         }
+        if has_next_observations:
+            raw["next_observations"] = np.array([[1.0], [2.0], [11.0], [12.0], [13.0]])
         converted = {
             "observations": raw["observations"][[0, 2, 3]],
             "actions": raw["actions"][[0, 2, 3]],
