@@ -52,7 +52,7 @@ Tasks
    * - Task
      - Description
    * - CartPole
-     - Balance the pole with state observations from ``embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json``.
+     - Balance the pole with state observations from ``embodichain_tasks/configs/tasks/classic_control/cart_pole/env.json``.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
