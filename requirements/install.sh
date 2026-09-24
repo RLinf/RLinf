@@ -109,7 +109,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -142,6 +142,7 @@ Common options:
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
                            versions in requirements/agentic/; torch is derived from it.
+                           Applies to target agentic and to --model sglang / qwen3_vl.
     --vllm <version>       Override vllm version (e.g., 0.23.0). Must be one of the
                            versions in requirements/agentic/.
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
@@ -628,6 +629,10 @@ configure_nvidia() {
             PLATFORM_TORCH_STR="+${_cuda_tag}"
             PLATFORM_TORCH_INDEX="${_index_base}/${_cuda_tag}"
             PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+            # PyPI's torchcodec links PyPI torch's CUDA (13 for torch 2.13).
+            if [ "$_tmaj" -gt 2 ] || [ "$_tmin" -ge 12 ]; then
+                PLATFORM_TORCH_PACKAGES+=("torchcodec")
+            fi
             if [ "$_uvtb_user_set" -eq 0 ]; then
                 export UV_TORCH_BACKEND="$_cuda_tag"
             fi
@@ -1288,6 +1293,9 @@ restore_pyproject() {
 }
 
 AGENTIC_DEFAULT_ENGINE="sglang"
+# agentic is validated with 0.5.12.post1 (torch 2.11); `--model sglang` uses 0.5.19 (torch 2.13).
+AGENTIC_DEFAULT_SGLANG_VERSION="0.5.12.post1"
+EMBODIED_SGLANG_VERSION="0.5.19"
 
 agentic_latest_version() {
     ls "$SCRIPT_DIR/agentic/" 2>/dev/null \
@@ -1304,17 +1312,26 @@ effective_engine_version() {
     local engine
     engine=$(effective_engine)
     case "$engine" in
-        sglang) printf '%s\n' "${SGLANG_VERSION:-$(agentic_latest_version sglang)}" ;;
+        sglang) printf '%s\n' "${SGLANG_VERSION:-$AGENTIC_DEFAULT_SGLANG_VERSION}" ;;
         vllm)   printf '%s\n' "${VLLM_VERSION:-$(agentic_latest_version vllm)}" ;;
+    esac
+}
+
+# Torch an SGLang release is built against ("-": the project default).
+sglang_torch_version() {
+    case "$1" in
+        0.4.6.post5) echo "2.6.0" ;;
+        0.5.2|0.5.4) echo "2.8.0" ;;
+        0.5.19)      echo "2.13.0" ;;
+        *)           echo "-" ;;
     esac
 }
 
 agentic_torch_for_engine() {
     case "$(effective_engine):$(effective_engine_version)" in
-        sglang:0.4.6.post5)        echo "2.6.0" ;;
-        sglang:0.5.2|sglang:0.5.4) echo "2.8.0" ;;
-        vllm:0.8.5)                echo "2.6.0" ;;
-        *)                         echo "-" ;;
+        sglang:*)   sglang_torch_version "$(effective_engine_version)" ;;
+        vllm:0.8.5) echo "2.6.0" ;;
+        *)          echo "-" ;;
     esac
 }
 
@@ -1373,6 +1390,22 @@ install_engine_requirements() {
     fi
 }
 
+# Installs SGLang $1 for the CUDA line, then the extras named by the other args.
+install_sglang() {
+    local version="$1" extra extra_req
+    shift
+    install_engine_requirements "$(agentic_requirements_file sglang "$version")"
+    for extra in "$@"; do
+        extra_req="$SCRIPT_DIR/agentic/sglang_${version}_${extra}.txt"
+        if [ ! -f "$extra_req" ]; then
+            echo "[install.sh] ERROR: sglang ${version} has no '${extra}' requirements (${extra_req})." >&2
+            exit 1
+        fi
+        install_engine_requirements "$extra_req"
+    done
+    echo "[install.sh] Installed sglang ${version}${*:+ with extras: $*} for $(agentic_cuda_line)."
+}
+
 derive_torchcodec_spec() {
     local tmaj="$1" tmin="$2"
     [ "$tmaj" = "2" ] || { echo ""; return 0; }
@@ -1399,14 +1432,31 @@ VLLM_VERSION=""
 
 apply_agentic_torch_default() {
     [ "$TARGET" = "agentic" ] || return 0
+    local torch_ver
+    torch_ver=$(agentic_torch_for_engine)
+    if [ "$torch_ver" = "2.13.0" ]; then
+        echo "[install.sh] $(effective_engine) $(effective_engine_version) runs on torch ${torch_ver}, which the agentic Megatron stack is not built for; it is installed by 'embodied --model sglang'." >&2
+        exit 1
+    fi
     # --torch wins; on AMD, configure_amd derives torch from the ROCm version.
     [ -z "$TORCH_VERSION" ] || return 0
     [ "$PLATFORM" != "amd" ] || return 0
-    local torch_ver
-    torch_ver=$(agentic_torch_for_engine)
     [ "$torch_ver" != "-" ] || return 0
     TORCH_VERSION="$torch_ver"
     echo "[install.sh] agentic: $(effective_engine) $(effective_engine_version) needs torch ${TORCH_VERSION}; pinning it (pass --torch to override)."
+}
+
+# Pins the torch a model's engine is built against; --torch wins.
+apply_model_default_torch() {
+    [ "$TARGET" = "embodied" ] || return 0
+    [ -z "$TORCH_VERSION" ] || return 0
+    local model_torch="-"
+    case "$MODEL" in
+        sglang) model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}") ;;
+    esac
+    [ "$model_torch" != "-" ] || return 0
+    TORCH_VERSION="$model_torch"
+    echo "[install.sh] Model '${MODEL}' pins torch ${TORCH_VERSION}; overriding the project default (pass --torch to override)."
 }
 
 apply_torch_override() {
@@ -1496,6 +1546,10 @@ apply_torch_override() {
         torch_version="$TORCH_VERSION"
         torchvision_version="0.${tv_minor}.${torch_patch}"
         torchaudio_version="$TORCH_VERSION"
+        # torchaudio's last release is 2.11.0; newer torch keeps it.
+        if [ "$torch_minor" -ge 12 ]; then
+            torchaudio_version="2.11.0"
+        fi
     else
         # Reuse the public versions already pinned in pyproject.toml, stripping
         # any pre-existing local segment so PLATFORM_TORCH_STR can be re-applied cleanly.
@@ -2020,7 +2074,7 @@ install_qwen3_vl_sglang_deps() {
     fi
 
     uv sync --extra agentic --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    install_engine_requirements "$(agentic_requirements_file sglang "$SGLANG_VERSION")"
+    install_sglang "$SGLANG_VERSION"
     uv pip install "transformers==${TRANSFORMERS_VERSION}"
     python - "$TORCH_VERSION" "$SGLANG_VERSION" "$TRANSFORMERS_VERSION" <<'EOF'
 from importlib.metadata import version
@@ -2784,7 +2838,8 @@ install_cosmos3_deps() {
     local cosmos_path
     cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
     if [ -z "${COSMOS_FRAMEWORK_PATH:-}" ]; then
-        git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-main}" >&2
+        # Revision the Cosmos3 examples are validated with.
+        git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-0460be81f16883aa380e716dc6f58c1189481172}" >&2
     fi
 
     uv pip install -r "$SCRIPT_DIR/embodied/models/cosmos3.txt"
@@ -2863,6 +2918,25 @@ install_qwen3_vl_model() {
     install_qwen3_vl_sglang_deps
 
     install_flash_attn
+}
+
+# SGLang server venv for embodied eval (Cosmos3 via sglang[diffusion]).
+install_sglang_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            install_${ENV_NAME}_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for the SGLang model server." >&2
+            exit 1
+            ;;
+    esac
+
+    install_sglang "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}" diffusion
+    uv pip uninstall pynvml || true
 }
 
 install_lerobot() {
@@ -3763,7 +3837,11 @@ install_agentic() {
     engine_req=$(agentic_requirements_file "$engine" "$engine_ver")
 
     uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    install_engine_requirements "$engine_req"
+    if [ "$engine" = "sglang" ]; then
+        install_sglang "$engine_ver"
+    else
+        install_engine_requirements "$engine_req"
+    fi
     echo "[install.sh] Installed engine: $(basename "$engine_req")"
     uv pip check || echo "[install.sh] WARNING: dependency conflicts reported above"
     if [ "$NO_ROOT" -eq 0 ]; then
@@ -3821,7 +3899,7 @@ install_agentic() {
 install_docs() {
     uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     install_engine_requirements "$(agentic_requirements_file vllm "$(agentic_latest_version vllm)")"
-    install_engine_requirements "$(agentic_requirements_file sglang "$(agentic_latest_version sglang)")"
+    install_sglang "$AGENTIC_DEFAULT_SGLANG_VERSION"
     uv sync --extra embodied --active --inexact "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/docs/requirements.txt
     uv pip uninstall pynvml || true
@@ -3830,6 +3908,7 @@ install_docs() {
 main() {
     parse_args "$@"
     validate_python_version
+    apply_model_default_torch
     apply_env_default_torch
     apply_agentic_torch_default
     configure_platform
@@ -3904,6 +3983,9 @@ main() {
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
+                    ;;
+                sglang)
+                    install_sglang_model
                     ;;
                 diffusion)
                     install_diffusion_model

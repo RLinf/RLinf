@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the FSDP device mesh and the process groups derived from it.
+"""Tests for the FSDP device mesh, the process groups derived from it, and the
+units FSDP2 shards a model into.
 
 Two properties of that mesh are easy to get wrong and silent when they are, so
 they are pinned here: the timeout its collectives run under, and which of its
@@ -31,6 +32,9 @@ The reduction group. FSDP leaves each rank only its slice of every gradient, so
 a norm over one of them is not the gradient's norm. ``gradient_reduction_group``
 picks the dimension the shards are spread over, which stays ``fsdp`` even once a
 replicated ``ddp`` dimension exists beside it.
+
+The units. A model that reads embedding weights directly sets
+``_fsdp_wrap_embeddings = False`` so they are gathered with the enclosing unit.
 """
 
 import logging
@@ -39,9 +43,11 @@ import socket
 from datetime import timedelta
 
 import pytest
+import torch
 import torch.distributed as dist
+from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, OffloadPolicy
 
-from rlinf.hybrid_engines.fsdp.utils import create_device_mesh
+from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
 
@@ -251,3 +257,59 @@ def test_gradients_reduce_over_the_sharding_dimension(single_rank_env):
     replicated_only = init_device_mesh("cpu", (1,), mesh_dim_names=["ddp"])
     with pytest.raises(KeyError):
         gradient_reduction_group(replicated_only)
+
+
+class _DomainTable(torch.nn.Module):
+    """Reads its embedding weights directly, like cosmos ``DomainAwareLinear``."""
+
+    def __init__(self):
+        super().__init__()
+        self.table = torch.nn.Embedding(4, 3)
+
+    def forward(self, x):
+        return x @ self.table.weight.T
+
+
+class _Block(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.head = _DomainTable()
+
+    def forward(self, x):
+        return self.head(x)
+
+
+class _Policy(torch.nn.Module):
+    _no_split_modules = ["_Block"]
+
+    def __init__(self):
+        super().__init__()
+        self.block = _Block()
+
+    def forward(self, x):
+        return self.block(x)
+
+
+def _shard(policy: torch.nn.Module) -> torch.nn.Module:
+    return apply_fsdp2_to_model(
+        policy,
+        {},
+        create_device_mesh(1),
+        MixedPrecisionPolicy(),
+        OffloadPolicy(),
+        reshard_after_forward=True,
+    )
+
+
+def test_embeddings_are_sharded_as_their_own_units_by_default(single_rank_env):
+    policy = _shard(_Policy())
+
+    assert isinstance(policy.block.head.table, FSDPModule)
+
+
+def test_a_model_can_keep_its_embeddings_in_the_enclosing_unit(single_rank_env):
+    policy = _Policy()
+    policy._fsdp_wrap_embeddings = False
+    policy = _shard(policy)
+
+    assert not isinstance(policy.block.head.table, FSDPModule)

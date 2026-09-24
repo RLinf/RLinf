@@ -19,13 +19,65 @@ over a launched ``sglang serve`` HTTP server. It is registered per
 ``cfg.model_type`` with a *lazy* builder (mirroring
 ``rlinf.models._register_builtin_models``) so importing this module never
 force-imports a model's heavy deps; the builder runs only on lookup.
+
+An adapter whose server cannot batch every env together also defines
+``request_groups(env_obs)``; the worker then sends one request per group.
 """
 
-from typing import Callable
+from typing import Any, Callable
+
+import torch
 
 from rlinf.config import SupportedModel
+from rlinf.utils.obs_compression import infer_obs_batch_size
 
 _SGLANG_ADAPTER_REGISTRY: dict[str, Callable[[], type]] = {}
+
+
+def select_env_rows(env_obs: dict[str, Any], indices: list[int]) -> dict[str, Any]:
+    """Select the envs at ``indices`` from an env observation batch.
+
+    Args:
+        env_obs: An env observation batch as passed to ``build_request``.
+        indices: Env indices to keep.
+
+    Returns:
+        The observation with per-env tensors and lists indexed; other values kept.
+    """
+    batch_size = infer_obs_batch_size(env_obs)
+    selected: dict[str, Any] = {}
+    for key, value in env_obs.items():
+        if (
+            isinstance(value, torch.Tensor)
+            and value.dim() > 0
+            and value.shape[0] == batch_size
+        ):
+            index = torch.as_tensor(indices, dtype=torch.long, device=value.device)
+            selected[key] = value.index_select(0, index)
+        elif isinstance(value, list) and len(value) == batch_size:
+            selected[key] = [value[i] for i in indices]
+        else:
+            selected[key] = value
+    return selected
+
+
+def gather_env_rows(parts: list[Any], order: list[int]) -> Any:
+    """Concatenate per-group outputs and restore env order.
+
+    Args:
+        parts: One tensor, or (nested) dict of tensors, per request group.
+        order: The env index of each row of the concatenated parts.
+
+    Returns:
+        The concatenated output with row ``i`` belonging to env ``i``.
+    """
+    first = parts[0]
+    if isinstance(first, torch.Tensor):
+        inverse = torch.argsort(torch.as_tensor(order, device=first.device))
+        return torch.cat(parts, dim=0).index_select(0, inverse)
+    if isinstance(first, dict):
+        return {key: gather_env_rows([p[key] for p in parts], order) for key in first}
+    return first
 
 
 def register_sglang_adapter(

@@ -22,22 +22,12 @@ Each GPU runs one SGLang server (``server_type: embodied``) executing ``Cosmos3O
 Installation
 ----------------------------------------
 
-Install embodied + LIBERO dependencies:
+Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env libero
+   bash requirements/install.sh embodied --model sglang --env libero
    source .venv/bin/activate
-
-.. note::
-
-   Do not use ``--model cosmos3`` here: The model dependencies for cosmos3 (such as natten and cuDNN pin) conflict too much with the SGLang stack described below. Simply install the RLinf core and the LIBERO environment dependencies; install SGLang separately following the steps below.
-
-Cosmos3 SGLang serving requires SGLang with the ``diffusion`` extra (batched Cosmos3 action support is merged to ``main`` at commit ``924aeee59cb68ea99bf7c7c183512958ed3d6272``):
-
-.. code-block:: bash
-
-   git clone https://github.com/FxxxxU/sglang.git /path/to/sglang && cd /path/to/sglang && git checkout 924aeee59cb68ea99bf7c7c183512958ed3d6272 && pip install -e "python[diffusion]"
 
 Prepare Checkpoint
 ----------------------------------------
@@ -58,7 +48,7 @@ The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.ya
    rollout:
      model:
        model_path: /path/to/model_diffusers          # eval input diffusers directory
-       action_stats_path: /path/to/cosmos3_framework/libero_native_frame_wise_relative_rot6d.json  # rot6d stats file from cosmos3_framework
+       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json  # rot6d stats file from cosmos-framework
 
    env:
      eval:

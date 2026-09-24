@@ -510,6 +510,10 @@ def apply_fsdp2_to_model(
     tie_word_embeddings = getattr(
         getattr(module, "config", None), "tie_word_embeddings", False
     )
+    # Models that read embedding weights directly opt out of per-embedding units.
+    wrap_embeddings = not tie_word_embeddings and getattr(
+        module, "_fsdp_wrap_embeddings", True
+    )
 
     modules_to_shard = []
 
@@ -521,7 +525,7 @@ def apply_fsdp2_to_model(
                 no_split_name_set
                 and getattr(submodule, "_fsdp_wrap_name", None) in no_split_name_set
             )
-            or (isinstance(submodule, torch.nn.Embedding) and not tie_word_embeddings)
+            or (isinstance(submodule, torch.nn.Embedding) and wrap_embeddings)
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 

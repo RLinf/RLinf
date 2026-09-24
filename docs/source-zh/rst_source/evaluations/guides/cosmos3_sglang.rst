@@ -22,22 +22,12 @@ Cosmos3 SGLang 评测
 安装
 ----------------------------------------
 
-安装 embodied + LIBERO 依赖：
+安装 LIBERO 环境和带 ``diffusion`` extra 的 SGLang 0.5.19。``sglang`` model 会固定 torch 2.13.0，并按驱动支持的版本选择 CUDA 12 或 CUDA 13 的 wheel：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env libero
+   bash requirements/install.sh embodied --model sglang --env libero
    source .venv/bin/activate
-
-.. note::
-
-   这里不使用 ``--model cosmos3``：cosmos3 的模型依赖（natten、cuDNN pin 等）与下方 SGLang 栈冲突过多。只装 RLinf 本体 + LIBERO 环境依赖即可；SGLang 按下文步骤单独安装。
-
-Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（batch action 支持已合并到 ``main``,commit ``924aeee59cb68ea99bf7c7c183512958ed3d6272``）：
-
-.. code-block:: bash
-
-   git clone https://github.com/FxxxxU/sglang.git /path/to/sglang && cd /path/to/sglang && git checkout 924aeee59cb68ea99bf7c7c183512958ed3d6272 && pip install -e "python[diffusion]"
 
 准备 Checkpoint
 ----------------------------------------
@@ -58,7 +48,7 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（batch actio
    rollout:
      model:
        model_path: /path/to/model_diffusers          # 评测输入的 diffusers 目录
-       action_stats_path: /path/to/cosmos3_framework/libero_native_frame_wise_relative_rot6d.json  # 与 cosmos3_framework 的 rot6d 文件
+       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json  # cosmos-framework 的 rot6d 统计文件
 
    env:
      eval:
