@@ -116,6 +116,24 @@ def collate_fn(data_list: list[Any]) -> dict[str, Any]:
                     if isinstance(vals[0], torch.Tensor)
                     else vals
                 )
+            elif key == "mm_token_type_ids":
+                # transformers >= 5 emits this; the model needs it to compute
+                # M-RoPE. Left-pad with 0 (text token) to match the prompts.
+                mm_type_ids = []
+                for v in vals:
+                    t = (
+                        v
+                        if isinstance(v, torch.Tensor)
+                        else torch.as_tensor(v, dtype=torch.long)
+                    )
+                    if t.dim() == 2 and t.size(0) == 1:
+                        t = t.squeeze(0)
+                    t = t.to(dtype=torch.long)
+                    pad = target_len - t.numel()
+                    if pad > 0:
+                        t = torch.nn.functional.pad(t, (pad, 0), value=0)
+                    mm_type_ids.append(t)
+                multi_modal_inputs[key] = torch.stack(mm_type_ids, dim=0)
             else:
                 raise ValueError(f"Unsupported multi_modal_input key: {key}")
 
