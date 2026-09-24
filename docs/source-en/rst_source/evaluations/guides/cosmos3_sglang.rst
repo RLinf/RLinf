@@ -129,6 +129,6 @@ FAQ
    * - Local requests blocked by proxy
      - Set ``NO_PROXY=127.0.0.1,localhost`` before launch.
    * - LIBERO rendering errors
-     - Set ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl`` when GPU is available.
+     - ``run_eval.sh`` renders with EGL by default; on hosts without EGL, set ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.
    * - GPU not released before re-run
      - Confirm the previous ``ray stop`` completed; ``nvidia-smi`` shows all GPUs free; no residual ``ray::SGLangServerGroup`` processes.

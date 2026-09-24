@@ -129,6 +129,6 @@ LIBERO 轨迹计数规则见 :ref:`libero-eval-config`。
    * - 本地请求被 proxy 拦截
      - 启动前设 ``NO_PROXY=127.0.0.1,localhost``。
    * - LIBERO 渲染报错
-     - 有 GPU 时设 ``MUJOCO_GL=egl``、``PYOPENGL_PLATFORM=egl``。
+     - ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，设 ``MUJOCO_GL=osmesa``、``PYOPENGL_PLATFORM=osmesa``。
    * - 重跑前 GPU 未释放
      - 确认上次 ``ray stop`` 已彻底、``nvidia-smi`` 全空、无残留 ``ray::SGLangServerGroup`` 进程。
