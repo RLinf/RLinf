@@ -144,6 +144,7 @@ rollout:
     precision: null
     is_lora: False
     openpi:
+      task: eval
       config_name: "pi05_libero"
       num_images_in_input: 2
       noise_level: 0.5
@@ -181,6 +182,7 @@ actor:
     num_steps: 3
     add_value_head: True
     openpi:
+      task: eval
       config_name: "pi05_libero"
       num_images_in_input: 2
       noise_level: 0.5
@@ -227,7 +229,7 @@ actor:
     forward_prefetch: False
     limit_all_gathers: False
     backward_prefetch: null
-    use_orig_params: False
+    use_orig_params: True
     use_liger_kernel: False
     mixed_precision:
       param_dtype: null

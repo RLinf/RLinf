@@ -1,0 +1,63 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/fastwam@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0-3
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_10_fastwam_eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    seed: 42
+    rollout_epoch: 1
+    # 20 slots x 25 episodes cover all 500 initial states.
+    total_num_envs: 20
+    auto_reset: true
+    ignore_terminations: true
+    # Reset no-op steps before policy control.
+    num_steps_wait: 30
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 17500
+    group_size: 1
+    use_fixed_reset_state_ids: true
+    use_ordered_reset_state_ids: true
+    is_eval: true
+    libero_variant: standard
+    perturbation_suffix: null
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_type: "fastwam"
+    seed: 42

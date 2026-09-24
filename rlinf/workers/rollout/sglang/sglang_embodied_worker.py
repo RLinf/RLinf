@@ -163,7 +163,29 @@ class SGLangEmbodiedWorker(Worker):
 
         Owns the sglang HTTP round-trip: the adapter builds the request
         payload and parses the response; this worker performs the msgpack POST.
+        Adapters with ``request_groups`` get one request per env group.
         """
+        from rlinf.models.embodiment.sglang_adapter import (
+            gather_env_rows,
+            select_env_rows,
+        )
+
+        request_groups = getattr(self.sglang_adapter, "request_groups", None)
+        groups = request_groups(env_obs) if request_groups is not None else None
+        if groups is None or len(groups) <= 1:
+            return self._request_actions(env_obs, mode)
+        outputs = [
+            self._request_actions(select_env_rows(env_obs, group), mode)
+            for group in groups
+        ]
+        order = [index for group in groups for index in group]
+        actions = gather_env_rows([actions for actions, _ in outputs], order)
+        info = gather_env_rows([info for _, info in outputs], order)
+        return actions, info
+
+    def _request_actions(
+        self, env_obs: dict[str, Any], mode: Literal["train", "eval"]
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         adapter = self.sglang_adapter
         payload, state = adapter.build_request(env_obs, mode=mode)
         resp = self.http_client.post(

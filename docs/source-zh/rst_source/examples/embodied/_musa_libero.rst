@@ -9,6 +9,8 @@ MUSA 使用摩尔线程 training-suite 镜像中相互匹配的 PyTorch 与 ``to
       -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
       "$MUSA_IMAGE" bash
 
+预装 LIBERO 模型环境的镜像已发布为 ``rlinf/rlinf:agentic-rlinf0.4-maniskill_libero-musa``，它基于同一个 training-suite 镜像，启动方式相同。ManiSkill 仍需要下文所述的厂商仿真器包，因此 ManiSkill 请使用厂商镜像。
+
 安装模型环境前，先确认设备可用：
 
 .. code-block:: bash

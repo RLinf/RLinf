@@ -7,7 +7,7 @@
 
    defaults:
      - env/libero_spatial@env.eval      # 环境 preset
-     - model/pi0_5@rollout.model        # 模型 preset
+     - model/pi0_5@rollout.model  # 模型 preset
      - override hydra/job_logging: stdout
 
    hydra:

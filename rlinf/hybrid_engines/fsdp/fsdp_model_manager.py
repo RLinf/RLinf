@@ -39,10 +39,12 @@ from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
+from rlinf.hybrid_engines.fsdp.optim import build_adamw
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
+    gradient_reduction_group,
 )
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
@@ -75,7 +77,12 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-        if self.torch_dtype != torch.float32:
+        if self._cfg.get("optim", {}).get("use_fp32_master_params", False):
+            self._logger.info(
+                "[FSDP] Using AdamW with FP32 optimizer state and master weights "
+                "while preserving model parameter dtypes."
+            )
+        elif self.torch_dtype != torch.float32:
             self._logger.warning(
                 "Provided there is sufficient GPU memory, "
                 "set the actor.model.precision parameter to fp32 "
@@ -97,11 +104,7 @@ class FSDPModelManager:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
         self._device_mesh = create_device_mesh(world_size)
-        self._dp_group = (
-            self._device_mesh["ddp"].get_group()
-            if "ddp" in self._device_mesh.mesh_dim_names
-            else None
-        )
+        self._dp_group = gradient_reduction_group(self._device_mesh)
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
@@ -137,9 +140,18 @@ class FSDPModelManager:
             self._cfg.fsdp_config.amp_autocast.precision
         )
 
-        self._logger.info(f"[FSDP] AMP is enabled with precision: {precision}.")
+        device_type = Worker.torch_device_type
+        if device_type is None:
+            self._logger.info("[FSDP] AMP is disabled: no accelerator on this worker.")
+            return nullcontext()
 
-        return torch.amp.autocast(device_type="cuda", dtype=precision)
+        self._logger.info(
+            f"[FSDP] AMP is enabled with precision: {precision} on {device_type}."
+        )
+
+        # Not "cuda": on another backend that autocast disables itself (with a
+        # warning) and AMP would silently never apply.
+        return torch.amp.autocast(device_type=device_type, dtype=precision)
 
     def model_provider_func(self) -> torch.nn.Module:
         """
@@ -593,30 +605,26 @@ class FSDPModelManager:
                 }
             )
 
-        # Fused AdamW avoids a large foreach temp buffer during warmup_optimizer_state
-        # for NO_SHARD models (e.g. STEAM ensemble SFT). It is unsafe with sharded
-        # FSDP params + grad_scaler.step() and can fail at runtime with:
-        # "output with shape [] doesn't match the broadcast shape [1]".
+        use_fp32_master_params = self._cfg.optim.get("use_fp32_master_params", False)
+
+        # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
+        # for NO_SHARD models. Sharded scalar parameters cannot use this path.
         all_params = [p for group in param_groups for p in group["params"]]
         use_fused_adamw = (
-            self._cfg.fsdp_config.get("sharding_strategy", "full_shard") == "no_shard"
+            not use_fp32_master_params
+            and self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
+            == "no_shard"
             and Worker.torch_device_type == "cuda"
             and Worker.torch_platform.is_available()
             and not any(p.dim() == 0 for p in all_params)
         )
-        try:
-            optimizer = torch.optim.AdamW(
-                param_groups,
-                eps=adam_eps,
-                weight_decay=weight_decay,
-                fused=use_fused_adamw,
-            )
-        except (RuntimeError, TypeError):
-            optimizer = torch.optim.AdamW(
-                param_groups,
-                eps=adam_eps,
-                weight_decay=weight_decay,
-            )
+        optimizer = build_adamw(
+            param_groups,
+            eps=adam_eps,
+            weight_decay=weight_decay,
+            use_fp32_master_params=use_fp32_master_params,
+            fused=use_fused_adamw,
+        )
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict

@@ -205,7 +205,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+          bash requirements/install.sh embodied --env franka
 
       - name: Franka SAC mock-robot test
         timeout-minutes: 20
@@ -373,7 +373,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export SKIP_ROS=1
           bash requirements/install.sh embodied --env franka
 
       - name: Real-world data collection mock-robot test
@@ -402,7 +401,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export SKIP_ROS=1
           bash requirements/install.sh embodied --env franka
 
       - name: Reward-dataset labelling mock-robot test
@@ -630,6 +628,101 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openvla-maniskill-rocm-test:
+    runs-on: rocm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create ROCm embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform amd embodied --model openvla --env maniskill_libero
+
+      - name: ManiSkill PPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          # SAPIEN's GPU physx needs CUDA: simulate on CPU, one env per rank.
+          # install.sh points Vulkan at lavapipe on these compute-only accelerators.
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla osmesa \
+            env.train.init_params.sim_backend=cpu env.eval.init_params.sim_backend=cpu \
+            +env.train.init_params.render_backend=pci:0000:00:00.0 \
+            +env.eval.init_params.render_backend=pci:0000:00:00.0 \
+            env.train.total_num_envs=2 env.eval.total_num_envs=2 actor.global_batch_size=4
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-libero-rocm-test:
+    runs-on: rocm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create ROCm embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform amd embodied --model openpi --env libero
+
+      - name: LIBERO-10 PPO OpenPI Pi05 test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_ppo_openpi_pi05_musa osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-gr00t-libero-rocm-test:
+    runs-on: rocm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create ROCm embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          bash requirements/install.sh --platform amd embodied --model gr00t --env libero
+
+      - name: Libero-Spatial PPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openpi-maniskill-libero-musa-test:
     runs-on: musa
     steps:
@@ -663,6 +756,97 @@ jobs:
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_async_ppo_openpi_pi05_musa osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvla-maniskill-musa-test:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --model openvla --env maniskill_libero
+
+      - name: ManiSkill PPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          # SAPIEN's GPU physx and renderer need CUDA: simulate on CPU, one env per rank.
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla osmesa \
+            env.train.init_params.sim_backend=cpu env.eval.init_params.sim_backend=cpu \
+            +env.train.init_params.render_backend=pci:0000:00:00.0 \
+            +env.eval.init_params.render_backend=pci:0000:00:00.0 \
+            env.train.total_num_envs=2 env.eval.total_num_envs=2 actor.global_batch_size=4
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvlaoft-libero-musa-test:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
+
+      - name: Libero-Goal GRPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-gr00t-libero-musa-test:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          bash requirements/install.sh --platform musa embodied --model gr00t --env libero
+
+      - name: Libero-Spatial PPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t osmesa
           ray stop
 
       - name: Clean up
@@ -826,7 +1010,7 @@ jobs:
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: BEHAVIOR-OpenPI test
+      - name: BEHAVIOR OpenPI PPO test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH
@@ -842,7 +1026,7 @@ jobs:
           uv cache prune
           rm -rf /tmp/tmp*
 
-  embodied-openpi-pytorch-behavior-eval-test:
+  embodied-openpi-behavior-eval-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -859,7 +1043,7 @@ jobs:
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: BEHAVIOR-OpenPI-PyTorch eval test
+      - name: BEHAVIOR OpenPI eval test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH
@@ -867,7 +1051,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_rlinf_eval
+          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_eval
 
       - name: Clean up
         run: |
@@ -927,6 +1111,68 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-libero-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform ascend embodied --model openpi --env libero
+
+      - name: LIBERO-10 PPO OpenPI Pi05 test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_ppo_openpi_pi05_musa osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openvla-maniskill-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform ascend embodied --model openvla --env maniskill_libero
+
+      - name: ManiSkill PPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          # SAPIEN's GPU physx and renderer need CUDA: simulate on CPU, one env per rank.
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla osmesa \
+            env.train.init_params.sim_backend=cpu env.eval.init_params.sim_backend=cpu \
+            +env.train.init_params.render_backend=pci:0000:00:00.0 \
+            +env.eval.init_params.render_backend=pci:0000:00:00.0 \
+            env.train.total_num_envs=2 env.eval.total_num_envs=2 actor.global_batch_size=4
           ray stop
 
       - name: Clean up
@@ -1012,7 +1258,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
-      - name: Maniskill PPO Pi05 training pipeline test
+      - name: ManiSkill PPO OpenPI Pi05 training pipeline test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
@@ -1020,15 +1266,15 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
-      - name: Libero-Spatial PPO OpenPI_RLinf test
+      - name: Libero-Spatial PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_rlinf
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
 
-      - name: Libero-Object NFT test
+      - name: Libero-Object NFT OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1036,7 +1282,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_object_nft_openpi
 
-      - name: Libero-Spatial DAgger test
+      - name: Libero-Spatial DAgger OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1044,15 +1290,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_dagger_openpi
 
-      - name: Libero-Spatial PPO Pi05 torch compile test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
-
-      - name: ManiSkill Async PPO test
+      - name: ManiSkill Async PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1061,7 +1299,7 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openpi
 
-      - name: Libero-Spatial DSRL PPO test
+      - name: Libero-Spatial DSRL OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1069,7 +1307,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_dsrl_openpi
 
-      - name: Maniskill PPO Co-Training Pi05 test
+      - name: ManiSkill PPO Co-Training OpenPI Pi05 test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1117,7 +1355,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           uv pip install "protobuf>=6.33.5,<7"
 
-      - name: ManiSkill-GS PPO Pi05 test
+      - name: ManiSkill-GS PPO OpenPI Pi05 test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1145,7 +1383,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env metaworld
 
-      - name: Metaworld PPO test
+      - name: Metaworld PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1202,7 +1440,7 @@ jobs:
           export CALVIN_PATH=/workspace/dataset/calvin
           bash requirements/install.sh embodied --model openpi --env calvin
 
-      - name: Calvin PPO test
+      - name: Calvin PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1260,7 +1498,7 @@ jobs:
           export ROBOCASA_PATH=/workspace/dataset/robocasa
           bash requirements/install.sh embodied --model openpi --env robocasa
 
-      - name: Robocasa PPO test
+      - name: RoboCasa PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1288,7 +1526,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env roboverse
 
-      - name: RoboVerse PPO test
+      - name: RoboVerse PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1320,7 +1558,7 @@ jobs:
           export ROBOCASA_ASSETS_PATH=/workspace/dataset/robocasa365_assets
           bash requirements/install.sh embodied --model openpi --env robocasa365
 
-      - name: RoboCasa365 PPO test
+      - name: RoboCasa365 PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1378,7 +1616,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export STARVLA_PATH=/workspace/dataset/starVLA
+          export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           bash requirements/install.sh embodied --model starvla --env maniskill_libero
 
       - name: Libero-10 GRPO test
@@ -1388,6 +1626,36 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_10_grpo_starvla
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-starvla-libero-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
+          export DECORD_PATH=/workspace/dataset/decord
+          bash requirements/install.sh --platform ascend embodied --model starvla --env libero
+
+      - name: Libero-10 GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_starvla osmesa
+          ray stop
 
       - name: Clean up
         run: |
@@ -1798,6 +2066,40 @@ jobs:
           bash tests/e2e_tests/embodied/run_eval.sh libero_10_molmoact2_eval
 
       - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-pi0-fast-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PI0-Fast environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export UV_TORCH_BACKEND=cu128
+          bash requirements/install.sh embodied --model pi0_fast --env libero \
+            --python 3.12.12 --torch 2.11.0 --no-flash-attn
+
+      - name: PI0-Fast LIBERO GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export PI0FAST_MODEL_PATH=/workspace/dataset/pi0_fast/pi0fast-libero
+          export PI0FAST_TEXT_TOKENIZER=/workspace/dataset/pi0_fast/paligemma-3b-pt-224
+          export PI0FAST_ACTION_TOKENIZER=/workspace/dataset/pi0_fast/tokenizer-lib-mean
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_pi0_fast egl
+
+      - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           uv cache prune

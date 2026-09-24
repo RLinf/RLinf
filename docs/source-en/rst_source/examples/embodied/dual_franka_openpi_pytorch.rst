@@ -55,7 +55,7 @@ Tasks
      - ``realworld_collect_data_gello_joint_dual_franka``
      - Collect dual-arm joint trajectories.
    * - SFT
-     - ``realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d``
+     - ``realworld_sft_openpi_dual_franka_tcp_rot6d``
      - Fine-tune π₀.₅ on tcp_rot6d actions.
    * - Deployment
      - ``realworld_eval_dual_franka``
@@ -85,18 +85,24 @@ Installation
 Robot Nodes
 ~~~~~~~~~~~
 
-Run the robot-node installation on both ``node 0`` and ``node 1``.
-Choose ``LIBFRANKA_VERSION`` from the official `Franka compatibility
-matrix <https://frankarobotics.github.io/docs/compatibility.html>`_; avoid
-libfranka ``0.18.0``.
+Run the robot-node installation on both ``node 0`` and ``node 1``. Dual-arm
+Franka always drives the arms through Franky, the backend that the default
+``franka`` environment installs. The installer downloads a prebuilt Franky wheel
+with libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
+``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to the one that the
+official `Franka compatibility
+matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for your
+firmware. For other firmware, build a Franky wheel against the matching libfranka
+and pass its path or URL in ``FRANKY_WHEEL``; the legacy ROS backend covers other
+libfranka versions only for single-arm Franka.
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # replace with your compatible version
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
 Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
@@ -106,11 +112,17 @@ The two GELLO leaders must stay local to ``node 0``; do not route their
 Real-time prerequisites
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``franka-franky`` uses franky/libfranka to communicate with each Franka at
-1 kHz. The RLinf installer installs runtime dependencies only; configure the
-PREEMPT_RT kernel and real-time permissions according to the official `Franka
-real-time kernel guide
+The ``franka`` environment uses franky/libfranka to communicate with each Franka
+at 1 kHz. A PREEMPT_RT kernel is recommended. The RLinf installer installs
+runtime dependencies only; configure the PREEMPT_RT kernel and real-time
+permissions according to the official `Franka real-time kernel guide
 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
+
+The ``DualFranka`` hardware config defaults to ``realtime_config: ignore``, so
+both arms also start on a kernel without PREEMPT_RT and RLinf logs a warning.
+On such a kernel the 1 kHz control loop can miss deadlines under load and
+trigger a robot reflex. Set ``realtime_config: enforce`` to refuse a kernel
+without PREEMPT_RT.
 
 Run this example on each workstation that directly communicates with a Franka
 before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and
@@ -166,7 +178,7 @@ Use the repository-provided configs and replace the required parameters:
      - Purpose
    * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
      - GELLO joint-space collection
-   * - ``examples/sft/config/realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d.yaml``
+   * - ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
      - π₀.₅ SFT on converted tcp_rot6d data
    * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
      - Real-world policy deployment
@@ -418,19 +430,21 @@ On the training node:
        --config-name pi05_dualfranka_tcp_rot6d \
        --repo-id $SFT_REPO_ID
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d
+   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
 
-Update ``train_data_paths``, ``model_path``, ``assets_dir``, ``asset_id``,
-logger settings, and cluster placement in
-``examples/sft/config/realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d.yaml``.
+Update ``train_data_paths``, ``model_path``,
+``openpi_data.norm_stats_path``, logger settings, and cluster placement in
+``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``.
 Checkpoints are saved under
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
 
-``assets_dir`` is the directory containing ``norm_stats.json``; ``asset_id``
-is the ``repo_id`` under which ``norm_stats.json`` is stored; and ``model_path``
+``openpi_data.norm_stats_path`` is the ``norm_stats.json`` produced by
+``calculate_norm_stats.py`` (typically
+``./assets/pi05_dualfranka_tcp_rot6d/<repo_id>/norm_stats.json``). Omit the
+key to use the OpenPI TrainConfig default under ``model_path``. ``model_path``
 is the model path selected for training. The model used in this
 guide must first be converted from the ``openpi-jax`` format. See
-``sft_openpi_rlinf.rst`` for details. The conversion utility is located at:
+:doc:`sft_openpi` for details. The conversion utility is located at:
 
 .. code-block:: text
 

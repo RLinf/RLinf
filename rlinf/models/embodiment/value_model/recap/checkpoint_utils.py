@@ -151,7 +151,10 @@ def build_input_transforms(
     import openpi.models.model as _openpi_model
     import openpi.transforms as _openpi_transforms
 
-    from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+    from rlinf.models.embodiment.openpi.policies import (
+        franka_policy,
+        libero_policy,
+    )
 
     _mt_map = {
         "pi0": _openpi_model.ModelType.PI0,

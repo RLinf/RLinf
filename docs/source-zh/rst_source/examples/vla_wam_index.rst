@@ -25,7 +25,7 @@
      - LIBERO · ManiSkill（需要带有 ``maniskill_widowx`` head 的 checkpoint）
    * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
      - :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <pi0-hardware>`
-     - LIBERO · ManiSkill
+     - LIBERO · ManiSkill · :ref:`ROCm 上的 RoboTwin <robotwin-hardware>`
 
 模型示例
 --------
@@ -55,6 +55,17 @@
            <b>MLP 策略强化学习</b>
          </a><br>
          使用 PPO、SAC 或 GRPO 在多种仿真环境中训练轻量级 MLP 策略
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/pi0_fast.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/pi0_fast.html" style="text-decoration: underline; color: blue;">
+           <b>PI0-FAST 强化学习训练</b>
+         </a><br>
+         LeRobot PI0-FAST + LIBERO-Long + token-level GRPO
        </p>
      </div>
 
@@ -156,6 +167,7 @@
    OpenVLA-OFT <embodied/openvla_oft>
    MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
+   PI0-FAST <embodied/pi0_fast>
    GR00T <embodied/gr00t>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>

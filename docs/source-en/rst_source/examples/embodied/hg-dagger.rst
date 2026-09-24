@@ -53,7 +53,7 @@ Tasks
      - ``realworld_collect_data_pico``
      - Collect real-world demonstrations with PICO.
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - Train the student initialization.
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
@@ -88,38 +88,11 @@ The real-world pipeline uses **different environments on different nodes**:
 Robot / Env Node
 ~~~~~~~~~~~~~~~~
 
-Follow the controller-node setup in :doc:`franka` for firmware checks, RT
-kernel, ROS, and Franka controller dependencies.
-
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   docker run -it --rm \
-      --privileged \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-franka
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
-
-Then switch to the libfranka-compatible environment:
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
-
-Before ``ray start`` on the robot node, source the same ROS / Franka controller
-environment described in :doc:`franka`.
+Set up the robot node as described in the Installation section of
+:doc:`franka`: install the Franky-based ``franka`` environment directly, or use
+the ``franky`` venv in the Franka Docker image, with ``LIBFRANKA_VERSION``
+matching the firmware. Activate that environment before starting Ray. This
+recipe runs the OpenPI actor and rollout on a separate GPU node.
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -137,7 +110,7 @@ Use the same environment as simulator Pi0 DAgger.
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Inside the container:
 
@@ -271,7 +244,7 @@ OpenPI-specific dataset notes are documented in :doc:`sft_openpi`.
 3. Run OpenPI SFT
 ~~~~~~~~~~~~~~~~~
 
-Edit ``examples/sft/config/realworld_sft_openpi.yaml`` before launch:
+Edit ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` before launch:
 
 .. code-block:: yaml
 
@@ -288,7 +261,7 @@ Then run:
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 The SFT checkpoint is the student initialization for the online stage. For more
 OpenPI SFT details, see :doc:`sft_openpi`.

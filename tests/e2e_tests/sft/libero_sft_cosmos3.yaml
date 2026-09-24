@@ -1,0 +1,86 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/cosmos3@actor.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-1
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_cosmos3"
+    logger_backends: null
+
+  max_epochs: -1
+  max_steps: 1
+  val_check_interval: -1
+  save_interval: -1
+  log_interval: 1
+  resume_dir: null
+
+data:
+  train_data_paths: /workspace/dataset/LIBERO_LeRobot_v3/libero_10
+  data_type: "libero_10"
+  num_workers: 2
+  prefetch_factor: 2
+  val_ratio: 0.01
+  seed: 0
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 4
+  seed: 42
+
+  model:
+    precision: bf16
+    is_lora: false
+    load_to_device: false
+    ema_enabled: false
+    model_path: /workspace/dataset/Cosmos3-Nano-DCP
+    wan_vae_path: /workspace/dataset/Wan-AI/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    max_samples_per_batch: 2
+
+  optim:
+    lr: 5.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.99
+    adam_eps: 1.0e-08
+    weight_decay: 0.05
+    clip_grad: 1.0
+    lr_scheduler: "lambda_linear"
+    lr_warmup_steps: 500
+    total_training_steps: 16000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    use_orig_params: True
+    gradient_checkpointing: False
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: False
+    save_full_model_weights: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+      cast_forward_inputs: false
+    amp_autocast:
+      enabled: False
+      precision: "bf16"

@@ -135,7 +135,7 @@ value computation so the RL-specific logic stays inside the model.
           }
           return actions, result
 
-Refer to `rlinf/models/embodiment/openpi/openpi_action_model.py`. The inputs and
+Refer to `rlinf/models/embodiment/openpi/tasks/rl.py`. The inputs and
 outputs of these interfaces are best understood as follows:
 
 - ``forward(forward_type=..., **kwargs)``:

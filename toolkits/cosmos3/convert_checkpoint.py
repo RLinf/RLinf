@@ -41,6 +41,29 @@ PIPELINE_CLASS = "Cosmos3OmniDiffusersPipeline"
 # Match transformers' default max_shard_size so the DCP shards land near 5 GB.
 SHARD_BYTES = 5 * 1024**3
 
+# Training-only / default config nodes that cosmos export_model has no public alias for.
+EXPORT_DROPPED_CONFIG_KEYS = ("lbl", "multiview_attention")
+# export_model with those nodes removed; argv[1] lists them, the rest is its CLI.
+_EXPORT_MODEL_CODE = """
+import sys
+
+import cosmos_framework.scripts.export_model as export_model
+
+dropped = sys.argv[1].split(",")
+coerce_to_base_model = export_model._coerce_to_base_model
+
+
+def coerce_and_drop(model_dict):
+    coerce_to_base_model(model_dict)
+    for key in dropped:
+        model_dict["config"].pop(key, None)
+
+
+export_model._coerce_to_base_model = coerce_and_drop
+sys.argv = ["export_model", *sys.argv[2:]]
+export_model.main()
+"""
+
 
 def step1_strip_omni_prefix(src: str, out: str) -> str:
     """full_weights.pt -> model_safetensors (strip ``omni.`` -> ``net.`` / ``net_ema.``)."""
@@ -99,8 +122,9 @@ def step3_export_to_hf(
     out_dir = os.path.join(out, "model_hf")
     cmd = [
         sys.executable,
-        "-m",
-        "cosmos_framework.scripts.export_model",
+        "-c",
+        _EXPORT_MODEL_CODE,
+        ",".join(EXPORT_DROPPED_CONFIG_KEYS),
         "--checkpoint-path",
         dcp_dir,
         "--config-file",
@@ -111,7 +135,11 @@ def step3_export_to_hf(
     if no_ema:
         cmd.append("--no-use-ema-weights")
     cmd += ["-o", out_dir]
-    print("DCP -> HF:", " ".join(cmd))
+    print(
+        "DCP -> HF: cosmos_framework.scripts.export_model",
+        " ".join(cmd[4:]),
+        f"(without model.config.{{{','.join(EXPORT_DROPPED_CONFIG_KEYS)}}})",
+    )
     subprocess.run(cmd, check=True)
     return out_dir
 

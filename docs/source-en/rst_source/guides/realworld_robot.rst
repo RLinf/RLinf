@@ -37,7 +37,7 @@ All nodes must be on the **same LAN** (or overlay network; see :doc:`cloud_edge`
 
 .. important::
 
-   - Control nodes need Franka dependencies (ROS, libfranka, etc.); see :doc:`../examples/embodied/franka`.
+   - Control nodes need the Franka controller environment (Franky with bundled libfranka by default); see :doc:`../examples/embodied/franka`.
    - Ray freezes Python and env vars at ``ray start``; install dependencies on **each node** first.
    - Use ``ray_utils/realworld/setup_before_ray.sh`` to align per-node env before ``ray start``.
 
@@ -59,11 +59,11 @@ On **every node**, before ``ray start``:
    # If multiple NICs, pin the reachable interface, e.g.:
    # export RLINF_COMM_NET_DEVICES=eth0
 
-On control nodes, also source the ROS / Franka workspace if not in ``setup_before_ray.sh``:
+On control nodes, also activate the Franka environment if ``setup_before_ray.sh`` does not:
 
 .. code-block:: bash
 
-   source <your_catkin_ws>/devel/setup.bash
+   source .venv/bin/activate
 
 Step 2: Start Ray
 ~~~~~~~~~~~~~~~~~

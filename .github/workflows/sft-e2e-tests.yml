@@ -73,7 +73,53 @@ jobs:
                -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
-  sft-openpi-pytorch-behavior-test:
+  sft-fastwam-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create FastWAM environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model fastwam --env libero
+
+      - name: FastWAM LIBERO FSDP SFT test
+        timeout-minutes: 25
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_fastwam
+
+      - name: FastWAM LIBERO batch evaluation
+        timeout-minutes: 25
+        run: |
+          ray stop || true
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh libero_spatial_fastwam_eval
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+
+  sft-openpi-behavior-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -90,7 +136,7 @@ jobs:
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: SFT BEHAVIOR OpenPI-PyTorch test
+      - name: SFT BEHAVIOR OpenPI test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH
@@ -98,7 +144,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_rlinf_sft
+          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_sft
 
       - name: Clean up
         run: |
@@ -201,4 +247,46 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+
+  sft-cosmos3-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Cosmos3 SFT and SGLang eval environments
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model cosmos3 --env libero
+          bash requirements/install.sh embodied --model sglang --env libero --venv .venv-sglang
+
+      - name: Cosmos3 LIBERO SFT test
+        timeout-minutes: 40
+        run: |
+          unset PYTHONPATH UV_DEFAULT_INDEX
+          export REPO_PATH=$(pwd)
+          export HF_HOME=/workspace/dataset/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_cosmos3
+
+      - name: Cosmos3 LIBERO SGLang evaluation
+        timeout-minutes: 30
+        run: |
+          ray stop || true
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export NO_PROXY=127.0.0.1,localhost
+          source .venv-sglang/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh libero_spatial_cosmos3_eval_sglang
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv .venv-sglang
           uv cache prune

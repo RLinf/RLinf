@@ -35,6 +35,8 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         "PackedAttentionMoT",
         "Cosmos3VFMNetwork",
     ]
+    # cosmos DomainAwareLinear reads its embedding weights directly (grouped_mm).
+    _fsdp_wrap_embeddings: bool = False
 
     def __init__(
         self,

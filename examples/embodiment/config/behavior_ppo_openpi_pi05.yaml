@@ -3,7 +3,7 @@ defaults:
   - env/behavior_r1pro@env.eval
   - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
-  - weight_syncer/bucket_syncer@weight_syncer # use bucket_syncer to avoid OOM in training on 4090
+  - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
 hydra:
@@ -25,7 +25,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_ppo_openpi05"
+    experiment_name: "behavior_ppo_openpi05_pytorch"
     logger_backends: ["tensorboard"]
 
   only_eval: False
@@ -47,7 +47,7 @@ algorithm:
   group_size: 1
 
   reward_type: chunk_level
-  logprob_type: token_level
+  logprob_type: chunk_level
   entropy_type: token_level
 
   adv_type: gae
@@ -64,7 +64,7 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  reward_coef: 5.0
+  reward_coef: 10.0
 
 env:
   group_name: "EnvGroup"
@@ -100,7 +100,9 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/pi05"
+    # NEW-format pytorch SFT checkpoint (model.safetensors). The value head is
+    # added fresh (add_value_head: True) on top of these weights.
+    model_path: "/path/to/pi05_sft_pytorch_new"
     precision: ${actor.model.precision}
 
 actor:
@@ -109,36 +111,51 @@ actor:
   micro_batch_size: 4
   global_batch_size: 64
   seed: 1234
-  num_steps: 10
   enable_offload: True
 
   model:
     model_path: ${rollout.model.model_path}
+    # actor_critic loss requires a value head (validate_embodied_cfg asserts this).
     add_value_head: True
     num_images_in_input: 3
     proprio_dim: 32
     action_dim: 23
     num_action_chunks: 32
+    # Flow-matching denoise steps (RL SDE chain length).
+    num_steps: 8
     openpi:
+      # Selects the RL variant (chain-collecting SDE sampler + VLM value head).
+      task: rl
       config_name: "pi05_behavior"
+      num_images_in_input: 3
+      value_after_vlm: True
+      value_vlm_mode: "mean_token"
       detach_critic_input: True
       joint_logprob: False
-      noise_level: 0.5
-      action_env_dim: ${actor.model.action_dim}
+      ignore_last: True
+      noise_level: 0.4
       noise_method: "flow_sde"
+      # Freeze the paligemma VLM (SigLIP + gemma expert-0); PPO backward only
+      # updates the action expert + projections + value head.
+      train_expert_only: True
 
   optim:
-    lr: 1.0e-4
-    value_lr: 3.0e-3
+    lr: 5.0e-6
+    value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-08
-    clip_grad: 10.0
+    clip_grad: 1.0
     weight_decay: 0.01
     critic_warmup_steps: 0
 
   fsdp_config:
     strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    # train_expert_only freezes the VLM, so the flat param group mixes frozen +
+    # trainable tensors — FSDP requires use_orig_params=True to wrap that (the
+    # default False rejects non-uniform requires_grad).
+    use_orig_params: True
     gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
