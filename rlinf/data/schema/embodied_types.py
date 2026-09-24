@@ -1164,7 +1164,10 @@ class LeRobotChunk:
     intervention_actions: np.ndarray | None
     # Policy-side expert masks, bool [B, C].
     intervention_flags: np.ndarray | None
-    # Executed action slots, bool [B, C], or ``None`` for full chunks.
+    # Valid leading action slots, bool [B, C], or ``None`` for full chunks.
+    # When present (even if all True), observations are pre-action and aligned
+    # with actions; otherwise the legacy post-action convention applies.
+    # Completion metadata is carried separately from these observations.
     valid_action_mask: np.ndarray | None
     # Number of parallel environments represented by the leading batch B.
     num_envs: int
@@ -1197,6 +1200,19 @@ class LeRobotChunk:
         if len(infos) != len(observations):
             raise ValueError("LeRobot infos must contain one entry per chunk step.")
 
+        term = np.asarray(cls._to_numpy(terminations))
+        trunc = np.asarray(cls._to_numpy(truncations))
+        valid_action_mask = cls._to_numpy(valid_action_mask)
+        if valid_action_mask is not None:
+            assert term.ndim == 2 and term.shape == valid_action_mask.shape, (
+                "terminations must be [B, C] matching valid_action_mask, "
+                f"got {term.shape} vs {valid_action_mask.shape}"
+            )
+            assert trunc.ndim == 2 and trunc.shape == valid_action_mask.shape, (
+                "truncations must be [B, C] matching valid_action_mask, "
+                f"got {trunc.shape} vs {valid_action_mask.shape}"
+            )
+
         intervention_flags = (
             policy_output.intervene_flags if policy_output is not None else None
         )
@@ -1217,8 +1233,8 @@ class LeRobotChunk:
                 action_dim=action_dim,
             ),
             observations=observations,
-            terminations=cls._to_numpy(terminations),
-            truncations=cls._to_numpy(truncations),
+            terminations=term,
+            truncations=trunc,
             infos=infos,
             intervention_actions=cls._reshape_actions(
                 intervention_actions,
@@ -1227,7 +1243,7 @@ class LeRobotChunk:
                 action_dim=action_dim,
             ),
             intervention_flags=intervention_flags,
-            valid_action_mask=cls._to_numpy(valid_action_mask),
+            valid_action_mask=valid_action_mask,
             num_envs=num_envs,
             action_dim=action_dim,
         )
@@ -1260,6 +1276,8 @@ class LeRobotChunk:
             )
         done = terminated or truncated
 
+        # Masked chunks already carry pre-action observations; replacing them
+        # with terminal post-action observations would misalign action pairs.
         has_final_observation = (
             self.valid_action_mask is None
             and isinstance(step_info, dict)
@@ -1947,7 +1965,7 @@ def split_episode_data(
                 chunk.append(split_item)
         return chunks
 
-    chunks = [
+    return [
         {
             "chunk_actions": chunk_actions,
             "obs_list": obs_list,
@@ -1965,7 +1983,6 @@ def split_episode_data(
             split_batch_value(data.get("valid_action_mask"), split_sizes),
         )
     ]
-    return chunks
 
 
 def merge_episode_data(data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1979,17 +1996,16 @@ def merge_episode_data(data: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError("Cannot merge episode data with different chunk lengths.")
         return [merge_batch_values(list(items)) for items in zip(*values)]
 
-    merged = {
+    return {
         "chunk_actions": merge_batch_values([value["chunk_actions"] for value in data]),
         "obs_list": merge_steps([value["obs_list"] for value in data]),
         "terminations": merge_batch_values([value["terminations"] for value in data]),
         "truncations": merge_batch_values([value["truncations"] for value in data]),
         "infos_list": merge_steps([value["infos_list"] for value in data]),
         "valid_action_mask": merge_batch_values(
-            [value["valid_action_mask"] for value in data]
+            [value.get("valid_action_mask") for value in data]
         ),
     }
-    return merged
 
 
 def _observation_batch_size(obs: dict[str, Any]) -> int:
