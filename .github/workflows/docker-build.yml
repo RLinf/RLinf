@@ -1227,3 +1227,21 @@ jobs:
             NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-maniskill_libero-rocm
+
+  build-embodied-robotwin-lingbotvlav2:
+    # Uses the same pinned dependency and patch as requirements/install.sh.
+    if: ${{ vars.LINGBOT_VLA_V2_CI == 'true' }}
+    runs-on: embodied
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build RoboTwin with V2
+        uses: docker/build-push-action@v6
+        with:
+          file: ./docker/Dockerfile
+          push: false
+          build-args: |
+            BUILD_TARGET=embodied-robotwin-lingbotvlav2
+            NO_MIRROR=1
+          outputs: type=cacheonly
+          tags: rlinf:embodied-robotwin-lingbotvlav2

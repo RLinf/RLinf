@@ -34,6 +34,12 @@ SFT, then use Advanced Integrations for backend integration and weight transport
 
       Add one local part, compose the robot, then place it remotely.
 
+   .. grid-item-card:: Model Adaptation
+      :link: model_adaptation
+      :link-type: doc
+
+      Compare existing model integrations and follow the shared policy contract.
+
    .. grid-item-card:: New Model with FSDP
       :link: new_model_fsdp
       :link-type: doc
@@ -68,6 +74,7 @@ SFT, then use Advanced Integrations for backend integration and weight transport
    :hidden:
 
    Extending Overview <overview>
+   Model Adaptation <model_adaptation>
    New Environment <new_env>
    New Real-World Tasks <new_task>
    New Robot <new_robot>

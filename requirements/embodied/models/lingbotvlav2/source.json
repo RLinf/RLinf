@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/robbyant/lingbot-vla-v2.git",
+  "revision": "ecca77bb259b9592d5fc0eb2b4972d4a236ed2c8",
+  "patch": "ppo-compat.patch",
+  "files": {
+    "lingbotvla/data/__init__.py": {
+      "before_sha256": "db4230123017f1d3f684b402e46b8d94bdd6583f9bc18100c7401855a2b4af2b",
+      "after_sha256": "17af83f51312b789f3637f4c83f146a413566b7fef5f4d13dced9eab701e2e0b"
+    },
+    "lingbotvla/data/vla_data/__init__.py": {
+      "before_sha256": "362282de0f8ac1ab332571a3e52ad29e40430a9cd43c7f1f7de003a0d77abb67",
+      "after_sha256": "964d2414ef05748a72edd4fec07dfd4fab260a5e0a2e4eb76fb267e5e68a2f32"
+    },
+    "lingbotvla/models/vla/lingbot_vla/qwen2_action_expert.py": {
+      "before_sha256": "2221459c676c27eb70e13edd29d6e25c2c6008a1fc3f0b7c820b8abbbf11aff6",
+      "after_sha256": "9a0164b52a279a66ffe319ccc00fbd0dee6f59bc4a647e3084a100d011c38b5e"
+    },
+    "lingbotvla/checkpoint_metadata.py": {
+      "before_sha256": null,
+      "after_sha256": "533d01487094a1fab3522f6aa01331a6c9669526d74e41762a4660b3503b1b51"
+    },
+    "lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py": {
+      "before_sha256": "9b3c9a2ad6823f9d58da51b732477785a1e4db0d29db80e030e094c7b605e40c",
+      "after_sha256": "5023a9e9585cafc133eeb5e19f85ee6ef04d551edb91bab5f33404bb224702f9"
+    }
+  }
+}

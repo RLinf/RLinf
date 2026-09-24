@@ -1,0 +1,35 @@
+defaults:
+  - robotwin_click_bell_ppo_lingbotvlav2
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+runner:
+  max_epochs: 2
+  max_steps: 2
+  val_check_interval: -1
+  save_interval: 2
+  logger:
+    experiment_name: robotwin_vla2_ppo_smoke
+
+env:
+  train:
+    total_num_envs: 2
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    video_cfg:
+      save_video: false
+    task_config:
+      step_lim: 100
+  eval:
+    total_num_envs: 2
+    video_cfg:
+      save_video: false
+
+algorithm:
+  update_epoch: 1
+
+actor:
+  global_batch_size: 4

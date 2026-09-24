@@ -1,0 +1,31 @@
+model_type: lingbotvlav2
+model_path: ${oc.env:LINGBOT_VLA_V2_CKPT}
+tokenizer_path: ${oc.env:QWEN3_VL_PATH}
+precision: bf16
+num_action_chunks: 50
+action_dim: 14
+# PPO scores every latent coordinate, including those not sent to RoboTwin.
+logprob_dim: 55
+is_lora: false
+use_proprio: true
+proprio_dim: 14
+num_steps: 10
+# Keep the MoE/GEMM batch shape identical in rollout and actor likelihood replay.
+forward_micro_batch_size: 1
+# Reject rollout/actor density drift before replacing old log-probabilities.
+logprob_replay_atol: 0.001
+noise_method: flow_sde
+noise_level: 0.3
+joint_logprob: true
+rl_trainable_scope: action_expert
+add_value_head: true
+value_type: chunk_level
+value_head:
+  hidden_sizes: [512, 128]
+  activation: relu
+lingbotvlav2:
+  data_parallel_backend: fsdp2
+  training_config_path: ${oc.env:LINGBOT_VLA_V2_TRAIN_CONFIG}
+  robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
+  stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
+  attention_implementation: eager

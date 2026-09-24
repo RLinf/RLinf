@@ -106,6 +106,7 @@ SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
 SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
+SupportedModel.LINGBOTVLAV2 = SupportedModel.register("lingbotvlav2", force=True)
 SupportedModel.ABOT_M0 = SupportedModel.register("abot_m0", force=True)
 SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
 SupportedModel.CFG_MODEL = SupportedModel.register("cfg_model", force=True)
@@ -151,6 +152,7 @@ EMBODIED_MODEL = set(
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
         SupportedModel.LINGBOTVLA,
+        SupportedModel.LINGBOTVLAV2,
         SupportedModel.ABOT_M0,
         SupportedModel.RESNET_REWARD,
         SupportedModel.GR00T_N1D6,
@@ -1044,13 +1046,39 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_cfg.model_type == "lingbotvlav2" and not only_eval:
+        if (
+            algorithm_cfg.logprob_type != "chunk_level"
+            or algorithm_cfg.reward_type != "chunk_level"
+        ):
+            raise ValueError(
+                "LingBot-VLA V2 PPO scores whole latent trajectories; use chunk_level logprobs and rewards"
+            )
+        if model_cfg.logprob_dim != 55 or model_cfg.action_dim != 14:
+            raise ValueError(
+                "LingBot-VLA V2 RoboTwin requires logprob_dim=55 and action_dim=14"
+            )
+        if (
+            cfg.actor.fsdp_config.strategy != "fsdp2"
+            or model_cfg.lingbotvlav2.data_parallel_backend != "fsdp2"
+        ):
+            raise ValueError("LingBot-VLA V2 requires FSDP2 data parallelism")
+        if cfg.actor.fsdp_config.mixed_precision.cast_forward_inputs:
+            raise ValueError(
+                "LingBot-VLA V2 requires cast_forward_inputs=false to preserve FP32 SDE samples"
+            )
+
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
-        # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
-        # gap per action, which assumes the OpenVLA family's tokenized action layout.
+        # Recompute supports flattened token or latent-coordinate logprobs.
+        # ``logprob_dim`` distinguishes latent width from the robot action width.
         # GR00T needs no recompute: it already rescores inside its training forward.
-        assert model_type in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT], (
+        assert model_type in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+            SupportedModel.LINGBOTVLAV2,
+        ], (
             f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value]}, "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.LINGBOTVLAV2.value]}, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (

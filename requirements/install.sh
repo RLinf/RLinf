@@ -109,7 +109,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -2635,6 +2635,42 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_lingbot_vla_v2_model() {
+    if [ "$ENV_NAME" != "robotwin" ]; then
+        echo "LingBot-VLA V2 currently supports --env robotwin." >&2
+        exit 1
+    fi
+    if [ "$TORCH_VERSION" != "2.9.0" ] || [ "$TRANSFORMERS_VERSION" != "4.57.6" ]; then
+        echo "V2's verified runtime requires --torch 2.9.0 --transformers 4.57.6." >&2
+        exit 1
+    fi
+    create_and_sync_venv
+    install_common_embodied_deps
+    # Pin the official source and apply the reviewed RLinf compatibility patch.
+    # Keep V1 and V2 in separate venvs: both distributions import as lingbotvla.
+    local vla2_path
+    local prepare_args=()
+    if [ -z "${LINGBOT_VLA_V2_PATH:-}" ] || [ ! -d "$LINGBOT_VLA_V2_PATH" ]; then
+        prepare_args+=(--managed)
+    fi
+    vla2_path=$(clone_or_reuse_repo LINGBOT_VLA_V2_PATH "$VENV_DIR/lingbot-vla-v2" "${GITHUB_PREFIX}https://github.com/robbyant/lingbot-vla-v2.git")
+    python "$SCRIPT_DIR/embodied/prepare_model_source.py" \
+        --source "$vla2_path" \
+        --manifest "$SCRIPT_DIR/embodied/models/lingbotvlav2/source.json" "${prepare_args[@]}"
+    uv pip install -e "$vla2_path" --no-deps
+    printf 'V2 source (LINGBOT_VLA_V2_PATH): %s\n' "$vla2_path"
+    install_robotwin_env
+    uv pip install -r "$SCRIPT_DIR/embodied/models/lingbotvlav2.txt"
+    install_flash_attn
+    python - <<'EOF'
+from lingbotvla.checkpoint_metadata import read_checkpoint_config
+from lingbotvla.models.vla.lingbot_vla.modeling_lingbot_vla_v2 import LingbotVlaV2Policy
+assert callable(read_checkpoint_config)
+assert callable(LingbotVlaV2Policy.set_moe_forward_backend)
+assert callable(LingbotVlaV2Policy.set_moe_activation_checkpointing)
+EOF
+}
+
 install_abot_m0_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -3886,6 +3922,9 @@ main() {
                     ;;
                 dexbotic)
                     install_dexbotic_model
+                    ;;
+                lingbotvlav2)
+                    install_lingbot_vla_v2_model
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 

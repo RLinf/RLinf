@@ -1,0 +1,287 @@
+diff --git a/lingbotvla/data/__init__.py b/lingbotvla/data/__init__.py
+--- a/lingbotvla/data/__init__.py
++++ b/lingbotvla/data/__init__.py
+@@ -1,3 +1,6 @@
++# Modified for RLinf: lazy dataset imports and PPO-compatible MoE replay.
++# See requirements/embodied/models/lingbotvlav2/README.md in RLinf.
++
+ # Copyright 2025 Bytedance Ltd. and/or its affiliates
+ #
+ # Licensed under the Apache License, Version 2.0 (the "License");
+@@ -13,22 +16,34 @@
+ # limitations under the License.
+ 
+ 
+-from .chat_template import build_chat_template
+-from .data_collator import (
+-    CollatePipeline,
+-    DataCollatorWithPacking,
+-    DataCollatorWithPadding,
+-    DataCollatorWithPositionIDs,
+-    MakeMicroBatchCollator,
+-    TextSequenceShardCollator,
+-    UnpackDataCollator,
+-)
+-from .data_loader import build_dataloader
+-from .dataset import build_iterative_dataset, build_mapping_dataset, build_vla_dataset
+-from .multimodal.data_collator import (
+-    OmniDataCollatorWithPacking,
+-    OmniDataCollatorWithPadding,
+-    OmniSequenceShardCollator,
+-    VLADataCollatorWithPacking,
+-)
+-from .multimodal.multimodal_chat_template import build_multimodal_chat_template
++from importlib import import_module
++
++
++# Model preprocessing and data.constants must not require offline LeRobot datasets.
++# Keep the training-facing exports, importing each implementation when requested.
++_EXPORTS = {
++    "build_chat_template": ".chat_template",
++    "build_dataloader": ".data_loader",
++    "build_iterative_dataset": ".dataset",
++    "build_mapping_dataset": ".dataset",
++    "build_vla_dataset": ".dataset",
++    "build_multimodal_chat_template": ".multimodal.multimodal_chat_template",
++    **{name: ".data_collator" for name in (
++        "CollatePipeline", "DataCollatorWithPacking", "DataCollatorWithPadding",
++        "DataCollatorWithPositionIDs", "MakeMicroBatchCollator",
++        "TextSequenceShardCollator", "UnpackDataCollator",
++    )},
++    **{name: ".multimodal.data_collator" for name in (
++        "OmniDataCollatorWithPacking", "OmniDataCollatorWithPadding",
++        "OmniSequenceShardCollator", "VLADataCollatorWithPacking",
++    )},
++}
++__all__ = list(_EXPORTS)
++
++
++def __getattr__(name):
++    if name not in _EXPORTS:
++        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
++    value = getattr(import_module(_EXPORTS[name], __name__), name)
++    globals()[name] = value
++    return value
+diff --git a/lingbotvla/data/vla_data/__init__.py b/lingbotvla/data/vla_data/__init__.py
+--- a/lingbotvla/data/vla_data/__init__.py
++++ b/lingbotvla/data/vla_data/__init__.py
+@@ -1,2 +1,18 @@
+-from .base_dataset import VLADataset
+-from .multi_vla_dataset import MultiVLADataset
+\ No newline at end of file
++# Modified for RLinf: lazy dataset imports and PPO-compatible MoE replay.
++# See requirements/embodied/models/lingbotvlav2/README.md in RLinf.
++
++"""VLA transforms remain usable without loading offline dataset dependencies."""
++
++from importlib import import_module
++
++
++__all__ = ["VLADataset", "MultiVLADataset"]
++_EXPORTS = {"VLADataset": ".base_dataset", "MultiVLADataset": ".multi_vla_dataset"}
++
++
++def __getattr__(name):
++    if name not in _EXPORTS:
++        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
++    value = getattr(import_module(_EXPORTS[name], __name__), name)
++    globals()[name] = value
++    return value
+diff --git a/lingbotvla/models/vla/lingbot_vla/qwen2_action_expert.py b/lingbotvla/models/vla/lingbot_vla/qwen2_action_expert.py
+--- a/lingbotvla/models/vla/lingbot_vla/qwen2_action_expert.py
++++ b/lingbotvla/models/vla/lingbot_vla/qwen2_action_expert.py
+@@ -1,3 +1,6 @@
++# Modified for RLinf: lazy dataset imports and PPO-compatible MoE replay.
++# See requirements/embodied/models/lingbotvlav2/README.md in RLinf.
++
+ from logging import raiseExceptions
+ import einops
+ import numpy as np
+@@ -252,6 +255,8 @@
+ 
+         # EP/fused support: choose expert storage based on moe_implementation
+         self._moe_implementation = getattr(config, '_moe_implementation', None) or 'eager'
++        self.allow_inference_kernel = True
++        self.checkpoint_experts = False
+         if self._moe_implementation == 'fused':
+             self.experts = Qwen2FusedExperts(
+                 self.num_experts,
+@@ -300,10 +305,26 @@
+             routing_weights = routing_weights * self.routed_scaling_factor
+         routing_weights = routing_weights.to(hidden_states.dtype)
+ 
++        if self.checkpoint_experts and self.training and torch.is_grad_enabled():
++            from torch.utils.checkpoint import checkpoint
++
++            final_hidden_states = checkpoint(
++                self._compute_experts, hidden_flat, routing_weights, selected_experts,
++                use_reentrant=False,
++            )
++        else:
++            final_hidden_states = self._compute_experts(hidden_flat, routing_weights, selected_experts)
++        return final_hidden_states.reshape(batch_size, sequence_length, hidden_dim), router_logits
++
++    def _compute_experts(self, hidden_flat, routing_weights, selected_experts):
++        # Recompute inside the decoder's FSDP boundary; do not retain BF16
++        # weight copies for every denoising transition. Router statistics are
++        # updated once by forward(), outside the recomputed region.
+         # Expert computation: fused (group_gemm) or eager (per-expert loop)
+         if self._moe_implementation == 'fused':
+             use_robby_moe = (
+                 robby_moe_forward is not None
++                and self.allow_inference_kernel
+                 and hidden_flat.is_cuda
+                 and not self.training
+                 and not torch.is_grad_enabled()
+@@ -347,7 +368,7 @@
+             expert_mask = F.one_hot(
+                 selected_experts, num_classes=self.num_experts
+             ).float()  # (B*T, top_k, num_experts)
+-            weights = (expert_mask * routing_weights.unsqueeze(-1).float()).sum(dim=1).to(hidden_states.dtype)  # (B*T, num_experts)
++            weights = (expert_mask * routing_weights.unsqueeze(-1).float()).sum(dim=1).to(hidden_flat.dtype)  # (B*T, num_experts)
+             final_hidden_states = torch.einsum('ebd,be->bd', expert_outputs, weights)  # (B*T, D)
+ 
+         # Shared expert: applied to all tokens (fixed shape)
+@@ -358,8 +379,7 @@
+             shared_expert_output = F.sigmoid(self.shared_expert_gate(hidden_flat)) * shared_expert_output
+         final_hidden_states = final_hidden_states + shared_expert_output
+ 
+-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+-        return final_hidden_states, router_logits
++        return final_hidden_states
+ 
+ 
+ class Qwen2DecoderLayer(GradientCheckpointingLayer):
+diff --git a/lingbotvla/checkpoint_metadata.py b/lingbotvla/checkpoint_metadata.py
+new file mode 100644
+--- /dev/null
++++ b/lingbotvla/checkpoint_metadata.py
+@@ -0,0 +1,86 @@
++# Copyright 2026 The RLinf Authors.
++# SPDX-License-Identifier: Apache-2.0
++
++"""Public metadata reader for exported and official-release VLA2 checkpoints.
++
++This module does not load weights, start inference, or own a training loop.
++The official release stores architecture fields in lingbotvla_cli.yaml and
++only a family marker in hf_ckpt/config.json.
++"""
++
++from __future__ import annotations
++
++import json
++from copy import deepcopy
++from pathlib import Path
++from typing import Any
++
++import yaml
++
++
++def read_checkpoint_config(checkpoint: str | Path) -> dict[str, Any]:
++    """Read full exported metadata, or the pinned release's sibling CLI config."""
++    checkpoint = Path(checkpoint).expanduser()
++    with (checkpoint / "config.json").open() as source:
++        config = json.load(source)
++    if "max_action_dim" in config and "chunk_size" in config:
++        return config
++    release_config = checkpoint.parent.parent.parent / "lingbotvla_cli.yaml"
++    if not release_config.is_file():
++        raise ValueError(
++            f"{checkpoint}/config.json is incomplete; expected a full exported "
++            f"model config or official release metadata at {release_config}"
++        )
++    with release_config.open() as source:
++        release = yaml.safe_load(source)
++    config = {**release["model"], **release["train"]}
++    for field in ("max_action_dim", "max_state_dim", "chunk_size"):
++        if not isinstance(config.get(field), int) or config[field] <= 0:
++            raise ValueError(f"Official checkpoint requires positive {field}")
++    return config
++
++
++def build_checkpoint_config(values: dict[str, Any], base_model: str | Path):
++    """Reconstruct the same VLA/Qwen configuration as the release evaluator.
++
++    A caller chooses attention/cache/training flags after construction. Never
++    discard depth/video query heads: their tokens also affect action inference.
++    """
++    from transformers import AutoConfig
++
++    from lingbotvla.models.vla.lingbot_vla.configuration_lingbot_vla import (
++        LingbotVLAV2Config,
++    )
++
++    values = deepcopy(values)
++    config = LingbotVLAV2Config(**values)
++    for key, value in values.items():
++        if not hasattr(config, key):
++            setattr(config, key, value)
++    qwen = AutoConfig.from_pretrained(str(base_model), local_files_only=True)
++    if qwen.model_type != "qwen3_vl":
++        raise ValueError(f"VLA2 requires qwen3_vl, got {qwen.model_type!r}")
++    qwen_dict = qwen.to_dict()
++    text = qwen_dict["text_config"]
++    for key in (
++        "hidden_size",
++        "intermediate_size",
++        "num_hidden_layers",
++        "num_attention_heads",
++        "num_key_value_heads",
++        "rms_norm_eps",
++        "rope_theta",
++        "vocab_size",
++        "max_position_embeddings",
++        "hidden_act",
++        "tie_word_embeddings",
++    ):
++        if key in text:
++            setattr(config, key, text[key])
++        elif key in qwen_dict:
++            setattr(config, key, qwen_dict[key])
++    config.vision_config = qwen.vision_config
++    if values.get("vocab_size", 0):
++        config.vocab_size = values["vocab_size"]
++    config.tokenizer_path = str(Path(base_model).expanduser())
++    return config
+diff --git a/lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py b/lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py
+--- a/lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py
++++ b/lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py
+@@ -1,3 +1,6 @@
++# Modified for RLinf: lazy dataset imports and PPO-compatible MoE replay.
++# See requirements/embodied/models/lingbotvlav2/README.md in RLinf.
++
+ import einops
+ import torch
+ from torch import Tensor, nn
+@@ -1233,6 +1236,31 @@
+     def get_optim_params(self) -> dict:
+         return self.parameters()
+ 
++    def set_moe_activation_checkpointing(self, enabled: bool) -> None:
++        """Recompute experts within their owning decoder's FSDP boundary."""
++        for module in self.modules():
++            if isinstance(module, Qwen2TokenMoeBlock):
++                module.checkpoint_experts = bool(enabled)
++
++
++    def set_moe_forward_backend(self, backend: str) -> str:
++        """Select identical differentiable kernels for sampling/gradient replay.
++
++        Automatic inference kernels may differ numerically from the training
++        kernels; this matters when scoring a high-dimensional sampled path.
++        Returns the previous mode so inference callers can restore it.
++        """
++        if backend not in {"auto", "differentiable"}:
++            raise ValueError(f"Unknown MoE forward backend: {backend}")
++        blocks = [module for module in self.modules() if isinstance(module, Qwen2TokenMoeBlock)]
++        previous = {module.allow_inference_kernel for module in blocks}
++        if len(previous) > 1:
++            raise ValueError("Mixed MoE inference backends are not supported")
++        for module in blocks:
++            module.allow_inference_kernel = backend == "auto"
++        return "auto" if not previous or True in previous else "differentiable"
++
++
+     def forward(
+         self,
+         images,

@@ -59,6 +59,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin-lingbotvlav2
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-wan
@@ -392,6 +393,17 @@ RUN link_assets
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: LingBot-VLA 2.0 on RoboTwin
+##################################################################################################
+# The installer fetches a pinned upstream revision and applies the versioned patch.
+FROM embodied-common-image AS embodied-robotwin-lingbotvlav2-image
+ENV LINGBOT_VLA_V2_PATH=/opt/venvs/lingbotvlav2/lingbot-vla-v2
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied \
+    --torch 2.9.0 --transformers 4.57.6 --venv lingbotvlav2 --model lingbotvlav2 --env robotwin
+RUN echo "source ${UV_PATH}/lingbotvlav2/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

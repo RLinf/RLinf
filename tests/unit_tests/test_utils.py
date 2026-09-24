@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import math
 import os
 import subprocess
@@ -32,6 +34,104 @@ from omegaconf import OmegaConf
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+
+
+@pytest.fixture
+def model_source_patch(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-C", str(source), *args], text=True, stderr=subprocess.PIPE
+        ).strip()
+
+    git("init")
+    (source / "model.py").write_text("value = 1\n")
+    git("add", "model.py")
+    git(
+        "-c",
+        "user.name=RLinf Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "test fixture",
+        "--no-gpg-sign",
+    )
+    revision = git("rev-parse", "HEAD")
+    patch = tmp_path / "compat.patch"
+    patch.write_text(
+        "diff --git a/model.py b/model.py\n"
+        "--- a/model.py\n+++ b/model.py\n@@ -1 +1 @@\n"
+        "-value = 1\n+value = 2\n"
+    )
+    manifest = tmp_path / "source.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "revision": revision,
+                "patch": patch.name,
+                "files": {
+                    "model.py": {
+                        "before_sha256": hashlib.sha256(b"value = 1\n").hexdigest(),
+                        "after_sha256": hashlib.sha256(b"value = 2\n").hexdigest(),
+                    }
+                },
+            }
+        )
+    )
+    module_path = (
+        Path(__file__).parents[2] / "requirements/embodied/prepare_model_source.py"
+    )
+    spec = importlib.util.spec_from_file_location("prepare_model_source", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return source, manifest, module.prepare_source, git
+
+
+def test_model_source_patch_is_idempotent(model_source_patch):
+    source, manifest, prepare, _ = model_source_patch
+    prepare(source, manifest)
+    prepare(source, manifest)
+    assert (source / "model.py").read_text() == "value = 2\n"
+
+
+@pytest.mark.parametrize("already_patched", [False, True])
+def test_model_source_patch_preserves_conflicting_edits(
+    model_source_patch, already_patched
+):
+    source, manifest, prepare, _ = model_source_patch
+    if already_patched:
+        prepare(source, manifest)
+    (source / "model.py").write_text("value = 99\n")
+    with pytest.raises(ValueError, match="Existing files were preserved"):
+        prepare(source, manifest)
+    assert (source / "model.py").read_text() == "value = 99\n"
+
+
+def test_model_source_patch_rejects_wrong_user_revision(model_source_patch):
+    source, manifest, prepare, git = model_source_patch
+    data = json.loads(manifest.read_text())
+    data["revision"] = "0" * 40
+    manifest.write_text(json.dumps(data))
+    before = git("rev-parse", "HEAD")
+    with pytest.raises(ValueError, match="Expected source revision"):
+        prepare(source, manifest)
+    assert git("rev-parse", "HEAD") == before
+    assert (source / "model.py").read_text() == "value = 1\n"
+
+
+def test_model_source_patch_rejects_path_escape(model_source_patch, tmp_path):
+    source, manifest, prepare, _ = model_source_patch
+    outside = tmp_path / "outside.py"
+    outside.write_text("untouched\n")
+    data = json.loads(manifest.read_text())
+    data["files"]["../outside.py"] = data["files"].pop("model.py")
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="escapes checkout"):
+        prepare(source, manifest)
+    assert outside.read_text() == "untouched\n"
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():

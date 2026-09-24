@@ -1272,3 +1272,141 @@ def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
         OpenPIApxInfAdapter(
             _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
         )
+
+
+@pytest.mark.parametrize("step", [0, 4, 9])
+def test_lingbotvlav2_sde_has_finite_first_and_last_step_density(step):
+    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
+        flow_sde_transition,
+        gaussian_logprob,
+    )
+
+    x = torch.zeros(2, 50, 55)
+    velocity = torch.ones_like(x, requires_grad=True)
+    times = torch.linspace(1, 0, 11)
+    time, delta = times[step], times[step] - times[step + 1]
+    mean, std = flow_sde_transition(x, velocity, time, delta, 0.3)
+    assert torch.isfinite(mean).all() and std > 0
+    sample = (mean + std).detach()
+    score = gaussian_logprob(sample, mean, std)
+    expected = -0.5 - std.log() - 0.5 * np.log(2 * np.pi)
+    torch.testing.assert_close(
+        score, torch.full_like(score, expected), atol=1e-5, rtol=0
+    )
+    score.sum().backward()
+    assert torch.isfinite(velocity.grad).all()
+    # Unexecuted latent coordinates still influence subsequent denoising.
+    assert velocity.grad[..., 54].abs().sum() > 0
+
+
+def test_lingbotvlav2_zero_noise_recovers_flow_ode():
+    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
+        flow_sde_transition,
+    )
+
+    x, velocity = torch.randn(2, 50, 55), torch.randn(2, 50, 55)
+    mean, std = flow_sde_transition(
+        x, velocity, torch.tensor(0.5), torch.tensor(0.1), 0
+    )
+    torch.testing.assert_close(mean, x - 0.1 * velocity)
+    assert std == 0
+
+
+def test_lingbotvlav2_latent_ppo_ratio_includes_unexecuted_dimensions():
+    from rlinf.algorithms.utils import preprocess_loss_inputs
+
+    old = torch.zeros(2, 50 * 55)
+    new = old.clone()
+    new[:, -1] = 0.1
+    result = preprocess_loss_inputs(
+        logprobs=new,
+        old_logprobs=old,
+        advantages=torch.ones(2, 1),
+        logprob_type="chunk_level",
+        reward_type="chunk_level",
+        single_action_dim=55,
+    )
+    torch.testing.assert_close(
+        (result["logprobs"] - result["old_logprobs"]).exp(),
+        torch.full((2,), np.exp(0.1)),
+    )
+    assert SupportedModel("lingbotvlav2") == SupportedModel.LINGBOTVLAV2
+
+
+@pytest.mark.parametrize(
+    "logprob_type,reward_type",
+    [("token_level", "chunk_level"), ("chunk_level", "action_level")],
+)
+def test_lingbotvlav2_rejects_partial_latent_density(logprob_type, reward_type):
+    from rlinf.config import validate_embodied_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied", "only_eval": False},
+            "actor": {
+                "model": {
+                    "model_type": "lingbotvlav2",
+                    "logprob_dim": 55,
+                    "action_dim": 14,
+                }
+            },
+            "algorithm": {"logprob_type": logprob_type, "reward_type": reward_type},
+        }
+    )
+    with pytest.raises(ValueError, match="whole latent trajectories"):
+        validate_embodied_cfg(cfg)
+
+
+def test_lingbotvlav2_smoke_config_composes(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    for name in (
+        "LINGBOT_VLA_V2_PATH",
+        "LINGBOT_VLA_V2_CKPT",
+        "LINGBOT_VLA_V2_TRAIN_CONFIG",
+        "QWEN3_VL_PATH",
+        "ROBOTWIN_ASSETS_PATH",
+    ):
+        monkeypatch.setenv(name, "/explicit/asset")
+    with initialize_config_dir(
+        config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_ppo_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+    assert cfg.actor.model.model_type == "lingbotvlav2"
+    assert cfg.actor.model.logprob_dim == 55 and cfg.actor.model.action_dim == 14
+    assert cfg.actor.model.num_action_chunks == 50
+    assert not cfg.actor.fsdp_config.mixed_precision.cast_forward_inputs
+    assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
+    assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 2
+
+
+@pytest.mark.parametrize(
+    "strategy,cast_inputs,message",
+    [("fsdp", False, "FSDP2"), ("fsdp2", True, "FP32 SDE samples")],
+)
+def test_lingbotvlav2_rejects_incompatible_sharding(strategy, cast_inputs, message):
+    from rlinf.config import validate_embodied_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied", "only_eval": False},
+            "actor": {
+                "model": {
+                    "model_type": "lingbotvlav2",
+                    "logprob_dim": 55,
+                    "action_dim": 14,
+                    "lingbotvlav2": {"data_parallel_backend": "fsdp2"},
+                },
+                "fsdp_config": {
+                    "strategy": strategy,
+                    "mixed_precision": {"cast_forward_inputs": cast_inputs},
+                },
+            },
+            "algorithm": {"logprob_type": "chunk_level", "reward_type": "chunk_level"},
+        }
+    )
+    with pytest.raises(ValueError, match=message):
+        validate_embodied_cfg(cfg)

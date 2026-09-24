@@ -30,6 +30,12 @@
 
       从本地零部件开始，完成机器人组合和远程部署。
 
+   .. grid-item-card:: 模型适配方案
+      :link: model_adaptation
+      :link-type: doc
+
+      对照已有模型实现，按统一 policy 接口完成接入。
+
    .. grid-item-card:: FSDP 新模型
       :link: new_model_fsdp
       :link-type: doc
@@ -64,6 +70,7 @@
    :hidden:
 
    扩展概览 <overview>
+   模型适配方案 <model_adaptation>
    新环境 <new_env>
    新增真机任务 <new_task>
    新机器人 <new_robot>

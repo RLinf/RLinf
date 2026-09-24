@@ -425,10 +425,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_logprobs = self.rollout_batch["prev_logprobs"]
         rollout_size = rollout_logprobs.shape[0]
-        kwargs = {
-            "temperature": self.cfg.rollout.sampling_params.temperature_train,
-            "top_k": self.cfg.rollout.sampling_params.top_k,
-        }
+        kwargs = {}
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+        ]:
+            kwargs = {
+                "temperature": self.cfg.rollout.sampling_params.temperature_train,
+                "top_k": self.cfg.rollout.sampling_params.top_k,
+            }
 
         recomputed_logprobs = []
         with torch.no_grad():
@@ -461,7 +466,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         clear_memory()
 
         # Logprobs are per action token, the mask and the advantages per action.
-        action_dim = self.cfg.actor.model.get("action_dim", 7)
+        action_dim = self.cfg.actor.model.get(
+            "logprob_dim", self.cfg.actor.model.get("action_dim", 7)
+        )
         log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
             *rollout_logprobs.shape[:-1], -1, action_dim
         )
@@ -476,6 +483,21 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 log_ratio.abs(), mask=mask
             ).item()
         }
+        if (
+            SupportedModel(self.cfg.actor.model.model_type)
+            == SupportedModel.LINGBOTVLAV2
+        ):
+            joint_gap = log_ratio.sum(dim=(-2, -1)).abs().max().item()
+            metrics["actor/rollout_train_joint_logprob_gap_max"] = joint_gap
+            if (
+                not np.isfinite(joint_gap)
+                or joint_gap > self.cfg.actor.model.logprob_replay_atol
+            ):
+                raise ValueError(
+                    f"V2 rollout/actor joint logprob gap {joint_gap} exceeds "
+                    f"{self.cfg.actor.model.logprob_replay_atol}; likelihood replay must "
+                    "match before a PPO update"
+                )
 
         self.rollout_batch["prev_logprobs"] = recomputed_logprobs
         return metrics
@@ -753,7 +775,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_type": self.cfg.algorithm.loss_type,
             "logprob_type": self.cfg.algorithm.logprob_type,
             "reward_type": self.cfg.algorithm.reward_type,
-            "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
+            "single_action_dim": self.cfg.actor.model.get(
+                "logprob_dim", self.cfg.actor.model.get("action_dim", 7)
+            ),
             "logprobs": output_dict["logprobs"],
             "values": output_dict.get("values", None),
             "old_logprobs": prev_logprobs,
@@ -815,7 +839,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     entropy,
                     entropy_type=self.cfg.algorithm.entropy_type,
                     loss_mask=entropy_mask,
-                    action_dim=self.cfg.actor.model.get("action_dim", 7),
+                    action_dim=self.cfg.actor.model.get(
+                        "logprob_dim", self.cfg.actor.model.get("action_dim", 7)
+                    ),
                     batch_size=output_dict["logprobs"].shape[0],
                 )
                 if self.cfg.algorithm.entropy_bonus > 0:

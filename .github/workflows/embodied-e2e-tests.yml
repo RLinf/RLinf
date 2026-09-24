@@ -2103,3 +2103,30 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-lingbotvlav2-robotwin-test:
+    # Requires official release weights, RoboTwin assets and four >=48 GB GPUs.
+    if: ${{ vars.LINGBOT_VLA_V2_CI == 'true' }}
+    runs-on: embodied
+    timeout-minutes: 60
+    env:
+      LINGBOT_VLA_V2_PATH: ${{ github.workspace }}/.venv/lingbot-vla-v2
+      LINGBOT_VLA_V2_CKPT: /workspace/dataset/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+      LINGBOT_VLA_V2_TRAIN_CONFIG: /workspace/dataset/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+      QWEN3_VL_PATH: /workspace/dataset/Qwen3-VL-4B-Instruct
+      ROBOTWIN_PATH: /workspace/dataset/RoboTwin
+      ROBOTWIN_ASSETS_PATH: /workspace/dataset/RoboTwin
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install V2 in its own environment
+        run: |
+          bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin --torch 2.9.0 --transformers 4.57.6
+      - name: Run two PPO updates with likelihood replay checks
+        run: |
+          source .venv/bin/activate
+          export REPO_PATH=$(pwd)
+          export PYTHONPATH="$REPO_PATH:$ROBOTWIN_PATH:$LINGBOT_VLA_V2_PATH"
+          bash tests/e2e_tests/embodied/run.sh robotwin_ppo_lingbotvlav2 runner.logger.log_path=/workspace/results/vla2_ppo
+      - name: Clean environment
+        if: always()
+        run: rm -rf .venv
