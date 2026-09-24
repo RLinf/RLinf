@@ -35,7 +35,7 @@ DreamZero 监督微调和 Franka 真机部署
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1+ 节点 · GPU
+      1+ 节点 · GPU · :ref:`Ascend SFT <sft-dreamzero-hardware>`
 
 | **你将完成：** 安装 → 准备模型和 LeRobot 数据 → 生成 ``metadata.json`` → 运行 ``run_vla_sft.sh`` → 在仿真或 Franka 上评测。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · `DreamZero 仓库 <https://github.com/RLinf/dreamzero>`_（``DREAMZERO_PATH``）· 一个 LeRobot 数据集。
@@ -72,8 +72,7 @@ DreamZero 监督微调和 Franka 真机部署
    git clone https://github.com/RLinf/dreamzero.git
    export DREAMZERO_PATH=/path/to/dreamzero
 
-``DREAMZERO_PATH`` 必须指向该 clone：``examples/sft/run_vla_sft.sh`` 会读取它，
-以便让外部 DreamZero 包可被导入。
+``DREAMZERO_PATH`` 必须指向该 clone：``examples/sft/run_vla_sft.sh`` 会读取它，以便让外部 DreamZero 包可被导入。
 
 模型准备
 ----------------------------------------
@@ -390,6 +389,35 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 断点续训可设置 ``runner.resume_dir`` 指向 checkpoint 目录。
 
 
+.. _sft-dreamzero-hardware:
+
+在不同硬件后端上运行
+----------------------------------------
+
+使用前面准备的模型、数据集和 SFT 配置，先在目标加速器上完成短训练检查，再开始完整训练。
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+准备 PyTorch、``torch_npu`` 和 CANN 版本匹配的环境，并安装前面安装章节所述的 DreamZero 依赖。当 DreamZero 的 actor worker 或 rollout worker 分配到 NPU 时，RLinf 会启用 Ascend 补丁。
+
+启动 SFT 前，设置 ``ATTENTION_BACKEND=torch``，让 DreamZero 原生注意力模块使用 PyTorch SDPA；同时设置 ``TORCH_COMPILE_DISABLE=1``，让训练及依赖中的 compile 调用以 eager 模式执行。RLinf 在 NPU 上还会跳过四个 CUDA ``reduce-overhead`` 编译 wrapper。
+
+填好模型和数据路径后，从仓库根目录执行以下命令
+
+.. code-block:: bash
+
+   export DREAMZERO_PATH=/path/to/dreamzero
+   export ATTENTION_BACKEND=torch
+   export TORCH_COMPILE_DISABLE=1
+   export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD:$DREAMZERO_PATH:$PYTHONPATH"
+   python examples/sft/train_vla_sft.py \
+     --config-path "$EMBODIED_PATH/config" \
+     --config-name libero_sft_dreamzero_5b
+
+RLinf 会在 NPU worker 构建 DreamZero 前导入 ``torch_npu.contrib.transfer_to_npu``，将上游代码中的 CUDA 张量创建、设备参数、随机数生成器、计时事件及同步操作转向 NPU，因此安装的 DreamZero 源码可以保留 CUDA 调用。自动迁移会修改整个 worker 进程中的 PyTorch API，同时重映射分布式 API，并禁用 ``torch.jit.script`` 和 ``torch.jit.script_method``，并非只作用于某个 DreamZero 调用。CPU 和 GPU worker 不会通过此入口启用自动迁移。
+
 独立评测
 ----------------------------------------
 
@@ -673,7 +701,7 @@ RLinf 团队对 DreamZero 的训练管线进行了深度的系统级重构与加
      - **0.150**
      - **+170%（2.7x）**
 
-14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
+14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**\ 的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
 
 **DreamZero-5B**
 

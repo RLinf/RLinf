@@ -315,12 +315,16 @@ class DreamZeroPolicy(VLA, BasePolicy):
     def sft_forward(self, data=None, **kwargs):
         # Mark the start of each training iteration so PyTorch knows when
         # to reclaim memory held by CUDA graphs from the previous iteration.
-        torch.compiler.cudagraph_mark_step_begin()
+        if self.device.type == "cuda":
+            torch.compiler.cudagraph_mark_step_begin()
 
         if data is None:
             data = kwargs.get("data")
         if data is None:
             raise ValueError("sft_forward requires `data` from the SFT dataloader.")
+        # Upstream uses _device for latent transfers, noise and autocast.
+        # Follow the policy after FSDP placement or offload/onload.
+        self.action_head._device = self.device
         outputs = super().forward(data)
         if hasattr(outputs, "data"):
             outputs = outputs.data

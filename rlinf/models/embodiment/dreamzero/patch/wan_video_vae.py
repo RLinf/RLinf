@@ -68,8 +68,10 @@ class WanVideoVAE(nn.Module):
             2.8251,
             1.9160,
         ]
-        self.mean = torch.tensor(mean, device="cuda")
-        self.std = torch.tensor(std, device="cuda")
+        # VideoVAE_.encode/decode move these constants to the latent's device
+        # and dtype. Keep the originals in FP32 across model.to(dtype) calls.
+        self.mean = torch.tensor(mean, dtype=torch.float32, device="cpu")
+        self.std = torch.tensor(std, dtype=torch.float32, device="cpu")
         self.scale = [self.mean, 1.0 / self.std]
 
         self.model = VideoVAE_(z_dim=z_dim).eval().requires_grad_(False)
@@ -387,8 +389,9 @@ class WanVideoVAE38(WanVideoVAE):
             0.7468,
             0.7744,
         ]
-        self.mean = torch.tensor(mean, device="cuda")
-        self.std = torch.tensor(std, device="cuda")
+        # VideoVAE38_ handles the device/dtype conversion at encode/decode time.
+        self.mean = torch.tensor(mean, dtype=torch.float32, device="cpu")
+        self.std = torch.tensor(std, dtype=torch.float32, device="cpu")
         self.scale = [self.mean, 1.0 / self.std]
 
         self.model = VideoVAE38_(z_dim=z_dim, dim=dim).eval().requires_grad_(False)

@@ -37,7 +37,7 @@ Fine-tune a WAN-based DreamZero world model into a manipulation policy on LeRobo
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1+ nodes · GPUs
+      1+ nodes · GPUs · :ref:`Ascend SFT <sft-dreamzero-hardware>`
 
 | **You'll do:** install → prepare model + LeRobot data → generate ``metadata.json`` → launch ``run_vla_sft.sh`` → evaluate in sim or on Franka.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the `DreamZero repo <https://github.com/RLinf/dreamzero>`_ (``DREAMZERO_PATH``) · a LeRobot dataset.
@@ -393,6 +393,49 @@ Logs:
 
 Resume training with ``runner.resume_dir`` pointing to a checkpoint directory (field provided in example configs such as ``droid_sft_dreamzero_14b.yaml`` and ``libero_sft_dreamzero_5b.yaml``).
 
+
+.. _sft-dreamzero-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+Use the model, dataset and SFT configuration prepared above to run a short
+training check on your target accelerator before a full training run.
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+Use an environment with matching PyTorch, ``torch_npu`` and CANN versions,
+plus the DreamZero dependencies described under Installation. RLinf selects
+the Ascend patches when the actor worker or rollout worker is assigned an NPU.
+
+Before launching SFT, set ``ATTENTION_BACKEND=torch`` to select PyTorch SDPA
+in DreamZero's native attention module, and ``TORCH_COMPILE_DISABLE=1`` to run
+in eager mode, including compile calls in dependencies. RLinf also skips its
+four CUDA ``reduce-overhead`` compilation wrappers on NPU.
+
+With the model and data paths filled in, run the following command from the
+repository root:
+
+.. code-block:: bash
+
+   export DREAMZERO_PATH=/path/to/dreamzero
+   export ATTENTION_BACKEND=torch
+   export TORCH_COMPILE_DISABLE=1
+   export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD:$DREAMZERO_PATH:$PYTHONPATH"
+   python examples/sft/train_vla_sft.py \
+     --config-path "$EMBODIED_PATH/config" \
+     --config-name libero_sft_dreamzero_5b
+
+On NPU workers, RLinf imports ``torch_npu.contrib.transfer_to_npu`` before
+constructing DreamZero. It redirects upstream CUDA tensor allocations, device
+arguments, random generators, timing events and synchronization to NPU, so the
+installed DreamZero source can retain its CUDA calls. This migration changes
+PyTorch APIs throughout the worker process: it also remaps distributed APIs
+and disables ``torch.jit.script`` and ``torch.jit.script_method``. These effects
+are not scoped to individual DreamZero calls.
+CPU and GPU workers do not enable it through this hook.
 
 Standalone Evaluation
 ---------------------
