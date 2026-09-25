@@ -296,7 +296,7 @@ def create_so101_sft_data_loader(
     dataset = LeRobotDataset(
         repo_id=root.name,
         root=root,
-        delta_timestamps={"actions": [step / fps for step in range(action_horizon)]},
+        delta_timestamps={"action": [step / fps for step in range(action_horizon)]},
         video_backend="pyav",
     )
     input_transforms, _ = build_openpi_transforms(

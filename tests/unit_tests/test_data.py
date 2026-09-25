@@ -19,7 +19,9 @@ import copy
 import inspect
 import json
 import random
+import sys
 import time
+import types
 from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
@@ -132,6 +134,85 @@ def test_so101_repack_scales_the_gripper_with_joint_values():
         result["observation/state"], [1.0, -1.0, 0.5, 0.0, -0.25, 0.75]
     )
     np.testing.assert_allclose(result["actions"], [0.8, -0.8, 0.4, 0.1, -0.2, 0.25])
+
+
+def test_so101_loader_queries_lerobot_action_feature(tmp_path, monkeypatch):
+    """Use the formal LeRobot ``action`` feature for temporal queries."""
+    import rlinf.data.datasets.openpi.so101.so101_sft_data_loader as loader_module
+
+    root = tmp_path / "so101"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text(
+        json.dumps(
+            {
+                "fps": 15,
+                "features": {
+                    "action": {"shape": [6]},
+                    "observation.state": {"shape": [6]},
+                    "observation.images.wrist": {"shape": [480, 640, 3]},
+                },
+            }
+        )
+    )
+    norm_stats = root / "norm_stats.json"
+    norm_stats.write_text("{}")
+
+    class FakeDataset(torch.utils.data.Dataset):
+        last_kwargs = None
+
+        def __init__(self, **kwargs):
+            type(self).last_kwargs = kwargs
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            del index
+            raise AssertionError("the temporal query test must not decode a frame")
+
+    class FakeTrainConfig:
+        class Model:
+            action_horizon = 20
+            action_dim = 32
+
+        model = Model()
+
+    fake_lerobot = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    fake_lerobot.LeRobotDataset = FakeDataset
+    monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", fake_lerobot)
+    monkeypatch.setattr(loader_module, "resolve_lerobot_dataset_root", lambda _: root)
+    monkeypatch.setattr(
+        loader_module, "build_openpi_transforms", lambda *args, **kwargs: ([], [])
+    )
+
+    fake_dataconfig = types.ModuleType("rlinf.models.embodiment.openpi.dataconfig")
+    fake_dataconfig.get_openpi_config = lambda *args, **kwargs: FakeTrainConfig()
+    monkeypatch.setitem(
+        sys.modules, "rlinf.models.embodiment.openpi.dataconfig", fake_dataconfig
+    )
+
+    loader_module.create_so101_sft_data_loader(
+        data_path=str(root),
+        model_path="/tmp/pi05",
+        config_name="pi05_so101_joint",
+        assets_dir=str(tmp_path),
+        asset_id="so101",
+        raw_action_dim=6,
+        action_dim=32,
+        action_horizon=20,
+        max_token_len=200,
+        batch_size=1,
+        num_workers=0,
+        shuffle=False,
+        seed=0,
+        dist_rank=0,
+        dist_world_size=1,
+        data_kwargs={"norm_stats_path": str(norm_stats)},
+    )
+
+    assert FakeDataset.last_kwargs["delta_timestamps"] == {
+        "action": [step / 15 for step in range(20)]
+    }
 
 
 class TestMathDatasetMultithread:
