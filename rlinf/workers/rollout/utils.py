@@ -249,6 +249,29 @@ class DisaggRankMapper(RankMapper):
 
 
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
+SUPPORTED_EMBODIED_ROLLOUT_BACKENDS = ["huggingface", "phyai"]
+
+
+def get_embodied_rollout_worker(cfg: DictConfig) -> type[Worker]:
+    """Select the embodied rollout worker from the configured backend."""
+    backend = str(cfg.rollout.get("rollout_backend", "huggingface")).lower()
+    if backend == "hf":
+        backend = "huggingface"
+    if backend not in SUPPORTED_EMBODIED_ROLLOUT_BACKENDS:
+        raise ValueError(
+            f"Unsupported embodied rollout_backend={backend!r}; "
+            "expected one of "
+            f"{SUPPORTED_EMBODIED_ROLLOUT_BACKENDS}."
+        )
+    if backend == "huggingface":
+        from rlinf.workers.rollout.hf.huggingface_worker import (
+            MultiStepRolloutWorker,
+        )
+
+        return MultiStepRolloutWorker
+    from rlinf.workers.rollout.phyai.phyai_worker import PhyAIWorker
+
+    return PhyAIWorker
 
 
 def get_rollout_backend_worker(cfg: DictConfig) -> Worker:

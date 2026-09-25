@@ -103,6 +103,28 @@ PPO 的目标函数定义如下：
 
       huber_delta: 10.0         # 价值训练中 Huber 损失的 Delta 参数
 
+当 rollout 生成和 Actor 训练使用不同的推理实现时，即使同步相同权重，二者的动作
+对数概率也可能不同。同步具身 PPO 可以使用 Actor 重放已采样的 transition，并应用与
+reasoning 训练相同的重要性采样修正：
+
+.. code-block:: yaml
+
+   algorithm:
+      importance_sampling_fix: True
+      importance_sampling_clip: 1.0
+      recompute_logprobs: True
+
+启用 ``algorithm.recompute_logprobs`` 后，Actor 会在训练前重新计算旧策略的
+log-probability。设 :math:`q`\ 为 rollout 行为策略，:math:`p`\ 为 Actor 重放策略；
+该修正使用 :math:`\min(p/q,\;c)`\ 乘以 advantage，并将 :math:`p`\ 作为 PPO 的旧策略
+锚点。概率比会按照 ``logprob_type`` 配置的粒度计算。value 预测和 GAE 仍使用 rollout
+返回的 value。
+
+该模式要求使用同步、非流水线的具身训练，且 ``loss_type`` 必须为 ``actor`` 或
+``actor_critic``。可以监控 ``actor/importance_sampling_weight``、
+``actor/importance_sampling_clip_fraction``、``actor/behav_approx_kl`` 和
+``actor/recomputed_logprob_abs_diff`` 来衡量 rollout 与 Actor 的差异。
+
 3.2. LLM 推理任务
 ~~~~~~~~~~~~~~~~~
 LLM 推理任务的配置与具身任务的配置有相似之处。

@@ -1045,17 +1045,50 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
-        # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
-        # gap per action, which assumes the OpenVLA family's tokenized action layout.
-        # GR00T needs no recompute: it already rescores inside its training forward.
-        assert model_type in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT], (
+        assert model_type in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+            SupportedModel.OPENPI,
+        ], (
             f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value]}, "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value]}, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
+    rollout_backend = str(cfg.rollout.get("rollout_backend", "huggingface")).lower()
+    if rollout_backend == "hf":
+        rollout_backend = "huggingface"
+    if rollout_backend == "phyai":
+        assert model_type == SupportedModel.OPENPI, (
+            "rollout_backend='phyai' currently requires model_type='openpi'."
+        )
+        if not only_eval:
+            assert cfg.weight_syncer.get("type") == "bucket", (
+                "rollout_backend='phyai' requires weight_syncer.type='bucket'."
+            )
+            openpi_cfg = model_cfg.get("openpi", {})
+            assert bool(model_cfg.get("pi05", True)), (
+                "PhyAI training requires actor.model.pi05=True."
+            )
+            assert bool(model_cfg.get("add_value_head", False)), (
+                "PhyAI training requires actor.model.add_value_head=True."
+            )
+            assert bool(openpi_cfg.get("value_after_vlm", False)), (
+                "The current openpi Actor requires openpi.value_after_vlm=True."
+            )
+            assert openpi_cfg.get("value_vlm_mode", "mean_token") == "mean_token", (
+                "The current openpi Actor supports only "
+                "openpi.value_vlm_mode='mean_token'."
+            )
+            assert not bool(openpi_cfg.get("joint_logprob", False)), (
+                "The current openpi Actor supports only joint_logprob=False."
+            )
+            assert openpi_cfg.get("noise_method", "flow_ode") in {
+                "flow_ode",
+                "flow_sde",
+            }, "The current openpi Actor supports flow_ode or flow_sde."
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
@@ -1128,6 +1161,32 @@ def validate_embodied_cfg(cfg):
             if sampling_params.get("max_new_tokens", None) is None:
                 sampling_params.max_new_tokens = algorithm_cfg.length_params.get(
                     "max_new_token", None
+                )
+
+        if not only_eval:
+            importance_sampling_fix = algorithm_cfg.get(
+                "importance_sampling_fix", False
+            )
+            if importance_sampling_fix:
+                assert cfg.algorithm.loss_type in {"actor", "actor_critic"}, (
+                    "algorithm.importance_sampling_fix for synchronous embodied "
+                    "training requires loss_type 'actor' or 'actor_critic'."
+                )
+                importance_sampling_clip = algorithm_cfg.get(
+                    "importance_sampling_clip", None
+                )
+                assert (
+                    importance_sampling_clip is not None
+                    and importance_sampling_clip > 0
+                ), "algorithm.importance_sampling_clip must be greater than 0."
+                assert algorithm_cfg.get("recompute_logprobs", False), (
+                    "algorithm.importance_sampling_fix=True requires "
+                    "algorithm.recompute_logprobs=True."
+                )
+            if algorithm_cfg.get("recompute_logprobs", False):
+                assert not cfg.runner.get("use_training_pipeline", False), (
+                    "algorithm.recompute_logprobs is not supported with "
+                    "runner.use_training_pipeline=True."
                 )
 
     if not only_eval and cfg.runner.get("use_training_pipeline", False):
