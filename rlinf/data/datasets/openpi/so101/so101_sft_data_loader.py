@@ -26,9 +26,9 @@ from typing import Any
 
 import numpy as np
 import torch
-from rlinf.data.datasets.openpi.transform_fn import DataTransformFn, compose
 from torch.utils.data.distributed import DistributedSampler
 
+from rlinf.data.datasets.openpi.transform_fn import DataTransformFn, compose
 from rlinf.data.storage.lerobot import (
     resolve_lerobot_dataset_root,
     resolve_lerobot_repo_id,
@@ -49,8 +49,9 @@ class _RepackSO101(DataTransformFn):
 
     RLinf's real-world writer stores the single camera as ``image``, the
     proprioceptive vector as ``state``, and action chunks as ``actions``.
-    OpenPI represents the five arm joints as degree * 0.01 while the
-    normalized gripper value stays unchanged.
+    OpenPI's SO-101 canonical contract represents all six LeRobot values at
+    the 0.01 scale: five arm joints in degree-like units and the gripper in
+    its normalized 0..1 range.
     """
 
     joint_scale: float = _RAW_JOINT_SCALE
@@ -92,7 +93,7 @@ class _RepackSO101(DataTransformFn):
             raise ValueError(
                 f"Expected SO-101 vector last dimension {_RAW_ACTION_DIM}, got {array.shape}."
             )
-        array[..., :5] *= self.joint_scale
+        array *= self.joint_scale
         return array
 
 
@@ -225,7 +226,9 @@ def _read_dataset_metadata(root: pathlib.Path) -> int:
         key = next((candidate for candidate in aliases if candidate in features), None)
         shape = tuple(features.get(key, {}).get("shape", ())) if key else ()
         if shape != (_RAW_ACTION_DIM,):
-            raise ValueError(f"SO-101 {name} must have shape [{_RAW_ACTION_DIM}], got {shape}.")
+            raise ValueError(
+                f"SO-101 {name} must have shape [{_RAW_ACTION_DIM}], got {shape}."
+            )
     if not any(key in features for key in ("image", "observation.images.wrist")):
         raise ValueError("SO-101 dataset is missing its camera image feature.")
     return int(info["fps"])

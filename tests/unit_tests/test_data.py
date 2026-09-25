@@ -115,6 +115,25 @@ def test_openpi_sft_dispatches_so101_to_registered_loader(monkeypatch):
     assert result is sentinel
 
 
+def test_so101_repack_scales_the_gripper_with_joint_values():
+    """Map LeRobot's 0..100 gripper scale into the SO-101 contract."""
+    from rlinf.data.datasets.openpi.so101.so101_sft_data_loader import _RepackSO101
+
+    frame = {
+        "image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "state": np.array([100, -100, 50, 0, -25, 75], dtype=np.float32),
+        "actions": np.array([80, -80, 40, 10, -20, 25], dtype=np.float32),
+        "task": "test task",
+    }
+
+    result = _RepackSO101()(frame)
+
+    np.testing.assert_allclose(
+        result["observation/state"], [1.0, -1.0, 0.5, 0.0, -0.25, 0.75]
+    )
+    np.testing.assert_allclose(result["actions"], [0.8, -0.8, 0.4, 0.1, -0.2, 0.25])
+
+
 class TestMathDatasetMultithread:
     """Tests for ReasoningDataset multithread processing consistency."""
 
