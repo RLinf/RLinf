@@ -3589,9 +3589,8 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
-    # build_env into embodichain.lab.gym.utils.registration.
-    uv pip install "embodichain>=0.2.4" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # >=0.3.0 uses the task-oriented config layout under embodichain_tasks.
+    uv pip install "embodichain>=0.3.0" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site --index-strategy unsafe-best-match
 }
 
 install_dosw1_env() {
