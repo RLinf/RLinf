@@ -198,9 +198,6 @@ class MegatronModelManager:
 
         self._cfg = cfg
         self.mbridge = cfg.megatron.get("mbridge", False)
-        # if use the megatron-mbridge need patch some function
-        if self.mbridge:
-            self.patch_mbrdige_function()
 
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
@@ -237,18 +234,6 @@ class MegatronModelManager:
 
         # Patch Megatron MoE token dispatcher if FUSCO is available and conditions are met
         self.patch_megatron_moe_dispatcher()
-
-    def patch_mbrdige_function(self):
-        from rlinf.utils.patcher import Patcher
-
-        Patcher.clear()
-        Patcher.add_patch(
-            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils.get_rope_index",
-            "rlinf.hybrid_engines.megatron.utils.get_rope_index",
-        )
-        Patcher.apply()
-
-        self._logger.info("Use the megatron-Mbrdige, patched the fix function Success.")
 
     def patch_megatron_moe_dispatcher(self):
         if HAVE_FUSCO:
