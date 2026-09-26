@@ -35,7 +35,7 @@ DreamZero 监督微调和 Franka 真机部署
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1+ 节点 · GPU
+      1+ 节点 · NVIDIA CUDA · :ref:`华为昇腾 CANN <sft-dreamzero-hardware>` （SFT）
 
 | **你将完成：** 安装 → 准备模型和 LeRobot 数据 → 生成 ``metadata.json`` → 运行 ``run_vla_sft.sh`` → 在仿真或 Franka 上评测。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · `DreamZero 仓库 <https://github.com/RLinf/dreamzero>`_（``DREAMZERO_PATH``）· 一个 LeRobot 数据集。
@@ -72,8 +72,7 @@ DreamZero 监督微调和 Franka 真机部署
    git clone https://github.com/RLinf/dreamzero.git
    export DREAMZERO_PATH=/path/to/dreamzero
 
-``DREAMZERO_PATH`` 必须指向该 clone：``examples/sft/run_vla_sft.sh`` 会读取它，
-以便让外部 DreamZero 包可被导入。
+``DREAMZERO_PATH`` 必须指向该 clone：``examples/sft/run_vla_sft.sh`` 会读取它，以便让外部 DreamZero 包可被导入。
 
 模型准备
 ----------------------------------------
@@ -222,7 +221,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - ``sampling_mode``
      - ``multi_anchor`` （默认，推荐）：在同一语言片段内按多个时间锚点采样；宏观时间块数由 ``max_chunk_size`` 决定。``fixed_window`` 为连续固定窗口。
    * - ``video_backend``
-     - LeRobot 视频解码后端：``pyav`` 或 ``torchcodec``，影响懒加载 mp4 的速度与兼容性，推荐使用 ``torchcodec``。
+     - LeRobot 视频解码后端：``pyav``、``torchcodec`` 或 ``decord``，影响懒加载 mp4 的速度与兼容性。推荐使用 ``torchcodec``；在昇腾等无法加载 ``torchcodec`` 的环境中使用 ``decord``。
    * - ``video_tolerance_s``
      - 视频时间戳与目标帧时间的容差（秒）。
    * - ``parquet_cache_size``
@@ -389,6 +388,39 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 断点续训可设置 ``runner.resume_dir`` 指向 checkpoint 目录。
 
+
+.. _sft-dreamzero-hardware:
+
+在不同硬件后端上运行
+----------------------------------------
+
+NVIDIA 使用上面的安装与启动步骤。华为昇腾 CANN 支持 DreamZero SFT，沿用相同的 checkpoint、数据集和配置；CI 在两张昇腾 910B NPU 上以 PyTorch 与 ``torch-npu`` 2.6.0 运行 WAN2.2 5B SFT。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用昇腾 LIBERO 容器，或已安装 CANN 与 NPU 驱动的宿主机：
+
+.. include:: _ascend_libero.rst
+
+在容器内使用 RLinf 代码创建 DreamZero 环境，也可以直接在昇腾宿主机上运行相同命令：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model dreamzero
+   source .venv/bin/activate
+
+国内下载可添加 ``--use-mirror``。安装器会安装匹配的 ``torch-npu`` 包，并跳过 CUDA flash-attention。
+
+按上文准备模型、数据和 ``metadata.json``，并按安装章节设置 ``DREAMZERO_PATH``。在昇腾上，如果 ``torchcodec`` 的 wheel 无法加载，安装器会将其移除，因此需要在 SFT 配置中设置 ``data.video_backend: decord``，改用 decord 解码视频。然后在仓库根目录启动 SFT：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
+
+示例配置中的 ``actor.micro_batch_size`` 按 80 GB GPU 设置。在 64 GB NPU 上需要调小该值，并保证 ``actor.global_batch_size`` 能被 ``micro_batch_size`` 与 NPU 数量之积整除。
+
+当 actor 或 rollout worker 位于 NPU 上时，RLinf 会在构建 DreamZero 前导入 ``torch_npu.contrib.transfer_to_npu``，让 DreamZero 源码中的 CUDA 调用在 NPU 上执行，同时关闭 TorchDynamo，使所有 ``torch.compile`` 以 eager 模式运行。这两项改动作用于整个 worker 进程：该进程中其他调用 ``torch.cuda``、``torch.compile`` 或 ``torch.jit.script`` 的代码也会受到同样的影响。
 
 独立评测
 ----------------------------------------
@@ -673,7 +705,7 @@ RLinf 团队对 DreamZero 的训练管线进行了深度的系统级重构与加
      - **0.150**
      - **+170%（2.7x）**
 
-14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
+14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**\ 的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
 
 **DreamZero-5B**
 

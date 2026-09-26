@@ -19,7 +19,7 @@ runner:
   logger:
     log_path: "/workspace/results/"
     project_name: rlinf
-    experiment_name: "droid_sft_wan22"
+    experiment_name: "droid_sft_wan22_ascend"
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
@@ -33,6 +33,8 @@ runner:
 data:
   # Root of LeRobot DROID (OXE) dataset
   train_data_paths: /workspace/dataset/data/sft-ci-data/dreamzero-droid
+  # The Ascend installer drops torchcodec when its wheel cannot load.
+  video_backend: decord
 
 actor:
   group_name: "ActorGroup"
