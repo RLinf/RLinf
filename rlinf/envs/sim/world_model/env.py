@@ -473,6 +473,10 @@ class WorldModelEnv:
             seeds=[0] * num_slots,
         )
 
+        # A multi-chunk scorer caches frames; they must not cross into a new episode
+        if hasattr(self.reward_model, "reset_history"):
+            self.reward_model.reset_history(None if env_idx is None else target_slots)
+
         self._reset_metrics(env_idx=None if env_idx is None else target_slots)
 
         # Wrap observation to match libero_env format
