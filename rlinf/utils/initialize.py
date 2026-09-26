@@ -40,9 +40,11 @@ from rlinf.config import torch_dtype_from_precision
 from rlinf.scheduler import Worker
 
 try:  # Megatron-LM < 0.17
-    from megatron.legacy import fused_kernels
+    # Import load itself: a checkout upgraded in place keeps the git-ignored
+    # fused_kernels/build/ dir, which still imports as a namespace package.
+    from megatron.legacy.fused_kernels import load as load_fused_kernels
 except ImportError:  # the legacy JIT fused kernels were dropped in 0.17
-    fused_kernels = None
+    load_fused_kernels = None
 
 
 # String-valued args are not adopted wholesale (see megatron_arg_defaults), but
@@ -232,7 +234,7 @@ def _compile_dependencies(cfg: DictConfig):
     # Load fused kernels
     # ==================
 
-    if fused_kernels is None:
+    if load_fused_kernels is None:
         return
 
     # Custom kernel constraints check.
@@ -266,13 +268,13 @@ def _compile_dependencies(cfg: DictConfig):
     if torch.distributed.get_rank() == 0:
         start_time = time.time()
         print("> compiling and loading fused kernels ...", flush=True)
-        if fused_kernels is not None:
-            fused_kernels.load(cfg)
+        if load_fused_kernels is not None:
+            load_fused_kernels(cfg)
         torch.distributed.barrier()
     else:
         torch.distributed.barrier()
-        if fused_kernels is not None:
-            fused_kernels.load(cfg)
+        if load_fused_kernels is not None:
+            load_fused_kernels(cfg)
     # Simple barrier to make sure all ranks have passed the
     # compilation phase successfully before moving on to the
     # rest of the program. We think this might ensure that
