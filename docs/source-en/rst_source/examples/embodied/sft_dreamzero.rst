@@ -37,7 +37,7 @@ Fine-tune a WAN-based DreamZero world model into a manipulation policy on LeRobo
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1+ nodes · GPUs · :ref:`Ascend SFT <sft-dreamzero-hardware>`
+      1+ nodes · NVIDIA CUDA · :ref:`Huawei Ascend CANN <sft-dreamzero-hardware>` (SFT)
 
 | **You'll do:** install → prepare model + LeRobot data → generate ``metadata.json`` → launch ``run_vla_sft.sh`` → evaluate in sim or on Franka.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the `DreamZero repo <https://github.com/RLinf/dreamzero>`_ (``DREAMZERO_PATH``) · a LeRobot dataset.
@@ -225,7 +225,7 @@ Data-Related Settings
    * - ``sampling_mode``
      - ``multi_anchor`` (default, recommended): sample multiple temporal anchors within the same language span; macro block count comes from ``max_chunk_size``. ``fixed_window`` is a contiguous fixed window.
    * - ``video_backend``
-     - LeRobot video decoder: ``pyav`` or ``torchcodec``; affects lazy mp4 speed and compatibility. **``torchcodec`` is recommended.**
+     - LeRobot video decoder: ``pyav``, ``torchcodec`` or ``decord``; affects lazy mp4 speed and compatibility. **``torchcodec`` is recommended**; use ``decord`` where ``torchcodec`` cannot load, such as Ascend.
    * - ``video_tolerance_s``
      - Timestamp tolerance (seconds) between video frames and target times.
    * - ``parquet_cache_size``
@@ -399,43 +399,49 @@ Resume training with ``runner.resume_dir`` pointing to a checkpoint directory (f
 Run on Different Hardware Backends
 ----------------------------------
 
-Use the model, dataset and SFT configuration prepared above to run a short
-training check on your target accelerator before a full training run.
+NVIDIA uses the installation and launch steps above. Huawei Ascend CANN supports
+DreamZero SFT with the same checkpoints, datasets and configurations; CI runs
+WAN2.2 5B SFT on two Ascend 910B NPUs with PyTorch and ``torch-npu`` 2.6.0.
 
 Huawei Ascend CANN
 ~~~~~~~~~~~~~~~~~~
 
-Use an environment with matching PyTorch, ``torch_npu`` and CANN versions,
-plus the DreamZero dependencies described under Installation. RLinf selects
-the Ascend patches when the actor worker or rollout worker is assigned an NPU.
+Start with the Ascend LIBERO container or a host with CANN and the NPU driver
+installed:
 
-Before launching SFT, set ``ATTENTION_BACKEND=torch`` to select PyTorch SDPA
-in DreamZero's native attention module, and ``TORCH_COMPILE_DISABLE=1`` to run
-in eager mode, including compile calls in dependencies. RLinf also skips its
-four CUDA ``reduce-overhead`` compilation wrappers on NPU.
+.. include:: _ascend_libero.rst
 
-With the model and data paths filled in, run the following command from the
+Create a DreamZero environment from the RLinf checkout inside the container, or
+run the same command directly on the Ascend host:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model dreamzero
+   source .venv/bin/activate
+
+Add ``--use-mirror`` for downloads from mainland China. The installer installs
+the matching ``torch-npu`` package and skips CUDA flash-attention.
+
+Prepare the model, data and ``metadata.json`` as described above, and set
+``DREAMZERO_PATH`` as in Installation. On Ascend the installer removes
+``torchcodec`` if its wheel cannot load, so set ``data.video_backend: decord``
+in the SFT config to decode videos with decord. Then launch SFT from the
 repository root:
 
 .. code-block:: bash
 
-   export DREAMZERO_PATH=/path/to/dreamzero
-   export ATTENTION_BACKEND=torch
-   export TORCH_COMPILE_DISABLE=1
-   export EMBODIED_PATH="$PWD/examples/sft"
-   export PYTHONPATH="$PWD:$DREAMZERO_PATH:$PYTHONPATH"
-   python examples/sft/train_vla_sft.py \
-     --config-path "$EMBODIED_PATH/config" \
-     --config-name libero_sft_dreamzero_5b
+   bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
 
-On NPU workers, RLinf imports ``torch_npu.contrib.transfer_to_npu`` before
-constructing DreamZero. It redirects upstream CUDA tensor allocations, device
-arguments, random generators, timing events and synchronization to NPU, so the
-installed DreamZero source can retain its CUDA calls. This migration changes
-PyTorch APIs throughout the worker process: it also remaps distributed APIs
-and disables ``torch.jit.script`` and ``torch.jit.script_method``. These effects
-are not scoped to individual DreamZero calls.
-CPU and GPU workers do not enable it through this hook.
+The example configs size ``actor.micro_batch_size`` for 80 GB GPUs. On 64 GB
+NPUs, lower it and keep ``actor.global_batch_size`` divisible by
+``micro_batch_size`` times the number of NPUs.
+
+When an actor or rollout worker is on an NPU, RLinf imports
+``torch_npu.contrib.transfer_to_npu`` before building DreamZero, so the CUDA
+calls in the DreamZero source run on the NPU, and it disables TorchDynamo, so
+every ``torch.compile`` runs eagerly. Both changes apply to the whole worker
+process: other code in it that calls ``torch.cuda``, ``torch.compile`` or
+``torch.jit.script`` sees the same redirection.
 
 Standalone Evaluation
 ---------------------

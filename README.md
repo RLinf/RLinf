@@ -306,6 +306,7 @@ Choose the model and environment combination you need, then follow the correspon
 | [GR00T N1.5](docs/source-en/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-en/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-en/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
+| [DreamZero](docs/source-en/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — |
 
 ### Agentic AI
 

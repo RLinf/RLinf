@@ -12,19 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DreamZero attention, rotary embedding and real-valued RoPE for Ascend SFT."""
-
-import copy
-from collections.abc import Callable
-from functools import wraps
-from typing import TYPE_CHECKING
+"""Ascend replacements for DreamZero's FP64, complex RoPE and FlashAttention ops."""
 
 import torch
 import torch.nn.functional as F
-from torch.distributed.tensor import DTensor
 
-if TYPE_CHECKING:
-    from transformers.feature_extraction_utils import BatchFeature
+from rlinf.scheduler import AcceleratorType, Worker
+from rlinf.utils.logging import get_logger
 
 
 def sinusoidal_embedding_1d(dim: int, position: torch.Tensor) -> torch.Tensor:
@@ -194,48 +188,24 @@ def flash_attention(
     return output.transpose(1, 2).contiguous().to(output_dtype)
 
 
-def ensure_vae_on_device(self: torch.nn.Module, ref_tensor: torch.Tensor) -> None:
-    """Let FSDP2 manage sharded VAE placement; lazily move an unsharded VAE."""
-    if getattr(self, "_vae_device_ready", False):
-        return
-    # FSDP2 owns DTensor placement and mixed precision. Module.to() here can
-    # mix local tensors and DTensors or invalidate the sharding state.
-    if any(isinstance(param, DTensor) for param in self.vae.parameters()):
-        return
-    self.vae.to(device=ref_tensor.device, dtype=torch.bfloat16)
-    self.vae.eval()
-    self._vae_device_ready = True
-
-
-def wrap_action_loss_mask(forward: Callable) -> Callable:
-    """Adapt per-sample flags to the vendor's [B, T, D] action-loss broadcast."""
-
-    @wraps(forward)
-    def wrapped(
-        self: torch.nn.Module,
-        backbone_output: "BatchFeature",
-        action_input: "BatchFeature",
-    ) -> "BatchFeature":
-        # The pinned vendor inserts one axis with has_real_action[:, None].
-        # Supply [B, 1] so it produces [B, 1, 1], including when B == T.
-        # Copy the mapping so repeated forwards never change caller inputs.
-        if action_input.has_real_action.ndim == 1:
-            action_input = copy.copy(action_input)
-            action_input["has_real_action"] = action_input.has_real_action[:, None]
-        return forward(self, backbone_output, action_input)
-
-    return wrapped
-
-
 def apply_npu_patches(patcher) -> None:
-    """Enable CUDA API migration and register DreamZero patches on Ascend."""
-    from rlinf.scheduler import AcceleratorType, Worker
+    """Register the Ascend patches for building DreamZero.
 
+    No-op off NPU. Call before ``patcher.apply()``. On NPU this also changes
+    the whole worker process: ``transfer_to_npu`` redirects the CUDA calls left
+    in DreamZero, and TorchDynamo is disabled so every ``torch.compile`` in
+    DreamZero and RLinf runs eagerly.
+    """
     if Worker.accelerator_type != AcceleratorType.NPU:
         return
 
-    # CUDA API migration for DreamZero worker process.
     from torch_npu.contrib import transfer_to_npu  # noqa: F401
+
+    torch._dynamo.config.disable = True
+    get_logger().info(
+        "DreamZero on NPU: enabled torch_npu transfer_to_npu and disabled "
+        "TorchDynamo for this worker process."
+    )
 
     source = "groot.vla.model.dreamzero.modules"
     target = "rlinf.models.embodiment.dreamzero.patch.npu_patches"
@@ -254,8 +224,3 @@ def apply_npu_patches(patcher) -> None:
         f"{source}.wan_video_dit_action_casual_chunk.causal_rope_action_apply",
         f"{target}.causal_rope_action_apply",
     )
-    action_head = "groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead"
-    patcher.add_patch(
-        f"{action_head}._ensure_vae_on_device", f"{target}.ensure_vae_on_device"
-    )
-    patcher.add_wrapper(f"{action_head}.forward", wrap_action_loss_mask)
