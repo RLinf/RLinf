@@ -29,9 +29,54 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.algorithms.utils import compute_entropy_loss
+from rlinf.algorithms.registry import calculate_adv_and_returns
+from rlinf.algorithms.utils import compute_entropy_loss, safe_normalize
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+
+
+@pytest.mark.parametrize("valid_count", [0, 1, 2])
+def test_safe_normalize_uses_only_valid_samples(valid_count: int) -> None:
+    values = torch.tensor([[2.0, 4.0, 100.0]])
+    mask = torch.arange(3).reshape(1, 3) < valid_count
+
+    result = safe_normalize(values, mask)
+
+    expected = values if valid_count < 2 else (values - 3.0) / (math.sqrt(2) + 1e-5)
+    torch.testing.assert_close(result, expected)
+    torch.testing.assert_close(values, torch.tensor([[2.0, 4.0, 100.0]]))
+
+
+def test_safe_normalize_without_mask_uses_all_elements() -> None:
+    values = torch.tensor([[2.0, 4.0]])
+
+    result = safe_normalize(values, None)
+
+    torch.testing.assert_close(result, (values - 3.0) / (math.sqrt(2) + 1e-5))
+
+
+@pytest.mark.parametrize("use_mask", [False, True])
+@pytest.mark.parametrize("normalize", [False, True])
+def test_embodied_gae_preserves_a_single_valid_sample(
+    use_mask: bool, normalize: bool
+) -> None:
+    # A one-step terminal rollout has return 2 and advantage 2 - V(s) = 1.5.
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="gae",
+        reward_type="action_level",
+        rewards=torch.tensor([[[2.0]]]),
+        values=torch.tensor([[[0.5]], [[0.0]]]),
+        dones=torch.tensor([[[False]], [[True]]]),
+        loss_mask=torch.ones((1, 1, 1), dtype=torch.bool) if use_mask else None,
+        gamma=0.99,
+        gae_lambda=0.95,
+        normalize_advantages=normalize,
+        normalize_returns=normalize,
+    )
+
+    torch.testing.assert_close(result["advantages"], torch.tensor([[[1.5]]]))
+    torch.testing.assert_close(result["returns"], torch.tensor([[[2.0]]]))
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
