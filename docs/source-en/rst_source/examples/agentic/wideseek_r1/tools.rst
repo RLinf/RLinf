@@ -52,7 +52,7 @@ We recommend the prebuilt Docker image:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.17.0-te2.17
+   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
 
 If you prefer a local environment, install the agentic stack:
 
@@ -61,17 +61,17 @@ If you prefer a local environment, install the agentic stack:
    bash requirements/install.sh agentic
 
 .. note::
-   If you run the prebuilt image on a GPU older than ``sm90`` (such as an
-   ``A100``), you may hit an architecture-not-supported error. Uninstall
-   ``flash-attn-4`` first:
+   The image above ships FA2 and no ``flash-attn-4``, so it also runs on GPUs
+   older than ``sm90`` (such as an ``A100``). On Hopper or newer GPUs, the same
+   tag with a ``-fa4`` suffix ships FA4 and no FA2, which RLinf then uses for
+   attention:
 
    .. code-block:: bash
 
-      uv pip uninstall flash-attn-4
+      docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
 
-   If you installed the stack locally with
-   ``bash requirements/install.sh agentic``, this is handled automatically
-   and you do not need to uninstall it.
+   A local installation with ``bash requirements/install.sh agentic``
+   detects the GPU and makes this choice automatically.
 
 Startup scripts and configuration files are in ``examples/agent/wideseek_r1``.
 
