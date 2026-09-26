@@ -336,6 +336,10 @@ class EnvWorker(Worker):
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
             )
+            if SupportedEnvType(env_cfg.env_type) is SupportedEnvType.ROBOTWIN:
+                env.enable_online_lerobot = (
+                    self.enable_online_lerobot and env_cfg is self.cfg.env.train
+                )
             if (
                 self.cfg.env.get("delay_sampler", None)
                 and env_cfg is not self.cfg.env.eval
@@ -394,12 +398,44 @@ class EnvWorker(Worker):
             return
         await env.wait_delay()
 
+    @staticmethod
+    def _valid_action_mask_from_infos(
+        infos: Any,
+        chunk_size: int,
+    ) -> torch.Tensor | None:
+        """Build a [B, C] mask for each environment's valid action prefix.
+
+        `executed_action_count` is a [B] count including the episode-ending
+        action and excluding later executed or padded slots. It may appear at
+        the top level or in `final_info` after auto-reset. Infos are read-only.
+        """
+        if not isinstance(infos, dict):
+            return None
+        executed_counts = infos.get("executed_action_count")
+        final_info = infos.get("final_info")
+        if executed_counts is None and isinstance(final_info, dict):
+            executed_counts = final_info.get("executed_action_count")
+        if executed_counts is None:
+            return None
+
+        if isinstance(executed_counts, torch.Tensor):
+            raw_counts = executed_counts.detach().cpu()
+        else:
+            raw_counts = torch.as_tensor(np.asarray(executed_counts))
+
+        counts = raw_counts.to(dtype=torch.long)
+        action_indices = torch.arange(chunk_size, dtype=torch.long).unsqueeze(0)
+        return action_indices < counts.unsqueeze(1)
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
-        self, chunk_actions: torch.Tensor, stage_id: int
+        self, chunk_actions: torch.Tensor, stage_id: int, current_obs: Any
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
-        """
-        This function is used to interact with the environment.
+        """Execute a chunk and build environment output and LeRobot payload.
+
+        `current_obs` is the pre-action observation for the first action.
+        Masked LeRobot payloads align it with the post-action observations to
+        store pre-action/action pairs; EnvOutput retains the final observation.
         """
         exec_actions = prepare_actions(
             raw_chunk_actions=chunk_actions["raw_actions"]
@@ -422,10 +458,19 @@ class EnvWorker(Worker):
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
             self.env_list[stage_id].chunk_step(chunk_actions)
         )
+        extracted_obs = obs_list
+        infos = infos_list
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
+        infos = infos or {}
+        valid_action_mask = None
+        if self.enable_online_lerobot:
+            valid_action_mask = self._valid_action_mask_from_infos(
+                infos,
+                chunk_size=self.model_cfg.num_action_chunks,
+            )
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -479,12 +524,18 @@ class EnvWorker(Worker):
                 rlt_switch_flags=rlt_switch_flags,
             ),
         )
+        if valid_action_mask is not None:
+            post_action_obs = (
+                obs_list if isinstance(obs_list, (list, tuple)) else [obs_list]
+            )
+            obs_list = [current_obs, *post_action_obs[:-1]]
         chunk_step_payload = {
             "chunk_actions": exec_actions,
             "obs_list": obs_list,
             "terminations": chunk_terminations,
             "truncations": chunk_truncations,
             "infos_list": infos_list,
+            "valid_action_mask": valid_action_mask,
         }
         return env_output, env_info, chunk_step_payload
 
@@ -1126,7 +1177,9 @@ class EnvWorker(Worker):
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
                     env_output, env_info, chunk_step_data = self.env_interact_step(
-                        actions, stage_id
+                        actions,
+                        stage_id,
+                        current_obs=env_outputs[stage_id].obs,
                     )
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)

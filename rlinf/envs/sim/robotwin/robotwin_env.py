@@ -59,6 +59,7 @@ class RoboTwinEnv(gym.Env):
 
         self.cfg = cfg
         self.record_metrics = record_metrics
+        self.enable_online_lerobot = False
         self._is_start = True
 
         self.task_name = cfg.task_config.task_name
@@ -329,13 +330,23 @@ class RoboTwinEnv(gym.Env):
         obs_list = []
         infos_list = []
 
-        raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
-            chunk_actions
-        )
-        extracted_obs = self._extract_obs_image(raw_obs)
+        if self.enable_online_lerobot:
+            raw_obs_list, step_reward, terminations, truncations, info_list = (
+                self.venv.step_with_full_obs(chunk_actions)
+            )
+            obs_list = [
+                self._extract_obs_image(raw_obs) for raw_obs in raw_obs_list
+            ]
+            infos_list = [{} for _ in range(chunk_step)]
+        else:
+            raw_obs, step_reward, terminations, truncations, info_list = (
+                self.venv.step(chunk_actions)
+            )
+            obs_list.append(self._extract_obs_image(raw_obs))
+            infos_list.append({})
+
         infos = list_of_dict_to_dict_of_list(info_list)
-        obs_list.append(extracted_obs)
-        infos_list.append(infos)
+        infos_list[-1] = infos
         if isinstance(terminations, list):
             terminations = torch.as_tensor(
                 np.array(terminations).reshape(-1), device=self.device
