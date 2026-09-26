@@ -25,7 +25,7 @@ from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
+from rlinf.hybrid_engines.fsdp import FSDP, DTensor, FSDPModule
 from rlinf.hybrid_engines.fsdp.utils import FSDPVersion, to_local_if_dtensor
 from rlinf.utils.utils import get_rng_state, set_rng_state
 
@@ -62,6 +62,17 @@ class Checkpoint(Stateful):
         else:
             for opt, opt_sd in zip(self.optimizers, optim_state_dicts):
                 opt.load_state_dict(opt_sd)
+
+    def _has_dtensor(self) -> bool:
+        """Return whether any parameter or buffer is a DTensor.
+
+        FSDP1 ``state_dict()`` gathers the full parameter set onto rank 0.
+        The live parameters and buffers already answer this question, so a
+        model with only local tensors can skip that gather.
+        """
+        if any(isinstance(tensor, DTensor) for tensor in self.model.parameters()):
+            return True
+        return any(isinstance(tensor, DTensor) for tensor in self.model.buffers())
 
     def state_dict(self):
         if self.checkpoint_format == "local_shard":
@@ -110,7 +121,30 @@ class Checkpoint(Stateful):
             )
 
         if self.checkpoint_format == "local_shard":
-            self.model.load_state_dict(state["model"])
+            model_sd = state["model"]
+            if self._has_dtensor():
+                model_sd = model_sd.copy()
+                for key, target in self.model.state_dict().items():
+                    if isinstance(target, DTensor) and key in model_sd:
+                        local_tensor = model_sd[key]
+                        if local_tensor.shape != target.to_local().shape:
+                            raise ValueError(
+                                f"Local shard shape mismatch for {key}: "
+                                f"{local_tensor.shape} != {target.to_local().shape}. "
+                                "local_shard checkpoints require the same model and "
+                                "distributed topology used when saving."
+                            )
+                        # The file stores local tensors, while load_state_dict
+                        # expects the global DTensor shape, including for uneven
+                        # shards.
+                        model_sd[key] = DTensor.from_local(
+                            local_tensor.to(target.device),
+                            device_mesh=target.device_mesh,
+                            placements=target.placements,
+                            shape=target.shape,
+                            stride=target.stride(),
+                        )
+            self.model.load_state_dict(model_sd)
 
             self._load_local_optim_state_dicts(state["optimizers"])
 
