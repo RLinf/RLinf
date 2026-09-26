@@ -15,7 +15,11 @@
 import numpy as np
 import torch
 
-from rlinf.config import SupportedModel
+from rlinf.config import (
+    OPENWAM_LIBERO_ACTION_REPRESENTATIONS,
+    OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
+    SupportedModel,
+)
 from rlinf.envs import SupportedEnvType
 
 
@@ -72,11 +76,84 @@ def prepare_actions_for_maniskill(
     return chunk_actions
 
 
+def _openwam_eef20_to_robotwin_ee16(chunk_actions) -> np.ndarray:
+    """Convert OpenWAM's 20-D dual-arm EEF actions to RoboTwin's 16-D ``ee`` actions.
+
+    OpenWAM RoboTwin checkpoints (``dataloader.action_mode: eef``) predict
+    ``[l_xyz(3), l_rot6d(6), l_grip(1), r_xyz(3), r_rot6d(6), r_grip(1)]`` in
+    the same absolute end-effector frame as the ``endpose`` fields of the
+    RoboTwin dataset. RoboTwin's ``take_action(..., action_type="ee")`` wants
+    ``[l_xyz(3), l_quat_xyzw(4), l_grip(1), r_xyz(3), r_quat_xyzw(4), r_grip(1)]``;
+    the gripper stays a raw ``[0, 1]`` opening (1 = open), exactly as trained.
+    Mirrors ``benchmarks/utils/action_conversion.eef20d_to_ee16d`` in OpenWAM.
+    """
+    from rlinf.utils.rot6d import rot6d_to_quat_xyzw
+
+    raw = np.asarray(chunk_actions, dtype=np.float32)
+    if raw.shape[-1] != 20:
+        raise ValueError(
+            f"OpenWAM RoboTwin rollout expects 20-D EEF actions, got {raw.shape}"
+        )
+    if not np.isfinite(raw).all():
+        raise ValueError("OpenWAM RoboTwin rollout produced non-finite actions")
+    flat = raw.reshape(-1, 20)
+    out = np.empty((flat.shape[0], 16), dtype=np.float32)
+    for row, action in enumerate(flat):
+        out[row, 0:3] = action[0:3]
+        out[row, 3:7] = rot6d_to_quat_xyzw(action[3:9].astype(np.float64))
+        out[row, 7] = action[9]
+        out[row, 8:11] = action[10:13]
+        out[row, 11:15] = rot6d_to_quat_xyzw(action[13:19].astype(np.float64))
+        out[row, 15] = action[19]
+    return out.reshape(*raw.shape[:-1], 16)
+
+
+def prepare_actions_for_robotwin(
+    raw_chunk_actions,
+    model_type,
+    env_cfg=None,
+) -> np.ndarray:
+    """RoboTwin consumes 14-D joint actions as-is; OpenWAM needs the EEF bridge."""
+    if SupportedModel(model_type) != SupportedModel.OPENWAM:
+        return raw_chunk_actions
+    representation = (
+        None if env_cfg is None else env_cfg.get("openwam_action_representation", None)
+    )
+    if representation not in OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS:
+        raise ValueError(
+            "OpenWAM RoboTwin requires env.<split>.openwam_action_representation "
+            f"to be one of {OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS}, got {representation!r}. "
+            "It switches RoboTwinEnv to end-effector control and 20-D native proprio."
+        )
+    return _openwam_eef20_to_robotwin_ee16(raw_chunk_actions)
+
+
 def prepare_actions_for_libero(
     raw_chunk_actions,
     model_type,
+    env_cfg=None,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
+    if SupportedModel(model_type) == SupportedModel.OPENWAM:
+        representation = (
+            None
+            if env_cfg is None
+            else env_cfg.get("openwam_action_representation", None)
+        )
+        if representation not in OPENWAM_LIBERO_ACTION_REPRESENTATIONS:
+            raise ValueError(
+                "OpenWAM LIBERO requires env.eval.openwam_action_representation "
+                f"to be one of {OPENWAM_LIBERO_ACTION_REPRESENTATIONS}, "
+                f"got {representation!r}."
+            )
+        if representation == "absolute_eef10":
+            raw = np.asarray(chunk_actions, dtype=np.float32)
+            if raw.shape[-1] != 10:
+                raise ValueError(
+                    f"OpenWAM absolute EEF rollout expects 10-D actions, got {raw.shape}"
+                )
+            return raw
+        return _openwam_eef10_to_libero7(chunk_actions)
     if SupportedModel(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
@@ -87,6 +164,90 @@ def prepare_actions_for_libero(
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
     return chunk_actions
+
+
+def _openwam_absolute_eef10_to_libero7(
+    raw_chunk_actions: np.ndarray,
+    reference_eef10: np.ndarray,
+    *,
+    pos_scale: float = 0.05,
+    rot_scale: float = 0.5,
+) -> np.ndarray:
+    """Convert absolute EEF10 goals to LIBERO's per-step OSC action."""
+    from scipy.spatial.transform import Rotation
+
+    raw = np.asarray(raw_chunk_actions, dtype=np.float32)
+    ref = np.asarray(reference_eef10, dtype=np.float32)
+    if raw.shape[-1] != 10 or ref.shape[-1] != 10:
+        raise ValueError(
+            f"OpenWAM absolute EEF conversion expects (..., 10), got {raw.shape} and {ref.shape}"
+        )
+    if raw.shape[:-1] != ref.shape[:-1]:
+        raise ValueError(
+            f"OpenWAM action/reference batch mismatch: {raw.shape} vs {ref.shape}"
+        )
+    if not np.all(np.isfinite(raw)) or not np.all(np.isfinite(ref)):
+        raise ValueError(
+            "OpenWAM absolute EEF action/reference contains non-finite values; "
+            "refusing to send NaN or Inf into the LIBERO controller."
+        )
+    if not (pos_scale > 0 and rot_scale > 0):
+        raise ValueError(f"OSC scales must be positive, got {pos_scale=} {rot_scale=}")
+
+    def matrix(r6):
+        first = r6[..., :3]
+        second = r6[..., 3:6]
+        first = first / np.maximum(np.linalg.norm(first, axis=-1, keepdims=True), 1e-8)
+        second = second - np.sum(first * second, axis=-1, keepdims=True) * first
+        second = second / np.maximum(
+            np.linalg.norm(second, axis=-1, keepdims=True), 1e-8
+        )
+        return np.stack([first, second, np.cross(first, second)], axis=-1)
+
+    relative = matrix(raw[..., 3:9]) @ np.swapaxes(matrix(ref[..., 3:9]), -1, -2)
+    rotvec = (
+        Rotation.from_matrix(relative.reshape(-1, 3, 3))
+        .as_rotvec()
+        .reshape(raw.shape[:-1] + (3,))
+    )
+    output = np.concatenate(
+        [
+            (raw[..., :3] - ref[..., :3]) / pos_scale,
+            rotvec / rot_scale,
+            -raw[..., 9:10],
+        ],
+        axis=-1,
+    )
+    return np.clip(output, -1.0, 1.0).astype(np.float32)
+
+
+def _openwam_eef10_to_libero7(raw_chunk_actions: np.ndarray) -> np.ndarray:
+    """Convert native OpenWAM EEF10 deltas to LIBERO's 7-D OSC action."""
+    from scipy.spatial.transform import Rotation
+
+    raw = np.asarray(raw_chunk_actions, dtype=np.float32)
+    if raw.shape[-1] != 10:
+        raise ValueError(
+            f"OpenWAM LIBERO rollout expects 10-D EEF actions, got {raw.shape}"
+        )
+    if not np.all(np.isfinite(raw)):
+        raise ValueError(
+            "OpenWAM EEF action contains non-finite values; refusing to send "
+            "NaN or Inf into the LIBERO controller."
+        )
+    r6d = raw[..., 3:9].reshape(-1, 6).astype(np.float64)
+    first = r6d[:, :3]
+    second = r6d[:, 3:]
+    first /= np.maximum(np.linalg.norm(first, axis=-1, keepdims=True), 1e-8)
+    second -= np.sum(first * second, axis=-1, keepdims=True) * first
+    second /= np.maximum(np.linalg.norm(second, axis=-1, keepdims=True), 1e-8)
+    matrices = np.stack([first, second, np.cross(first, second)], axis=-1)
+    rotvec = Rotation.from_matrix(matrices).as_rotvec().astype(np.float32)
+    output = np.concatenate(
+        [raw[..., :3], rotvec.reshape(raw.shape[:-1] + (3,)), -raw[..., 9:10]],
+        axis=-1,
+    )
+    return np.clip(output, -1.0, 1.0).astype(np.float32)
 
 
 def prepare_actions_for_isaaclab(
@@ -348,6 +509,7 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
+            env_cfg=env_cfg,
         )
     elif env_type == SupportedEnvType.WORLD_MODEL:
         # TODO: Implement prepare_actions_for_opensora_wm
@@ -355,6 +517,7 @@ def prepare_actions(
             chunk_actions = prepare_actions_for_libero(
                 raw_chunk_actions=raw_chunk_actions,
                 model_type=model_type,
+                env_cfg=env_cfg,
             )
         else:
             raise NotImplementedError(f"Env type {wm_env_type} not implemented")
@@ -370,7 +533,11 @@ def prepare_actions(
             policy=policy,
         )
     elif env_type == SupportedEnvType.ROBOTWIN:
-        chunk_actions = raw_chunk_actions
+        chunk_actions = prepare_actions_for_robotwin(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+            env_cfg=env_cfg,
+        )
     elif env_type == SupportedEnvType.EMBODICHAIN:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:

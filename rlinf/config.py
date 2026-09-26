@@ -102,6 +102,7 @@ SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.FASTWAM = SupportedModel.register("fastwam", force=True)
 SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
+SupportedModel.OPENWAM = SupportedModel.register("openwam", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
@@ -117,6 +118,12 @@ SupportedModel.STEAM_VALUE_MODEL = SupportedModel.register(
 )
 SupportedModel.SD3 = SupportedModel.register("sd3", force=True)
 SupportedModel.WAN22_TI2V_5B = SupportedModel.register("wan22_ti2v_5b", force=True)
+
+# Action spaces the OpenWAM policy can be evaluated in, per environment. The
+# env worker converts each chunk with rlinf.envs.action_utils; the recipes name
+# the representation the checkpoint was trained with.
+OPENWAM_LIBERO_ACTION_REPRESENTATIONS = ("native_delta_eef10", "absolute_eef10")
+OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS = ("absolute_eef20",)
 
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
@@ -147,6 +154,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DREAMZERO,
         SupportedModel.FASTWAM,
         SupportedModel.COSMOS3,
+        SupportedModel.OPENWAM,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
@@ -1029,6 +1037,64 @@ def validate_weight_sync_overlap_cfg(cfg):
     )
 
 
+def validate_openwam_eval_cfg(cfg: DictConfig) -> None:
+    """Reject OpenWAM eval recipes whose chunking or action bridge is inconsistent.
+
+    The policy returns one chunk of ``rollout.model.openwam.inference_horizon``
+    actions (``num_frames - 1`` when the horizon is null) and the environment
+    executes the whole chunk, so ``rollout.model.num_action_chunks`` must equal
+    that length and the episode budget must be a multiple of it. The action
+    bridge needs ``env.eval.openwam_action_representation`` before the first
+    step; checking it here fails before the multi-minute model load.
+    """
+    model_cfg = cfg.rollout.model
+    horizon = OmegaConf.select(model_cfg, "openwam.inference_horizon", default=None)
+    chunk = (
+        int(horizon)
+        if horizon is not None
+        else int(OmegaConf.select(model_cfg, "num_frames", default=49)) - 1
+    )
+    num_action_chunks = int(model_cfg.num_action_chunks)
+    if num_action_chunks != chunk:
+        raise ValueError(
+            "OpenWAM executes one generated chunk per step: set "
+            f"rollout.model.num_action_chunks={chunk} to match "
+            "rollout.model.openwam.inference_horizon (or num_frames - 1 when the "
+            f"horizon is null); got num_action_chunks={num_action_chunks}."
+        )
+    env_cfg = cfg.env.eval
+    max_steps = OmegaConf.select(env_cfg, "max_steps_per_rollout_epoch", default=None)
+    if max_steps is not None and int(max_steps) % num_action_chunks != 0:
+        raise ValueError(
+            "env.eval.max_steps_per_rollout_epoch must be a multiple of "
+            f"rollout.model.num_action_chunks ({num_action_chunks}); got {max_steps}. "
+            "The env worker would otherwise drop the remainder silently."
+        )
+    allowed = {
+        "libero": OPENWAM_LIBERO_ACTION_REPRESENTATIONS,
+        "robotwin": OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
+    }
+    env_type = str(OmegaConf.select(env_cfg, "env_type", default=""))
+    if env_type in allowed:
+        representation = OmegaConf.select(
+            env_cfg, "openwam_action_representation", default=None
+        )
+        if representation not in allowed[env_type]:
+            raise ValueError(
+                f"OpenWAM on {env_type} requires env.eval.openwam_action_representation "
+                f"to be one of {allowed[env_type]}; got {representation!r}."
+            )
+    render_gpu_ids = OmegaConf.select(env_cfg, "render_gpu_ids", default=None)
+    if render_gpu_ids is not None and (
+        isinstance(render_gpu_ids, (str, int))
+        or not all(isinstance(int(gpu), int) for gpu in render_gpu_ids)
+    ):
+        raise ValueError(
+            "env.eval.render_gpu_ids must be a list of GPU indices, one EGL "
+            f"renderer per entry; got {render_gpu_ids!r}."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1044,6 +1110,14 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if not only_eval and model_type == SupportedModel.OPENWAM:
+        raise ValueError(
+            "OpenWAM supports supervised fine-tuning (runner.task_type=sft) and "
+            "evaluation (runner.task_type=embodied_eval or runner.only_eval=True) "
+            "only; RL training with the OpenWAM policy is not implemented."
+        )
+    if only_eval and model_type == SupportedModel.OPENWAM:
+        validate_openwam_eval_cfg(cfg)
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
         # gap per action, which assumes the OpenVLA family's tokenized action layout.

@@ -1636,6 +1636,9 @@ class EnvOutput:
             obs["extra_view_images"] if "extra_view_images" in obs else None
         )
         states = obs["states"] if "states" in obs else None
+        # Optional proprioception in the policy checkpoint's own physical units
+        # (e.g. OpenWAM's 20-D RoboTwin EEF state); most environments omit it.
+        native_proprio = obs["native_proprio"] if "native_proprio" in obs else None
         task_descriptions = (
             list(obs["task_descriptions"])
             if "task_descriptions" in obs and obs["task_descriptions"] is not None
@@ -1647,6 +1650,7 @@ class EnvOutput:
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
+            "native_proprio": native_proprio,  # [N_ENV, D] or None
             "task_descriptions": task_descriptions,
         }
 

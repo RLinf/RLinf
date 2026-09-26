@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on OXE DROID.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=oxe_droid, cameras, action mode) drives the
+# native OpenWAM reader, so a oxe_droid checkpoint must be paired with oxe_droid data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "oxe_droid_sft_openwam"
+
+data:
+  train_data_paths: /path/to/oxe_droid_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-oxe_droid-checkpoint
