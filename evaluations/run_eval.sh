@@ -11,8 +11,8 @@ export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
 
 setup_sim_env() {
-    export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
-    export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-osmesa}"
+    export MUJOCO_GL="${MUJOCO_GL:-egl}"
+    export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
     export OMNIGIBSON_DATA_PATH="${OMNIGIBSON_DATA_PATH:-}"
     export OMNIGIBSON_DATASET_PATH="${OMNIGIBSON_DATASET_PATH:-${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/}"

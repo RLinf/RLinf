@@ -1538,6 +1538,92 @@ def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
         )
 
 
+def _cosmos3_sglang_cfg(batching_max_size=None):
+    server = (
+        {} if batching_max_size is None else {"batching_max_size": batching_max_size}
+    )
+    return OmegaConf.create(
+        {
+            "rollout": {
+                "model": {"num_action_chunks": 16},
+                "sglang": {"server": server},
+            },
+            "env": {"eval": {"env_type": "libero"}},
+        }
+    )
+
+
+def test_cosmos3_sglang_requests_group_envs_by_prompt_up_to_the_server_batch():
+    # The Cosmos3 server rejects a batch whose prompts tokenize to different
+    # lengths, and one larger than its --batching-max-size.
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    adapter = Cosmos3SGLangAdapter(_cosmos3_sglang_cfg(batching_max_size=2), rank=0)
+    tasks = ["pick the bowl", "open the drawer", "pick the bowl", "pick the bowl"]
+
+    groups = adapter.request_groups({"task_descriptions": tasks})
+
+    assert groups == [[0, 2], [3], [1]]
+
+
+def test_cosmos3_sglang_requests_default_to_one_env_like_sglang():
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    adapter = Cosmos3SGLangAdapter(_cosmos3_sglang_cfg(), rank=0)
+
+    groups = adapter.request_groups({"task_descriptions": ["a", "a", "a"]})
+
+    assert groups == [[0], [1], [2]]
+
+
+def test_sglang_request_groups_round_trip_to_env_order():
+    from rlinf.models.embodiment.sglang_adapter import (
+        gather_env_rows,
+        select_env_rows,
+    )
+
+    env_obs = {
+        "main_images": torch.arange(5).view(5, 1),
+        "task_descriptions": ["a", "b", "a", "a", "b"],
+        "wrist_images": None,
+        "_rlinf_stage_id": 1,
+    }
+    groups = [[0, 2], [3], [1, 4]]
+
+    parts = [select_env_rows(env_obs, group) for group in groups]
+    assert parts[2]["task_descriptions"] == ["b", "b"]
+    assert parts[0]["_rlinf_stage_id"] == 1 and parts[0]["wrist_images"] is None
+
+    # Each "request" answers with its envs' rows; gathering restores env order.
+    order = [index for group in groups for index in group]
+    actions = gather_env_rows([p["main_images"] * 10 for p in parts], order)
+    info = gather_env_rows([{"x": {"y": p["main_images"]}} for p in parts], order)
+    assert torch.equal(actions, torch.arange(5).view(5, 1) * 10)
+    assert torch.equal(info["x"]["y"], torch.arange(5).view(5, 1))
+
+
+def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
+    # The action envelope carries one ``data`` entry per env of the request.
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    adapter = Cosmos3SGLangAdapter(_cosmos3_sglang_cfg(), rank=0)
+
+    def entry(input_index, gripper):
+        values = np.zeros((16, 12), dtype=np.float32)
+        values[:, 3] = 1.0  # rot6d columns (1, 0, 0) and (0, 1, 0): no rotation
+        values[:, 7] = 1.0
+        values[:, 9] = gripper
+        return {"input_index": input_index, "action": {"values": values}}
+
+    actions, _ = adapter.parse_response(
+        {"data": [entry(1, 0.5), entry(0, -0.5)]}, state={}
+    )
+
+    assert actions.shape == (2, 16, 7)
+    assert torch.all(actions[0, :, 6] == -0.5)
+    assert torch.all(actions[1, :, 6] == 0.5)
+
+
 # --- OpenWAM checkpoint export ---------------------------------------------
 
 

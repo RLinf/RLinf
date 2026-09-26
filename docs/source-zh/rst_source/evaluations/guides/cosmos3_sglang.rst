@@ -6,38 +6,34 @@ Cosmos3 SGLang 评测
 工作原理
 ----------------------------------------
 
-每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成 HTTP 端点 ``POST /v1/actions/generations``。eval driver 把 server URL 下发给 rollout worker；worker 一次发送全部 N 个环境的观测，server 单次批量前向返回 ``[N, horizon, 10]`` 归一化 rot6d，由 ``sglang_adapter`` 去归一化并转成 7 维 axis-angle 送入 LIBERO。
+每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成 HTTP 端点 ``POST /v1/actions/generations``。eval driver 把 server URL 下发给 rollout worker，worker 把 N 个环境的一步观测拆成一个或多个请求发出。
+
+server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3SGLangAdapter.request_groups`` 先按补全后的 prompt 给环境分组，再把每组按 ``rollout.sglang.server.batching_max_size`` 切成若干份，每份最多这么多个环境。示例配置中该值为 ``8``；不设置时 adapter 采用 SGLang 自身的默认值 ``1``，即每个环境单独发一次请求。worker 逐组发送，再把结果按原来的环境顺序拼回去。
+
+响应中每个环境各占一条记录：``data[i].action.values`` 是该环境的 ``[horizon, raw_action_dim]`` 归一化 rot6d 动作块。adapter 先按 ``input_index`` 排序，再去归一化并转成 7 维 axis-angle 送入 LIBERO。
 
 .. code:: text
 
-   EnvWorker(libero) --观测(图像+指令)--> Cosmos3SGLangAdapter 构造请求
-        --POST /v1/actions/generations-->
+   EnvWorker(libero) --观测(图像+指令)--> Cosmos3SGLangAdapter.request_groups
+     按 prompt 给 N 个环境分组，每组最多 batching_max_size 个环境
+        --每组发一次 POST /v1/actions/generations-->
    SGLang server（Cosmos3OmniDiffusersPipeline，扩散 num_inference_steps 步）
-        --响应 [N, horizon, 10]（归一化 rot6d）-->
-   Cosmos3SGLangAdapter 解析：
-     裁前 10 通道 → quantile 去归一化 → rot6d(6) 转 axis-angle(3) → 拼成 [N, 16, 7]
+        --响应中每个环境一条 data[i].action.values = [horizon, 10]（归一化 rot6d）-->
+   Cosmos3SGLangAdapter 按 input_index 顺序逐条解析：
+     裁前 10 通道 → quantile 去归一化 → rot6d(6) 转 axis-angle(3)
+   worker 把各组结果按环境顺序拼成 [N, 16, 7]
         --[N, 16, 7]-->
    EnvWorker.chunk_step 推进仿真
 
 安装
 ----------------------------------------
 
-安装 embodied + LIBERO 依赖：
+安装 LIBERO 环境和带 ``diffusion`` extra 的 SGLang 0.5.19。``sglang`` model 会固定 torch 2.13.0，并按驱动支持的版本选择 CUDA 12 或 CUDA 13 的 wheel：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env libero
+   bash requirements/install.sh embodied --model sglang --env libero
    source .venv/bin/activate
-
-.. note::
-
-   这里不使用 ``--model cosmos3``：cosmos3 的模型依赖（natten、cuDNN pin 等）与下方 SGLang 栈冲突过多。只装 RLinf 本体 + LIBERO 环境依赖即可；SGLang 按下文步骤单独安装。
-
-Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（batch action 支持已合并到 ``main``,commit ``924aeee59cb68ea99bf7c7c183512958ed3d6272``）：
-
-.. code-block:: bash
-
-   git clone https://github.com/FxxxxU/sglang.git /path/to/sglang && cd /path/to/sglang && git checkout 924aeee59cb68ea99bf7c7c183512958ed3d6272 && pip install -e "python[diffusion]"
 
 准备 Checkpoint
 ----------------------------------------
@@ -58,7 +54,7 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（batch actio
    rollout:
      model:
        model_path: /path/to/model_diffusers          # 评测输入的 diffusers 目录
-       action_stats_path: /path/to/cosmos3_framework/libero_native_frame_wise_relative_rot6d.json  # 与 cosmos3_framework 的 rot6d 文件
+       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json  # cosmos-framework 的 rot6d 统计文件
 
    env:
      eval:
@@ -95,6 +91,8 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（batch actio
      - 扩散步数与输入视频规格，须与训练一致。
    * - ``rollout.sglang.server.num_gpus`` / ``tp_size``
      - 每 server 占用 GPU 与 TP；单卡部署均为 1（每卡一个 server）。
+   * - ``rollout.sglang.server.batching_max_size``
+     - 单次请求中 server 最多批处理的环境数（示例为 8）。adapter 按该值切分每个 prompt 分组；不设置时采用 SGLang 默认值 1，即每个环境单独一次请求。
    * - ``rollout.sglang.http_timeout_s``
      - HTTP 超时；扩散推理慢，建议 ``600``。
    * - ``env.eval.total_num_envs``
@@ -131,6 +129,6 @@ LIBERO 轨迹计数规则见 :ref:`libero-eval-config`。
    * - 本地请求被 proxy 拦截
      - 启动前设 ``NO_PROXY=127.0.0.1,localhost``。
    * - LIBERO 渲染报错
-     - 有 GPU 时设 ``MUJOCO_GL=egl``、``PYOPENGL_PLATFORM=egl``。
+     - ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，设 ``MUJOCO_GL=osmesa``、``PYOPENGL_PLATFORM=osmesa``。
    * - 重跑前 GPU 未释放
      - 确认上次 ``ray stop`` 已彻底、``nvidia-smi`` 全空、无残留 ``ray::SGLangServerGroup`` 进程。

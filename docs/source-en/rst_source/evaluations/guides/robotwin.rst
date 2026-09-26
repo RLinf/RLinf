@@ -299,4 +299,4 @@ FAQ
 - **Robot platform:** Set ``ROBOT_PLATFORM=ALOHA`` to select the platform variant.
 - **GPU OOM:** Set ``env.enable_offload: True`` and ``rollout.enable_offload: True`` in the YAML, or reduce ``env.eval.total_num_envs``.
 - **Eval coverage:** See :ref:`robotwin-eval-config` above; default 128 parallel envs with ``use_fixed_reset_state_ids: True`` only covers a subset of seeds.
-- **Rendering issues:** On headless hosts, try ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa`` (``run_eval.sh`` sets these by default).
+- **Rendering issues:** ``run_eval.sh`` renders with EGL by default; on hosts without EGL, ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa``.

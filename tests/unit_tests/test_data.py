@@ -29,7 +29,9 @@ import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+import rlinf.data.datasets.d4rl as d4rl_dataset_module
 import rlinf.utils.obs_compression as obs_compression
+from rlinf.data.datasets.d4rl import D4RLDataset
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.schema.embodied_trajectory import (
     LeRobotEpisodeAccumulator,
@@ -84,6 +86,94 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+class TestD4RLDataset:
+    """Tests for loading D4RL transition datasets."""
+
+    @pytest.mark.parametrize("has_next_observations", [False, True])
+    def test_from_path_converts_standard_hdf5_dataset(
+        self, tmp_path, monkeypatch, has_next_observations
+    ):
+        """Standard D4RL files go through ``qlearning_dataset``.
+
+        AntMaze files have no ``next_observations``; MuJoCo v2 files have both
+        ``next_observations`` and ``timeouts``.
+        """
+        dataset_path = tmp_path / "standard-d4rl.hdf5"
+        dataset_path.touch()
+        raw = {
+            "observations": np.array([[0.0], [1.0], [10.0], [11.0], [12.0]]),
+            "actions": np.array([[-1.5], [0.25], [0.5], [0.75], [1.5]]),
+            "rewards": np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
+            "terminals": np.array([False, False, False, False, True]),
+            "timeouts": np.array([False, True, False, False, False]),
+        }
+        if has_next_observations:
+            raw["next_observations"] = np.array([[1.0], [2.0], [11.0], [12.0], [13.0]])
+        converted = {
+            "observations": raw["observations"][[0, 2, 3]],
+            "actions": raw["actions"][[0, 2, 3]],
+            "rewards": raw["rewards"][[0, 2, 3]],
+            "terminals": raw["terminals"][[0, 2, 3]],
+            "next_observations": raw["observations"][[1, 3, 4]],
+        }
+
+        env = mock.Mock()
+        env.get_dataset.return_value = raw
+        gym_api = mock.Mock()
+        gym_api.make.return_value = env
+
+        def qlearning_dataset(actual_env, *, dataset):
+            assert actual_env is env
+            assert dataset is raw
+            assert "timeouts" in dataset
+            return converted
+
+        d4rl_api = mock.Mock(qlearning_dataset=qlearning_dataset)
+        monkeypatch.setattr(d4rl_dataset_module, "gym", gym_api)
+        monkeypatch.setattr(d4rl_dataset_module, "d4rl", d4rl_api)
+
+        dataset = D4RLDataset.from_path(dataset_path, task_name="antmaze-test-v0")
+
+        np.testing.assert_allclose(dataset.observations[:, 0], [0.0, 10.0, 11.0])
+        np.testing.assert_allclose(dataset.next_observations[:, 0], [1.0, 11.0, 12.0])
+        np.testing.assert_allclose(dataset.actions[:, 0], [-0.99999, 0.5, 0.75])
+        np.testing.assert_allclose(dataset.rewards, [0.0, 2.0, 3.0])
+        np.testing.assert_allclose(dataset.dones_float, [1.0, 0.0, 1.0])
+        env.get_dataset.assert_called_once_with(h5path=str(dataset_path))
+        env.close.assert_called_once_with()
+
+    def test_from_path_preserves_materialized_transition_dataset(
+        self, tmp_path, monkeypatch
+    ):
+        """Existing files with next observations remain supported."""
+        dataset_path = tmp_path / "materialized-d4rl.hdf5"
+        dataset_path.touch()
+        raw = {
+            "observations": np.array([[1.0], [2.0]]),
+            "actions": np.array([[-0.25], [0.25]]),
+            "rewards": np.array([3.0, 4.0]),
+            "terminals": np.array([False, True]),
+            "next_observations": np.array([[2.0], [3.0]]),
+        }
+
+        env = mock.Mock()
+        env.get_dataset.return_value = raw
+        gym_api = mock.Mock()
+        gym_api.make.return_value = env
+        d4rl_api = mock.Mock()
+        monkeypatch.setattr(d4rl_dataset_module, "gym", gym_api)
+        monkeypatch.setattr(d4rl_dataset_module, "d4rl", d4rl_api)
+
+        dataset = D4RLDataset.from_path(dataset_path, task_name="custom-test-v0")
+
+        np.testing.assert_array_equal(dataset.observations, raw["observations"])
+        np.testing.assert_array_equal(
+            dataset.next_observations, raw["next_observations"]
+        )
+        d4rl_api.qlearning_dataset.assert_not_called()
+        env.close.assert_called_once_with()
 
 
 class TestMathDatasetMultithread:
@@ -2744,3 +2834,89 @@ def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
     assert metadata[0][0].total_num_frames == 5
     assert metadata[0][0].frames_indices == [0, 1, 2, 3, 4]
     assert metadata[1][1].total_num_frames == 5
+
+
+# --------------------------------------------------------------------------
+# VLM SFT collate: transformers >= 5 emits mm_token_type_ids
+# --------------------------------------------------------------------------
+
+
+def _vlm_sft_sample(idx, seq_len, mm_token_type_ids):
+    """A sample shaped like ``Robo2VLMSFTDataset.encode_prompt`` output."""
+    return SimpleNamespace(
+        idx=idx,
+        length=seq_len,
+        prompt=torch.arange(1, seq_len + 1, dtype=torch.long),
+        answer="a",
+        solution="s",
+        image_data=None,
+        prompt_text="p",
+        meta={},
+        attention_mask=torch.ones(seq_len, dtype=torch.long),
+        label_mask=torch.zeros(seq_len, dtype=torch.bool),
+        multi_modal_inputs={
+            "pixel_values": torch.randn(4, 3, 2, 2),
+            "image_grid_thw": torch.tensor([[1, 2, 2]]),
+            "mm_token_type_ids": mm_token_type_ids,
+        },
+    )
+
+
+def test_vlm_collate_left_pads_mm_token_type_ids_like_prompts():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    # The three processor output shapes seen in the wild: (1, L) tensor,
+    # plain list, and (L,) tensor.
+    samples = [
+        _vlm_sft_sample(0, 9, torch.tensor([[0, 0, 1, 1, 0, 0, 1, 1, 0]])),
+        _vlm_sft_sample(1, 5, [0, 1, 1, 0, 0]),
+        _vlm_sft_sample(2, 7, torch.tensor([0, 1, 1, 1, 1, 0, 0])),
+    ]
+
+    batch = collate_fn(samples)
+
+    mm_ids = batch["multi_modal_inputs"]["mm_token_type_ids"]
+    assert mm_ids.shape == (3, 9)
+    assert mm_ids.dtype == torch.long
+
+    for i, sample in enumerate(samples):
+        pad_len = 9 - sample.length
+        # Left padding is 0 (text token) and masked by attention_mask.
+        assert (mm_ids[i, :pad_len] == 0).all()
+        assert (batch["attention_mask"][i, :pad_len] == 0).all()
+        # Valid part matches the processor output bit-for-bit.
+        expected = torch.as_tensor(
+            sample.multi_modal_inputs["mm_token_type_ids"], dtype=torch.long
+        ).flatten()
+        assert torch.equal(mm_ids[i, pad_len:], expected)
+        # Padding positions line up with the prompt's padding positions.
+        assert (batch["prompt"][i, :pad_len] == 0).all()
+
+    assert isinstance(batch["multi_modal_inputs"]["pixel_values"], list)
+    assert batch["multi_modal_inputs"]["image_grid_thw"].shape == (3, 3)
+
+
+def test_vlm_collate_stacks_mm_token_type_ids_without_padding():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    samples = [
+        _vlm_sft_sample(0, 5, torch.tensor([0, 1, 1, 0, 0])),
+        _vlm_sft_sample(1, 5, torch.tensor([[0, 0, 1, 1, 0]])),
+    ]
+
+    batch = collate_fn(samples)
+
+    mm_ids = batch["multi_modal_inputs"]["mm_token_type_ids"]
+    assert mm_ids.shape == (2, 5)
+    assert torch.equal(mm_ids[0], torch.tensor([0, 1, 1, 0, 0]))
+    assert torch.equal(mm_ids[1], torch.tensor([0, 0, 1, 1, 0]))
+
+
+def test_vlm_collate_still_rejects_unknown_mm_keys():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    sample = _vlm_sft_sample(0, 5, torch.tensor([0, 1, 1, 0, 0]))
+    sample.multi_modal_inputs["some_future_field"] = torch.zeros(5)
+
+    with pytest.raises(ValueError, match="Unsupported multi_modal_input key"):
+        collate_fn([sample])

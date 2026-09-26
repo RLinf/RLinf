@@ -299,7 +299,7 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
 常见问题
 --------
 
-- **渲染问题：** 若 headless 环境报错，尝试 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa`` （``run_eval.sh`` 默认已设置）。
+- **渲染问题：** ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，可 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。
 - **评测覆盖范围：** 见上文 :ref:`libero-eval-config`；核心是 ``total_num_envs``、``auto_reset`` 与 ``max_steps_per_rollout_epoch`` 三者的配合。
 
 .. toctree::

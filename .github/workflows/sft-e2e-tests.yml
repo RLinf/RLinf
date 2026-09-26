@@ -219,12 +219,6 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
-          source .venv/bin/activate
-          uv pip install transformers==4.57.1
-          # --no-deps: bitsandbytes' torch requirement is unpinned, so a plain
-          # install re-resolves torch through pyproject's override and replaces
-          # the version install.sh chose for this stack.
-          uv pip install --no-deps bitsandbytes
 
       - name: SFT Robo2vlm train test
         timeout-minutes: 20
@@ -248,8 +242,6 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          export PYTHONPATH=/workspace/dataset/Megatron-Bridge-0.3.0/src:$PYTHONPATH
-          export PYTHONPATH=/workspace/dataset/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8:$PYTHONPATH
           export CUDA_DEVICE_MAX_CONNECTIONS=1
           bash tests/e2e_tests/sft/run_vlm_sft.sh robo2vlm_sft_megatron_bridge_train
           rm -rf /workspace/results/qwen3_vl_megatron_sft/
@@ -297,4 +289,46 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+
+  sft-cosmos3-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Cosmos3 SFT and SGLang eval environments
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model cosmos3 --env libero
+          bash requirements/install.sh embodied --model sglang --env libero --venv .venv-sglang
+
+      - name: Cosmos3 LIBERO SFT test
+        timeout-minutes: 40
+        run: |
+          unset PYTHONPATH UV_DEFAULT_INDEX
+          export REPO_PATH=$(pwd)
+          export HF_HOME=/workspace/dataset/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_cosmos3
+
+      - name: Cosmos3 LIBERO SGLang evaluation
+        timeout-minutes: 30
+        run: |
+          ray stop || true
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export NO_PROXY=127.0.0.1,localhost
+          source .venv-sglang/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh libero_spatial_cosmos3_eval_sglang
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv .venv-sglang
           uv cache prune

@@ -300,7 +300,7 @@ Advanced Usage
 FAQ
 ---
 
-- **Rendering issues:** On headless systems, try ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa`` (``run_eval.sh`` sets these by default).
+- **Rendering issues:** ``run_eval.sh`` renders with EGL by default; on hosts without EGL, ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa``.
 - **Test coverage:** See :ref:`libero-eval-config` above; the key is coordinating ``total_num_envs``, ``auto_reset``, and ``max_steps_per_rollout_epoch``.
 
 .. toctree::
