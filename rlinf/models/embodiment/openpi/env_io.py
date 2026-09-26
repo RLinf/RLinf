@@ -123,6 +123,7 @@ class EnvIO:
             token_ar_mask=_move(obs.token_ar_mask),
             token_loss_mask=_move(obs.token_loss_mask),
             pcd_xyz=_move(obs.pcd_xyz),
+            action_states=_move_state(obs.action_states),
         )
 
     def env_obs_to_observation(self, env_obs: dict[str, Any]) -> Observation:
@@ -133,8 +134,24 @@ class EnvIO:
             env_obs,
             select_state=self._select_configured_state,
         )
+        self._inject_sfp_action_states(repacked)
         processed = self.input_transform(repacked, transpose=False)
         return self._observation_dict_to_device(processed)
+
+    def _inject_sfp_action_states(self, repacked: dict[str, Any]) -> None:
+        """Copy the env-space SFP accumulator into the OpenPI input dict."""
+        sfp_cfg = getattr(self, "sfp_cfg", None)
+        if sfp_cfg is None or not sfp_cfg.use_sfp:
+            return
+        action_states = getattr(self, "_sfp_env_action_states", None)
+        if action_states is None:
+            raise RuntimeError(
+                "SFP eval requires an action_states buffer. Pi0Eval.predict_"
+                "action_batch must prepare it before env_obs_to_observation."
+            )
+        repacked["observation/action_states"] = (
+            action_states.detach().cpu().numpy().astype(np.float32, copy=False)
+        )
 
     def _predict_eval(
         self,

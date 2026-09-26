@@ -24,10 +24,36 @@ from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
 from rlinf.models.embodiment.openpi.pi0 import Pi0
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
+from rlinf.models.embodiment.openpi.sfp_config import OpenPiPytorchSfpConfig
+
+
+def env_reset_mask(
+    dones: Any | None,
+    episode_starts: Any | None,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Combine batched done and episode-start flags into a reset mask."""
+    reset = None
+    for field_name, flags in (("dones", dones), ("episode_starts", episode_starts)):
+        if flags is None:
+            continue
+        mask = torch.as_tensor(flags, device=device)
+        if mask.dtype != torch.bool:
+            mask = mask != 0
+        while mask.ndim > 1:
+            mask = mask.any(dim=-1)
+        if mask.shape != (batch_size,):
+            raise ValueError(
+                f"SFP {field_name} must collapse to shape {(batch_size,)}; "
+                f"got {tuple(mask.shape)}."
+            )
+        reset = mask if reset is None else reset | mask
+    return reset
 
 
 class Pi0Eval(EnvIO, Pi0):
-    """Inference-only: deterministic Euler sampling, optional RTC guidance."""
+    """Inference-only: flow-matching Euler, SFP trajectory sampling, or RTC."""
 
     def __init__(
         self,
@@ -39,6 +65,7 @@ class Pi0Eval(EnvIO, Pi0):
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
         rlt_cfg: OpenPiPytorchRLTConfig | None = None,
+        sfp_cfg: OpenPiPytorchSfpConfig | None = None,
         rtc_enabled: bool = False,
         rtc_guidance_mode: str = "approx",
         rtc_guidance_clip: float = 5.0,
@@ -51,10 +78,18 @@ class Pi0Eval(EnvIO, Pi0):
             config_name=config_name,
             state_indices=state_indices,
             rlt_cfg=rlt_cfg,
+            sfp_cfg=sfp_cfg,
         )
+        if self.sfp_cfg.use_sfp and rtc_enabled:
+            raise ValueError(
+                "actor.model.openpi.use_sfp cannot be combined with RTC: "
+                "RTC guidance integrates the flow-matching velocity field."
+            )
         self.rtc_enabled = rtc_enabled
         self.rtc_guidance_mode = rtc_guidance_mode
         self.rtc_guidance_clip = rtc_guidance_clip
+        # Env-space cumulative action, shape (B, action_env_dim). SFP only.
+        self._sfp_env_action_states: torch.Tensor | None = None
 
     @torch.no_grad()
     def predict_action_batch(
@@ -66,6 +101,8 @@ class Pi0Eval(EnvIO, Pi0):
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
         rtc_context=None,
+        dones: Any | None = None,
+        episode_starts: Any | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         del compute_values, kwargs
@@ -74,6 +111,16 @@ class Pi0Eval(EnvIO, Pi0):
                 f"{type(self).__name__} only supports predict_action_batch(mode='eval'); "
                 "use a training task wrapper (rl / dagger / dsrl) for train rollouts."
             )
+        if self.sfp_cfg.use_sfp:
+            if rtc_context is not None or self.rtc_enabled:
+                raise ValueError(
+                    "SFP eval cannot use RTC guidance; disable runner.rtc / "
+                    "openpi.rtc_enabled."
+                )
+            return self._predict_sfp_eval(
+                env_obs, dones=dones, episode_starts=episode_starts
+            )
+
         observation = self.env_obs_to_observation(env_obs)
         if rtc_context is not None and self.rtc_enabled:
             if self.rtc_guidance_mode != "approx":
@@ -84,6 +131,70 @@ class Pi0Eval(EnvIO, Pi0):
                 observation, rtc_context=rtc_context, noise=noise, rng=rng
             )
         return self._predict_eval(observation, noise=noise, rng=rng)
+
+    def _predict_sfp_eval(
+        self,
+        env_obs: dict[str, Any],
+        *,
+        dones: Any | None,
+        episode_starts: Any | None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        from rlinf.models.embodiment.openpi.sampling.sfp_sampler import (
+            sample_sfp_actions,
+        )
+
+        batch_size = self._sfp_batch_size(env_obs)
+        self._prepare_sfp_action_states(batch_size, dones, episode_starts)
+        observation = self.env_obs_to_observation(env_obs)
+        model_actions = sample_sfp_actions(self, observation)
+        actions = self.decode_actions(model_actions, observation.state)
+        self._accumulate_sfp_action_states(actions)
+        batch = actions.shape[0]
+        return actions, {
+            "prev_logprobs": None,
+            "prev_values": None,
+            "forward_inputs": {
+                "action": actions.reshape(batch, -1).contiguous(),
+                "model_action": model_actions.reshape(batch, -1).contiguous(),
+            },
+            "model_actions": model_actions,
+        }
+
+    def _sfp_batch_size(self, env_obs: dict[str, Any]) -> int:
+        states = env_obs["states"]
+        if hasattr(states, "shape"):
+            return int(states.shape[0])
+        return int(np.asarray(states).shape[0])
+
+    def _prepare_sfp_action_states(
+        self,
+        batch_size: int,
+        dones: Any | None,
+        episode_starts: Any | None,
+    ) -> None:
+        env_dim = int(self.action_env_dim)
+        device = self.device
+        if (
+            self._sfp_env_action_states is None
+            or self._sfp_env_action_states.shape[0] != batch_size
+            or self._sfp_env_action_states.shape[-1] != env_dim
+        ):
+            self._sfp_env_action_states = torch.zeros(
+                batch_size, env_dim, device=device, dtype=torch.float32
+            )
+        else:
+            self._sfp_env_action_states = self._sfp_env_action_states.to(device)
+        reset = env_reset_mask(dones, episode_starts, batch_size, device)
+        if reset is not None:
+            self._sfp_env_action_states[reset] = 0
+
+    def _accumulate_sfp_action_states(self, env_actions: torch.Tensor) -> None:
+        if self._sfp_env_action_states is None:
+            raise RuntimeError("SFP action_states buffer was not prepared.")
+        executed = env_actions.to(
+            device=self._sfp_env_action_states.device, dtype=torch.float32
+        )
+        self._sfp_env_action_states = self._sfp_env_action_states + executed.sum(dim=1)
 
     def _predict_eval_with_rtc(
         self,

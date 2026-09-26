@@ -26,6 +26,10 @@ from rlinf.models.embodiment.openpi.checkpoint import (
 )
 from rlinf.models.embodiment.openpi.modules.utils import set_torch_compile
 from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+from rlinf.models.embodiment.openpi.sfp_config import (
+    build_sfp_config,
+    validate_sfp_config,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -49,6 +53,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     model_cfg = cfg.openpi
     set_torch_compile(bool(OmegaConf.select(model_cfg, "torch_compile", default=True)))
+    task = OmegaConf.select(model_cfg, "task", default="sft")
+    task = str(task).lower() if task is not None else "sft"
+    rlt_cfg = build_rlt_config(model_cfg)
+    sfp_cfg = build_sfp_config(model_cfg)
+    validate_sfp_config(sfp_cfg, rlt_cfg, task)
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
@@ -102,15 +111,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         pi0_kwargs["max_token_len"] = int(max_token_len)
 
     pi0_config = Pi0Config(**pi0_kwargs)
-    rlt_cfg = build_rlt_config(model_cfg)
     runtime = {
         "num_steps": num_steps,
         "action_env_dim": action_env_dim,
         "action_chunk": action_chunk,
     }
-
-    task = OmegaConf.select(model_cfg, "task", default="sft")
-    task = str(task).lower() if task is not None else "sft"
 
     if task == "sft":
         model = Pi0(
@@ -119,6 +124,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             action_env_dim=action_env_dim,
             action_chunk=action_chunk,
             rlt_cfg=rlt_cfg,
+            sfp_cfg=sfp_cfg,
         )
     elif task == "eval":
         from rlinf.models.embodiment.openpi.tasks.eval import Pi0Eval
@@ -130,6 +136,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             config_name=config_name,
             state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
             rlt_cfg=rlt_cfg,
+            sfp_cfg=sfp_cfg,
             rtc_enabled=bool(OmegaConf.select(model_cfg, "rtc_enabled", default=False)),
             rtc_guidance_mode=str(
                 OmegaConf.select(model_cfg, "rtc_guidance_mode", default="approx")
@@ -138,7 +145,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
                 OmegaConf.select(model_cfg, "rtc_guidance_clip", default=5.0)
             ),
         )
-        _install_transforms(model, cfg, config_name)
+        _install_transforms(model, cfg, config_name, use_sfp=sfp_cfg.use_sfp)
     elif task == "rl":
         from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
 
@@ -395,13 +402,16 @@ def _resolve_data_kwargs(cfg):
     return data_kwargs
 
 
-def _install_transforms(model, cfg, config_name: str):
+def _install_transforms(model, cfg, config_name: str, *, use_sfp: bool = False):
     from rlinf.models.embodiment.openpi.transforms.pipeline import (
         build_openpi_transforms,
     )
 
     input_transforms, output_transforms = build_openpi_transforms(
-        cfg.model_path, config_name, data_kwargs=_resolve_data_kwargs(cfg)
+        cfg.model_path,
+        config_name,
+        data_kwargs=_resolve_data_kwargs(cfg),
+        use_sfp=use_sfp,
     )
     model.setup_transforms(input_transforms, output_transforms)
     return model

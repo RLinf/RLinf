@@ -527,10 +527,12 @@ class EnvWorker(Worker):
         current_dones = chunk_dones.any(dim=1)  # [num_envs] bool
         if self.cfg.env.eval.auto_reset:
             newly_done = current_dones
+            episode_starts = current_dones.clone()
         else:
             prev = self.eval_prev_done[stage_id].to(current_dones.device)
             newly_done = current_dones & ~prev
             self.eval_prev_done[stage_id] = prev | current_dones
+            episode_starts = torch.zeros_like(current_dones)
 
         if newly_done.any():
             if "final_info" in infos:
@@ -549,7 +551,21 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
-            transition=EnvTransition(rlt_switch_flags=rlt_switch_flags),
+            transition=EnvTransition(
+                dones=current_dones,
+                episode_starts=episode_starts,
+                terminations=(
+                    chunk_terminations.any(dim=1)
+                    if chunk_terminations.ndim > 1
+                    else chunk_terminations
+                ),
+                truncations=(
+                    chunk_truncations.any(dim=1)
+                    if chunk_truncations.ndim > 1
+                    else chunk_truncations
+                ),
+                rlt_switch_flags=rlt_switch_flags,
+            ),
         )
         return env_output, env_info
 
@@ -799,6 +815,8 @@ class EnvWorker(Worker):
         data = {
             "obs": env_batch["obs"],
             "final_obs": env_batch["final_obs"],
+            "dones": env_batch.get("dones"),
+            "episode_starts": env_batch.get("episode_starts"),
         }
         if self.enable_rlt:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
@@ -1225,6 +1243,11 @@ class EnvWorker(Worker):
                     extracted_obs, infos = self.eval_env_list[stage_id].reset()
                     env_output = EnvOutput(
                         obs=extracted_obs,
+                        transition=EnvTransition(
+                            episode_starts=torch.ones(
+                                self.eval_num_envs_per_stage, dtype=torch.bool
+                            )
+                        ),
                         final_obs=(
                             infos["final_observation"]
                             if "final_observation" in infos

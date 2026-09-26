@@ -141,6 +141,8 @@ class EnvTransition:
     rewards: torch.Tensor | None = None
     # Combined terminal mask, bool [B, C].
     dones: torch.Tensor | None = None
+    # Environments whose next observation starts a new episode, bool [B].
+    episode_starts: torch.Tensor | None = None
     # Natural termination mask, bool [B, C].
     terminations: torch.Tensor | None = None
     # Time-limit/external truncation mask, bool [B, C].
@@ -162,6 +164,7 @@ class EnvTransition:
         for field_name in (
             "rewards",
             "dones",
+            "episode_starts",
             "terminations",
             "truncations",
             "intervene_actions",
@@ -194,6 +197,7 @@ class EnvTransition:
             name: getattr(self, name)
             for name in (
                 "dones",
+                "episode_starts",
                 "terminations",
                 "truncations",
                 "rewards",
@@ -1603,6 +1607,11 @@ class EnvOutput:
     def dones(self) -> torch.Tensor | None:
         """Return combined termination/truncation flags."""
         return self.transition.dones
+
+    @property
+    def episode_starts(self) -> torch.Tensor | None:
+        """Return which observations start a new episode."""
+        return self.transition.episode_starts
 
     @property
     def terminations(self) -> torch.Tensor | None:

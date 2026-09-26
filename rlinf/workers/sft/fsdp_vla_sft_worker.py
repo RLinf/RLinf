@@ -83,9 +83,20 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         # now the eval is not supported for embodied sft
         raise NotImplementedError("eval is not supported for embodied sft right now.")
 
-    def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
+    def get_train_model_output(
+        self,
+        batch: Any,
+        *,
+        micro_batch_index: int = 0,
+        gradient_accumulation: int = 1,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         with self.amp_context:
-            output = self.model(forward_type=ForwardType.SFT, data=batch)
+            output = self.model(
+                forward_type=ForwardType.SFT,
+                data=batch,
+                micro_batch_index=micro_batch_index,
+                gradient_accumulation=gradient_accumulation,
+            )
 
         if isinstance(output, torch.Tensor):
             loss = output
