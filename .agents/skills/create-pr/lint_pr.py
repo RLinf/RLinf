@@ -887,6 +887,7 @@ or `pre-commit run --all-files` for docs-only PRs>
 
 ### Checklist:
 
+- [ ] I have signed off my commits in accordance with the [DCO](https://github.com/RLinf/RLinf/blob/main/DCO).
 - [ ] My code follows the code style of this project.
 - [ ] My change requires a change to the documentation.
 - [ ] I have updated the documentation accordingly.

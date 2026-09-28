@@ -94,7 +94,7 @@ Installation
       rlinf/rlinf:agentic-rlinf0.4-isaaclab
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-isaaclab
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-isaaclab
 
 Switch to the matching virtual environment inside the image:
 

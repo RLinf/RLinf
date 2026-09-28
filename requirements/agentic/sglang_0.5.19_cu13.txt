@@ -1,0 +1,11 @@
+# engine: sglang==0.5.19
+# sglang 0.5.19 on CUDA 13 (torch 2.13 cu130, driver >= 580).
+-r sglang_0.5.19_common.txt
+
+cuda-python>=13.0
+flashinfer-python[cu13]==0.6.18
+humming-kernels[cu13]==0.1.12
+nvidia-cutlass-dsl[cu13]==4.6.2
+sgl-deep-ep==0.1.2
+sgl-deep-gemm==0.1.7
+sglang-kernel==0.4.6.post1

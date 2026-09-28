@@ -1,0 +1,13 @@
+pyyaml
+rospkg
+pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'
+toppra==0.6.3
+numpy==1.26.4
+empy==3.3.4
+gymnasium==0.29.1
+pyquaternion
+opencv-python
+defusedxml
+pyspacemouse>=2.0.0
+imageio[ffmpeg]
+evdev

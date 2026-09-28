@@ -117,6 +117,7 @@ actor:
     num_steps: 3
     add_value_head: True
     openpi:
+      task: rl
       value_after_vlm: True
 
   optim:

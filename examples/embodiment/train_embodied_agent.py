@@ -174,9 +174,9 @@ def main(cfg) -> None:
     if reward_group is not None:
         reward_group.stop().wait()
     if router_group is not None:
-        router_group.shutdown().wait()
+        router_group.stop().wait()
     if server_group is not None:
-        server_group.shutdown().wait()
+        server_group.stop().wait()
 
 
 if __name__ == "__main__":

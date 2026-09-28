@@ -430,6 +430,18 @@ class ManiskillOffloadEnv(EnvOffloadMixin):
             return getattr(self, name)
         return self.__getattr__(name)
 
+    async def wait_delay(self):
+        """No-op: delays are sampled by ``InsertDelay`` wrappers, never here.
+
+        Defined locally so existence probes like ``get_env_attr`` resolve to a
+        real method instead of an RPC proxy for a method the worker process
+        does not have.
+        """
+
+    def insert_delay_metrics(self):
+        """Report no recorded delays; samples live in ``InsertDelay`` wrappers."""
+        return torch.tensor([], dtype=torch.float32)
+
     def _force_shutdown(self):
         if self.command_queue is not None:
             self.command_queue.close()

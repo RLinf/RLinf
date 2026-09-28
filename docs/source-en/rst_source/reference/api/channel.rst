@@ -1,14 +1,40 @@
-Channel Interface
-======================
+Channel API
+===========
 
-This section provides a detailed introduction to the **channel** in RLinf,  
-a higher-level abstraction for asynchronous communication implemented as a producer–consumer queue.  
+Use these interfaces to create queues and customize their enqueue and consumer
+routing behavior. Start with :doc:`../../concepts/channel` for the execution
+model and a minimal registered-hook example.
 
 Channel
---------
+-------
 
 .. autoclass:: rlinf.scheduler.Channel
    :members:
-   :no-index:
    :member-order: bysource
-   :class-doc-from: class  
+   :no-index:
+   :class-doc-from: class
+
+Hook Context
+------------
+
+.. autoclass:: rlinf.scheduler.ChannelContext
+   :members:
+   :member-order: bysource
+
+Collector
+---------
+
+.. autoclass:: rlinf.scheduler.Collector
+   :members:
+   :member-order: bysource
+
+.. autofunction:: rlinf.scheduler.register_collector
+
+Dispatcher
+----------
+
+.. autoclass:: rlinf.scheduler.Dispatcher
+   :members:
+   :member-order: bysource
+
+.. autofunction:: rlinf.scheduler.register_dispatcher

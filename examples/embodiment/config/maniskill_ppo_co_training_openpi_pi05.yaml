@@ -119,6 +119,7 @@ actor:
     num_steps: 4
     # openpi specific parameters
     openpi:
+      task: rl
       value_after_vlm: True
       config_name: "pi05_maniskill_sim_real_co_training"
       num_images_in_input: 1

@@ -1,0 +1,4 @@
+# The default patch_syncer compresses with nvcomp_lz4.
+nvidia-nvcomp-cu12
+evdev
+opencv-python

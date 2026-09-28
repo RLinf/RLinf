@@ -1,0 +1,5 @@
+numpy
+gymnasium
+opencv-python
+pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'
+imageio[ffmpeg]

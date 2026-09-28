@@ -143,7 +143,7 @@ rollout:
     lora_rank: 32
 
   rlt_feature_model:
-    model_type: "openpi_rlinf"
+    model_type: "openpi"
     # Stage1 SFT output from ci_maniskill_rlt_stage1_sft_openpi_pi05.
     model_path: "/workspace/dataset/RLinf-Maniskill-RLT-Stage1/"
     precision: bf16
@@ -198,6 +198,8 @@ actor:
 
   model:
     model_type: "rlt_mlp_policy"
+    # Empty: Stage2 MLP is trained from scratch. Do not point this at Stage1.
+    model_path: ""
     precision: fp32
     policy_setup: "panda-qpos"
     action_dim: 8

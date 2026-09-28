@@ -171,6 +171,7 @@ rollout:
     num_steps: 10
     is_lora: False
     openpi:
+      task: eval
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2
       noise_method: "flow_sde"
@@ -199,6 +200,7 @@ actor:
     num_steps: 10
     is_lora: False
     openpi:
+      task: eval
       value_after_vlm: False
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2

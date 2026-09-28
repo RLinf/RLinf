@@ -115,6 +115,7 @@ actor:
     num_action_chunks: 5
     # openpi specific parameters
     openpi:
+      task: rl
       noise_level: 0.3
       value_after_vlm: True
 

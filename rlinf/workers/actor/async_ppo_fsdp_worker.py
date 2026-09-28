@@ -22,8 +22,9 @@ import numpy as np
 import torch
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
-from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import PriorityStore
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
@@ -35,7 +36,7 @@ from rlinf.utils.metric_utils import (
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -101,7 +102,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             trajectory: Trajectory = input_channel.get()
             self.log_info(
                 f"recv trajectory versions.shape={trajectory.versions.shape} "
-                f"input_channel.qsize={input_channel.qsize()}"
+                "from trajectory channel"
             )
             if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
                 "staleness_threshold", None
@@ -176,7 +177,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             diff = int(self.version) - int(version_val)
             staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
 
-        self.rollout_batch = convert_trajectories_to_batch(rollout_batch)
+        self.rollout_batch = Trajectory.to_batch(rollout_batch)
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
@@ -445,14 +446,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         self.cfg.algorithm.entropy_bonus > 0
                         and not loss_kwargs["critic_warmup"]
                     ):
-                        entropy = out["entropy"]
-                        entropy = reshape_entropy(
-                            entropy,
+                        entropy_loss = compute_entropy_loss(
+                            out["entropy"],
                             entropy_type=self.cfg.algorithm.entropy_type,
+                            loss_mask=loss_mask,
                             action_dim=self.cfg.actor.model.get("action_dim", 7),
                             batch_size=out["logprobs"].shape[0],
                         )
-                        entropy_loss = masked_mean(entropy, mask=loss_mask)
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
                     loss = loss / self.gradient_accumulation

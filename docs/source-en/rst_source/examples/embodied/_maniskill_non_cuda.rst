@@ -22,6 +22,12 @@ PCI address. RLinf preserves a ``pci:<domain>:<bus>:<slot>.<function>`` value
 before creating the environment; replace the sample address if the renderer
 inside your container uses another address.
 
+On AMD, ``install.sh`` picks the Vulkan driver from the GPU ISA and writes it
+into the environment: Radeon GPUs render on Mesa's RADV driver, while CDNA
+accelerators such as the Instinct line render on Mesa's lavapipe software
+rasterizer, because RADV cannot render on them. Rendering on the CPU costs more
+CPU time per step than a hardware renderer.
+
 .. warning::
 
    The CPU simulation backend cannot vectorize several environments inside one

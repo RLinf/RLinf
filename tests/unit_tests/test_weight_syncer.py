@@ -27,7 +27,7 @@ from omegaconf import OmegaConf
 from torch.distributed.tensor.placement_types import Partial, Replicate, Shard
 
 from rlinf.config import validate_weight_sync_overlap_cfg
-from rlinf.data.schema.embodied_types import EnvOutput
+from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
@@ -1726,6 +1726,9 @@ def _make_runner(runner_cls, actor: _Actor, rollout: _Rollout, no_wait: bool = F
 class _LifecycleWorker:
     """Worker-group stub for a zero-step runner lifecycle."""
 
+    def set_global_step(self, global_step: int) -> _Handle:
+        return _Handle()
+
     def interact(self, **kwargs) -> _Handle:
         return _Handle()
 
@@ -2087,8 +2090,15 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         )
         self.worker._accelerator_type = AcceleratorType.NO_ACCEL
         self.worker._prefetched_train_bootstrap = None
+        self.worker._trajectory_step = 0
+        # The controller now also carries the action geometry it needs to build
+        # hold actions; disabled here, so zeros match what from_cfg defaults to.
         self.worker.smooth_intervene = SmoothInterveneController(
-            stage_num=self.worker.stage_num, enabled=False
+            stage_num=self.worker.stage_num,
+            num_envs_per_stage=self.worker.train_num_envs_per_stage,
+            num_action_chunks=0,
+            action_dim=0,
+            enabled=False,
         )
 
         # Mock env_list
@@ -2128,9 +2138,11 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             return_value=(
                 EnvOutput(
                     obs={"main_images": torch.zeros(2, 3, 224, 224)},
-                    dones=torch.zeros(2, 4, dtype=torch.bool),
-                    truncations=torch.zeros(2, 4, dtype=torch.bool),
-                    terminations=torch.zeros(2, 4, dtype=torch.bool),
+                    transition=EnvTransition(
+                        dones=torch.zeros(2, 4, dtype=torch.bool),
+                        truncations=torch.zeros(2, 4, dtype=torch.bool),
+                        terminations=torch.zeros(2, 4, dtype=torch.bool),
+                    ),
                 ),
                 {},
                 {},
@@ -2147,7 +2159,10 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         # 1. Prefetch
         # We need to mock _bootstrap_and_send_train as it's called by prefetch_train_bootstrap
         dummy_bootstrap = [
-            EnvOutput(obs={"m": torch.zeros(1)}, dones=torch.zeros(1, 4))
+            EnvOutput(
+                obs={"m": torch.zeros(1)},
+                transition=EnvTransition(dones=torch.zeros(1, 4)),
+            )
         ]
         self.worker._bootstrap_and_send_train = MagicMock(return_value=dummy_bootstrap)
 
@@ -2167,7 +2182,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             self.worker.send_rollout_trajectories.return_value.set_result(None)
 
             loop.run_until_complete(
-                self.worker.interact(input_channel, rollout_channel, None, None)
+                self.worker.interact(input_channel, rollout_channel, None)
             )
         finally:
             asyncio.set_event_loop(None)
@@ -2237,9 +2252,11 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             return_value=(
                 EnvOutput(
                     obs={"main_images": torch.zeros(2, 3, 224, 224)},
-                    dones=torch.zeros(2, 4, dtype=torch.bool),
-                    truncations=torch.zeros(2, 4, dtype=torch.bool),
-                    terminations=torch.zeros(2, 4, dtype=torch.bool),
+                    transition=EnvTransition(
+                        dones=torch.zeros(2, 4, dtype=torch.bool),
+                        truncations=torch.zeros(2, 4, dtype=torch.bool),
+                        terminations=torch.zeros(2, 4, dtype=torch.bool),
+                    ),
                 ),
                 {"episode_len": torch.tensor([1, 2])},
                 {},
@@ -2252,7 +2269,12 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             return_value=torch.zeros(2, 4)
         )
         self.worker._bootstrap_and_send_train = MagicMock(
-            return_value=[EnvOutput(obs={"m": torch.zeros(1)}, dones=torch.zeros(1, 4))]
+            return_value=[
+                EnvOutput(
+                    obs={"m": torch.zeros(1)},
+                    transition=EnvTransition(dones=torch.zeros(1, 4)),
+                )
+            ]
         )
         self.worker.send_rollout_trajectories = MagicMock(
             return_value=MagicMock(wait=MagicMock(return_value=None))
@@ -2264,7 +2286,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(
-                self.worker.interact(input_channel, rollout_channel, None, None)
+                self.worker.interact(input_channel, rollout_channel, None)
             )
         finally:
             asyncio.set_event_loop(None)

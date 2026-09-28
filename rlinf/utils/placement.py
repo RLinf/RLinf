@@ -282,16 +282,15 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 assert self.actor_tp_size % self.rollout_tp_size == 0, (
                     f"Actor TP size ({self.actor_tp_size}) must be divisible by Rollout TP size ({self.rollout_tp_size})"
                 )
-            stride = (
-                self.actor_tp_size // self.rollout_tp_size
-                if self.actor_tp_size > self.rollout_tp_size
-                else 1
-            )
+            # Dense (stride=1) placement: rollout ranks are packed
+            # contiguously. The strided layout used before assumed that rollout
+            # rank r shares a device with actor rank r, which no longer holds
+            # once sglang assigns its own attention coordinates. send/recv
+            # already picks IPC or NCCL by detecting same-device pairs.
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
                 self._rollout_gpus[-1],
                 num_hardware_per_process=self.rollout_tp_size,
-                stride=stride,
             )
             if self._reward_gpus:
                 self._placements["reward"] = PackedPlacementStrategy(
@@ -539,6 +538,37 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def rollout_tp_size(self) -> int:
         return self._config.rollout.get("tensor_parallel_size", 1)
+
+    @property
+    def rollout_attn_tp_size(self) -> int:
+        # Attention TP for the weight-reshard path. Equals rollout_tp_size
+        # normally, but under sglang DP-attention the engine's
+        # tensor_parallel_size is the world size while attention is sharded by
+        # tp // dp. Placement still uses rollout_tp_size; the reshard
+        # destination ranks and RankMapper use this one.
+        tp = self._config.rollout.get("tensor_parallel_size", 1)
+        sglang = self._config.rollout.get("sglang", {})
+        if sglang.get("enable_dp_attention", False):
+            dp = sglang.get("dp_size", 1)
+            assert tp % dp == 0, (
+                f"rollout tensor_parallel_size ({tp}) must be divisible by "
+                f"sglang dp_size ({dp}) when enable_dp_attention is on"
+            )
+            return tp // dp
+        return tp
+
+    @property
+    def rollout_ep_size(self) -> int:
+        # Rollout MoE expert-parallel size. Each rollout rank holds
+        # num_moe_experts // ep_size experts, which is what dst_ep_rank in
+        # MegatronActor is computed against. Defaults to tp when only
+        # enable_ep_moe is set. moe_dp replication is a separate TODO.
+        sglang = self._config.rollout.get("sglang", {})
+        if "ep_size" in sglang:
+            return sglang["ep_size"]
+        if sglang.get("enable_ep_moe", False):
+            return self._config.rollout.get("tensor_parallel_size", 1)
+        return 1
 
     @property
     def rollout_world_size(self) -> int:

@@ -14,28 +14,28 @@ supervised fine-tuning, deployment, and DAgger training.
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: Collect-SFT-Deploy
+   .. grid-item-card:: Collection / SFT / Deployment
       :link: dual_franka
       :link-type: doc
 
       Collect GELLO demonstrations, convert data, fine-tune a policy, and deploy it.
 
-   .. grid-item-card:: Collect-SFT-Deploy (RLinf-pytorch)
-      :link: dual_franka_openpi_pytorch
-      :link-type: doc
-
-      Fine-tune and deploy a dual-Franka policy with OpenPI PyTorch.
-
-   .. grid-item-card:: HG-DAgger via VR
+   .. grid-item-card:: VR HG-DAgger
       :link: dual_franka_pico_dagger
       :link-type: doc
 
       Collect dual-arm PICO data and run online human-gated DAgger.
 
+   .. grid-item-card:: Collection / SFT / Deployment (OpenPI PyTorch)
+      :link: dual_franka_openpi_pytorch
+      :link-type: doc
+
+      Fine-tune and deploy a dual-Franka policy with OpenPI PyTorch.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   Collect-SFT-Deploy <dual_franka>
-   Collect-SFT-Deploy (RLinf-pytorch) <dual_franka_openpi_pytorch>
-   HG-DAgger via VR <dual_franka_pico_dagger>
+   Collection / SFT / Deployment <dual_franka>
+   VR HG-DAgger <dual_franka_pico_dagger>
+   Collection / SFT / Deployment (OpenPI PyTorch) <dual_franka_openpi_pytorch>

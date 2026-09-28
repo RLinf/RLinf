@@ -1,6 +1,6 @@
 .. _dual-franka-pico-dagger-zh:
 
-双 Franka 使用 PICO 采集与 DAgger
+双臂 Franka 的 PICO 数据采集与 DAgger
 ================================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
@@ -95,22 +95,18 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 机器人节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。根据 Franka 官方
-`compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_
-选择 ``LIBFRANKA_VERSION``；避免使用 libfranka ``0.18.0``。
+在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   export LIBFRANKA_VERSION=0.19.0       # 或 0.15.0，与固件匹配
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-``franka-franky`` 环境会安装 ``franka`` extra，其中包含 PICO consumer 侧所需的
-``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证
-流程见 :doc:`franka_vr`。
+``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
 
 推理节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -164,9 +160,7 @@ Ray 节点布局
 
 .. warning::
 
-   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成
-   ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK``、
-   ``RLINF_KEYBOARD_DEVICE`` 和 ROS / Franka 相关环境变量配置。
+   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成 ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK``、``RLINF_KEYBOARD_DEVICE`` 以及 Franka 专用环境变量的配置。
 
 集群设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -325,64 +319,18 @@ collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
 机械臂柔顺性参数
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-默认的 Cartesian 增益面向 policy rollout，此时目标位姿按小步变化。而在 PICO 遥操作中目标跟随人手移动，这组默认增益会让末端落后于手部，操作者往往用过冲来补偿。下面是 Franka Panda 上 PICO 采集实际使用的取值。它们属于机械臂本身而非某个任务，因此写在 ``DualFranka`` 硬件配置中，与机械臂 IP 并列：
+PICO 数采、DAgger 的 policy 执行和评估中，两条机械臂均使用 Franky 默认 Cartesian 参数，无需额外添加 ``compliance``。默认值和任务 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。双臂 TCP 任务默认不在 reset 时请求其他参数，因此初始刚度和误差限幅会持续生效。
+
+需要同时调整两条机械臂时，在 ``DualFranka`` 硬件条目中添加与机械臂 IP 同级的 ``compliance`` mapping。单侧 mapping 会替换该机械臂使用的共享 mapping，其中未填写的字段使用 Franky 默认值。例如：
 
 .. code-block:: yaml
 
-   cluster:
-     node_groups:
-       - label: franka
-         node_ranks: 0
-         hardware:
-           type: DualFranka
-           configs:
-             - left_robot_ip: LEFT_ROBOT_IP
-               right_robot_ip: RIGHT_ROBOT_IP
-               node_rank: 0
-               compliance:
-                 translational_stiffness: 1000
-                 rotational_stiffness: 50
-                 translational_clip: 0.008
-                 rotational_clip: 0.04
-                 max_step: 0.03
-                 max_step_rad: 0.10
+   compliance:
+     translational_stiffness: 900.0
+   left_compliance:
+     max_step: 0.02
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 11 11 50
-
-   * - 参数
-     - 默认值
-     - PICO
-     - 调整原因
-   * - ``translational_stiffness``
-     - 500
-     - 1000
-     - N/m。加倍后末端能跟上手部，而不是持续落后。
-   * - ``rotational_stiffness``
-     - 40
-     - 50
-     - Nm/rad。姿态方向出于同样原因调高。
-   * - ``translational_clip``
-     - 0.05
-     - 0.008
-     - m，控制器实际响应的最大位置误差。调小以避免更高的刚度在目标较远时产生猛冲。
-   * - ``rotational_clip``
-     - 0.3
-     - 0.04
-     - rad，姿态误差上的同类限制。
-   * - ``max_step``
-     - 0.10
-     - 0.03
-     - m，单次下发目标相对上一个目标的最大距离。调小以避免手部抖动变成快速运动。
-   * - ``max_step_rad``
-     - 0.30
-     - 0.10
-     - rad，姿态方向上的同类限制。
-
-只需写出与默认值不同的项，未写出的项保持默认；参数名拼写错误会在构建配置时直接报错。若要让两条机械臂使用不同增益，可另外设置 ``left_compliance`` 或 ``right_compliance``，未设置时各自回落到 ``compliance``。
-
-这些参数通过 ``franky`` backend 生效，作用于该机械臂的每一次 Cartesian 运动，因此 DAgger 中的 policy rollout 与操作者遵循同一组增益。``franka_ros`` backend 会忽略它们，因为其增益由该 backend 自己的控制器持有；GELLO 关节遥操作同样不受影响，因为它下发的是关节目标而非 Cartesian 目标。
+这里右臂使用 900 N/m 的刚度和默认的 3 cm 目标变化上限；左臂使用默认的 1000 N/m 刚度和 2 cm 上限。不填写 ``left_compliance`` 时，左臂也使用共享 mapping；填写 ``left_compliance: {}`` 则让左臂全部使用 backend 默认值。``right_compliance`` 遵循相同规则。这些参数也作用于 DAgger 中的 policy 目标。GELLO 关节遥操作使用关节控制，不受这些 Cartesian 参数影响。
 
 
 启动 PICO 数据流

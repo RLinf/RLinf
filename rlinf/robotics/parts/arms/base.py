@@ -17,7 +17,7 @@
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import Any, ClassVar, Optional, Protocol
 
 import numpy as np
@@ -57,11 +57,19 @@ class CartesianCompliance:
 
     @classmethod
     def from_config(
-        cls, value: "CartesianCompliance | Mapping[str, float] | None"
+        cls,
+        value: "CartesianCompliance | Mapping[str, float] | None",
+        *,
+        defaults: "CartesianCompliance | None" = None,
     ) -> "CartesianCompliance":
-        """Build settings from a YAML mapping, rejecting unknown keys."""
+        """Resolve a mapping against defaults, rejecting unknown keys.
+
+        A settings object is already complete and is returned unchanged.
+        ``None`` and omitted mapping keys use ``defaults``, or this class's
+        defaults when none are supplied.
+        """
         if value is None:
-            return cls()
+            return cls() if defaults is None else replace(defaults)
         if isinstance(value, cls):
             return value
         given = dict(value)
@@ -71,7 +79,10 @@ class CartesianCompliance:
                 f"Unknown compliance settings {sorted(unknown)}. "
                 f"Known: {sorted(f.name for f in fields(cls))}."
             )
-        return cls(**{key: float(val) for key, val in given.items()})
+        return replace(
+            cls() if defaults is None else defaults,
+            **{key: float(val) for key, val in given.items()},
+        )
 
 
 class ArmState(Protocol):
@@ -116,7 +127,7 @@ class Arm(ControllablePart):
         gripper_connection: Optional[str] = None,
         end_effector_type: Optional[str] = None,
         end_effector_config: Optional[dict] = None,
-        compliance: "Optional[CartesianCompliance]" = None,
+        compliance: "CartesianCompliance | Mapping[str, float] | None" = None,
         **placement: Any,
     ) -> "Arm":
         """Declare an unconnected arm from standard robot settings.
@@ -127,8 +138,9 @@ class Arm(ControllablePart):
             gripper_connection: Where that gripper is attached.
             end_effector_type: End effector fitted, when the arm builds it.
             end_effector_config: Settings for that end effector.
-            compliance: Cartesian impedance settings, ignored by backends
-                whose controller owns its gains.
+            compliance: Complete Cartesian impedance settings, or a mapping
+                overriding backend defaults. ``None`` uses backend defaults.
+                Ignored by backends whose controller owns its gains.
             **placement: Placement arguments forwarded to the connection.
         """
         offered = {
