@@ -161,17 +161,21 @@ class TeleopIntervention(gym.Wrapper):
             else:
                 applied, overridden = action, False
         elif sample.active:
+            self._hold_next_action = False
             self._last_active = time.monotonic()
             self._last_operator_action = np.asarray(sample.action).copy()
             applied, overridden = sample.action, True
         elif self.intervening:
             # Retain operator control for the configured hold window.
+            self._hold_next_action = False
             self._last_operator_action = np.asarray(sample.action).copy()
             applied, overridden = sample.action, True
         elif sample.apply_when_inactive:
             # Some devices keep only their own stateful action parts applied.
+            self._hold_next_action = False
             applied, overridden = sample.action, False
         else:
+            self._hold_next_action = False
             applied, overridden = action, False
 
         obs, reward, terminated, truncated, info = self.env.step(applied)

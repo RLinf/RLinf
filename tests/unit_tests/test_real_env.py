@@ -984,6 +984,30 @@ def test_missing_initial_sample_holds_absolute_device_pose():
     assert np.array_equal(info["intervene_action"], hold)
 
 
+def test_handover_hold_flag_clears_after_operator_sample():
+    env = FakeEnv()
+    hold = np.array([0.25, -0.5, 0.75])
+
+    class HoldingDevice(ScriptedDevice):
+        def get_hold_action(self, env, fallback_action=None):
+            return hold
+
+    device = HoldingDevice(
+        [
+            TeleopSample(action=EXPERT, active=True),
+            TeleopSample(action=None, active=False),
+        ]
+    )
+    wrapper = TeleopIntervention(env, device)
+    wrapper.hold_next_action()
+
+    wrapper.step(POLICY)
+    device.timeout = 0.0
+    wrapper.step(POLICY)
+
+    assert np.array_equal(env.stepped[1], POLICY)
+
+
 def test_control_is_held_between_samples_then_released():
     env = FakeEnv()
     device = ScriptedDevice(
