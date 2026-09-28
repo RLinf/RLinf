@@ -79,6 +79,9 @@ env:
   group_name: "EnvGroup"
   # enable_offload: False
   train:
+    # Online LeRobot stores one observation per action. RoboTwin skips
+    # intermediate renders unless this is false.
+    skip_intermediate_renders: False
     rollout_epoch: 1
     total_num_envs: 64
     reward_coef: ${algorithm.reward_coef}
