@@ -1109,12 +1109,16 @@ def test_sfp_is_refused_by_the_tasks_that_sample_actions(task):
     )
 
     rlt_off = OpenPiPytorchRLTConfig()
-    validate_sfp_config(OpenPiPytorchSfpConfig(use_sfp=False), rlt_off, task)
-    validate_sfp_config(OpenPiPytorchSfpConfig(use_sfp=True), rlt_off, "sft")
-    validate_sfp_config(OpenPiPytorchSfpConfig(use_sfp=True), rlt_off, "eval")
+    validate_sfp_config(OpenPiPytorchSfpConfig(use_sfp=False), rlt_off, task, pi05=True)
+    validate_sfp_config(OpenPiPytorchSfpConfig(use_sfp=True), rlt_off, "sft", pi05=True)
+    validate_sfp_config(
+        OpenPiPytorchSfpConfig(use_sfp=True), rlt_off, "eval", pi05=True
+    )
 
     with pytest.raises(ValueError, match="use_sfp is not supported"):
-        validate_sfp_config(OpenPiPytorchSfpConfig(use_sfp=True), rlt_off, task)
+        validate_sfp_config(
+            OpenPiPytorchSfpConfig(use_sfp=True), rlt_off, task, pi05=True
+        )
 
 
 def test_sfp_and_rlt_objectives_are_mutually_exclusive():
@@ -1131,6 +1135,7 @@ def test_sfp_and_rlt_objectives_are_mutually_exclusive():
             OpenPiPytorchSfpConfig(use_sfp=True),
             OpenPiPytorchRLTConfig(use_rlt=True),
             "sft",
+            pi05=True,
         )
 
 
@@ -1283,7 +1288,6 @@ def test_sfp_episode_start_resets_accumulated_action_state():
 
     model._prepare_sfp_action_states(
         2,
-        dones=torch.zeros(2, dtype=torch.bool),
         episode_starts=torch.tensor([True, False]),
     )
 

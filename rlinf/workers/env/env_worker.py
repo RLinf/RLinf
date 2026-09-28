@@ -552,7 +552,6 @@ class EnvWorker(Worker):
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
             transition=EnvTransition(
-                dones=current_dones,
                 episode_starts=episode_starts,
                 terminations=(
                     chunk_terminations.any(dim=1)
@@ -815,7 +814,6 @@ class EnvWorker(Worker):
         data = {
             "obs": env_batch["obs"],
             "final_obs": env_batch["final_obs"],
-            "dones": env_batch.get("dones"),
             "episode_starts": env_batch.get("episode_starts"),
         }
         if self.enable_rlt:

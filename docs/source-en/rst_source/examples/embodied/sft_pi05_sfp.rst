@@ -117,9 +117,8 @@ the scale the model trains in:
        --output-dir /data/assets/libero_sfp
 
 This writes ``/data/assets/libero_sfp/norm_stats.json`` with statistics for
-``state``, ``actions``, and ``action_states``. The last entry is a copy of
-``actions``, because SFP sums the initial state and the action deltas into one
-trajectory and the two therefore have to be scaled by the same numbers.
+``state``, ``actions``, and ``action_states``. ``action_states`` is a copy of
+``actions``, because SFP adds those two on one scale.
 
 The same requirement is why SFP divides by ``max(|q01|, |q99|)`` instead of
 using the affine quantile map OpenPI applies elsewhere: a pure scaling commutes
@@ -144,7 +143,7 @@ SFP runs in the OpenPI environment; no separate install target is needed.
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # Inside the container, switch to the OpenPI virtual environment:
    source switch_env openpi

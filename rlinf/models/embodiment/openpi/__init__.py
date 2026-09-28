@@ -57,10 +57,10 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     task = str(task).lower() if task is not None else "sft"
     rlt_cfg = build_rlt_config(model_cfg)
     sfp_cfg = build_sfp_config(model_cfg)
-    validate_sfp_config(sfp_cfg, rlt_cfg, task)
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
+    validate_sfp_config(sfp_cfg, rlt_cfg, task, pi05=pi05)
     target_dtype = (
         torch_dtype
         if torch_dtype is not None

@@ -53,17 +53,30 @@ def build_sfp_config(model_cfg: Any) -> OpenPiPytorchSfpConfig:
 
 
 def validate_sfp_config(
-    sfp_cfg: OpenPiPytorchSfpConfig, rlt_cfg: OpenPiPytorchRLTConfig, task: str
+    sfp_cfg: OpenPiPytorchSfpConfig,
+    rlt_cfg: OpenPiPytorchRLTConfig,
+    task: str,
+    *,
+    pi05: bool,
 ) -> None:
     """Reject the configurations SFP cannot run under.
 
-    RL, DAgger, and DSRL sample actions with the flow-matching sampler, which
-    integrates the wrong field on an SFP checkpoint. Eval now has its own
-    trajectory sampler. The RLT objective extends flow matching rather than
-    SFP, so the two cannot be combined either.
+    SFP sends one suffix token and conditions Pi0.5 with adaRMS. Pi0 instead
+    concatenates the time embedding onto every action token, so a one-token
+    suffix does not match that layout. RL, DAgger, and DSRL sample actions
+    with the flow-matching sampler, which integrates the wrong field on an SFP
+    checkpoint. Eval has its own trajectory sampler. The RLT objective extends
+    flow matching rather than SFP, so the two cannot be combined either.
     """
     if not sfp_cfg.use_sfp:
         return
+    if not pi05:
+        raise ValueError(
+            "actor.model.openpi.use_sfp requires pi05=true. Streaming Flow "
+            "Policy uses one suffix token and Pi0.5 adaRMS time conditioning. "
+            "Pi0 mixes the time embedding into every action token and cannot "
+            "represent that suffix."
+        )
     if task not in ("sft", "eval"):
         raise ValueError(
             f"actor.model.openpi.use_sfp is not supported with task={task!r}: "

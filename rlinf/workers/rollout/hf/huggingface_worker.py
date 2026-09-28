@@ -487,7 +487,6 @@ class MultiStepRolloutWorker(Worker):
         env_obs: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
         *,
-        dones: Any | None = None,
         episode_starts: Any | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         kwargs = (
@@ -527,8 +526,6 @@ class MultiStepRolloutWorker(Worker):
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
         if SupportedModel(self.model_cfg.model_type) == SupportedModel.OPENPI:
-            if dones is not None:
-                kwargs["dones"] = dones
             if episode_starts is not None:
                 kwargs["episode_starts"] = episode_starts
 
@@ -590,7 +587,6 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
         rlt_switch_flags: torch.Tensor | None = None,
         intervene_requested: torch.Tensor | None = None,
-        dones: Any | None = None,
         episode_starts: Any | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.rlt_feature_model is not None:
@@ -609,7 +605,6 @@ class MultiStepRolloutWorker(Worker):
         return self.predict(
             env_obs,
             mode=mode,
-            dones=dones,
             episode_starts=episode_starts,
         )
 
@@ -972,7 +967,6 @@ class MultiStepRolloutWorker(Worker):
                     final_obs=env_output.get("final_obs", None),
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                     intervene_requested=env_output.get("intervene_flags", None),
-                    dones=env_output.get("dones", None),
                     episode_starts=env_output.get("episode_starts", None),
                 )
                 if isinstance(actions, torch.Tensor):
@@ -1008,7 +1002,6 @@ class MultiStepRolloutWorker(Worker):
                             final_obs=env_output.get("final_obs", None),
                             rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                             intervene_requested=env_output.get("intervene_flags", None),
-                            dones=env_output.get("dones", None),
                             episode_starts=env_output.get("episode_starts", None),
                         )
                         if isinstance(actions, torch.Tensor):
@@ -1089,7 +1082,6 @@ class MultiStepRolloutWorker(Worker):
         intervene_flags_list = [
             obs_batch.get("intervene_flags", None) for obs_batch in obs_batches
         ]
-        dones_list = [obs_batch.get("dones", None) for obs_batch in obs_batches]
         episode_starts_list = [
             obs_batch.get("episode_starts", None) for obs_batch in obs_batches
         ]
@@ -1129,7 +1121,6 @@ class MultiStepRolloutWorker(Worker):
             "intervene_flags": self._merge_optional_flag_tensors(
                 obs_dicts, intervene_flags_list
             ),
-            "dones": self._merge_optional_flag_tensors(obs_dicts, dones_list),
             "episode_starts": self._merge_optional_flag_tensors(
                 obs_dicts, episode_starts_list
             ),

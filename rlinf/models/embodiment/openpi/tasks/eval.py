@@ -28,28 +28,24 @@ from rlinf.models.embodiment.openpi.sfp_config import OpenPiPytorchSfpConfig
 
 
 def env_reset_mask(
-    dones: Any | None,
     episode_starts: Any | None,
     batch_size: int,
     device: torch.device,
 ) -> torch.Tensor | None:
-    """Combine batched done and episode-start flags into a reset mask."""
-    reset = None
-    for field_name, flags in (("dones", dones), ("episode_starts", episode_starts)):
-        if flags is None:
-            continue
-        mask = torch.as_tensor(flags, device=device)
-        if mask.dtype != torch.bool:
-            mask = mask != 0
-        while mask.ndim > 1:
-            mask = mask.any(dim=-1)
-        if mask.shape != (batch_size,):
-            raise ValueError(
-                f"SFP {field_name} must collapse to shape {(batch_size,)}; "
-                f"got {tuple(mask.shape)}."
-            )
-        reset = mask if reset is None else reset | mask
-    return reset
+    """Collapse episode-start flags into a per-env reset mask."""
+    if episode_starts is None:
+        return None
+    mask = torch.as_tensor(episode_starts, device=device)
+    if mask.dtype != torch.bool:
+        mask = mask != 0
+    while mask.ndim > 1:
+        mask = mask.any(dim=-1)
+    if mask.shape != (batch_size,):
+        raise ValueError(
+            "SFP episode_starts must collapse to shape "
+            f"{(batch_size,)}; got {tuple(mask.shape)}."
+        )
+    return mask
 
 
 class Pi0Eval(EnvIO, Pi0):
@@ -101,7 +97,6 @@ class Pi0Eval(EnvIO, Pi0):
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
         rtc_context=None,
-        dones: Any | None = None,
         episode_starts: Any | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -117,9 +112,7 @@ class Pi0Eval(EnvIO, Pi0):
                     "SFP eval cannot use RTC guidance; disable runner.rtc / "
                     "openpi.rtc_enabled."
                 )
-            return self._predict_sfp_eval(
-                env_obs, dones=dones, episode_starts=episode_starts
-            )
+            return self._predict_sfp_eval(env_obs, episode_starts=episode_starts)
 
         observation = self.env_obs_to_observation(env_obs)
         if rtc_context is not None and self.rtc_enabled:
@@ -136,7 +129,6 @@ class Pi0Eval(EnvIO, Pi0):
         self,
         env_obs: dict[str, Any],
         *,
-        dones: Any | None,
         episode_starts: Any | None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         from rlinf.models.embodiment.openpi.sampling.sfp_sampler import (
@@ -144,7 +136,7 @@ class Pi0Eval(EnvIO, Pi0):
         )
 
         batch_size = self._sfp_batch_size(env_obs)
-        self._prepare_sfp_action_states(batch_size, dones, episode_starts)
+        self._prepare_sfp_action_states(batch_size, episode_starts)
         observation = self.env_obs_to_observation(env_obs)
         model_actions = sample_sfp_actions(self, observation)
         actions = self.decode_actions(model_actions, observation.state)
@@ -169,7 +161,6 @@ class Pi0Eval(EnvIO, Pi0):
     def _prepare_sfp_action_states(
         self,
         batch_size: int,
-        dones: Any | None,
         episode_starts: Any | None,
     ) -> None:
         env_dim = int(self.action_env_dim)
@@ -184,7 +175,7 @@ class Pi0Eval(EnvIO, Pi0):
             )
         else:
             self._sfp_env_action_states = self._sfp_env_action_states.to(device)
-        reset = env_reset_mask(dones, episode_starts, batch_size, device)
+        reset = env_reset_mask(episode_starts, batch_size, device)
         if reset is not None:
             self._sfp_env_action_states[reset] = 0
 

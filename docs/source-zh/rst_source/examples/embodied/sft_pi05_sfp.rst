@@ -88,7 +88,7 @@ SFP 比 flow matching 多需要一个字段 ``action_states``，即每一帧之�
        --repo-id local/libero_sfp \
        --output-dir /data/assets/libero_sfp
 
-命令生成 ``/data/assets/libero_sfp/norm_stats.json``，包含 ``state``、``actions`` 和 ``action_states`` 三项统计量。最后一项是 ``actions`` 的副本，因为 SFP 把初始状态和动作增量累加成同一条轨迹，两者必须用同一套数值缩放。
+命令生成 ``/data/assets/libero_sfp/norm_stats.json``，包含 ``state``、``actions`` 和 ``action_states`` 三项统计量。``action_states`` 是 ``actions`` 的副本，因为 SFP 把这两项加在同一套尺度上。
 
 同样的要求决定了 SFP 采用除以 ``max(|q01|, |q99|)`` 的纯缩放，而不用 OpenPI 在别处采用的仿射 quantile 映射：纯缩放与累加可交换，先归一化再累加与先累加再归一化结果一致；仿射映射会给每个值加上偏移，这个等式就不成立了。
 
@@ -109,7 +109,7 @@ SFP 运行在 OpenPI 环境中，不需要单独的安装目标。
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # 进入容器后，切换到 OpenPI 虚拟环境：
    source switch_env openpi
