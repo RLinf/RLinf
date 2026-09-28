@@ -965,6 +965,24 @@ def test_inactive_device_leaves_the_policy_action_alone():
     assert "intervene_action" not in info
 
 
+def test_missing_initial_sample_holds_absolute_device_pose():
+    env = FakeEnv()
+    hold = np.array([0.25, -0.5, 0.75])
+
+    class HoldingDevice(ScriptedDevice):
+        def get_hold_action(self, env, fallback_action=None):
+            return hold
+
+    wrapper = TeleopIntervention(
+        env, HoldingDevice([TeleopSample(action=None, active=False)])
+    )
+
+    _, _, _, _, info = wrapper.step(POLICY)
+
+    assert np.array_equal(env.stepped[0], hold)
+    assert np.array_equal(info["intervene_action"], hold)
+
+
 def test_control_is_held_between_samples_then_released():
     env = FakeEnv()
     device = ScriptedDevice(

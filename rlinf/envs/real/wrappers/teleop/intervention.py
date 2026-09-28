@@ -142,6 +142,19 @@ class TeleopIntervention(gym.Wrapper):
                 # A transient missing teleop sample must not turn into the
                 # caller's placeholder action (often all zeros).
                 applied, overridden = self._last_operator_action.copy(), True
+            elif self._last_operator_action is None:
+                # Before the first operator sample, an absolute-pose device
+                # must hold the robot where it is.  The caller's action is
+                # often only a placeholder (zero for data collection), and
+                # sending it would move an absolute-position robot toward
+                # that placeholder.  Delta devices deliberately do not
+                # implement get_hold_action and keep the policy action.
+                try:
+                    applied = self.device.get_hold_action(self, action)
+                except AttributeError:
+                    applied, overridden = action, False
+                else:
+                    applied, overridden = np.asarray(applied).copy(), True
             else:
                 applied, overridden = action, False
         elif sample.active:

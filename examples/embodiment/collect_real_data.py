@@ -124,25 +124,29 @@ class DataCollector(Worker):
     def run(self):
         """Collect episodes and leave hardware safe after every exit path."""
         failed = False
+        parked = False
+
+        def park_once() -> None:
+            """Park hardware before any wrapper closes its teleop devices."""
+            nonlocal parked
+            if parked:
+                return
+            try:
+                self.env.get_wrapper_attr("park")()
+                parked = True
+            except BaseException:  # noqa: BLE001 - preserve cleanup failure
+                get_logger().exception("Failed to park real-world hardware")
+
         try:
             return self._collect()
         except KeyboardAbort:
             self.log_info("Operator requested collection shutdown.")
-            try:
-                self.env.get_wrapper_attr("park")()
-            except BaseException:  # noqa: BLE001 - preserve controlled shutdown
-                get_logger().exception(
-                    "Failed to park real-world hardware after operator shutdown"
-                )
             return None
         except BaseException:  # noqa: BLE001 - hardware cleanup includes interrupts
             failed = True
-            try:
-                self.env.get_wrapper_attr("park")()
-            except BaseException:  # noqa: BLE001 - preserve the collection failure
-                get_logger().exception("Failed to park real-world hardware after error")
             raise
         finally:
+            park_once()
             try:
                 self.env.close()
             except BaseException:  # noqa: BLE001 - preserve the collection failure
@@ -160,7 +164,6 @@ class DataCollector(Worker):
         success_cnt = self._preexisting_success
         if success_cnt >= self.num_data_episodes:
             self.log_info(f"[resume] target {self.num_data_episodes} already met.")
-            self.env.close()
             return
         progress_bar = tqdm(
             total=self.num_data_episodes,
@@ -265,10 +268,11 @@ class DataCollector(Worker):
                         f"Discarded. Total success: {success_cnt}/{self.num_data_episodes}"
                     )
 
-                reset_options = None
                 if success_cnt >= self.num_data_episodes:
-                    reset_options = {"skip_wait_for_start": True}
-                obs, _ = self.env.reset(options=reset_options)
+                    self.log_info("Collection target reached; preparing to park.")
+                    break
+
+                obs, _ = self.env.reset()
                 current_obs_processed = self._process_obs(obs)
                 current_rollout = TrajectoryAccumulator(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
