@@ -1,0 +1,45 @@
+env_type: realworld
+
+total_num_envs: 1
+auto_reset: false
+ignore_terminations: false
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: false
+max_steps_per_rollout_epoch: 1000
+max_episode_steps: 1000
+main_image_key: top_rgb
+
+video_cfg:
+  save_video: false
+  info_on_video: true
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "DualYamJointEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "dual-arm YAM manipulation task"
+  step_frequency: 30.0
+  max_num_steps: 1000
+  max_joint_delta: 0.05
+  # Nominal YAM v1 joint limits. Check these against the installed model.
+  joint_limit_min:
+    - [-2.61799, 0.0, 0.0, -1.69297, -1.5708, -2.0944]
+    - [-2.61799, 0.0, 0.0, -1.69297, -1.5708, -2.0944]
+  joint_limit_max:
+    - [3.14159, 3.66519, 3.14159, 1.5708, 1.5708, 2.0944]
+    - [3.14159, 3.66519, 3.14159, 1.5708, 1.5708, 2.0944]
+  feedback_timeout_s: 0.25
+  camera_warmup_timeout_s: 10.0
+  camera_frame_timeout_s: 1.0
+  camera_stale_timeout_s: 2.0
+  image_height: 480
+  image_width: 640
+  manual_episode_control_only: false
+  reset:
+    enabled: false

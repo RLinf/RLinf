@@ -169,5 +169,7 @@ class TeleopIntervention(gym.Wrapper):
 
     def close(self) -> None:
         """Release the device, then the wrapped env."""
-        self.device.close()
-        return super().close()
+        try:
+            self.device.close()
+        finally:
+            super().close()

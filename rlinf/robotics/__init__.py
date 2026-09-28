@@ -59,6 +59,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         DOSW1RobotConfig,
         DualFrankaConfig,
         DualFrankaRobot,
+        DualYamConfig,
+        DualYamRobot,
         FrankaConfig,
         FrankaRobot,
         GimArmConfig,
@@ -69,6 +71,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         SO101Robot,
         Turtle2Config,
         Turtle2Robot,
+        YamCameraConfig,
+        YamDeviceConfig,
     )
 
 #: Public symbols grouped by defining module for lazy loading.
@@ -94,6 +98,8 @@ _MODULE_GROUPS: dict[str, tuple[str, ...]] = {
         "DOSW1RobotConfig",
         "DualFrankaConfig",
         "DualFrankaRobot",
+        "DualYamConfig",
+        "DualYamRobot",
         "FrankaConfig",
         "FrankaRobot",
         "GimArmConfig",
@@ -104,6 +110,8 @@ _MODULE_GROUPS: dict[str, tuple[str, ...]] = {
         "SO101Robot",
         "Turtle2Config",
         "Turtle2Robot",
+        "YamCameraConfig",
+        "YamDeviceConfig",
     ),
     ".adapters": (
         "LegacyObservationAdapter",
@@ -142,6 +150,8 @@ __all__ = [
     "DOSW1RobotConfig",
     "DualFrankaConfig",
     "DualFrankaRobot",
+    "DualYamConfig",
+    "DualYamRobot",
     "EndEffector",
     "Features",
     "FrankaConfig",
@@ -170,6 +180,8 @@ __all__ = [
     "Turtle2Robot",
     "VectorActionAdapter",
     "VectorActionBinding",
+    "YamCameraConfig",
+    "YamDeviceConfig",
     "build_robot",
     "register_robot",
 ]
