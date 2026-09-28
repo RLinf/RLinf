@@ -136,8 +136,8 @@ def test_so101_repack_scales_the_gripper_with_joint_values():
     np.testing.assert_allclose(result["actions"], [0.8, -0.8, 0.4, 0.1, -0.2, 0.25])
 
 
-def test_so101_loader_queries_lerobot_action_feature(tmp_path, monkeypatch):
-    """Use the formal LeRobot ``action`` feature for temporal queries."""
+def test_so101_loader_queries_available_action_feature(tmp_path, monkeypatch):
+    """Use the action feature name actually present in LeRobot metadata."""
     import rlinf.data.datasets.openpi.so101.so101_sft_data_loader as loader_module
 
     root = tmp_path / "so101"
@@ -147,7 +147,7 @@ def test_so101_loader_queries_lerobot_action_feature(tmp_path, monkeypatch):
             {
                 "fps": 15,
                 "features": {
-                    "action": {"shape": [6]},
+                    "actions": {"shape": [6]},
                     "observation.state": {"shape": [6]},
                     "observation.images.wrist": {"shape": [480, 640, 3]},
                 },
@@ -211,7 +211,7 @@ def test_so101_loader_queries_lerobot_action_feature(tmp_path, monkeypatch):
     )
 
     assert FakeDataset.last_kwargs["delta_timestamps"] == {
-        "action": [step / 15 for step in range(20)]
+        "actions": [step / 15 for step in range(20)]
     }
 
 

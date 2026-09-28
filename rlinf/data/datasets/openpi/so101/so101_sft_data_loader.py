@@ -212,7 +212,7 @@ def _worker_init_fn(worker_id: int) -> None:
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 
 
-def _read_dataset_metadata(root: pathlib.Path) -> int:
+def _read_dataset_metadata(root: pathlib.Path) -> tuple[int, str]:
     info_path = root / "meta" / "info.json"
     if not info_path.is_file():
         raise FileNotFoundError(f"SO-101 dataset not found: {root}")
@@ -222,8 +222,11 @@ def _read_dataset_metadata(root: pathlib.Path) -> int:
         "state": ("state", "observation.state"),
         "actions": ("actions", "action"),
     }
+    action_key = ""
     for name, aliases in feature_aliases.items():
         key = next((candidate for candidate in aliases if candidate in features), None)
+        if name == "actions" and key is not None:
+            action_key = key
         shape = tuple(features.get(key, {}).get("shape", ())) if key else ()
         if shape != (_RAW_ACTION_DIM,):
             raise ValueError(
@@ -231,7 +234,7 @@ def _read_dataset_metadata(root: pathlib.Path) -> int:
             )
     if not any(key in features for key in ("image", "observation.images.wrist")):
         raise ValueError("SO-101 dataset is missing its camera image feature.")
-    return int(info["fps"])
+    return int(info["fps"]), action_key
 
 
 def create_so101_sft_data_loader(
@@ -260,7 +263,7 @@ def create_so101_sft_data_loader(
         )
 
     root = resolve_lerobot_dataset_root(data_path)
-    fps = _read_dataset_metadata(root)
+    fps, action_key = _read_dataset_metadata(root)
     resolved_data_kwargs = dict(data_kwargs or {})
     configured_stats = resolved_data_kwargs.get("norm_stats_path")
     if configured_stats is None:
@@ -296,7 +299,9 @@ def create_so101_sft_data_loader(
     dataset = LeRobotDataset(
         repo_id=root.name,
         root=root,
-        delta_timestamps={"action": [step / fps for step in range(action_horizon)]},
+        delta_timestamps={
+            action_key: [step / fps for step in range(action_horizon)]
+        },
         video_backend="pyav",
     )
     input_transforms, _ = build_openpi_transforms(
