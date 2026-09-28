@@ -976,6 +976,7 @@ def test_missing_initial_sample_holds_absolute_device_pose():
     wrapper = TeleopIntervention(
         env, HoldingDevice([TeleopSample(action=None, active=False)])
     )
+    wrapper.hold_next_action()
 
     _, _, _, _, info = wrapper.step(POLICY)
 

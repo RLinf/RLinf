@@ -114,6 +114,7 @@ class TeleopIntervention(gym.Wrapper):
         self.mark_flag = mark_flag
         self._last_active: float = -float("inf")
         self._last_operator_action: Optional[np.ndarray] = None
+        self._hold_next_action = False
 
     @property
     def intervening(self) -> bool:
@@ -127,6 +128,7 @@ class TeleopIntervention(gym.Wrapper):
             result = self.env.reset(**kwargs)
             self._last_active = -float("inf")
             self._last_operator_action = None
+            self._hold_next_action = False
             self.device.reset(self)
             return result
         finally:
@@ -142,7 +144,7 @@ class TeleopIntervention(gym.Wrapper):
                 # A transient missing teleop sample must not turn into the
                 # caller's placeholder action (often all zeros).
                 applied, overridden = self._last_operator_action.copy(), True
-            elif self._last_operator_action is None:
+            elif self._hold_next_action:
                 # Before the first operator sample, an absolute-pose device
                 # must hold the robot where it is.  The caller's action is
                 # often only a placeholder (zero for data collection), and
@@ -155,6 +157,7 @@ class TeleopIntervention(gym.Wrapper):
                     applied, overridden = action, False
                 else:
                     applied, overridden = np.asarray(applied).copy(), True
+                self._hold_next_action = False
             else:
                 applied, overridden = action, False
         elif sample.active:
@@ -180,6 +183,10 @@ class TeleopIntervention(gym.Wrapper):
         info.update(sample.info)
 
         return obs, reward, terminated, truncated, info
+
+    def hold_next_action(self) -> None:
+        """Hold the current robot pose on the next missing teleop sample."""
+        self._hold_next_action = True
 
     def on_action_chunk_begin(self) -> None:
         """Notify the device that a new policy action chunk has started."""

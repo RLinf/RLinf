@@ -92,6 +92,9 @@ class KeyboardStartEndWrapper(KeyboardSession):
         release = self._teleop_attr("release_for_manual")
         if release is not None:
             release()
+        hold_next = self._teleop_attr("hold_next_action")
+        if hold_next is not None:
+            hold_next()
 
     def _hold_before_reset(self) -> None:
         """Reapply leader torque and wait before a reset or park operation."""
