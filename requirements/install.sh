@@ -100,6 +100,8 @@ DEFAULT_BACKEND_NVIDIA="auto"
 SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren")
 TEST_BUILD=${TEST_BUILD:-0}
 UNINSTALL_FA4=${UNINSTALL_FA4:-0}
+# Set by select_flash_attn_variant: 1 when this venv keeps FA4 and skips FA2.
+FA4_KEPT=0
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
@@ -3781,12 +3783,25 @@ install_mbridge() {
     echo "[install.sh] megatron-bridge ${mbridge_ver} + nvidia-modelopt ${modelopt_ver} installed."
 }
 
-# FA4 backward is sm90+ only; on sm<90 drop it so TE falls back to FA2.
-# Docker builds usually have no GPU, so detection cannot run; set
-# UNINSTALL_FA4=1 to drop it without probing the device.
-uninstall_fa4_conditional() {
+# A venv carries exactly one flash-attention variant. FA2 and FA4 both own
+# flash_attn/cute/, so installing both leaves a half-FA2, half-FA4 module tree
+# whose imports fail, and with them `import transformer_engine.pytorch`.
+#
+# The engine requirements pull FA4; FA2 comes later from install_flash_attn.
+# FA4 backward is sm90+ only, so on sm<90 drop FA4 and let install_flash_attn
+# add FA2. Docker builds usually have no GPU and cannot probe the device; set
+# UNINSTALL_FA4=1 to take the FA2 path without detection.
+#
+# Sets FA4_KEPT=1 when FA4 stays, which tells install_agentic to skip FA2.
+select_flash_attn_variant() {
+    FA4_KEPT=0
+    # Only the sglang requirements carry FA4; a vllm venv never has one to keep.
+    if ! uv pip show flash-attn-4 >/dev/null 2>&1; then
+        echo "[install.sh] flash-attn-4 is not installed; this venv uses FA2."
+        return 0
+    fi
     if [ "$UNINSTALL_FA4" -eq 1 ]; then
-        echo "[install.sh] UNINSTALL_FA4=1: uninstalling flash-attn-4 → TE will use FA2."
+        echo "[install.sh] UNINSTALL_FA4=1: uninstalling flash-attn-4 → this venv uses FA2."
         uv pip uninstall flash-attn-4 || true
         return 0
     fi
@@ -3794,14 +3809,27 @@ uninstall_fa4_conditional() {
     gpu_cc=$(python -c "import torch;print(torch.cuda.get_device_capability(0)[0])" 2>/dev/null || true)
     if [ -z "$gpu_cc" ]; then
         echo "[install.sh] WARNING: Could not detect GPU compute capability; keeping FA4. Set UNINSTALL_FA4=1 to drop it (needed for sm<90 images)."
+        FA4_KEPT=1
         return 0
     fi
     if [ "$gpu_cc" -lt 9 ]; then
-        echo "[install.sh] GPU sm${gpu_cc} < sm90: FA4 backward unsupported, uninstalling flash-attn-4 → TE will use FA2."
+        echo "[install.sh] GPU sm${gpu_cc} < sm90: FA4 backward unsupported, uninstalling flash-attn-4 → this venv uses FA2."
         uv pip uninstall flash-attn-4 || true
     else
         echo "[install.sh] GPU sm${gpu_cc} >= sm90: FA4 usable, keeping flash-attn-4."
+        FA4_KEPT=1
     fi
+}
+
+# Drop an FA2 that landed next to FA4, and restore the FA4 files that removing
+# it takes along. A no-op when FA2 was never installed.
+drop_fa2_for_fa4() {
+    uv pip show flash-attn >/dev/null 2>&1 || return 0
+    local fa4_ver
+    fa4_ver=$(uv pip show flash-attn-4 2>/dev/null | awk '/^Version:/{print $2}')
+    echo "[install.sh] flash-attn-4 is installed; removing flash-attn (FA2) so only one variant remains."
+    uv pip uninstall flash-attn || true
+    [ -n "$fa4_ver" ] && uv pip install --no-deps --reinstall "flash-attn-4==${fa4_ver}"
 }
 
 # TE 2.17's .so files carry no RPATH, so the venv's NVIDIA libs must precede a
@@ -3880,7 +3908,7 @@ install_agentic() {
         else
             echo "[install.sh] WARNING: skipping megatron-bridge, which needs Python 3.12 (venv has $(python -V 2>&1))." >&2
         fi
-        uninstall_fa4_conditional
+        select_flash_attn_variant
         setup_nccl_env
     fi
 
@@ -3890,7 +3918,11 @@ install_agentic() {
     [ -n "$XGRAMMAR_VERSION" ] && uv pip install "xgrammar==${XGRAMMAR_VERSION}"
 
     install_apex
-    install_flash_attn
+    if [ "${FA4_KEPT:-0}" -eq 1 ]; then
+        drop_fa2_for_fa4
+    else
+        install_flash_attn
+    fi
     uv pip uninstall pynvml || true
 }
 

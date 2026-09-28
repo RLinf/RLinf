@@ -49,7 +49,7 @@
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.17.0-te2.17
+   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17
 
 如果你更倾向于本地环境，请安装 agentic 依赖栈：
 
@@ -58,13 +58,13 @@
    bash requirements/install.sh agentic
 
 .. note::
-   若您在早于 ``sm90`` 的 GPU（如 ``A100``）上运行预构建镜像，则可能会出现架构不支持相关报错，此时需要先卸载 ``flash-attn-4``：
+   上面的镜像安装的是 FA2，不包含 ``flash-attn-4``，因此也能在早于 ``sm90`` 的 GPU（如 ``A100``）上运行。在 Hopper 及更新的 GPU 上，可以使用同一 tag 加 ``-fa4`` 后缀的镜像，其中安装 FA4 而不安装 FA2，RLinf 会相应改用 FA4 计算注意力：
 
    .. code-block:: bash
 
-      uv pip uninstall flash-attn-4
+      docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.18.0-te2.17-fa4
 
-   若您是在本地环境用 ``bash requirements/install.sh agentic`` 安装的依赖，则上述问题会自动解决，无需手动卸载。
+   使用 ``bash requirements/install.sh agentic`` 本地安装时，安装脚本会检测 GPU 并自动做出这一选择。
 
 启动脚本和配置文件位于 ``examples/agent/wideseek_r1``。
 
