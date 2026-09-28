@@ -209,6 +209,73 @@ YAML 配置
    ZED SDK 须在 GPU 节点、在 ``ray start`` **之前** 安装到 Ray 使用的同一虚拟环境中；
    Robotiq 串口权限须在 NUC 控制节点上配置好。详见 :doc:`../examples/embodied/franka_zed_robotiq`。
 
+Kuavo 硬件配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在机器人控制节点安装 Kuavo 环境依赖。如果 SDK 尚未由机器人的 ROS workspace 提供，可将安装器指向 SDK 源码目录：
+
+.. code-block:: bash
+
+   KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
+     bash requirements/install.sh embodied --env kuavo
+
+使用 ``hardware.type: Kuavo`` 选择内置的 Kuavo 机器人组合。配置中指定平台版本、使用的手臂、末端执行器、可选头部初始位置、控制频率、ROS 观测 topic 和安全限位。目前支持关节位置控制。
+
+.. code-block:: yaml
+
+   - label: kuavo
+     node_ranks: 1
+     hardware:
+       type: Kuavo
+       configs:
+         - node_rank: 1
+           platform_type: 4pro       # 4pro、5 或 5w
+           which_arm: both           # left、right 或 both
+           end_effector_type: leju_claw  # leju_claw、qiangnao 或 rq2f85
+           only_arm: true
+           control_mode: joint
+           direct_to_wbc: false
+           qiangnao_dof_needed: 1
+           is_binary: false
+           head_position: null       # 省略时保持当前头部位置
+           ros_rate: 10
+           control_rate: 100
+           controller_node_rank: 1
+           image_size: [848, 480]
+           depth_range: [0, 1500]
+           joint_limits_min: [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14]
+           joint_limits_max: [3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14]
+           end_effector_limits_min: [0.0, 0.0]
+           end_effector_limits_max: [1.0, 1.0]
+           arm_state_keys: [joint_q, gripper]
+           obs_key_map:
+             head_cam_h:
+               topic: /cam_h/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             wrist_cam_l:
+               topic: /cam_l/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             wrist_cam_r:
+               topic: /cam_r/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             joint_q:
+               topic: /sensors_data_raw
+               msg_type: sensorsData
+               frequency: 500
+             leju_claw:
+               topic: /leju_claw_state
+               msg_type: lejuClawState
+               frequency: 500
+
+Kuavo SDK 和 ROS 消息包必须安装在机器人控制节点。只有延迟创建的机器人连接真正打开时才会加载这些依赖，因此训练节点和调度节点无需导入它们。
+
+当前适配会明确拒绝底盘控制、direct WBC、多自由度 Qiangnao policy 动作、二值末端动作和笛卡尔手臂控制，避免接受实际无法执行的配置。
+
+每只选中的手臂分别通过 ``left.arm`` 或 ``right.arm`` 暴露，规范观测和动作字段都是以弧度表示的 ``arm_joint_position``；对应末端执行器通过 ``left.gripper`` 或 ``right.gripper`` 暴露，目标值归一化到 ``0..1``。``active_obs_key_map()`` 会去掉未使用的腕部相机和末端执行器 route，把选中的末端执行器 route 改名为 ``gripper``，并为 ROS 观测桥补充 ``handle.params.resize_wh`` 和 ``handle.params.slice``。
+
 从环境变量自动配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
