@@ -17,7 +17,7 @@ RTC 的核心思想是将策略推理与动作执行流水线化。标准 rollou
 3. **延迟自适应**：RTC 维护一个滑动窗口（``delay_buffer_size``）记录实际观测到的推理延迟，用于预测下一轮请求时机。
 4. **停止**：episode 结束（或达到最大步数）后，Env Worker 发送 ``stop`` 信号终止 Rollout Worker 循环。
 
-RTC 使用 ``软重叠引导``（soft overlap guidance）来平滑 chunk 边界。当新 chunk 到达时，前一个 chunk 可能还有若干步未执行。RTC 引导机制使新 chunk 的前 ``delay_steps`` 步与旧 chunk 的剩余部分保持一致，避免动作突变：
+RTC 使用 ``软重叠引导``\ （soft overlap guidance）来平滑 chunk 边界。当新 chunk 到达时，前一个 chunk 可能还有若干步未执行。RTC 引导机制使新 chunk 的前 ``delay_steps`` 步与旧 chunk 的剩余部分保持一致，避免动作突变：
 
 - ``硬掩码`` （hard mask）：前 ``delay_steps`` 步，强制使用旧 chunk 的剩余动作。
 - ``软掩码`` （soft mask）：后续若干步，通过指数衰减引导新 chunk 逐渐过渡到其自身预测。
@@ -156,7 +156,7 @@ RTC 将 ``wait_inference_time`` 从数秒降至约 2ms（接近零），几乎�
 
 .. code:: bash
 
-   source .venv/franka_catkin_ws/devel/setup.bash
+   source .venv/bin/activate
    source ray_utils/realworld/setup_before_ray.sh
    ray start --address='<head_node_ip_address>:6379'
 

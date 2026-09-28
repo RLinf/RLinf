@@ -114,6 +114,7 @@ actor:
     model_type: "openpi"
     # openpi specific parameters
     openpi:
+      task: rl
       noise_level: 0.3
 
   optim:

@@ -97,6 +97,23 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
     )
 
 
+def gradient_reduction_group(device_mesh: DeviceMesh) -> torch.distributed.ProcessGroup:
+    """Return the group a gradient's shards are spread over.
+
+    :func:`get_grad_norm` sums per-rank shard norms over this group, so it has
+    to span the sharding dimension and nothing else. Passing ``None`` yields one
+    rank's shard norm instead of the gradient's, and under hybrid sharding the
+    ``ddp`` dimension holds replicas whose norms would be counted once each.
+
+    Args:
+        device_mesh (DeviceMesh): The mesh FSDP was built over.
+
+    Returns:
+        torch.distributed.ProcessGroup: The group behind the ``fsdp`` dimension.
+    """
+    return device_mesh["fsdp"].get_group()
+
+
 def init_fn(x: torch.nn.Module):
     if not torch.distributed.get_rank() == 0:
         x = x.to_empty(device=Worker.torch_platform.current_device(), recurse=False)
@@ -177,6 +194,28 @@ def _collect_ignored_params_for_fsdp2(
     return out
 
 
+def _module_has_single_floating_dtype(module: torch.nn.Module) -> bool:
+    dtype = None
+    for param in module.parameters():
+        if not param.is_floating_point():
+            continue
+        if dtype is None:
+            dtype = param.dtype
+        elif param.dtype != dtype:
+            return False
+    return dtype is not None
+
+
+def _pi0_fast_dtype_auto_wrap_policy(
+    module: torch.nn.Module, recurse: bool, nonwrapped_numel: int
+) -> bool:
+    if recurse:
+        return True
+    if nonwrapped_numel <= 0:
+        return False
+    return _module_has_single_floating_dtype(module)
+
+
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
@@ -238,6 +277,14 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
 
     # Build policies list
     policies = []
+
+    if (
+        SupportedModel(model_type) == SupportedModel.PI0_FAST
+        and not use_custom_wrap_policy
+    ):
+        # PI0-Fast mixes small FP32 embedding/norm parameters with a BF16 backbone.
+        # FSDP flat parameters must have one dtype, so split only on dtype-uniform modules.
+        policies.append(_pi0_fast_dtype_auto_wrap_policy)
 
     if SupportedModel(model_type) in [
         SupportedModel.CNN_POLICY,
@@ -463,6 +510,10 @@ def apply_fsdp2_to_model(
     tie_word_embeddings = getattr(
         getattr(module, "config", None), "tie_word_embeddings", False
     )
+    # Models that read embedding weights directly opt out of per-embedding units.
+    wrap_embeddings = not tie_word_embeddings and getattr(
+        module, "_fsdp_wrap_embeddings", True
+    )
 
     modules_to_shard = []
 
@@ -474,7 +525,7 @@ def apply_fsdp2_to_model(
                 no_split_name_set
                 and getattr(submodule, "_fsdp_wrap_name", None) in no_split_name_set
             )
-            or (isinstance(submodule, torch.nn.Embedding) and not tie_word_embeddings)
+            or (isinstance(submodule, torch.nn.Embedding) and wrap_embeddings)
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
@@ -615,6 +666,36 @@ def get_lr_scheduler(
             return min_mult + (1.0 - min_mult) * cosine
 
         return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
+    elif lr_scheduler == "fastwam_cosine":
+        # FastWAM's official trainer uses a LinearLR warmup followed by a
+        # torch CosineAnnealingLR with eta_min=learning_rate*0.01.
+        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+
+        num_training_steps = max(int(num_training_steps), 1)
+        num_warmup_steps = min(max(int(num_warmup_steps), 0), num_training_steps - 1)
+        remaining_steps = max(num_training_steps - num_warmup_steps, 1)
+        eta_min = optimizer.param_groups[0]["lr"] * 0.01
+        main_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=remaining_steps,
+            eta_min=eta_min,
+            last_epoch=last_epoch,
+        )
+        if num_warmup_steps <= 0:
+            return main_scheduler
+
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=1.0 / num_warmup_steps,
+            end_factor=1.0,
+            total_iters=num_warmup_steps,
+            last_epoch=last_epoch,
+        )
+        return SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[num_warmup_steps],
+        )
     # PyTorch native
     elif lr_scheduler == "torch_constant":
         from torch.optim.lr_scheduler import ConstantLR
@@ -1110,46 +1191,34 @@ def generate_with_kv_cache(
     generated_attention_mask = attention_mask.to(dtype=torch.long)
     finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
 
+    # Qwen-VL models take 3D M-RoPE position ids. Compute them for the prompt
+    # here and advance them by one per decoded token: transformers 5 moved this
+    # bookkeeping out of prepare_inputs_for_generation and into generate().
+    rope_inputs = {
+        k: v
+        for k, v in multi_modal_inputs.items()
+        if k not in ("pixel_values", "pixel_values_videos")
+    }
+    position_ids, _ = model.model.get_rope_index(
+        input_ids, attention_mask=generated_attention_mask, **rope_inputs
+    )
+    next_position = position_ids.amax(dim=(0, 2)) + 1
+
+    model_inputs = {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        **multi_modal_inputs,
+    }
     past_key_values = None
 
     for step in range(max_new_tokens):
-        if step == 0:
-            # prefill: full prompt + multimodal
-            cache_position = torch.arange(
-                0,
-                generated_ids.size(1),
-                device=generated_ids.device,
-                dtype=torch.long,
-            )
-            model_inputs = model.prepare_inputs_for_generation(
-                input_ids=generated_ids,
-                attention_mask=generated_attention_mask,
-                use_cache=True,
-                cache_position=cache_position,
-                past_key_values=past_key_values,
-                **multi_modal_inputs,
-            )
-        else:
-            # decode: only last token + cache
-            new_generated_ids = generated_ids[:, -1:].contiguous()
-            start_pos = generated_attention_mask.size(1) - new_generated_ids.size(1)
-            cache_position = torch.arange(
-                start_pos,
-                generated_attention_mask.size(1),
-                device=generated_ids.device,
-                dtype=torch.long,
-            )
-
-            model_inputs = model.prepare_inputs_for_generation(
-                input_ids=new_generated_ids,
-                attention_mask=generated_attention_mask,
-                use_cache=True,
-                cache_position=cache_position,
-                past_key_values=past_key_values,
-            )
-
         with amp_context:
-            outputs = model(**model_inputs)
+            outputs = model(
+                **model_inputs,
+                attention_mask=generated_attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+            )
 
         logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
         past_key_values = (
@@ -1174,6 +1243,12 @@ def generate_with_kv_cache(
         generated_attention_mask = torch.cat(
             [generated_attention_mask, append_mask], dim=-1
         )
+
+        # decode: only the new token; images are already in the KV cache
+        model_inputs = {
+            "input_ids": next_token.unsqueeze(-1),
+            "position_ids": (next_position + step).view(1, -1, 1).expand(3, -1, -1),
+        }
 
         if eos_token_id is not None:
             finished = finished | (next_token == eos_token_id)

@@ -29,6 +29,7 @@ from omegaconf.omegaconf import DictConfig
 
 from rlinf.data.schema.embodied_types import (
     EnvOutput,
+    EnvTransition,
     RTCActionResponse,
     RTCRequest,
 )
@@ -57,12 +58,9 @@ class RTCEnvWorker(EnvWorker):
         rtc_cfg = self.cfg.runner.get("rtc", {})
         if not rtc_cfg.get("enabled", False):
             return
-        assert str(self.cfg.actor.model.model_type) in (
-            "openpi",
-            "openpi_rlinf",
-        ), (
-            "RTC real-world evaluation is currently integrated for the OpenPI "
-            "and openpi_rlinf policy paths."
+        assert str(self.cfg.actor.model.model_type) == "openpi", (
+            "RTC real-world evaluation is currently integrated for the "
+            "openpi policy path."
         )
         assert self.stage_num == 1, (
             "RTC real-world evaluation currently supports a single pipeline stage."
@@ -187,10 +185,12 @@ class RTCEnvWorker(EnvWorker):
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=final_obs,
-            rewards=step_reward,
-            dones=dones,
-            terminations=terminations,
-            truncations=truncations,
+            transition=EnvTransition(
+                rewards=step_reward,
+                dones=dones,
+                terminations=terminations,
+                truncations=truncations,
+            ),
         )
         return env_output, env_info
 

@@ -241,16 +241,17 @@ arrives without editing anything that selects one.
 
 Arms are where this matters most, because two of them drive the same hardware.
 A Franka is reached through libfranka or through ROS, so both register on
-``Arm`` and a robot names one:
+``Arm`` and a robot names one. ``FrankaRobot`` names Franky, and a subclass that
+wanted the ROS stack would override only the name:
 
 .. code-block:: python
 
    class FrankaRobot(Robot):
-       BACKEND = "franka_ros"
-
-
-   class DualFrankaRobot(FrankaRobot):
        BACKEND = "franky"
+
+
+   class FrankaRosRobot(FrankaRobot):  # hypothetical
+       BACKEND = "franka_ros"
 
 Naming the backend is the whole of the swap. Each backend maps the standard arm
 settings onto its own constructor in its own ``declare()``, next to the

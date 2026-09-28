@@ -175,26 +175,18 @@ Franka builder 将末端执行器单独返回，是因为 Franka Hand 会打开�
 3. 在真机环境中使用组合机器人
 ------------------------------
 
-硬件代码定义底盘如何运动，任务代码则定义目标位置、成功条件以及 policy 实际控制的零部件。下面的 ``RobotTask`` 只向 policy 提供底盘观测和动作；同一机器人中已经组合的机械臂保持空闲：
+硬件代码定义底盘如何运动，任务代码则定义目标位置、成功条件以及 policy 实际控制的零部件。在 RLinf 中，任务就是所属机器人包中的一个 ``gymnasium.Env`` 类：由 dataclass 配置，并注册到一个 Gymnasium ID 上。现有示例参见 ``rlinf/envs/real/franka/peg_insertion.py``，完整流程参见 :doc:`新增真机任务 <new_task>`。
+
+无论任务如何计算奖励，都通过上一步的组合访问硬件。下面的 env 只驱动底盘，读取并下发 ``base`` 分支，同一机器人中已经组合的机械臂保持空闲：
 
 .. code-block:: python
 
-   import gymnasium as gym
-
-   from rlinf.envs.real.task_env import RobotTask, RobotTaskEnv
-
-
-   class DriveToTarget(RobotTask):
-       def __init__(self, target_xy: np.ndarray):
-           self.target_xy = np.asarray(target_xy, dtype=np.float32)
-
-       @property
-       def description(self) -> str:
-           return "drive the mobile manipulator to the target"
-
-       @property
-       def observation_space(self) -> gym.Space:
-           return gym.spaces.Dict(
+   class DriveToTargetEnv(gym.Env):
+       def __init__(self, config: DriveToTargetConfig) -> None:
+           self.target_xy = np.asarray(config.target_xy, dtype=np.float32)
+           self.robot = Robot.of_type("MobileManipulator", **config.hardware)
+           self.robot.connect()
+           self.observation_space = gym.spaces.Dict(
                {
                    "base": gym.spaces.Dict(
                        {
@@ -205,10 +197,7 @@ Franka builder 将末端执行器单独返回，是因为 Franka Hand 会打开�
                    )
                }
            )
-
-       @property
-       def action_space(self) -> gym.Space:
-           return gym.spaces.Dict(
+           self.action_space = gym.spaces.Dict(
                {
                    "base": gym.spaces.Dict(
                        {
@@ -221,37 +210,27 @@ Franka builder 将末端执行器单独返回，是因为 Franka Hand 会打开�
                }
            )
 
-       @staticmethod
-       def observe(robot: Robot) -> dict:
-           return {"base": robot.get_observation()["base"]}
+       def _observe(self) -> dict:
+           return {"base": self.robot.get_observation()["base"]}
 
-       def reset(self, robot: Robot, *, seed=None, options=None):
-           del seed, options
-           robot.reset()
-           return self.observe(robot), {}
+       def reset(self, *, seed=None, options=None):
+           super().reset(seed=seed)
+           self.robot.reset()
+           return self._observe(), {}
 
-       def step(self, robot: Robot, action: dict):
-           robot.send_action(action)
-           observation = self.observe(robot)
+       def step(self, action: dict):
+           self.robot.send_action(action)
+           observation = self._observe()
            distance = float(
                np.linalg.norm(observation["base"]["pose"][:2] - self.target_xy)
            )
            reached = distance < 0.05
            return observation, float(reached), reached, False, {"distance": distance}
 
+       def close(self) -> None:
+           self.robot.disconnect()
 
-   env = RobotTaskEnv(robot, DriveToTarget(np.array([1.0, 0.0])))
-   try:
-       observation, info = env.reset()
-       observation, reward, terminated, truncated, info = env.step(
-           {"base": {"velocity": np.array([0.1, 0.0], dtype=np.float32)}}
-       )
-   finally:
-       env.close()
-
-应按照 env 的调用顺序理解这段任务代码。``observation_space`` 与 ``action_space`` 在 episode 开始前声明 policy 边界，``observe()`` 再从完整机器人观测中选出对应的 ``base`` 分支。``reset()`` 先停止并复位机器人，再返回首个观测；每次调用 ``step()`` 时，任务依次下发标准动作、读取新位姿，并从同一份状态计算奖励、终止条件和诊断信息。
-
-``RobotTaskEnv(robot, task)`` 将这些任务规则与组合机器人连接起来。构造 env 时会连接机器人，Gymnasium 的 ``reset()`` 与 ``step()`` 会转发给任务，``close()`` 则负责断开。移动操作任务可以在两类 space 和动作字典中加入 ``arm`` 与 ``end_effector``，无需修改底盘 driver 或机器人组合。
+应按照 Gymnasium 的调用顺序理解这个 env。``observation_space`` 与 ``action_space`` 在 episode 开始前声明 policy 边界，``_observe()`` 再从完整机器人观测中选出对应的 ``base`` 分支。``reset()`` 先复位机器人，再返回首个观测；每次调用 ``step()`` 时，env 依次下发标准动作、读取新位姿，并从同一份状态计算奖励、终止条件和诊断信息；``close()`` 则断开 ``__init__`` 建立的连接。移动操作任务可以在两类 space 和动作字典中加入 ``arm`` 与 ``end_effector``，无需修改底盘 driver 或机器人组合。
 
 如需通过 RLinf 分布式 ``RealWorldEnv`` 启动该任务，应先注册 Gymnasium ID，并在 env YAML 中设置 ``env_type: real`` 和对应 ID。当前 rollout 接口使用面向 policy 的 ``state`` 与 ``frames`` 观测；已有 policy 采用该表示时，请在环境边界配置 ``LegacyObservationAdapter`` 和 ``VectorActionAdapter``。任务注册、YAML、wrapper 与兼容性检查请参阅 :doc:`新增真机任务 <new_task>`。
 
@@ -346,7 +325,7 @@ placement 只决定各条连接在哪个节点打开，不改变任务访问零�
 
 .. warning::
 
-   读取观测或发送命令前必须调用 ``connect()``，清理阶段必须调用 ``disconnect()``。由 ``RobotTaskEnv`` 持有机器人时，这两个生命周期操作分别在环境创建和 ``close()`` 中完成。
+   读取观测或发送命令前必须调用 ``connect()``，清理阶段必须调用 ``disconnect()``。由 env 持有机器人时，这两个生命周期操作分别在环境创建和 ``close()`` 中完成。
 
 6. 注册机器人类型
 -----------------

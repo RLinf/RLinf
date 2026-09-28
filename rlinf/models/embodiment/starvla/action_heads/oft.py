@@ -26,6 +26,7 @@ from starVLA.training.trainer_utils.trainer_tools import (
 from torch.distributions.normal import Normal
 
 from ..utils import data_pipeline as data_pipeline_utils
+from ..utils.accelerator import accelerator_autocast, build_gaussian
 from ..utils.backbone_pipeline import compute_values_from_hidden, run_backbone_pipeline
 from ..utils.profile import (
     RL_BATCH_TENSOR_KEYS_TO_IGNORE,
@@ -94,7 +95,7 @@ def _run_oft_backbone_and_head(
     )
     model = policy.starvla_model
     last_hidden = backbone_output["last_hidden"]
-    with torch.autocast("cuda", dtype=torch.float32):
+    with accelerator_autocast(torch.float32):
         input_ids = model_inputs["input_ids"]
         action_queries = model._gather_action_token_embeddings(
             last_hidden,
@@ -103,7 +104,7 @@ def _run_oft_backbone_and_head(
         )
         mean_actions = model.action_model.predict_action(action_queries)
 
-    dist = Normal(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
+    dist = build_gaussian(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
     return mean_actions, last_hidden, dist
 
 

@@ -31,7 +31,9 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
-- [2026/08] 🔥 RLinf supports SFT and SGLang-based evaluation of NVIDIA's ominimodal world model, Cosmos3. Docs: [Cosmos3 SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html), [SGLang eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/cosmos3_sglang.html).
+- [2026/09] 🔥 RLinf supports ApxInf-accelerated evaluation of π₀.₅ on LIBERO. RLinf keeps the native OpenPI transform chain and enters the engine through its L1 inference interface. Doc: [ApxInf LIBERO eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/libero.html#apxinf-backend).
+- [2026/09] 🔥 RLinf supports FSDP supervised fine-tuning and batched LIBERO evaluation for [FastWAM](https://github.com/yuantianyuan01/FastWAM). Doc: [FastWAM Evaluation and SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html).
+- [2026/08] 🔥 RLinf supports SFT and SGLang-based evaluation of NVIDIA's omnimodal world model, Cosmos3. Docs: [Cosmos3 SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html), [SGLang eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/cosmos3_sglang.html).
 - [2026/08] 🎉 RLinf is officially welcomed into the **PyTorch Ecosystem**! We will continue to bring scalable embodied and agentic RL to PyTorch users, pushing model intelligence into the real world. Blog: [PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/).
 - [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf).
 - [2026/08] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](docs/source-en/rst_source/examples/video_models.rst).
@@ -43,7 +45,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/08] 🎉 One paper accepted to **NSDI 2027**: [FUSCO](https://arxiv.org/abs/2512.22036). FUSCO accelerates MoE All-to-All communication by fusing data transformation and communication for high-performance distributed data shuffling. Doc: [FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html).
 - [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rtc.html).
 - [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
-- [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [OpenPI_RLinf](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_rlinf.html).
+- [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [OpenPI](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html).
 - [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
 - [2026/07] 🎉 RLinf v0.3 is released with major upgrades in the real-world RL full pipeline (data collection → SFT → RL → deployment), more simulators and SOTA models, and system-level optimizations. Release notes: [RLinf v0.3](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.3.html).
 - [2026/07] 🔥 RLinf supports RLT for online RL fine-tuning of VLA policies. Doc: [RLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html).
@@ -54,7 +56,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for Genesis. Doc: [RL on Genesis](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/genesis.html).
 - [2026/05] 🔥 RLinf achieves **25×** end-to-end speedup for the BEHAVIOR simulator through system-level optimizations (slimming, on-demand observation, hybrid pipeline parallelism), reducing rollout latency from 1028.7 ms/step to 41.2 ms/step. Blog: [BEHAVIOR System Optimization](https://rlinf.readthedocs.io/en/latest/rst_source/resources/blog/behavior_system_optimization.html)
 - [2026/05] 🔥 RLinf supports reinforcement learning fine-tuning for ABot-M0. Doc: [RL on ABot-M0 Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html).
-- [2026/05] 🔥 RLinf supports RL training and SFT with Megatron-Bridge actor beckend. Doc: [Megatron-Bridge](https://rlinf.readthedocs.io/en/latest/rst_source/extending/mbridge.html).
+- [2026/05] 🔥 RLinf supports RL training and SFT with Megatron-Bridge actor backend. Doc: [Megatron-Bridge](https://rlinf.readthedocs.io/en/latest/rst_source/extending/mbridge.html).
 - [2026/05] 🔥 RLinf supports AgentLightning for single-agent RL training. Doc: [AgentLightning Calc-X](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/agentlightning_calc_x.html).
 - [2026/05] 🔥 RLinf supports DreamZero SFT with a refactored training pipeline, achieving nearly **4×** throughput improvement over the official baseline and better convergence. Doc: [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html)
 - [2026/05] 🔥 RLinf supports GimArm. Doc: [GimArm](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html)
@@ -162,8 +164,8 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>VLA</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI-PyTorch)</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_rlinf.html">π₀ / π₀.₅ (OpenPI_RLinf)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html">PI0-FAST (LeRobot)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html">OpenVLA-OFT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
@@ -199,6 +201,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           </ul>
           <li><b>World Action Model</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
           </ul>
@@ -292,15 +295,17 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 #### Hardware Support
 
-Choose a model and environment together, then follow the model link for hardware setup. The component tables above list components independently; this matrix records the supported paths for the three model families covered by the hardware recipes. Each hardware backend applies to every environment listed in its row. ✅ means the code and installer support the combination; a compatible model checkpoint and task config are still required.
+RLinf hides the differences between heterogeneous hardware behind one unified low-level abstraction, so the same training stack runs seamlessly on NVIDIA and AMD GPUs and on domestic accelerators such as Huawei Ascend, Moore Threads, and Kunlunxin. Moving a training job between compute nodes takes zero changes to models and algorithms. Accelerator vendors, in turn, only have to adapt a minimal interface to bring the complete embodied and agentic RL training ecosystem onto their own hardware, with none of the burden of maintaining a customized fork of the framework.
+
+Choose the model and environment combination you need, then follow the corresponding link for detailed hardware instructions. Every hardware backend fully supports all the environments listed in its row.
 
 | Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm |
 |---|---|:---:|:---:|:---:|:---:|
 | [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
+| [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | [Wan world model](docs/source-en/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
 | [GR00T N1.5](docs/source-en/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-en/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-
-On non-CUDA backends, ManiSkill runs PhysX simulation on CPU and selects its renderer independently by PCI address. MUSA additionally requires the vendor-modified SAPIEN and ManiSkill packages. The GR00T ManiSkill path requires a checkpoint with a `maniskill_widowx` embodiment head; the non-NVIDIA GR00T scope is N1.5. LIBERO uses OSMesa on AMD, Ascend, and MUSA.
+| [StarVLA (QwenOFT)](docs/source-en/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
 
 ### Agentic AI
 
@@ -398,7 +403,7 @@ Below is the summary of the CI test status of the main branch:
 | scheduler-tests | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
 
 ## Contribution Guidelines
-We welcome contributions to RLinf. Please read [contribution guide](https://github.com/RLinf/RLinf?tab=contributing-ov-file#contributing-to-rlinf) before taking action. Thank the following contributors and welcome more developers to join us on this open source project.
+We welcome contributions to RLinf. Before opening a pull request, read the [contribution guide](CONTRIBUTING.md) and add `Signed-off-by` to each commit to certify compliance with the [Developer Certificate of Origin (DCO)](DCO). Thank you to everyone who contributes to the project.
 
 <a href="https://github.com/RLinf/RLinf/graphs/contributors"><img src="https://stg.contrib.rocks/image?repo=RLinf/RLinf&max=240&columns=18" /></a>
 

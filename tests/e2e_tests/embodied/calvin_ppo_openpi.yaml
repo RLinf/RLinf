@@ -111,6 +111,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi0_calvin"
       detach_critic_input: True
 

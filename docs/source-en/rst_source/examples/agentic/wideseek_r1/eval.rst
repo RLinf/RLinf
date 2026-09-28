@@ -46,11 +46,12 @@ dense model.
 Prerequisites
 -------------
 
-Before evaluation, make sure the following components are ready:
+Before evaluation, complete
+:doc:`Environment and Tool Setup <tools>`:
 
-- The RLinf environment is installed. See :doc:`../../../start/installation`.
-- The judge model server is running. See :doc:`index`.
-- The appropriate tool backend is configured. See :doc:`tools`.
+- The RLinf environment is installed.
+- The judge model is running.
+- The appropriate tool backend is configured.
 
 Download the Model
 ------------------
@@ -141,7 +142,7 @@ Before launching evaluation, verify all of the following:
 - ``rollout.model.model_path`` points to the model you want to evaluate.
 - ``data.val_data_paths`` points to the correct dataset.
 - ``agentloop.llm_ip`` is set correctly.
-- The required tools are configured. See :doc:`tools`.
+- The required tools are configured. See :doc:`Environment and Tool Setup <tools>`.
 
 Then run one of the following commands:
 
@@ -149,6 +150,8 @@ Then run one of the following commands:
 
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+
+For multi-node launches, see :ref:`wideseek-r1-multinode`.
 
 Output Files
 ------------

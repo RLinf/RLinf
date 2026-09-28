@@ -96,7 +96,7 @@
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-metaworld
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-metaworld
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-metaworld
 
    # 在容器内切换到对应模型的虚拟环境：
    source switch_env openpi        # 或：source switch_env openvla-oft

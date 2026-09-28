@@ -241,28 +241,24 @@ branches that shared one would run in declaration order.
 --------------------------------------------
 
 Hardware code says how to move the base. Task code decides where to move it,
-when an episode succeeds, and which subset of the robot a policy controls. The
-following ``RobotTask`` exposes only the base even though the robot also carries
-an arm:
+when an episode succeeds, and which subset of the robot a policy controls. A
+task in RLinf is a small ``gymnasium.Env`` class in its robot's package,
+configured by a dataclass and registered under a Gymnasium ID;
+``rlinf/envs/real/franka/peg_insertion.py`` is the current example, and
+:doc:`New Real-World Tasks <new_task>` covers that workflow step by step.
+
+Whatever the task computes, it reaches the hardware through the composition from
+the previous step. An env that drives only the base reads and commands the
+``base`` branch, leaving the arm the robot also carries idle:
 
 .. code-block:: python
 
-   import gymnasium as gym
-
-   from rlinf.envs.real.task_env import RobotTask, RobotTaskEnv
-
-
-   class DriveToTarget(RobotTask):
-       def __init__(self, target_xy: np.ndarray):
-           self.target_xy = np.asarray(target_xy, dtype=np.float32)
-
-       @property
-       def description(self) -> str:
-           return "drive the mobile manipulator to the target"
-
-       @property
-       def observation_space(self) -> gym.Space:
-           return gym.spaces.Dict(
+   class DriveToTargetEnv(gym.Env):
+       def __init__(self, config: DriveToTargetConfig) -> None:
+           self.target_xy = np.asarray(config.target_xy, dtype=np.float32)
+           self.robot = Robot.of_type("MobileManipulator", **config.hardware)
+           self.robot.connect()
+           self.observation_space = gym.spaces.Dict(
                {
                    "base": gym.spaces.Dict(
                        {
@@ -273,10 +269,7 @@ an arm:
                    )
                }
            )
-
-       @property
-       def action_space(self) -> gym.Space:
-           return gym.spaces.Dict(
+           self.action_space = gym.spaces.Dict(
                {
                    "base": gym.spaces.Dict(
                        {
@@ -289,46 +282,34 @@ an arm:
                }
            )
 
-       @staticmethod
-       def observe(robot: Robot) -> dict:
-           return {"base": robot.get_observation()["base"]}
+       def _observe(self) -> dict:
+           return {"base": self.robot.get_observation()["base"]}
 
-       def reset(self, robot: Robot, *, seed=None, options=None):
-           del seed, options
-           robot.reset()
-           return self.observe(robot), {}
+       def reset(self, *, seed=None, options=None):
+           super().reset(seed=seed)
+           self.robot.reset()
+           return self._observe(), {}
 
-       def step(self, robot: Robot, action: dict):
-           robot.send_action(action)
-           observation = self.observe(robot)
+       def step(self, action: dict):
+           self.robot.send_action(action)
+           observation = self._observe()
            distance = float(
                np.linalg.norm(observation["base"]["pose"][:2] - self.target_xy)
            )
            reached = distance < 0.05
            return observation, float(reached), reached, False, {"distance": distance}
 
+       def close(self) -> None:
+           self.robot.disconnect()
 
-   env = RobotTaskEnv(robot, DriveToTarget(np.array([1.0, 0.0])))
-   try:
-       observation, info = env.reset()
-       observation, reward, terminated, truncated, info = env.step(
-           {"base": {"velocity": np.array([0.1, 0.0], dtype=np.float32)}}
-       )
-   finally:
-       env.close()
-
-Read the task in the order the environment calls it. ``observation_space`` and
-``action_space`` declare the policy boundary before an episode starts;
-``observe()`` then selects the matching ``base`` branch from the larger robot
-observation. ``reset()`` stops and resets the robot before returning the first
+Read the env in the order Gymnasium calls it. ``observation_space`` and
+``action_space`` declare the policy boundary before an episode starts, and
+``_observe()`` selects the matching ``base`` branch from the larger robot
+observation. ``reset()`` resets the robot before returning the first
 observation. On each step, ``step()`` sends the canonical action, reads the new
 pose, and derives reward, termination, and diagnostic information from the same
-state.
-
-``RobotTaskEnv(robot, task)`` joins these task rules to the composed runtime. It
-connects the robot during construction, forwards Gymnasium ``reset()`` and
-``step()`` to the task, and disconnects in ``close()``. A manipulation task can
-expand both spaces and the action dictionary with ``arm`` and
+state. ``close()`` disconnects what ``__init__`` connected. A manipulation task
+expands both spaces and the action dictionary with ``arm`` and
 ``end_effector``; the base driver and robot composition remain unchanged.
 
 To launch the task through RLinf's distributed ``RealWorldEnv``, register the
@@ -458,8 +439,8 @@ absorbed by ``**kwargs`` and silently ignored.
 .. warning::
 
    Call ``connect()`` before reading observations or sending commands, and
-   ``disconnect()`` during teardown. ``RobotTaskEnv`` performs both lifecycle
-   operations when it owns the robot.
+   ``disconnect()`` during teardown. The env that owns the robot performs both,
+   connecting when it is built and disconnecting in ``close()``.
 
 6. Register the Robot Type
 --------------------------

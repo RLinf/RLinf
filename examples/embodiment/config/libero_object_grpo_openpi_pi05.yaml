@@ -114,6 +114,7 @@ actor:
     model_type: "openpi"
     num_action_chunks: 5 # interface for the env
     openpi:
+      task: rl
       noise_level: 0.3
 
   optim:

@@ -42,6 +42,8 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
 
+  staleness_threshold: 1
+
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level

@@ -103,9 +103,10 @@ Online LeRobot DAgger
 
 The classic configs above store expert-labeled trajectories in an in-memory
 **replay buffer**. ``libero_spatial_dagger_openpi_lerobot.yaml`` adds an
-**online LeRobot** path: the env worker collects completed episodes in LeRobot
-format, sends them to the actor in memory, and the actor trains from a rolling
-window via :class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset`.
+**online LeRobot** path: the Actor channel collector builds completed episodes
+in LeRobot format, sends them to the actor in memory, and the actor trains from
+a rolling window via
+:class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset`.
 
 **Classic replay buffer vs online LeRobot**
 
@@ -128,8 +129,8 @@ bridge online DAgger with offline SFT or real-robot datasets.
 1. **Mixed rollout and expert relabeling** — same ``beta`` scheduling and
    expert relabeling as classic DAgger.
 2. **Episode collection** — when ``algorithm.dagger.online_lerobot.enabled`` is
-   ``True``, EnvWorker uses :class:`~rlinf.data.schema.embodied_trajectory_builder.EmbodiedLerobotTrajectoryBuilder`
-   to accumulate per-env frames and export completed episodes.
+   ``True``, :class:`~rlinf.data.schema.embodied_trajectory.TrajectoryCollector`
+   accumulates per-env frames and exports completed episodes.
 3. **Actor ingestion** — completed episodes flow to the actor through
    ``recv_lerobot_rollout_trajectories`` and append to the rolling dataset.
 4. **Rolling-window training** — the actor samples from
@@ -162,7 +163,7 @@ The DAgger examples below use the embodied image or the equivalent local environ
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in
 ``switch_env`` utility in the image:

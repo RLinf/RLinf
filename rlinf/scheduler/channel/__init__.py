@@ -14,5 +14,33 @@
 
 from .channel import Channel
 from .channel_worker import ChannelWorker, WeightedItem
+from .hooks import (
+    ChannelContext,
+    Collector,
+    Dispatcher,
+    LeastLoadedDispatcher,
+    LeastLoadedStealingDispatcher,
+    RoundRobinDispatcher,
+    SharedDispatcher,
+    register_collector,
+    register_dispatcher,
+    resolve_collector,
+    resolve_dispatcher,
+)
 
-__all__ = ["Channel", "ChannelWorker", "WeightedItem"]
+__all__ = [
+    "Channel",
+    "ChannelContext",
+    "ChannelWorker",
+    "Collector",
+    "Dispatcher",
+    "LeastLoadedDispatcher",
+    "LeastLoadedStealingDispatcher",
+    "RoundRobinDispatcher",
+    "SharedDispatcher",
+    "WeightedItem",
+    "register_collector",
+    "register_dispatcher",
+    "resolve_collector",
+    "resolve_dispatcher",
+]

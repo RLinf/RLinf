@@ -114,6 +114,7 @@ actor:
     num_images_in_input: 3
     proprio_dim: 32
     openpi:
+      task: rl
       config_name: "pi0_behavior"
       detach_critic_input: True
       joint_logprob: False

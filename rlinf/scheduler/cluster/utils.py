@@ -15,6 +15,7 @@
 
 import atexit
 import contextlib
+import copy
 import dataclasses
 import importlib
 import logging
@@ -27,17 +28,12 @@ from typing import Any, Callable, Optional, Protocol, TextIO
 
 import torch
 
-# Type for a single tensor field value in a dataclass (used for send/recv).
-TensorFieldValue = (
-    torch.Tensor
-    | list[torch.Tensor]
-    | tuple[torch.Tensor, ...]
-    | dict[str, torch.Tensor]
-)
-# Metadata for flatten/unflatten: (field_name, 'tensor'|'list'|'tuple'|'dict', None|length|list_of_keys).
-DataclassTensorFieldsMetadata = list[
-    tuple[str, str, Optional[int] | Optional[list[str]]]
-]
+
+@dataclasses.dataclass(frozen=True)
+class TensorPlaceholder:
+    """Position of a tensor removed from a nested transport skeleton."""
+
+    index: int
 
 
 @contextlib.contextmanager
@@ -558,80 +554,207 @@ def dataclass_arg_check(
     return missing_required_args, unknown_args, valid_args
 
 
-def extract_dataclass_tensor_fields(
-    obj: Any,
-) -> tuple[
-    dict[str, TensorFieldValue], list[torch.Tensor], DataclassTensorFieldsMetadata
-]:
-    """Extract fields of a dataclass that are tensors or list/tuple/dict of tensors.
+def pack_dataclass_tensors(obj: Any) -> tuple[Any, list[torch.Tensor]]:
+    """Replace tensors nested in a dataclass with lightweight placeholders.
 
-    Supported field types:
-        - torch.Tensor
-        - list[torch.Tensor] (all elements must be tensors)
-        - tuple[torch.Tensor, ...] (all elements must be tensors)
-        - dict[str, torch.Tensor] (all values must be tensors)
-
-    Returns:
-        (fields_dict, tensors_list, metadata): fields_dict maps field names to their value(s);
-        tensors_list is a flat list of all tensors in field order for send/wire format;
-        metadata describes each field's kind for unflatten on recv.
+    Dataclasses are copied without invoking their constructors, so transport-only
+    placeholders never reach ``__post_init__`` methods. Tensor aliases are
+    preserved by emitting each tensor object only once.
     """
     if not is_dataclass(obj):
-        return {}, [], []
-    result: dict[str, TensorFieldValue] = {}
-    tensors_list: list[torch.Tensor] = []
-    metadata: DataclassTensorFieldsMetadata = []
-    for f in fields(obj):
-        val = getattr(obj, f.name)
-        if isinstance(val, torch.Tensor):
-            result[f.name] = val
-            tensors_list.append(val)
-            metadata.append((f.name, "tensor", None))
-        elif isinstance(val, (list, tuple)) and all(
-            isinstance(item, torch.Tensor) for item in val
-        ):
-            # Preserve list vs tuple; flatten/unflatten will distinguish for wire format.
-            result[f.name] = val
-            tensors_list.extend(val)
-            kind = "list" if isinstance(val, list) else "tuple"
-            metadata.append((f.name, kind, len(val)))
-        elif isinstance(val, dict) and all(
-            isinstance(v, torch.Tensor) for v in val.values()
-        ):
-            result[f.name] = val
-            keys = list(val.keys())
-            tensors_list.extend(val[k] for k in keys)
-            metadata.append((f.name, "dict", keys))
-    return result, tensors_list, metadata
+        raise TypeError(f"Expected a dataclass, got {type(obj)}")
+
+    tensors: list[torch.Tensor] = []
+    tensor_indices: dict[int, int] = {}
+
+    def pack(value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            tensor_id = id(value)
+            index = tensor_indices.get(tensor_id)
+            if index is None:
+                index = len(tensors)
+                tensor_indices[tensor_id] = index
+                tensors.append(value)
+            return TensorPlaceholder(index)
+        if is_dataclass(value):
+            packed = copy.copy(value)
+            for field in fields(value):
+                object.__setattr__(packed, field.name, pack(getattr(value, field.name)))
+            return packed
+        if isinstance(value, dict):
+            return {key: pack(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [pack(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(pack(item) for item in value)
+        return value
+
+    return pack(obj), tensors
 
 
-def unflatten_dataclass_tensor_fields(
-    metadata: DataclassTensorFieldsMetadata,
-    flat_tensors: list[torch.Tensor],
-) -> dict[str, TensorFieldValue]:
-    """Reconstruct a dict of tensor fields from metadata and flat tensor list (from recv)."""
-    result: dict[str, TensorFieldValue] = {}
-    idx = 0
-    for name, kind, extra in metadata:
-        if kind == "tensor":
-            result[name] = flat_tensors[idx]
-            idx += 1
-        elif kind == "list":
-            n = extra if isinstance(extra, int) else 0
-            result[name] = flat_tensors[idx : idx + n]
-            idx += n
-        elif kind == "tuple":
-            n = extra if isinstance(extra, int) else 0
-            result[name] = tuple(flat_tensors[idx : idx + n])
-            idx += n
-        elif kind == "dict":
-            keys = extra if isinstance(extra, list) else []
-            result[name] = dict(zip(keys, flat_tensors[idx : idx + len(keys)]))
-            idx += len(keys)
-        else:
-            raise ValueError(f"Unknown metadata kind for field {name}: {kind}")
-    if idx != len(flat_tensors):
+def unpack_dataclass_tensors(skeleton: Any, tensors: list[torch.Tensor]) -> Any:
+    """Restore tensors previously removed by :func:`pack_dataclass_tensors`."""
+
+    def unpack(value: Any) -> Any:
+        if isinstance(value, TensorPlaceholder):
+            return tensors[value.index]
+        if is_dataclass(value):
+            restored = copy.copy(value)
+            for field in fields(value):
+                object.__setattr__(
+                    restored, field.name, unpack(getattr(value, field.name))
+                )
+            return restored
+        if isinstance(value, dict):
+            return {key: unpack(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [unpack(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(unpack(item) for item in value)
+        return value
+
+    return unpack(skeleton)
+
+
+#: What worker-group arguments accept: a worker group, a group name, or any
+#: iterable mixing the two.
+WorkerGroupSpec = "WorkerGroup | str | Iterable[WorkerGroup | str]"
+
+
+def get_group_world_size(group_name: str) -> int:
+    """Ask the worker manager how many workers a launched group has.
+
+    Args:
+        group_name: Name of a launched worker group.
+
+    Returns:
+        The number of workers in the group.
+
+    Raises:
+        ValueError: If no group of that name has registered with the manager.
+    """
+    from ..manager import WorkerAddress, WorkerManager
+
+    worker_info = WorkerManager.get_proxy().get_worker_info(
+        WorkerAddress(root_group_name=group_name, ranks=0)
+    )
+    if worker_info is None:
         raise ValueError(
-            f"Metadata consumed {idx} tensors but flat list has {len(flat_tensors)}"
+            f"Worker group '{group_name}' is not registered. Pass the worker "
+            f"group itself, or launch it before naming it."
         )
-    return result
+    return worker_info.group_world_size
+
+
+def resolve_group_sizes(spec: Any) -> list[tuple[str, int]]:
+    """Normalize a worker group spec into ``(group name, world size)`` pairs.
+
+    A worker group reports its own size, which is known as soon as it is
+    launched. A bare group name is resolved through the worker manager, which
+    requires that group to have finished registering.
+
+    Args:
+        spec: A worker group, a group name, an iterable mixing the two, or None.
+
+    Returns:
+        One ``(group name, world size)`` pair per group, in the given order.
+
+    Raises:
+        TypeError: If an entry is neither a worker group nor a group name.
+    """
+    from ..worker import WorkerGroup
+
+    if spec is None:
+        return []
+    if isinstance(spec, (str, WorkerGroup)):
+        spec = [spec]
+    sizes = []
+    for group in spec:
+        if isinstance(group, WorkerGroup):
+            sizes.append((group.worker_group_name, len(group.worker_info_list)))
+        elif isinstance(group, str):
+            sizes.append((group, get_group_world_size(group)))
+        else:
+            raise TypeError(
+                f"Expected a WorkerGroup or a group name, got {type(group)}."
+            )
+    return sizes
+
+
+def resolve_colocation_node_rank(*specs: Any) -> Optional[int]:
+    """Find the node a channel should sit on to stay close to its traffic.
+
+    Returns the cluster node rank of rank 0 of the first group that resolves,
+    trying each spec in the order given. A channel placed on that node keeps one
+    side of its traffic node-local instead of crossing the network twice.
+
+    Args:
+        *specs: Worker group specs, in preference order. Each is a worker group,
+            a group name, an iterable mixing the two, or None.
+
+    Returns:
+        The node rank to place on, or None if no spec names a launched group.
+    """
+    from ..manager import WorkerAddress, WorkerManager
+
+    for spec in specs:
+        if spec is None:
+            continue
+        # Groups are looked up by name whether they arrive as objects or strings:
+        # a group's own worker list holds ranks and actor handles, not placements.
+        for group_name in resolve_group_names(spec):
+            worker_info = WorkerManager.get_proxy().get_worker_info(
+                WorkerAddress(root_group_name=group_name, ranks=0)
+            )
+            if worker_info is not None:
+                return worker_info.cluster_node_rank
+    return None
+
+
+def resolve_group_names(spec: Any) -> list[str]:
+    """Normalize a worker group spec into a list of group names.
+
+    Args:
+        spec: A worker group, a group name, an iterable mixing the two, or None.
+
+    Returns:
+        The group names, in the given order.
+    """
+    from ..worker import WorkerGroup
+
+    if spec is None:
+        return []
+    if isinstance(spec, (str, WorkerGroup)):
+        spec = [spec]
+    names = []
+    for group in spec:
+        if isinstance(group, WorkerGroup):
+            names.append(group.worker_group_name)
+        elif isinstance(group, str):
+            names.append(group)
+        else:
+            raise TypeError(
+                f"Expected a WorkerGroup or a group name, got {type(group)}."
+            )
+    return names
+
+
+def resolve_worker_names(spec: Any) -> list[str]:
+    """Expand a worker group spec into one worker name per rank.
+
+    Names are built with :meth:`WorkerAddress.get_name`, so they match the
+    names workers report for themselves.
+
+    Args:
+        spec: A worker group, a group name, an iterable mixing the two, or None.
+
+    Returns:
+        One ``"<group>:<rank>"`` name per worker, in group and rank order.
+    """
+    from ..manager import WorkerAddress
+
+    return [
+        WorkerAddress(root_group_name=name, ranks=rank).get_name()
+        for name, world_size in resolve_group_sizes(spec)
+        for rank in range(world_size)
+    ]

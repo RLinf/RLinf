@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 from ..discovery import (
@@ -48,8 +48,9 @@ class DualFrankaRobot(FrankaRobot):
         right_gripper_type: str = "robotiq",
         left_gripper_connection: Optional[str] = None,
         right_gripper_connection: Optional[str] = None,
-        left_compliance: Optional[CartesianCompliance] = None,
-        right_compliance: Optional[CartesianCompliance] = None,
+        left_compliance: CartesianCompliance | Mapping[str, float] | None = None,
+        right_compliance: CartesianCompliance | Mapping[str, float] | None = None,
+        realtime_config: Optional[str] = None,
         arm_cameras: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> dict[str, Any]:
         """Return the left and right arm groups with their wrist cameras."""
@@ -88,6 +89,7 @@ class DualFrankaRobot(FrankaRobot):
                     node_rank=node_rank,
                     name=f"{cls.ROBOT_TYPE}Arm-{side}-{worker_rank}-{env_idx}",
                     compliance=compliance,
+                    realtime_config=realtime_config,
                 ),
                 end_effector=cls.declare_end_effector(
                     robot_ip,
@@ -120,15 +122,23 @@ class DualFrankaConfig(RobotConfig):
     When unset in YAML it is auto-detected from the ``RIGHT_ROBOT_IP``
     environment variable on the node where the arm is enumerated."""
 
-    compliance: CartesianCompliance = field(default_factory=CartesianCompliance)
-    """Cartesian impedance settings shared by both arms.
+    compliance: CartesianCompliance | Mapping[str, float] | None = None
+    """Complete Cartesian settings, or backend overrides shared by both arms.
+    ``None`` uses backend defaults.
     Ignored by backends that own their gains."""
 
-    left_compliance: Optional[CartesianCompliance] = None
-    """Impedance settings for the left arm. Falls back to :attr:`compliance`."""
+    left_compliance: CartesianCompliance | Mapping[str, float] | None = None
+    """Left-arm settings. ``None`` uses :attr:`compliance`; a mapping replaces it
+    and fills omitted keys from backend defaults."""
 
-    right_compliance: Optional[CartesianCompliance] = None
-    """Impedance settings for the right arm. Falls back to :attr:`compliance`."""
+    right_compliance: CartesianCompliance | Mapping[str, float] | None = None
+    """Right-arm settings. ``None`` uses :attr:`compliance`; a mapping replaces it
+    and fills omitted keys from backend defaults."""
+
+    realtime_config: Optional[str] = None
+    """libfranka real-time mode for both arms: ``"ignore"`` (the default when
+    ``None``) runs on a kernel without PREEMPT_RT, and ``"enforce"`` refuses
+    one."""
 
     left_camera_serials: Optional[list[str]] = None
     """Camera serial numbers for the left arm's wrist camera(s)."""
@@ -186,12 +196,6 @@ class DualFrankaConfig(RobotConfig):
             self.right_camera_serials = list(self.right_camera_serials)
         if self.base_camera_serials:
             self.base_camera_serials = list(self.base_camera_serials)
-
-        self.compliance = CartesianCompliance.from_config(self.compliance)
-        for side in ("left_compliance", "right_compliance"):
-            given = getattr(self, side)
-            if given is not None:
-                setattr(self, side, CartesianCompliance.from_config(given))
 
 
 DualFrankaRobot.register_type(DualFrankaConfig)

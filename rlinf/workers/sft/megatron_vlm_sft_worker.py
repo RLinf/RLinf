@@ -26,8 +26,8 @@ try:
     from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
     from megatron.training.utils import average_losses_across_data_parallel_group
 
-except (ImportError, ModuleNotFoundError):
-    raise "Megatron core was not found."
+except (ImportError, ModuleNotFoundError) as e:
+    raise ImportError("Megatron core was not found.") from e
 
 from omegaconf import DictConfig
 

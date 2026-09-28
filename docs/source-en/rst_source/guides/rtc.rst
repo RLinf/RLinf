@@ -156,7 +156,7 @@ Control node (worker):
 
 .. code:: bash
 
-   source .venv/franka_catkin_ws/devel/setup.bash
+   source .venv/bin/activate
    source ray_utils/realworld/setup_before_ray.sh
    ray start --address='<head_node_ip_address>:6379'
 

@@ -109,6 +109,7 @@ actor:
     num_action_chunks: 5
     add_value_head: False
     openpi:
+      task: rl
       is_nft: True
       noise_level: 0.0
       noise_method: "flow_ode"

@@ -35,6 +35,9 @@ def _run_scenario(mode: str) -> subprocess.CompletedProcess:
     env["PYTHONPATH"] = os.pathsep.join(
         path for path in (_REPO_ROOT, env.get("PYTHONPATH")) if path
     )
+    # Start a private Ray instead of attaching to a running one, which would not
+    # see the scenario's environment.
+    env["RAY_ADDRESS"] = "local"
     return subprocess.run(
         [sys.executable, _SCENARIO, mode],
         capture_output=True,

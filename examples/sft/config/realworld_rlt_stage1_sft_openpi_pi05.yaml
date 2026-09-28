@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5_rlinf@actor.model
+  - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -40,7 +40,7 @@ actor:
   seed: 42
 
   model:
-    model_type: "openpi_rlinf"
+    model_type: "openpi"
     is_lora: False
     model_path: "/path/to/model"
     num_action_chunks: 20
@@ -96,7 +96,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
+    use_orig_params: True
     gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}

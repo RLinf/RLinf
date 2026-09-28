@@ -89,7 +89,7 @@ Installation
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
    # For faster image pull in mainland China you can use:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Then switch to the OpenPI env inside the container:
 

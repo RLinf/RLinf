@@ -238,8 +238,8 @@ Launcher 如何使用这份配置
        router_url = router_group.get_router_url().wait()[0]
        # ... 使用 router_url（见下文 “后续：调用 router”） ...
 
-       router_group.shutdown().wait()
-       server_group.shutdown().wait()
+       router_group.stop().wait()
+       server_group.stop().wait()
 
 
    if __name__ == "__main__":

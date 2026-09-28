@@ -141,13 +141,13 @@ in the task YAML as well.
 Run It
 ------
 
-1. On the Franka control node, install the Franka DexHand environment:
+1. On the Franka control node, install the Franka environment:
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --env franka-dexhand
+      bash requirements/install.sh embodied --env franka
 
-   This command installs the base Franka dependencies plus ``RLinf-dexterous-hands``, which includes the Ruiyan dexterous-hand and data-glove drivers.
+   The Franka environment includes ``RLinf-dexterous-hands``, which provides the Ruiyan dexterous-hand and data-glove drivers.
 2. Put the Franka robot into programming mode, manually move it to the task target pose, then run the script on the Franka control node to acquire the target end-effector pose:
 
    .. code-block:: bash

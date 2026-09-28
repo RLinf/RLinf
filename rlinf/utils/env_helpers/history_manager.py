@@ -84,6 +84,9 @@ class HistoryManager:
             )
 
         input_on_done = history_buffer_cfg.get("input_on_done", False)
+        input_on_done_full_window = history_buffer_cfg.get(
+            "input_on_done_full_window", False
+        )
 
         return {
             "name": history_buffer_name,
@@ -92,6 +95,7 @@ class HistoryManager:
             "input_interval": input_interval,
             "history_keys": history_keys,
             "input_on_done": input_on_done,
+            "input_on_done_full_window": input_on_done_full_window,
         }
 
     def validate_history_buffers(self, history_buffers: list[dict[str, Any]]) -> None:
@@ -174,8 +178,12 @@ class HistoryManager:
                         max(
                             0,
                             len(self.history_entries[env_idx])
-                            - self.history_counts[env_idx]
-                            % history_buffer["input_interval"],
+                            - (
+                                history_buffer["history_size"]
+                                if history_buffer["input_on_done_full_window"]
+                                else self.history_counts[env_idx]
+                                % history_buffer["input_interval"]
+                            ),
                         ),
                         len(self.history_entries[env_idx]),
                     )

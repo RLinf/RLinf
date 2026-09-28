@@ -206,9 +206,9 @@ Keep Task Logic Separate
 
 A part defines how to sense or move hardware; a task defines why those readings
 and motions matter. Reward, termination, task-specific reset behavior, and
-Gymnasium spaces therefore belong to a ``RobotTask`` or a concrete real-world
-env. ``RobotTaskEnv`` joins a generic task to the robot and owns the lifecycle,
-while specialized envs can use the same robot calls directly.
+Gymnasium spaces therefore belong to the real-world env class registered for
+the task, which drives the hardware through the same composed robot calls and
+owns its lifecycle.
 
 The result is two independent contracts: robot paths remain stable across tasks
 and placement, while a task can change its policy-facing schema without changing

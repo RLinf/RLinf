@@ -14,9 +14,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/franka_index.html" style="text-decoration: underline; color: blue;">
-           <b>Single-Arm Franka</b>
+           <b>单臂 Franka</b>
          </a><br>
-         进入 Single-Arm Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、VR / PICO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
+         查看单臂 Franka 的真机强化学习、遥操作与数据采集、奖励模型、灵巧手、SFT 和部署指南
        </p>
      </div>
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
@@ -24,9 +24,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/dual_franka_index.html" style="text-decoration: underline; color: blue;">
-           <b>Dual-Arm Franka</b>
+           <b>双臂 Franka</b>
          </a><br>
-         进入 Dual-Arm Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、VR / PICO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
+         查看双臂 Franka 的数据采集、SFT、部署与 PICO 辅助 HG-DAgger 指南
        </p>
      </div>
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
@@ -86,8 +86,8 @@ Piper 与 SO101 配置
    :hidden:
    :maxdepth: 3
 
-   Single-Arm Franka <embodied/franka_index>
-   Dual-Arm Franka <embodied/dual_franka_index>
+   单臂 Franka <embodied/franka_index>
+   双臂 Franka <embodied/dual_franka_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>

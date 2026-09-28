@@ -1,0 +1,12 @@
+# Shared Ascend TensorFlow pins for models whose stack pulls TF
+# (GR00T, StarVLA, tensorflow_graphics, …).
+# TensorFlow 2.21 dlopens a protobuf/absl that SIGSEGVs against Ray's
+# protobuf>=6.33.5 on Ascend (RegisterMessageExtension during TF MLIR init).
+tensorflow==2.15.0
+tensorflow-cpu-aws==2.15.0; platform_machine == "aarch64"
+tensorflow-estimator==2.15.0
+tensorflow-io-gcs-filesystem==0.37.1
+keras==2.15.0
+tensorboard==2.15.2
+ml-dtypes==0.2.0
+protobuf==3.20.3

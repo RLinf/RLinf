@@ -91,7 +91,7 @@
 - 数据手套控制 6 维手指动作
 - SpaceMouse 左键用于启用相对手套控制
 
-Reward Model
+奖励模型
 ------------
 
 reward model 侧与 :doc:`franka_reward_model` 中的 Franka 真机流程一致。
@@ -140,13 +140,13 @@ serial 是 ``wrist_1``，第二个 serial 是 ``wrist_2``，不会按序列号�
 运行
 ----------------------------------------
 
-1. 在 Franka 控制节点安装 Franka DexHand 环境：
+1. 在 Franka 控制节点安装 Franka 环境：
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --env franka-dexhand
+      bash requirements/install.sh embodied --env franka
 
-   该命令会安装 Franka 基础依赖和 ``RLinf-dexterous-hands``，后者包含睿研灵巧手与数据手套驱动。
+   Franka 环境已包含 ``RLinf-dexterous-hands``，其中提供睿研灵巧手与数据手套驱动。
 2. 将 Franka 机器人切换到可编程模式，手动移动到任务目标位姿，然后在 Franka 控制节点运行脚本获取目标末端位姿：
 
    .. code-block:: bash
