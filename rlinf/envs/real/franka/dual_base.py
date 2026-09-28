@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import queue
 import time
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from functools import partial
@@ -382,10 +383,13 @@ class DualFrankaEnv(gym.Env):
             self.node_rank if right_node is None else right_node,
         )
 
-    def _side_compliance(self, side: str) -> Optional[CartesianCompliance]:
+    def _side_compliance(
+        self, side: str
+    ) -> CartesianCompliance | Mapping[str, float] | None:
         """Return one arm's impedance settings, or the shared ones."""
         hardware = self.hardware
-        return getattr(hardware, f"{side}_compliance") or hardware.compliance
+        given = getattr(hardware, f"{side}_compliance")
+        return hardware.compliance if given is None else given
 
     def _setup_hardware(self) -> None:
         assert self.env_idx >= 0, f"env_idx must be set for {type(self).__name__}."
@@ -406,6 +410,7 @@ class DualFrankaEnv(gym.Env):
             right_gripper_connection=self.hardware.right_gripper_connection,
             left_compliance=self._side_compliance("left"),
             right_compliance=self._side_compliance("right"),
+            realtime_config=self.hardware.realtime_config,
             arm_cameras=arm_cameras,
             cameras=base_cameras,
         )

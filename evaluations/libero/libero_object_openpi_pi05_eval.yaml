@@ -61,4 +61,5 @@ rollout:
     num_action_chunks: 5
     # openpi specific parameters
     openpi:
+      task: eval
       noise_level: 0.3

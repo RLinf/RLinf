@@ -2,6 +2,7 @@ defaults:
   - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:
@@ -10,43 +11,41 @@ hydra:
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
 
-# Dual-Franka tcp_rot6d_v1 SFT.
-#   - config_name: pi05_dualfranka_tcp_rot6d (override repo_id at runtime)
-#   - 20-d state/action [xyz + rot6d + grip] per arm
-#   - Body-frame SE(3) RigidBodyDeltaActions at training time (no euler wrap)
+# Dual-Franka tcp_rot6d SFT on the openpi Pi0.5 path. The custom
+# LeRobot loader handles sampling and collation; model-facing transforms come
+# from the canonical RLinf pi05_dualfranka_tcp_rot6d data config.
 #
-# Before launching:
-#   export HF_LEROBOT_HOME=/path/to/lerobot_root
-#   export DUAL_FRANKA_DATA_ROOT=/path/to/lerobot_root
-#   export PI05_BASE_CKPT=/path/to/pi05/torch
-#   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
-#   python toolkits/lerobot/calculate_norm_stats.py \
-#       --config-name pi05_dualfranka_tcp_rot6d \
-#       --repo-id $SFT_REPO_ID
+# Replace the path and repository placeholders below before launching. When
+# train_data_paths points directly at a dataset, repo_id may remain empty. When
+# it points at an HF_LEROBOT_HOME-style parent, set repo_id to the dataset's
+# relative repository ID.
+#
+# Norm stats are loaded from actor.model.openpi_data.norm_stats_path
+# and should match the padded model tensors (state/actions last dim =
+# openpi.model_action_dim). Omit the key to use the OpenPI TrainConfig default.
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-3
+    actor,env,rollout: all
 
 runner:
   task_type: sft
   logger:
     log_path: "../results"
-    project_name: dual-franka-openpi
-    experiment_name: "dual_franka_tcp_rot6d_v1"
-    wandb_entity: WANDB_ENTITY  # Replace: your wandb team / user (or remove if you don't use wandb)
-    logger_backends: ["wandb"]
+    project_name: rlinf
+    experiment_name: "dual_franka_tcp_rot6d_openpi_sft"
+    logger_backends: ["tensorboard"]
 
-  max_epochs: 100000
-  max_steps: -1
+  max_epochs: 100
+  max_steps: 30000
   val_check_interval: -1
   save_interval: 2000
 
 data:
-  # LeRobot root on the training machine, not including the repo id.
-  # Example: /path/to/lerobot_root
-  train_data_paths: ${oc.env:DUAL_FRANKA_DATA_ROOT}
+  train_data_paths: /path/to/dual_franka_dataset
+  repo_id: "<repo_id>/tcp_rot6d_v1"
+  num_workers: 4
 
 algorithm:
   adv_type: gae
@@ -54,42 +53,48 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 16
-  global_batch_size: 128
+  micro_batch_size: 4
+  eval_batch_size: 1
+  global_batch_size: 16
   seed: 0
 
   model:
-    precision: null
-    # Path to the pi0.5 base checkpoint (torch). Set PI05_BASE_CKPT.
-    model_path: ${oc.env:PI05_BASE_CKPT}
-    action_dim: 20 # dual-franka tcp_rot6d: [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]
-    num_action_chunks: 20 # matches Pi0Config action_horizon
-    add_value_head: False
+    model_path: /path/to/pi05_base_pytorch_new
+    # Dual-Franka tcp_rot6d: 20-dim env actions
+    # [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip], 20-step env/SFT window.
+    num_action_chunks: 20
+    action_dim: 20
     openpi:
+      task: sft
       config_name: "pi05_dualfranka_tcp_rot6d"
-      detach_critic_input: True
-      # model/pi0_5 defaults train_expert_only to True, which freezes
-      # PaliGemma and breaks FSDP+gradient-checkpointing with a
-      # view-inplace error. SFT here trains the full model.
-      train_expert_only: False
+      # Network prediction horizon (Pi0Config.action_horizon). Matches official
+      # TrainConfig for pi05_dualfranka_tcp_rot6d. Distinct from action_chunk
+      # / num_action_chunks (env-executed / SFT window).
+      action_horizon: 20
+      # State stays continuous; do not discretize into the prompt (Pi0.5 default
+      # would set discrete_state_input=True when this key is omitted).
+      discrete_state_input: false
     openpi_data:
-      # Full repo id of the backfilled tcp_rot6d dataset.
-      # Must match calculate_norm_stats.py --repo-id.
-      repo_id: SFT_DATASET_REPO_ID  # Replace: <repo_id>/tcp_rot6d_v1
+      # {assets_dir}/{asset_id}/norm_stats.json from calculate_norm_stats.py.
+      norm_stats_path: /path/to/openpi_assets/<repo_id>/norm_stats.json
 
   optim:
-    lr: 7.91e-6
-    value_lr: 1.55e-4
+    lr: 2.5e-5
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-08
-    weight_decay: 0.01
+    weight_decay: 1e-10
     clip_grad: 1.0
+    total_training_steps: 30000
+    lr_warmup_steps: 1000
+    lr_scheduler: "openpi_cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
 
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
+    use_orig_params: True
     gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}

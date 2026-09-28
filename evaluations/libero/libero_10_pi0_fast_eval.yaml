@@ -1,0 +1,76 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/pi0_fast@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    # Exact 500-episode evaluation: 10 workers x 50 environments.
+    env,rollout: 0-9
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results/pi0_fast_libero10_eval"
+    project_name: rlinf
+    experiment_name: "pi0_fast_libero10_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 500
+    seed: 0
+    reward_coef: 1.0
+    auto_reset: False
+    ignore_terminations: True
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    reset_gripper_open: True
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 520
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  sampling_params:
+    do_sample: False
+    temperature_train: 0.3
+    temperature_eval: 0.0
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${rollout.model.pi0_fast.max_action_tokens}
+
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/pi0fast-libero" # https://huggingface.co/lerobot/pi0fast-libero
+    pi0_fast:
+      text_tokenizer_name: "/path/to/paligemma-3b-pt-224" # https://huggingface.co/google/paligemma-3b-pt-224
+      action_tokenizer_name: "/path/to/tokenizer-lib-mean" # https://huggingface.co/jadechoghari/tokenizer-lib-mean

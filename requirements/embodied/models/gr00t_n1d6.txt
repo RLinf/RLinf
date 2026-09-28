@@ -9,3 +9,4 @@ transformers==4.51.3
 lerobot==0.4.4
 peft==0.17.1
 lmdb==1.7.5
+dm-tree

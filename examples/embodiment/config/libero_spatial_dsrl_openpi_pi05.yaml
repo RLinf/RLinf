@@ -148,6 +148,7 @@ actor:
     q_head_type: "default"
 
     openpi:
+      task: dsrl
       use_dsrl: True
       dsrl_state_dim: 8
       dsrl_action_noise_dim: 32

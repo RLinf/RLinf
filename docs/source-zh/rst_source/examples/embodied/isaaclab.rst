@@ -93,7 +93,7 @@
       rlinf/rlinf:agentic-rlinf0.4-isaaclab
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-isaaclab
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-isaaclab
 
 在镜像中切换到对应的虚拟环境：
 

@@ -1,6 +1,5 @@
 defaults:
   - env/robotwin_adjust_bottle@env.eval
-  - model/pi0@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -20,7 +19,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "robotwin_ppo_openpi"
+    experiment_name: "robotwin_adjust_bottle_openpi_eval"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -74,11 +73,29 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
   model:
-    model_path: "/path/to/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle"
-    num_action_chunks: 50 # interface for the env
-    add_value_head: True
+    model_type: "openpi"
+    model_path: "/path/to/pi0_robotwin_adjust_bottle_sft_hf"
+    precision: "bf16"
+    is_lora: false
+    lora_rank: 32
+    pi05: False
+    num_action_chunks: 50
     action_dim: 14
+    use_proprio: True
+    num_steps: 5
+    add_value_head: False
+    # The converted task checkpoint bundles its own normalization statistics.
+    openpi_data:
+      norm_stats_path: ${..model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
+
     openpi:
+      task: "eval"
       config_name: "pi0_aloha_robotwin"
       num_images_in_input: 3
-      detach_critic_input: True
+      action_chunk: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      # max_token_len: 48
+      discrete_state_input: False

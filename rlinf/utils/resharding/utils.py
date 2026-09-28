@@ -13,63 +13,42 @@
 # limitations under the License.
 
 
+import math
+
 import torch
-from megatron.core import parallel_state
 
 from rlinf.config import SupportedModel
 
 
-def get_tp_reshard_fn(model_type: str):
+def get_tp_gather_fn(model_type: str):
     model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN2_5:
-        return tp_reshard_fn_qwen2_5
+        return tp_gather_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
-        return tp_reshard_fn_qwen3_dense
+        return tp_gather_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
-        return tp_reshard_fn_qwen3_moe
+        return tp_gather_fn_qwen3_moe
     elif model_type in (SupportedModel.DEEPSEEK_V3,):
-        return tp_reshard_fn_deepseek_v3
+        return tp_gather_fn_deepseek_v3
+    elif model_type == SupportedModel.GLM4_MOE_LITE:
+        return tp_gather_fn_deepseek_v3  # GLM-4.7-Flash: reuse DeepSeek-V3 MLA+MoE layout (verify at e2e)
     else:
         raise NotImplementedError(
-            f"get_tp_reshard_fn for model_type {model_type} is not implemented"
+            f"get_tp_gather_fn for model_type {model_type} is not implemented"
         )
 
 
-def get_tpe_reshard_fn(model_type: str):
+def get_tpe_gather_fn(model_type: str):
     model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN3_MOE:
-        return tpe_reshard_fn_qwen3_moe
+        return tpe_gather_fn_qwen3_moe
     elif model_type in (SupportedModel.DEEPSEEK_V3,):
-        return tpe_reshard_fn_deepseek_v3
+        return tpe_gather_fn_deepseek_v3
+    elif model_type == SupportedModel.GLM4_MOE_LITE:
+        return tpe_gather_fn_deepseek_v3  # GLM-4.7-Flash: reuse DeepSeek-V3 MLA+MoE layout (verify at e2e)
     else:
         raise NotImplementedError(
-            f"get_tpe_reshard_fn for model_type {model_type} is not implemented"
-        )
-
-
-def get_ep_reshard_fn(model_type: str):
-    model_type = SupportedModel(model_type)
-    if model_type in (SupportedModel.DEEPSEEK_V3,):
-        return ep_reshard_fn_deepseek_v3
-    else:
-        raise NotImplementedError(
-            f"get_ep_reshard_fn for model_type {model_type} is not implemented"
-        )
-
-
-def get_pp_reshard_fn(model_type: str):
-    model_type = SupportedModel(model_type)
-    if model_type == SupportedModel.QWEN2_5:
-        return pp_reshard_fn_qwen2_5
-    elif model_type == SupportedModel.QWEN3:
-        return pp_reshard_fn_qwen3_dense
-    elif model_type == SupportedModel.QWEN3_MOE:
-        return pp_reshard_fn_qwen3_moe
-    elif model_type in (SupportedModel.DEEPSEEK_V3,):
-        return pp_reshard_fn_deepseek_v3
-    else:
-        raise NotImplementedError(
-            f"get_pp_reshard_fn for model_type {model_type} is not implemented"
+            f"get_tpe_gather_fn for model_type {model_type} is not implemented"
         )
 
 
@@ -78,17 +57,162 @@ def get_pp_reshard_fn(model_type: str):
 ##############################
 
 
-def _gather_tp_group_tensor_and_reshard(tensor, dim, merge_factor, tp_group):
-    gathered_tensors = [torch.zeros_like(tensor) for _ in range(merge_factor)]
+def all_gather_tensor(tensor, dim, group):
+    """All-gather tensor across the given process group, cat along dim.
 
-    torch.distributed.all_gather(gathered_tensors, tensor, group=tp_group)
+    Uses group.world_size (not an external merge_factor) to size the output
+    list, avoiding mismatch errors.
+    """
+    world_size = torch.distributed.get_world_size(group)
+    gathered = [torch.zeros_like(tensor) for _ in range(world_size)]
+    torch.distributed.all_gather(gathered, tensor, group=group)
+    return torch.cat(gathered, dim=dim)
 
-    resharded_tensor = torch.cat(gathered_tensors, dim=dim)
 
-    return resharded_tensor
+def reshard_tensor_by_rank(tensor, dim, rank, world_size):
+    """Slice tensor on dim to rank's 1/world_size share.
+
+    narrow() returns a view; for a dim>0 slice (row-parallel weights) the view
+    is non-contiguous, which P2P send (collective_group._check_tensor_contiguous)
+    rejects. .contiguous() makes row-parallel slices contiguous; for dim=0
+    slices (column-parallel) and 1-D tensors narrow already yields a contiguous
+    block so .contiguous() is a no-op.
+    """
+    full_size = tensor.shape[dim]
+    assert full_size % world_size == 0, (
+        f"reshard_tensor_by_rank: dim {dim} size {full_size} not divisible "
+        f"by world_size {world_size} (rank={rank})"
+    )
+    shard_size = full_size // world_size
+    return tensor.narrow(dim, rank * shard_size, shard_size).contiguous()
 
 
-def tp_reshard_fn_qwen2_5(model_state_dict, merge_factor, tp_group):
+# The tp_gather_fn_* family is the gather half of the TP reshard: it
+# all_gathers each parameter across the actor TP group and tags it with a
+# narrow spec; narrow_to_target (mcore_weight_reshard.py) does the per-target
+# slicing. All per-model knowledge (the name lists below) stays here, so that
+# narrow stays model-agnostic. See gather_full_model for the spec format.
+#
+# ``cat`` labels the destination shard grid: "attn" / "dense" / "shared" for
+# the DPA split; non-DPA callers pass "attn", the single grid.
+#
+# ``tp_gather_is_identity`` means the only target wants exactly this rank's
+# shard, so every all_gather is skipped and the local shard is cloned instead.
+
+
+def _gather_tp_param(value, dim, tp_group, cat, tp_gather_is_identity):
+    """Gather one TP-sharded param to full and tag its narrow spec."""
+    if tp_gather_is_identity:
+        return value.clone(), None
+    return all_gather_tensor(value, dim, tp_group), ("slice", dim, cat)
+
+
+def _gather_fused_fc1(value, tp_group, tp_gather_is_identity):
+    """Split a fused gate+up fc1 into the full (gate, up) pair across the TP group.
+
+    Each rank's local fc1 weight is [gate_i; up_i] — two contiguous halves
+    (mcore's apply_swiglu_sharded_factory chunks it the same way).
+    """
+    local_gate, local_up = torch.chunk(value, 2, dim=0)
+    if tp_gather_is_identity:
+        return local_gate.clone(), local_up.clone()
+    return (
+        all_gather_tensor(local_gate, 0, tp_group),
+        all_gather_tensor(local_up, 0, tp_group),
+    )
+
+
+def _apply_layer_offset(key, layer_offset):
+    """Shift the decoder layer number in ``key`` by ``layer_offset``.
+
+    Only ``decoder.layers.*`` keys are shifted. A pipeline-stage offset applies
+    to decoder layers alone; mcore leaves MTP layers un-offset, so ``mtp.*``
+    keys keep their own numbering.
+    """
+    if layer_offset == 0 or not key.startswith("decoder.layers."):
+        return key
+    _, _, layer_num, remaining = key.split(".", 3)
+    return f"decoder.layers.{int(layer_num) + layer_offset}.{remaining}"
+
+
+def pp_merge_params(params, pp_group, layer_offset=0):
+    """Merge a parameter dict across pipeline-parallel ranks.
+
+    Every rank broadcasts the entries it owns and receives the rest, so the
+    result holds the union of all stages' entries. Each source applies
+    ``layer_offset`` to its own ``decoder.layers.*`` keys, so receivers never
+    have to infer a peer's global layer number from a fixed stride, which
+    breaks under uneven PP splits and unaligned buckets.
+
+    Communication is one all_gather_object for metadata plus one broadcast per
+    (source, dtype) flat buffer, instead of one all_gather per tensor.
+
+    Returns the input unchanged when pp_size == 1. Otherwise every value,
+    including this rank's own, is a view into a freshly allocated flat buffer.
+
+    Args:
+        params: local parameter dict (values on GPU).
+        pp_group: pipeline-parallel process group.
+        layer_offset: this rank's pipeline-stage layer offset, from mcore's
+            get_transformer_layer_offset.
+    """
+    pp_size = torch.distributed.get_world_size(pp_group)
+    if pp_size == 1:
+        return params
+
+    pp_rank = torch.distributed.get_rank(pp_group)
+    group_ranks = torch.distributed.get_process_group_ranks(pp_group)
+    device = torch.cuda.current_device()
+
+    own_params = {
+        _apply_layer_offset(key, layer_offset): value for key, value in params.items()
+    }
+    own_meta = {
+        key: (tuple(value.shape), value.dtype) for key, value in own_params.items()
+    }
+    all_meta = [None] * pp_size
+    torch.distributed.all_gather_object(all_meta, own_meta, group=pp_group)
+
+    merged_params = {}
+    for src_index, src_meta in enumerate(all_meta):
+        # Broadcast order must be identical on every rank: each one groups
+        # the same src_meta in insertion order and walks it the same way.
+        # Never sort the keys or dedupe them through a set here; that silently
+        # breaks broadcast symmetry across ranks.
+        dtype_groups = {}
+        for key, (shape, dtype) in src_meta.items():
+            dtype_groups.setdefault(dtype, []).append((key, shape))
+
+        for dtype, src_entries in dtype_groups.items():
+            flat_numel = sum(math.prod(shape) for _, shape in src_entries)
+            flat_buffer = torch.empty(flat_numel, dtype=dtype, device=device)
+            if src_index == pp_rank:
+                offset = 0
+                for key, shape in src_entries:
+                    entry_numel = math.prod(shape)
+                    flat_buffer[offset : offset + entry_numel].copy_(
+                        own_params[key].reshape(-1)
+                    )
+                    offset += entry_numel
+            # torch.distributed.broadcast takes the source as a global rank.
+            torch.distributed.broadcast(
+                flat_buffer, src=group_ranks[src_index], group=pp_group
+            )
+            offset = 0
+            for key, shape in src_entries:
+                entry_numel = math.prod(shape)
+                # A view, not a copy: the flat buffer stays alive as long as
+                # any of its views, and is freed together with them.
+                merged_params[key] = flat_buffer[offset : offset + entry_numel].view(
+                    shape
+                )
+                offset += entry_numel
+    return merged_params
+
+
+def tp_gather_fn_qwen2_5(
+    model_state_dict, tp_group, cat, split_fc1=True, tp_gather_is_identity=False
+):
     # Parameters that should skip TP resharding (just clone)
     param_skip_tp_reshard = [
         "linear_qkv.layer_norm_weight",
@@ -111,9 +235,11 @@ def tp_reshard_fn_qwen2_5(model_state_dict, merge_factor, tp_group):
         "mlp.linear_fc2.weight",
     ]
 
+    full_state_dict = {}
     for k, v in model_state_dict.items():
         if any(param in k for param in param_skip_tp_reshard):
-            model_state_dict[k] = v.clone()
+            # Replicated param: clone so it never aliases a live parameter.
+            full_state_dict[k] = (v.clone(), None)
             continue
 
         if any(param in k for param in param_reshard_column_parallel_linear):
@@ -123,14 +249,26 @@ def tp_reshard_fn_qwen2_5(model_state_dict, merge_factor, tp_group):
         else:
             assert False, f"Unknown parameter: {k}"
 
-        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
-            v, dim, merge_factor, tp_group
+        # Fused fc1: split gate/up per rank, then gather each half to full.
+        # split_fc1=False (mcore-format inference reshard) keeps the fused
+        # linear_fc1 key instead, through the generic path below.
+        if split_fc1 and "linear_fc1" in k:
+            gate, up = _gather_fused_fc1(v, tp_group, tp_gather_is_identity)
+            spec = None if tp_gather_is_identity else ("slice", 0, cat)
+            full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
+            full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            continue
+
+        full_state_dict[k] = _gather_tp_param(
+            v, dim, tp_group, cat, tp_gather_is_identity
         )
 
-    return model_state_dict
+    return full_state_dict
 
 
-def tp_reshard_fn_qwen3_dense(model_state_dict, merge_factor, tp_group):
+def tp_gather_fn_qwen3_dense(
+    model_state_dict, tp_group, cat, split_fc1=True, tp_gather_is_identity=False
+):
     # Parameters that should skip TP resharding (just clone)
     param_skip_tp_reshard = [
         "linear_qkv.layer_norm_weight",
@@ -156,9 +294,11 @@ def tp_reshard_fn_qwen3_dense(model_state_dict, merge_factor, tp_group):
         "mlp.linear_fc2.weight",
     ]
 
+    full_state_dict = {}
     for k, v in model_state_dict.items():
         if any(param in k for param in param_skip_tp_reshard):
-            model_state_dict[k] = v.clone()
+            # Replicated param: clone so it never aliases a live parameter.
+            full_state_dict[k] = (v.clone(), None)
             continue
 
         if any(param in k for param in param_reshard_column_parallel_linear):
@@ -168,14 +308,29 @@ def tp_reshard_fn_qwen3_dense(model_state_dict, merge_factor, tp_group):
         else:
             assert False, f"Unknown parameter: {k}"
 
-        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
-            v, dim, merge_factor, tp_group
+        # Fused fc1: split gate/up per rank, then gather each half to full.
+        # split_fc1=False (mcore-format inference reshard) keeps the fused
+        # linear_fc1 key instead, through the generic path below.
+        if split_fc1 and "linear_fc1" in k:
+            gate, up = _gather_fused_fc1(v, tp_group, tp_gather_is_identity)
+            spec = None if tp_gather_is_identity else ("slice", 0, cat)
+            full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
+            full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            continue
+
+        full_state_dict[k] = _gather_tp_param(
+            v, dim, tp_group, cat, tp_gather_is_identity
         )
 
-    return model_state_dict
+    return full_state_dict
 
 
-def tp_reshard_fn_qwen3_moe(model_state_dict, merge_factor, tp_group):
+def tp_gather_fn_qwen3_moe(
+    model_state_dict, tp_group, cat, split_fc1=True, tp_gather_is_identity=False
+):
+    # split_fc1 is unused: qwen3_moe has no dense MLP, and routed-expert
+    # fc1/fc2 never reach this fn (they live in expert_params). The parameter
+    # only keeps the tp_gather_fn_* signature uniform.
     # Parameters that should skip TP resharding (just clone)
     param_skip_tp_reshard = [
         "linear_qkv.layer_norm_weight",
@@ -187,7 +342,6 @@ def tp_reshard_fn_qwen3_moe(model_state_dict, merge_factor, tp_group):
         "router.weight",
     ]
 
-    # MoE model resharding the mlp weight in tpe_reshard_fn
     # Parameters that need to be gathered on dim=0
     param_reshard_column_parallel_linear = [
         "word_embeddings.weight",
@@ -200,34 +354,37 @@ def tp_reshard_fn_qwen3_moe(model_state_dict, merge_factor, tp_group):
         "self_attention.linear_proj.weight",
     ]
 
-    # Parameters that need to skip in tp resharding
-    param_reshard_skip_weight = [
-        "linear_fc1.weight",
-        "linear_fc2.weight",
-    ]
-
+    full_state_dict = {}
     for k, v in model_state_dict.items():
         if any(param in k for param in param_skip_tp_reshard):
-            model_state_dict[k] = v.clone()
+            # Replicated param: clone so it never aliases a live parameter.
+            full_state_dict[k] = (v.clone(), None)
             continue
 
         if any(param in k for param in param_reshard_column_parallel_linear):
             dim = 0
         elif any(param in k for param in param_reshard_row_parallel_linear):
             dim = 1
-        elif any(param in k for param in param_reshard_skip_weight):
-            continue
         else:
             assert False, f"Unknown parameter: {k}"
 
-        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
-            v, dim, merge_factor, tp_group
+        full_state_dict[k] = _gather_tp_param(
+            v, dim, tp_group, cat, tp_gather_is_identity
         )
 
-    return model_state_dict
+    return full_state_dict
 
 
-def tp_reshard_fn_deepseek_v3(model_state_dict, merge_factor, tp_group):
+def tp_gather_fn_deepseek_v3(
+    model_state_dict, tp_group, cat, split_fc1=True, tp_gather_is_identity=False
+):
+    # DeepSeek-V3 / Kimi K2 / GLM-4.7-Flash text backbone: MLA attention + MoE.
+    # This fn covers the MLA projections and the dense/shared MLP; routed
+    # experts live in expert_params and never reach it.
+
+    # Replicated / non-TP params: clone, no gather. q_down_proj and
+    # kv_down_proj are replicated in TE even though the spec marks them
+    # column-parallel (confirmed by dump: 1536 / 576 are not divided by TP).
     param_skip_tp_reshard = [
         "linear_q_up_proj.layer_norm_weight",
         "linear_kv_up_proj.layer_norm_weight",
@@ -239,6 +396,8 @@ def tp_reshard_fn_deepseek_v3(model_state_dict, merge_factor, tp_group):
         "final_layernorm.weight",
         "router.weight",
         "router.expert_bias",
+        "enorm.weight",
+        "hnorm.weight",
     ]
 
     param_reshard_column_parallel_linear = [
@@ -249,6 +408,9 @@ def tp_reshard_fn_deepseek_v3(model_state_dict, merge_factor, tp_group):
         "self_attention.linear_kv_up_proj.weight",
         "mlp.linear_fc1.weight",
         "shared_experts.linear_fc1.weight",
+        # eh_proj is column-parallel in mcore. Only the mcore-format target
+        # reaches here; the sglang-format case is intercepted below.
+        "eh_proj.weight",
     ]
 
     param_reshard_row_parallel_linear = [
@@ -257,27 +419,40 @@ def tp_reshard_fn_deepseek_v3(model_state_dict, merge_factor, tp_group):
         "shared_experts.linear_fc2.weight",
     ]
 
-    param_reshard_skip_weight = [
-        "linear_fc1.weight",
-        "linear_fc2.weight",
-    ]
-
+    full_state_dict = {}
     for k, v in model_state_dict.items():
         if any(param in k for param in param_skip_tp_reshard):
-            model_state_dict[k] = v.clone()
+            # Replicated param: clone so it never aliases a live parameter.
+            full_state_dict[k] = (v.clone(), None)
+            continue
+        if k.endswith("eh_proj.weight") and split_fc1:
+            # sglang target: deepseek_nextn uses a replicated nn.Linear, so
+            # gather to full and never slice. The identity fast path does not
+            # apply, since the target wants the full tensor rather than this
+            # rank's shard. An mcore-format target falls through instead.
+            full_state_dict[k] = (all_gather_tensor(v, 0, tp_group), None)
             continue
         if any(param in k for param in param_reshard_column_parallel_linear):
             dim = 0
         elif any(param in k for param in param_reshard_row_parallel_linear):
             dim = 1
-        elif any(param in k for param in param_reshard_skip_weight):
-            continue
         else:
             assert False, f"Unknown parameter: {k}"
-        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
-            v, dim, merge_factor, tp_group
+
+        # Unified fused fc1 (dense + shared): split gate/up per rank, then
+        # gather each half to full. split_fc1=False (mcore-format inference
+        # reshard) keeps the fused key instead.
+        if split_fc1 and "linear_fc1" in k:
+            gate, up = _gather_fused_fc1(v, tp_group, tp_gather_is_identity)
+            spec = None if tp_gather_is_identity else ("slice", 0, cat)
+            full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
+            full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            continue
+
+        full_state_dict[k] = _gather_tp_param(
+            v, dim, tp_group, cat, tp_gather_is_identity
         )
-    return model_state_dict
+    return full_state_dict
 
 
 ##############################
@@ -285,191 +460,96 @@ def tp_reshard_fn_deepseek_v3(model_state_dict, merge_factor, tp_group):
 ##############################
 
 
-def tpe_reshard_fn_qwen3_moe(
-    model_state_dict, tpe_size, tpe_group, rollout_tp_size, dst_tp_rank
-):
-    for key, value in model_state_dict.items():
+# The tpe_gather_fn_* family is the gather half of the routed-expert reshard:
+# it gathers expert weights across the expert-tensor-parallel (tpe) group and
+# tags each with a narrow spec, always under the "expert_tp" grid.
+#
+#   fc1: full fused [gate; up], tagged ("fused_glu", "expert_tp"). The key
+#       stays fused; convert_fn renames it to gate/up later.
+#   fc2: full row-parallel tensor, tagged ("slice", 1, "expert_tp").
+#
+# The TP identity fast path does not apply here, because the tpe all_gather is
+# a separate collective under separate conditions.
+
+
+def tpe_gather_fn_qwen3_moe(expert_params, tpe_size, tpe_group):
+    full_params = {}
+    for key, value in expert_params.items():
         if "linear_fc1.weight" in key:
-            dim = 0
-        elif "linear_fc2.weight" in key:
-            dim = 1
-        else:
-            continue
-        if tpe_size != 1:
-            value = _gather_tp_group_tensor_and_reshard(value, dim, tpe_size, tpe_group)
-        if dim == 0:
-            # for the fc1 weight, we need to split it into two parts gate weight and up weight
-            tpe_split_size = value.shape[dim] // tpe_size
-            tpe_value_slice = torch.split(value, tpe_split_size, dim=dim)
+            if tpe_size == 1:
+                # No tpe split: the local value is already the full fused
+                # [gate; up].
+                full_params[key] = (value, ("fused_glu", "expert_tp"))
+                continue
+            value = all_gather_tensor(value, 0, tpe_group)
+            # Each tpe rank's fused shard is [gate_i; up_i], so the gathered
+            # tensor is [g0; u0; g1; u1; ...]. Regroup it into [full_gate;
+            # full_up] so that narrow can chunk the two halves apart.
+            tpe_split_size = value.shape[0] // tpe_size
 
             gate_proj_shards = []
             up_proj_shards = []
+            for weight in torch.split(value, tpe_split_size, dim=0):
+                gate_proj_shard, up_proj_shard = torch.chunk(weight, 2, dim=0)
+                gate_proj_shards.append(gate_proj_shard)
+                up_proj_shards.append(up_proj_shard)
 
-            for i, weight in enumerate(tpe_value_slice):
-                weight_chunk = torch.chunk(weight, 2, dim=0)
-                gate_proj_shards.append(weight_chunk[0])
-                up_proj_shards.append(weight_chunk[1])
-
-            gate_weight = torch.cat(gate_proj_shards, dim=dim)
-            up_weight = torch.cat(up_proj_shards, dim=dim)
-
-            rollout_split_size = gate_weight.shape[dim] // rollout_tp_size
-            gate_value_slice = torch.split(gate_weight, rollout_split_size, dim=dim)
-            up_value_slice = torch.split(up_weight, rollout_split_size, dim=dim)
-
-            model_state_dict[key] = torch.cat(
-                [gate_value_slice[dst_tp_rank], up_value_slice[dst_tp_rank]],
-                dim=0,
-            ).contiguous()
-            del gate_weight, up_weight, gate_value_slice, up_value_slice, value
-        else:
-            rollout_split_size = value.shape[dim] // rollout_tp_size
-            value_slice = torch.split(value, rollout_split_size, dim=dim)
-            model_state_dict[key] = value_slice[dst_tp_rank].contiguous()
-            del value
-
-    return model_state_dict
-
-
-def tpe_reshard_fn_deepseek_v3(
-    model_state_dict, tpe_size, tpe_group, rollout_tp_size, dst_tp_rank
-):
-    for key, value in model_state_dict.items():
-        if "linear_fc1.weight" in key:
-            dim = 0
+            gate_weight = torch.cat(gate_proj_shards, dim=0)
+            up_weight = torch.cat(up_proj_shards, dim=0)
+            full_params[key] = (
+                torch.cat([gate_weight, up_weight], dim=0),
+                ("fused_glu", "expert_tp"),
+            )
         elif "linear_fc2.weight" in key:
-            dim = 1
+            if tpe_size != 1:
+                value = all_gather_tensor(value, 1, tpe_group)
+            full_params[key] = (value, ("slice", 1, "expert_tp"))
         else:
-            continue
-        if tpe_size != 1:
-            value = _gather_tp_group_tensor_and_reshard(value, dim, tpe_size, tpe_group)
-        if dim == 0:
-            # fc1: split fused gate+up, then slice per rollout tp rank.
-            tpe_split_size = value.shape[dim] // tpe_size
-            tpe_value_slice = torch.split(value, tpe_split_size, dim=dim)
+            # Neither expert fc1 nor fc2 (none exist in practice today):
+            # clone so it never aliases a live parameter, since narrow passes
+            # None-spec entries straight through.
+            full_params[key] = (value.clone(), None)
+    return full_params
+
+
+def tpe_gather_fn_deepseek_v3(expert_params, tpe_size, tpe_group):
+    # Same logic as tpe_gather_fn_qwen3_moe. DeepSeek-V3 routed experts
+    # usually run with tpe_size == 1, so the gather is skipped, but fc1 and
+    # fc2 are still tagged for narrow's per-target rollout-TP slicing.
+    full_params = {}
+    for key, value in expert_params.items():
+        if "linear_fc1.weight" in key:
+            if tpe_size == 1:
+                # No tpe split: the local value is already the full fused
+                # [gate; up].
+                full_params[key] = (value, ("fused_glu", "expert_tp"))
+                continue
+            value = all_gather_tensor(value, 0, tpe_group)
+            # Each tpe rank's fused shard is [gate_i; up_i], so the gathered
+            # tensor is [g0; u0; g1; u1; ...]. Regroup it into [full_gate;
+            # full_up] so that narrow can chunk the two halves apart.
+            tpe_split_size = value.shape[0] // tpe_size
 
             gate_proj_shards = []
             up_proj_shards = []
+            for weight in torch.split(value, tpe_split_size, dim=0):
+                gate_proj_shard, up_proj_shard = torch.chunk(weight, 2, dim=0)
+                gate_proj_shards.append(gate_proj_shard)
+                up_proj_shards.append(up_proj_shard)
 
-            for i, weight in enumerate(tpe_value_slice):
-                weight_chunk = torch.chunk(weight, 2, dim=0)
-                gate_proj_shards.append(weight_chunk[0])
-                up_proj_shards.append(weight_chunk[1])
-
-            gate_weight = torch.cat(gate_proj_shards, dim=dim)
-            up_weight = torch.cat(up_proj_shards, dim=dim)
-
-            rollout_split_size = gate_weight.shape[dim] // rollout_tp_size
-            gate_value_slice = torch.split(gate_weight, rollout_split_size, dim=dim)
-            up_value_slice = torch.split(up_weight, rollout_split_size, dim=dim)
-
-            model_state_dict[key] = torch.cat(
-                [gate_value_slice[dst_tp_rank], up_value_slice[dst_tp_rank]],
-                dim=0,
-            ).contiguous()
-            del gate_weight, up_weight, gate_value_slice, up_value_slice, value
+            gate_weight = torch.cat(gate_proj_shards, dim=0)
+            up_weight = torch.cat(up_proj_shards, dim=0)
+            full_params[key] = (
+                torch.cat([gate_weight, up_weight], dim=0),
+                ("fused_glu", "expert_tp"),
+            )
+        elif "linear_fc2.weight" in key:
+            if tpe_size != 1:
+                value = all_gather_tensor(value, 1, tpe_group)
+            full_params[key] = (value, ("slice", 1, "expert_tp"))
         else:
-            rollout_split_size = value.shape[dim] // rollout_tp_size
-            value_slice = torch.split(value, rollout_split_size, dim=dim)
-            model_state_dict[key] = value_slice[dst_tp_rank].contiguous()
-            del value
-
-    return model_state_dict
-
-
-def ep_reshard_fn_deepseek_v3(
-    expert_params, rollout_ep_size, dst_ep_rank, num_moe_experts
-):
-    """EP-distribute: select this rollout ep rank's subset of FULL experts.
-    Used when rollout_ep_size > 1.
-    i.e. `...mlp.experts.local_experts.{G}.linear_fc1.weight` with GLOBAL expert
-    id G in [0, num_moe_experts).
-    Extensible to dp>1+ep: generalize dst_ep_rank to a (dp_rank, ep_rank) pair
-    and recompute `start`/`end` here (the only place that needs to change).
-    """
-    experts_per_rank = num_moe_experts // rollout_ep_size
-    start = dst_ep_rank * experts_per_rank
-    end = start + experts_per_rank
-    out = {}
-    for key, val in expert_params.items():
-        if "local_experts." not in key:
-            continue
-        g = int(key.split("local_experts.")[1].split(".")[0])
-        if start <= g < end:
-            out[key] = val
-    return out
-
-
-##############################
-# pp reshard fn implementation
-##############################
-
-
-def _gather_pp_group_tensor_and_reshard(
-    model_state_dict, key, pp_src_idx, group, dtype
-):
-    tensor = model_state_dict.get(key)
-    if tensor is not None:
-        tensor_shape = [tensor.shape]
-    else:
-        tensor_shape = [None]
-
-    torch.distributed.broadcast_object_list(tensor_shape, pp_src_idx, group=group)
-
-    if tensor_shape[0] is None:
-        return None
-    if torch.distributed.get_rank() != pp_src_idx:
-        tensor = torch.empty(tensor_shape[0], dtype=dtype).cuda()
-
-    torch.distributed.broadcast(tensor.contiguous(), pp_src_idx, group=group)
-    return tensor
-
-
-def gather_pp_group_tensor_and_reshard(
-    model_state_dict, keys_with_ranks, pp_group, dtype
-):
-    """Helper function to reshard multiple keys."""
-    for key, target_rank in keys_with_ranks:
-        tensor = _gather_pp_group_tensor_and_reshard(
-            model_state_dict, key, target_rank, pp_group, dtype
-        )
-        if tensor is not None:
-            model_state_dict[key] = tensor.clone()
-    return model_state_dict
-
-
-def _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype):
-    """Common resharding logic for Qwen models."""
-    pp_first_rank = parallel_state.get_pipeline_model_parallel_first_rank()
-    pp_last_rank = parallel_state.get_pipeline_model_parallel_last_rank()
-
-    keys_with_ranks = [
-        ("embedding.word_embeddings.weight", pp_first_rank),
-        ("decoder.final_layernorm.weight", pp_last_rank),
-        ("decoder.final_layernorm.bias", pp_last_rank),
-        ("output_layer.weight", pp_last_rank),
-    ]
-
-    return gather_pp_group_tensor_and_reshard(
-        model_state_dict, keys_with_ranks, pp_group, dtype
-    )
-
-
-def pp_reshard_fn_qwen2_5(model_state_dict, pp_group, dtype):
-    """Reshard pipeline parallel weights for Qwen2.5 models."""
-    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
-
-
-def pp_reshard_fn_qwen3_dense(model_state_dict, pp_group, dtype):
-    """Reshard pipeline parallel weights for Qwen3 dense models."""
-    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
-
-
-def pp_reshard_fn_qwen3_moe(model_state_dict, pp_group, dtype):
-    """Reshard pipeline parallel weights for Qwen3 MoE models."""
-    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
-
-
-def pp_reshard_fn_deepseek_v3(model_state_dict, pp_group, dtype):
-    """Reshard pipeline parallel weights for DeepSeek-V3 models."""
-    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
+            # Neither expert fc1 nor fc2 (none exist in practice today):
+            # clone so it never aliases a live parameter, since narrow passes
+            # None-spec entries straight through.
+            full_params[key] = (value.clone(), None)
+    return full_params

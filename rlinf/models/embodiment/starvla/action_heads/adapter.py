@@ -19,11 +19,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
-from torch.distributions.normal import Normal
 
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import state as state_utils
 from ..utils import vlm_preprocess as vlm_input_utils
+from ..utils.accelerator import accelerator_autocast, build_gaussian
 from ..utils.backbone_pipeline import run_backbone_pipeline
 from ..utils.profile import RL_BATCH_TENSOR_KEYS_TO_IGNORE, resolve_action_chunk_len
 
@@ -243,7 +243,7 @@ def _run_adapter_pipeline(
         state_projected = model.proprio_projector(proprio=proprio)
 
     # 8) Predict actions from the fused multi-layer vision/query/state features.
-    with torch.autocast("cuda", dtype=torch.float32):
+    with accelerator_autocast(torch.float32):
         mean_actions = model.action_model.predict_action(
             multi_layer_hidden_states,
             vision_hidden_len=max_patch_len,
@@ -301,7 +301,7 @@ def run_default_forward_adapter(
             reference=mean_actions,
         )
     )
-    dist = Normal(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
+    dist = build_gaussian(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
 
     result: dict[str, torch.Tensor | None] = {
         "logprobs": None,
@@ -359,7 +359,7 @@ def run_rollout_adapter(
         state=state,
         use_cache=False,
     )
-    dist = Normal(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
+    dist = build_gaussian(mean_actions, torch.exp(policy.actor_logstd).view(1, 1, -1))
 
     sample_actions = bool(sampling_kwargs.get("do_sample")) and mode == "train"
     actions_for_logprob = dist.sample() if sample_actions else mean_actions

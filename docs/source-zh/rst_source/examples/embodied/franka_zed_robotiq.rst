@@ -423,6 +423,4 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 
 **控制器节点 rank 不匹配**
 
-- 如果机械臂在 NUC (node 1) 上而相机在 GPU 服务器 (node 0) 上，
-  **必须** 在硬件配置中设置 ``controller_node_rank: 1``。否则控制器会尝试
-  在 node 0 上启动，该节点没有 ROS 或机械臂连接。
+- 如果机械臂在 NUC（node 1）上而相机在 GPU 服务器（node 0）上，**必须** 在硬件配置中设置 ``controller_node_rank: 1``。否则控制器会尝试在 node 0 上启动，而该节点与机械臂之间没有网络连接。

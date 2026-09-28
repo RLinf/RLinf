@@ -7,3 +7,5 @@ peft==0.19.1
 lerobot==0.3.3
 torchcodec==0.2
 decord==0.6.0
+dm-tree
+matplotlib

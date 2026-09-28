@@ -33,7 +33,8 @@ environment list.
 - Use ``--venv <dir>`` to choose the virtual environment directory.
 - Use ``--use-mirror`` for faster downloads from mainland China.
 - Use ``--python <version>`` only when a package requires it. The default is
-  Python 3.11.14; some environments such as ``behavior`` and ``d4rl`` require
+  Python 3.11.14, and Python 3.12.12 for the ``agentic`` target on its default
+  torch 2.11 stack; some environments such as ``behavior`` and ``d4rl`` require
   Python 3.10.
 - Use ``--torch <version>`` only when you need a different PyTorch wheel.
 - Select ``--platform amd``, ``--platform ascend``, or ``--platform musa`` for the matching hardware. Choose a supported model/environment combination in :ref:`the model gallery <model-hardware-support>` and follow its setup instructions.

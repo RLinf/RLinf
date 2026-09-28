@@ -118,6 +118,7 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      task: rl
       noise_level: 0.3
       value_after_vlm: True
 

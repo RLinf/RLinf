@@ -439,4 +439,4 @@ Troubleshooting
 - If the arm is on a NUC (node 1) but cameras are on the GPU server
   (node 0), you **must** set ``controller_node_rank: 1`` in the hardware
   config.  Otherwise the controller will try to start on node 0, which
-  does not have ROS or the arm connection.
+  has no network connection to the arm.

@@ -219,6 +219,8 @@ through the Ascend option:
 Add ``--use-mirror`` for downloads from mainland China. The installer skips the
 CUDA flash-attention build on Ascend.
 
+.. include:: _ascend_torch.rst
+
 .. _openvla-oft-musa:
 
 Moore Threads MUSA

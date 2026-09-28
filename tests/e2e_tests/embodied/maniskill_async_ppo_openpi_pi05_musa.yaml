@@ -130,6 +130,9 @@ actor:
     num_steps: 4
     # openpi specific parameters
     openpi:
+      # MUSA and Ascend have no Triton, so inductor cannot compile RoPE / GELU.
+      torch_compile: False
+      task: rl
       value_after_vlm: True
       config_name: "pi05_maniskill"
       num_images_in_input: 1

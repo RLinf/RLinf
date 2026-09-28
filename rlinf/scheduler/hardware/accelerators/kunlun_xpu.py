@@ -30,19 +30,19 @@ class KunlunXPUManager(AcceleratorManager):
         """Get the number of Kunlun XPU devices on the node."""
         initialized = False
         try:
-            import torch_xmlir._XMLIRC as XMLIR_C
+            import xpuml
 
-            XMLIR_C.xpumlInit()
+            xpuml.xpumlInit()
             initialized = True
-            device_count = XMLIR_C.xpumlDeviceGetCount()
-            XMLIR_C.xpumlShutdown()
+            device_count = xpuml.xpumlDeviceGetCount()
+            xpuml.xpumlShutdown()
             return device_count
         except Exception:
             return 0
         finally:
             if initialized:
                 try:
-                    XMLIR_C.xpumlShutdown()
+                    xpuml.xpumlShutdown()
                 except Exception:
                     # Ignore shutdown errors to avoid masking earlier exceptions.
                     pass
@@ -57,14 +57,14 @@ class KunlunXPUManager(AcceleratorManager):
         """Get the model of the Kunlun XPU."""
         initialized = False
         try:
-            import torch_xmlir._XMLIRC as XMLIR_C
+            import xpuml
 
-            XMLIR_C.xpumlInit()
+            xpuml.xpumlInit()
             initialized = True
-            device_count = XMLIR_C.xpumlDeviceGetCount()
+            device_count = xpuml.xpumlDeviceGetCount()
             if device_count > 0:
-                device = XMLIR_C.xpumlDeviceGetHandleByIndex(0)
-                model = XMLIR_C.xpumlDeviceGetName(device)
+                device = xpuml.xpumlDeviceGetHandleByIndex(0)
+                model = xpuml.xpumlDeviceGetName(device)
                 return model
             else:
                 return "UNKNOWN"
@@ -73,7 +73,7 @@ class KunlunXPUManager(AcceleratorManager):
         finally:
             if initialized:
                 try:
-                    XMLIR_C.xpumlShutdown()
+                    xpuml.xpumlShutdown()
                 except Exception:
                     # Ignore shutdown errors to avoid masking earlier exceptions.
                     pass
@@ -115,7 +115,7 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_ccl_backend():
         """Get the CCL backend."""
-        return "bkcl"
+        return "kccl"
 
     @staticmethod
     def get_ccl_socket_ifname_env_var() -> str:
@@ -141,4 +141,12 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_accel_pg_options(options: Optional["CollectiveGroupOptions"]):
         """Get the accelerator CCL process group options."""
-        return None
+        from torch.distributed import ProcessGroupNCCL
+
+        if options is None or options.is_empty_options():
+            return None
+        else:
+            pg_options = ProcessGroupNCCL.Options()
+            pg_options.is_high_priority_stream = options.is_high_priority_stream
+
+            return pg_options

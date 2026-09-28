@@ -36,8 +36,7 @@ class SupportedEnvType(Enum):
     REAL = "real"
     FRANKASIM = "frankasim"
     HABITAT = "habitat"
-    OPENSORAWM = "opensora_wm"
-    WANWM = "wan_wm"
+    WORLD_MODEL = "world_model"
     GENESIS = "genesis"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
@@ -50,7 +49,9 @@ class SupportedEnvType(Enum):
         """Accept the spellings this enum used to have.
 
         The real-world package was ``envs/realworld`` and is now ``envs/real``;
-        configs that named the old one keep working and say so.
+        world-model backend names (and their retired ``env_type`` spellings)
+        resolve to ``world_model``. Configs that named the old values keep
+        working and say so.
         """
         if value == "realworld":
             warnings.warn(
@@ -59,6 +60,16 @@ class SupportedEnvType(Enum):
                 stacklevel=2,
             )
             return cls.REAL
+        from rlinf.envs.sim.world_model.registry import get_backend_name
+
+        backend = get_backend_name(value)
+        if backend is not None:
+            warnings.warn(
+                f"env_type {value!r} is retired. Use 'world_model' with backend: {backend}.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return cls.WORLD_MODEL
         return None
 
 
@@ -138,6 +149,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.real import RealWorldEnv
 
         return RealWorldEnv
+    elif env_type == SupportedEnvType.WORLD_MODEL:
+        from rlinf.envs.sim.world_model import WorldModelEnv
+
+        return WorldModelEnv
     elif env_type == SupportedEnvType.HABITAT:
         from rlinf.envs.sim.habitat.habitat_env import HabitatEnv
 
@@ -150,14 +165,6 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.genesis.genesis_env import GenesisEnv
 
         return GenesisEnv
-    elif env_type == SupportedEnvType.OPENSORAWM:
-        from rlinf.envs.sim.world_model.world_model_opensora_env import OpenSoraEnv
-
-        return OpenSoraEnv
-    elif env_type == SupportedEnvType.WANWM:
-        from rlinf.envs.sim.world_model.world_model_wan_env import WanEnv
-
-        return WanEnv
     elif env_type == SupportedEnvType.EMBODICHAIN:
         from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
 

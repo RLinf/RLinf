@@ -1,0 +1,96 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/fastwam@actor.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_fastwam"
+    logger_backends: ["tensorboard"]
+
+  # Official FastWAM training epoch count.
+  max_epochs: 10
+  # Negative values disable the step cap.
+  max_steps: -1
+  # Validation is disabled for this SFT recipe.
+  val_check_interval: -1
+  save_interval: 2000
+  log_interval: 10
+  resume_dir: null
+
+data:
+  # Four LIBERO training suites in LeRobot format.
+  train_data_paths:
+    - /path/to/LIBERO-fastwam/libero_spatial_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_object_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_goal_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_10_no_noops_lerobot
+  # Precomputed T5 embeddings shared by all suites.
+  text_embedding_cache_dir: /path/to/text_embeds_cache/libero
+  num_workers: 8
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  # Official per-rank batch size and eight-rank global batch size.
+  micro_batch_size: 16
+  global_batch_size: 128
+  seed: 42
+
+  model:
+    model_type: "fastwam"
+
+  optim:
+    lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-2
+    clip_grad: 1.0
+    # Linear warmup followed by cosine decay to 1% of the learning rate.
+    lr_scheduler: "fastwam_cosine"
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    # Null derives the scheduler horizon from the effective training length.
+    total_training_steps: null
+
+  fsdp_config:
+    strategy: "fsdp2"
+    # Root-only sharding supports MoT's direct access to expert blocks.
+    wrap_policy:
+      no_split_names: ["__none__"]
+    use_orig_params: True
+    # Match the upstream disabled checkpointing path.
+    gradient_checkpointing: False
+    gradient_checkpointing_use_reentrant: False
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: True
+    save_full_model_weights: False
+    grad_scaler:
+      enabled: False
+    # Model parameters remain bf16; FSDP2 adds no separate dtype cast.
+    mixed_precision:
+      param_dtype: null
+      reduce_dtype: null
+      buffer_dtype: null
+    amp_autocast:
+      enabled: True
+      precision: "bf16"

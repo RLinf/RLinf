@@ -14,7 +14,7 @@
 
 import sys
 import time
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import psutil
@@ -37,6 +37,7 @@ class FrankaROSArm(BaseArm):
         *,
         load_gripper: bool = True,
         compliance: Any = None,
+        realtime_config: Optional[str] = None,
         **placement: Any,
     ) -> "FrankaROSArm":
         """Declare a ROS-backed Franka arm.
@@ -45,7 +46,18 @@ class FrankaROSArm(BaseArm):
         backend takes no end-effector settings. It still needs *load_gripper*,
         which decides whether the ROS stack it launches brings up the Franka
         Hand driver the arm's own topics share a robot with.
+
+        Raises:
+            TypeError: If *realtime_config* is given. franka_control reads its
+                real-time mode from franka_control_node.yaml, which
+                ``FRANKA_REALTIME_CONFIG`` sets when the ROS stack is installed.
         """
+        if realtime_config is not None:
+            raise TypeError(
+                f"{cls.__name__} does not take realtime_config: franka_control "
+                "reads it from franka_control_node.yaml. Reinstall with "
+                "FRANKA_REALTIME_CONFIG=enforce|ignore to change it."
+            )
         # Its controller owns its gains; a task's request arrives through
         # reconfigure_compliance_params instead.
         del compliance

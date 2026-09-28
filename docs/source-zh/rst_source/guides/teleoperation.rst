@@ -141,7 +141,7 @@ placement 决定设备在哪里读取，常规 env loop 则决定动作下发频
 
 仅在跟随延迟明显时启用该选项。启用后，``env.step`` 不再发送关节目标；如果配置有误，机器人将保持静止。
 
-延迟还有另一种成因，提高下发频率并不能解决。如果 follower 能平滑到达目标，却总是落后 leader 一点，说明机械臂的柔顺性增益偏软。:doc:`Dual Franka PICO 采集与 DAgger <../examples/embodied/dual_franka_pico_dagger>` 列出了 Franka 上的相关参数以及为遥操作调好的取值。
+延迟也可能来自机械臂的柔顺性增益偏软，提高下发频率无法解决这种问题。如果 follower 运动平滑却持续落后于 leader，可以检查这组增益。:ref:`配置机械臂运动 <franka-motion-settings>` 说明了遥操作与 policy 执行共用的 Franky 默认参数，以及覆盖方法。
 
 新增设备
 --------

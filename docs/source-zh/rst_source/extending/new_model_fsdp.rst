@@ -124,7 +124,7 @@ RL 逻辑保持在模型内部。
           }
           return actions, result
 
-参考 `rlinf/models/embodiment/openpi/openpi_action_model.py`，这三个接口的输入输出建议按下面理解：
+参考 `rlinf/models/embodiment/openpi/tasks/rl.py`，这三个接口的输入输出建议按下面理解：
 
 - ``forward(forward_type=..., **kwargs)``:
   统一分发入口，根据 ``forward_type`` 路由到 ``default_forward``、``sft_forward``、

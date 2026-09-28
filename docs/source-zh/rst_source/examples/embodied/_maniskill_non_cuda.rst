@@ -16,6 +16,8 @@ ManiSkill 的 PhysX 仿真可以在 CPU 上运行，不依赖承载模型的 acc
 
 ``sim_backend: cpu`` 会将 PhysX 移到 CPU，VLA 仍在所选 accelerator 上运行。``render_backend`` 通过完整 PCI 地址选择 SAPIEN Vulkan renderer；RLinf 会在创建环境前保留 ``pci:<domain>:<bus>:<slot>.<function>`` 格式。若容器内的 renderer 使用其他地址，请替换示例值。
 
+在 AMD 平台上，``install.sh`` 会根据 GPU ISA 选择 Vulkan 驱动并写入环境：Radeon GPU 使用 Mesa 的 RADV 驱动渲染；CDNA accelerator（如 Instinct 系列）则使用 Mesa 的 lavapipe 软件光栅化器，因为 RADV 无法在这类卡上渲染。CPU 渲染比硬件渲染占用更多 CPU 时间。
+
 .. warning::
 
    CPU simulation backend 无法在单个进程内向量化多个环境。请将训练与评测的 ``total_num_envs`` 分别设为对应 env worker 的 rank 数量，使每个 worker 只运行一个环境。

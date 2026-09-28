@@ -4,7 +4,8 @@ av==12.3.0
 decord==0.6.0
 diffusers
 einops
-eva-decord==0.6.1
+# eva-decord ships no Linux aarch64 wheels; install.sh builds decord from source there.
+eva-decord==0.6.1; platform_machine != 'aarch64'
 fastparquet==2024.11.0
 matplotlib
 numpy==1.26.4

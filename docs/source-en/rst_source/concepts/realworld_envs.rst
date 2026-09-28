@@ -372,9 +372,6 @@ through robot I/O and the three wrapper families:
    * - ``real/env.py``
      - ``RealWorldEnv``, the vectorized env the framework instantiates from
        ``env_type: real``.
-   * - ``real/task_env.py``
-     - ``RobotTask`` and ``RobotTaskEnv`` define the boundary between task logic
-       and hardware.
 
 Next
 ----

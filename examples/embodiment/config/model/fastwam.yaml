@@ -1,0 +1,31 @@
+model_type: "fastwam"
+precision: bf16
+is_lora: false
+
+# Fine-tuned FastWAM checkpoint.
+model_path: /path/to/fastwam/libero_uncond_2cam224.pt
+# Action and state normalization statistics.
+dataset_stats_path: /path/to/fastwam/libero_uncond_2cam224_dataset_stats.json
+
+# Predicted horizon and executed steps before replanning.
+action_dim: 7
+num_action_chunks: 10
+action_horizon: 32
+
+# Flow-matching sampling parameters.
+num_inference_steps: 10
+binarize_gripper: true
+text_cfg_scale: 1.0
+negative_prompt: ""
+sigma_shift: null
+seed: null
+rand_device: cpu
+tiled: false
+
+# Upstream FastWAM Hydra configuration.
+fastwam:
+  config_dir: null
+  config_name: sim_libero
+  # Reuse converted VAE and T5 assets.
+  overrides:
+    - model.redirect_common_files=true

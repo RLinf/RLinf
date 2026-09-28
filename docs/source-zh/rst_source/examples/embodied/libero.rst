@@ -134,7 +134,7 @@ LIBERO 提供五个任务套件，共 130 个任务，从单步抓取放置到�
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # 进入容器后，切换到模型对应的虚拟环境：
    source switch_env openvla-oft
@@ -342,6 +342,8 @@ LIBERO-Pro 与 LIBERO-Plus 套件
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-liberopro   # 或 ...-liberoplus
+      # 国内镜像加速（LIBERO-Pro）：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberopro
+      # 国内镜像加速（LIBERO-Plus）：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberoplus
 
 **选项 2：自定义环境** —— 按套件选择安装包：
 

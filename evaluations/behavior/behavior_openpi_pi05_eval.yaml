@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_ppo_openpi05_eval"
+    experiment_name: "behavior_openpi_pi05_eval"
     logger_backends: ["tensorboard"]
 
   only_eval: True
@@ -38,8 +38,8 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    rollout_epoch: 2
-    total_num_envs: 8
+    rollout_epoch: 4
+    total_num_envs: 4
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096
     video_cfg:
@@ -53,17 +53,22 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
 
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: null
+
   model:
-    model_path: "/path/to/model/pi05"
-    add_value_head: True
-    num_images_in_input: 3
-    proprio_dim: 32
+    model_path: /path/to/pi05_sft_pytorch_new
+    add_value_head: False
     action_dim: 23
     num_action_chunks: 32
+    num_steps: 5
     openpi:
+      task: eval
       config_name: "pi05_behavior"
-      detach_critic_input: True
-      joint_logprob: False
-      noise_level: 0.0
-      action_env_dim: ${rollout.model.action_dim}
-      noise_method: "flow_sde"
+      num_images_in_input: 3

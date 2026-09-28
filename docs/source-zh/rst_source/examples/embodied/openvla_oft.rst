@@ -202,6 +202,8 @@ AMD ROCm
 
 中国大陆用户可添加 ``--use-mirror``。安装脚本在昇腾上会跳过 CUDA flash-attention 的构建。
 
+.. include:: _ascend_torch.rst
+
 .. _openvla-oft-musa:
 
 摩尔线程 MUSA

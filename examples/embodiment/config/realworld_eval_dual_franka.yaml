@@ -136,6 +136,7 @@ actor:
     action_dim: 20                 # dual-franka tcp_rot6d: [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]
     add_value_head: False
     openpi:
+      task: eval
       config_name: "pi05_dualfranka_tcp_rot6d"
       train_expert_only: False
       detach_critic_input: True
