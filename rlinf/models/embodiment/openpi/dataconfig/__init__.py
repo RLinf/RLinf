@@ -285,7 +285,9 @@ _CONFIGS = [
     TrainConfig(
         name="pi05_so101_joint",
         model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=20, discrete_state_input=False
+            # Pi05 consumes proprioception as discrete prompt tokens rather
+            # than through the continuous Pi0 state projection.
+            pi05=True, action_horizon=20, discrete_state_input=True
         ),
         data=SO101JointDataConfig(
             repo_id="id_0",

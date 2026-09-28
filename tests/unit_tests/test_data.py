@@ -117,6 +117,17 @@ def test_openpi_sft_dispatches_so101_to_registered_loader(monkeypatch):
     assert result is sentinel
 
 
+def test_so101_pi05_config_uses_discrete_state_input():
+    """SO-101 Pi05 must tokenize proprioceptive state with the prompt."""
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config("pi05_so101_joint")
+
+    assert config.model.pi05 is True
+    assert config.model.discrete_state_input is True
+
+
 def test_so101_repack_scales_the_gripper_with_joint_values():
     """Map LeRobot's 0..100 gripper scale into the SO-101 contract."""
     from rlinf.data.datasets.openpi.so101.so101_sft_data_loader import _RepackSO101
@@ -134,6 +145,23 @@ def test_so101_repack_scales_the_gripper_with_joint_values():
         result["observation/state"], [1.0, -1.0, 0.5, 0.0, -0.25, 0.75]
     )
     np.testing.assert_allclose(result["actions"], [0.8, -0.8, 0.4, 0.1, -0.2, 0.25])
+
+
+def test_so101_collection_export_uses_lerobot_units():
+    """Export runtime radians/fraction as degrees/0..100 LeRobot values."""
+    from rlinf.envs.wrappers.collect_episode import _so101_runtime_to_lerobot
+
+    runtime = np.array(
+        [np.pi / 2, -np.pi / 4, 0.0, np.pi, -np.pi / 2, 0.37],
+        dtype=np.float32,
+    )
+
+    np.testing.assert_allclose(
+        _so101_runtime_to_lerobot(runtime),
+        [90.0, -45.0, 0.0, 180.0, -90.0, 37.0],
+        rtol=1e-6,
+        atol=1e-5,
+    )
 
 
 def test_so101_loader_queries_available_action_feature(tmp_path, monkeypatch):
@@ -2111,6 +2139,7 @@ def test_lerobot_frame_owns_observation_and_image_conversion():
 def test_offline_lerobot_export_reuses_canonical_frame_conversion():
     collector = object.__new__(CollectEpisode)
     collector.num_envs = 1
+    collector.robot_type = "panda"
     buffer = {
         "observations": [
             {

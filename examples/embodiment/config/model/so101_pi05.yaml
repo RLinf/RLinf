@@ -11,7 +11,8 @@ openpi:
   config_name: pi05_so101_joint
   num_images_in_input: 1
   train_expert_only: false
-  discrete_state_input: false
+  # Pi05 consumes SO-101 proprioception as discrete prompt tokens.
+  discrete_state_input: true
   rtc_enabled: ${runner.rtc.enabled}
   rtc_guidance_mode: approx
   rtc_guidance_clip: 5.0

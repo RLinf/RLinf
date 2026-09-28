@@ -34,6 +34,25 @@ from rlinf.utils.logging import get_logger
 _VALID_FORMATS = ("pickle", "lerobot")
 
 
+def _so101_runtime_to_lerobot(value: Any) -> np.ndarray:
+    """Convert RLinf SO-101 runtime units to the LeRobot export contract.
+
+    RLinf keeps SO-101 observations and absolute actions in radians plus a
+    ``0..1`` gripper fraction while controlling hardware.  The LeRobot
+    SO-101 dataset used by the OpenPI adapter stores joint values in degrees
+    and the gripper on its ``0..100`` scale.  Conversion belongs at this
+    export boundary so pickle/runtime data remain in the robot contract.
+    """
+    array = np.asarray(value, dtype=np.float32).copy()
+    if array.shape[-1] != 6:
+        raise ValueError(
+            f"SO-101 LeRobot export expects six values, got shape {array.shape}."
+        )
+    array[..., :5] = np.rad2deg(array[..., :5])
+    array[..., 5] *= 100.0
+    return array
+
+
 _ID_DIR_RE = re.compile(r"^id_(\d+)$")
 
 
@@ -544,6 +563,9 @@ class CollectEpisode(gym.Wrapper):
             )
             if frame is None:
                 continue
+            if self.robot_type.lower() == "so101":
+                frame.state = _so101_runtime_to_lerobot(frame.state)
+                frame.action = _so101_runtime_to_lerobot(frame.action)
             steps.append(frame.to_dict(episode_success=is_success, done=False))
             if bool(terminated[i]) and first_term_step is None:
                 first_term_step = len(steps)

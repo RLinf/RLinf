@@ -69,9 +69,8 @@ actor:
       # TrainConfig for pi05_so101_joint. Distinct from action_chunk /
       # num_action_chunks (env-executed / SFT window).
       action_horizon: 20
-      # State stays continuous; do not discretize into the prompt (Pi0.5 default
-      # would set discrete_state_input=True when this key is omitted).
-      discrete_state_input: false
+      # Pi05 consumes SO-101 proprioception as discrete prompt tokens.
+      discrete_state_input: true
       assets_dir: /path/to/openpi_assets
       asset_id: "<repo_id>"
     openpi_data:

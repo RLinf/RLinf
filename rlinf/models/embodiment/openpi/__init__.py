@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from omegaconf import OmegaConf
+
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.openpi.checkpoint import (
     FULL_WEIGHTS_CANDIDATES,
@@ -401,7 +403,12 @@ def _install_transforms(model, cfg, config_name: str):
     )
 
     input_transforms, output_transforms = build_openpi_transforms(
-        cfg.model_path, config_name, data_kwargs=_resolve_data_kwargs(cfg)
+        cfg.model_path,
+        config_name,
+        data_kwargs=_resolve_data_kwargs(cfg),
+        discrete_state_input=OmegaConf.select(
+            cfg, "openpi.discrete_state_input", default=None
+        ),
     )
     model.setup_transforms(input_transforms, output_transforms)
     return model
