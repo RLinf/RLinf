@@ -226,7 +226,7 @@ class LeRobotDatasetWriter:
     def finalize(self) -> None:
         """Finalize the dataset and properly clean up all resources."""
         if self.dataset is None:
-            raise RuntimeError("Dataset not created. Call create() first.")
+            return
 
         if (
             hasattr(self.dataset, "image_writer")

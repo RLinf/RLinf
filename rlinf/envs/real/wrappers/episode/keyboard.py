@@ -29,11 +29,12 @@ class KeyboardListener:
 
     REQUIRED_KEY_NAMES = ("KEY_A", "KEY_B", "KEY_C", "KEY_Q")
 
-    def __init__(self) -> None:
+    def __init__(self, required_key_names: tuple[str, ...] | None = None) -> None:
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}
         self._press_events: deque[str] = deque()
         self._stop = threading.Event()
+        self._required_key_names = required_key_names or self.REQUIRED_KEY_NAMES
         self.device = None
         self.listener = None
         self.last_intervene = 0
@@ -73,7 +74,7 @@ class KeyboardListener:
             return device
 
         permission_denied_paths: list[str] = []
-        keyboards: list = []  # (path, device) for every device that has KEY_A/B/C/Q
+        keyboards: list = []  # (path, device) for devices with all operator keys
         for device_path in sorted(self._list_devices()):
             try:
                 device = self._open_device(device_path)
@@ -146,7 +147,7 @@ class KeyboardListener:
 
     def _is_keyboard_device(self, device: Any) -> bool:
         required_codes = {
-            getattr(self._ecodes, key_name) for key_name in self.REQUIRED_KEY_NAMES
+            getattr(self._ecodes, key_name) for key_name in self._required_key_names
         }
         capabilities = device.capabilities(verbose=False)
         supported_key_codes = set(capabilities.get(self._ecodes.EV_KEY, []))

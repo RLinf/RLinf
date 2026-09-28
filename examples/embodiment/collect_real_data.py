@@ -95,7 +95,7 @@ class DataCollector(Worker):
 
     def _process_obs(self, obs):
         """Reshape env observations for the internal trajectory accumulator."""
-        if not self.cfg.runner.record_task_description:
+        if not self.cfg.runner.get("record_task_description", False):
             obs.pop("task_descriptions", None)
 
         ret_obs = {}
@@ -155,6 +155,7 @@ class DataCollector(Worker):
     def _collect(self) -> None:
         """Run the collection loop while :meth:`run` owns hardware cleanup."""
         obs, _ = self.env.reset()
+        self.log_info(f"Collection target: {self.num_data_episodes} successful episodes.")
         # Seed from preexisting episodes so resume bar + stop target line up.
         success_cnt = self._preexisting_success
         if success_cnt >= self.num_data_episodes:

@@ -45,6 +45,23 @@ class KeyboardStartEndWrapper(KeyboardSession):
         self._recording = False
         self._last_segment_ts = -math.inf
 
+    @staticmethod
+    def _operator_help() -> str:
+        return (
+            "Operator controls: [a] start | [a] discard recording | "
+            "[b] next segment | [c] save success | [q] park and exit | "
+            "[Ctrl-C] emergency stop."
+        )
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[ObsType, dict[str, Any]]:
+        """Reset the robot and print the controls required for this episode."""
+        obs, info = super().reset(seed=seed, options=options)
+        self.operator_log("Arms ready. Press [a] to start a recording.")
+        self.operator_log(self._operator_help())
+        return obs, info
+
     def _teleop_attr(self, name: str) -> Any:
         """Return an optional lifecycle hook from the wrapped teleop stack."""
         try:

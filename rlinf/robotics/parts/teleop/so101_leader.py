@@ -106,6 +106,7 @@ class SO101Leader(TeleopDevice):
         self._torque_enabled = False
         self._reset_prepared = False
         self._manual_release_pending = False
+        self._last_valid_observation: Observation | None = None
 
     @classmethod
     def from_config(
@@ -232,10 +233,20 @@ class SO101Leader(TeleopDevice):
             reading = self._device.get_action()
         joints = np.deg2rad([reading[f"{motor}.pos"] for motor in MOTORS])
         grip = np.clip(reading[f"{GRIPPER}.pos"] / GRIPPER_SCALE, 0.0, 1.0)
-        return {
+        observation = {
             "joint_position": np.asarray(joints, dtype=np.float32),
             "grip": np.asarray([grip], dtype=np.float32),
         }
+        values = np.concatenate((observation["joint_position"], observation["grip"]))
+        if not np.all(np.isfinite(values)) or np.allclose(values, 0.0):
+            if self._last_valid_observation is None:
+                raise RuntimeError("SO-101 leader returned an invalid initial reading")
+            self._logger.warning(
+                "SO-101 leader returned an invalid reading; holding the last valid pose"
+            )
+            return self._last_valid_observation
+        self._last_valid_observation = observation
+        return observation
 
     def prepare_reset(self, context: Mapping[str, Any]) -> None:
         """Move to the reset state while the follower executes its reset."""

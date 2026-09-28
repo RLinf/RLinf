@@ -113,6 +113,7 @@ class TeleopIntervention(gym.Wrapper):
         self.device = device
         self.mark_flag = mark_flag
         self._last_active: float = -float("inf")
+        self._last_operator_action: Optional[np.ndarray] = None
 
     @property
     def intervening(self) -> bool:
@@ -125,6 +126,7 @@ class TeleopIntervention(gym.Wrapper):
         try:
             result = self.env.reset(**kwargs)
             self._last_active = -float("inf")
+            self._last_operator_action = None
             self.device.reset(self)
             return result
         finally:
@@ -136,12 +138,19 @@ class TeleopIntervention(gym.Wrapper):
         sample = self.device.read(self, action)
 
         if sample.action is None:
-            applied, overridden = action, False
+            if self.intervening and self._last_operator_action is not None:
+                # A transient missing teleop sample must not turn into the
+                # caller's placeholder action (often all zeros).
+                applied, overridden = self._last_operator_action.copy(), True
+            else:
+                applied, overridden = action, False
         elif sample.active:
             self._last_active = time.monotonic()
+            self._last_operator_action = np.asarray(sample.action).copy()
             applied, overridden = sample.action, True
         elif self.intervening:
             # Retain operator control for the configured hold window.
+            self._last_operator_action = np.asarray(sample.action).copy()
             applied, overridden = sample.action, True
         elif sample.apply_when_inactive:
             # Some devices keep only their own stateful action parts applied.

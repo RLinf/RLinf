@@ -368,10 +368,16 @@ class SO101Env(gym.Env):
 
     def get_joint_positions(self) -> np.ndarray:
         """Arm joints as ``(1, 5)``, the shape teleop bindings index by arm."""
+        # The cache starts at zeros before the first hardware observation.
+        # Teleoperation hold actions must never use that placeholder pose.
+        if not self.config.is_dummy and np.allclose(self._joints, 0.0):
+            self._get_observation()
         return self._joints.reshape(1, -1).copy()
 
     def get_gripper_position(self) -> np.ndarray:
         """Current gripper opening as ``(1, 1)`` for teleop context."""
+        if not self.config.is_dummy and np.allclose(self._joints, 0.0):
+            self._get_observation()
         return self._gripper_position.reshape(1, -1).copy()
 
     @property

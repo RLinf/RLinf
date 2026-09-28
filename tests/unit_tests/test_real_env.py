@@ -51,6 +51,7 @@ from rlinf.envs.real.franka.dual_franka_joint import (
     DualFrankaJointEnv,
 )
 from rlinf.envs.real.gim_arm.base import GimArmEnv, GimArmEnvConfig
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.envs.real.wrappers.teleop.config import (  # noqa: E402
     NO_DEVICE,
     resolve_teleop_device,
@@ -116,6 +117,98 @@ def test_rtc_env_worker_uses_eval_model_config():
     worker.eval_num_envs_per_stage = 1
 
     worker._assert_rtc_eval_supported()
+
+
+def test_rtc_eval_abort_parks_and_closes_environment():
+    """An operator abort must park hardware before releasing the env."""
+    worker = object.__new__(RTCEnvWorker)
+
+    class FakeEnv:
+        def __init__(self):
+            self.park_calls = 0
+            self.close_calls = 0
+
+        def park(self):
+            self.park_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker.log_warning = Mock()
+    worker._evaluate_rtc = Mock(side_effect=RuntimeError("operator abort"))
+
+    with pytest.raises(RuntimeError, match="operator abort"):
+        worker.evaluate(Mock(), Mock())
+
+    assert env.park_calls == 1
+    assert env.close_calls == 1
+
+    # A second cleanup attempt from runner teardown must be harmless.
+    worker._cleanup_aborted_eval(0)
+    assert env.park_calls == 1
+    assert env.close_calls == 1
+
+
+def test_rtc_eval_keyboard_abort_stops_rollout_without_fatal_error():
+    """An operator q abort returns normally after stopping RTC and parking."""
+    worker = object.__new__(RTCEnvWorker)
+
+    class FakeEnv:
+        def __init__(self):
+            self.park_calls = 0
+            self.close_calls = 0
+
+        def park(self):
+            self.park_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker.log_warning = Mock()
+    worker._evaluate_rtc = Mock(side_effect=KeyboardAbort("operator abort"))
+    worker.send_rtc_request = Mock()
+
+    assert worker.evaluate(Mock(), Mock()) == {}
+    worker.send_rtc_request.assert_called_once()
+    stop_request = worker.send_rtc_request.call_args.args[1]
+    assert stop_request.request_type == "stop"
+    assert env.park_calls == 1
+    assert env.close_calls == 1
+
+
+def test_rtc_eval_normal_completion_parks_and_closes_environment():
+    """A finite RTC evaluation must leave the robot in its safe park state."""
+    worker = object.__new__(RTCEnvWorker)
+
+    class FakeEnv:
+        def __init__(self):
+            self.park_calls = 0
+            self.close_calls = 0
+
+        def park(self):
+            self.park_calls += 1
+
+        def close(self):
+            self.close_calls += 1
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker.log_warning = Mock()
+    metrics = {"return": torch.tensor([1.0])}
+    worker._evaluate_rtc = Mock(return_value=metrics)
+
+    assert worker.evaluate(Mock(), Mock()) == metrics
+    assert env.park_calls == 1
+    assert env.close_calls == 1
+
+    # Runner teardown may repeat cleanup, but the hardware actions are idempotent.
+    worker._cleanup_eval(0)
+    assert env.park_calls == 1
+    assert env.close_calls == 1
 
 
 def _assert_legacy_transition(env) -> None:
@@ -1344,7 +1437,7 @@ def _keyboard_session(monkeypatch, queued):
     from rlinf.envs.real.wrappers.episode import session as session_module
 
     class FakeListener:
-        def __init__(self):
+        def __init__(self, *args):
             self.batches = list(queued)
 
         def pop_pressed_keys(self):
@@ -1376,6 +1469,42 @@ def test_repeat_presses_within_the_debounce_window_are_dropped(monkeypatch):
     assert list(session.presses()) == ["a"]
     assert list(session.presses()) == []  # Same key within the debounce window.
     assert list(session.presses()) == ["b"]  # A different key is accepted.
+
+
+def test_keyboard_eval_control_pauses_action_progress_and_resumes(monkeypatch):
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    class FakeListener:
+        def __init__(self, *args):
+            self.batches = [[], ["a"], ["p"], [], ["r"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {"state": 0}, {}
+
+        def step(self, action):
+            self.actions.append(action)
+            return {"state": len(self.actions)}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = KeyboardEvalControlWrapper(Env())
+    env.reset()
+
+    env.step("first")
+    _, _, _, _, info = env.step("second")
+    assert info["eval_phase"] == "paused"
+    assert env.env.actions[-1] == "first"
+
+    _, _, _, _, info = env.step("second")
+    assert info["eval_phase"] == "rec"
+    assert env.env.actions[-1] == "second"
 
 
 def test_presses_queued_between_episodes_do_not_leak(monkeypatch):
@@ -3015,7 +3144,10 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
 
     binding = SO101Leader(port="/dev/unused", movement_epsilon=0.01)
     at_rest = {"joint_position": np.zeros(5), "grip": np.array([0.0])}
-    context = {"joint_positions": np.zeros((1, 5))}
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_position": np.zeros(1),
+    }
 
     assert not binding.action(at_rest, context).driving
 
@@ -3026,6 +3158,32 @@ def test_so101_leader_only_drives_once_the_operator_moves_it():
     assert sample.parts["arm"] == pytest.approx(moved["joint_position"])
     # And the grip stays on the 0..1 axis the SO-101 env opens over.
     assert sample.parts["end_effector"][0] == pytest.approx(0.7)
+
+
+def test_so101_leader_handover_ignores_release_settling_motion():
+    """Torque release settling must not jerk the follower into a new pose."""
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    binding = SO101Leader(port="/dev/unused", movement_epsilon=0.01)
+    binding.MANUAL_RELEASE_SETTLE_SECONDS = 10.0
+    binding._manual_release_pending = True
+    binding._manual_release_pending_since = time.monotonic()
+    context = {"joint_positions": np.zeros((1, 5)), "gripper_position": np.zeros(1)}
+
+    settling = {
+        "joint_position": np.array([0.2, 0, 0, 0, 0]),
+        "grip": np.array([0.0]),
+    }
+    assert not binding.action(settling, context).driving
+    settling["joint_position"][0] = 0.25
+    assert not binding.action(settling, context).driving
+
+    binding._manual_release_pending_since -= 11.0
+    moved = {
+        "joint_position": np.array([0.5, 0, 0, 0, 0]),
+        "grip": np.array([0.0]),
+    }
+    assert binding.action(moved, context).driving
 
 
 @pytest.mark.placement

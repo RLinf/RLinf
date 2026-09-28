@@ -44,7 +44,7 @@ runner:
     inject_delay_ms: 0
     fixed_delay_steps: 0
     chunk_pause_seconds: 0.0
-    min_exec_horizon: 2
+    min_exec_horizon: 10
     initial_delay_steps: 1
     delay_buffer_size: 8
   logger:
@@ -59,7 +59,7 @@ env:
   eval:
     # One episode is capped at about two minutes at the 15 Hz hardware rate.
     # The horizon is divisible by the SO-101 policy's 20-step action chunk.
-    rollout_epoch: 1
+    rollout_epoch: 100
     total_num_envs: 1
     ignore_terminations: false
     auto_reset: true

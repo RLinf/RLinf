@@ -604,6 +604,14 @@ def test_writer_converts_scalar_schema_arrays_before_save():
     assert dataset.saved_episodes == 1
 
 
+def test_lerobot_writer_finalize_is_idempotent():
+    writer = LeRobotDatasetWriter()
+    writer.dataset = SimpleNamespace(image_writer=None)
+
+    writer.finalize()
+    writer.finalize()
+
+
 @pytest.mark.parametrize("dataset_cls", ALL_SHAPES)
 def test_caller_frames_are_not_mutated(dataset_cls):
     # The DAgger worker shares these dicts with the in-memory training store,

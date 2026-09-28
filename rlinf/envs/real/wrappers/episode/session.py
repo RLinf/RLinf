@@ -40,9 +40,14 @@ class KeyboardSession(gym.Wrapper):
     #: Minimum interval between accepted presses of the same key.
     DEBOUNCE_S: float = 0.2
 
-    def __init__(self, env: gym.Env) -> None:
+    def __init__(
+        self,
+        env: gym.Env,
+        *,
+        required_key_names: tuple[str, ...] | None = None,
+    ) -> None:
         super().__init__(env)
-        self.listener = KeyboardListener()
+        self.listener = KeyboardListener(required_key_names)
         self._last_press: dict[str, float] = {}
 
     def presses(self) -> Iterator[str]:
