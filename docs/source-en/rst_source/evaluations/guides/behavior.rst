@@ -140,7 +140,7 @@ Generic ``env.eval`` fields
      - Total interaction steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks``. Without ``auto_reset``, usually equals ``max_episode_steps``.
    * - ``num_env_subprocess``
      - Isaac sim subprocesses per env worker (default ``1``). Increasing this can reduce stepping bottlenecks but multiplies VRAM and process overhead; ``total_num_envs`` must be divisible by ``num_env_subprocess × pipeline_stage_num``.
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - When ``True``, skips intermediate observations inside action chunks for faster stepping; saved videos only contain chunk-boundary frames.
 
 Key ``omni_config`` fields
@@ -228,6 +228,6 @@ FAQ
 - **Out of memory:** Lower ``total_num_envs`` or ``num_env_subprocess``; each env uses about 10 GiB VRAM.
 - **Blurry or blocky rendering:** The GPU lacks Ray Tracing; use RTX 30/40 series or newer.
 - **Very slow startup:** First load of a large scene is expensive; keep ``partial_scene_load: true`` to load only task-relevant rooms.
-- **Fewer video frames than expected:** ``skip_intermediate_obs_in_chunk: True`` skips intermediate chunk frames and keeps only observations consumed by the policy.
+- **Fewer video frames than expected:** ``skip_intermediate_renders: True`` skips intermediate chunk frames and keeps only observations consumed by the policy.
 - **Instance load failure:** JSON filenames under ``activity_instance_dir`` must match ``activity_name``, ``activity_definition_id``, and ``scene_model``; see ``rlinf/envs/sim/behavior/instance_loader.py``.
 - **Step count validation error:** ``max_steps_per_rollout_epoch`` must be divisible by ``rollout.model.num_action_chunks``.
