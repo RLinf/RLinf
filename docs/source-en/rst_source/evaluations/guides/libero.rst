@@ -88,7 +88,7 @@ Available under ``evaluations/libero/``:
      - MolmoAct2
    * - ``libero_10_pi0_fast_eval.yaml``
      - Long (libero_10)
-     - PI0-FAST
+     - π₀-FAST
 
 For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`. For the Cosmos3 SGLang backend, see :doc:`cosmos3_sglang`.
 
