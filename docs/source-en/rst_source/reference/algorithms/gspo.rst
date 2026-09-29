@@ -43,9 +43,12 @@ Configuration
 -------------
 
 Start from ``examples/reasoning/config/math/qwen2.5-1.5b-gspo-fsdp.yaml``.
-It inherits the GRPO FSDP example's model, dataset, and placement settings.
-Set ``actor.model.model_path``, ``rollout.model.model_path``, and
-``actor.tokenizer.tokenizer_model`` to your local model checkpoint, and set
+It inherits the GRPO FSDP example's dataset and placement settings, with a
+smaller starting budget: 16 prompts, four responses per prompt, and 2,048 total
+tokens (at most 512 prompt tokens). Increase the context budget for tasks that
+need longer reasoning; truncation can change both rewards and training quality.
+Set ``actor.model.model_path`` to your local model checkpoint; the rollout and
+tokenizer paths follow it automatically. Also set
 ``data.train_data_paths`` and ``data.val_data_paths`` to your datasets.
 Follow :doc:`../../examples/agentic/math_reasoning/reasoning_ppo` for the
 reasoning environment and data preparation.
@@ -61,7 +64,7 @@ The GSPO settings select the new loss while retaining group-relative advantages:
      adv_type: grpo
      loss_type: gspo
      loss_agg_func: seq-mean-token-mean
-     group_size: 8
+     group_size: 4
      normalize_advantages: False
      use_valid_token_scale: False
      importance_sampling_fix: False
@@ -85,6 +88,33 @@ This runs rollout, group advantage calculation, and GSPO actor updates. The
 example retains recomputation of old log probabilities on the actor. Track
 ``actor/ratio`` and ``actor/clip_fraction`` together with task rewards; these
 diagnostics now describe complete responses.
+
+Tuning the Configuration
+------------------------
+
+* ``algorithm.group_size`` controls responses per prompt and must exceed one.
+  ``data.rollout_batch_size`` counts prompts, not responses.
+* ``algorithm.n_minibatches`` controls optimizer minibatches per rollout.
+  The runner derives the actor global batch size from
+  ``rollout_batch_size * group_size / n_minibatches``. Keep this division exact.
+* ``algorithm.training_batch_size_per_gpu`` controls the actual fixed
+  microbatch size. The runner copies it to ``actor.micro_batch_size``; changing
+  only the latter does not change the reasoning microbatch size. The derived
+  global batch must be divisible by the microbatch size times actor world size.
+* ``algorithm.clip_ratio_low`` and ``clip_ratio_high`` may differ. Setting
+  either to ``null`` uses ``ratio_clip_eps`` for that side. Values must be finite
+  and nonnegative, with the lower clipping width below one.
+* ``algorithm.recompute_logprobs: True`` uses actor-recomputed old log
+  probabilities. ``False`` uses rollout-provided log probabilities, exposing
+  any numerical difference between the rollout and actor engines.
+* ``algorithm.kl_beta`` and ``entropy_bonus`` retain the existing actor
+  regularizers. They are additional terms, separate from the sequence policy
+  objective. The example keeps fp32 actor parameters and optimizer state, with
+  bf16 forward computation and rollout, and fp32 gradient reduction.
+
+The current reasoning training loop does not perform held-out evaluation merely
+because ``runner.val_check_interval`` is set. Evaluate exported checkpoints
+separately; training reward is not held-out accuracy.
 
 Supported Settings
 ------------------

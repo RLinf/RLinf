@@ -30,7 +30,7 @@ GSPO 比较当前 policy 与采样 policy 对同一完整回答的概率。先�
 配置
 ----
 
-从 ``examples/reasoning/config/math/qwen2.5-1.5b-gspo-fsdp.yaml`` 开始配置。该文件继承 GRPO FSDP 示例的模型、数据和组件放置设置。将 ``actor.model.model_path``、``rollout.model.model_path`` 和 ``actor.tokenizer.tokenizer_model`` 改为本地模型 checkpoint 路径，并设置 ``data.train_data_paths`` 和 ``data.val_data_paths``。推理环境与数据准备参见 :doc:`../../examples/agentic/math_reasoning/reasoning_ppo`。
+从 ``examples/reasoning/config/math/qwen2.5-1.5b-gspo-fsdp.yaml`` 开始配置。该文件继承 GRPO FSDP 示例的数据和组件放置设置，将初始预算缩小为 16 个 prompt、每个 prompt 四条回答、总长度 2,048 token（prompt 最多 512 token）。需要更长推理的任务应增加上下文预算，截断会影响奖励与训练质量。将 ``actor.model.model_path`` 改为本地模型 checkpoint 路径，rollout 和 tokenizer 路径会自动跟随；另设置 ``data.train_data_paths`` 和 ``data.val_data_paths``。推理环境与数据准备参见 :doc:`../../examples/agentic/math_reasoning/reasoning_ppo`。
 
 以下配置选择 GSPO loss，并继续使用组内相对优势：
 
@@ -43,7 +43,7 @@ GSPO 比较当前 policy 与采样 policy 对同一完整回答的概率。先�
      adv_type: grpo
      loss_type: gspo
      loss_agg_func: seq-mean-token-mean
-     group_size: 8
+     group_size: 4
      normalize_advantages: False
      use_valid_token_scale: False
      importance_sampling_fix: False
@@ -60,6 +60,18 @@ GSPO 比较当前 policy 与采样 policy 对同一完整回答的概率。先�
    bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-gspo-fsdp
 
 此命令依次运行 rollout、组内优势计算与 GSPO actor 更新。示例保留在 actor 上重新计算旧 log 概率的设置。结合任务奖励观察 ``actor/ratio`` 与 ``actor/clip_fraction``，这两个指标在 GSPO 中描述完整回答。
+
+参数调整
+--------
+
+* ``algorithm.group_size`` 控制每个 prompt 的回答数，必须大于一；``data.rollout_batch_size`` 统计 prompt 数，而非回答数。
+* ``algorithm.n_minibatches`` 控制每次 rollout 的优化器 minibatch 数。runner 由 ``rollout_batch_size * group_size / n_minibatches`` 推导 actor 全局批量，请保证整除。
+* ``algorithm.training_batch_size_per_gpu`` 控制实际固定微批大小，runner 会将它复制到 ``actor.micro_batch_size``，因此仅修改后者不会改变推理微批。推导出的全局批量必须能被微批大小与 actor world size 的乘积整除。
+* ``algorithm.clip_ratio_low`` 与 ``clip_ratio_high`` 可以不同；某一侧设为 ``null`` 时使用 ``ratio_clip_eps``。值必须有限且非负，下裁剪宽度必须小于一。
+* ``algorithm.recompute_logprobs: True`` 使用 actor 重算的旧 log 概率；``False`` 使用 rollout 提供的 log 概率，也会暴露两个引擎之间的数值差异。
+* ``algorithm.kl_beta`` 与 ``entropy_bonus`` 保留现有 actor 正则化逻辑，是序列 policy 目标之外的附加项。示例保留 fp32 actor 参数与优化器状态，使用 bf16 前向计算和 rollout，以及 fp32 梯度归约。
+
+当前 reasoning 训练循环不会仅因设置 ``runner.val_check_interval`` 就执行 held-out 评估。请单独评估导出的 checkpoint，不能将训练奖励当作验证集准确率。
 
 支持的设置
 ----------

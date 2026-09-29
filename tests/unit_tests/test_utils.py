@@ -570,6 +570,11 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
         ("algorithm.clip_ratio_c", 3.0, "clip_ratio_c"),
         ("algorithm.clip_log_ratio_min", -10.0, "clip_log_ratio_min"),
         ("algorithm.clip_log_ratio_max", 10.0, "clip_log_ratio_max"),
+        ("algorithm.clip_ratio_low", -0.1, "clip_ratio_low"),
+        ("algorithm.clip_ratio_low", 1.0, "clip_ratio_low"),
+        ("algorithm.clip_ratio_high", -0.1, "clip_ratio_high"),
+        ("algorithm.clip_ratio_high", float("nan"), "clip_ratio_high"),
+        ("algorithm.ratio_clip_eps", float("inf"), "clip_ratio_low"),
     ],
 )
 def test_gspo_rejects_incompatible_config_before_cluster_start(key, value, message):
@@ -595,6 +600,18 @@ def test_gspo_rejects_incompatible_config_before_cluster_start(key, value, messa
     validate_gspo_cfg(cfg)
 
 
+def test_gspo_evaluation_does_not_require_training_options():
+    from rlinf.config import validate_gspo_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "reasoning_eval"},
+            "algorithm": {"loss_type": "gspo", "group_size": 1},
+        }
+    )
+    validate_gspo_cfg(cfg)
+
+
 @pytest.mark.parametrize(
     "folder,name",
     [
@@ -602,7 +619,32 @@ def test_gspo_rejects_incompatible_config_before_cluster_start(key, value, messa
         ("tests/e2e_tests/reasoning", "qwen2.5-1.5b-gspo-collocated-fsdp-sgl"),
     ],
 )
-def test_gspo_configs_compose_with_valid_fsdp_settings(folder, name, monkeypatch):
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        [],
+        [
+            "algorithm.group_size=2",
+            "algorithm.training_batch_size_per_gpu=2",
+            "algorithm.recompute_logprobs=false",
+            "algorithm.clip_ratio_low=null",
+            "algorithm.clip_ratio_high=null",
+            "algorithm.ratio_clip_eps=0.01",
+        ],
+        [
+            "algorithm.group_size=8",
+            "algorithm.training_batch_size_per_gpu=4",
+            "algorithm.kl_beta=0.01",
+            "algorithm.calculate_entropy=true",
+            "algorithm.entropy_bonus=0.001",
+            "actor.model.precision=fp32",
+            "actor.fsdp_config.mixed_precision.param_dtype=fp32",
+        ],
+    ],
+)
+def test_gspo_configs_compose_with_valid_fsdp_settings(
+    folder, name, overrides, monkeypatch
+):
     from hydra import compose, initialize_config_dir
 
     from rlinf.config import validate_fsdp_cfg, validate_gspo_cfg
@@ -610,8 +652,14 @@ def test_gspo_configs_compose_with_valid_fsdp_settings(folder, name, monkeypatch
     root = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("REPO_PATH", str(root))
     with initialize_config_dir(version_base="1.1", config_dir=str(root / folder)):
-        cfg = compose(config_name=name)
+        cfg = compose(config_name=name, overrides=overrides)
     validate_gspo_cfg(cfg)
     validate_fsdp_cfg(cfg.actor)
-    assert cfg.algorithm.clip_ratio_low == 3e-4
-    assert cfg.algorithm.clip_ratio_high == 4e-4
+    if not overrides:
+        assert cfg.algorithm.clip_ratio_low == 3e-4
+        assert cfg.algorithm.clip_ratio_high == 4e-4
+        assert cfg.actor.model.precision == "fp32"
+        assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
+    if folder.startswith("examples/"):
+        assert cfg.rollout.model.model_path == cfg.actor.model.model_path
+        assert cfg.actor.tokenizer.tokenizer_model == cfg.actor.model.model_path

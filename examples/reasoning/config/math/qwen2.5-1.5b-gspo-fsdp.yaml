@@ -5,6 +5,7 @@ defaults:
 runner:
   experiment_name: gspo-1.5b
   enable_dynamic_batch_size: False
+  seq_length: 2048
 
 algorithm:
   loss_type: gspo
@@ -16,8 +17,24 @@ algorithm:
   clip_ratio_low: 0.0003
   clip_ratio_high: 0.0004
   clip_ratio_c: null
+  group_size: 4
+  n_minibatches: 2
+  training_batch_size_per_gpu: 1
+
+data:
+  rollout_batch_size: 16
+  max_prompt_length: 512
+
+rollout:
+  model:
+    model_path: ${actor.model.model_path}
+    precision: bf16
 
 actor:
+  model:
+    precision: fp32
+  tokenizer:
+    tokenizer_model: ${actor.model.model_path}
   fsdp_config:
     mixed_precision:
       param_dtype: bf16

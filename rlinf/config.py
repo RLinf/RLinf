@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
@@ -1702,6 +1703,9 @@ def validate_gspo_cfg(cfg: DictConfig) -> None:
     """Reject options that change GSPO's sequence-level objective."""
     if OmegaConf.select(cfg, "algorithm.loss_type") != "gspo":
         return
+    # Evaluation reuses the training config but does not compute a policy loss.
+    if cfg.runner.task_type == "reasoning_eval":
+        return
     assert cfg.runner.task_type == "reasoning", (
         "GSPO requires runner.task_type=reasoning"
     )
@@ -1726,6 +1730,17 @@ def validate_gspo_cfg(cfg: DictConfig) -> None:
     )
     for key in ("clip_log_ratio_min", "clip_log_ratio_max"):
         assert cfg.algorithm.get(key) is None, f"GSPO requires algorithm.{key}=null"
+    for key in ("clip_ratio_low", "clip_ratio_high"):
+        value = cfg.algorithm.get(key)
+        if value is None:
+            value = cfg.algorithm.get("ratio_clip_eps", 0.2)
+        assert (
+            isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+        ), (
+            f"GSPO requires algorithm.{key} (or ratio_clip_eps) to be finite and nonnegative"
+        )
+        if key == "clip_ratio_low":
+            assert value < 1, "GSPO requires algorithm.clip_ratio_low < 1"
 
 
 def validate_cfg(cfg: DictConfig) -> DictConfig:
