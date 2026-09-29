@@ -80,7 +80,7 @@ from rlinf.scheduler.manager.net_emulation import (
     NetEmulationConfig,
     NetEmulationManager,
 )
-from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
+from rlinf.workers.env.env_worker import EnvWorker
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -103,112 +103,62 @@ def _robot_info(config):
     )
 
 
-def test_rtc_env_worker_uses_eval_model_config():
-    """RTC validation must accept an eval-only config without actor.model."""
-    worker = object.__new__(RTCEnvWorker)
-    worker.cfg = OmegaConf.create(
-        {
-            "runner": {"rtc": {"enabled": True}},
-            "env": {"eval": {"env_type": "real"}},
-        }
-    )
-    worker.model_cfg = OmegaConf.create({"model_type": "openpi"})
-    worker.stage_num = 1
-    worker.eval_num_envs_per_stage = 1
-
-    worker._assert_rtc_eval_supported()
-
-
-def test_rtc_eval_abort_parks_and_closes_environment():
-    """An operator abort must park hardware before releasing the env."""
-    worker = object.__new__(RTCEnvWorker)
+def test_standard_real_eval_cleanup_parks_before_close():
+    """The non-RTC real eval path must park before releasing hardware."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker._accelerator_type = None
+    worker._timer_metrics = {}
 
     class FakeEnv:
         def __init__(self):
-            self.park_calls = 0
-            self.close_calls = 0
+            self.events = []
 
         def park(self):
-            self.park_calls += 1
+            self.events.append("park")
 
         def close(self):
-            self.close_calls += 1
+            self.events.append("close")
 
     env = FakeEnv()
     worker.eval_env_list = [env]
-    worker.log_warning = Mock()
-    worker._evaluate_rtc = Mock(side_effect=RuntimeError("operator abort"))
+    worker._evaluate_standard = Mock(side_effect=RuntimeError("eval failed"))
 
-    with pytest.raises(RuntimeError, match="operator abort"):
+    with pytest.raises(RuntimeError, match="eval failed"):
         worker.evaluate(Mock(), Mock())
 
-    assert env.park_calls == 1
-    assert env.close_calls == 1
+    worker._cleanup_real_eval_envs()
 
-    # A second cleanup attempt from runner teardown must be harmless.
-    worker._cleanup_aborted_eval(0)
-    assert env.park_calls == 1
-    assert env.close_calls == 1
+    assert env.events == ["park", "close"]
 
 
-def test_rtc_eval_keyboard_abort_stops_rollout_without_fatal_error():
-    """An operator q abort returns normally after stopping RTC and parking."""
-    worker = object.__new__(RTCEnvWorker)
+def test_standard_real_eval_keyboard_abort_is_clean_shutdown():
+    """A standard real eval q abort returns without a Ray task failure."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker._accelerator_type = None
+    worker._timer_metrics = {}
+    worker.log_info = Mock()
 
     class FakeEnv:
         def __init__(self):
-            self.park_calls = 0
-            self.close_calls = 0
+            self.events = []
 
         def park(self):
-            self.park_calls += 1
+            self.events.append("park")
 
         def close(self):
-            self.close_calls += 1
+            self.events.append("close")
 
     env = FakeEnv()
     worker.eval_env_list = [env]
-    worker.log_warning = Mock()
-    worker._evaluate_rtc = Mock(side_effect=KeyboardAbort("operator abort"))
-    worker.send_rtc_request = Mock()
+    worker._evaluate_standard = Mock(
+        side_effect=KeyboardAbort("operator requested evaluation abort")
+    )
 
     assert worker.evaluate(Mock(), Mock()) == {}
-    worker.send_rtc_request.assert_called_once()
-    stop_request = worker.send_rtc_request.call_args.args[1]
-    assert stop_request.request_type == "stop"
-    assert env.park_calls == 1
-    assert env.close_calls == 1
-
-
-def test_rtc_eval_normal_completion_parks_and_closes_environment():
-    """A finite RTC evaluation must leave the robot in its safe park state."""
-    worker = object.__new__(RTCEnvWorker)
-
-    class FakeEnv:
-        def __init__(self):
-            self.park_calls = 0
-            self.close_calls = 0
-
-        def park(self):
-            self.park_calls += 1
-
-        def close(self):
-            self.close_calls += 1
-
-    env = FakeEnv()
-    worker.eval_env_list = [env]
-    worker.log_warning = Mock()
-    metrics = {"return": torch.tensor([1.0])}
-    worker._evaluate_rtc = Mock(return_value=metrics)
-
-    assert worker.evaluate(Mock(), Mock()) == metrics
-    assert env.park_calls == 1
-    assert env.close_calls == 1
-
-    # Runner teardown may repeat cleanup, but the hardware actions are idempotent.
-    worker._cleanup_eval(0)
-    assert env.park_calls == 1
-    assert env.close_calls == 1
+    assert env.events == ["park", "close"]
+    worker.log_info.assert_called_once()
 
 
 def _assert_legacy_transition(env) -> None:

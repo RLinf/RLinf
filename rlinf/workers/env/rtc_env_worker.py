@@ -29,13 +29,11 @@ from omegaconf.omegaconf import DictConfig
 
 from rlinf.data.schema.embodied_types import (
     EnvOutput,
-    EnvTransition,
     RTCActionResponse,
     RTCRequest,
 )
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.action_utils import prepare_actions
-from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
 
@@ -59,9 +57,12 @@ class RTCEnvWorker(EnvWorker):
         rtc_cfg = self.cfg.runner.get("rtc", {})
         if not rtc_cfg.get("enabled", False):
             return
-        assert str(self.model_cfg.model_type) == "openpi", (
-            "RTC real-world evaluation is currently integrated for the "
-            "openpi policy path."
+        assert str(self.cfg.actor.model.model_type) in (
+            "openpi",
+            "openpi_rlinf",
+        ), (
+            "RTC real-world evaluation is currently integrated for the OpenPI "
+            "and openpi_rlinf policy paths."
         )
         assert self.stage_num == 1, (
             "RTC real-world evaluation currently supports a single pipeline stage."
@@ -174,9 +175,6 @@ class RTCEnvWorker(EnvWorker):
         )
 
         if isinstance(infos, dict):
-            for key in ("eval_phase", "eval_result", "eval_event"):
-                if key in infos:
-                    env_info[key] = infos[key]
             if dones.any():
                 if "episode" in infos:
                     for key in infos["episode"]:
@@ -189,12 +187,10 @@ class RTCEnvWorker(EnvWorker):
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=final_obs,
-            transition=EnvTransition(
-                rewards=step_reward,
-                dones=dones,
-                terminations=terminations,
-                truncations=truncations,
-            ),
+            rewards=step_reward,
+            dones=dones,
+            terminations=terminations,
+            truncations=truncations,
         )
         return env_output, env_info
 
@@ -223,88 +219,7 @@ class RTCEnvWorker(EnvWorker):
         )
         return self._maybe_rewrite_eval_chunk_gripper(chunk_actions)
 
-    def _cleanup_eval(self, stage_id: int) -> None:
-        """Best-effort park and close after a real-world eval exits.
-
-        The robot must be parked before its environment is released, whether
-        evaluation completes normally or the operator interrupts it. Cleanup
-        is idempotent because the runner may call its own teardown afterwards.
-        """
-        if getattr(self, "_eval_cleanup_done", False):
-            return
-        self._eval_cleanup_done = True
-        env = self.eval_env_list[stage_id]
-        try:
-            park = getattr(env, "park", None)
-            if callable(park):
-                park()
-        except BaseException as exc:  # noqa: BLE001 - preserve original abort
-            self.log_warning("Failed to park eval environment during cleanup: %s", exc)
-        finally:
-            try:
-                close = getattr(env, "close", None)
-                if callable(close):
-                    close()
-            except BaseException as exc:  # noqa: BLE001 - preserve original abort
-                self.log_warning(
-                    "Failed to close eval environment during cleanup: %s", exc
-                )
-
-    def _cleanup_aborted_eval(self, stage_id: int) -> None:
-        """Backward-compatible alias for eval cleanup callers."""
-        self._cleanup_eval(stage_id)
-
-    def _stop_aborted_rtc_rollout(self, rollout_channel: Channel) -> None:
-        """Tell the paired rollout worker to leave its RTC receive loop.
-
-        The environment worker normally sends this request at the end of
-        :meth:`_evaluate_rtc`.  An operator abort raises from the wrapped
-        environment instead, so the normal epilogue is skipped.  Sending the
-        same stop request here prevents the rollout actor from waiting forever
-        after the environment has parked and closed.
-        """
-        try:
-            self.send_rtc_request(
-                rollout_channel,
-                RTCRequest(
-                    obs={},
-                    request_type="stop",
-                    executed_horizon=0,
-                    predicted_delay_steps=0,
-                    chunk_id=0,
-                ),
-                mode="eval",
-            )
-        except BaseException as exc:  # noqa: BLE001 - preserve controlled abort
-            self.log_warning("Failed to stop RTC rollout after operator abort: %s", exc)
-
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
-        """Run RTC evaluation and handle operator aborts as normal shutdown.
-
-        ``KeyboardAbort`` is an operator decision, not a failed Ray task.  It
-        still stops the paired rollout worker and parks/closes the environment,
-        but returns an empty metric shard so ``WorkerGroupFuncResult`` does not
-        report a fatal remote exception or signal the driver process.  Other
-        exceptions retain the existing fatal propagation path after cleanup.
-        """
-        self._eval_cleanup_done = False
-        try:
-            eval_metrics = self._evaluate_rtc(input_channel, rollout_channel)
-            if getattr(self, "eval_env_list", None):
-                self._cleanup_eval(0)
-            return eval_metrics
-        except KeyboardAbort:
-            self._stop_aborted_rtc_rollout(rollout_channel)
-            if getattr(self, "eval_env_list", None):
-                self._cleanup_eval(0)
-            return {}
-        except BaseException:
-            self._stop_aborted_rtc_rollout(rollout_channel)
-            if getattr(self, "eval_env_list", None):
-                self._cleanup_eval(0)
-            raise
-
-    def _evaluate_rtc(self, input_channel: Channel, rollout_channel: Channel):
         """Run real-time-control evaluation.
 
         Args:
@@ -361,18 +276,13 @@ class RTCEnvWorker(EnvWorker):
             current_chunk_len = current_chunk_actions.shape[1]
             pending_rtc_response = None
             request_start_step = 0
-            keyboard_paused = False
 
             max_eval_steps = self.cfg.env.eval.max_steps_per_rollout_epoch
             while episode_step < max_eval_steps:
                 if self.eval_chunk_pause_seconds > 0:
                     step_start = time.time()
 
-                if (
-                    not keyboard_paused
-                    and pending_rtc_response is not None
-                    and pending_rtc_response.done()
-                ):
+                if pending_rtc_response is not None and pending_rtc_response.done():
                     rtc_response = pending_rtc_response.wait()
                     observed_delay_steps = max(episode_step - request_start_step, 0)
                     delay_buffer.append(observed_delay_steps)
@@ -383,8 +293,7 @@ class RTCEnvWorker(EnvWorker):
                     chunk_id = rtc_response.chunk_id
 
                 if (
-                    not keyboard_paused
-                    and pending_rtc_response is None
+                    pending_rtc_response is None
                     and current_chunk_index >= min_exec_horizon
                 ):
                     predicted_delay_steps = int(max(delay_buffer))
@@ -412,27 +321,12 @@ class RTCEnvWorker(EnvWorker):
                 env_action = current_chunk_actions[:, action_index]
                 env_output, env_info = self._evaluate_rtc_action(env_action, stage_id)
 
-                # KeyboardEvalControlWrapper reports its state through the
-                # environment metadata.  While paused, continue polling the
-                # wrapper so resume/result keys are observed, but freeze the
-                # policy chunk cursor and never request another chunk.
-                phase = env_info.get("eval_phase")
-                if isinstance(phase, np.ndarray):
-                    phase = phase.flat[0] if phase.size else None
-                elif isinstance(phase, (list, tuple)):
-                    phase = phase[0] if phase else None
-                if isinstance(phase, torch.Tensor):
-                    phase = phase.flatten()[0].item() if phase.numel() else None
-                keyboard_paused = phase == "paused"
-
                 for key, value in env_info.items():
-                    if key not in {"eval_phase", "eval_result", "eval_event"}:
-                        eval_metrics[key].append(value)
+                    eval_metrics[key].append(value)
                 episode_success = episode_success or self._success_from_info(env_info)
 
-                if not keyboard_paused:
-                    episode_step += 1
-                    current_chunk_index += 1
+                episode_step += 1
+                current_chunk_index += 1
 
                 episode_done = env_output.dones is not None and bool(
                     env_output.dones.any()

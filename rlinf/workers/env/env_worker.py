@@ -30,6 +30,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
@@ -645,6 +646,43 @@ class EnvWorker(Worker):
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
+    def _cleanup_real_eval_envs(self) -> None:
+        """Park and close real evaluation environments exactly once."""
+        if getattr(self, "_eval_cleanup_done", False):
+            return
+        self._eval_cleanup_done = True
+        if not getattr(self, "eval_env_list", None):
+            return
+        if SupportedEnvType(self.cfg.env.eval.env_type) is not SupportedEnvType.REAL:
+            return
+
+        for env in self.eval_env_list:
+            try:
+                park = get_env_attr(env, "park")
+                if callable(park):
+                    park()
+            except BaseException as exc:  # noqa: BLE001 - preserve eval result
+                self.log_warning("Failed to park real eval environment: %s", exc)
+            finally:
+                try:
+                    close = get_env_attr(env, "close")
+                    if callable(close):
+                        close()
+                except BaseException as exc:  # noqa: BLE001 - preserve eval result
+                    self.log_warning("Failed to close real eval environment: %s", exc)
+
+    @staticmethod
+    def _success_from_info(env_info: dict[str, Any]) -> bool:
+        """Return whether an evaluation info mapping reports success."""
+        for key in ("success_once", "success_at_end", "success"):
+            value = env_info.get(key)
+            if value is None:
+                continue
+            if isinstance(value, torch.Tensor):
+                return bool(value.any().item())
+            return bool(np.asarray(value).any())
+        return False
+
     @Worker.timer("get_reward_model_output")
     def get_reward_model_output(
         self,
@@ -1214,6 +1252,24 @@ class EnvWorker(Worker):
 
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        """Run standard evaluation and handle operator aborts gracefully.
+
+        ``KeyboardAbort`` is an intentional operator shutdown signal from the
+        real-environment episode wrapper, not a failed evaluation.  Convert it
+        into an empty metric result after the common real-environment cleanup
+        runs so the Ray worker does not report a fatal remote exception.
+        Unexpected exceptions keep their original propagation semantics.
+        """
+        self._eval_cleanup_done = False
+        try:
+            return self._evaluate_standard(input_channel, rollout_channel)
+        except KeyboardAbort:
+            self.log_info("Operator requested evaluation abort; shutting down cleanly.")
+            return {}
+        finally:
+            self._cleanup_real_eval_envs()
+
+    def _evaluate_standard(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:

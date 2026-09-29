@@ -39,14 +39,6 @@ runner:
   only_eval: true
   ckpt_path: null
   val_check_interval: -1
-  rtc:
-    enabled: true
-    inject_delay_ms: 0
-    fixed_delay_steps: 0
-    chunk_pause_seconds: 0.0
-    min_exec_horizon: 10
-    initial_delay_steps: 1
-    delay_buffer_size: 8
   logger:
     log_path: ../results
     project_name: so101-openpi
