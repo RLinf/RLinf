@@ -69,6 +69,7 @@ GSPO 比较当前 policy 与采样 policy 对同一完整回答的概率。先�
 * ``algorithm.training_batch_size_per_gpu`` 控制实际固定微批大小，runner 会将它复制到 ``actor.micro_batch_size``，因此仅修改后者不会改变推理微批。推导出的全局批量必须能被微批大小与 actor world size 的乘积整除。
 * ``algorithm.clip_ratio_low`` 与 ``clip_ratio_high`` 可以不同；某一侧设为 ``null`` 时使用 ``ratio_clip_eps``。值必须有限且非负，下裁剪宽度必须小于一。
 * ``algorithm.recompute_logprobs: True`` 使用 actor 重算的旧 log 概率；``False`` 使用 rollout 提供的 log 概率，也会暴露两个引擎之间的数值差异。
+  示例将 ``algorithm.logprob_forward_micro_batch_size`` 联动到训练微批大小。重算旧概率时应保持两者相同：不同批量形状在 bf16 下可能产生数值差异，即使参数尚未更新，也可能触发 GSPO 很窄的裁剪区间。
 * ``algorithm.kl_beta`` 与 ``entropy_bonus`` 保留现有 actor 正则化逻辑，是序列 policy 目标之外的附加项。示例保留 fp32 actor 参数与优化器状态，使用 bf16 前向计算和 rollout，以及 fp32 梯度归约。
 
 当前 reasoning 训练循环不会仅因设置 ``runner.val_check_interval`` 就执行 held-out 评估。请单独评估导出的 checkpoint，不能将训练奖励当作验证集准确率。

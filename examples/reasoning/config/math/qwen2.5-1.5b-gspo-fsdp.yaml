@@ -20,6 +20,7 @@ algorithm:
   group_size: 4
   n_minibatches: 2
   training_batch_size_per_gpu: 1
+  logprob_forward_micro_batch_size: ${algorithm.training_batch_size_per_gpu}
 
 data:
   rollout_batch_size: 16

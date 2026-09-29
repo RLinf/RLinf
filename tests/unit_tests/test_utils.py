@@ -655,6 +655,10 @@ def test_gspo_configs_compose_with_valid_fsdp_settings(
         cfg = compose(config_name=name, overrides=overrides)
     validate_gspo_cfg(cfg)
     validate_fsdp_cfg(cfg.actor)
+    assert (
+        cfg.algorithm.logprob_forward_micro_batch_size
+        == cfg.algorithm.training_batch_size_per_gpu
+    )
     if not overrides:
         assert cfg.algorithm.clip_ratio_low == 3e-4
         assert cfg.algorithm.clip_ratio_high == 4e-4

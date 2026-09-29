@@ -48,7 +48,7 @@ algorithm:
   # mbs to do log prob inference, can be set to
   # lower than rollout_batch_size_per_gpu to reduce
   # memory usage
-  logprob_forward_micro_batch_size: 1 # ${.rollout_batch_size_per_gpu}
+  logprob_forward_micro_batch_size: ${algorithm.training_batch_size_per_gpu}
 
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}

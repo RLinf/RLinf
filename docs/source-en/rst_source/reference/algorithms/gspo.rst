@@ -107,6 +107,10 @@ Tuning the Configuration
 * ``algorithm.recompute_logprobs: True`` uses actor-recomputed old log
   probabilities. ``False`` uses rollout-provided log probabilities, exposing
   any numerical difference between the rollout and actor engines.
+  The example links ``algorithm.logprob_forward_micro_batch_size`` to the
+  training microbatch size. Keep them equal when recomputing old probabilities:
+  different batch shapes can introduce numerical differences under bf16 that
+  matter for GSPO's narrow clipping interval, even before a parameter update.
 * ``algorithm.kl_beta`` and ``entropy_bonus`` retain the existing actor
   regularizers. They are additional terms, separate from the sequence policy
   objective. The example keeps fp32 actor parameters and optimizer state, with
