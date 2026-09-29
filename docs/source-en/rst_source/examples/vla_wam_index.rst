@@ -67,9 +67,9 @@ Open a model page for the full workflow and its supported environments.
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/pi0_fast.html" style="text-decoration: underline; color: blue;">
-           <b>RL on PI0-FAST</b>
+           <b>RL on π₀-FAST</b>
          </a><br>
-         LeRobot PI0-FAST + LIBERO-Long + token-level GRPO
+         LeRobot π₀-FAST + LIBERO-Long + token-level GRPO
        </p>
      </div>
 
@@ -171,7 +171,7 @@ Open a model page for the full workflow and its supported environments.
    OpenVLA-OFT <embodied/openvla_oft>
    MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
-   PI0-FAST <embodied/pi0_fast>
+   π₀-FAST <embodied/pi0_fast>
    GR00T <embodied/gr00t>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>

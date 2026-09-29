@@ -17,47 +17,38 @@ Megatron-Bridge resources:
 
 - `Megatron-Bridge upstream repository <https://github.com/NVIDIA/Megatron-Bridge>`__
 
-- `Megatron-Bridge version 0.3.0 used by RLinf <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
+- `Megatron-Bridge version 0.5.0 used by RLinf <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.5.0>`__
 
-- `Corresponding Megatron-LM version b0cc2706ddc60d2aefd5fff346445b5c013036a8 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
+- `Corresponding Megatron-LM branch core_r0.18.0 <https://github.com/NVIDIA/Megatron-LM/tree/core_r0.18.0>`__
 
 Environment Setup
 -----------------
 
-MBridge currently uses RLinf's agentic environment. Install the base
-environment first:
+MBridge uses RLinf's agentic environment. ``install.sh`` installs
+Megatron-Bridge and the matching Megatron-LM together with it, so there is no
+need to clone extra repositories or set ``PYTHONPATH``:
 
 .. code:: bash
 
    bash requirements/install.sh agentic
    source .venv/bin/activate
-
-Install the extra Python packages required by the MBridge path:
-
-.. code:: bash
-
-   uv pip install transformers==4.57.1 bitsandbytes
-
-The reasoning image does not include the ``megatron.bridge`` package.
-Clone Megatron-Bridge and the matching Megatron-LM revision, then add both
-source trees to ``PYTHONPATH``:
-
-.. code:: bash
-
-   export MBRIDGE_ROOT=/path/to/Megatron-Bridge-0.3.0
-   export MEGATRON_LM_ROOT=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8
-
-   mkdir -p "$(dirname "${MBRIDGE_ROOT}")" "$(dirname "${MEGATRON_LM_ROOT}")"
-   git clone --branch v0.3.0 https://github.com/NVIDIA-NeMo/Megatron-Bridge.git "${MBRIDGE_ROOT}"
-   git clone https://github.com/NVIDIA/Megatron-LM.git "${MEGATRON_LM_ROOT}"
-   git -C "${MEGATRON_LM_ROOT}" checkout b0cc2706ddc60d2aefd5fff346445b5c013036a8
-
-   export PYTHONPATH="${MBRIDGE_ROOT}/src:${MEGATRON_LM_ROOT}:${PYTHONPATH}"
-   export CUDA_DEVICE_MAX_CONNECTIONS=1
    python -c "from megatron.bridge import AutoBridge; print('Megatron-Bridge OK')"
 
-If your cluster image already mounts these repositories, keep the same
-``PYTHONPATH`` exports and skip the two ``git clone`` commands.
+This creates a Python 3.12 virtual environment, installs ``megatron-bridge``
+0.5.0 and ``nvidia-modelopt`` 0.45.0, and clones Megatron-LM ``core_r0.18.0``
+into the virtual environment directory, which ``.venv/bin/activate`` adds to
+``PYTHONPATH``. To reuse an existing Megatron-LM checkout, set
+``MEGATRON_PATH=/path/to/Megatron-LM`` before installing; ``install.sh`` reuses
+that directory as is without switching branches, so make sure it is on
+``core_r0.18.0``.
+
+.. note::
+
+   Megatron-Bridge requires Python 3.12. If you pass a lower version with
+   ``--python``, ``install.sh`` skips Megatron-Bridge with a WARNING and the
+   import check above fails. The virtual environment in the current reasoning
+   image uses Python 3.11 and does not include ``megatron.bridge``; install the
+   environment with the commands above to use MBridge.
 
 Download the model and dataset used by the reasoning example:
 
@@ -141,12 +132,11 @@ When ``actor.megatron.mbridge`` is ``True``, RLinf reads the model path from
 Quick Start
 -----------
 
-1. Export the MBridge paths before launching training:
+1. Activate the environment and set the environment variable before launching training:
 
 .. code:: bash
 
-   export PYTHONPATH=/path/to/Megatron-Bridge-0.3.0/src:$PYTHONPATH
-   export PYTHONPATH=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8:$PYTHONPATH
+   source .venv/bin/activate
    export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 2. Prepare the HuggingFace model and data directories:

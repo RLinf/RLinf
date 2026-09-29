@@ -327,7 +327,7 @@ performance.
      - ``True`` enables transition-rule state changes (e.g. slicing, cooking).
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` uses the numpy controller backend, usually faster in single-/moderate-parallel runs.
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - When ``True``, skips collecting intermediate observations inside an action chunk (large
        env-speed gain). Saved videos then show only the frames the policy observes at chunk boundaries.
    * - ``num_env_subprocess``
