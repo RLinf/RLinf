@@ -54,6 +54,7 @@ FROM ${KUNLUN_BASE_IMAGE} AS base-image-platform-kunlun
 ##################################################################################################
 FROM base-image-platform-${PLATFORM} AS base-image-reason
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-maniskill_libero
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-openwam
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-behavior-openvlaoft
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-behavior-openpi
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-metaworld
@@ -227,6 +228,18 @@ RUN chmod +x /usr/local/bin/link_assets
 
 RUN cp $UV_PATH/requirements/embodied/download_assets.sh /usr/local/bin/download_assets
 RUN chmod +x /usr/local/bin/download_assets
+
+
+##################################################################################################
+# Embodied: OpenWAM (LIBERO)
+##################################################################################################
+FROM embodied-common-image AS embodied-openwam-image
+
+# Install the OpenWAM LIBERO training/evaluation environment.
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openwam --model openwam --env libero
+
+# Set default env
+RUN echo "source ${UV_PATH}/openwam/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

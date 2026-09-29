@@ -25,6 +25,7 @@ import numpy as np
 import torch
 from omegaconf.omegaconf import OmegaConf
 
+from rlinf.envs.action_utils import _openwam_absolute_eef10_to_libero7
 from rlinf.envs.sim.libero.utils import (
     build_interleaved_eval_reset_state_ids,
     distribute_reset_state_ids_round_robin,
@@ -202,10 +203,30 @@ class LiberoEnv(gym.Env):
 
         current_type_val = get_libero_type()
 
-        for env_fn_param in env_fn_params:
+        # Optional: spread the LIBERO subprocess renderers over several GPUs.
+        # Each child keeps one EGL context; many contexts rendering on one
+        # device abort inside MuJoCo, so the native OpenWAM runner pins each
+        # client to its own render device the same way.
+        render_gpu_ids = self.cfg.get("render_gpu_ids", None)
+        render_gpu_ids = (
+            [int(gpu) for gpu in render_gpu_ids] if render_gpu_ids else None
+        )
 
-            def env_fn(param=env_fn_param, _type_val=current_type_val):
+        for env_index, env_fn_param in enumerate(env_fn_params):
+            render_gpu = (
+                None
+                if render_gpu_ids is None
+                else render_gpu_ids[
+                    (self.seed_offset * self.num_envs + env_index) % len(render_gpu_ids)
+                ]
+            )
+
+            def env_fn(
+                param=env_fn_param, _type_val=current_type_val, _render_gpu=render_gpu
+            ):
                 os.environ["LIBERO_TYPE"] = _type_val
+                if _render_gpu is not None:
+                    os.environ["MUJOCO_EGL_DEVICE_ID"] = str(_render_gpu)
                 seed = param.pop("seed")
 
                 if _type_val in ["pro", "plus"]:
@@ -895,10 +916,32 @@ class LiberoEnv(gym.Env):
             depth=depth,
         )
 
+    def _openwam_reference_eef10(self) -> np.ndarray:
+        """Read the current achieved LIBERO pose in OpenWAM's EEF10 format."""
+        if self.current_raw_obs is None:
+            raise RuntimeError(
+                "LIBERO must be reset before converting OpenWAM absolute actions"
+            )
+        references = []
+        from rlinf.utils.rot6d import quat_xyzw_to_rot6d
+
+        for obs in self.current_raw_obs:
+            pos = np.asarray(obs["robot0_eef_pos"], dtype=np.float32).reshape(-1)
+            quat = np.asarray(obs["robot0_eef_quat"], dtype=np.float32).reshape(-1)
+            qpos = np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32).reshape(-1)
+            width = float(qpos[0] - qpos[1])
+            grip = np.clip(2.0 * width / 0.08 - 1.0, -1.0, 1.0)
+            references.append(np.concatenate([pos, quat_xyzw_to_rot6d(quat), [grip]]))
+        return np.asarray(references, dtype=np.float32)
+
     def step(self, actions=None, auto_reset=True, _skip_obs_wrap=False):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
+        if self.cfg.get("openwam_action_representation", None) == "absolute_eef10":
+            actions = _openwam_absolute_eef10_to_libero7(
+                actions, self._openwam_reference_eef10()
+            )
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)

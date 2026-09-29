@@ -1,7 +1,7 @@
 支持的模型
 ==========
 
-评测配置通过 ``defaults`` 引用 ``examples/embodiment/config/model/`` 下的模型 preset，并在 ``rollout.model`` 中覆盖 ``model_path`` 等字段。当前 ``evaluations/`` 中已有示例的模型如下：
+评测配置通过 ``defaults`` 引用 ``examples/embodiment/config/model/`` 下的模型 preset，并在 ``rollout.model`` 中覆盖 ``model_path`` 等字段；OpenWAM 配方则把整个 ``rollout.model`` 块内联写出，因为模型设置来自 checkpoint 自带的 ``config.yaml``。当前 ``evaluations/`` 中已有示例的模型如下：
 
 .. list-table::
    :header-rows: 1
@@ -34,6 +34,9 @@
    * - PI0-FAST
      - ``pi0_fast``
      - ``libero_10_pi0_fast_eval``
+   * - OpenWAM
+     - ``openwam``
+     - ``libero_spatial_openwam_eval``、``libero_object_openwam_eval``、``libero_goal_openwam_eval``、``libero_10_openwam_eval``、``robotwin_<task>_openwam_eval``\ （50 个 RoboTwin 任务）
 
 模型路径设置
 ------------

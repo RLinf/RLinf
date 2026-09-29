@@ -1,0 +1,43 @@
+# OpenWAM (https://github.com/OpenWAM-Official/OpenWAM) runtime deps.
+#
+# OpenWAM itself is installed with `pip install -e --no-deps`, so the pins in its
+# pyproject.toml are not resolved. Two of them would otherwise conflict with RLinf
+# and neither is load-bearing:
+#
+# - `transformers>=5.5,<6`: OpenWAM only uses AutoConfig / AutoModel / AutoTokenizer /
+#   AutoProcessor / PreTrainedTokenizerFast plus Qwen2_5_VLForConditionalGeneration
+#   (cosmos_predict25 text encoder) and Qwen3VLForConditionalGeneration (tri_system
+#   VLM backbone), all imported lazily inside functions. Its own error message in
+#   model/vlm_backbone/qwen3_vl_backbone.py states the real floor: transformers>=4.50.
+#   Left unpinned here so the `embodied` extra's `transformers<=4.57.6` applies; that
+#   version ships Qwen3VLForConditionalGeneration (RLinf's own gr00t_n1d7 imports it
+#   at module scope under the same cap).
+# - `deepspeed>=0.18.5,<0.19`: only reached through accelerate in OpenWAM's own
+#   scripts/train.py. The `openwam` package never imports it, and RLinf trains with
+#   FSDP, so it is omitted.
+#
+# torch, torchvision, transformers, accelerate, numpy, einops, scipy, tqdm, wandb,
+# hydra-core and omegaconf are left out: RLinf core and the `embodied` extra already
+# install compatible versions.
+
+# Video/action model stack
+diffusers==0.39.0
+safetensors
+timm>=1.0.20,<1.1
+sentencepiece
+protobuf
+
+# Data / IO
+h5py
+pandas
+pyarrow
+modelscope
+ftfy
+av
+imageio
+imageio-ffmpeg
+
+# Deploy-side transport (OpenWAM's websocket policy server; RLinf drives the
+# architecture in-process, but benchmarks/utils and deploy/server.py import it)
+websockets
+msgpack

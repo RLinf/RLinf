@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on RoboCoin.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=robocoin, cameras, action mode) drives the
+# native OpenWAM reader, so a robocoin checkpoint must be paired with robocoin data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "robocoin_sft_openwam"
+
+data:
+  train_data_paths: /path/to/robocoin_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-robocoin-checkpoint
