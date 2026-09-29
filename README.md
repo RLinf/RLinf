@@ -37,7 +37,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/09] 🔥 RLinf supports FSDP supervised fine-tuning and batched LIBERO evaluation for [FastWAM](https://github.com/yuantianyuan01/FastWAM). Doc: [FastWAM Evaluation and SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html).
 - [2026/08] 🔥 RLinf supports SFT and SGLang-based evaluation of NVIDIA's omnimodal world model, Cosmos3. Docs: [Cosmos3 SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html), [SGLang eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/cosmos3_sglang.html).
 - [2026/08] 🎉 RLinf is officially welcomed into the **PyTorch Ecosystem**! We will continue to bring scalable embodied and agentic RL to PyTorch users, pushing model intelligence into the real world. Blog: [PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/).
-- [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf).
+- [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training).
 - [2026/08] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](docs/source-en/rst_source/examples/video_models.rst).
 - [2026/08] 🔥 RLinf supports Moore Threads (MUSA), Huawei Ascend (CANN), and AMD (ROCm). See the [hardware support matrix](#hardware-support) for model/environment combinations and setup instructions.
 - [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html).
@@ -378,7 +378,7 @@ We are excited to see a growing ecosystem of projects building on top of or inte
 - [pi-StepNFT](https://github.com/wangst0181/pi-StepNFT): Extends RLinf for step-level training and optimization of π-series VLA models.
 - [Dexbotic](https://github.com/dexmal/dexbotic): A robotics + RL system integrating RLinf for scalable training and deployment of embodied agents.
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): A digital twin + robotics platform leveraging RLinf for large-scale embodied RL training.
-- [IsaacLab](https://github.com/isaac-sim/IsaacLab/tree/develop/scripts/reinforcement_learning/rlinf): Official integration of RLinf within IsaacLab, enabling seamless reinforcement learning workflows on top of NVIDIA Isaac Sim based robotics environments.
+- [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): Official integration of RLinf within IsaacLab, enabling seamless reinforcement learning workflows on top of NVIDIA Isaac Sim based robotics environments.
 - [RISE](https://github.com/OpenDriveLab/RISE): A robot reinforcement learning framework based on a compositional world model, using RLinf for online reinforcement learning.
 
 💡 Want to feature your project here? Open a PR and we’ll be happy to include it!
