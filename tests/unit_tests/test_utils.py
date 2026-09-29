@@ -555,3 +555,63 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+@pytest.mark.parametrize(
+    "key,value,message",
+    [
+        ("runner.task_type", "embodied", "task_type"),
+        ("algorithm.adv_type", "gae", "adv_type"),
+        ("algorithm.loss_agg_func", "token-mean", "loss_agg_func"),
+        ("algorithm.normalize_advantages", True, "normalize_advantages"),
+        ("runner.enable_dynamic_batch_size", True, "enable_dynamic_batch_size"),
+        ("algorithm.use_valid_token_scale", True, "use_valid_token_scale"),
+        ("algorithm.importance_sampling_fix", True, "importance_sampling_fix"),
+        ("algorithm.clip_ratio_c", 3.0, "clip_ratio_c"),
+        ("algorithm.clip_log_ratio_min", -10.0, "clip_log_ratio_min"),
+        ("algorithm.clip_log_ratio_max", 10.0, "clip_log_ratio_max"),
+    ],
+)
+def test_gspo_rejects_incompatible_config_before_cluster_start(key, value, message):
+    from rlinf.config import validate_cfg, validate_gspo_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "reasoning", "enable_dynamic_batch_size": False},
+            "algorithm": {
+                "loss_type": "gspo",
+                "adv_type": "grpo",
+                "loss_agg_func": "seq-mean-token-mean",
+                "normalize_advantages": False,
+                "clip_ratio_c": None,
+            },
+        }
+    )
+    validate_gspo_cfg(cfg)
+    OmegaConf.update(cfg, key, value)
+    with pytest.raises(AssertionError, match=message):
+        validate_cfg(cfg)
+    cfg.algorithm.loss_type = "actor"
+    validate_gspo_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    "folder,name",
+    [
+        ("examples/reasoning/config/math", "qwen2.5-1.5b-gspo-fsdp"),
+        ("tests/e2e_tests/reasoning", "qwen2.5-1.5b-gspo-collocated-fsdp-sgl"),
+    ],
+)
+def test_gspo_configs_compose_with_valid_fsdp_settings(folder, name, monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_fsdp_cfg, validate_gspo_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    with initialize_config_dir(version_base="1.1", config_dir=str(root / folder)):
+        cfg = compose(config_name=name)
+    validate_gspo_cfg(cfg)
+    validate_fsdp_cfg(cfg.actor)
+    assert cfg.algorithm.clip_ratio_low == 3e-4
+    assert cfg.algorithm.clip_ratio_high == 4e-4

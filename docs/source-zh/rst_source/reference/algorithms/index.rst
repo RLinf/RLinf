@@ -13,6 +13,8 @@
      - Proximal Policy Optimization。
    * - :doc:`GRPO <grpo>`
      - Group Relative Policy Optimization。
+   * - :doc:`GSPO <gspo>`
+     - 面向推理任务的序列级重要性比率与裁剪。
    * - :doc:`DAPO <dapo>`
      - 解耦裁剪与动态采样的策略优化。
    * - :doc:`Reinforce++ <reinforce>`
@@ -33,6 +35,7 @@
 
    PPO <ppo>
    GRPO <grpo>
+   GSPO <gspo>
    DAPO <dapo>
    Reinforce++ <reinforce>
    SAC <sac>

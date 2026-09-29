@@ -1,0 +1,29 @@
+defaults:
+  - qwen2.5-1.5b-grpo-fsdp
+  - _self_
+
+runner:
+  experiment_name: gspo-1.5b
+  enable_dynamic_batch_size: False
+
+algorithm:
+  loss_type: gspo
+  adv_type: grpo
+  loss_agg_func: seq-mean-token-mean
+  normalize_advantages: False
+  use_valid_token_scale: False
+  importance_sampling_fix: False
+  clip_ratio_low: 0.0003
+  clip_ratio_high: 0.0004
+  clip_ratio_c: null
+
+actor:
+  fsdp_config:
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+    amp_autocast:
+      enabled: False
+    grad_scaler:
+      enabled: False
