@@ -30,7 +30,7 @@ robodojo_runtime.bridge.VectorEnv:
   matching keys (optional success: bool). Rewards are totals over the chunk.
   The bridge must not auto-reset. Terminal slots stay latched until reset.
 * check_seeds(seeds) returns one validity boolean per input seed.
-* close(clear_cache: bool) releases simulator resources.
+* offload(clear_cache: bool) releases simulator resources.
 
 The runtime converts vision.cam_head/cam_left_wrist/cam_right_wrist and state.*
 to the observation schema above, and maps policy vectors to RoboDojo's
@@ -43,7 +43,7 @@ observation/info entry and (N, H) tensors: aggregate reward and terminal flags
 occupy the last column. elapsed_steps counts submitted control steps, including
 the padded remainder after early termination; simulator step limits are conveyed
 through truncations. RLinf also enforces cfg.max_episode_steps.
-Keep enable_offload false: this adapter exposes terminal close, not suspend/resume.
+Keep enable_offload false: this adapter exposes terminal offload, not suspend/resume.
 """
 
 import json
@@ -56,8 +56,11 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
-from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
-from rlinf.envs.utils import center_crop_image, list_of_dict_to_dict_of_list
+from rlinf.envs.utils import (
+    center_crop_image,
+    list_of_dict_to_dict_of_list,
+    partition_success_seeds,
+)
 
 __all__ = ["RoboDojoEnv"]
 
@@ -139,11 +142,6 @@ class RoboDojoEnv(gym.Env):
             n_envs=self.num_envs,
             env_seeds=self.reset_state_ids.tolist(),
         )
-
-    @property
-    def device(self) -> torch.device:
-        """Return the CPU device used for wrapper counters and rewards."""
-        return torch.device("cpu")
 
     @property
     def elapsed_steps(self) -> torch.Tensor:
@@ -326,7 +324,7 @@ class RoboDojoEnv(gym.Env):
         """Delegate seed validity checks to the runtime."""
         return self.venv.check_seeds(seeds)
 
-    def close(self, clear_cache: bool = True) -> None:
+    def offload(self, clear_cache: bool = True) -> None:
         """Release the owned bridge once; repeated calls are harmless."""
         if not self._closed:
             self.venv.close(clear_cache)

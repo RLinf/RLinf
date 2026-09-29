@@ -106,7 +106,7 @@ def make_env(monkeypatch):
 
     yield build
     for env in environments:
-        env.close()
+        env.offload()
 
 
 def test_robodojo_registration_and_lazy_import():
@@ -139,7 +139,6 @@ def test_robodojo_assets_root_preserves_environment_default(make_env, assets_pat
 @pytest.mark.parametrize("record_metrics", [True, False])
 def test_robodojo_reset_step_chunk_contract(make_env, record_metrics):
     env = make_env(record_metrics=record_metrics)
-    assert env.device == torch.device("cpu")
     assert env.is_start
     obs, infos = env.reset()
     assert not env.is_start
@@ -208,15 +207,15 @@ def test_robodojo_custom_reward_and_ignored_termination(make_env):
     assert reward.tolist() == [0.0, 0.0]
 
 
-def test_robodojo_seeds_and_close(make_env):
+def test_robodojo_seeds_and_offload(make_env):
     env = make_env(group_size=2, use_fixed_reset_state_ids=True)
     seeds = env.reset_state_ids.clone()
     assert seeds[0] == seeds[1]
     env.update_reset_state_ids()
     assert torch.equal(seeds, env.reset_state_ids)
     assert env.check_seeds([1, -1]) == [True, False]
-    env.close(clear_cache=False)
-    env.close()
+    env.offload(clear_cache=False)
+    env.offload()
     assert env.venv.closed == [False]
 
 
@@ -271,7 +270,7 @@ def test_robodojo_installed_bridge_is_called(monkeypatch):
     assert obs["states"].shape == (1, 14)
     _, rewards, _, _, _ = env.step(np.zeros((1, 2, 14)))
     assert rewards.tolist() == [2.0]
-    env.close(False)
+    env.offload(False)
     assert calls == [
         ("create", {"task_name": "test_task"}),
         ("reset", 7),
