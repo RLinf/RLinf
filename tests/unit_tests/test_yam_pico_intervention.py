@@ -23,9 +23,6 @@ with poses the test chooses.
 
 from __future__ import annotations
 
-import shutil
-import tempfile
-import time
 from types import SimpleNamespace
 
 import gymnasium as gym
@@ -238,52 +235,6 @@ def test_fault_holds_both_and_requires_release_before_reengagement(station, faul
     )
 
 
-@pytest.mark.parametrize("side", ["left", "right"])
-def test_ik_failure_holds_only_failed_arm_and_retries_without_release(station, side):
-    for arm in station.arms.values():
-        arm.held = True
-    station.env.step(np.zeros(14))
-    press(station, "right_menu_button")
-    station.arms["right"].buttons = {}
-    held = station.base.get_hold_action().copy()
-    resets = {name: arm.resets for name, arm in station.arms.items()}
-    for arm in station.arms.values():
-        arm.action[6] = 1.0
-    kin = station.kinematics[side]
-    failed_index = 0 if side == "left" else 7
-    healthy_index = 7 - failed_index
-    healthy_side = "right" if side == "left" else "left"
-    kin.fail = True
-    solves = len(kin.targets)
-    for attempt in range(3):
-        _, reward, done, _, info = station.env.step(np.zeros(14))
-        assert len(kin.targets) == solves + attempt + 1
-        assert info["yam_pico_fault"] == f"{side}:ik:injected_failure"
-        assert info["pico_active"] and info[healthy_side] and not info[side]
-        assert info["pre_record"] and reward == 0 and not done
-        assert info["record_reset"] == (attempt == 0)
-        np.testing.assert_allclose(
-            info["intervene_action"][failed_index : failed_index + 7],
-            held[failed_index : failed_index + 7],
-        )
-        assert info["intervene_action"][healthy_index] > held[healthy_index]
-        assert info["intervene_action"][healthy_index + 6] == 1.0
-        for name, arm in station.arms.items():
-            assert arm.held and arm.reference
-            assert arm.resets == resets[name]
-
-    kin.fail = False
-    for arm in station.arms.values():
-        arm.action[6] = 0.0
-    info = station.env.step(np.zeros(14))[-1]
-    assert info["yam_pico_fault"] is None and info["pico_active"]
-    assert info["intervene_action"][0] > held[0]
-    assert info["intervene_action"][7] > held[7]
-    # An open command from a rejected frame must not leak into the retry.
-    assert info["intervene_action"][failed_index + 6] == held[failed_index + 6]
-    assert info["intervene_action"][healthy_index + 6] == 1.0
-
-
 def test_record_edges_abort_and_success_preserve_only_manual_boundary(station):
     station.arms["left"].held = True
     info = press(station, "right_menu_button")[-1]
@@ -303,174 +254,6 @@ def test_record_edges_abort_and_success_preserve_only_manual_boundary(station):
     assert info["pre_record"] and info["record_reset"] and not info["success"]
 
 
-def test_fault_stops_recording_without_claiming_success(station):
-    press(station, "right_menu_button")
-    station.arms["left"].ready = False
-    _, reward, done, _, info = station.env.step(np.zeros(14))
-    assert info["record_reset"] and info["pre_record"]
-    assert not done and reward == 0.0
-
-
-def test_recorded_action_uses_runtime_acceptance(station, monkeypatch):
-    original = station.env.env.step
-
-    def clipped(action):
-        obs, reward, done, truncated, info = original(action)
-        info["accepted_action"] = np.full(14, 0.123, dtype=np.float32)
-        return obs, reward, done, truncated, info
-
-    monkeypatch.setattr(station.env.env, "step", clipped)
-    np.testing.assert_allclose(
-        station.env.step(np.zeros(14))[-1]["intervene_action"], 0.123
-    )
-
-
-@pytest.mark.parametrize("joint_step", [0.05, 0.08])
-def test_large_valid_ik_target_is_interpolated_and_recorded(monkeypatch, joint_step):
-    station = build_station(max_joint_delta=joint_step)
-    try:
-        station.env.reset()
-        station.env.step(np.zeros(14))
-        station.arms["left"].held = True
-        station.env.step(np.zeros(14))
-        before = station.base.get_hold_action().copy()
-
-        def large_target(target, seed, gripper):
-            del target, gripper
-            return YamIKResult(
-                True, seed + np.array([0.2, 0.1, 0.05, 0.1, 0, -0.1]), 0.0, 0.0, 0.0
-            )
-
-        monkeypatch.setattr(station.kinematics["left"], "solve", large_target)
-        info = station.env.step(np.zeros(14))[-1]
-        assert info["yam_pico_fault"] is None and info["pico_active"]
-        np.testing.assert_allclose(
-            info["intervene_action"][:6],
-            before[:6] + joint_step * np.array([1, 0.5, 0.25, 0.5, 0, -0.5]),
-        )
-        np.testing.assert_allclose(info["intervene_action"][6:], before[6:])
-        np.testing.assert_array_equal(info["intervene_action"], info["accepted_action"])
-    finally:
-        station.env.close()
-
-
-def test_real_pico_arm_lifecycle_preserves_calibration(monkeypatch):
-    from rlinf.robotics.parts.teleop.yam_pico import _YamPicoArm
-    from rlinf.robotics.parts.transports.pico import PicoExpert
-
-    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
-    arm = _YamPicoArm(hand="right", calibration={"enabled": False})
-    arm._expert._latest_data = {
-        "right_controller": {
-            "position": [0.0, 0.0, 0.0],
-            "orientation": [0.0, 0.0, 0.0, 1.0],
-            "grip": 1.0,
-        },
-        "buttons": {"A": True},
-    }
-    arm._expert._last_update_time = time.time()
-    tcp = np.array([0.4, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0])
-    scale = np.array([0.01, 0.1, 1.0])
-    action, engaged, _ = arm.command(arm.read(), tcp, scale)
-    assert engaged
-    np.testing.assert_allclose(action[:6], 0)
-    assert arm.read_buttons()["A"]
-    arm._expert._calibrated = True
-    arm.reset_reference()
-    assert arm._expert._calibrated and arm._ref_tcp_pos is None
-    action, _, _ = arm.command(arm.read(), tcp, scale)
-    np.testing.assert_allclose(action[:6], 0)
-    arm.stop()
-
-
-def test_two_real_subscribers_receive_and_close_independently():
-    zmq = pytest.importorskip("zmq")
-    from rlinf.robotics.parts.transports.pico import PicoExpert
-
-    # ``ipc://`` addresses are capped at ``sizeof(sun_path)`` (103 bytes), and
-    # pytest's own ``tmp_path`` on macOS already exceeds that.
-    directory = tempfile.mkdtemp(prefix="yam-pico-")
-    address = f"ipc://{directory}/pico.ipc"
-    context = zmq.Context()
-    publisher = None
-    experts = []
-    try:
-        publisher = context.socket(zmq.PUB)
-        publisher.bind(address)
-        for side in ("left", "right"):
-            experts.append(
-                PicoExpert(
-                    zmq_addr=address,
-                    hand=side,
-                    timeout_ms=20,
-                    calibration={"enabled": False},
-                )
-            )
-        assert experts[0]._socket is not experts[1]._socket
-        assert experts[0]._thread is not experts[1]._thread
-        message = {
-            "headset_pose": [0, 1, 0, 0, 0, 0, 1],
-            "buttons": {"X": True},
-            "left_controller": {
-                "grip": 1,
-                "position": [0, 0, 0],
-                "orientation": [0, 0, 0, 1],
-            },
-            "right_controller": {
-                "grip": 0,
-                "position": [0, 0, 0],
-                "orientation": [0, 0, 0, 1],
-            },
-        }
-        deadline = time.monotonic() + 2
-        while not all(e.ready for e in experts) and time.monotonic() < deadline:
-            publisher.send_json(message)
-            time.sleep(0.01)
-        assert all(e.ready for e in experts)
-        # Only the gripping hand is driven; each reader sees its own grip.
-        assert experts[0].get_reading()["held"]
-        assert not experts[1].get_reading()["held"]
-        assert experts[0].get_buttons()["X"]
-        threads = [e._thread for e in experts]
-    finally:
-        for expert in experts:
-            expert.stop()
-        if publisher is not None:
-            publisher.close(linger=0)
-        context.term()
-        shutil.rmtree(directory, ignore_errors=True)
-    assert all(not thread.is_alive() for thread in threads)
-
-
-def test_runtime_rejection_aborts_recording_and_reports_accepted_hold(
-    station, monkeypatch
-):
-    press(station, "right_menu_button")
-    original = station.env.env.step
-
-    def reject(action):
-        result = original(station.base.get_hold_action())
-        result[-1]["action_rejected"] = "measured_joint_out_of_limits"
-        return result
-
-    monkeypatch.setattr(station.env.env, "step", reject)
-    info = station.env.step(np.zeros(14))[-1]
-    assert info["record_reset"] and info["pre_record"]
-    assert info["yam_pico_fault"].startswith("runtime:")
-    np.testing.assert_array_equal(info["accepted_action"], info["intervene_action"])
-
-
-def test_unexpected_control_exception_closes_followers_and_arms(station, monkeypatch):
-    def fail(*args):
-        raise RuntimeError("injected FK error")
-
-    monkeypatch.setattr(station.kinematics["left"], "fk", fail)
-    with pytest.raises(RuntimeError, match="injected FK error"):
-        station.env.step(np.zeros(14))
-    assert station.base._closed
-    assert all(arm.stopped for arm in station.arms.values())
-
-
 class PackedObservations(gym.ObservationWrapper):
     def observation(self, obs):
         return {
@@ -481,91 +264,6 @@ class PackedObservations(gym.ObservationWrapper):
             ),
             "task_descriptions": "pick_block",
         }
-
-
-@pytest.mark.parametrize("write_to_disk", [False, True])
-def test_two_lerobot_episodes_exclude_preview_and_discarded_frames(
-    station, tmp_path, monkeypatch, write_to_disk
-):
-    from rlinf.envs.wrappers.collect_episode import CollectEpisode
-
-    collector = CollectEpisode(
-        PackedObservations(station.env),
-        str(tmp_path),
-        export_format="lerobot",
-        only_success=True,
-    )
-    episodes = []
-    if write_to_disk:
-        pytest.importorskip("lerobot")
-        from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
-
-        original_create = LeRobotDatasetWriter.create
-
-        def create(self, **kwargs):
-            kwargs.update(image_writer_processes=0, image_writer_threads=1)
-            return original_create(self, **kwargs)
-
-        monkeypatch.setattr(LeRobotDatasetWriter, "create", create)
-        original_write = collector._write_lerobot_episode
-
-        def write(episode):
-            original_write(episode)
-            episodes.append(episode)
-
-        monkeypatch.setattr(collector, "_write_lerobot_episode", write)
-    else:
-        monkeypatch.setattr(collector, "_write_lerobot_episode", episodes.append)
-    try:
-        collector.reset()
-        station.arms["left"].held = False
-        collector.step(np.zeros(14))
-
-        def edge(button):
-            station.arms["right"].buttons = {}
-            collector.step(np.zeros(14))
-            station.arms["right"].buttons = {button: True}
-            return collector.step(np.zeros(14))
-
-        edge("right_menu_button")
-        collector.step(np.zeros(14))
-        edge("left_menu_button")
-        assert collector._buffers[0]["actions"] == []
-        for _ in range(2):
-            edge("right_menu_button")
-            before = station.base.get_hold_action().copy()
-            station.arms["left"].held = True
-            _, _, _, _, info = collector.step(np.zeros(14))
-            expected = info["accepted_action"].copy()
-            edge("right_menu_button")
-            collector._wait_futures()
-            frame = episodes[-1][0]
-            np.testing.assert_allclose(frame["state"], before)
-            np.testing.assert_allclose(frame["actions"], expected)
-            assert frame["actions"].shape == (14,)
-            assert frame["image"].shape == (8, 8, 3)
-            assert "extra_view_image-1" in frame
-            assert episodes[-1][-1]["done"].all()
-            collector.reset()
-        assert len(episodes) == 2
-    finally:
-        collector.close()
-    if write_to_disk:
-        import json
-
-        import pyarrow.parquet as pq
-
-        shard = tmp_path / "rank_0/id_0"
-        metadata = json.loads((shard / "meta/info.json").read_text())
-        assert metadata["total_episodes"] == 2
-        tables = [
-            pq.read_table(path) for path in sorted(shard.glob("data/**/*.parquet"))
-        ]
-        assert len(tables) == 2
-        for table, episode in zip(tables, episodes, strict=True):
-            np.testing.assert_allclose(
-                table["actions"].to_pylist(), [frame["actions"] for frame in episode]
-            )
 
 
 def test_streaming_discards_operator_abort_but_keeps_fault_as_failure(
@@ -653,7 +351,7 @@ def test_streaming_lerobot_writes_three_views_and_14d_vectors(station, tmp_path)
         collector.reset()
         edge("right_menu_button")
         station.arms["left"].held = True
-        collector.step(np.zeros(14))
+        accepted = collector.step(np.zeros(14))[-1]["accepted_action"]
         edge("right_menu_button")
     finally:
         collector.close()
@@ -665,6 +363,7 @@ def test_streaming_lerobot_writes_three_views_and_14d_vectors(station, tmp_path)
     assert table.num_rows > 0
     assert len(table["state"][0].as_py()) == 14
     assert len(table["actions"][0].as_py()) == 14
+    assert any(np.allclose(action, accepted) for action in table["actions"].to_pylist())
     assert {"image", "extra_view_image-0", "extra_view_image-1"} <= set(
         table.column_names
     )

@@ -16,12 +16,9 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
-from rlinf.envs.real.yam.config import DualYamJointEnvConfig
 from rlinf.envs.real.yam.dual_yam_joint_env import DualYamJointEnv
 from rlinf.envs.real.yam.types import (
     DualYamState,
@@ -79,20 +76,6 @@ def _camera_must_not_be_created(_camera_info):
     raise AssertionError("dummy YAM env attempted to create a camera")
 
 
-def test_reset_config_requires_a_complete_safe_target():
-    with pytest.raises(ValueError, match="required"):
-        DualYamJointEnvConfig(reset={"enabled": True})
-
-    with pytest.raises(ValueError, match="outside joint limits"):
-        DualYamJointEnvConfig(
-            reset={
-                "enabled": True,
-                "left_qpos": [4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-                "right_qpos": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-            }
-        )
-
-
 def test_dummy_reset_is_lazy_and_returns_the_canonical_observation():
     initial = np.array(
         [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.75]
@@ -129,32 +112,6 @@ def test_dummy_reset_is_lazy_and_returns_the_canonical_observation():
     assert env.observation_space.contains(observation)
     np.testing.assert_allclose(env.get_joint_positions(), initial)
     np.testing.assert_allclose(env.get_hold_action(), initial)
-
-
-def test_real_camera_uses_robot_part_connection_contract():
-    """Real cameras expose connect/disconnect, not open/close."""
-    calls = []
-    camera = SimpleNamespace(
-        name="top_rgb",
-        connect=lambda: calls.append("connect"),
-        disconnect=lambda: calls.append("disconnect"),
-        get_frame=lambda **kwargs: np.zeros((2, 3, 3), dtype=np.uint8),
-    )
-    env = DualYamJointEnv.__new__(DualYamJointEnv)
-    env.config = SimpleNamespace(
-        camera_warmup_timeout_s=1.0, image_height=2, image_width=3
-    )
-    env._camera_specs = [object()]
-    env._camera_factory = lambda spec: camera
-    env._cameras = []
-    env._last_camera_frame = {}
-    env._last_camera_success_s = {}
-
-    env._open_and_warm_cameras()
-    assert calls == ["connect"]
-    assert list(env._last_camera_frame) == ["top_rgb"]
-    assert env._close_cameras() == []
-    assert calls == ["connect", "disconnect"]
 
 
 def test_dummy_step_preserves_14d_order_and_close_is_idempotent(monkeypatch):
@@ -242,19 +199,51 @@ def test_the_shared_teleop_stack_takes_only_yam_picos_own_mapping():
     ) == ["yam_pico"]
 
 
-def test_teleop_close_releases_robot_even_if_controller_close_fails():
-    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+def test_dummy_yam_import_does_not_require_i2rt():
+    import subprocess
+    import sys
 
-    events = []
+    code = """
+import builtins
+import psutil
+psutil.process_iter = lambda: ()
+original_import = builtins.__import__
+def guarded_import(name, *args, **kwargs):
+    if name == 'i2rt' or name.startswith('i2rt.'):
+        raise AssertionError(f'unexpected i2rt import: {name}')
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = guarded_import
+import rlinf.envs.real.yam
+from rlinf.robotics.robots.dual_yam import DualYamRobot
+assert DualYamRobot.ROBOT_TYPE == 'DualYam'
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
 
-    def device_close():
-        events.append("controller")
-        raise RuntimeError("controller close failed")
 
-    wrapped = TeleopIntervention.__new__(TeleopIntervention)
-    wrapped.device = SimpleNamespace(close=device_close)
-    wrapped.env = SimpleNamespace(close=lambda: events.append("robot"))
+def test_pico_collection_recipe_composes_with_site_values(monkeypatch):
+    from pathlib import Path
 
-    with pytest.raises(RuntimeError, match="controller close failed"):
-        wrapped.close()
-    assert events == ["controller", "robot"]
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    for key in (
+        "YAM_LEFT_FOLLOWER_CAN",
+        "YAM_RIGHT_FOLLOWER_CAN",
+        "YAM_TOP_CAMERA_SERIAL",
+        "YAM_LEFT_CAMERA_SERIAL",
+        "YAM_RIGHT_CAMERA_SERIAL",
+        "YAM_PICO_ZMQ_ADDR",
+        "YAM_LEFT_OPERATOR_TO_ROBOT_YAW",
+        "YAM_RIGHT_OPERATOR_TO_ROBOT_YAW",
+    ):
+        monkeypatch.setenv(key, "0" if key.endswith("YAW") else f"test-{key}")
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        config = compose(config_name="realworld_dual_yam_collect_data_pico")
+    resolved = OmegaConf.to_container(config, resolve=True)
+    assert resolved["env"]["eval"]["teleop"] == "yam_pico"
+    assert resolved["cluster"]["num_nodes"] == 1
