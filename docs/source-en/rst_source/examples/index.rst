@@ -28,7 +28,7 @@ entry points — pick the one that matches your starting question:
       :link: vla_wam_index
       :link-type: doc
 
-      RL-fine-tune embodied model families — π₀, GR00T, StarVLA, Lingbot-VLA, and more.
+      RL-fine-tune embodied model families — π₀, GR00T, StarVLA, LingBot-VLA 1.0 / 2.0, and more.
 
    .. grid-item-card:: World Models
       :link: world_model_index

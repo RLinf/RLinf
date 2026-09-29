@@ -1,0 +1,31 @@
+model_type: lingbotvla_v2
+
+model_path: ${oc.env:LINGBOT_VLA_V2_CHECKPOINT}
+tokenizer_path: ${oc.env:QWEN3VL_PATH}
+precision: bf16
+init_device: cuda
+
+num_action_chunks: 50
+action_dim: 14
+action_env_dim: 14
+num_steps: 10
+noise_method: flow_sde
+noise_level: 0.5
+
+is_lora: false
+lora_rank: 4
+add_value_head: false
+rl_trainable_scope: action_expert
+
+attn_implementation: flash_attention_2
+attention_implementation: flex_cached
+moe_implementation: fused
+
+lingbotvla_v2:
+  config_path: ${oc.env:LINGBOT_VLA_V2_PATH}
+  robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
+  robot_config_root: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs
+  stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
+  data_name: robotwin
+  chunk_size: ${..num_action_chunks}
+  use_auxiliary_alignment: false

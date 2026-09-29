@@ -1,0 +1,37 @@
+defaults:
+  - robotwin_click_bell_grpo_lingbotvla_v2
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  # The example config places actor and rollout on separate GPUs. Overriding each of its
+  # keys collocates them on two GPUs; a merged "actor,env,rollout" key would instead add
+  # a second placement for components the example config already placed.
+  component_placement:
+    actor: 0-1
+    rollout: 0-1
+    env: 0-1
+
+runner:
+  max_steps: 1
+  val_check_interval: -1
+  save_interval: -1
+  logger:
+    log_path: /workspace/results/robotwin_grpo_lingbotvla_v2
+    experiment_name: ci-test
+
+env:
+  train:
+    total_num_envs: 8
+    max_episode_steps: 50
+    max_steps_per_rollout_epoch: 50
+  eval:
+    total_num_envs: 4
+    max_episode_steps: 50
+    max_steps_per_rollout_epoch: 50
+
+actor:
+  global_batch_size: 8

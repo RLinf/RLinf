@@ -62,6 +62,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin-lingbotvla-v2
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-wan
@@ -395,6 +396,19 @@ RUN link_assets
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: RoboTwin with LingBot-VLA V2
+##################################################################################################
+FROM embodied-common-image AS embodied-robotwin-lingbotvla-v2-image
+
+RUN uv python install 3.12 && \
+    PYTHON="$(uv python find 3.12)" bash requirements/install.sh \
+      --platform ${RLINF_PLATFORM} embodied --venv lingbotvla-v2 \
+      --model lingbotvla_v2 --env robotwin
+
+RUN echo "source ${UV_PATH}/lingbotvla-v2/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

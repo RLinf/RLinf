@@ -26,7 +26,7 @@
    .. grid-item-card:: 模型
       :text-align: center
 
-      OpenVLA-OFT · π₀ / π₀.₅ · Lingbot-VLA
+      OpenVLA-OFT · π₀ / π₀.₅ · LingBot-VLA 1.0 / 2.0
 
    .. grid-item-card:: 算法
       :text-align: center
@@ -208,7 +208,9 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 .. include:: _model_path.rst
 
-对于 Lingbot-VLA 配方，请将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 指向你的 Lingbot-VLA SFT 检查点。
+对于 Lingbot-VLA 1.0 配方，请将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 指向你的 Lingbot-VLA SFT 检查点。
+
+对于 :doc:`LingBot-VLA 2.0 <lingbotvla_v2>`，沿用与 1.0 相同的流程：安装依赖时将 ``--model lingbotvla`` 换成 ``--model lingbotvla_v2``，把 ``LINGBOT_VLA_V2_CHECKPOINT`` 指向你的 LingBot-VLA 2.0 checkpoint（``actor.model.model_path`` 默认读取该变量，``rollout.model.model_path`` 继承 actor 路径），再按下方表格中的 2.0 配置启动即可。2.0 的 checkpoint 与配置与 1.0 不互通；2.0 复用通用的 ``run_vla_sft.sh`` 和 ``run_embodiment.sh`` 启动脚本，启动前需先激活安装好的 ``.venv`` 并手动 export ``LINGBOT_VLA_V2_PATH``、``ROBOTWIN_PATH`` 等所需路径。上述 Docker 镜像不包含 2.0 环境，请使用 ``requirements/install.sh`` 安装，或构建 ``embodied-robotwin-lingbotvla-v2`` Docker 目标；安装与资源准备的完整说明见 2.0 专属教程。
 
 .. note::
 
@@ -245,6 +247,9 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
    * - Lingbot-VLA + GRPO
      - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
      - ``robotwin_click_bell_grpo_lingbotvla``
+   * - LingBot-VLA 2.0 + GRPO
+     - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla_v2.yaml``
+     - ``robotwin_click_bell_grpo_lingbotvla_v2``
 
 .. code:: bash
 
