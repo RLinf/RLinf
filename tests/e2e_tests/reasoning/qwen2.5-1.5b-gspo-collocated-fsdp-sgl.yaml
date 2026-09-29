@@ -45,9 +45,8 @@ algorithm:
   training_batch_size_per_gpu: 1 # micro batch size
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
-  # mbs to do log prob inference, can be set to
-  # lower than rollout_batch_size_per_gpu to reduce
-  # memory usage
+  # Match training batch shapes to avoid numerical differences that can
+  # trigger narrow sequence clipping before the first parameter update.
   logprob_forward_micro_batch_size: ${algorithm.training_batch_size_per_gpu}
 
   # val rollout mbs
