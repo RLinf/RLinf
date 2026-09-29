@@ -122,6 +122,17 @@ The buffer supports checkpointing and distributed loading by rank:
 - `world_size`: total number of ranks (shard count)
 - maintain consistency for `size`, `total_samples`, and `trajectory_counter`
 
+With ``auto_save=False``, ``save_checkpoint(save_path)`` saves the trajectories
+still held in the memory cache. The checkpoint index lists those trajectories
+in insertion order, and its ``size`` and ``total_samples`` count only the saved
+data. For example, adding five trajectories with ``sample_window_size=2`` saves
+IDs 3 and 4. Loading this checkpoint with ``is_distributed=True`` and
+``world_size=2`` assigns ID 3 to rank 0 and ID 4 to rank 1.
+
+Saving leaves the running buffer unchanged. A full load preserves the next
+trajectory ID, so adding data after this example resumes at ID 5. The same
+checkpoint contents apply to both ``pt`` and ``pkl`` formats.
+
 Usage Tips
 ----------
 
