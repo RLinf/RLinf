@@ -6,6 +6,7 @@ hydra-core
 pydantic
 tyro
 termcolor
+pytz
 msgpack
 obstore
 requests
@@ -30,4 +31,3 @@ boto3>=1.34
 botocore>=1.34
 aiohttp>=3.9
 async-timeout>=4
-nvidia-cudnn-cu13>=9.22
