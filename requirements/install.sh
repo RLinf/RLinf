@@ -1369,7 +1369,6 @@ platform_index_args() {
 
 install_engine_requirements() {
     local req="$1" engine_specs engine_req pip_req="$1" rewritten_req=""
-    engine_specs=$(sed -n 's/^# engine: //p' "$req")
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     # git insteadOf does not cover direct wheel URLs, so prefix them here.
@@ -1382,6 +1381,7 @@ install_engine_requirements() {
             "$req" > "$rewritten_req"
         pip_req="$rewritten_req"
     fi
+    engine_specs=$(sed -n 's/^# engine: //p' "$pip_req")
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$pip_req"
     [ -n "$rewritten_req" ] && rm -f "$rewritten_req"
     if [ -n "$engine_specs" ]; then
