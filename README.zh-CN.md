@@ -30,6 +30,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/09] 🔥 RLinf 重构真机机器人与环境，用统一的 robotics 接口分开管理硬件、任务和 rollout wrapper。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)、[机器人架构](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics_architecture.html)、[真机任务与环境](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/realworld_envs.html)、[添加机器人](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/new_robot.html)、[新增真机任务](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/new_task.html)、[遥操作](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/teleoperation.html)。
 - [2026/09] 🔥 RLinf 支持 π₀-FAST 强化学习。文档：[π₀-FAST](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0_fast.html)。
 - [2026/09] 🔥 RLinf 支持壁仞 GPU。PR：[壁仞 GPU 支持（#1581）](https://github.com/RLinf/RLinf/pull/1581)。
 - [2026/09] 🔥 RLinf 支持基于 ApxInf 加速的 π₀.₅ LIBERO 评测：resize、tokenize、归一化等仍由 RLinf 原生 OpenPI transforms 负责，仅经由 ApxInf 的 L1 推理接口接入引擎。文档：[ApxInf LIBERO 评测](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/libero.html#apxinf-backend)。
@@ -50,6 +51,10 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/07] 🔥 RLinf 支持 OPD，用于在 LIBERO 上对 OpenVLA-OFT 进行在线策略蒸馏。文档：[OPD](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html)。
 - [2026/07] 🎉 RLinf v0.3 发布，主要升级：真机 RL 全流程（数据采集 → SFT → RL → 部署）、更多模拟器与 SOTA 模型、系统级优化。发布说明：[RLinf v0.3](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.3.html)。
 - [2026/07] 🔥 RLinf 支持 RLT，用于 VLA 策略的在线强化学习微调。文档：[RLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rlt.html)。
+
+<details>
+<summary><b>更多更新</b></summary>
+
 - [2026/06] 🔥 RLinf 支持 STEAM 离线优势评估与策略优化。文档：[STEAM](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/steam.html)。
 - [2026/06] 🔥 RLinf 现在已经支持强化学习微调 [GR00T-N1.7](https://github.com/NVIDIA/Isaac-GR00T)！文档：[RL on GR00T-N1.7](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html)。
 - [2026/06] 🔥 RLinf 支持基于 Polaris 模拟器的强化学习微调。文档：[Polaris 强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/polaris.html)。
@@ -71,9 +76,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/04] 🔥 RLinf 支持 [StarVLA](https://github.com/starVLA/starVLA) 模型上的强化学习微调。文档：[StarVLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html)。
 - [2026/04] 🔥 RLinf 现已支持真实世界中的 HG-DAgger人在环训练。文档：[真实 Franka 的 HG-DAgger 全流程](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/hg-dagger.html)。
 - [2026/03] 🔥 RLinf 现已支持 Stereolabs ZED 相机和 Robotiq 2F-85 / 2F-140 夹爪用于 Franka 真机强化学习。文档：[Franka ZED & Robotiq](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_zed_robotiq.html)。
-
-<details>
-<summary><b>更多更新</b></summary>
 
 - [2026/03] 🔥 RLinf 支持 LIBERO-Pro 和 LIBERO-Plus 的强化学习微调。文档：[LIBERO-Pro & LIBERO-Plus](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-liberopro-plus-benchmark)。
 - [2026/03] 🔥 RLinf支持了具身策略的DAgger训练。文档：[具身策略的 DAgger 训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dagger.html)。
