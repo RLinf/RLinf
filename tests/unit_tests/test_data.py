@@ -166,6 +166,55 @@ def test_auto_save_checkpoint_copies_current_window(tmp_path):
         shutil.rmtree(checkpoint, ignore_errors=True)
 
 
+def test_auto_save_checkpoint_resaves_restored_window(tmp_path):
+    """A resumed auto-save buffer copies old and newly written trajectories."""
+    source = tmp_path / "source"
+    first_checkpoint = tmp_path / "first_checkpoint"
+    resumed_source = tmp_path / "resumed_source"
+    second_checkpoint = tmp_path / "second_checkpoint"
+    buffer = TrajectoryReplayBuffer(
+        auto_save=True,
+        auto_save_path=str(source),
+        sample_window_size=2,
+    )
+    resumed = TrajectoryReplayBuffer(
+        auto_save=True,
+        auto_save_path=str(resumed_source),
+        sample_window_size=2,
+    )
+    restored = None
+    try:
+        for value in range(3):
+            buffer.add_trajectories([_scalar_trajectory(value)])
+        buffer.save_checkpoint(str(first_checkpoint))
+
+        resumed.load_checkpoint(str(first_checkpoint))
+        resumed.add_trajectories([_scalar_trajectory(3)])
+        resumed.save_checkpoint(str(second_checkpoint))
+
+        index = json.loads((second_checkpoint / "trajectory_index.json").read_text())
+        metadata = json.loads((second_checkpoint / "metadata.json").read_text())
+        assert index["trajectory_id_list"] == [2, 3]
+        assert metadata["size"] == 2
+        assert metadata["total_samples"] == 2
+        assert metadata["trajectory_counter"] == 4
+        assert len(list(second_checkpoint.glob("trajectory_*.pt"))) == 2
+
+        restored = TrajectoryReplayBuffer(sample_window_size=2)
+        restored.load_checkpoint(str(second_checkpoint))
+        assert restored.get_stats()["num_trajectories"] == 2
+        assert restored.get_stats()["total_samples"] == 2
+    finally:
+        buffer.close()
+        resumed.close()
+        if restored is not None:
+            restored.close()
+        shutil.rmtree(source, ignore_errors=True)
+        shutil.rmtree(first_checkpoint, ignore_errors=True)
+        shutil.rmtree(resumed_source, ignore_errors=True)
+        shutil.rmtree(second_checkpoint, ignore_errors=True)
+
+
 class TestD4RLDataset:
     """Tests for loading D4RL transition datasets."""
 
