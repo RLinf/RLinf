@@ -19,7 +19,7 @@ import os
 import pickle as pkl
 import shutil
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 import numpy as np
@@ -304,6 +304,9 @@ class TrajectoryReplayBuffer:
 
         # Async save executor for add_trajectories
         self._save_executor = ThreadPoolExecutor(max_workers=20)
+        # Trajectory-file writes still in flight. Checkpoint saving waits for
+        # the snapshot of this list so it never copies a partial file.
+        self._auto_save_futures: list[Future] = []
         # Separate executor for checkpoint saves
         self._checkpoint_executor = ThreadPoolExecutor(max_workers=20)
         self._index_lock = threading.Lock()
@@ -485,20 +488,22 @@ class TrajectoryReplayBuffer:
                 continue  # Skip empty trajectories
 
             # Save trajectory to disk if enabled
+            save_future = None
             if self.auto_save:
                 # Save asynchronously to reduce I/O stalls
-                save_futures.append(
-                    self._save_executor.submit(
-                        self._save_trajectory,
-                        trajectory,
-                        trajectory_id,
-                        model_weights_id,
-                    )
+                save_future = self._save_executor.submit(
+                    self._save_trajectory,
+                    trajectory,
+                    trajectory_id,
+                    model_weights_id,
                 )
+                save_futures.append(save_future)
                 self._trajectory_file_path[trajectory_id] = self.auto_save_path
 
             # Add to index
             with self._index_lock:
+                if save_future is not None:
+                    self._auto_save_futures.append(save_future)
                 trajectory_info = {
                     "num_samples": num_samples,
                     "trajectory_id": trajectory_id,
@@ -942,20 +947,23 @@ class TrajectoryReplayBuffer:
         return stats
 
     def save_checkpoint(self, save_path: str):
-        """
-        Save buffer state (metadata and indices) to save_path.
+        """Save trajectories and buffer metadata to ``save_path``.
+
+        With ``auto_save=False``, only trajectories still in the memory cache are
+        written. With ``auto_save=True``, the current sampling window is copied
+        from the auto-save directory. The checkpoint index and counts match the
+        saved trajectories, and the running buffer is left unchanged.
         """
         # Create save directory
         os.makedirs(save_path, exist_ok=True)
 
         save_futures = []
-        checkpoint_ids = None
+        checkpoint_ids: list[int] = []
         if not self.auto_save:
             cache = self._flat_trajectory_cache
             if cache is None:
                 raise RuntimeError("auto_save=False requires cache to save checkpoint.")
             cached_ids = list(cache.cache.keys())
-            checkpoint_ids = []
             for trajectory_id in cached_ids:
                 flat = cache.get(trajectory_id)
                 if flat is None:
@@ -990,17 +998,33 @@ class TrajectoryReplayBuffer:
                 )
                 checkpoint_ids.append(trajectory_id)
         else:
-            for trajectory_id in self._window_cache_ids:
-                model_weights_id = self._trajectory_index[trajectory_id][
-                    "model_weights_id"
+            with self._index_lock:
+                if self.sample_window_size > 0:
+                    checkpoint_ids = list(
+                        self._trajectory_id_list[-self.sample_window_size :]
+                    )
+                else:
+                    checkpoint_ids = list(self._trajectory_id_list)
+                pending_saves = list(self._auto_save_futures)
+                self._auto_save_futures.clear()
+                copy_jobs = [
+                    (
+                        trajectory_id,
+                        self._trajectory_index[trajectory_id]["model_weights_id"],
+                    )
+                    for trajectory_id in checkpoint_ids
                 ]
+            for pending in pending_saves:
+                pending.result()
+            for trajectory_id, model_weights_id in copy_jobs:
                 trajectory_path = self._get_trajectory_path(
                     trajectory_id, model_weights_id
                 )
                 if not os.path.isfile(trajectory_path):
-                    continue
-
-                # copy trajectory file from trajectory_path to save_path
+                    raise FileNotFoundError(
+                        f"Trajectory {trajectory_id} is indexed but missing "
+                        f"at {trajectory_path}"
+                    )
                 target_path = os.path.join(save_path, os.path.basename(trajectory_path))
                 save_futures.append(
                     self._checkpoint_executor.submit(
@@ -1011,10 +1035,8 @@ class TrajectoryReplayBuffer:
         for fut in save_futures:
             fut.result()
 
-        # Save metadata and trajectory index into the specified directory
-        # Evicted memory-only trajectories have no file to restore. Keep the
-        # checkpoint's index and counts aligned with the trajectories saved above,
-        # while preserving the next ID and the live buffer's state.
+        # Keep the checkpoint index and counts aligned with the trajectories
+        # saved above, while preserving the next ID and the live buffer.
         self._save_metadata(save_path, checkpoint_ids)
         self._save_trajectory_index(save_path, checkpoint_ids)
 

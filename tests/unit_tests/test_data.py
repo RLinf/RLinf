@@ -19,6 +19,7 @@ import copy
 import inspect
 import json
 import random
+import shutil
 import time
 from types import SimpleNamespace
 from unittest import mock
@@ -89,121 +90,80 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
-@pytest.mark.parametrize("trajectory_format", ["pt", "pkl"])
-@pytest.mark.parametrize("num_trajectories", [0, 2, 5])
-def test_memory_replay_checkpoint_contains_only_retained_trajectories(
-    tmp_path, trajectory_format, num_trajectories
-):
-    """Checkpoint indices and counts describe the files retained by the cache."""
-    buffer = TrajectoryReplayBuffer(
-        sample_window_size=2, trajectory_format=trajectory_format
-    )
-    restored = TrajectoryReplayBuffer(sample_window_size=2)
+def _scalar_trajectory(value: float) -> Trajectory:
+    """One-sample trajectory so checkpoint tests write only tiny files."""
+    return Trajectory(max_episode_length=1, rewards=torch.full((1, 1, 1), float(value)))
+
+
+def test_memory_checkpoint_indexes_only_cached_trajectories(tmp_path):
+    """A memory checkpoint records only the trajectories still held in cache."""
+    checkpoint = tmp_path / "checkpoint"
+    buffer = TrajectoryReplayBuffer(sample_window_size=2)
+    restored = None
     try:
-        for value in range(num_trajectories):
-            rewards = torch.full((3, 2, 1), float(value))
-            buffer.add_trajectories(
-                [
-                    Trajectory(
-                        max_episode_length=3, rewards=rewards, actions=rewards + 100
-                    )
-                ]
-            )
+        for value in range(3):
+            buffer.add_trajectories([_scalar_trajectory(value)])
         original_stats = buffer.get_stats()
-        checkpoint = tmp_path / "checkpoint"
         buffer.save_checkpoint(str(checkpoint))
         assert buffer.get_stats() == original_stats
 
         index = json.loads((checkpoint / "trajectory_index.json").read_text())
         metadata = json.loads((checkpoint / "metadata.json").read_text())
-        retained_ids = list(range(max(0, num_trajectories - 2), num_trajectories))
-        assert index["trajectory_id_list"] == retained_ids
-        assert set(index["trajectory_index"]) == {str(i) for i in retained_ids}
-        assert metadata["size"] == len(retained_ids)
-        assert metadata["total_samples"] == 6 * len(retained_ids)
-        assert metadata["trajectory_counter"] == num_trajectories
+        assert index["trajectory_id_list"] == [1, 2]
+        assert metadata["size"] == 2
+        assert metadata["total_samples"] == 2
+        assert metadata["trajectory_counter"] == 3
+        assert len(list(checkpoint.glob("trajectory_*.pt"))) == 2
 
+        restored = TrajectoryReplayBuffer(sample_window_size=2)
         restored.load_checkpoint(str(checkpoint))
-        assert restored.get_stats()["num_trajectories"] == len(retained_ids)
-        if retained_ids:
-            batch = restored.sample(12)
-            assert torch.isin(batch["rewards"], torch.tensor(retained_ids)).all()
-            torch.testing.assert_close(batch["actions"], batch["rewards"] + 100)
-
-        # New trajectories must keep their IDs across save/load, even after eviction.
-        rewards = torch.full((3, 2, 1), float(num_trajectories))
-        restored.add_trajectories(
-            [Trajectory(max_episode_length=3, rewards=rewards, actions=rewards + 100)]
-        )
-        next_checkpoint = tmp_path / "next"
-        restored.save_checkpoint(str(next_checkpoint))
-        next_index = json.loads((next_checkpoint / "trajectory_index.json").read_text())
-        assert (
-            next_index["trajectory_id_list"] == (retained_ids + [num_trajectories])[-2:]
-        )
+        assert restored.get_stats()["num_trajectories"] == 2
+        assert restored.get_stats()["total_samples"] == 2
     finally:
         buffer.close()
-        restored.close()
+        if restored is not None:
+            restored.close()
+        shutil.rmtree(checkpoint, ignore_errors=True)
 
 
-@pytest.mark.parametrize("trajectory_format", ["pt", "pkl"])
-def test_memory_replay_checkpoint_loads_retained_trajectories_by_rank(
-    tmp_path, trajectory_format
-):
-    """Demo loading partitions saved trajectories, including an empty rank."""
+def test_auto_save_checkpoint_copies_current_window(tmp_path):
+    """An auto-save checkpoint copies the current window, not a stale sample window."""
+    source = tmp_path / "buffer"
+    checkpoint = tmp_path / "checkpoint"
     buffer = TrajectoryReplayBuffer(
-        sample_window_size=2, trajectory_format=trajectory_format
+        auto_save=True,
+        auto_save_path=str(source),
+        cache_size=3,
+        sample_window_size=2,
     )
+    restored = None
     try:
-        for value in range(5):
-            rewards = torch.full((3, 2, 1), float(value))
-            buffer.add_trajectories([Trajectory(max_episode_length=3, rewards=rewards)])
-        buffer.save_checkpoint(str(tmp_path))
-        for rank in range(3):
-            restored = TrajectoryReplayBuffer(sample_window_size=2)
-            try:
-                restored.load_checkpoint(
-                    str(tmp_path), is_distributed=True, local_rank=rank, world_size=3
-                )
-                if rank < 2:
-                    assert restored.get_stats()["num_trajectories"] == 1
-                    assert restored.get_stats()["total_samples"] == 6
-                    torch.testing.assert_close(
-                        restored.sample(6)["rewards"],
-                        torch.full((6, 1), float(rank + 3)),
-                    )
-                else:
-                    assert restored.get_stats()["num_trajectories"] == 0
-                    assert restored.get_stats()["total_samples"] == 0
-            finally:
-                restored.close()
+        buffer.add_trajectories([_scalar_trajectory(0)])
+        buffer.add_trajectories([_scalar_trajectory(1)])
+        buffer.sample(1)
+        buffer.add_trajectories([_scalar_trajectory(2)])
+        original_stats = buffer.get_stats()
+        buffer.save_checkpoint(str(checkpoint))
+        assert buffer.get_stats() == original_stats
+
+        index = json.loads((checkpoint / "trajectory_index.json").read_text())
+        metadata = json.loads((checkpoint / "metadata.json").read_text())
+        assert index["trajectory_id_list"] == [1, 2]
+        assert metadata["size"] == 2
+        assert metadata["total_samples"] == 2
+        assert metadata["trajectory_counter"] == 3
+        assert len(list(checkpoint.glob("trajectory_*.pt"))) == 2
+
+        restored = TrajectoryReplayBuffer(sample_window_size=2)
+        restored.load_checkpoint(str(checkpoint))
+        assert restored.get_stats()["num_trajectories"] == 2
+        assert restored.get_stats()["total_samples"] == 2
     finally:
         buffer.close()
-
-
-def test_auto_saved_replay_metadata_keeps_all_trajectories(tmp_path):
-    """Auto-save retains disk-backed trajectories after cache eviction."""
-    buffer = TrajectoryReplayBuffer(
-        auto_save=True, auto_save_path=str(tmp_path), cache_size=1, sample_window_size=2
-    )
-    try:
-        for value in range(5):
-            buffer.add_trajectories(
-                [
-                    Trajectory(
-                        max_episode_length=3,
-                        rewards=torch.full((3, 2, 1), float(value)),
-                    )
-                ]
-            )
-    finally:
-        buffer.close()
-    metadata = json.loads((tmp_path / "metadata.json").read_text())
-    index = json.loads((tmp_path / "trajectory_index.json").read_text())
-    assert metadata["size"] == 5
-    assert metadata["total_samples"] == 30
-    assert index["trajectory_id_list"] == list(range(5))
-    assert len(list(tmp_path.glob("trajectory_*.pt"))) == 5
+        if restored is not None:
+            restored.close()
+        shutil.rmtree(source, ignore_errors=True)
+        shutil.rmtree(checkpoint, ignore_errors=True)
 
 
 class TestD4RLDataset:

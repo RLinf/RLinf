@@ -133,6 +133,13 @@ Saving leaves the running buffer unchanged. A full load preserves the next
 trajectory ID, so adding data after this example resumes at ID 5. The same
 checkpoint contents apply to both ``pt`` and ``pkl`` formats.
 
+With ``auto_save=True``, ``save_checkpoint(save_path)`` copies the current
+sampling window from the auto-save directory. That window is the last
+``sample_window_size`` trajectories, or every trajectory when
+``sample_window_size`` is 0 or the list is shorter. The checkpoint index,
+``size``, and ``total_samples`` count only this window. Trajectories outside
+the window remain in the auto-save directory.
+
 Usage Tips
 ----------
 
