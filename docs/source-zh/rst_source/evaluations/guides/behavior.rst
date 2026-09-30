@@ -140,7 +140,7 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/be
      - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。无 ``auto_reset`` 时通常等于 ``max_episode_steps``。
    * - ``num_env_subprocess``
      - 单个 env worker 内划分的 Isaac 仿真子进程数（默认 ``1``）。适当增大可缓解步进瓶颈，但会成倍增加显存与进程开销；``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - 设为 ``True`` 时跳过 chunk 内中间 observation，显著加速环境步进；保存的视频仅含 chunk 边界帧。
 
 ``omni_config`` 关键字段
@@ -228,6 +228,6 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 - **显存不足：** 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
 - **启动极慢：** 首次加载大场景耗时较长；保持 ``partial_scene_load: true`` 可只加载任务相关房间。
-- **视频帧数少于预期：** ``skip_intermediate_obs_in_chunk: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
+- **视频帧数少于预期：** ``skip_intermediate_renders: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
 - **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/sim/behavior/instance_loader.py``。
 - **步数校验失败：** ``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除。

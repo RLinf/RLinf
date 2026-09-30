@@ -1191,46 +1191,34 @@ def generate_with_kv_cache(
     generated_attention_mask = attention_mask.to(dtype=torch.long)
     finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
 
+    # Qwen-VL models take 3D M-RoPE position ids. Compute them for the prompt
+    # here and advance them by one per decoded token: transformers 5 moved this
+    # bookkeeping out of prepare_inputs_for_generation and into generate().
+    rope_inputs = {
+        k: v
+        for k, v in multi_modal_inputs.items()
+        if k not in ("pixel_values", "pixel_values_videos")
+    }
+    position_ids, _ = model.model.get_rope_index(
+        input_ids, attention_mask=generated_attention_mask, **rope_inputs
+    )
+    next_position = position_ids.amax(dim=(0, 2)) + 1
+
+    model_inputs = {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        **multi_modal_inputs,
+    }
     past_key_values = None
 
     for step in range(max_new_tokens):
-        if step == 0:
-            # prefill: full prompt + multimodal
-            cache_position = torch.arange(
-                0,
-                generated_ids.size(1),
-                device=generated_ids.device,
-                dtype=torch.long,
-            )
-            model_inputs = model.prepare_inputs_for_generation(
-                input_ids=generated_ids,
-                attention_mask=generated_attention_mask,
-                use_cache=True,
-                cache_position=cache_position,
-                past_key_values=past_key_values,
-                **multi_modal_inputs,
-            )
-        else:
-            # decode: only last token + cache
-            new_generated_ids = generated_ids[:, -1:].contiguous()
-            start_pos = generated_attention_mask.size(1) - new_generated_ids.size(1)
-            cache_position = torch.arange(
-                start_pos,
-                generated_attention_mask.size(1),
-                device=generated_ids.device,
-                dtype=torch.long,
-            )
-
-            model_inputs = model.prepare_inputs_for_generation(
-                input_ids=new_generated_ids,
-                attention_mask=generated_attention_mask,
-                use_cache=True,
-                cache_position=cache_position,
-                past_key_values=past_key_values,
-            )
-
         with amp_context:
-            outputs = model(**model_inputs)
+            outputs = model(
+                **model_inputs,
+                attention_mask=generated_attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+            )
 
         logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
         past_key_values = (
@@ -1255,6 +1243,12 @@ def generate_with_kv_cache(
         generated_attention_mask = torch.cat(
             [generated_attention_mask, append_mask], dim=-1
         )
+
+        # decode: only the new token; images are already in the KV cache
+        model_inputs = {
+            "input_ids": next_token.unsqueeze(-1),
+            "position_ids": (next_position + step).view(1, -1, 1).expand(3, -1, -1),
+        }
 
         if eos_token_id is not None:
             finished = finished | (next_token == eos_token_id)
