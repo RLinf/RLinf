@@ -41,6 +41,14 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 启动训练或评估后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
 每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
 
+对于 ResNet reward，可以直接使用 ``maniskill_ppo_mlp_collect`` 采集数据。该配置在 ManiSkill
+PickCube 上训练基于状态的 MLP PPO 策略，并在周期性评估（每隔 ``runner.val_check_interval`` 步）时
+以 ``pickle`` 格式采集 RGB episode，只保留成功的 episode（``only_success: True``）：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
+
 对于 VLM Trend reward，RLinf 也提供了可直接运行的数据采集配置：
 
 .. code-block:: bash
@@ -207,6 +215,15 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
 训练日志会保存到新建的 ``logs/<timestamp>-reward_training`` 目录下。
 
+训练的 checkpoint 保存在 ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/`` 下：
+每隔 ``runner.save_interval`` 步保存一次 ``global_step_<N>/``，验证集准确率提升时更新
+``best_model/``（需要配置 ``runner.early_stop``）。在 RL 中使用训练好的模型时，
+将 ``reward.model.model_path`` 设为权重文件，例如：
+
+.. code-block:: text
+
+   logs/<timestamp>-reward_training/reward_training/checkpoints/best_model/actor/model_state_dict/full_weights.pt
+
 2.3 微调 VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
@@ -363,6 +380,9 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
   对 ``shaped_vlm``，标量来自 potential 差分和一次性 success bonus。
   配置里的 ``reward_threshold`` 当前不会被 VLM 路径读取。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
+  对于 ``model_type: resnet``，它是权重文件本身，例如 2.2.3 节中的
+  ``checkpoints/best_model/actor/model_state_dict/full_weights.pt``。
+  ``maniskill_ppo_mlp_resnet_reward.yaml`` 默认的 ``model_path: null`` 不会加载任何训练好的权重。
 
 3.2 Rollout 阶段的 worker 交互
 """"""""""""""""""""""""""""""
