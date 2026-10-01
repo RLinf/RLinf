@@ -257,3 +257,10 @@ Ray 会在启动时捕获环境变量，因此必须在每个节点上 ``ray sta
 
    rollout:
      attention_backend: triton
+
+创建通信组时 worker 中止
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+部分旧版 PyTorch（包括 BEHAVIOR 使用的 2.5.1）在多个 worker 线程并发构造通信组包装对象时，可能报 ``pybind11_object_dealloc(): Tried to deallocate unregistered instance!`` 并中止。RLinf 对本地包装对象的构造加锁，保留其 store、rank、size 和 timeout。网络 rendezvous 及 Gloo/NCCL 后端初始化在锁外执行，因此一对 peer 等待连接时，另一对仍可初始化。
+
+此处理针对包装对象构造，不涵盖所有原生 worker 崩溃。报告故障时，请提供实际安装的 PyTorch 版本和第一份原生调用栈；Ray 后续的 ``actor died`` 消息本身不足以确定原因。不要锁住整个通信组初始化过程：不同 rank 可能按不同顺序连接 peer，从而相互等待并造成死锁。

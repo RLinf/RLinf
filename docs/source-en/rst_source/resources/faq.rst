@@ -276,3 +276,19 @@ compatibility, try **triton**:
 
    rollout:
      attention_backend: triton
+
+Worker aborts while creating a process group
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some older PyTorch builds, including the 2.5.1 stack used by BEHAVIOR, can abort
+with ``pybind11_object_dealloc(): Tried to deallocate unregistered instance!``
+when worker threads construct process-group wrappers concurrently. RLinf
+serializes the local wrapper constructor while preserving its store, rank,
+size and timeout. Network rendezvous and Gloo/NCCL backend initialization run
+outside this lock, so one peer pair can initialize while another waits.
+
+This addresses wrapper construction, not every possible native worker crash.
+When reporting a failure, include the installed PyTorch version and the first
+native stack trace; Ray's later ``actor died`` message alone does not identify
+the cause. Do not serialize the whole group initialization: different ranks
+can start peer pairs in different orders and deadlock while waiting for peers.

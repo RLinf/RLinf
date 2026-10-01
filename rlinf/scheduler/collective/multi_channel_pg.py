@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import logging
+import threading
+from datetime import timedelta
 from typing import Optional
 
 import torch
@@ -25,6 +27,31 @@ from .collective_group import (
     CollectiveGroupInfo,
     CollectiveGroupOptions,
 )
+
+_PROCESS_GROUP_WRAPPER_LOCK = threading.Lock()
+
+
+def _create_process_group_base(
+    store: dist.Store,
+    rank: int,
+    size: int,
+    backend: str,
+    timeout: timedelta,
+) -> dist.ProcessGroup:
+    """Construct the local wrapper without serializing backend rendezvous.
+
+    Older torch bindings release the GIL during ProcessGroup construction,
+    including pybind instance registration. Concurrent wrapper constructors
+    can then corrupt that registration. The base constructor only stores its
+    arguments; keep the lock away from TCPStore and backend constructors,
+    which may wait for another rank.
+    """
+    with _PROCESS_GROUP_WRAPPER_LOCK:
+        if hasattr(dist.ProcessGroup, "Options"):
+            options = dist.ProcessGroup.Options(backend=backend)
+            options._timeout = timeout
+            return dist.ProcessGroup(store, rank, size, options)
+        return dist.ProcessGroup(store, rank, size)
 
 
 def _empty_pinned(
@@ -796,15 +823,9 @@ class MultiChannelProcessGroup:
                 return GroupMember.NON_GROUP_MEMBER, None
 
         prefix_store = PrefixStore(f"{group_name}/", store)
-        if hasattr(ProcessGroup, "Options"):
-            # Torch 2.7 removed Options
-            base_pg_options = ProcessGroup.Options(backend=str(backend))
-            base_pg_options._timeout = timeout
-            pg: ProcessGroup = ProcessGroup(
-                prefix_store, group_rank, group_size, base_pg_options
-            )
-        else:
-            pg: ProcessGroup = ProcessGroup(prefix_store, group_rank, group_size)
+        pg = _create_process_group_base(
+            prefix_store, group_rank, group_size, str(backend), timeout
+        )
         if device_id:
             pg.bound_device_id = device_id
         backend_config = BackendConfig(backend)
@@ -827,19 +848,13 @@ class MultiChannelProcessGroup:
                     return GroupMember.NON_GROUP_MEMBER, None
                 # create new process group with accurate rank and size
                 if pg.rank() == -1 and pg.size() == -1:
-                    if hasattr(ProcessGroup, "Options"):
-                        pg = ProcessGroup(
-                            backend_prefix_store,
-                            backend_class.rank(),
-                            backend_class.size(),
-                            base_pg_options,
-                        )
-                    else:
-                        pg = ProcessGroup(
-                            backend_prefix_store,
-                            backend_class.rank(),
-                            backend_class.size(),
-                        )
+                    pg = _create_process_group_base(
+                        backend_prefix_store,
+                        backend_class.rank(),
+                        backend_class.size(),
+                        str(backend),
+                        timeout,
+                    )
             elif backend_str == Backend.GLOO:
                 # TODO: remove this check after lazy initialization is supported
                 # if pg_options is not None:
