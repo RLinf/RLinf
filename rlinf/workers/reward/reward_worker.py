@@ -388,6 +388,46 @@ class EmbodiedRewardWorker(Worker):
             self._interact_task.cancel()
 
 
+def check_reward_dataloaders(
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    world_size: int,
+    validation_enabled: bool,
+) -> None:
+    """Raise if the reward splits cannot drive training and validation.
+
+    The train loader drops incomplete batches, so it yields nothing when a
+    rank gets fewer samples than one micro batch. With validation enabled,
+    the best checkpoint is chosen by validation accuracy, so an empty
+    validation split never saves one.
+
+    Args:
+        train_loader: Training loader built with ``drop_last=True``.
+        val_loader: Validation loader.
+        world_size: Number of ranks sharing the training split.
+        validation_enabled: Whether the run validates, i.e.
+            ``runner.val_check_interval > 0``.
+
+    Raises:
+        ValueError: If the train loader has no batch, or validation is
+            enabled and the val split is empty.
+    """
+    if len(train_loader) == 0:
+        raise ValueError(
+            f"The reward training split has {len(train_loader.dataset)} samples, "
+            f"which gives each of the {world_size} ranks fewer than "
+            f"micro_batch_size ({train_loader.batch_size}) samples, so training "
+            "has no batch. Use a larger split or a smaller actor.micro_batch_size."
+        )
+    if validation_enabled and len(val_loader.dataset) == 0:
+        raise ValueError(
+            "The reward validation split is empty, so validation has no data "
+            "and no best checkpoint can be selected. Regenerate the splits "
+            "with examples/reward/preprocess_reward_dataset.py, or set "
+            "runner.val_check_interval to -1 to train without validation."
+        )
+
+
 class FSDPRewardWorker(FSDPModelManager, Worker):
     """FSDP-based worker for reward model training."""
 
@@ -428,8 +468,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
-        if self.data_loader is None:
-            raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
 
         self.setup_model_and_optimizer()
@@ -439,7 +477,7 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
             f"{sum(p.numel() for p in self.model.parameters())} parameters"
         )
 
-    def build_dataloader(self) -> tuple[Optional[DataLoader], Optional[DataLoader]]:
+    def build_dataloader(self) -> tuple[DataLoader, DataLoader]:
         """Build dataloaders from preprocessed train/val dataset files."""
         data_cfg = self.cfg.get("data", {})
         train_data_paths = data_cfg.get("train_data_paths")
@@ -451,10 +489,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         )
         train_dataset = RewardBinaryDataset(train_data_paths)
         val_dataset = RewardBinaryDataset(val_data_paths)
-
-        if len(train_dataset) == 0:
-            self.logger.warning("Training dataset is empty")
-            return None, None
 
         # Create distributed samplers
         train_sampler = DistributedSampler(
@@ -489,6 +523,12 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
             num_workers=data_cfg.get("num_workers", 4),
             pin_memory=True,
             drop_last=False,
+        )
+        check_reward_dataloaders(
+            train_loader,
+            val_loader,
+            self._world_size,
+            validation_enabled=self.cfg.runner.val_check_interval > 0,
         )
 
         self.logger.info(
@@ -571,9 +611,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     @Worker.timer("run_eval")
     def run_eval(self) -> dict[str, float]:
         """Run validation over the entire validation set."""
-        if self.val_loader is None:
-            return {}
-
         self.model.eval()
         metrics = {}
 
@@ -601,6 +638,4 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         return val_metrics
 
     def get_max_steps_per_epoch(self):
-        if self.data_loader is not None:
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        return 0
+        return max(1, len(self.data_loader) // self.gradient_accumulation)
