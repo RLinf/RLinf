@@ -388,26 +388,34 @@ During online RL, the ``env``, ``rollout``, and ``reward`` workers collaborate a
       v
    Env worker
       | 5. Receives bootstrap values from the Rollout worker
-      | 6. Combines env reward with reward model output
+      | 6. Attaches reward model output to the EnvTransition
+      v
+   Trajectory collector
+      | 7. Combines env reward with reward model output
       v
    Final reward -> stored in rollout results and used by later RL updates
 
-In the implementation, ``EnvWorker`` requests reward model outputs during rollout and then computes the final reward centrally.
+In the implementation, ``EnvWorker`` requests reward model outputs during rollout and attaches them to the
+``EnvTransition`` it sends out; the trajectory collector then computes the final reward centrally.
 
 3.3 Final Reward Computation
 """"""""""""""""""""""""""""
 
-When the reward channel is enabled, ``EnvWorker`` first fetches ``reward_model_output``,
-then merges it with the original environment reward inside ``compute_bootstrap_rewards``:
+When the reward channel is enabled, ``EnvWorker`` fetches ``reward_model_output`` and stores it on the
+``EnvTransition``. The trajectory collector then merges it with the original environment reward inside
+``EnvTransition.compute_rewards``:
 
 .. code-block:: python
 
    reward = env_reward_weight * env_reward + reward_weight * reward_model_output
 
+``env_reward_weight`` defaults to ``0.0`` and ``reward_weight`` defaults to ``1.0``, so by default the env reward
+is not added to the reward model output.
+
 If bootstrap is enabled by the algorithm config, RLinf may also add bootstrap values to the last step reward.
 
 From a system perspective, the reward model does not replace the original bootstrap reward. Instead, it serves as
-an additional reward source inside the env worker and participates in final reward construction.
+an additional reward source and participates in final reward construction.
 
 3.4 Deploy VLM Trend Reward for MLP RL
 """"""""""""""""""""""""""""""""""""""""""""""""

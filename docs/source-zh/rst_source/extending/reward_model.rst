@@ -381,27 +381,33 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
       v
    Env worker
       | 5. 接收 Rollout worker 的 bootstrap values
-      | 6. 将 env reward 与 reward model output 组合
+      | 6. 将 reward model output 附加到 EnvTransition
+      v
+   Trajectory collector
+      | 7. 将 env reward 与 reward model output 组合
       v
    Final reward -> 写入 rollout 结果并参与后续 RL 更新
 
 在实现上，``EnvWorker`` 会在 rollout 过程中向 reward worker 请求 reward model 输出，
-再统一计算最终 reward。
+并将其附加到发出的 ``EnvTransition`` 上，再由 trajectory collector 统一计算最终 reward。
 
 3.3 最终 reward 的计算
 """"""""""""""""""""""
 
-当 reward channel 已启用时，``EnvWorker`` 会先获取 ``reward_model_output``，
-随后在 ``compute_bootstrap_rewards`` 中与环境原始 reward 合并：
+当 reward channel 已启用时，``EnvWorker`` 会获取 ``reward_model_output`` 并将其存入 ``EnvTransition``，
+随后由 trajectory collector 在 ``EnvTransition.compute_rewards`` 中将其与环境原始 reward 合并：
 
 .. code-block:: python
 
    reward = env_reward_weight * env_reward + reward_weight * reward_model_output
 
+``env_reward_weight`` 默认为 ``0.0``，``reward_weight`` 默认为 ``1.0``，因此默认情况下
+环境 reward 不会叠加到 reward model output 上。
+
 之后，若当前算法配置启用了 bootstrap，RLinf 还会按配置将 bootstrap value 加到最后一步 reward 中。
 
 因此，从系统视角看，reward model 在 RL 中并不会替代原有的 bootstrap reward，
-而是作为 env worker 中的附加 reward 来源参与最终 reward 的构造。
+而是作为附加的 reward 来源参与最终 reward 的构造。
 
 3.4 部署 VLM Trend reward 进行 MLP RL
 """"""""""""""""""""""""""""""""""""""""""""""""
