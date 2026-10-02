@@ -192,6 +192,8 @@ def compute_ppo_actor_loss(
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
     log_logprob_diagnostics: bool = False,
+    rollout_logprobs: Optional[torch.Tensor] = None,
+    importance_sampling_clip: Optional[float] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -207,6 +209,10 @@ def compute_ppo_actor_loss(
         clip_ratio_c (Optional[float], optional): Optional clipping coefficient. Defaults to None.
         loss_agg_func (callable, optional): Aggregation function (e.g., masked_mean). Defaults to None.
         max_episode_steps (Optional[int], optional): Max episode length for normalization. Defaults to None.
+        rollout_logprobs (Optional[torch.Tensor], optional): Log probabilities from
+            the rollout behavior policy. Defaults to None.
+        importance_sampling_clip (Optional[float], optional): Upper bound for the
+            actor-to-rollout importance-sampling ratio. Defaults to None.
 
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
@@ -248,6 +254,47 @@ def compute_ppo_actor_loss(
     assert advantages.dtype == torch.float32, (
         "advantages must be float32 to keep numerical stability"
     )
+
+    importance_sampling_metrics = {}
+    if rollout_logprobs is not None:
+        assert rollout_logprobs.dtype == torch.float32, (
+            "rollout_logprobs must be float32 to keep numerical stability"
+        )
+        assert rollout_logprobs.shape == old_logprobs.shape, (
+            "rollout_logprobs and old_logprobs must have the same shape"
+        )
+        assert importance_sampling_clip is not None and importance_sampling_clip > 0
+        log_importance_ratio = old_logprobs - rollout_logprobs
+        importance_sampling_weight = torch.exp(log_importance_ratio)
+        clipped_importance_sampling_weight = torch.clamp(
+            importance_sampling_weight, max=importance_sampling_clip
+        )
+        advantages = advantages * clipped_importance_sampling_weight.detach()
+
+        importance_sampling_mask = loss_mask
+        if importance_sampling_mask.shape != importance_sampling_weight.shape:
+            importance_sampling_mask = torch.broadcast_to(
+                importance_sampling_mask, importance_sampling_weight.shape
+            )
+        valid_weight = torch.where(
+            importance_sampling_mask, importance_sampling_weight.detach(), 0.0
+        )
+        importance_sampling_metrics = {
+            "actor/importance_sampling_weight": masked_mean(
+                importance_sampling_weight.detach(), importance_sampling_mask
+            ),
+            "actor/importance_sampling_weight_max": valid_weight.max(),
+            "actor/importance_sampling_clip_fraction": masked_mean(
+                (importance_sampling_weight > importance_sampling_clip).float(),
+                importance_sampling_mask,
+            ),
+            "actor/behav_approx_kl": -masked_mean(
+                log_importance_ratio.detach(), importance_sampling_mask
+            ),
+            "actor/recomputed_logprob_abs_diff": masked_mean(
+                log_importance_ratio.detach().abs(), importance_sampling_mask
+            ),
+        }
 
     # For numerical stability.
     raw_log_ratio = logprobs - old_logprobs
@@ -368,6 +415,7 @@ def compute_ppo_actor_loss(
                     ),
                 }
             )
+    metrics_data.update(importance_sampling_metrics)
     return policy_loss, metrics_data
 
 
