@@ -38,6 +38,7 @@ from rlinf.models.embodiment.evo1.utils.normalizer import (
     NormalizationType,
     Normalizer,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -142,6 +143,11 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None):
         # A frozen VLM needs no activation checkpointing; disabling it also avoids
         # reentrant-checkpoint "no input requires grad" errors during training.
         config_dict["enable_gradient_checkpointing"] = False
+
+    # Evo-1 moves its InternVL3 embedder onto config.device while building it, and
+    # that field defaults to "cuda", which raises "Torch not compiled with CUDA
+    # enabled" on any other accelerator. Name the one this worker runs on.
+    config_dict["device"] = Worker.torch_device_type
 
     evo_config = EvoConfig.from_dict(config_dict)
     logger.info(

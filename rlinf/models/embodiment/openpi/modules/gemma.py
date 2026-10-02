@@ -300,7 +300,6 @@ class Attention(nn.Module):
         Returns:
             (outputs, new_kv_cache)
         """
-        dtype = next(x.dtype for x in xs if x is not None)
 
         q_parts, k_parts, v_parts = [], [], []
         for i, x in enumerate(xs):
@@ -341,42 +340,45 @@ class Attention(nn.Module):
 
         new_kv_cache = (k, v)
 
-        # Apply mask: shape (B, 1, T, S) -> broadcast to (B, K, G, T, S)
+        # Apply mask: shape (B, 1, T, S) -> broadcast over heads
         if attn_mask.dim() == 4:
             attn_mask = attn_mask[:, 0:1, :, :]  # (B, 1, T, S)
 
-        # GQA einsum pattern matching JAX:
-        q = q * (self.head_dim**-0.5)
-
-        # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
-        # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
         K = self.num_kv_heads
         G = self.num_heads // K
 
-        q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
-        k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
-        v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
-
-        # einsum "BTKGH,BSKH->BKGTS"
-        logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
-
-        # Align mask to logits shape: logits is (B, K, G, T, S), mask is (B, 1, T, S)
-        # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
-        big_neg = -2.3819763e38
-        mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
-        masked_logits = torch.where(
-            mask_for_logits,
-            logits,
-            torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
-        )
-
-        probs = F.softmax(masked_logits, dim=-1).to(dtype)
-
-        # einsum "BKGTS,BSKH->BTKGH"
-        encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
-        encoded = encoded.reshape(
-            encoded.shape[0], encoded.shape[1], K * G, self.head_dim
-        )
+        if not torch.is_grad_enabled() or q.device.type == "npu":
+            # Fused SDPA in (B, heads, T, H) layout, keys/values repeated per
+            # query group. CUDA gradient passes stay on the fp32-softmax einsum
+            # below: the masked SDPA backward measures slower there, while the
+            # NPU kernel's backward is faster on both passes.
+            q_r = q.transpose(1, 2) * (self.head_dim**-0.5)
+            k_r = k.transpose(1, 2).repeat_interleave(G, dim=1)
+            v_r = v.transpose(1, 2).repeat_interleave(G, dim=1)
+            encoded = F.scaled_dot_product_attention(
+                q_r, k_r, v_r, attn_mask=attn_mask.bool(), scale=1.0
+            )
+            encoded = encoded.transpose(1, 2).reshape(
+                q.shape[0], q.shape[1], K * G, self.head_dim
+            )
+        else:
+            q_s = q * (self.head_dim**-0.5)
+            q_r = q_s.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
+            k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
+            v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
+            logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
+            big_neg = -2.3819763e38
+            mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
+            masked_logits = torch.where(
+                mask_for_logits,
+                logits,
+                torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
+            )
+            probs = F.softmax(masked_logits, dim=-1).to(v.dtype)
+            encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(v.dtype))
+            encoded = encoded.reshape(
+                encoded.shape[0], encoded.shape[1], K * G, self.head_dim
+            )
         # encoded: (B, T_total, num_heads, head_dim)
 
         # Split back to per-expert outputs

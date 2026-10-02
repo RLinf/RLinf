@@ -625,15 +625,17 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
                 f"In: What action should the robot take to {t.lower()}?\nOut: "
                 for t in env_obs["task_descriptions"]
             ]
-            image_tensor = env_obs["main_images"].permute(
-                0, 3, 1, 2
+            device = next(self.parameters()).device
+            # Run the resize/normalize pipeline where the model lives; the
+            # frames cross as uint8 instead of processed floats.
+            image_tensor = (
+                env_obs["main_images"].to(device, non_blocking=True).permute(0, 3, 1, 2)
             )  # [B, H, W, C] -> [B, C, H, W]
             if image_tensor.ndim == 4:
                 image_tensor = image_tensor.unsqueeze(1)
             assert image_tensor.ndim == 5
 
             max_length = self.max_prompt_length
-            device = next(self.parameters()).device
             precision = next(self.parameters()).dtype
             processed_obs = self.input_processor(
                 text=task_descriptions,

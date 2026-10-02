@@ -80,10 +80,13 @@ def build_evo1_inputs(
     image_size: int = 448,
     num_view_slots: int = 3,
     view_keys: tuple[str, ...] = ("main_images", "wrist_images", "extra_view_images"),
+    device: Any = None,
 ):
     """Return ``(images, image_mask, prompts, states)`` for a batch.
 
     Args:
+        device: with a device given, the batched resize runs there and the
+            returned views are device tensors; None keeps the host path.
         env_obs: RLinf env observation dict. Recognized keys: ``main_images``
             ([B,H,W,C] uint8 for LIBERO), ``wrist_images``, ``extra_view_images``,
             ``states`` ([B, state_dim]), ``task_descriptions`` (list[str]).
@@ -109,22 +112,57 @@ def build_evo1_inputs(
             continue
         view_stacks.append(_to_numpy(val))
 
+    if device is not None:
+        # One batched resize per stack on the target device; uint8 crosses.
+        per_stack: list[torch.Tensor] = []
+        for stack in view_stacks:
+            arr = stack.reshape(batch_size, -1, *stack.shape[-3:])  # [B, N, H, W, C]
+            t = torch.from_numpy(np.ascontiguousarray(arr)).to(
+                device, non_blocking=True
+            )
+            if t.dtype != torch.uint8:
+                t = (
+                    (t * 255).clamp(0, 255).to(torch.uint8)
+                    if t.max() <= 1
+                    else t.to(torch.uint8)
+                )
+            b, n, h, w, c = t.shape
+            t = t.permute(0, 1, 4, 2, 3).reshape(b * n, c, h, w).float().div_(255.0)
+            if h != image_size or w != image_size:
+                t = torch.nn.functional.interpolate(
+                    t,
+                    size=(image_size, image_size),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            per_stack.append(t.reshape(b, n, c, image_size, image_size))
+
     images: list[list[torch.Tensor]] = []
     masks: list[list[int]] = []
     for i in range(batch_size):
         views: list[torch.Tensor] = []
-        for stack in view_stacks:
-            sample = stack[i]
-            if sample.ndim == 4:  # [N, H, W, C]: multiple sub-views
-                for v in range(sample.shape[0]):
-                    views.append(_to_chw_float(_to_hwc_uint8(sample[v]), image_size))
-            else:
-                views.append(_to_chw_float(_to_hwc_uint8(sample), image_size))
+        if device is not None:
+            for t in per_stack:
+                views.extend(t[i].unbind(0))
+        else:
+            for stack in view_stacks:
+                sample = stack[i]
+                if sample.ndim == 4:  # [N, H, W, C]: multiple sub-views
+                    for v in range(sample.shape[0]):
+                        views.append(
+                            _to_chw_float(_to_hwc_uint8(sample[v]), image_size)
+                        )
+                else:
+                    views.append(_to_chw_float(_to_hwc_uint8(sample), image_size))
 
         mask = [1] * len(views)
         # Pad with zero (dummy) views up to the fixed slot count.
         while len(views) < num_view_slots:
-            views.append(torch.zeros(3, image_size, image_size, dtype=torch.float32))
+            views.append(
+                torch.zeros(
+                    3, image_size, image_size, dtype=torch.float32, device=device
+                )
+            )
             mask.append(0)
         views = views[:num_view_slots]
         mask = mask[:num_view_slots]

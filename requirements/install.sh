@@ -1131,9 +1131,13 @@ EOF
 }
 
 install_ascend_tensorflow_pins() {
-    # TF 2.21 SIGSEGVs against Ray's protobuf 6.x on Ascend. Shared by every
-    # embodied model whose install pulls TensorFlow (GR00T, StarVLA, …).
+    # TF 2.21 SIGSEGVs against Ray's protobuf 6.x on Ascend, taking down every
+    # worker that imports it. main() calls this after the model and environment
+    # installs, because those are what pull TensorFlow in, and which of them do
+    # is not something each install function should have to know. Pin only what
+    # is already installed: a venv with no TensorFlow does not want one.
     [ "$PLATFORM" = "ascend" ] || return 0
+    uv pip show tensorflow >/dev/null 2>&1 || return 0
     echo "[install.sh] Applying Ascend TensorFlow compatibility pins"
     uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/tensorflow.txt"
 }
@@ -2528,7 +2532,6 @@ install_starvla_model() {
     fi
 
     install_flash_attn
-    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2590,7 +2593,6 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
-    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2601,7 +2603,6 @@ install_gr00t_n1d6_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/RLinf/Isaac-GR00T.git" -b n1.6.1-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -2614,6 +2615,11 @@ install_gr00t_n1d6_model() {
             ;;
     esac
 
+    # After the environment: it resolves its own dependency set and had raised
+    # transformers past the 4.51.3 this backbone's vendored Eagle3 code is
+    # written against, whose ProcessorMixin contract differs in 4.57.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
+
     uv pip uninstall pynvml || true
 }
 
@@ -2624,7 +2630,6 @@ install_gr00t_n1d7_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -2636,6 +2641,10 @@ install_gr00t_n1d7_model() {
             exit 1
             ;;
     esac
+
+    # After the environment, for the same reason as N1.6: this backbone needs
+    # the transformers its pins name, not whatever the environment resolved.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     uv pip uninstall pynvml || true
 }
@@ -2703,6 +2712,28 @@ install_abot_m0_model() {
     uv pip install -e "$vggt_path"
 
     uv pip install -e "$abot_path" --no-deps
+
+    # ABot-M0 loads its VGGT spatial encoder from a hard-coded Hub id, which
+    # fails on a host with no route to huggingface.co. Read VGGT_MODEL_PATH when
+    # it is set so an image or an air-gapped run can point at a local copy, and
+    # keep the Hub id as the default. The file already imports os.
+    local abot_framework="$abot_path/ABot/model/framework/ABot_M0.py"
+    if [ -f "$abot_framework" ]; then
+        python - "$abot_framework" <<'EOF'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+pinned = "VGGT.from_pretrained('facebook/VGGT-1B')"
+configurable = (
+    "VGGT.from_pretrained(os.environ.get('VGGT_MODEL_PATH', 'facebook/VGGT-1B'))"
+)
+if pinned in source:
+    path.write_text(source.replace(pinned, configurable))
+    print("[install.sh] ABot-M0 VGGT weights now honor VGGT_MODEL_PATH")
+EOF
+    fi
 
     maybe_build_decord_from_source
     uv pip install -r $SCRIPT_DIR/embodied/models/abot.txt
@@ -4055,6 +4086,7 @@ main() {
     esac
 
     install_platform_extras
+    install_ascend_tensorflow_pins
     # Last step: env/model pip installs may have downgraded protobuf.
     echo "[install.sh] Ensuring ${RAY_COMPAT_PROTOBUF_SPEC} for Ray dashboard/agent"
     uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"

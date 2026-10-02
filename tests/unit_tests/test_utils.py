@@ -555,3 +555,44 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_boolean_attention_mask_casts_only_binary_float_masks():
+    # The NPU keeps its fused SDPA kernel for boolean masks; the cast must
+    # accept exactly the {0, dtype-min} masks HF models build and refuse any
+    # mask that encodes a real bias.
+    import torch
+
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        boolean_attention_mask,
+    )
+
+    causal = torch.zeros(2, 1, 4, 4, dtype=torch.bfloat16)
+    causal[:, :, :, 2:] = torch.finfo(torch.bfloat16).min
+    out = boolean_attention_mask(causal)
+    assert out is not None and out.dtype == torch.bool
+    assert torch.equal(out, causal >= 0)
+
+    assert boolean_attention_mask(None) is None
+    assert boolean_attention_mask(causal.bool()) is None
+    biased = causal.clone()
+    biased[0, 0, 0, 0] = -1.5
+    assert boolean_attention_mask(biased) is None
+
+
+def test_boolean_attention_mask_caches_per_live_tensor():
+    # One mask tensor flows through every layer of a forward; the verdict is
+    # cached so only the first layer pays the device sync, and an in-place
+    # edit or a new tensor gets a fresh verdict.
+    import torch
+
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        boolean_attention_mask,
+    )
+
+    mask = torch.zeros(1, 1, 3, 3, dtype=torch.float32)
+    first = boolean_attention_mask(mask)
+    assert boolean_attention_mask(mask) is first
+
+    mask[0, 0, 0, 0] = -2.0  # bias now; version bump must invalidate
+    assert boolean_attention_mask(mask) is None

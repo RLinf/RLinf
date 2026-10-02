@@ -1358,3 +1358,150 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def _gr00t_npu_patch_modules():
+    from rlinf.models.embodiment.gr00t.gr00t_n1d5 import npu_patches as n1d5
+    from rlinf.models.embodiment.gr00t.gr00t_n1d6 import npu_patches as n1d6
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7 import npu_patches as n1d7
+
+    return {"n1d5": n1d5, "n1d6": n1d6, "n1d7": n1d7}
+
+
+def test_gr00t_npu_patches_are_inert_off_ascend():
+    # Every GR00T version registers its Ascend patches through the same pair of
+    # calls, and off NPU both do nothing, so a CUDA run is untouched.
+    from rlinf.utils.patcher import Patcher
+
+    for version, module in _gr00t_npu_patch_modules().items():
+        Patcher.clear()
+        state = module.apply_npu_patches(Patcher)
+        assert state is None, version
+        module.restore_npu_patches(Patcher, state)
+        assert Patcher._mappings_dict == {}, version
+
+
+def test_gr00t_npu_fused_kernel_paths_resolve_for_every_version():
+    # The Patcher names replacements by string path, so a moved or renamed
+    # kernel wrapper has to fail here rather than at model construction on NPU.
+    from rlinf.utils.patcher import Patcher
+
+    for path in (
+        "rlinf.models.embodiment.gr00t.npu_common.npu_rmsnorm_forward",
+        "rlinf.models.embodiment.gr00t.npu_common.npu_apply_rotary_pos_emb",
+        "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches.npu_rmsnorm_forward",
+        "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches.npu_apply_rotary_pos_emb",
+    ):
+        _, obj = Patcher._get_parent_obj_and_obj(path)
+        assert callable(obj), path
+
+
+def test_npu_flash_attention_binding_fills_only_missing_names(monkeypatch):
+    # GR00T's vendored SigLIP2 attention leaves its flash-attention names
+    # undefined on Ascend; binding supplies them without displacing a module
+    # that found real kernels.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    def fake_symbols():
+        return {"flash_attn_varlen_func": "npu", "_flash_supports_window_size": False}
+
+    monkeypatch.setattr(npu_common, "_npu_flash_attention_symbols", fake_symbols)
+
+    vendored = ModuleType("modeling_siglip2")
+    npu_common.bind_npu_flash_attention(vendored)
+    assert vendored.flash_attn_varlen_func == "npu"
+    assert vendored._flash_supports_window_size is False
+
+    with_real_kernels = ModuleType("modeling_siglip2")
+    with_real_kernels.flash_attn_varlen_func = "cuda"
+    npu_common.bind_npu_flash_attention(with_real_kernels)
+    assert with_real_kernels.flash_attn_varlen_func == "cuda"
+
+
+def test_npu_flash_attention_binding_reaches_a_later_import(monkeypatch, tmp_path):
+    # The vendored module is loaded by trust_remote_code after the patches are
+    # registered, so the binding has to apply as it is imported, and stop once
+    # the installer's uninstall callable runs.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    monkeypatch.setattr(
+        npu_common, "_npu_flash_attention_symbols", lambda: {"flash_attn_func": "npu"}
+    )
+    (tmp_path / "modeling_siglip2.py").write_text("flash_attn_func = None\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    stop = npu_common.install_npu_flash_attention("modeling_siglip2")
+    try:
+        sys.modules.pop("modeling_siglip2", None)
+        import modeling_siglip2
+
+        assert modeling_siglip2.flash_attn_func == "npu"
+    finally:
+        stop()
+        sys.modules.pop("modeling_siglip2", None)
+
+    import modeling_siglip2 as unbound
+
+    assert unbound.flash_attn_func is None
+
+
+def test_openpi_kernels_compile_only_where_inductor_can_run(monkeypatch):
+    # OpenPI's fused kernels go through Inductor, which needs Triton. Ascend and
+    # MUSA venvs have none, and compiling there used to fail at the first
+    # forward, so absence of Triton has to read as "do not compile".
+    from rlinf.models.embodiment.openpi.modules import utils
+
+    real_find_spec = importlib.util.find_spec
+
+    def without_triton(name, *args, **kwargs):
+        return None if name == "triton" else real_find_spec(name, *args, **kwargs)
+
+    utils.inductor_available.cache_clear()
+    monkeypatch.setattr(importlib.util, "find_spec", without_triton)
+    try:
+        assert utils.inductor_available() is False
+    finally:
+        utils.inductor_available.cache_clear()
+
+    # An explicit choice still wins over the platform default, in both directions.
+    utils.set_torch_compile(True)
+    assert utils.torch_compile_enabled() is True
+    utils.set_torch_compile(False)
+    assert utils.torch_compile_enabled() is False
+
+
+def test_npu_sdpa_context_materializes_a_broadcast_mask():
+    # Ascend's attention kernel rejects a mask whose query dimension is 1, which
+    # CUDA broadcasts. GR00T's DiT builds exactly that, so the context has to
+    # expand it to the query length and leave every other mask alone.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    seen = {}
+
+    def record(query, key, value, attn_mask=None, *args, **kwargs):
+        seen["mask_shape"] = None if attn_mask is None else tuple(attn_mask.shape)
+        return torch.zeros_like(query)
+
+    original = torch.nn.functional.scaled_dot_product_attention
+    torch.nn.functional.scaled_dot_product_attention = record
+    try:
+        q = torch.zeros(2, 32, 51, 64)
+        kv = torch.zeros(2, 32, 570, 64)
+        with npu_common.npu_sdpa_context():
+            torch.nn.functional.scaled_dot_product_attention(
+                q, kv, kv, attn_mask=torch.zeros(2, 32, 1, 570)
+            )
+            assert seen["mask_shape"] == (2, 32, 51, 570)
+
+            # A mask that already spans the queries is passed through untouched.
+            torch.nn.functional.scaled_dot_product_attention(
+                q, kv, kv, attn_mask=torch.zeros(2, 32, 51, 570)
+            )
+            assert seen["mask_shape"] == (2, 32, 51, 570)
+
+            torch.nn.functional.scaled_dot_product_attention(q, kv, kv)
+            assert seen["mask_shape"] is None
+        # The context restores what it replaced.
+        assert torch.nn.functional.scaled_dot_product_attention is record
+    finally:
+        torch.nn.functional.scaled_dot_product_attention = original

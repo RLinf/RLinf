@@ -16,7 +16,7 @@ GR00T模型强化学习训练
 
 .. note::
 
-   RLinf 同时支持 GR00T-N1.5、GR00T-N1.6 和 GR00T-N1.7。N1.6 引入了流匹配动作头、FSDP 训练和更强的跨具身支持；N1.7 则进一步将官方 backbone 升级到 Cosmos-Reason2-2B / Qwen3-VL，并显著扩展了官方通用 state/action 空间。版本差异以 **N1.5** / **N1.6** / **N1.7** 标注区分。本页的 AMD、昇腾与 MUSA 步骤适用于 N1.5 + LIBERO 或 ManiSkill；这些后端上的 N1.6、N1.7 与 IsaacLab 需要分别验证。
+   RLinf 同时支持 GR00T-N1.5、GR00T-N1.6 和 GR00T-N1.7。N1.6 引入了流匹配动作头、FSDP 训练和更强的跨具身支持；N1.7 则进一步将官方 backbone 升级到 Cosmos-Reason2-2B / Qwen3-VL，并显著扩展了官方通用 state/action 空间。版本差异以 **N1.5** / **N1.6** / **N1.7** 标注区分。本页的 AMD、昇腾与 MUSA 步骤适用于 N1.5 + LIBERO 或 ManiSkill；昇腾还可运行 N1.6 与 N1.7，其余组合在这些后端上需要分别验证。
 
 概览
 ----------------------------------------
@@ -543,7 +543,7 @@ GR00T-N1.5的动作头包含dropout层，这会干扰对数概率的计算，因
 在不同硬件后端上运行
 --------------------
 
-NVIDIA 使用上面各版本对应的安装流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行。非 NVIDIA 的说明不包含 N1.6、N1.7 与 IsaacLab。
+NVIDIA 使用上面各版本对应的安装流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行，昇腾还支持 N1.6 与 N1.7 在 LIBERO 上运行。AMD 与 MUSA 上的 N1.6、N1.7，以及所有非 NVIDIA 后端上的 IsaacLab，尚未验证。
 
 AMD ROCm
 ~~~~~~~~
@@ -580,14 +580,16 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 GR00T N1.5 可直接使用共�
 
    source switch_env gr00t
 
-本地安装时，明确选择 N1.5 和 LIBERO：
+本地安装时，明确选择版本和 LIBERO：
 
 .. code-block:: bash
 
    bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
    source .venv/bin/activate
 
-中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用 N1.5 的 NPU 补丁。
+N1.6 或 N1.7 使用 ``--model gr00t_n1d6`` 或 ``--model gr00t_n1d7``，环境为 ``--env maniskill_libero``。
+
+中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用各版本对应的 NPU 补丁：融合 RMSNorm 与 rotary kernel、由 Transformers 昇腾集成提供的 flash-attention，以及 NPU kernel 接受的注意力 mask 布局。
 
 .. include:: _ascend_torch.rst
 

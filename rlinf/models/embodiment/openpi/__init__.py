@@ -24,7 +24,10 @@ from rlinf.models.embodiment.openpi.checkpoint import (
     resolve_full_weights,
     resolve_model_safetensors,
 )
-from rlinf.models.embodiment.openpi.modules.utils import set_torch_compile
+from rlinf.models.embodiment.openpi.modules.utils import (
+    inductor_available,
+    set_torch_compile,
+)
 from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
 from rlinf.utils.logging import get_logger
 
@@ -48,7 +51,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     model_cfg = cfg.openpi
-    set_torch_compile(bool(OmegaConf.select(model_cfg, "torch_compile", default=True)))
+    set_torch_compile(
+        bool(OmegaConf.select(model_cfg, "torch_compile", default=inductor_available()))
+    )
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
