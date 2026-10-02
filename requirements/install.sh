@@ -3589,12 +3589,8 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
-    # build_env into embodichain.lab.gym.utils.registration.
-    # <0.3 keeps CartPole at
-    # embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json.
-    # 0.3.0 moves that file and changes the gym/sim APIs this env uses.
-    uv pip install "embodichain>=0.2.4,<0.3" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # >=0.3.0 uses the task-oriented config layout under embodichain_tasks.
+    uv pip install "embodichain>=0.3.0" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site --index-strategy unsafe-best-match
 }
 
 install_dosw1_env() {
