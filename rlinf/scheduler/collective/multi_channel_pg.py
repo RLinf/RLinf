@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import logging
+import os
 import threading
 from datetime import timedelta
 from typing import Optional
 
 import torch
 import torch.distributed as dist
+from torch.torch_version import TorchVersion
 
 from ..hardware import AcceleratorType, AcceleratorUtil
 from .async_work import AsyncCollWork, AsyncWork
@@ -28,7 +30,15 @@ from .collective_group import (
     CollectiveGroupOptions,
 )
 
-_PROCESS_GROUP_WRAPPER_LOCK = threading.Lock()
+# Before torch 2.7, several c10d constructors are pybind factories bound with
+# call_guard<gil_scoped_release>. pybind registers the new Python object inside
+# that guard, so registration runs without the GIL and races with any other
+# thread creating or freeing a pybind object (pybind/pybind11#5473). Plain
+# py::init<...> constructors register after the GIL is reacquired.
+_C10D_FACTORY_INIT_RELEASES_GIL = TorchVersion(torch.__version__) < (2, 7)
+
+_BASE_PG_OPTIONS: dict[tuple[str, timedelta], "dist.ProcessGroup.Options"] = {}
+_BASE_PG_OPTIONS_LOCK = threading.Lock()
 
 
 def _create_process_group_base(
@@ -38,20 +48,52 @@ def _create_process_group_base(
     backend: str,
     timeout: timedelta,
 ) -> dist.ProcessGroup:
-    """Construct the local wrapper without serializing backend rendezvous.
+    """Construct the backend-less ProcessGroup wrapper.
 
-    Older torch bindings release the GIL during ProcessGroup construction,
-    including pybind instance registration. Concurrent wrapper constructors
-    can then corrupt that registration. The base constructor only stores its
-    arguments; keep the lock away from TCPStore and backend constructors,
-    which may wait for another rank.
+    ``ProcessGroup.Options`` (torch < 2.6) has only a factory constructor, so
+    one instance per ``(backend, timeout)`` is built and shared; the wrapper
+    only reads it. The wrapper constructor itself is a plain constructor.
     """
-    with _PROCESS_GROUP_WRAPPER_LOCK:
-        if hasattr(dist.ProcessGroup, "Options"):
+    if not hasattr(dist.ProcessGroup, "Options"):
+        return dist.ProcessGroup(store, rank, size)
+    with _BASE_PG_OPTIONS_LOCK:
+        options = _BASE_PG_OPTIONS.get((backend, timeout))
+        if options is None:
             options = dist.ProcessGroup.Options(backend=backend)
             options._timeout = timeout
-            return dist.ProcessGroup(store, rank, size, options)
-        return dist.ProcessGroup(store, rank, size)
+            _BASE_PG_OPTIONS[(backend, timeout)] = options
+    return dist.ProcessGroup(store, rank, size, options)
+
+
+def _create_gloo_backend(
+    store: dist.Store, rank: int, size: int, timeout: timedelta
+) -> "dist.ProcessGroupGloo":
+    """Construct a Gloo backend through a constructor that registers under the GIL.
+
+    On torch < 2.7 this replaces the ``timeout=`` factory overload with the plain
+    ``(store, rank, size, options)`` overload and builds the same options the
+    factory would: devices from ``GLOO_SOCKET_IFNAME`` or the default device,
+    two threads per device. The constructor still connects to peers without
+    the GIL, so no lock is held while waiting for another rank.
+    """
+    from torch.distributed.distributed_c10d import ProcessGroupGloo
+
+    if not _C10D_FACTORY_INIT_RELEASES_GIL:
+        return ProcessGroupGloo(store, rank, size, timeout=timeout)
+
+    options = ProcessGroupGloo._Options()
+    options._timeout = timeout
+    ifname = os.environ.get("GLOO_SOCKET_IFNAME", "")
+    if len(ifname) > 1:
+        # c10d::split drops the empty field after a trailing comma.
+        options._devices = [
+            ProcessGroupGloo.create_device(interface=name)
+            for name in ifname.removesuffix(",").split(",")
+        ]
+    else:
+        options._devices = [ProcessGroupGloo.create_default_device()]
+    options._threads = len(options._devices) * 2
+    return ProcessGroupGloo(store, rank, size, options)
 
 
 def _empty_pinned(
@@ -859,8 +901,8 @@ class MultiChannelProcessGroup:
                 # TODO: remove this check after lazy initialization is supported
                 # if pg_options is not None:
                 #     raise RuntimeError("GLOO options not supported")
-                backend_class = ProcessGroupGloo(
-                    backend_prefix_store, group_rank, group_size, timeout=timeout
+                backend_class = _create_gloo_backend(
+                    backend_prefix_store, group_rank, group_size, timeout
                 )
                 backend_type = ProcessGroup.BackendType.GLOO
             elif backend_str == Backend.NCCL:
