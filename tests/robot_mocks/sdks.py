@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fake SDKs for the remaining robots: GimArm, Turtle2 and DOSW1."""
+"""Fake SDKs for the remaining robots: GimArm, Turtle2, DOSW1, and Kuavo."""
 
 from __future__ import annotations
 
@@ -331,10 +331,69 @@ def airbot() -> dict[str, types.ModuleType]:
     }
 
 
+def kuavo() -> dict[str, types.ModuleType]:
+    """Return a Kuavo SDK module with one resting dual-arm robot."""
+    robots = []
+    end_effectors = []
+
+    class KuavoSDK:
+        def Init(self):  # noqa: N802 - the vendor spells it this way
+            return True
+
+    class KuavoRobot:
+        def __init__(self):
+            self.commands: list[tuple[str, Any]] = []
+            robots.append(self)
+
+        def set_external_control_arm_mode(self):
+            return True
+
+        def control_head(self, yaw, pitch):
+            self.commands.append(("head", (yaw, pitch)))
+            return True
+
+        def control_arm_joint_positions(self, positions):
+            self.commands.append(("arms", list(positions)))
+            return True
+
+    class KuavoRobotState:
+        def arm_joint_state(self):
+            return types.SimpleNamespace(position=np.arange(14, dtype=np.float32))
+
+    class EndEffector:
+        def __init__(self):
+            self.commands: list[tuple[str, list[float]]] = []
+            end_effectors.append(self)
+
+        def get_position(self):
+            return [10.0], [20.0]
+
+        def control_left(self, *, target_positions, **_kwargs):
+            self.commands.append(("left", list(target_positions)))
+            return True
+
+        def control_right(self, *, target_positions, **_kwargs):
+            self.commands.append(("right", list(target_positions)))
+            return True
+
+    sdk = module(
+        "kuavo_humanoid_sdk",
+        KuavoSDK=KuavoSDK,
+        KuavoRobot=KuavoRobot,
+        KuavoRobotState=KuavoRobotState,
+        LejuClaw=EndEffector,
+        DexterousHand=EndEffector,
+        _robots=robots,
+        _end_effectors=end_effectors,
+    )
+    return {"kuavo_humanoid_sdk": sdk}
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return the remaining fake robot SDKs keyed by import name."""
     made: dict[str, types.ModuleType] = {}
     made.update(gim_arm())
     made.update(turtle2())
     made.update(airbot())
+    made.update(kuavo())
     return made

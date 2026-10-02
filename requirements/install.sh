@@ -112,7 +112,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "kuavo" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -2969,7 +2969,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
+        franka|franka-ros|so101|piper|dosw1|gim_arm|kuavo|xsquare_turtle2)
             install_common_embodied_deps
             ;;
     esac
@@ -3003,6 +3003,9 @@ install_env_only() {
             ;;
         gim_arm)
             install_gim_arm_env
+            ;;
+        kuavo)
+            install_kuavo_env
             ;;
         so101)
             install_so101_env
@@ -3510,6 +3513,24 @@ install_xsquare_turtle2_env() {
 
 install_gim_arm_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/gim_arm.txt"
+}
+
+install_kuavo_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/kuavo.txt"
+
+    # Robot images normally provide the SDK through their ROS workspace. A
+    # source checkout can be installed into this venv explicitly when needed.
+    if [ -n "${KUAVO_SDK_PATH:-}" ]; then
+        if [ ! -d "$KUAVO_SDK_PATH" ]; then
+            echo "KUAVO_SDK_PATH is not a directory: $KUAVO_SDK_PATH" >&2
+            exit 1
+        fi
+        uv pip install -e "$KUAVO_SDK_PATH"
+    else
+        echo "[kuavo] KUAVO_SDK_PATH is unset; using the SDK from the robot's ROS workspace." >&2
+    fi
+
+    use_opencv_gui_wheel
 }
 
 install_robotwin_env() {
