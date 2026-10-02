@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from diffsynth.models.reward_model import ResnetRewModel, TaskEmbedResnetRewModel
 from diffsynth.pipelines.wan_video_new import ModelConfig, WanVideoPipeline
+from omegaconf import OmegaConf
 from PIL import Image
 
 from rlinf.envs.sim.world_model.registry import register_backend
@@ -67,10 +68,23 @@ class WanBackend:
                 checkpoint_path=cfg.reward_model.from_pretrained,
                 task_suite_name=cfg.task_suite_name,
             )
+        if cfg.reward_model.type == "TOPRewardModel":
+            from rlinf.models.embodiment.reward.topreward_model import TOPRewardModel
+
+            rm_cfg = OmegaConf.to_container(cfg.reward_model, resolve=True)
+            rm_cfg.pop("type")
+            return TOPRewardModel(
+                model_path=rm_cfg.pop("from_pretrained"),
+                chunk=cfg.chunk,
+                **rm_cfg,
+            )
         raise ValueError(f"Unknown reward model type: {cfg.reward_model.type}")
 
     def reward_instructions(self, env) -> Optional[list[str]]:
-        if env.cfg.reward_model.type != "TaskEmbedResnetRewModel":
+        if env.cfg.reward_model.type not in (
+            "TaskEmbedResnetRewModel",
+            "TOPRewardModel",
+        ):
             return None
         # One instruction per scored frame, so each description repeats over its chunk
         instructions = []
