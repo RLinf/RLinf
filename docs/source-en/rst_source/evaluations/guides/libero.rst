@@ -225,7 +225,13 @@ Option 1: High parallelism (``auto_reset`` optional)
        auto_reset: True           # optional when E >= S
        rollout_epoch: 1
 
-**Option 2: Auto-reset (recommended when memory is limited)**
+Each LIBERO env runs in its own process and holds about 2 GiB of host RAM after reset (measured on ``libero_spatial``), and this memory is not shared between envs. With ``total_num_envs: 500``, the env workers need about 1 TiB of host RAM in total.
+
+.. warning::
+
+   The env processes are subprocesses of the env worker, not Ray workers. In a run that exhausted host memory, Ray's memory monitor (Ray 2.58.0) logged that it selected no worker to kill, and the node became unresponsive instead of the job failing with an out-of-memory error.
+
+**Option 2: Auto-reset (recommended unless the env nodes have more than about 2 GiB of host RAM per env, plus headroom for the rollout model)**
 
 .. code-block:: yaml
 
@@ -279,10 +285,14 @@ Advanced Usage
 
 **Adjust parallel scale**
 
+Lowering ``total_num_envs`` alone also lowers coverage: with 64 envs and the config's 240-step budget, one rollout epoch evaluates 64 of the 500 init states. Raise ``max_steps_per_rollout_epoch`` with it so each env runs several trajectories. ``total_num_envs`` must also be divisible by the number of env worker processes; 128 works on 1, 2, 4, or 8 GPUs:
+
 .. code-block:: bash
 
+   # max_steps_per_rollout_epoch = ceil(S / E) * max_episode_steps = ceil(500 / 128) * 240
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     env.eval.total_num_envs=64 \
+     env.eval.total_num_envs=128 \
+     env.eval.max_steps_per_rollout_epoch=960 \
      rollout.model.model_path=/path/to/model
 
 FAQ
