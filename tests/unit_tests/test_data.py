@@ -799,22 +799,132 @@ def test_infer_obs_batch_size_raises_when_unbatched():
         infer_obs_batch_size({"obs": {}})
 
 
+def test_sfp_normalization_commutes_with_the_action_sum():
+    """SFP reconstructs a trajectory by summing action_states and the deltas.
+
+    That sum is only meaningful when normalization is a pure scaling, so
+    accumulating normalized deltas has to give the same answer as normalizing
+    the accumulated trajectory. openpi's default quantile transform is affine
+    and shifts every value, which is why SFP replaces it.
+    """
+    import numpy as np
+    from openpi import transforms
+    from openpi.shared.normalize import NormStats
+
+    from rlinf.models.embodiment.openpi.dataconfig.sfp_transforms import SfpNormalize
+
+    stats = NormStats(
+        mean=np.array([0.0, 0.0]),
+        std=np.array([1.0, 1.0]),
+        q01=np.array([-2.0, -1.0]),
+        q99=np.array([4.0, 3.0]),
+    )
+    norm_stats = {"actions": stats, "action_states": stats}
+    deltas = np.array([[1.0, 2.0], [3.0, -1.0], [0.5, 0.5]])
+    start = np.array([2.0, -3.0])
+    raw_trajectory = np.cumsum(np.concatenate([start[None], deltas]), axis=0)
+
+    def trajectory_from_parts(normalize):
+        parts = normalize({"actions": deltas, "action_states": start})
+        return np.cumsum(
+            np.concatenate([parts["action_states"][None], parts["actions"]]), axis=0
+        )
+
+    def normalized_trajectory(normalize):
+        return normalize({"actions": raw_trajectory, "action_states": start})["actions"]
+
+    sfp = SfpNormalize(norm_stats, use_quantiles=True)
+    np.testing.assert_allclose(
+        trajectory_from_parts(sfp), normalized_trajectory(sfp), rtol=1e-6
+    )
+
+    affine = transforms.Normalize(norm_stats, use_quantiles=True)
+    assert not np.allclose(trajectory_from_parts(affine), normalized_trajectory(affine))
+
+
+def test_sfp_unnormalize_inverts_sfp_normalize():
+    import numpy as np
+    from openpi.shared.normalize import NormStats
+
+    from rlinf.models.embodiment.openpi.dataconfig.sfp_transforms import (
+        SfpNormalize,
+        SfpUnnormalize,
+    )
+
+    stats = NormStats(
+        mean=np.array([0.0, 0.0]),
+        std=np.array([1.0, 1.0]),
+        q01=np.array([-2.0, -1.0]),
+        q99=np.array([4.0, 3.0]),
+    )
+    norm_stats = {"actions": stats, "action_states": stats}
+    raw = {
+        "actions": np.array([[1.0, 2.0], [3.0, -1.0], [0.5, 0.5]]),
+        "action_states": np.array([2.0, -3.0]),
+    }
+    normalize = SfpNormalize(norm_stats, use_quantiles=True)
+    unnormalize = SfpUnnormalize(norm_stats, use_quantiles=True)
+    recovered = unnormalize(normalize(raw))
+    np.testing.assert_allclose(recovered["actions"], raw["actions"], rtol=1e-6)
+    np.testing.assert_allclose(
+        recovered["action_states"], raw["action_states"], rtol=1e-6
+    )
+
+
+def test_sfp_padding_names_the_converter_when_action_states_are_missing():
+    from rlinf.models.embodiment.openpi.dataconfig.sfp_transforms import (
+        PadSfpActionStates,
+    )
+
+    with pytest.raises(KeyError, match="convert_libero_data_to_lerobot"):
+        PadSfpActionStates(model_action_dim=32)({"state": [0.0]})
+
+
+def test_sfp_loader_key_does_not_capture_the_plain_libero_configs():
+    """``_resolve_env`` matches registry keys as substrings of the config name.
+
+    "libero" would therefore route ``pi05_libero`` to the SFP loader, which
+    demands an ``action_states`` field those datasets do not have. Plain
+    LIBERO configs must continue to use the official OpenPI loader.
+    """
+    from rlinf.data.datasets.openpi import _resolve_env
+
+    assert _resolve_env("pi05_libero_sfp") == "libero_sfp"
+
+    for config_name in ("pi0_libero", "pi0_libero_horizon10", "pi05_libero"):
+        assert _resolve_env(config_name) == "official"
+
+
 def test_env_output_composes_one_transition_object():
     transition = EnvTransition(
         rewards=torch.ones(2, 1),
         dones=torch.zeros(2, 1, dtype=torch.bool),
+        episode_starts=torch.tensor([True, False]),
     )
     output = EnvOutput(obs={"states": torch.zeros(2, 3)}, transition=transition)
 
     assert output.transition is transition
     assert output.rewards is transition.rewards
     assert output.dones is transition.dones
+    assert output.episode_starts is transition.episode_starts
     assert set(output.__dataclass_fields__) == {
         "obs",
         "transition",
         "final_obs",
         "env_infos",
     }
+
+
+def test_env_transition_preserves_episode_starts_across_split_and_merge():
+    transition = EnvTransition(
+        dones=torch.zeros(3, 1, dtype=torch.bool),
+        episode_starts=torch.tensor([True, False, True]),
+    )
+
+    merged = EnvTransition.merge(transition.split([2, 1]))
+
+    assert torch.equal(merged.dones, transition.dones)
+    assert torch.equal(merged.episode_starts, transition.episode_starts)
 
 
 def test_removed_duplicate_types_are_not_schema_api():

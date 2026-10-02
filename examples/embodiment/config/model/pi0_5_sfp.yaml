@@ -1,0 +1,38 @@
+model_type: "openpi"
+
+# Model-shape template for Streaming Flow Policy eval on LIBERO. Filesystem
+# paths (model_path and openpi_data.norm_stats_path) live in the experiment
+# config so this template stays path-free.
+
+precision: null
+pi05: True
+
+is_lora: False
+lora_rank: 32
+
+# LIBERO pi05: 7-dim env actions, 10-step chunk. SFP integrates one suffix
+# token per action_horizon step, so horizon and env chunk stay equal.
+num_action_chunks: 10
+action_dim: 7
+use_proprio: True
+# Unused by the SFP sampler (it uses action_horizon). Kept because the shared
+# factory still reads one uniform field.
+num_steps: 10
+add_value_head: False
+
+openpi:
+  task: eval
+  config_name: "pi05_libero_sfp"
+  use_sfp: True
+  sfp_sigma: 0.16
+  sfp_noise_decay: 4.0
+  # Keep network horizon and executed chunk aligned: the sampler uses dt=1/H.
+  action_horizon: ${..num_action_chunks}
+  action_chunk: ${..num_action_chunks}
+  num_steps: ${..num_steps}
+  action_env_dim: ${..action_dim}
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200
+  discrete_state_input: False
