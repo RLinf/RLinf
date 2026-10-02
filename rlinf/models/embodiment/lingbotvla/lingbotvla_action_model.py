@@ -1149,7 +1149,8 @@ class LingbotvlaActionModel(nn.Module, BasePolicy):
 
         log_probs = log_probs.mean(dim=1)
         entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
-        value_t = value_t.mean(dim=-1, keepdim=False)
+        # ``[B, 1]``, matching the ``prev_values`` stored during rollout.
+        value_t = value_t.mean(dim=-1, keepdim=True)
 
         return {
             "logprobs": log_probs.to(torch.float32),
