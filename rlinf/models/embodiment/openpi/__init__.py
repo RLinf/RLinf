@@ -31,6 +31,36 @@ from rlinf.utils.logging import get_logger
 logger = get_logger()
 
 
+def resolve_torch_compile(model_cfg: Any) -> bool:
+    """Whether to compile OpenPI's fused RoPE/GELU kernels.
+
+    The kernels go through Triton, which has no NPU backend: on Ascend the
+    compile fails with "0 active drivers" and takes the rollout worker down,
+    leaving the actor waiting on a weight broadcast until HCCL times out. They
+    are therefore never compiled on an NPU, and a config that asks for it there
+    gets a warning. Every other platform follows ``openpi.torch_compile``.
+
+    Args:
+        model_cfg (Any): The ``openpi`` config node of the model.
+
+    Returns:
+        bool: True to compile the fused kernels.
+    """
+    from omegaconf import OmegaConf
+
+    from rlinf.scheduler import Worker
+
+    configured = bool(OmegaConf.select(model_cfg, "torch_compile", default=True))
+    if Worker.torch_device_type == "npu":
+        if configured:
+            logger.warning(
+                "openpi.torch_compile is set, but Triton has no NPU backend; "
+                "running the fused RoPE/GELU kernels without compiling them."
+            )
+        return False
+    return configured
+
+
 def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
@@ -48,7 +78,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     model_cfg = cfg.openpi
-    set_torch_compile(bool(OmegaConf.select(model_cfg, "torch_compile", default=True)))
+    set_torch_compile(resolve_torch_compile(model_cfg))
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
