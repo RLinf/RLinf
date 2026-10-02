@@ -30,6 +30,7 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
+from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
@@ -1358,3 +1359,142 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def _gspo_loss(logprobs, old_logprobs, advantages, mask, low=0.1, high=0.2):
+    return policy_loss(
+        task_type="reasoning",
+        loss_type="gspo",
+        logprobs=logprobs,
+        old_logprobs=old_logprobs,
+        advantages=advantages,
+        loss_mask=mask,
+        clip_ratio_low=low,
+        clip_ratio_high=high,
+    )
+
+
+@pytest.mark.parametrize("low,high", [(0.1, 0.2), (3e-4, 4e-4)])
+def test_gspo_matches_sequence_objective_and_gradient(low, high):
+    # Each row covers a different sign/clipping case; token ratios disagree
+    # within rows, so token-wise PPO clipping cannot pass this comparison.
+    mask = torch.tensor([[1, 1, 0], [1, 1, 1], [1, 0, 0], [1, 1, 0]]).bool()
+    old = torch.full((4, 3), -3.0)
+    delta = torch.tensor(
+        [[0.8, -0.8, 1000], [0.5, 0.5, 0.5], [-0.5, 0, 0], [-0.2, 0.2, 0]]
+    )
+    current = (old + delta).requires_grad_()
+    sequence_advantages = torch.tensor([1.0, 2.0, -1.0, -2.0])
+    advantages = sequence_advantages[:, None].expand_as(old)
+    loss, metrics = _gspo_loss(current, old, advantages, mask, low, high)
+
+    reference_logprobs = current.detach().double().requires_grad_()
+    terms = []
+    for i in range(4):
+        log_ratio = (reference_logprobs[i, mask[i]] - old[i, mask[i]]).mean()
+        ratio = log_ratio.exp()
+        advantage = sequence_advantages[i].double()
+        terms.append(
+            -torch.minimum(
+                ratio * advantage, ratio.clamp(1 - low, 1 + high) * advantage
+            )
+        )
+    reference = torch.stack(terms).mean()
+    torch.testing.assert_close(loss.double(), reference, rtol=1e-6, atol=1e-7)
+    gradient = torch.autograd.grad(loss, current)[0]
+    reference_gradient = torch.autograd.grad(reference, reference_logprobs)[0]
+    torch.testing.assert_close(
+        gradient.double(), reference_gradient, rtol=1e-6, atol=1e-7
+    )
+    assert torch.count_nonzero(gradient[~mask]) == 0
+    assert metrics["actor/clip_fraction"].item() == pytest.approx(0.5)
+    assert all(
+        not value.requires_grad and torch.isfinite(value) for value in metrics.values()
+    )
+
+
+@pytest.mark.parametrize("empty_batch", [False, True])
+def test_gspo_padding_and_empty_responses_have_zero_gradient(empty_batch):
+    mask = torch.tensor([[1, 1, 0], [0, 0, 0]], dtype=torch.bool)
+    if empty_batch:
+        mask.zero_()
+    old = torch.full((2, 3), -2.0).masked_fill(~mask, float("-inf"))
+    current = old.clone().requires_grad_()
+    advantages = torch.ones_like(old).masked_fill(~mask, float("nan"))
+    loss, metrics = _gspo_loss(current, old, advantages, mask)
+    assert loss.item() == pytest.approx(0.0 if empty_batch else -0.5)
+    loss.backward()
+    assert torch.isfinite(current.grad).all()
+    assert torch.count_nonzero(current.grad[~mask]) == 0
+    assert all(torch.isfinite(value) for value in metrics.values())
+
+
+def test_gspo_preserves_sequence_weights_across_lengths_and_microbatches():
+    mask = torch.tensor([[1, 0, 0, 0], [1, 1, 1, 1], [1, 1, 0, 0], [1, 1, 1, 0]]).bool()
+    old = torch.full(mask.shape, -2.0)
+    advantages, _ = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="grpo",
+        group_size=2,
+        rewards=torch.tensor([0.0, 1.0, 1.0, 0.0]),
+        loss_mask=mask,
+    )
+    current = (old + 0.01).requires_grad_()
+    loss, _ = _gspo_loss(current, old, advantages, mask)
+    gradient = torch.autograd.grad(loss, current)[0]
+    split_current = current.detach().clone().requires_grad_()
+    split_loss = (
+        sum(
+            _gspo_loss(split_current[s], old[s], advantages[s], mask[s])[0]
+            for s in (slice(0, 2), slice(2, 4))
+        )
+        / 2
+    )
+    split_gradient = torch.autograd.grad(split_loss, split_current)[0]
+    torch.testing.assert_close(loss, split_loss)
+    torch.testing.assert_close(gradient, split_gradient)
+    # Long responses do not receive more total gradient weight.
+    torch.testing.assert_close(
+        gradient.abs().sum(-1), gradient.abs().sum(-1)[0].expand(4)
+    )
+
+
+def test_gspo_default_mask_and_equal_reward_group():
+    old = torch.full((4, 3), -2.0)
+    mask = torch.ones_like(old, dtype=torch.bool)
+    advantages, _ = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="grpo",
+        group_size=4,
+        rewards=torch.ones(4),
+        loss_mask=mask,
+    )
+    current = old.clone().requires_grad_()
+    loss, metrics = _gspo_loss(current, old, advantages, None)
+    loss.backward()
+    assert loss.item() == 0
+    assert torch.count_nonzero(current.grad) == 0
+    assert metrics["actor/ratio"].item() == 1
+
+
+def test_gspo_and_token_clipping_produce_different_updates():
+    current = torch.tensor([[-1.0, -3.0]], requires_grad=True)
+    old = torch.full_like(current, -2.0)
+    advantages = torch.ones_like(current)
+    mask = torch.ones_like(current, dtype=torch.bool)
+    loss, _ = _gspo_loss(current, old, advantages, mask)
+    gradient = torch.autograd.grad(loss, current)[0]
+    torch.testing.assert_close(gradient, torch.full_like(current, -0.5))
+    token_loss, _ = policy_loss(
+        task_type="reasoning",
+        loss_type="actor",
+        logprobs=current,
+        old_logprobs=old,
+        advantages=advantages,
+        loss_mask=mask,
+        clip_ratio_low=0.1,
+        clip_ratio_high=0.2,
+    )
+    token_gradient = torch.autograd.grad(token_loss, current)[0]
+    assert token_gradient[0, 0] == 0
+    assert token_gradient[0, 1] != gradient[0, 1]

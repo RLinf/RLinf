@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
@@ -1698,7 +1699,52 @@ def adv_requires_group_baseline(
     return False
 
 
+def validate_gspo_cfg(cfg: DictConfig) -> None:
+    """Reject options that change GSPO's sequence-level objective."""
+    if OmegaConf.select(cfg, "algorithm.loss_type") != "gspo":
+        return
+    # Evaluation reuses the training config but does not compute a policy loss.
+    if cfg.runner.task_type == "reasoning_eval":
+        return
+    assert cfg.runner.task_type == "reasoning", (
+        "GSPO requires runner.task_type=reasoning"
+    )
+    assert cfg.algorithm.adv_type == "grpo", "GSPO requires algorithm.adv_type=grpo"
+    assert cfg.algorithm.loss_agg_func == "seq-mean-token-mean", (
+        "GSPO requires algorithm.loss_agg_func=seq-mean-token-mean"
+    )
+    assert not cfg.algorithm.normalize_advantages, (
+        "GSPO requires algorithm.normalize_advantages=false; GRPO already normalizes within each group"
+    )
+    assert not cfg.runner.get("enable_dynamic_batch_size", False), (
+        "GSPO requires runner.enable_dynamic_batch_size=false to preserve equal sequence weights"
+    )
+    assert not cfg.algorithm.get("use_valid_token_scale", False), (
+        "GSPO requires algorithm.use_valid_token_scale=false"
+    )
+    assert not cfg.algorithm.get("importance_sampling_fix", False), (
+        "GSPO does not support token-wise algorithm.importance_sampling_fix"
+    )
+    assert cfg.algorithm.get("clip_ratio_c", 3.0) is None, (
+        "GSPO requires algorithm.clip_ratio_c=null (no PPO dual clipping)"
+    )
+    for key in ("clip_log_ratio_min", "clip_log_ratio_max"):
+        assert cfg.algorithm.get(key) is None, f"GSPO requires algorithm.{key}=null"
+    for key in ("clip_ratio_low", "clip_ratio_high"):
+        value = cfg.algorithm.get(key)
+        if value is None:
+            value = cfg.algorithm.get("ratio_clip_eps", 0.2)
+        assert (
+            isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+        ), (
+            f"GSPO requires algorithm.{key} (or ratio_clip_eps) to be finite and nonnegative"
+        )
+        if key == "clip_ratio_low":
+            assert value < 1, "GSPO requires algorithm.clip_ratio_low < 1"
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
+    validate_gspo_cfg(cfg)
     OmegaConf.set_struct(cfg, True)
 
     with open_dict(cfg):
