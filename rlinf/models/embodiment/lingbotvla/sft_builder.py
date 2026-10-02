@@ -17,13 +17,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from lerobot.configs.policies import PreTrainedConfig
+from lingbotvla.data.vla_data.base_dataset import RobotwinDataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoProcessor
-
-from rlinf.models.embodiment.lingbotvla.data.vla_data.base_dataset import (
-    RobotwinDataset,
-)
 
 
 @dataclass
