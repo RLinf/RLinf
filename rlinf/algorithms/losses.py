@@ -574,6 +574,115 @@ def compute_opd_actor_loss(
     return policy_loss, metrics_data
 
 
+@register_policy_loss("drpo")
+def compute_drpo_actor_loss(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    drpo_lambda: float = 0.1,
+    drpo_tau: float = 10.0,
+    drpo_beta: float = 1000.0,
+    drpo_delta: float = 1e-4,
+    drpo_kl_type: str = "kl",
+    dp_group: Optional[torch.distributed.ProcessGroup] = None,
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
+    """Compute DRPO for complete, contiguous prompt groups on each DP rank.
+
+    Positive responses use length-dependent weights normalized only among
+    positives; negatives use a log-mean-exp of current sequence scores. Groups
+    without both classes contribute zero, as in the authors' implementation.
+    The KL constraint is token-weighted across the synchronized micro-batch on
+    all DP ranks. FSDP must average gradients across these same ranks.
+
+    The squared hinge uses beta / 2, matching the gradient of the official
+    implementation's detached ``beta * relu(KL - delta)`` multiplier.
+    See https://arxiv.org/abs/2510.04474, Eq. (7).
+
+    Args:
+        logprobs: Current response-token log probabilities, shaped [batch, capacity].
+        old_logprobs: Old-policy log probabilities with the same shape.
+        rewards: Binary correctness labels, shaped [batch].
+        loss_mask: Valid response-token mask with the same shape as logprobs.
+        group_size: Number of contiguous responses belonging to each prompt.
+        drpo_lambda: Positive temperature for correct-response length weights.
+        drpo_tau: Positive temperature for incorrect-response scores.
+        drpo_beta: Nonnegative coefficient for the KL constraint.
+        drpo_delta: Nonnegative KL threshold.
+        drpo_kl_type: Sampled KL estimator, either kl or low_var_kl.
+        dp_group: Gradient-averaging group; None selects the default world group.
+
+    Returns:
+        The differentiable loss and detached training metrics.
+    """
+    if logprobs.ndim != 2 or old_logprobs.shape != logprobs.shape:
+        raise ValueError("DRPO requires matching [response, token] log probabilities.")
+    batch_size, capacity = logprobs.shape
+    if group_size < 2 or batch_size == 0 or batch_size % group_size:
+        raise ValueError("DRPO requires a nonempty batch of complete prompt groups.")
+    if capacity == 0 or loss_mask.shape != logprobs.shape:
+        raise ValueError(
+            "DRPO requires a nonempty response capacity and matching mask."
+        )
+    if rewards.shape != (batch_size,) or not torch.all((rewards == 0) | (rewards == 1)):
+        raise ValueError(
+            "DRPO requires one binary correctness reward (0 or 1) per response."
+        )
+    mask = loss_mask.bool()
+    # Mask before arithmetic: padding may contain non-finite sentinel values.
+    current = (
+        logprobs.float()
+        if logprobs.dtype in (torch.float16, torch.bfloat16)
+        else logprobs
+    )
+    current = current.masked_fill(~mask, 0)
+    previous = old_logprobs.detach().to(current.dtype).masked_fill(~mask, 0)
+    lengths = mask.sum(-1)
+    scores = (current.sum(-1) / lengths.clamp_min(1)).reshape(-1, group_size)
+    lengths = lengths.reshape_as(scores)
+    positive = (rewards.reshape_as(scores) == 1) & (lengths > 0)
+    negative = (rewards.reshape_as(scores) == 0) & (lengths > 0)
+    valid = positive.any(-1) & negative.any(-1)
+
+    # The constant 1 / lambda cancels in the positive softmax. Subtracting
+    # length instead avoids overflow for small lambda or large capacities.
+    weight_logits = -lengths.to(scores.dtype) / (capacity * drpo_lambda)
+    floor = torch.finfo(scores.dtype).min
+    weights = torch.softmax(weight_logits.masked_fill(~positive, floor), dim=-1)
+    positive_score = (weights * scores).sum(-1)
+    negative_score = drpo_tau * (
+        torch.logsumexp((scores / drpo_tau).masked_fill(~negative, floor), dim=-1)
+        - negative.sum(-1).clamp_min(1).to(scores.dtype).log()
+    )
+    policy = torch.where(valid, negative_score - positive_score, 0).mean()
+
+    difference = current - previous
+    if drpo_kl_type == "kl":
+        token_kl = -difference
+    elif drpo_kl_type == "low_var_kl":
+        token_kl = difference.exp() - 1 - difference
+    else:
+        raise ValueError("DRPO kl_type must be 'kl' or 'low_var_kl'.")
+    stats = torch.stack(
+        (token_kl.masked_fill(~mask, 0).sum(), mask.sum().to(current.dtype))
+    )
+    if torch.distributed.is_initialized():
+        from torch.distributed.nn.functional import all_reduce
+
+        stats = all_reduce(stats, group=dp_group)
+    kl = stats[0] / stats[1].clamp_min(1)
+    penalty = 0.5 * drpo_beta * torch.relu(kl - drpo_delta).square()
+    loss = policy + penalty
+    return loss, {
+        "actor/policy_loss": policy.detach(),
+        "actor/ppo_kl": kl.detach(),
+        "actor/drpo_constraint": penalty.detach(),
+        "actor/drpo_mixed_group_fraction": valid.float().mean().detach(),
+    }
+
+
 @register_policy_loss("actor")
 def compute_grpo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
     """

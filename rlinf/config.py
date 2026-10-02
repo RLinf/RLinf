@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
@@ -1698,7 +1699,65 @@ def adv_requires_group_baseline(
     return False
 
 
+def validate_drpo_cfg(cfg: DictConfig) -> None:
+    """Keep complete prompt groups and binary rewards for the DRPO objective."""
+    if OmegaConf.select(cfg, "algorithm.loss_type") != "drpo":
+        return
+    if cfg.runner.task_type == "reasoning_eval":
+        return
+    assert cfg.runner.task_type == "reasoning", "DRPO requires reasoning training."
+    assert cfg.actor.training_backend == "fsdp", "DRPO currently requires FSDP."
+    assert cfg.algorithm.adv_type == "raw", "DRPO requires algorithm.adv_type=raw."
+    assert not cfg.algorithm.normalize_advantages, "DRPO does not normalize advantages."
+    assert not cfg.algorithm.get("shuffle_rollout", True), (
+        "DRPO requires algorithm.shuffle_rollout=false to keep prompt groups intact."
+    )
+    for key in ("shuffle_rollout", "importance_sampling_fix", "use_valid_token_scale"):
+        assert not cfg.algorithm.get(key, False), (
+            f"DRPO requires algorithm.{key}=false."
+        )
+    assert not cfg.runner.get("enable_dynamic_batch_size", False), (
+        "DRPO requires fixed micro-batches to preserve complete prompt groups."
+    )
+    assert not cfg.actor.get("enable_dp_load_balance", False), (
+        "DRPO does not support response-level DP load balancing."
+    )
+    assert not cfg.actor.model.get("variable_seq_lengths", False), (
+        "DRPO uses a fixed response capacity for its length reward."
+    )
+    group_size = cfg.algorithm.group_size
+    assert group_size >= 2, "DRPO needs at least two responses per prompt."
+    assert cfg.algorithm.training_batch_size_per_gpu % group_size == 0, (
+        "DRPO training_batch_size_per_gpu must be a multiple of group_size."
+    )
+    for key, default, positive in (
+        ("drpo_lambda", 0.1, True),
+        ("drpo_tau", 10.0, True),
+        ("drpo_beta", 1000.0, False),
+        ("drpo_delta", 1e-4, False),
+    ):
+        value = cfg.algorithm.get(key, default)
+        assert isinstance(value, (int, float)) and math.isfinite(value), (
+            f"algorithm.{key} must be finite."
+        )
+        assert value > 0 if positive else value >= 0, (
+            f"algorithm.{key} must be {'positive' if positive else 'nonnegative'}."
+        )
+    assert cfg.algorithm.get("drpo_kl_type", "kl") in ("kl", "low_var_kl"), (
+        "DRPO kl_type must be kl or low_var_kl."
+    )
+    assert cfg.reward.reward_type == "math" and not cfg.reward.use_reward_model, (
+        "DRPO currently uses the binary math verifier."
+    )
+    assert (
+        cfg.reward.get("reward_scale", 1.0) == 1
+        and cfg.reward.get("reward_min_val", -1.0) == 0
+        and cfg.reward.get("reward_max_val", 1.0) == 1
+    ), "DRPO needs reward_scale=1, reward_min_val=0, reward_max_val=1."
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
+    validate_drpo_cfg(cfg)
     OmegaConf.set_struct(cfg, True)
 
     with open_dict(cfg):

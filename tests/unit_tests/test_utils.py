@@ -29,9 +29,219 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.losses import compute_drpo_actor_loss
+from rlinf.algorithms.registry import policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+
+
+def _drpo_reference(
+    current, old, rewards, mask, group_size, lam, tau, beta, delta, kl_type
+):
+    """Direct per-question Eq. (7), independent of vectorized masking/softmax."""
+    values = []
+    scores = [
+        current[i, mask[i]].mean() if mask[i].any() else current[i, :0].sum()
+        for i in range(len(rewards))
+    ]
+    for start in range(0, len(rewards), group_size):
+        pos = [
+            i
+            for i in range(start, start + group_size)
+            if rewards[i] == 1 and mask[i].any()
+        ]
+        neg = [
+            i
+            for i in range(start, start + group_size)
+            if rewards[i] == 0 and mask[i].any()
+        ]
+        if not pos or not neg:
+            values.append(current[start, :0].sum())
+            continue
+        weights = [math.exp(-int(mask[i].sum()) / mask.shape[1] / lam) for i in pos]
+        positive = sum(w * scores[i] for w, i in zip(weights, pos)) / sum(weights)
+        negative = tau * torch.log(
+            sum(torch.exp(scores[i] / tau) for i in neg) / len(neg)
+        )
+        values.append(negative - positive)
+    difference = current[mask] - old[mask]
+    kl = (-difference if kl_type == "kl" else difference.exp() - 1 - difference).mean()
+    return torch.stack(values).mean() + beta / 2 * torch.relu(kl - delta).square()
+
+
+@pytest.mark.parametrize("kl_type", ["kl", "low_var_kl"])
+@pytest.mark.parametrize("lam,tau,beta", [(0.1, 10.0, 1000.0), (0.5, 0.2, 0.0)])
+def test_drpo_matches_independent_objective_and_gradient(kl_type, lam, tau, beta):
+    current = (
+        torch.linspace(-2.7, -0.3, 48, dtype=torch.float64)
+        .reshape(8, 6)
+        .requires_grad_()
+    )
+    old = current.detach() + 0.2
+    mask = torch.arange(6)[None, :] < torch.tensor([1, 3, 5, 6, 2, 4, 1, 3])[:, None]
+    rewards = torch.tensor([1, 1, 0, 0, 0, 1, 0, 1])
+    actual, _ = compute_drpo_actor_loss(
+        current, old, rewards, mask, 4, lam, tau, beta, 1e-4, kl_type
+    )
+    reference = _drpo_reference(
+        current, old, rewards, mask, 4, lam, tau, beta, 1e-4, kl_type
+    )
+    torch.testing.assert_close(actual, reference)
+    torch.testing.assert_close(
+        torch.autograd.grad(actual, current, retain_graph=True)[0],
+        torch.autograd.grad(reference, current)[0],
+    )
+
+
+@pytest.mark.parametrize("reward", [0, 1])
+def test_drpo_single_class_and_empty_responses(reward):
+    current = torch.full((4, 5), -1.0, requires_grad=True)
+    mask = torch.ones_like(current, dtype=torch.bool)
+    mask[0] = False
+    current_with_padding = current.masked_fill(~mask, float("nan"))
+    loss, metrics = compute_drpo_actor_loss(
+        current_with_padding,
+        current_with_padding.detach(),
+        torch.full((4,), reward),
+        mask,
+        4,
+    )
+    loss.backward()
+    assert loss.item() == 0, (
+        "Single-class groups should not contribute a discriminative objective."
+    )
+    assert torch.isfinite(current.grad).all(), (
+        "Masked padding must not contaminate gradients."
+    )
+    assert current.grad.count_nonzero() == 0
+    assert metrics["actor/drpo_mixed_group_fraction"] == 0
+
+
+def test_drpo_positive_length_weight_and_hard_negative_direction():
+    current = torch.full((4, 8), -1.0, requires_grad=True)
+    mask = torch.arange(8)[None, :] < torch.tensor([2, 7, 4, 8])[:, None]
+    rewards = torch.tensor([1, 1, 0, 0])
+    loss, _ = compute_drpo_actor_loss(
+        current, current.detach(), rewards, mask, 4, drpo_beta=0
+    )
+    loss.backward()
+    per_response = current.grad.sum(-1)
+    assert per_response[0] < per_response[1] < 0, (
+        "Both correct responses must be encouraged, with greater weight on the shorter one."
+    )
+    assert (per_response[2:] > 0).all(), "Incorrect responses must be discouraged."
+    assert current.grad[~mask].count_nonzero() == 0
+
+
+def test_drpo_all_masked_batch_is_finite_zero():
+    current = torch.full((4, 3), float("nan"), requires_grad=True)
+    loss, _ = compute_drpo_actor_loss(
+        current,
+        current.detach(),
+        torch.tensor([0, 1, 0, 1]),
+        torch.zeros_like(current, dtype=torch.bool),
+        4,
+    )
+    loss.backward()
+    assert loss.item() == 0
+    assert torch.isfinite(current.grad).all() and current.grad.count_nonzero() == 0
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_drpo_registry_promotes_low_precision_and_detaches_old_policy(dtype):
+    current = torch.linspace(-2, -0.1, 24).reshape(4, 6).to(dtype).requires_grad_()
+    old = (current.detach() + 0.2).requires_grad_()
+    mask = torch.arange(6)[None, :] < torch.tensor([2, 5, 4, 6])[:, None]
+    rewards = torch.tensor([1, 1, 0, 0])
+    loss, _ = policy_loss(
+        task_type="reasoning",
+        loss_type="drpo",
+        logprobs=current,
+        old_logprobs=old,
+        rewards=rewards,
+        loss_mask=mask,
+        group_size=4,
+    )
+    reference_current = current.detach().float().requires_grad_()
+    reference = _drpo_reference(
+        reference_current,
+        old.detach().float(),
+        rewards,
+        mask,
+        4,
+        0.1,
+        10,
+        1000,
+        1e-4,
+        "kl",
+    )
+    loss.backward()
+    reference.backward()
+    assert loss.dtype == torch.float32 and old.grad is None
+    torch.testing.assert_close(loss, reference)
+    torch.testing.assert_close(current.grad, reference_current.grad.to(dtype))
+
+
+@pytest.mark.parametrize("empty_rank", [False, True])
+def test_drpo_distributed_gradient_matches_global_objective(tmp_path, empty_rank):
+    script = r"""
+from datetime import timedelta
+import multiprocessing
+import sys
+import torch
+import torch.distributed as dist
+from rlinf.algorithms.losses import compute_drpo_actor_loss
+
+def worker(rank, path):
+    dist.init_process_group("gloo", init_method="file://" + path, rank=rank,
+                            world_size=2, timeout=timedelta(seconds=20))
+    try:
+        theta = torch.tensor(0.7, dtype=torch.float64, requires_grad=True)
+        coefficients = torch.arange(1, 49, dtype=torch.float64).reshape(8, 6) / 50
+        old = -coefficients * 0.5
+        mask = torch.arange(6)[None, :] < torch.tensor([1, 2, 3, 4, 5, 6, 3, 6])[:, None]
+        if sys.argv[2] == "1":
+            mask[:4] = False
+        rewards = torch.tensor([1, 1, 0, 0, 0, 1, 0, 1])
+        rows = slice(rank * 4, (rank + 1) * 4)
+        loss, _ = compute_drpo_actor_loss(-theta * coefficients[rows], old[rows],
+            rewards[rows], mask[rows], 4, drpo_kl_type="low_var_kl")
+        loss.backward()
+        gradient = theta.grad.clone()
+        dist.all_reduce(gradient)
+        gradient /= 2  # FSDP/DDP gradient averaging
+        dist.destroy_process_group()
+        reference_theta = theta.detach().requires_grad_()
+        reference, _ = compute_drpo_actor_loss(-reference_theta * coefficients, old,
+            rewards, mask, 4, drpo_kl_type="low_var_kl")
+        reference.backward()
+        torch.testing.assert_close(gradient, reference_theta.grad, rtol=1e-10, atol=1e-10)
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+ctx = multiprocessing.get_context("fork")
+children = [ctx.Process(target=worker, args=(rank, sys.argv[1])) for rank in range(2)]
+try:
+    for child in children:
+        child.start()
+    for child in children:
+        child.join(30)
+    assert all(child.exitcode == 0 for child in children), "Distributed DRPO gradient comparison failed"
+finally:
+    for child in children:
+        if child.is_alive():
+            child.terminate()
+        child.join()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "store"), str(int(empty_rank))],
+        capture_output=True,
+        text=True,
+        timeout=75,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():

@@ -13,6 +13,8 @@
      - Proximal Policy Optimization。
    * - :doc:`GRPO <grpo>`
      - Group Relative Policy Optimization。
+   * - :doc:`DRPO <drpo>`
+     - 在推理训练中解耦正确性与长度奖励。
    * - :doc:`DAPO <dapo>`
      - 解耦裁剪与动态采样的策略优化。
    * - :doc:`Reinforce++ <reinforce>`
@@ -33,6 +35,7 @@
 
    PPO <ppo>
    GRPO <grpo>
+   DRPO <drpo>
    DAPO <dapo>
    Reinforce++ <reinforce>
    SAC <sac>
