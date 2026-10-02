@@ -6,6 +6,15 @@ Brief for AI coding agents working on RLinf. For full contribution flow, code st
 
 ---
 
+## Commands
+
+- **Environment:** `bash requirements/install.sh embodied --model <model> --env <env>` builds `.venv`. The unit-test CI job uses the lighter `bash requirements/install.sh --no-flash-attn embodied --env dummy`.
+- **Lint:** set up `pre-commit` as described in [CONTRIBUTING.md](CONTRIBUTING.md). Ruff's docstring rules (`D`) apply only to `rlinf/scheduler/`, and its annotation rules (`ANN`) only to `rlinf/robotics/` and `rlinf/envs/real/`.
+- **Unit tests:** CI runs each file in its own process and stops Ray between files. To reproduce, `export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests`, then `pytest tests/unit_tests/test_worker.py; ray stop`. Scheduler doctests: `pytest --doctest-modules rlinf/scheduler`.
+- **Embodied e2e:** with `REPO_PATH` set, run `bash tests/e2e_tests/embodied/run.sh <config>` (or `run_async.sh`), where `<config>` is a file name from `tests/e2e_tests/embodied/` without `.yaml`. An optional second argument selects the render backend (default `egl`). With `run.sh`, configs whose names contain `mock` run real-world envs against the fake vendor SDKs in `tests/robot_mocks/`.
+
+---
+
 ## Code structure
 
 - **`.agents/skills/`** – Canonical project skills shared by Codex, Cursor, and Claude. Claude discovers the same files through symlinks in `.claude/skills/`.
