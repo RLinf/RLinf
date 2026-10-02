@@ -112,7 +112,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -3013,6 +3013,9 @@ install_env_only() {
         dosw1)
             install_dosw1_env
             ;;
+        yam)
+            install_yam_env
+            ;;
         polaris)
             install_polaris_env
             ;;
@@ -3624,6 +3627,18 @@ install_dosw1_env() {
         echo "[dosw1] WARNING: DOSW1 airbot_api source not found at '$dosw1_api_path'." >&2
         echo "[dosw1] WARNING: Skipping 'airbot_api' install. Set DOSW1_API_PATH to the source directory if you need the local SDK." >&2
     fi
+
+    local repo_root
+    repo_root="$(dirname "$SCRIPT_DIR")"
+    uv pip install -e "$repo_root" --no-deps
+}
+
+install_yam_env() {
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install \
+        --build-constraint "$SCRIPT_DIR/embodied/envs/yam-build-constraints.txt" \
+        -r "$SCRIPT_DIR/embodied/envs/yam.txt"
+    install_lerobot
 
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"

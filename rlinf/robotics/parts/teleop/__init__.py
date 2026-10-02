@@ -31,6 +31,7 @@ _MODULES = (
     ".pico",
     ".so101_leader",
     ".spacemouse",
+    ".yam_pico",
 )
 
 for _module in _MODULES:
@@ -42,6 +43,7 @@ from .glove import Glove  # noqa: E402
 from .pico import Pico, PicoDelta, PicoTcp  # noqa: E402
 from .so101_leader import SO101Leader  # noqa: E402
 from .spacemouse import SpaceMouse  # noqa: E402
+from .yam_pico import YamPico  # noqa: E402
 
 __all__ = [
     "CONTEXT_KEYS",
@@ -58,4 +60,5 @@ __all__ = [
     "TeleopEntry",
     "TeleopGroup",
     "TeleopPart",
+    "YamPico",
 ]

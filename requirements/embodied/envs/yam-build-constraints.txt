@@ -1,0 +1,3 @@
+# ruckig 0.15.3 is built from source and still uses the pre-0.10
+# scikit-build-core interface.
+scikit-build-core<0.10
