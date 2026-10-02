@@ -864,7 +864,8 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          # Git rejects cached repositories created by a different runner UID.
+          export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
 
