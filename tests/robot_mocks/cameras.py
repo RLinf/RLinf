@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fake RealSense, ZED, and OpenCV camera interfaces.
+"""Fake RealSense, Orbbec, ZED, and OpenCV camera interfaces.
 
-Each generated frame increments its first pixel so tests can detect fresh
-capture-thread output.
+Synthetic frames and controllable device state support lifecycle and image
+conversion checks without attached cameras.
 """
 
 from __future__ import annotations
 
 import importlib.machinery
+import time
 import types
 from typing import Any
 
@@ -130,6 +131,259 @@ def realsense(width: int = 64, height: int = 48) -> types.ModuleType:
         format=types.SimpleNamespace(bgr8="bgr8", z16="z16"),
     )
     fake.opened = opened
+    return fake
+
+
+def orbbec(
+    width: int = 64,
+    height: int = 48,
+    *,
+    color_format: str = "BGR",
+    fps: tuple[int, ...] = (15, 30),
+) -> types.ModuleType:
+    """Return an Orbbec SDK with serial selection and controllable stream faults.
+
+    The module exposes hardware state for tests: ``opened``, ``pipelines``,
+    ``fail_start``, ``missing_depth``, ``no_frames``, ``transient_misses``, and
+    ``depth_scale_mm``. Native profiles have two sizes at the advertised FPS.
+    """
+    fake = module("pyorbbecsdk")
+    fake.opened = []
+    fake.pipelines = []
+    fake.fail_start = False
+    fake.fail_profiles = False
+    fake.missing_depth = False
+    fake.no_frames = False
+    fake.transient_misses = 0
+    fake.depth_scale_mm = 0.25
+    fake.distortion_model = "BROWN_CONRADY_K6"
+    fake.aligned = 0
+    fake.align_filters = []
+    fake.depth_reads = 0
+    fake.color_bgr = np.array([32, 96, 192], dtype=np.uint8)
+
+    class Profile:
+        def __init__(self, sensor: str, size: tuple[int, int], rate: int):
+            self.sensor = sensor
+            self.size = size
+            self.rate = rate
+
+        def as_video_stream_profile(self):
+            return self
+
+        def get_width(self):
+            return self.size[0]
+
+        def get_height(self):
+            return self.size[1]
+
+        def get_fps(self):
+            return self.rate
+
+        def get_format(self):
+            return color_format if self.sensor == "color" else "Y16"
+
+        def get_distortion(self):
+            return types.SimpleNamespace(model=fake.distortion_model)
+
+    class ProfileList:
+        def __init__(self, sensor: str):
+            self.profiles = [
+                Profile(sensor, size, rate)
+                for size in ((width * 2, height * 2), (width, height))
+                for rate in fps
+            ]
+
+        def get_count(self):
+            return len(self.profiles)
+
+        def get_stream_profile_by_index(self, index: int):
+            return self.profiles[index]
+
+    class DeviceList:
+        def get_count(self):
+            return len(SERIALS)
+
+        def get_device_serial_number_by_index(self, index: int):
+            return SERIALS[index]
+
+        def get_device_by_serial_number(self, serial_number: str):
+            if serial_number not in SERIALS:
+                raise RuntimeError(f"Device {serial_number!r} not found")
+            fake.opened.append(serial_number)
+            return types.SimpleNamespace(serial=serial_number)
+
+        def get_device_by_index(self, index: int):
+            raise AssertionError("An Orbbec camera must be opened by serial number")
+
+    class Config:
+        def __init__(self):
+            self.streams = {}
+            self.aggregate_mode = None
+
+        def enable_stream(self, profile: Profile):
+            self.streams[profile.sensor] = profile
+
+        def set_frame_aggregate_output_mode(self, mode: str):
+            self.aggregate_mode = mode
+
+    class VideoFrame:
+        def __init__(self, profile: Profile, data: np.ndarray):
+            self.profile = profile
+            self.data = data
+
+        def get_width(self):
+            return self.profile.get_width()
+
+        def get_height(self):
+            return self.profile.get_height()
+
+        def get_format(self):
+            return self.profile.get_format()
+
+        def get_data(self):
+            return self.data
+
+    class DepthFrame(VideoFrame):
+        def __init__(self, profile: Profile, data: np.ndarray):
+            super().__init__(profile, data)
+            self.scale = fake.depth_scale_mm
+
+        def get_depth_scale(self):
+            return self.scale
+
+    class Frames:
+        def __init__(self, config: Config):
+            color = config.streams["color"]
+            shape = (color.get_height(), color.get_width())
+            bgr = np.broadcast_to(fake.color_bgr, (*shape, 3)).copy()
+            if color_format == "RGB":
+                data = bgr[..., ::-1].copy()
+            elif color_format == "MJPG":
+                import cv2
+
+                success, data = cv2.imencode(".jpg", bgr)
+                assert success, "The fake camera could not encode its JPEG frame"
+            elif color_format == "YUYV":
+                # Neutral chroma and Y=128 encode a uniform grey image.
+                data = np.full((*shape, 2), 128, dtype=np.uint8)
+            else:
+                data = bgr
+            self.color = VideoFrame(color, data)
+            self.depth = None
+            if "depth" in config.streams and not fake.missing_depth:
+                depth = config.streams["depth"]
+                data = np.full(
+                    (depth.get_height(), depth.get_width()),
+                    DEPTH_FAR,
+                    dtype=np.uint16,
+                )
+                data[:, : depth.get_width() // 2] = DEPTH_NEAR
+                data[0, 0] = 0
+                self.depth = DepthFrame(depth, data)
+
+        def get_color_frame(self):
+            return self.color
+
+        def get_depth_frame(self):
+            fake.depth_reads += 1
+            return self.depth
+
+        def as_frame_set(self):
+            return self
+
+    class Pipeline:
+        def __init__(self, device: Any):
+            self.device = device
+            self.started = False
+            self.stops = 0
+            self.config = None
+            self.wait_timeouts = []
+            fake.pipelines.append(self)
+
+        def get_stream_profile_list(self, sensor: str):
+            if fake.fail_profiles:
+                raise RuntimeError("device profile query failed")
+            return ProfileList(sensor)
+
+        def enable_frame_sync(self):
+            pass
+
+        def start(self, config: Config):
+            self.config = config
+            self.started = True
+            if fake.fail_start:
+                raise RuntimeError("device pipeline start failed")
+
+        def wait_for_frames(self, timeout_ms: int):
+            self.wait_timeouts.append(timeout_ms)
+            if not self.started:
+                raise RuntimeError("device pipeline is not started")
+            if fake.no_frames or fake.transient_misses:
+                fake.transient_misses = max(0, fake.transient_misses - 1)
+                time.sleep(min(timeout_ms / 1000, 0.01))
+                return None
+            if fake.missing_depth:
+                time.sleep(min(timeout_ms / 1000, 0.01))
+            return Frames(self.config)
+
+        def stop(self):
+            self.started = False
+            self.stops += 1
+
+    class AlignFilter:
+        def __init__(self, align_to_stream: str):
+            assert align_to_stream == "color", "Depth must align to color"
+            self.match_target_resolution = True
+            self.config = {"TargetDistortion": 0.0}
+            fake.align_filters.append(self)
+
+        def set_match_target_resolution(self, enabled: bool):
+            self.match_target_resolution = enabled
+
+        def set_config_value(self, name: str, value: float):
+            self.config[name] = value
+
+        def process(self, frames: Frames):
+            fake.aligned += 1
+            expected = float(fake.distortion_model != "NONE")
+            if frames.depth is not None and self.config["TargetDistortion"] != expected:
+                # Represent the difference between ideal and distorted color
+                # coordinates with a one-pixel shift at the depth boundary.
+                frames.depth.data = np.roll(frames.depth.data, 1, axis=1)
+            return frames
+
+    fake.Context = lambda: types.SimpleNamespace(
+        query_devices=DeviceList,
+        enable_net_device_enumeration=lambda enabled: None,
+    )
+    fake.Config = Config
+    fake.Pipeline = Pipeline
+    fake.AlignFilter = AlignFilter
+    fake.OBSensorType = types.SimpleNamespace(
+        COLOR_SENSOR="color", DEPTH_SENSOR="depth"
+    )
+    fake.OBStreamType = types.SimpleNamespace(
+        COLOR_STREAM="color", DEPTH_STREAM="depth"
+    )
+    fake.OBFormat = types.SimpleNamespace(
+        RGB="RGB",
+        BGR="BGR",
+        MJPG="MJPG",
+        YUYV="YUYV",
+        YUY2="YUYV",
+        Y16="Y16",
+        Z16="Z16",
+    )
+    fake.OBFrameAggregateOutputMode = types.SimpleNamespace(
+        FULL_FRAME_REQUIRE="full", COLOR_FRAME_REQUIRE="color"
+    )
+    fake.OBCameraDistortionModel = types.SimpleNamespace(
+        NONE="NONE",
+        BROWN_CONRADY="BROWN_CONRADY",
+        BROWN_CONRADY_K6="BROWN_CONRADY_K6",
+        KANNALA_BRANDT4="KANNALA_BRANDT4",
+    )
     return fake
 
 
@@ -315,6 +569,6 @@ def opencv() -> types.ModuleType:
 
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return fake camera SDKs keyed by import name."""
-    made = {"pyrealsense2": realsense(), "cv2": opencv()}
+    made = {"pyrealsense2": realsense(), "pyorbbecsdk": orbbec(), "cv2": opencv()}
     made.update(zed())
     return made
