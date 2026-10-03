@@ -3907,6 +3907,53 @@ def test_orbbec_disconnect_is_idempotent_and_reconnect_discards_old_frames(orbbe
     assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
 
 
+@pytest.mark.parametrize(
+    ("enable_depth", "fault"), [(False, "no_frames"), (True, "missing_depth")]
+)
+def test_orbbec_recovers_fresh_observations_after_runtime_stream_loss(
+    orbbec_sdk, enable_depth, fault
+):
+    camera = _orbbec_camera(enable_depth=enable_depth)
+    try:
+        camera.connect()
+        original = camera.get_observation(timeout=1)
+        np.testing.assert_array_equal(original["frame"][20, 20], [32, 96, 192])
+        if enable_depth:
+            np.testing.assert_allclose(np.unique(original["depth"]), [0, 0.125, 0.375])
+
+        interrupted = orbbec_sdk.pipelines[0]
+        interrupted.fault = fault
+        assert interrupted.fault_observed.wait(timeout=2), "Capture never saw the fault"
+        reader = interrupted.fault_reader
+        reader.join(timeout=2)
+        assert not reader.is_alive(), (
+            "The capture thread did not exit after stream loss"
+        )
+        assert interrupted.stops == 0, "The caller must recover the stopped reader"
+
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        orbbec_sdk.depth_scale_mm = 0.5
+        # Reject any frame queued before the stalled read. The normal public
+        # timeout path must reopen the camera and retry on a healthy session.
+        recovered = camera.get_observation(timeout=1, attempts=2, max_age=0.1)
+        assert orbbec_sdk.opened == ["MOCK0002", "MOCK0002"]
+        assert len(orbbec_sdk.pipelines) == 2
+        assert interrupted.stops == 1
+        assert not interrupted.started
+        assert not reader.is_alive()
+        np.testing.assert_array_equal(recovered["frame"][20, 20], [9, 21, 43])
+        assert recovered["frame"].dtype == np.uint8
+        if enable_depth:
+            assert recovered["depth"].dtype == np.float32
+            np.testing.assert_allclose(np.unique(recovered["depth"]), [0, 0.25, 0.75])
+        else:
+            assert set(recovered) == {"frame"}
+    finally:
+        camera.disconnect()
+    assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
+    assert not camera.is_connected
+
+
 @pytest.mark.placement
 @pytest.mark.parametrize("node_rank", [None, 0])
 def test_orbbec_camera_has_local_remote_observation_parity(node_rank):

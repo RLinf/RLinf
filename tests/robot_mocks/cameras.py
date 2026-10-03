@@ -21,6 +21,7 @@ conversion checks without attached cameras.
 from __future__ import annotations
 
 import importlib.machinery
+import threading
 import time
 import types
 from typing import Any
@@ -146,6 +147,8 @@ def orbbec(
     The module exposes hardware state for tests: ``opened``, ``pipelines``,
     ``fail_start``, ``missing_depth``, ``no_frames``, ``transient_misses``, and
     ``depth_scale_mm``. Native profiles have two sizes at the advertised FPS.
+    A pipeline's ``fault`` can interrupt only that session with ``no_frames``
+    or ``missing_depth``; ``fault_observed`` signals the affected reader.
     """
     fake = module("pyorbbecsdk")
     fake.opened = []
@@ -253,7 +256,7 @@ def orbbec(
             return self.scale
 
     class Frames:
-        def __init__(self, config: Config):
+        def __init__(self, config: Config, *, missing_depth: bool = False):
             color = config.streams["color"]
             shape = (color.get_height(), color.get_width())
             bgr = np.broadcast_to(fake.color_bgr, (*shape, 3)).copy()
@@ -271,7 +274,7 @@ def orbbec(
                 data = bgr
             self.color = VideoFrame(color, data)
             self.depth = None
-            if "depth" in config.streams and not fake.missing_depth:
+            if "depth" in config.streams and not (fake.missing_depth or missing_depth):
                 depth = config.streams["depth"]
                 data = np.full(
                     (depth.get_height(), depth.get_width()),
@@ -299,6 +302,9 @@ def orbbec(
             self.stops = 0
             self.config = None
             self.wait_timeouts = []
+            self.fault = None
+            self.fault_reader = None
+            self.fault_observed = threading.Event()
             fake.pipelines.append(self)
 
         def get_stream_profile_list(self, sensor: str):
@@ -319,13 +325,16 @@ def orbbec(
             self.wait_timeouts.append(timeout_ms)
             if not self.started:
                 raise RuntimeError("device pipeline is not started")
-            if fake.no_frames or fake.transient_misses:
+            if self.fault is not None:
+                self.fault_reader = threading.current_thread()
+                self.fault_observed.set()
+            if fake.no_frames or fake.transient_misses or self.fault == "no_frames":
                 fake.transient_misses = max(0, fake.transient_misses - 1)
                 time.sleep(min(timeout_ms / 1000, 0.01))
                 return None
-            if fake.missing_depth:
+            if fake.missing_depth or self.fault == "missing_depth":
                 time.sleep(min(timeout_ms / 1000, 0.01))
-            return Frames(self.config)
+            return Frames(self.config, missing_depth=self.fault == "missing_depth")
 
         def stop(self):
             self.started = False
