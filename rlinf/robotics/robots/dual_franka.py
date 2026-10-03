@@ -151,7 +151,7 @@ class DualFrankaConfig(RobotConfig):
 
     camera_type: str = "realsense"
     """Default camera backend when a per-slot type is not set.
-    Supported: ``"realsense"``, ``"zed"``, ``"lumos"``."""
+    Use registered camera backends such as ``"realsense"`` or ``"orbbec"``."""
 
     base_camera_type: Optional[str] = None
     """Camera backend for the base (third-person) camera(s).

@@ -18,6 +18,8 @@ connect RLinf to physical hardware.
      - Split inference and training across cloud and edge.
    * - :doc:`Real-World Robots <../realworld_robot>`
      - Run RL on physical robot hardware.
+   * - :doc:`Orbbec Cameras <../orbbec>`
+     - Capture color images and aligned depth from a USB camera.
    * - :doc:`Teleoperation <../teleoperation>`
      - Let an operator take over from the policy mid-rollout.
 
@@ -28,4 +30,5 @@ connect RLinf to physical hardware.
    Heterogeneous Clusters <../hetero>
    Cloud-Edge Collaboration <../cloud_edge>
    Real-World Robots <../realworld_robot>
+   Orbbec <../orbbec>
    Teleoperation <../teleoperation>

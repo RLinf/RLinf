@@ -162,6 +162,8 @@ YAML 配置
 
 按相同方式为第三台、第四台机械臂扩展 ``num_nodes``、``node_ranks``、``placement`` 与 ``hardware.configs``。
 
+使用 Orbbec 采集彩色图像和对齐深度时，先按 :doc:`orbbec` 安装 SDK 并单独验证相机，再将其加入机器人配置。
+
 相机与机械臂分机部署（ZED + Robotiq）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

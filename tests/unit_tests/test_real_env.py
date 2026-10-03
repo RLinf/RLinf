@@ -193,7 +193,8 @@ def test_a_franka_observation_comes_from_one_snapshot():
 
 
 @pytest.mark.placement
-def test_franka_depth_reaches_the_observation_only_when_asked_for():
+@pytest.mark.parametrize("camera_type", ["realsense", "orbbec"])
+def test_franka_depth_reaches_the_observation_only_when_asked_for(camera_type):
     """A rig without a depth camera keeps the schema a policy already reads.
 
     Depth arrives as its own key rather than a fourth channel, so an existing
@@ -222,6 +223,10 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
                 override_cfg={
                     "enable_camera_depth": enable_camera_depth,
                     "enable_camera_player": False,
+                    # Keep the Orbbec fake's invalid corner sample in view.
+                    "camera_crop_regions": {SERIAL: [0.0, 0.0, 1.0, 1.0]}
+                    if camera_type == "orbbec"
+                    else None,
                 },
                 worker_info=None,
                 env_idx=0,
@@ -230,6 +235,7 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
                         node_rank=0,
                         robot_ip="0.0.0.0",
                         camera_serials=[SERIAL],
+                        camera_type=camera_type,
                         disable_validate=True,
                     )
                 ),
@@ -256,10 +262,12 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for():
             # was actually measured at; averaging would invent readings between
             # the near and far halves, where nothing is.
             distances = np.unique(depth)
-            assert len(distances) == 2
-            assert np.allclose(
-                distances, [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE]
+            expected = (
+                [0.0, 0.125, 0.375]
+                if camera_type == "orbbec"
+                else [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE]
             )
+            np.testing.assert_allclose(distances, expected)
         finally:
             env.close()
 
