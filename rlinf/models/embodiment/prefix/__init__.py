@@ -50,6 +50,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16) -> PrefixPolicy:
             "ref_num_action_chunks",
             cfg.num_action_chunks,
         ),
+        expo_candidate_samples=cfg.get("expo_candidate_samples", 0),
         actor_head_cfg=cfg.actor_head,
         critic_head_cfg=cfg.critic_head,
     )

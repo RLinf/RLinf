@@ -362,16 +362,29 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
 
 内置 ``ac`` 使用 stochastic actor 和 Q1 聚合，``td3`` 使用 deterministic actor、target actor、action noise，并支持 ``min``、``q1``、``mean`` 三种 actor Q 聚合。每个 algorithm 的 requirements 会和 head capabilities 一起校验。
 
+EXPO edit actor 与 candidate selection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+内置 ``expo`` algorithm 让 stochastic edit actor 围绕 VLA 的 reference chunk 学习。将 ``actor_head.name`` 设为 ``expo_edit_mlp`` 即可使用 ``ExpoEditMLPActor``。它拼接 policy state 和 reference action，采样 ``tanh`` edit，再输出裁剪到 action 范围内的 ``reference + edit_scale * edit``。actor 返回每个 action 维度的 transformed log probability，供 entropy objective 使用。``mean_action`` 在 supervised 调用中使用确定性的 mean edit。
+
+``expo`` 要求 stochastic actor 和至少两个 Q estimate。``multi_q_mlp`` 通过 ``critic_head.num_q_heads`` 提供 Q ensemble。critic target 始终包含未修改的 reference action，并加入 ``algorithm.expo_num_edit_samples`` 个采样 edit。``algorithm.expo_num_min_qs`` 从 Q head 中随机选取子集计算保守的 candidate score，最高分 candidate 提供 chunk-level bootstrap value。chunk 内 reward 先按折扣聚合，再使用 ``gamma ** chunk_horizon`` 计算下一状态 bootstrap。
+
+actor objective 为 ``alpha * log_prob(edit) - q_weight * Q(edit) + bc_weight * BC``，其中 ``Q(edit)`` 对 ensemble estimate 取平均。将 ``bc_weight`` 设为正数可以保留 reference 或 intervention BC 项。``entropy_tuning.alpha_type: softplus`` 开启自动 temperature training；``initial_alpha`` 和 ``target_entropy`` 分别定义初始值和目标值。``actor_tau`` 单独控制 EXPO actor target 的更新速率，critic target 继续使用 ``tau``。
+
+rollout 可以在发送 action 前对 candidate set 打分。``actor.model.expo_candidate_samples`` 会在 reference candidate 外增加采样 edit，rollout policy 选择前两个 Q estimate 的较小值最高的 candidate。将该值设为零可以关闭 rollout-time selection，同时保留 EXPO training。
+
+当前 Prefix 集成包含 edit MLP、candidate Q selection、Q ensemble target、chunk-level EXPO objective 和 temperature training。Real-Time EXPO 的 latency handling、异步 VLA inference 和 noise filtering 不在当前实现中。
+
 训练与运行
 ----------
 
-仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。将 ``rollout.prefix_feature_model.model_path``、OpenPI ``repo_id``、``norm_stats_path`` 和环境资产改成当前机器的路径后运行：
+仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。当前配置使用 ``use_rlt: false`` 和 masked-mean VLM Prefix 特征、``expo_edit_mlp``、十个 head 的 ``multi_q_mlp`` 以及 ``algorithm.name: expo``。将 ``rollout.prefix_feature_model.model_path``、OpenPI ``repo_id``、``norm_stats_path`` 和环境资产改成当前机器的路径后运行：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-这个配置使用 ``prefix.pool: masked_mean``、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。STEAM routing 只负责 base VLA、Stage 2 actor 与 expert 的 rollout route，head 和 algorithm 仍由 Prefix runtime 负责。
+rollout 配置使用 ``stage2_z_source: vlm_prefix`` 和 ``prefix_pool: masked_mean``，因此 ``z_rl`` 来自 VLM pooling，同时关闭 RLT token module。STEAM routing 只负责 base VLA、Stage 2 actor 与 expert 的 rollout route，head 和 algorithm 仍由 Prefix runtime 负责。EXPO 的 candidate 和 temperature 设置也位于同一文件中。
 
 Stage 2 replay 的 observation 固定为：
 
@@ -402,6 +415,8 @@ critic 将 chunk 内 reward 按 ``gamma`` 折扣，并使用 ``gamma ** chunk_ho
      - ``rlinf/models/embodiment/prefix/heads/``
    * - off-policy algorithms
      - ``rlinf/algorithms/prefix_off_policy/``
+   * - EXPO edit actor 和 algorithm
+     - ``rlinf/models/embodiment/prefix/heads/mlp.py``、``rlinf/algorithms/prefix_off_policy/expo.py``
    * - FSDP actor worker
      - ``rlinf/workers/actor/fsdp_prefix_off_policy_worker.py``
 

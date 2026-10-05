@@ -38,6 +38,7 @@ class PrefixPolicy(nn.Module, BasePolicy):
         ref_num_action_chunks: int | None,
         actor_head_cfg: Any,
         critic_head_cfg: Any,
+        expo_candidate_samples: int = 0,
     ) -> None:
         super().__init__()
         self.prefix_dim = int(prefix_dim)
@@ -59,6 +60,12 @@ class PrefixPolicy(nn.Module, BasePolicy):
         self.num_action_chunks = self.chunk_len
         self.flat_action_dim = self.chunk_len * self.step_action_dim
         self.state_dim = self.prefix_dim + self.proprio_dim
+        self.expo_candidate_samples = int(expo_candidate_samples or 0)
+        if self.expo_candidate_samples < 0:
+            raise ValueError(
+                "expo_candidate_samples must be non-negative, got "
+                f"{self.expo_candidate_samples}."
+            )
         self.torch_compile_enabled = False
 
         actor_name = actor_head_cfg.get("name", None)
@@ -117,6 +124,57 @@ class PrefixPolicy(nn.Module, BasePolicy):
 
     def _format_chunk_actions(self, actions: torch.Tensor) -> torch.Tensor:
         return actions.reshape(-1, self.chunk_len, self.step_action_dim)
+
+    def _select_expo_candidate(
+        self,
+        state: torch.Tensor,
+        reference: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Select the highest-Q reference or edit candidate for EXPO rollout."""
+        batch_size = state.shape[0]
+        repeated_state = state.repeat_interleave(self.expo_candidate_samples, dim=0)
+        repeated_reference = reference.repeat_interleave(
+            self.expo_candidate_samples,
+            dim=0,
+        )
+        edits, edit_logprobs = self._actor_forward_from_processed_tensors(
+            repeated_state,
+            repeated_reference,
+            deterministic=False,
+            apply_reference_dropout=False,
+            reference_dropout_prob=None,
+            apply_action_noise=False,
+        )
+        candidates = torch.cat(
+            [
+                reference.unsqueeze(1),
+                edits.reshape(batch_size, -1, self.flat_action_dim),
+            ],
+            dim=1,
+        )
+        candidate_logprobs_tensor = torch.cat(
+            [
+                torch.zeros_like(reference).unsqueeze(1),
+                edit_logprobs.reshape(batch_size, -1, self.flat_action_dim),
+            ],
+            dim=1,
+        )
+        batch_size, num_candidates, action_dim = candidates.shape
+        repeated_state = state[:, None, :].expand(-1, num_candidates, -1)
+        q_values = self.q_head(
+            repeated_state.reshape(batch_size * num_candidates, -1),
+            candidates.reshape(batch_size * num_candidates, action_dim),
+        )
+        if isinstance(q_values, tuple):
+            q_values = q_values[0]
+        q_values = q_values.reshape(batch_size, num_candidates, -1)
+        q_score = torch.minimum(q_values[..., 0], q_values[..., 1])
+        indices = q_score.argmax(dim=1)
+        batch_indices = torch.arange(batch_size, device=state.device)
+        return (
+            candidates[batch_indices, indices],
+            candidate_logprobs_tensor[batch_indices, indices],
+        )
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         """Dispatch the forward pass required by the off-policy worker."""
@@ -266,11 +324,22 @@ class PrefixPolicy(nn.Module, BasePolicy):
         """Predict an action chunk from a compact prefix observation."""
         del calculate_logprobs, calculate_values, kwargs
         obs = self.preprocess_env_obs(env_obs)
-        actions, logprobs, _ = self.sac_forward(
-            obs,
-            deterministic=(mode == "eval"),
-            apply_action_noise=(mode != "eval"),
-        )
+        state = self._state(obs)
+        reference = self._reference(obs)
+        if self.expo_candidate_samples > 0:
+            actions, logprobs = self._select_expo_candidate(
+                state,
+                reference,
+            )
+        else:
+            actions, logprobs = self._actor_forward_from_processed_tensors(
+                state,
+                reference,
+                deterministic=(mode == "eval"),
+                apply_reference_dropout=False,
+                reference_dropout_prob=None,
+                apply_action_noise=(mode != "eval"),
+            )
         chunk_actions = self._format_chunk_actions(actions)
         forward_inputs = {"action": actions, "model_action": actions}
         if return_obs:

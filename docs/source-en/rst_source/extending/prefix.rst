@@ -362,16 +362,29 @@ Extending the Prefix Algorithm
 
 The built-in ``ac`` uses a stochastic actor and Q1 aggregation. ``td3`` uses a deterministic actor, a target actor, action noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. The algorithm requirements are checked against the head capabilities.
 
+EXPO edit actor and candidate selection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The built-in ``expo`` algorithm trains a stochastic edit actor around the VLA reference chunk. Set ``actor_head.name: expo_edit_mlp`` to use ``ExpoEditMLPActor``. It encodes the concatenation of policy state and reference action, samples a ``tanh`` edit, and returns ``reference + edit_scale * edit`` clipped to the action range. The actor returns the per-dimension transformed log probability used by the entropy objective. ``mean_action`` uses the deterministic mean edit for supervised calls.
+
+``expo`` requires a stochastic actor and at least two Q estimates. ``multi_q_mlp`` provides the Q ensemble through ``critic_head.num_q_heads``. The critic target always contains the unmodified reference action and ``algorithm.expo_num_edit_samples`` sampled edits. ``algorithm.expo_num_min_qs`` selects a random subset of Q heads for a conservative candidate score, and the best candidate supplies the chunk-level bootstrap value. Rewards inside a chunk use discounted aggregation, followed by ``gamma ** chunk_horizon`` for the next-state bootstrap.
+
+The actor objective is ``alpha * log_prob(edit) - q_weight * Q(edit) + bc_weight * BC``, where ``Q(edit)`` averages the ensemble estimates. Set ``bc_weight`` above zero when the run should retain a reference or intervention BC term. ``entropy_tuning.alpha_type: softplus`` enables automatic temperature training; ``initial_alpha`` and ``target_entropy`` define its starting value and target. ``actor_tau`` controls the EXPO actor target update independently from the critic ``tau``.
+
+Rollout can score a candidate set before sending an action to the environment. ``actor.model.expo_candidate_samples`` adds sampled edits to the reference candidate, and the rollout policy selects the candidate with the highest minimum of its first two Q estimates. Keep this value at zero to disable rollout-time selection while retaining EXPO training.
+
+The current Prefix integration covers the edit MLP, candidate Q selection, Q ensemble target, chunk-level EXPO objective, and temperature training. Real-Time EXPO latency handling, asynchronous VLA inference, and noise filtering are outside this implementation.
+
 Training and Running
 --------------------
 
-The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. Replace ``rollout.prefix_feature_model.model_path``, the OpenPI ``repo_id``, ``norm_stats_path``, and environment asset paths, then run:
+The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. Its current settings use ``use_rlt: false`` with masked-mean VLM Prefix features, ``expo_edit_mlp``, a ten-head ``multi_q_mlp`` ensemble, and ``algorithm.name: expo``. Replace ``rollout.prefix_feature_model.model_path``, the OpenPI ``repo_id``, ``norm_stats_path``, and environment asset paths, then run:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-This configuration uses ``prefix.pool: masked_mean``, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. STEAM routing selects among the base VLA, Stage 2 actor, and expert during rollout; the Prefix runtime still owns the heads and algorithm.
+The rollout configuration sets ``stage2_z_source: vlm_prefix`` and ``prefix_pool: masked_mean``, so ``z_rl`` comes from VLM pooling while the RLT token module remains disabled. STEAM routing selects among the base VLA, Stage 2 actor, and expert during rollout; the Prefix runtime still owns the heads and algorithm. The same file contains the EXPO candidate and temperature settings described above.
 
 Stage 2 replay uses a fixed observation contract:
 
@@ -402,6 +415,8 @@ Implementation and Checkpoints
      - ``rlinf/models/embodiment/prefix/heads/``
    * - off-policy algorithms
      - ``rlinf/algorithms/prefix_off_policy/``
+   * - EXPO edit actor and algorithm
+     - ``rlinf/models/embodiment/prefix/heads/mlp.py``, ``rlinf/algorithms/prefix_off_policy/expo.py``
    * - FSDP actor worker
      - ``rlinf/workers/actor/fsdp_prefix_off_policy_worker.py``
 

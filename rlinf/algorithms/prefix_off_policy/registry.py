@@ -46,6 +46,7 @@ def register_prefix_off_policy_algorithm(
 
 def _load_builtin_algorithms() -> None:
     from rlinf.algorithms.prefix_off_policy import ac as _ac  # noqa: F401
+    from rlinf.algorithms.prefix_off_policy import expo as _expo  # noqa: F401
     from rlinf.algorithms.prefix_off_policy import td3 as _td3  # noqa: F401
 
 

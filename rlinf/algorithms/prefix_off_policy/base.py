@@ -35,6 +35,7 @@ class PrefixOffPolicyContext(Protocol):
     cfg: Any
     model: Any
     target_model: Any
+    entropy_temp: Any
     torch_dtype: torch.dtype
     update_step: int
 
@@ -293,6 +294,18 @@ class PrefixOffPolicyAlgorithm(ABC):
     @abstractmethod
     def aggregate_actor_q(self, all_q_values: torch.Tensor) -> torch.Tensor:
         """Reduce twin-Q output for the actor objective."""
+
+    def alpha_loss(
+        self,
+        context: PrefixOffPolicyContext,
+        batch: dict[str, Any],
+    ) -> torch.Tensor:
+        """Return the entropy-temperature loss when an algorithm supports it."""
+        del context, batch
+        raise NotImplementedError(
+            f"algorithm.name={self.cfg.algorithm.name!r} does not support "
+            "automatic entropy tuning."
+        )
 
     def critic_loss(
         self,

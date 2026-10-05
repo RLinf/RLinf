@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from collections import OrderedDict
 from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.distributions import TransformedDistribution
 from torch.distributions.normal import Normal
+from torch.distributions.transforms import TanhTransform
 
 from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
 from rlinf.models.embodiment.modules.utils import get_act_func, layer_init, make_mlp
@@ -176,6 +179,95 @@ class DeterministicMLPActor(PrefixActorHead):
         return action, torch.zeros_like(action)
 
 
+class ExpoEditMLPActor(PrefixActorHead):
+    """Stochastic MLP that predicts a bounded edit to the reference chunk."""
+
+    capabilities = ActorHeadCapabilities(distribution="stochastic")
+
+    def __init__(
+        self,
+        state_dim: int,
+        reference_dim: int,
+        action_dim: int,
+        cfg: Any,
+    ) -> None:
+        super().__init__()
+        hidden_dims = _hidden_dims(cfg, [256, 256, 256])
+        activation = get_act_func(str(cfg.get("activation", "relu")))
+        self.backbone = nn.Sequential(
+            *make_mlp(
+                in_channels=int(state_dim) + int(reference_dim),
+                mlp_channels=hidden_dims,
+                act_builder=activation,
+                last_act=True,
+            )
+        )
+        self.mean_head = layer_init(
+            nn.Linear(hidden_dims[-1], int(action_dim)),
+            std=0.01,
+        )
+        self.log_std_head = layer_init(
+            nn.Linear(hidden_dims[-1], int(action_dim)),
+            std=0.01,
+        )
+        nn.init.constant_(self.log_std_head.bias, float(cfg.get("init_log_std", -1.0)))
+        self.log_std_min = float(cfg.get("log_std_min", -5.0))
+        self.log_std_max = float(cfg.get("log_std_max", 2.0))
+        self.edit_scale = float(cfg.get("edit_scale", 0.2))
+        if self.edit_scale <= 0.0:
+            raise ValueError(f"edit_scale must be positive, got {self.edit_scale}.")
+
+    def _distribution(
+        self,
+        state: torch.Tensor,
+        reference: torch.Tensor,
+    ) -> TransformedDistribution:
+        features = self.backbone(torch.cat([state, reference], dim=-1))
+        mean = self.mean_head(features)
+        log_std = self.log_std_head(features).clamp(
+            min=self.log_std_min,
+            max=self.log_std_max,
+        )
+        return TransformedDistribution(
+            Normal(mean, log_std.exp()),
+            [TanhTransform(cache_size=1)],
+        )
+
+    def mean_action(
+        self,
+        state: torch.Tensor,
+        reference: torch.Tensor,
+    ) -> torch.Tensor:
+        distribution = self._distribution(state, reference)
+        edit = distribution.base_dist.loc.tanh()
+        return (reference + self.edit_scale * edit).clamp(-1.0, 1.0)
+
+    def forward(
+        self,
+        state: torch.Tensor,
+        reference: torch.Tensor,
+        *,
+        deterministic: bool,
+        apply_reference_dropout: bool,
+        reference_dropout_prob: float | None,
+        apply_action_noise: bool | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del apply_action_noise
+        if apply_reference_dropout:
+            reference = _drop_reference(
+                reference,
+                float(reference_dropout_prob or 0.0),
+            )
+        distribution = self._distribution(state, reference)
+        if deterministic:
+            edit = distribution.base_dist.loc.tanh()
+        else:
+            edit = distribution.rsample()
+        logprobs = distribution.log_prob(edit) - math.log(self.edit_scale)
+        action = (reference + self.edit_scale * edit).clamp(-1.0, 1.0)
+        return action, logprobs
+
+
 class MultiQMLPCritic(PrefixCriticHead):
     """Independently parameterized multi-Q MLP critic."""
 
@@ -305,6 +397,19 @@ def build_deterministic_mlp_actor(
     cfg: Any,
 ) -> PrefixActorHead:
     return DeterministicMLPActor(state_dim, reference_dim, action_dim, cfg)
+
+
+@register_prefix_actor(
+    "expo_edit_mlp",
+    capabilities=ExpoEditMLPActor.capabilities,
+)
+def build_expo_edit_mlp_actor(
+    state_dim: int,
+    reference_dim: int,
+    action_dim: int,
+    cfg: Any,
+) -> PrefixActorHead:
+    return ExpoEditMLPActor(state_dim, reference_dim, action_dim, cfg)
 
 
 @register_prefix_critic(

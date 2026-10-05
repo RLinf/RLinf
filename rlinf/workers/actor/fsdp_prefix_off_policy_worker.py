@@ -70,12 +70,36 @@ class PrefixOffPolicyRuntime:
 
     @Worker.timer("forward_alpha")
     def forward_alpha(self, batch):
-        """Reject entropy-temperature training for prefix algorithms."""
-        del batch
-        raise NotImplementedError(
-            "Prefix off-policy algorithms disable entropy/alpha training. Use "
-            "algorithm.entropy_tuning.alpha_type=fixed_alpha."
+        """Delegate entropy-temperature training to algorithms that support it."""
+        return self.algorithm_component.alpha_loss(self, batch)
+
+    def soft_update_target_model(self, tau=None):
+        """Update target parameters, with a separate EXPO actor rate."""
+        if str(self.cfg.algorithm.get("name", "")).lower() != "expo":
+            return super().soft_update_target_model(tau)
+
+        if tau is None:
+            tau = self.cfg.algorithm.tau
+        assert self.target_model_initialized
+        actor_tau = (
+            1.0 if tau >= 1.0 else float(self.cfg.algorithm.get("actor_tau", tau))
         )
+        critic_tau = float(tau)
+        target_update_type = self.cfg.algorithm.get("target_update_type", "all")
+
+        with torch.no_grad():
+            for (name_online, online_param), (name_target, target_param) in zip(
+                self.model.named_parameters(),
+                self.target_model.named_parameters(),
+            ):
+                assert name_online == name_target
+                is_critic = "q_head" in name_online
+                if not is_critic and target_update_type != "all":
+                    target_param.data.copy_(online_param.data)
+                    continue
+                update_tau = critic_tau if is_critic else actor_tau
+                target_param.data.mul_(1.0 - update_tau)
+                target_param.data.add_(online_param.data * update_tau)
 
     def _ingest_rollout_trajectories(
         self,
