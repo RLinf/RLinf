@@ -12,67 +12,80 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""SO-101-specific episode controls for leader-follower collection."""
+
+from __future__ import annotations
+
 import math
 import time
 from typing import Any, SupportsFloat
 
-from gymnasium.core import ActType, Env, ObsType
+from gymnasium.core import ActType, ObsType
 
-from .session import KeyboardAbort, KeyboardSession
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
+from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
 
 
-class KeyboardStartEndWrapper(KeyboardSession):
-    """Control data-collection episodes with a three-key foot pedal.
+class SO101StartEndWrapper(KeyboardStartEndWrapper):
+    """Collect SO-101 demonstrations with explicit leader handover."""
 
-    ``a`` starts or aborts recording, ``b`` advances the segment, and ``c``
-    ends the episode successfully. ``q`` requests a controlled shutdown that
-    lets the owning runner clean up the environment. Device-specific handover
-    hooks belong to an environment wrapper.
+    LOG_PREFIX = "[SO-101]"
 
-    Adds ``keyboard_phase`` / ``keyboard_event`` / ``pre_record`` /
-    ``record_reset`` / ``segment_advance`` to ``info`` for ``CollectEpisode``.
-    """
+    def _teleop_attr(self, name: str) -> Any:
+        """Return an optional lifecycle hook from the wrapped teleop stack."""
+        try:
+            return self.env.get_wrapper_attr(name)
+        except AttributeError:
+            return None
 
-    SEGMENT_DEBOUNCE_S = 1.0
+    def _countdown(self, message: str, seconds: float) -> None:
+        """Give the operator time to change hand position safely."""
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self.operator_log("%s: %d", message, math.ceil(remaining))
+            time.sleep(min(1.0, remaining))
 
-    def __init__(self, env: Env) -> None:
-        super().__init__(env)
-        self._recording = False
-        self._last_segment_ts = -math.inf
-
-    def begin_episode(self) -> None:
-        """Clear segment history before recording a new episode."""
-        self._recording = False
-        self._last_segment_ts = -math.inf
-
-    @staticmethod
-    def _operator_help() -> str:
-        return (
-            "Operator controls: [a] start | [a] discard recording | "
-            "[b] next segment | [c] save success | [q] stop and exit | "
-            "[Ctrl-C] emergency stop."
-        )
-
-    def reset(
-        self, *, seed: int | None = None, options: dict[str, Any] | None = None
-    ) -> tuple[ObsType, dict[str, Any]]:
-        """Reset the robot and print the controls required for this episode."""
-        obs, info = super().reset(seed=seed, options=options)
-        self.operator_log("Arms ready. Press [a] to start a recording.")
-        self.operator_log(self._operator_help())
-        return obs, info
+    def _hold_before_reset(self) -> None:
+        """Reapply leader torque and wait before reset or park."""
+        hold = self._teleop_attr("hold_for_reset")
+        if hold is not None:
+            hold()
+        seconds = self._teleop_attr("manual_start_hold_seconds")
+        if seconds is None:
+            return
+        seconds = float(seconds)
+        if seconds < 0 or not math.isfinite(seconds):
+            raise ValueError("manual_start_hold_seconds must be finite and nonnegative")
+        if seconds:
+            self._countdown("Keep hands clear; reset starts in", seconds)
 
     def before_recording_start(self) -> None:
-        """Prepare an environment-specific operator handover, if required."""
+        """Release the leader after the handover countdown."""
+        seconds = self._teleop_attr("manual_start_hold_seconds")
+        if seconds is None:
+            seconds = 0.0
+        seconds = float(seconds)
+        if seconds < 0 or not math.isfinite(seconds):
+            raise ValueError("manual_start_hold_seconds must be finite and nonnegative")
+        if seconds:
+            self._countdown("Manual control starts in", seconds)
+        release = self._teleop_attr("release_for_manual")
+        if release is not None:
+            release()
 
     def before_recording_abort(self) -> None:
-        """Prepare an environment-specific abort/reset, if required."""
+        """Hold the leader before the runner resets the discarded episode."""
+        self._hold_before_reset()
 
     def before_recording_success(self) -> None:
-        """Prepare an environment-specific successful reset, if required."""
+        """Hold the leader before the runner resets the saved episode."""
+        self._hold_before_reset()
 
     def _hold_action(self, action: ActType) -> ActType:
-        """Use the current robot pose while the recording pedal is idle."""
+        """Use the follower pose while the absolute-position leader is idle."""
         try:
             hold = self.env.get_wrapper_attr("get_hold_action")
         except AttributeError:
@@ -80,13 +93,12 @@ class KeyboardStartEndWrapper(KeyboardSession):
         try:
             return hold(action)
         except AttributeError:
-            # Delta-only teleop devices have no absolute pose to hold; their
-            # zero action is already the stable idle command.
             return action
 
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Handle SO-101 handover before the wrapped environment steps."""
         pressed = list(self.presses())
         if any(key in {"q", "quit"} for key in pressed):
             raise KeyboardAbort("Operator requested collection shutdown.")
@@ -95,29 +107,27 @@ class KeyboardStartEndWrapper(KeyboardSession):
         aborted = "a" in pressed and self._recording
         if started:
             self.before_recording_start()
-            self._recording = True
         elif aborted:
             self.before_recording_abort()
-            self._recording = False
 
         if not self._recording or started or aborted:
             action = self._hold_action(action)
 
         obs, reward, terminated, truncated, info = self.env.step(action)
-
-        # The pedal owns episode boundaries; start and abort do not reset the env.
         terminated = aborted
         truncated = False
-
         record_reset = False
         segment_advance = False
         event: str | None = None
+
         if started:
             event = "start"
+            self._recording = True
             record_reset = True
             self._last_segment_ts = -math.inf
         elif aborted:
             event = "abort"
+            self._recording = False
             record_reset = True
             self._last_segment_ts = -math.inf
 
@@ -125,23 +135,19 @@ class KeyboardStartEndWrapper(KeyboardSession):
             if key == "a":
                 if aborted:
                     reward = 0.0
-                elif self._recording:
-                    if event != "start":
-                        event = "abort"
-                        self._recording = False
-                        record_reset = True
-                        self._last_segment_ts = -math.inf
-                        terminated = True
-                        reward = 0.0
-                else:
-                    continue
+                elif not started:
+                    event = "abort"
+                    self._recording = False
+                    record_reset = True
+                    self._last_segment_ts = -math.inf
+                    terminated = True
+                    reward = 0.0
             elif key == "b" and self._recording:
                 now = time.monotonic()
                 if now - self._last_segment_ts >= self.SEGMENT_DEBOUNCE_S:
                     event = "segment"
                     segment_advance = True
                     self._last_segment_ts = now
-                # Ignore rapid repeats to avoid very short segments.
             elif key == "c" and self._recording:
                 event = "end_success"
                 reward = 1.0

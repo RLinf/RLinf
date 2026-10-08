@@ -19,7 +19,9 @@ import copy
 import inspect
 import json
 import random
+import sys
 import time
+import types
 from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
@@ -84,6 +86,217 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+def test_openpi_sft_dispatches_so101_to_registered_loader(monkeypatch):
+    """SO-101 selects its dedicated SFT loader through the public dispatcher."""
+    import rlinf.data.datasets.openpi as openpi_sft
+
+    sentinel = object()
+    monkeypatch.setitem(
+        openpi_sft._SFT_DATALOADER_BUILDERS,
+        "so101",
+        lambda: lambda *args: sentinel,
+    )
+    cfg = DictConfig(
+        {
+            "actor": {
+                "model": {
+                    "openpi": {
+                        "config_name": "pi05_so101_joint",
+                        "use_rlt": False,
+                    }
+                }
+            }
+        }
+    )
+
+    result = openpi_sft.build_openpi_sft_dataloader(
+        cfg, world_size=1, rank=0, data_paths="/tmp/so101"
+    )
+    assert result is sentinel
+
+
+def test_so101_pi05_config_uses_discrete_state_input():
+    """SO-101 Pi05 must tokenize proprioceptive state with the prompt."""
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config("pi05_so101_joint")
+
+    assert config.model.pi05 is True
+    assert config.model.discrete_state_input is True
+
+
+def test_so101_norm_stats_match_padded_model_dimension():
+    """Reject six-dimensional stats before OpenPI applies them to 32D inputs."""
+    from rlinf.models.embodiment.openpi.transforms.pipeline import (
+        select_so101_norm_stats,
+    )
+
+    valid = {
+        key: {name: np.zeros(32, dtype=np.float32) for name in ("mean", "std")}
+        for key in ("state", "actions")
+    }
+    selected = select_so101_norm_stats(valid, action_dim=32)
+    assert set(selected) == {"state", "actions"}
+
+    invalid = {
+        "state": {"mean": np.zeros(6), "std": np.ones(6)},
+        "actions": {"mean": np.zeros(6), "std": np.ones(6)},
+    }
+    with pytest.raises(ValueError, match=r"state\.mean.*\(32,\)"):
+        select_so101_norm_stats(invalid, action_dim=32)
+
+
+def test_so101_repack_preserves_canonical_units():
+    """The SO-101 repacker preserves radians and normalized gripper values."""
+    from rlinf.data.datasets.openpi.so101.so101_sft_data_loader import _RepackSO101
+
+    frame = {
+        "image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "state": np.array([0.4, -0.8, 0.2, 1.0, -0.5, 0.75], dtype=np.float32),
+        "actions": np.array([0.3, -0.6, 0.1, 0.2, -0.4, 0.25], dtype=np.float32),
+        "task": "test task",
+    }
+
+    result = _RepackSO101()(frame)
+
+    np.testing.assert_array_equal(result["observation/state"], frame["state"])
+    np.testing.assert_array_equal(result["actions"], frame["actions"])
+
+
+def test_so101_repack_rejects_nonfinite_or_invalid_gripper():
+    """Reject malformed vectors at the canonical data boundary."""
+    from rlinf.data.datasets.openpi.so101.so101_sft_data_loader import _RepackSO101
+
+    frame = {
+        "image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "state": np.zeros(6, dtype=np.float32),
+        "actions": np.zeros(6, dtype=np.float32),
+        "task": "test task",
+    }
+    repack = _RepackSO101()
+
+    frame["state"][0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        repack(frame)
+
+    frame["state"][0] = 0.0
+    frame["actions"][5] = 1.1
+    with pytest.raises(ValueError, match="gripper"):
+        repack(frame)
+
+
+def test_so101_collection_keeps_canonical_units():
+    """The recorder preserves SO-101 radians and normalized gripper values."""
+    from rlinf.envs.wrappers.collect_episode import CollectEpisode
+
+    state = np.array(
+        [np.pi / 2, -np.pi / 4, 0.0, np.pi, -np.pi / 2, 0.37],
+        dtype=np.float32,
+    )
+    action = np.array(
+        [0.1, -0.2, 0.3, -0.4, 0.5, 0.63],
+        dtype=np.float32,
+    )
+    collector = CollectEpisode.__new__(CollectEpisode)
+    collector.num_envs = 1
+    collector.logger = Mock()
+    episode = collector._buffer_to_lerobot_ep(
+        {
+            "observations": [{"state": state}],
+            "actions": [action],
+            "terminated": [False],
+            "infos": [{}, {}],
+            "segment_ids": [0],
+        },
+        env_idx=0,
+        is_success=False,
+    )
+
+    assert episode is not None
+    np.testing.assert_array_equal(episode[0]["state"], state)
+    np.testing.assert_array_equal(episode[0]["actions"], action)
+
+
+def test_so101_loader_uses_canonical_action_feature(tmp_path, monkeypatch):
+    """Use the canonical SO-101 action feature in LeRobot metadata."""
+    import rlinf.data.datasets.openpi.so101.so101_sft_data_loader as loader_module
+
+    root = tmp_path / "so101"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text(
+        json.dumps(
+            {
+                "fps": 15,
+                "features": {
+                    "actions": {"shape": [6]},
+                    "state": {"shape": [6]},
+                    "image": {"shape": [480, 640, 3]},
+                },
+            }
+        )
+    )
+    norm_stats = root / "norm_stats.json"
+    norm_stats.write_text("{}")
+
+    class FakeDataset(torch.utils.data.Dataset):
+        last_kwargs = None
+
+        def __init__(self, **kwargs):
+            type(self).last_kwargs = kwargs
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            del index
+            raise AssertionError("the temporal query test must not decode a frame")
+
+    class FakeTrainConfig:
+        class Model:
+            action_horizon = 20
+            action_dim = 32
+
+        model = Model()
+
+    fake_lerobot = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    fake_lerobot.LeRobotDataset = FakeDataset
+    monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", fake_lerobot)
+    monkeypatch.setattr(loader_module, "resolve_lerobot_dataset_root", lambda _: root)
+    monkeypatch.setattr(
+        loader_module, "build_openpi_transforms", lambda *args, **kwargs: ([], [])
+    )
+
+    fake_dataconfig = types.ModuleType("rlinf.models.embodiment.openpi.dataconfig")
+    fake_dataconfig.get_openpi_config = lambda *args, **kwargs: FakeTrainConfig()
+    monkeypatch.setitem(
+        sys.modules, "rlinf.models.embodiment.openpi.dataconfig", fake_dataconfig
+    )
+
+    loader_module.create_so101_sft_data_loader(
+        data_path=str(root),
+        model_path="/tmp/pi05",
+        config_name="pi05_so101_joint",
+        assets_dir=str(tmp_path),
+        asset_id="so101",
+        raw_action_dim=6,
+        action_dim=32,
+        action_horizon=20,
+        max_token_len=200,
+        batch_size=1,
+        num_workers=0,
+        shuffle=False,
+        seed=0,
+        dist_rank=0,
+        dist_world_size=1,
+        data_kwargs={"norm_stats_path": str(norm_stats)},
+    )
+
+    assert FakeDataset.last_kwargs["delta_timestamps"] == {
+        "actions": [step / 15 for step in range(20)]
+    }
 
 
 class TestMathDatasetMultithread:
@@ -386,6 +599,33 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _ScalarFeatureDataset(_LegacyDataset):
+    """Mimic LeRobot 0.4's scalar HF schema and deferred episode buffer."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {"done": [], "segment_id": []}
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -426,6 +666,69 @@ def test_post_revert_dataset_keeps_task_in_frame():
 
     assert [f["task"] for f in dataset.frames] == ["pick up the cube"] * 2
     assert dataset.saved_episodes == 1
+
+
+def test_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _ScalarFeatureDataset()
+    episode = [
+        {
+            "done": np.array([done], dtype=bool),
+            "segment_id": np.array([index], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+        for index, done in enumerate((False, True))
+    ]
+
+    _make_writer(dataset).add_episode(episode)
+
+    assert dataset.episode_buffer == {
+        "done": [False, True],
+        "segment_id": [0, 1],
+    }
+    assert dataset.saved_episodes == 1
+
+
+def test_real_lerobot_writer_round_trip_keeps_multiple_episodes(tmp_path):
+    """The installed LeRobot schema reads two finalized episodes from one root."""
+    pytest.importorskip("lerobot.datasets.lerobot_dataset")
+    from rlinf.data.storage.lerobot.compat import episode_boundaries
+
+    writer = LeRobotDatasetWriter()
+    writer.create(
+        repo_id=str(tmp_path / "dataset"),
+        robot_type="so101",
+        fps=15,
+        state_dim=6,
+        action_dim=6,
+        has_image=False,
+        has_intervene_flag=True,
+        has_segment_id=True,
+        image_writer_threads=0,
+        image_writer_processes=0,
+    )
+    for episode_id in range(2):
+        writer.add_episode(
+            [
+                {
+                    "state": np.zeros(6, dtype=np.float32),
+                    "actions": np.ones(6, dtype=np.float32),
+                    "done": np.array([step == 1]),
+                    "is_success": np.array([True]),
+                    "intervene_flag": np.array([True]),
+                    "segment_id": np.array([episode_id], dtype=np.uint8),
+                    "task": "test task",
+                }
+                for step in range(2)
+            ]
+        )
+    writer.finalize()
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    dataset = LeRobotDataset(repo_id="dataset", root=tmp_path / "dataset")
+    assert len(dataset) == 4
+    assert dataset.num_episodes == 2
+    assert episode_boundaries(dataset) == ([0, 2], [2, 4])
 
 
 @pytest.mark.parametrize("dataset_cls", ALL_SHAPES)
@@ -1927,6 +2230,7 @@ def test_lerobot_frame_owns_observation_and_image_conversion():
 def test_offline_lerobot_export_reuses_canonical_frame_conversion():
     collector = object.__new__(CollectEpisode)
     collector.num_envs = 1
+    collector.robot_type = "panda"
     buffer = {
         "observations": [
             {

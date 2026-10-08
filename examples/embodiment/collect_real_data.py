@@ -26,7 +26,9 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.real import RealWorldEnv
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
+from rlinf.utils.logging import get_logger
 
 
 class DataCollector(Worker):
@@ -93,18 +95,25 @@ class DataCollector(Worker):
 
     def _process_obs(self, obs):
         """Reshape env observations for the internal trajectory accumulator."""
-        if not self.cfg.runner.record_task_description:
+        if not self.cfg.runner.get("record_task_description", False):
             obs.pop("task_descriptions", None)
 
         ret_obs = {}
         for key, val in obs.items():
             if isinstance(val, np.ndarray):
                 val = torch.from_numpy(val)
-            val = val.cpu()
+            if isinstance(val, torch.Tensor):
+                val = val.cpu()
+            elif key == "task_descriptions":
+                val = list(val)
+            else:
+                raise TypeError(
+                    f"Unsupported observation field {key!r}: {type(val).__name__}"
+                )
             if key == "images":
                 ret_obs["main_images"] = val.clone()
             else:
-                ret_obs[key] = val.clone()
+                ret_obs[key] = val.clone() if isinstance(val, torch.Tensor) else val
         return ret_obs
 
     @staticmethod
@@ -113,12 +122,48 @@ class DataCollector(Worker):
         return {key: value for key, value in obs.items() if key != "task_descriptions"}
 
     def run(self):
+        """Collect episodes and leave hardware safe after every exit path."""
+        failed = False
+        parked = False
+
+        def park_once() -> None:
+            """Park hardware before any wrapper closes its teleop devices."""
+            nonlocal parked
+            if parked:
+                return
+            try:
+                self.env.get_wrapper_attr("park")()
+                parked = True
+            except BaseException:  # noqa: BLE001 - preserve cleanup failure
+                get_logger().exception("Failed to park real-world hardware")
+
+        try:
+            return self._collect()
+        except KeyboardAbort:
+            self.log_info("Operator requested collection shutdown.")
+            return None
+        except BaseException:  # noqa: BLE001 - hardware cleanup includes interrupts
+            failed = True
+            raise
+        finally:
+            park_once()
+            try:
+                self.env.close()
+            except BaseException:  # noqa: BLE001 - preserve the collection failure
+                if not failed:
+                    raise
+                get_logger().exception(
+                    "Failed to close real-world hardware after error"
+                )
+
+    def _collect(self) -> None:
+        """Run the collection loop while :meth:`run` owns hardware cleanup."""
         obs, _ = self.env.reset()
+        self.log_info(f"Collection target: {self.num_data_episodes} successful episodes.")
         # Seed from preexisting episodes so resume bar + stop target line up.
         success_cnt = self._preexisting_success
         if success_cnt >= self.num_data_episodes:
             self.log_info(f"[resume] target {self.num_data_episodes} already met.")
-            self.env.close()
             return
         progress_bar = tqdm(
             total=self.num_data_episodes,
@@ -223,10 +268,11 @@ class DataCollector(Worker):
                         f"Discarded. Total success: {success_cnt}/{self.num_data_episodes}"
                     )
 
-                reset_options = None
                 if success_cnt >= self.num_data_episodes:
-                    reset_options = {"skip_wait_for_start": True}
-                obs, _ = self.env.reset(options=reset_options)
+                    self.log_info("Collection target reached; preparing to park.")
+                    break
+
+                obs, _ = self.env.reset()
                 current_obs_processed = self._process_obs(obs)
                 current_rollout = TrajectoryAccumulator(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
@@ -243,7 +289,6 @@ class DataCollector(Worker):
         self.log_info(
             f"Finished. Demos saved in: {os.path.join(self.cfg.runner.logger.log_path, 'demos')}"
         )
-        self.env.close()
 
 
 @hydra.main(

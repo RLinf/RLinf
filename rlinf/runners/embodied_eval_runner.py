@@ -44,6 +44,7 @@ class EmbodiedEvalRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
+        self.control_channel = Channel.create("EvalControl")
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -64,13 +65,20 @@ class EmbodiedEvalRunner:
         # Channel direction convention (names follow the receiver, not the sender):
         #   rollout_channel: env -> rollout  (env sends obs/RTC requests, rollout receives)
         #   env_channel:     rollout -> env  (rollout sends actions/RTC responses, env receives)
+        env_kwargs = {}
+        rollout_kwargs = {}
+        if not self.cfg.runner.get("rtc", {}).get("enabled", False):
+            env_kwargs["control_channel"] = self.control_channel
+            rollout_kwargs["control_channel"] = self.control_channel
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
+            **env_kwargs,
         )
         rollout_handle: Handle = self.rollout.evaluate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
+            **rollout_kwargs,
         )
 
         env_results = env_handle.wait()

@@ -1,0 +1,18 @@
+# SO-101 Pi0.5 model specification for local real-time evaluation.
+defaults:
+  - pi0_5
+  - _self_
+
+num_action_chunks: 20
+action_dim: 6
+model_path: /path/to/so101_pi05_checkpoint
+openpi:
+  task: eval
+  config_name: pi05_so101_joint
+  num_images_in_input: 1
+  train_expert_only: false
+  # Pi05 consumes SO-101 proprioception as discrete prompt tokens.
+  discrete_state_input: true
+openpi_data:
+  repo_id: id_0
+  norm_stats_path: null

@@ -929,12 +929,51 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.offload_model()
 
+    @staticmethod
+    def _poll_eval_control(control_channel: Channel | None) -> dict[str, Any] | None:
+        if control_channel is None:
+            return None
+        try:
+            message = control_channel.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+        if not isinstance(message, dict) or message.get("kind") != "stop":
+            raise TypeError("Evaluation control messages must be {'kind': 'stop'}.")
+        return message
+
+    async def _wait_eval_input(
+        self,
+        input_channel: Channel,
+        control_channel: Channel | None,
+        **recv_kwargs: Any,
+    ) -> Any | None:
+        """Wait for an observation while keeping operator abort responsive."""
+        work = self.recv_from(channel=input_channel, async_op=True, **recv_kwargs)
+        task = asyncio.create_task(work.async_wait())
+        while True:
+            if self._poll_eval_control(control_channel) is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                return None
+            if task.done():
+                return task.result()
+            await asyncio.sleep(0.01)
+
     @Worker.timer("evaluate")
-    async def evaluate(self, input_channel: Channel, output_channel: Channel):
+    async def evaluate(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        control_channel: Channel | None = None,
+    ):
         if self.enable_offload:
             self.reload_model()
         if self.env_decoupled_mode:
             while True:
+                if self._poll_eval_control(control_channel) is not None:
+                    if self.enable_offload:
+                        self.offload_model()
+                    return None
                 (
                     env_output,
                     split_sizes,
@@ -972,16 +1011,20 @@ class MultiStepRolloutWorker(Worker):
             ):
                 for _ in range(self.n_eval_chunk_steps):
                     for stage_id in range(self.num_pipeline_stages):
-                        env_output = await self.recv_from(
+                        env_output = await self._wait_eval_input(
+                            input_channel=input_channel,
                             group_name=self.cfg.env.group_name,
-                            channel=input_channel,
                             tag="eval_rollout_results",
                             route_key=stage_id,
-                            async_op=True,
                             batch_size=self.eval_batch_size,
                             merge_fn=self._merge_obs_batches,
                             infer_batch_size_fn=self._infer_env_batch_size,
-                        ).async_wait()
+                            control_channel=control_channel,
+                        )
+                        if env_output is None:
+                            if self.enable_offload:
+                                self.offload_model()
+                            return None
                         actions, _ = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",

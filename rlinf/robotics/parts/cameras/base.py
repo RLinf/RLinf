@@ -148,10 +148,20 @@ class BaseCamera(Camera, ABC):
         self._frame_capturing_thread = None
         self._latest_frame = None
 
-    def reopen(self) -> None:
-        """Reconnect the camera on the node that owns it."""
-        self.disconnect()
-        self.connect()
+    def reopen(self, *, attempts: int = 5, retry_delay: float = 0.5) -> None:
+        """Reconnect the camera, tolerating a short device re-enumeration."""
+        last_error: Optional[BaseException] = None
+        for attempt in range(max(attempts, 1)):
+            try:
+                self.disconnect()
+                self.connect()
+                return
+            except Exception as error:  # noqa: BLE001 - preserve final driver error
+                last_error = error
+                if attempt + 1 < max(attempts, 1):
+                    time.sleep(retry_delay)
+        assert last_error is not None
+        raise last_error
 
     def is_ready(self, timeout: float = 0.5) -> bool:
         """Whether a frame can be read within *timeout*."""

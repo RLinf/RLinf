@@ -51,6 +51,7 @@ from rlinf.envs.real.franka.dual_franka_joint import (
     DualFrankaJointEnv,
 )
 from rlinf.envs.real.gim_arm.base import GimArmEnv, GimArmEnvConfig
+from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.envs.real.wrappers.teleop.config import (  # noqa: E402
     NO_DEVICE,
     resolve_teleop_device,
@@ -79,6 +80,7 @@ from rlinf.scheduler.manager.net_emulation import (
     NetEmulationConfig,
     NetEmulationManager,
 )
+from rlinf.workers.env.env_worker import EnvWorker
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -99,6 +101,116 @@ def _robot_info(config):
     return RobotInfo(
         type=robot_type, model=config.hardware_model(robot_type), config=config
     )
+
+
+def test_standard_real_eval_cleanup_parks_before_close():
+    """The non-RTC real eval path must park before releasing hardware."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker._accelerator_type = None
+    worker._timer_metrics = {}
+
+    class FakeEnv:
+        def __init__(self):
+            self.events = []
+
+        def park(self):
+            self.events.append("park")
+
+        def close(self):
+            self.events.append("close")
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker._evaluate_standard = Mock(side_effect=RuntimeError("eval failed"))
+
+    with pytest.raises(RuntimeError, match="eval failed"):
+        worker.evaluate(Mock(), Mock())
+
+    worker._cleanup_real_eval_envs()
+
+    assert env.events == ["park", "close"]
+
+
+def test_standard_real_eval_cleanup_closes_after_park_failure():
+    """A failed park must not prevent real-eval hardware cleanup."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker.log_warning = Mock()
+
+    class FakeEnv:
+        def __init__(self):
+            self.events = []
+
+        def park(self):
+            self.events.append("park")
+            raise RuntimeError("park failed")
+
+        def close(self):
+            self.events.append("close")
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+
+    worker._cleanup_real_eval_envs()
+
+    assert env.events == ["park", "close"]
+    worker.log_warning.assert_called_once()
+
+
+def test_real_world_env_close_can_retry_after_inner_close_failure():
+    """A failed vector-env close leaves the public wrapper retryable."""
+    from rlinf.envs.real.env import RealWorldEnv
+
+    class FailingOnce:
+        def __init__(self):
+            self.calls = 0
+
+        def close(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("close failed")
+
+    worker = object.__new__(RealWorldEnv)
+    worker._closed = False
+    worker.env = FailingOnce()
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        worker.close()
+
+    assert worker._closed is False
+    worker.close()
+    assert worker._closed is True
+    assert worker.env.calls == 2
+
+
+def test_standard_real_eval_keyboard_abort_is_clean_shutdown():
+    """A standard real eval q abort returns without a Ray task failure."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker._accelerator_type = None
+    worker._timer_metrics = {}
+    worker.log_info = Mock()
+
+    class FakeEnv:
+        def __init__(self):
+            self.events = []
+
+        def park(self):
+            self.events.append("park")
+
+        def close(self):
+            self.events.append("close")
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker._evaluate_standard = Mock(
+        side_effect=KeyboardAbort("operator requested evaluation abort")
+    )
+
+    assert worker.evaluate(Mock(), Mock()) == {}
+    assert env.events == ["park", "close"]
+    worker.log_info.assert_called_once()
 
 
 def _assert_legacy_transition(env) -> None:
@@ -825,6 +937,249 @@ class ScriptedDevice(TeleopDevice):
         self.closed = True
 
 
+def test_composed_teleop_park_needs_no_so101_context():
+    """A generic device and environment park without SO-101 pose fields."""
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.robotics.parts.teleop import SpaceMouse, TeleopEntry, TeleopGroup
+
+    class ParkableEnv(FakeEnv):
+        def __init__(self):
+            super().__init__()
+            self.park_calls = 0
+
+        def park(self):
+            self.park_calls += 1
+
+    env = ParkableEnv()
+    device = ComposedTeleop(
+        TeleopGroup([TeleopEntry(SpaceMouse())]),
+        {"arm": slice(0, 6), "end_effector": slice(6, 7)},
+    )
+    wrapper = TeleopIntervention(env, device)
+
+    wrapper.park()
+
+    assert env.park_calls == 1
+    assert env.stepped == []
+
+
+def test_composed_teleop_park_uses_device_declared_context():
+    """Park coordination must not depend on SO-101 field names."""
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    events = []
+
+    class ParkGroup:
+        parts = ()
+        context_keys = frozenset({"custom_target", "custom_duration"})
+        park_context_keys = context_keys
+
+        def hold_for_reset(self, context):
+            events.append(("hold", dict(context)))
+
+        def park(self, context):
+            events.append(("park", dict(context)))
+
+        def reset(self, context):
+            events.append(("reset", dict(context)))
+
+        def abort_reset(self, context):
+            events.append(("abort", dict(context)))
+
+    class ParkableEnv(FakeEnv):
+        def park(self):
+            events.append(("env", None))
+
+        def get_wrapper_attr(self, name):
+            values = {"get_custom_target": np.array([1.0]), "get_custom_duration": 1.0}
+            if name not in values:
+                raise AttributeError(name)
+            return values[name]
+
+    env = ParkableEnv()
+    device = ComposedTeleop(ParkGroup(), {})
+    device.park(env, env.park)
+
+    assert events[0][0] == "hold"
+    assert events[-1][0] == "reset"
+    assert {event[0] for event in events[1:-1]} == {"park", "env"}
+    park_context = next(event[1] for event in events if event[0] == "park")
+    np.testing.assert_array_equal(park_context["custom_target"], [1.0])
+    assert park_context["custom_duration"] == 1.0
+
+
+def test_composed_teleop_park_stops_stream_before_environment_park():
+    """A configured stream is stopped before the environment starts parking."""
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.streaming import TeleopStreamer
+    from rlinf.robotics.parts.teleop import SpaceMouse, TeleopEntry, TeleopGroup
+
+    events = []
+    started = threading.Event()
+
+    class ParkableEnv(FakeEnv):
+        def park(self):
+            events.append("park")
+
+    class Stream(TeleopStreamer):
+        def stream_once(self, env):
+            del env
+            events.append("tick")
+            started.set()
+
+        def before_park(self, env):
+            events.append("before_park")
+            super().before_park(env)
+
+    env = ParkableEnv()
+    streamer = Stream(period=0.001, enabled=True)
+    streamer._aligned = True
+    streamer.before_step(env)
+    assert started.wait(timeout=1.0)
+
+    device = ComposedTeleop(
+        TeleopGroup([TeleopEntry(SpaceMouse())]),
+        {"arm": slice(0, 6), "end_effector": slice(6, 7)},
+        streamer=streamer,
+    )
+
+    device.park(env, env.park)
+
+    assert events.index("before_park") < events.index("park")
+    assert not streamer.streaming
+
+
+def test_teleop_streamer_close_waits_for_inflight_tick():
+    """Closing a stream must finish its current hardware command first."""
+    from rlinf.envs.real.wrappers.teleop.streaming import TeleopStreamer
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingStream(TeleopStreamer):
+        def stream_once(self, env):
+            del env
+            started.set()
+            assert release.wait(timeout=10.0)
+
+    streamer = BlockingStream(period=0.001, enabled=True)
+    streamer._aligned = True
+    streamer.before_step(FakeEnv())
+    assert started.wait(timeout=1.0)
+
+    close_thread = threading.Thread(target=streamer.close)
+    close_thread.start()
+    try:
+        close_thread.join(timeout=2.2)
+        assert close_thread.is_alive()
+        assert streamer._thread is not None
+    finally:
+        release.set()
+        close_thread.join(timeout=1.0)
+
+    assert not close_thread.is_alive()
+    assert streamer._thread is None
+
+
+def test_composed_teleop_reset_failure_breaks_synchronized_barrier():
+    """A failed device preparation must release the environment reset wait."""
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    class FailingGroup:
+        parts = ()
+        context_keys = frozenset({"hand_reset_pose"})
+        synchronized_reset_context_keys = frozenset({"hand_reset_pose"})
+
+        def prepare_reset(self, context):
+            del context
+            raise RuntimeError("leader reset failed")
+
+        def abort_reset(self, context):
+            del context
+
+    class ResetEnv:
+        def get_wrapper_attr(self, name):
+            values = {
+                "get_hand_reset_pose": np.zeros(3),
+            }
+            if name not in values:
+                raise AttributeError(name)
+            return values[name]
+
+    device = ComposedTeleop(FailingGroup(), {})
+    kwargs = device.before_reset(ResetEnv(), {})
+    barrier = kwargs["options"]["_teleop_reset_barrier"]
+    result = []
+
+    def wait_for_reset_start():
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            result.append("broken")
+
+    waiter = threading.Thread(target=wait_for_reset_start)
+    waiter.start()
+    device._reset_thread.join()
+    waiter.join(timeout=0.5)
+    try:
+        assert not waiter.is_alive()
+        assert result == ["broken"]
+    finally:
+        barrier.abort()
+        waiter.join(timeout=1.0)
+
+
+def test_so101_env_without_park_config_is_a_noop():
+    """SO-101 only moves during park when an explicit target is configured."""
+    from rlinf.envs.real.so101 import SO101ReachEnv
+
+    env = SO101ReachEnv(
+        {
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "target_joint_qpos": [0.0] * 5,
+        }
+    )
+    try:
+        env._move_to_configured_pose = Mock()
+        env.park()
+        env._move_to_configured_pose.assert_not_called()
+    finally:
+        env.close()
+
+
+def test_so101_leader_parks_only_with_a_complete_context():
+    """The leader remains still unless the environment supplies park targets."""
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import SO101Leader, TeleopEntry, TeleopGroup
+
+    leader = SO101Leader(port="/dev/unused")
+    leader._move_to = Mock()
+
+    group = TeleopGroup(
+        [TeleopEntry(leader)],
+        available={
+            "arm": ActionKind.JOINT_POSITION,
+            "end_effector": ActionKind.GRIPPER,
+        },
+    )
+    assert group.park_context_keys == frozenset(
+        {"park_joint_positions", "park_gripper_position", "park_duration"}
+    )
+
+    leader.park({})
+    leader._move_to.assert_not_called()
+
+    leader.park(
+        {
+            "park_joint_positions": np.zeros((1, 5)),
+            "park_gripper_position": np.zeros((1, 1)),
+            "park_duration": 1.0,
+        }
+    )
+    leader._move_to.assert_called_once()
+
+
 POLICY = np.array([0.0, 0.0, 0.0])
 
 
@@ -853,6 +1208,23 @@ def test_inactive_device_leaves_the_policy_action_alone():
 
     assert np.array_equal(env.stepped[0], POLICY)
     assert "intervene_action" not in info
+
+
+def test_missing_sample_after_operator_sample_leaves_policy_action_alone():
+    """A later missing sample does not replay the last operator action."""
+    env = FakeEnv()
+    device = ScriptedDevice(
+        [
+            TeleopSample(action=EXPERT, active=True),
+            TeleopSample(action=None, active=False),
+        ]
+    )
+    wrapper = TeleopIntervention(env, device)
+
+    wrapper.step(POLICY)
+    wrapper.step(POLICY)
+
+    assert np.array_equal(env.stepped[1], POLICY)
 
 
 def test_control_is_held_between_samples_then_released():
@@ -1327,7 +1699,7 @@ def _keyboard_session(monkeypatch, queued):
     from rlinf.envs.real.wrappers.episode import session as session_module
 
     class FakeListener:
-        def __init__(self):
+        def __init__(self, *args):
             self.batches = list(queued)
 
         def pop_pressed_keys(self):
@@ -1361,6 +1733,135 @@ def test_repeat_presses_within_the_debounce_window_are_dropped(monkeypatch):
     assert list(session.presses()) == ["b"]  # A different key is accepted.
 
 
+def test_keyboard_eval_control_pauses_action_progress_and_resumes(monkeypatch):
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    class FakeListener:
+        def __init__(self, *args):
+            self.batches = [[], ["a"], ["p"], [], ["r"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {"state": 0}, {}
+
+        def step(self, action):
+            self.actions.append(action)
+            return {"state": len(self.actions)}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = KeyboardEvalControlWrapper(Env())
+    env.reset()
+
+    env.step("first")
+    _, _, _, _, info = env.step("second")
+    assert info["eval_phase"] == "paused"
+    assert env.env.actions[-1] == "first"
+
+    _, _, _, _, info = env.step("second")
+    assert info["eval_phase"] == "rec"
+    assert env.env.actions[-1] == "second"
+
+
+def test_keyboard_eval_control_uses_environment_hold_while_paused(monkeypatch):
+    """Paused evaluation asks the environment for a stable hold action."""
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    class FakeListener:
+        def __init__(self, *args):
+            self.batches = [[], ["a"], ["p"], [], ["r"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {"state": 0}, {}
+
+        def get_hold_action(self, fallback=None):
+            return "hold"
+
+        def step(self, action):
+            self.actions.append(action)
+            return {"state": len(self.actions)}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = KeyboardEvalControlWrapper(Env())
+    env.reset()
+    env.step("policy")
+    env.step("next")
+    env.step("next")
+
+    assert env.env.actions == ["policy", "hold", "next"]
+
+
+def test_real_eval_leaves_episode_reset_to_chunk_step(monkeypatch):
+    import rlinf.workers.env.env_worker as env_worker_module
+
+    class FakeEnv:
+        def __init__(self):
+            self.reset_calls = 0
+
+        def chunk_step(self, actions, auto_reset=None, stop_on_done=False):
+            dones = torch.ones((1, actions.shape[1]), dtype=torch.bool)
+            return ([{"state": torch.zeros(1, 1)}], None, dones, dones, [{}])
+
+        def reset(self):
+            self.reset_calls += 1
+            return {"state": torch.ones(1, 1)}, {}
+
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create(
+        {
+            "env": {"eval": {"env_type": "real", "auto_reset": True}},
+            "runner": {},
+        }
+    )
+    worker.model_cfg = OmegaConf.create(
+        {"model_type": "openpi", "num_action_chunks": 1, "action_dim": 2}
+    )
+    worker.eval_env_list = [FakeEnv()]
+    worker.use_external_reward_model = False
+    monkeypatch.setattr(
+        env_worker_module,
+        "prepare_actions",
+        lambda **kwargs: kwargs["raw_chunk_actions"],
+    )
+
+    output, _ = worker.env_evaluate_step(np.zeros((1, 1, 2), dtype=np.float32), 0)
+
+    assert worker.eval_env_list[0].reset_calls == 0
+    assert torch.equal(output.obs["state"], torch.zeros(1, 1))
+
+
+def test_so101_configured_pose_uses_one_synchronized_arm_command():
+    from rlinf.envs.real.so101.base import SO101Env
+
+    calls = []
+
+    class FakeArm:
+        def move_to_pose(self, target, duration, max_velocity, start_barrier=None):
+            calls.append((target, duration, max_velocity, start_barrier))
+
+    env = object.__new__(SO101Env)
+    env._arm = FakeArm()
+    env.config = SimpleNamespace(reset_joint_speed=1.0)
+
+    env._move_to_configured_pose([0.0] * 5, 0.0, 1.0)
+
+    assert calls == [([0.0] * 6, 1.0, 1.0, None)]
+
+
 def test_presses_queued_between_episodes_do_not_leak(monkeypatch):
     session = _keyboard_session(monkeypatch, [["c"], ["a"]])
 
@@ -1388,6 +1889,60 @@ def test_every_keyboard_wrapper_shares_the_session(monkeypatch):
         KeyboardRewardDoneMultiStageWrapper,
     ):
         assert issubclass(wrapper, KeyboardSession), wrapper.__name__
+
+
+def test_so101_selects_its_episode_wrapper_without_changing_generic_modes():
+    """SO-101 owns handover controls while generic modes keep their classes."""
+    from rlinf.envs.real.so101.base import SO101Env
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers import WrapperStack
+    from rlinf.envs.real.wrappers.episode import KeyboardStartEndWrapper
+
+    env = object.__new__(SO101Env)
+    env.config = SimpleNamespace(is_dummy=False)
+
+    selected = env.episode_wrapper_for_mode({"keyboard_reward_wrapper": "start_end"})
+    assert selected is SO101StartEndWrapper
+    assert selected is not KeyboardStartEndWrapper
+    assert hasattr(KeyboardStartEndWrapper, "_hold_action")
+
+    assert not hasattr(KeyboardStartEndWrapper, "_release_for_manual")
+    assert WrapperStack._keyboard_wrapper_for_mode(object(), "start_end") is None
+
+
+def test_generic_start_end_holds_absolute_teleop_while_idle(monkeypatch):
+    """Generic start/end collection keeps absolute teleop pose before a start."""
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+
+    class FakeListener:
+        def __init__(self, *args):
+            self.batches = [[]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def get_hold_action(self, fallback=None):
+            return "hold"
+
+        def step(self, action):
+            self.actions.append(action)
+            return {}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = Env()
+    wrapper = KeyboardStartEndWrapper(env)
+    wrapper.reset()
+    wrapper.step("policy")
+
+    assert env.actions == ["hold"]
 
 
 def test_episode_wrappers_report_through_the_logger():
@@ -2426,6 +2981,9 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
 
 
 @pytest.mark.placement
+
+
+@pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
     """The env speaks radians; only the driver may speak lerobot's units.
 
@@ -2934,6 +3492,26 @@ def test_so101_leader_reports_radians_and_a_zero_to_one_grip():
             leader.disconnect()
 
 
+def test_so101_leader_accepts_a_valid_zero_pose():
+    """A calibrated leader may legitimately report the all-zero pose."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.teleop import SO101Leader
+
+        leader = SO101Leader(port="/dev/mock-leader")
+        leader.connect()
+        try:
+            leader._device.positions.update(
+                {f"{motor}.pos": 0.0 for motor in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")}
+            )
+            reading = leader.get_observation()
+            np.testing.assert_allclose(reading["joint_position"], 0.0)
+            assert reading["grip"][0] == pytest.approx(0.0)
+        finally:
+            leader.disconnect()
+
+
 def test_so101_leader_releases_the_servo_bus():
     """lerobot spells release ``disconnect``, which the base class does not try.
 
@@ -2992,22 +3570,49 @@ def test_so101_leader_calibrates_when_the_caller_asks():
             fake.calibrated = True
 
 
-def test_so101_leader_only_drives_once_the_operator_moves_it():
-    """A leader resting in its holder must not take control from the policy."""
+def test_so101_leader_holds_follower_pose_until_manual_handover():
+    """Idle/reset mode is explicit and does not inspect leader motion."""
     from rlinf.robotics.parts.teleop import SO101Leader
 
-    binding = SO101Leader(port="/dev/unused", movement_epsilon=0.01)
-    at_rest = {"joint_position": np.zeros(5), "grip": np.array([0.0])}
-    context = {"joint_positions": np.zeros((1, 5))}
+    binding = SO101Leader(port="/dev/unused")
+    reading = {
+        "joint_position": np.array([0.5, 0, 0, 0, 0]),
+        "grip": np.array([0.7]),
+    }
+    context = {
+        "joint_positions": np.array([[0.1, -0.2, 0.3, -0.4, 0.5]]),
+        "gripper_position": np.array([0.25]),
+    }
 
-    assert not binding.action(at_rest, context).driving
+    sample = binding.action(reading, context)
+    assert not sample.driving
+    assert binding.APPLIES_WHILE_IDLE
+    assert sample.parts["arm"] == pytest.approx(context["joint_positions"][0])
+    assert sample.parts["end_effector"] == pytest.approx(context["gripper_position"])
 
-    moved = {"joint_position": np.array([0.5, 0, 0, 0, 0]), "grip": np.array([0.7])}
-    sample = binding.action(moved, context)
+    # A leader pose that differs greatly from the follower does not implicitly
+    # transfer control. The episode wrapper performs the handover explicitly.
+    assert not binding.action(reading, context).driving
+
+
+def test_so101_leader_uses_leader_pose_after_explicit_handover():
+    """Manual mode sends the leader's absolute target even when it is still."""
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    binding = SO101Leader(port="/dev/unused")
+    reading = {
+        "joint_position": np.array([0.5, 0, 0, 0, 0]),
+        "grip": np.array([0.7]),
+    }
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_position": np.zeros(1),
+    }
+
+    binding._manual_control_enabled = True
+    sample = binding.action(reading, context)
     assert sample.driving
-    # The leader's pose is the follower's target, joint for joint.
-    assert sample.parts["arm"] == pytest.approx(moved["joint_position"])
-    # And the grip stays on the 0..1 axis the SO-101 env opens over.
+    assert sample.parts["arm"] == pytest.approx(reading["joint_position"])
     assert sample.parts["end_effector"][0] == pytest.approx(0.7)
 
 

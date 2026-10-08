@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from rlinf.models.embodiment.openpi.transforms.env import calvin, default
+from rlinf.models.embodiment.openpi.transforms.env import calvin, default, so101
 
 
 def repack_env_obs(
@@ -30,4 +30,6 @@ def repack_env_obs(
     """Map an env observation dict to ``observation/*`` keys for ``config_name``."""
     if "calvin" in config_name:
         return calvin.repack_env_obs(env_obs, select_state=select_state)
+    if "so101" in config_name:
+        return so101.repack_env_obs(env_obs, select_state=select_state)
     return default.repack_env_obs(env_obs, select_state=select_state)

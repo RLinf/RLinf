@@ -39,6 +39,7 @@ from rlinf.robotics.parts.base import Action, Features, Observation, RobotPart
 from rlinf.robotics.parts.views import MethodEndEffector
 from rlinf.utils.logging import get_logger
 
+from ..so101_motion import DEFAULT_SO101_FPS, plan_so101_motion
 from .base import Arm, BaseArm
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -108,6 +109,25 @@ class SO101Arm(BaseArm):
     #: where they stand.
     GRIPPER_STALL_POLLS: int = 3
 
+    #: Position tolerance used when a reset waits for a joint target.
+    RESET_POSITION_TOLERANCE: float = np.deg2rad(1.0)
+
+    #: Extra time allowed for a reset target to converge after its trajectory.
+    RESET_CONVERGENCE_TIMEOUT: float = 8.0
+
+    #: Poll interval for the closed-loop reset convergence pass.
+    RESET_CONVERGENCE_POLL: float = 1.0 / 30.0
+
+    #: Position tolerance for a completed gripper reset, on the 0..100 scale.
+    GRIPPER_RESET_TOLERANCE: float = 2.0
+
+    #: Maximum time spent retrying a gripper reset target.
+    GRIPPER_RESET_TIMEOUT: float = 8.0
+
+    #: Transient serial failures during startup are retried before surfacing.
+    SERIAL_CONNECT_RETRIES: int = 3
+    SERIAL_RETRY_DELAY_S: float = 0.1
+
     #: The SO-101 reports joints only; it carries no pose or force sensing.
     STATE_FIELDS = ("arm_joint_position",)
 
@@ -116,13 +136,17 @@ class SO101Arm(BaseArm):
         port: str,
         *,
         calibration_id: Optional[str] = None,
-        max_relative_target: Optional[int] = None,
+        max_relative_target: Optional[float] = None,
         cameras: Optional[dict[str, Any]] = None,
     ) -> None:
         self._logger = get_logger()
         self._port = port
         self._calibration_id = calibration_id
-        self._max_relative_target = max_relative_target
+        self._max_relative_target = (
+            None
+            if max_relative_target is None
+            else float(max_relative_target)
+        )
         self._cameras = dict(cameras or {})
         self._robot: "Optional[SO101Follower]" = None
         self._gripper_condition = threading.Condition(threading.RLock())
@@ -196,14 +220,7 @@ class SO101Arm(BaseArm):
         hang a worker that has no terminal, so a missing calibration is
         reported instead. Run lerobot's own calibration once per arm first.
         """
-        try:
-            # lerobot 0.4 merged the SO-family followers into one module.
-            from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
-        except ImportError:  # pragma: no cover - older lerobot
-            from lerobot.robots.so101_follower import (
-                SO101Follower,
-                SO101FollowerConfig,
-            )
+        from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
         robot = SO101Follower(
             SO101FollowerConfig(
@@ -216,30 +233,69 @@ class SO101Arm(BaseArm):
                 use_degrees=True,
             )
         )
+        accepted = False
         try:
-            robot.connect(calibrate=False)
+            for attempt in range(1, self.SERIAL_CONNECT_RETRIES + 1):
+                try:
+                    robot.connect(calibrate=False)
+                    break
+                except ConnectionError:
+                    if attempt == self.SERIAL_CONNECT_RETRIES:
+                        raise
+                    self._logger.warning(
+                        "SO-101 follower connection did not receive a status packet; "
+                        "retrying (%d/%d)",
+                        attempt + 1,
+                        self.SERIAL_CONNECT_RETRIES,
+                    )
+                    try:
+                        robot.disconnect()
+                    except Exception:  # noqa: BLE001 - retry the original connection
+                        pass
+                    time.sleep(self.SERIAL_RETRY_DELAY_S)
         except RuntimeError as error:
-            faulted = self._faulted_motors()
-            if not faulted:
-                raise
-            raise RuntimeError(
-                f"The SO-101 on {self._port!r} cannot start: motor(s) "
-                f"{faulted} report a latched fault, which lerobot reports as "
-                "a missing motor. The gripper reaches this by being held "
-                "shut against something until its overload protection trips. "
-                "Power-cycle the arm's supply to clear it"
-            ) from error
-        if not robot.is_calibrated:
-            robot.disconnect()
-            raise RuntimeError(
-                f"The SO-101 on {self._port!r} is not calibrated, and "
-                "calibrating it asks the operator to move the arm, which "
-                "cannot be done from here. Run lerobot's calibration for "
-                f"id={self._calibration_id!r} once, then start again."
-            )
-        self._logger.info("SO-101 connected on %s", self._port)
-        self._robot = robot
-        return robot
+            try:
+                faulted = self._faulted_motors()
+                if not faulted:
+                    raise
+                raise RuntimeError(
+                    f"The SO-101 on {self._port!r} cannot start: motor(s) "
+                    f"{faulted} report a latched fault, which lerobot reports as "
+                    "a missing motor. The gripper reaches this by being held "
+                    "shut against something until its overload protection trips. "
+                    "Power-cycle the arm's supply to clear it"
+                ) from error
+            finally:
+                if not accepted:
+                    try:
+                        robot.disconnect()
+                    except Exception:  # noqa: BLE001 - preserve startup failure
+                        pass
+        except BaseException:
+            if not accepted:
+                try:
+                    robot.disconnect()
+                except Exception:  # noqa: BLE001 - preserve startup failure
+                    pass
+            raise
+        try:
+            if not robot.is_calibrated:
+                raise RuntimeError(
+                    f"The SO-101 on {self._port!r} is not calibrated, and "
+                    "calibrating it asks the operator to move the arm, which "
+                    "cannot be done from here. Run lerobot's calibration for "
+                    f"id={self._calibration_id!r} once, then start again."
+                )
+            self._logger.info("SO-101 connected on %s", self._port)
+            self._robot = robot
+            accepted = True
+            return robot
+        finally:
+            if not accepted:
+                try:
+                    robot.disconnect()
+                except Exception:  # noqa: BLE001 - preserve startup failure
+                    pass
 
     def _faulted_motors(self) -> dict[int, int]:
         """Return ``{motor id: error byte}`` for servos answering with a fault.
@@ -376,6 +432,33 @@ class SO101Arm(BaseArm):
             self._gripper_requested = opening
             self._gripper_target = float(sent[f"{self.GRIPPER}.pos"])
 
+    def move_gripper_to(self, target: "Sequence[float]") -> None:
+        """Move a gripper target to completion while preserving safety limits.
+
+        LeRobot applies ``max_relative_target`` to every command, including a
+        reset command. A single command can therefore stop at a safe intermediate
+        position and still satisfy ``wait_for_gripper``. Reissue the target until
+        feedback reaches it, or stop after the bounded reset timeout.
+        """
+        value = float(np.asarray(target, dtype=float).reshape(-1)[0])
+        opening = float(np.clip(value, 0.0, 1.0))
+        target_units = opening * self.GRIPPER_SCALE
+        deadline = time.monotonic() + self.GRIPPER_RESET_TIMEOUT
+        while True:
+            self.move_gripper([opening])
+            self.wait_for_gripper()
+            current_units = float(self.get_state().gripper_position[0]) * self.GRIPPER_SCALE
+            if abs(current_units - target_units) <= self.GRIPPER_RESET_TOLERANCE:
+                return
+            if time.monotonic() >= deadline:
+                self._logger.warning(
+                    "SO-101 gripper reset did not reach target: target=%.3f current=%.3f",
+                    target_units,
+                    current_units,
+                )
+                return
+            time.sleep(self.RESET_CONVERGENCE_POLL)
+
     def _check_gripper_monitor(self) -> None:
         """Surface a failed monitor before further reads or commands."""
         if self._gripper_error is not None:
@@ -433,8 +516,8 @@ class SO101Arm(BaseArm):
                 self._gripper_error = error
                 self._gripper_condition.notify_all()
 
-    def _wait_for_gripper(self) -> None:
-        """Wait for a discrete open or close to finish or relieve a stall."""
+    def wait_for_gripper(self) -> None:
+        """Wait for the current gripper command to finish or relieve a stall."""
         with self._gripper_condition:
             while self._gripper_target is not None:
                 self._check_gripper_monitor()
@@ -444,12 +527,12 @@ class SO101Arm(BaseArm):
     def open_gripper(self) -> None:
         """Open the gripper fully."""
         self.move_gripper([1.0])
-        self._wait_for_gripper()
+        self.wait_for_gripper()
 
     def close_gripper(self) -> None:
         """Close the gripper fully."""
         self.move_gripper([0.0])
-        self._wait_for_gripper()
+        self.wait_for_gripper()
 
     def reset_joint(
         self,
@@ -468,31 +551,114 @@ class SO101Arm(BaseArm):
                 per second. Defaults to 30 degrees per second.
         """
         target = np.asarray(positions, dtype=float).reshape(-1)
-        if target.shape != (len(self.MOTORS),) or not np.all(np.isfinite(target)):
+        if target.shape != (len(self.MOTORS),):
             raise ValueError("An SO-101 reset needs five finite joint targets.")
-        if not np.isfinite(duration) or duration <= 0:
-            raise ValueError("Reset duration must be finite and positive.")
-        if not np.isfinite(max_velocity) or max_velocity <= 0:
-            raise ValueError("Reset max_velocity must be finite and positive.")
-        start = self.get_state().arm_joint_position
-        if not np.all(np.isfinite(start)):
-            raise RuntimeError("Cannot reset an SO-101 with non-finite joint feedback.")
-        delta = target - start
-        distance = float(np.max(np.abs(delta)))
-        if distance > 1e-8:
-            # The quintic blend has peak slope 15/8 and zero endpoint velocity
-            # and acceleration. Stretch its duration to bound every joint's speed.
-            travel_time = max(duration, 1.875 * distance / max_velocity)
-            period = 1.0 / 30.0
-            steps = max(2, int(np.ceil(travel_time / period)))
-            for index in range(1, steps + 1):
-                # Never catch up with a burst of writes after a slow bus call.
-                time.sleep(period)
-                phase = index / steps
-                blend = phase**3 * (10 + phase * (-15 + 6 * phase))
-                self.move_joints(start + blend * delta)
-        else:
-            self.move_joints(target)
+        state = self.get_state()
+        current_gripper = float(
+            np.asarray(getattr(state, "gripper_position", [0.0]), dtype=float)
+            .reshape(-1)[0]
+        )
+        self._execute_pose(
+            np.concatenate((target, [current_gripper])),
+            state,
+            duration=duration,
+            max_velocity=max_velocity,
+        )
+
+    def move_to_pose(
+        self,
+        target: "Sequence[float]",
+        duration: float = 3.0,
+        *,
+        max_velocity: float = np.deg2rad(30.0),
+        start_at: Optional[float] = None,
+    ) -> None:
+        """Move all five joints and the gripper through one shared trajectory."""
+        target_array = np.asarray(target, dtype=float).reshape(-1)
+        if target_array.shape != (len(self.MOTORS) + 1,):
+            raise ValueError("An SO-101 pose needs five joints and one gripper target.")
+        state = self.get_state()
+        return self._execute_pose(
+            target_array,
+            state,
+            duration=duration,
+            max_velocity=max_velocity,
+            start_at=start_at,
+        )
+
+    def _execute_pose(
+        self,
+        target_array: np.ndarray,
+        state: Any,
+        *,
+        duration: float,
+        max_velocity: float,
+        start_at: Optional[float] = None,
+    ) -> None:
+        """Execute a validated pose from one state snapshot."""
+        start_gripper = float(
+            np.asarray(getattr(state, "gripper_position", [0.0]), dtype=float)
+            .reshape(-1)[0]
+        )
+        start = np.concatenate(
+            (np.asarray(state.arm_joint_position, dtype=float), [start_gripper])
+        )
+        plan = plan_so101_motion(
+            start,
+            target_array,
+            minimum_duration=duration,
+            max_joint_speed=max_velocity,
+            fps=DEFAULT_SO101_FPS,
+        )
+        with self._gripper_condition:
+            self._check_gripper_monitor()
+            self._gripper_target = None
+            if start_at is not None:
+                time.sleep(max(0.0, start_at - time.monotonic()))
+            for index, frame in enumerate(plan.frames()):
+                action = {
+                    **{
+                        f"{motor}.pos": float(value)
+                        for motor, value in zip(
+                            self.MOTORS,
+                            np.rad2deg(frame[: len(self.MOTORS)]),
+                            strict=True,
+                        )
+                    },
+                    f"{self.GRIPPER}.pos": float(frame[-1] * self.GRIPPER_SCALE),
+                }
+                self._robot.send_action(action)
+                if index + 1 < plan.steps:
+                    time.sleep(plan.period)
+            self._gripper_requested = float(frame[-1] * self.GRIPPER_SCALE)
+            self._gripper_target = self._gripper_requested
+            self._gripper_condition.notify_all()
+        # The coordinated trajectory commands the gripper on the same bus as
+        # the arm joints, but the servo may still be travelling when the last
+        # frame is sent.  Wait through the normal monitor so reset/park cannot
+        # return while the gripper is still moving.
+        self.wait_for_gripper()
+        if self._max_relative_target is not None:
+            deadline = time.monotonic() + self.RESET_CONVERGENCE_TIMEOUT
+            while True:
+                current = self.get_state().arm_joint_position
+                if (
+                    np.max(np.abs(target_array[: len(self.MOTORS)] - current))
+                    <= self.RESET_POSITION_TOLERANCE
+                ):
+                    break
+                self.move_joints(target_array[: len(self.MOTORS)])
+                if time.monotonic() >= deadline:
+                    self._logger.warning(
+                        "SO-101 reset did not reach target: target_rad=%s current_rad=%s error_rad=%s",
+                        np.array2string(target_array[: len(self.MOTORS)], precision=5),
+                        np.array2string(current, precision=5),
+                        np.array2string(
+                            current - target_array[: len(self.MOTORS)], precision=5
+                        ),
+                    )
+                    break
+                time.sleep(self.RESET_CONVERGENCE_POLL)
         self.wait_until_still()
 
     def is_robot_up(self) -> bool:

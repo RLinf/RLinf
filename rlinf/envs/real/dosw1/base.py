@@ -300,6 +300,9 @@ class DOSW1Env(gym.Env):
             info["intervene_action"] = actual_action
         return obs, reward, terminated, truncated, info
 
+    def park(self) -> None:
+        """Leave the arms in their current state during process cleanup."""
+
     def close(self) -> None:
         self._close_cameras()
         if self._keyboard is not None:

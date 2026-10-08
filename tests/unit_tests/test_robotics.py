@@ -5281,6 +5281,31 @@ def test_so101_reset_waits_for_the_servos_to_stop_moving():
         arm.disconnect()
 
 
+def test_so101_pose_reset_waits_for_the_gripper_to_reach_target():
+    """A coordinated pose is complete only after its gripper target settles."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms import so101
+
+        SO101Follower.jaw_step = 25.0
+        SO101Follower.jaw_lag = 0
+        arm = so101.SO101Arm("/dev/mock-so101")
+        arm.connect()
+        try:
+            arm.move_to_pose(
+                np.r_[np.zeros(5), 1.0], duration=0.01, max_velocity=100.0
+            )
+            device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+            assert device.positions["gripper.pos"] == pytest.approx(100.0)
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_step = None
+            SO101Follower.jaw_lag = 1
+
+
 @pytest.mark.parametrize("write_delay", [0.0, 0.2])
 def test_so101_reset_paces_joint_targets_from_measured_feedback(
     monkeypatch, write_delay
@@ -5300,7 +5325,7 @@ def test_so101_reset_paces_joint_targets_from_measured_feedback(
             {f"{motor}.pos": value for motor, value in zip(arm.MOTORS, initial)}
         )
         clock = [0.0]
-        writes = [(0.0, initial)]
+        writes = []
         original_send = follower.send_action
 
         def sleep(seconds):
@@ -5339,6 +5364,32 @@ def test_so101_reset_paces_joint_targets_from_measured_feedback(
             )
         finally:
             arm.disconnect()
+
+
+def test_so101_motion_planner_is_shared_canonical_six_axis_trajectory():
+    from rlinf.robotics.parts.so101_motion import plan_so101_motion
+
+    start = np.array([0.1, -0.2, 0.3, -0.4, 0.5, 0.2])
+    target = np.array([-0.4, 0.6, 0.1, 0.2, -0.3, 0.8])
+    plan = plan_so101_motion(
+        start,
+        target,
+        minimum_duration=1.0,
+        max_joint_speed=0.5,
+        fps=20.0,
+    )
+
+    frames = list(plan.frames())
+    assert len(frames) == plan.steps
+    assert frames[0].shape == (6,)
+    np.testing.assert_allclose(frames[-1], target)
+    np.testing.assert_allclose(plan.start, start)
+    np.testing.assert_allclose(plan.target, target)
+    assert all(
+        np.all(frame >= np.minimum(start, target))
+        and np.all(frame <= np.maximum(start, target))
+        for frame in frames
+    )
 
 
 @pytest.mark.parametrize(

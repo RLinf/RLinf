@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Sequence
+
+import numpy as np
 
 from rlinf.utils.logging import get_logger
 
@@ -60,10 +63,54 @@ def select_openpi_norm_stats(
     return norm_stats
 
 
+def select_so101_norm_stats(
+    norm_stats: Any,
+    *,
+    action_dim: int | None = None,
+) -> Any:
+    """Keep and validate stats used by the SO-101 OpenPI transforms.
+
+    ``SO101Inputs`` pads the six canonical values to the model action
+    dimension before normalization.  The matching statistics therefore need
+    one value for every padded dimension; accepting six-dimensional stats here
+    would defer the failure to OpenPI's tree transform with an opaque shape
+    error.
+    """
+    from openpi.shared.normalize import NormStats
+
+    if not isinstance(norm_stats, Mapping):
+        raise ValueError("SO-101 norm stats must be an OpenPI mapping of NormStats.")
+    selected = {
+        key: value
+        for key, value in norm_stats.items()
+        if key in {"state", "actions"}
+    }
+    if action_dim is None:
+        return selected
+    if action_dim <= 0:
+        raise ValueError(f"SO-101 action_dim must be positive, got {action_dim}.")
+    for key, stats in selected.items():
+        if not isinstance(stats, NormStats):
+            raise ValueError(f"SO-101 norm stats for {key!r} must be NormStats.")
+        for stat_name in ("mean", "std", "q01", "q99"):
+            value = getattr(stats, stat_name, None)
+            if value is None:
+                continue
+            shape = np.asarray(value).shape
+            if shape != (action_dim,):
+                raise ValueError(
+                    f"SO-101 norm stats {key}.{stat_name} must have shape "
+                    f"({action_dim},), got {shape}. The six canonical values "
+                    "must be padded before normalization."
+                )
+    return selected
+
+
 def build_openpi_transforms(
     model_path: str,
     config_name: str,
     data_kwargs: dict[str, Any] | None = None,
+    discrete_state_input: bool | None = None,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -85,6 +132,13 @@ def build_openpi_transforms(
         config_name, model_path=str(model_path), data_kwargs=data_kwargs
     )
     upstream_model_config = train_config.model
+    if discrete_state_input is not None:
+        import dataclasses
+
+        upstream_model_config = dataclasses.replace(
+            upstream_model_config,
+            discrete_state_input=bool(discrete_state_input),
+        )
     data_config = train_config.data.create(
         train_config.assets_dirs, upstream_model_config
     )
@@ -92,6 +146,10 @@ def build_openpi_transforms(
         data_config.norm_stats,
         norm_stats_path=norm_stats_path_from_data_kwargs(data_kwargs),
     )
+    if config_name == "pi05_so101_joint":
+        norm_stats = select_so101_norm_stats(
+            norm_stats, action_dim=int(upstream_model_config.action_dim)
+        )
 
     input_transforms = [
         transforms.InjectDefaultPrompt(None),

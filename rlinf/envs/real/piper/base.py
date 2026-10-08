@@ -421,6 +421,9 @@ class PiperEnv(gym.Env):
             self.camera_player.put_frame(frames)
         return frames
 
+    def park(self) -> None:
+        """Leave the arm in its current state during process cleanup."""
+
     def close(self) -> None:
         """Release the cameras and disconnect the robot."""
         if hasattr(self, "_cameras"):
