@@ -299,7 +299,7 @@ Logs and checkpoints go under ``runner.logger.log_path``, saved every
 ``runner.save_interval`` steps at ``.../checkpoints/global_step_<N>/``.
 
 Pi0.5 Base Checkpoint Download and Conversion
---------------------------------------------
+---------------------------------------------
 
 The π₀.₅ JAX base checkpoint is available at
 ``gs://openpi-assets/checkpoints/pi05_base``. The downloaded directory contains
