@@ -154,6 +154,7 @@ jobs:
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
+              - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
               - 'evaluations/libero/*fastwam*'
