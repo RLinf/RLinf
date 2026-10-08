@@ -1029,6 +1029,49 @@ def validate_weight_sync_overlap_cfg(cfg):
     )
 
 
+def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
+    """Require per-step observations when online LeRobot collection is enabled.
+
+    The collector stores one observation/action pair per environment step.
+    RoboTwin, LIBERO, and Behavior share ``env.train.skip_intermediate_renders``;
+    online LeRobot requires it to be false. Eval does not write the dataset.
+    """
+    enabled = bool(
+        OmegaConf.select(cfg, "algorithm.dagger.online_lerobot.enabled", default=False)
+    )
+    if not enabled:
+        return
+    only_eval = (
+        cfg.runner.get("only_eval", False)
+        or cfg.runner.get("task_type") == "embodied_eval"
+    )
+    train_env = cfg.env.get("train", None)
+    if only_eval or train_env is None:
+        return
+
+    # RoboTwin skips intermediate renders unless the config turns them back on.
+    # LIBERO and Behavior render every step unless the config skips them.
+    skip_intermediate_renders_default = {
+        SupportedEnvType.ROBOTWIN: True,
+        SupportedEnvType.LIBERO: False,
+        SupportedEnvType.BEHAVIOR: False,
+    }
+    env_type = SupportedEnvType(train_env.env_type)
+    if env_type not in skip_intermediate_renders_default:
+        return
+    skip_intermediate_renders = bool(
+        train_env.get(
+            "skip_intermediate_renders",
+            skip_intermediate_renders_default[env_type],
+        )
+    )
+    assert not skip_intermediate_renders, (
+        "algorithm.dagger.online_lerobot.enabled requires "
+        f"env.train.skip_intermediate_renders=False for env_type {env_type.value!r}. "
+        "Skipped intermediate renders drop the observation for each action."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1320,6 +1363,7 @@ def validate_embodied_cfg(cfg):
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
 
+    validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
 

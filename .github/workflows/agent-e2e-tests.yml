@@ -107,6 +107,7 @@ jobs:
         run: |
           export UV_LINK_MODE=copy
           source .venv/bin/activate
+          uv pip install -r requirements/agentic/agentlightning_constraints.txt
           # litellm 1.95 imports get_flat_dependant, which fastapi dropped in 0.140.7
           uv pip install "agentlightning==0.3.0" "litellm<1.95" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator" "openai==2.32.0"
           # tensorboard 2.21+ requires protobuf>=6.31.1; autogen pins protobuf~=5.29.x
