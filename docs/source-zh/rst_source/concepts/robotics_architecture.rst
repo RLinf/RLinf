@@ -426,7 +426,7 @@ driver 应实现 ``_open()`` 与 ``_release()``，不要覆盖 ``connect()`` 和
    * - ``robotics/parts/arms/``
      - ``Arm`` 类别与 ``BaseArm``，以及注册到它们之上的各个 backend：Franky、Franka ROS、GimArm、SO-101、Piper 和联动控制器。
    * - ``robotics/parts/cameras/``
-     - 相机生命周期，以及 RealSense、ZED 和 Lumos 实现。
+     - 相机生命周期，以及 RealSense、ZED、Lumos 和 Orbbec 实现。
    * - ``robotics/parts/end_effectors/``
      - 夹爪和灵巧手。
    * - ``robotics/parts/mobility/``

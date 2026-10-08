@@ -168,6 +168,9 @@ See ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_2arms.yam
 Extend ``num_nodes``, ``node_ranks``, ``placement``, and ``hardware.configs`` the same
 way for more arms.
 
+For Orbbec color and aligned depth capture, follow :doc:`orbbec` to install the
+camera SDK and verify the camera before adding it to a robot configuration.
+
 Split camera and arm (ZED + Robotiq)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
