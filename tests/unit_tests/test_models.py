@@ -1358,3 +1358,109 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def _load_openvla_action_model(monkeypatch) -> ModuleType:
+    """Load the OpenVLA action model module with prismatic base classes stubbed.
+
+    The module inherits the vendor VLM classes from prismatic, which only the
+    openvla venv provides. The methods under test are plain tensor code that
+    never instantiates those classes, so absent a real prismatic install the
+    names are stubbed with bare types for the import to resolve.
+    """
+    if importlib.util.find_spec("prismatic") is None:
+        modeling_module = ModuleType("prismatic.extern.hf.modeling_prismatic")
+        modeling_module.IGNORE_INDEX = -100
+        modeling_module.OpenVLAForActionPrediction = type(
+            "OpenVLAForActionPrediction", (torch.nn.Module,), {}
+        )
+        modeling_module.PrismaticCausalLMOutputWithPast = type(
+            "PrismaticCausalLMOutputWithPast", (), {}
+        )
+        processing_module = ModuleType("prismatic.extern.hf.processing_prismatic")
+        processing_module.PrismaticImageProcessor = type(
+            "PrismaticImageProcessor", (), {}
+        )
+        processing_module.PrismaticProcessor = type("PrismaticProcessor", (), {})
+        for name, module in (
+            ("prismatic", ModuleType("prismatic")),
+            ("prismatic.extern", ModuleType("prismatic.extern")),
+            ("prismatic.extern.hf", ModuleType("prismatic.extern.hf")),
+            ("prismatic.extern.hf.modeling_prismatic", modeling_module),
+            ("prismatic.extern.hf.processing_prismatic", processing_module),
+        ):
+            monkeypatch.setitem(sys.modules, name, module)
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "rlinf/models/embodiment/openvla/openvla_action_model.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "openvla_action_model_under_test", source
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("num_action_chunks", "token_shape"),
+    [(1, (7,)), (1, (1, 7)), (8, (8, 7)), (8, (56,))],
+)
+def test_openvla_preprocess_for_train_flattens_action_tokens(
+    monkeypatch, num_action_chunks, token_shape
+):
+    module = _load_openvla_action_model(monkeypatch)
+    action_dim = 7
+    batch_size = 2
+    total_tokens = action_dim * num_action_chunks
+    seq_len = 16
+    data = {
+        "input_ids": torch.full((batch_size, seq_len), 5),
+        "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.long),
+        "action_tokens": torch.full((batch_size, *token_shape), 31745),
+    }
+    prompt_ids = data["input_ids"]
+    prompt_mask = data["attention_mask"]
+    model = SimpleNamespace(action_dim=action_dim, num_action_chunks=num_action_chunks)
+
+    processed = module.OpenVLAForRLActionPrediction.preprocess_for_train(model, data)
+
+    assert processed["action_tokens"].shape == (batch_size, total_tokens)
+    assert processed["input_ids"].shape == (batch_size, seq_len + total_tokens)
+    assert processed["attention_mask"].shape == (batch_size, seq_len + total_tokens)
+    torch.testing.assert_close(processed["input_ids"][:, :seq_len], prompt_ids)
+    torch.testing.assert_close(
+        processed["input_ids"][:, seq_len:], processed["action_tokens"]
+    )
+    torch.testing.assert_close(processed["attention_mask"][:, :seq_len], prompt_mask)
+
+
+@pytest.mark.parametrize("num_action_chunks", [1, 8])
+def test_openvla_preprocess_tokens_line_up_with_the_logprob_slice(
+    monkeypatch, num_action_chunks
+):
+    from rlinf.utils.utils import compute_logprobs_from_logits
+
+    module = _load_openvla_action_model(monkeypatch)
+    action_dim = 7
+    batch_size, seq_len, vocab = 2, 16, 32064
+    total_tokens = action_dim * num_action_chunks
+    data = {
+        "input_ids": torch.randint(2, 31744, (batch_size, seq_len)),
+        "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.long),
+        # action tokens live in the last n_action_bins of the vocabulary
+        "action_tokens": torch.randint(32064 - 256, 32064, (batch_size, total_tokens)),
+    }
+    model = SimpleNamespace(action_dim=action_dim, num_action_chunks=num_action_chunks)
+
+    processed = module.OpenVLAForRLActionPrediction.preprocess_for_train(model, data)
+
+    # default_forward reads the total_tokens positions before the final one
+    # and scores the action tokens against them.
+    logits = torch.randn(batch_size, seq_len + total_tokens, vocab)
+    logprobs = compute_logprobs_from_logits(
+        logits=logits[:, -total_tokens - 1 : -1],
+        target=processed["action_tokens"],
+    )
+    assert logprobs.shape == (batch_size, total_tokens)
+    assert torch.isfinite(logprobs).all()
