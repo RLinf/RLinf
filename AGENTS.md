@@ -1,281 +1,142 @@
 # AGENTS.md
 
-Brief for AI coding agents working on RLinf. For full contribution flow, code style, and PR process see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-**Quick orientation:** RLinf is a distributed RL stack (embodied + reasoning + agent). It uses **Ray** for process management and **Hydra** for config. Single-machine runs use `cluster.num_nodes: 1`; multi-node needs Ray started on every node with `RLINF_NODE_RANK` set *before* `ray start`. Pre-commit runs Ruff (lint + format) and commit-check; use Google-style docstrings and type hints. All user-facing changes need tests and docs. If something is unclear, add a `TODO(agent)` and note the limitation.
-
----
-
-## Commands
-
-- **Environment:** `bash requirements/install.sh embodied --model <model> --env <env>` builds `.venv`. The unit-test CI job uses the lighter `bash requirements/install.sh --no-flash-attn embodied --env dummy`.
-- **Lint:** set up `pre-commit` as described in [CONTRIBUTING.md](CONTRIBUTING.md). Ruff's docstring rules (`D`) apply only to `rlinf/scheduler/`, and its annotation rules (`ANN`) only to `rlinf/robotics/` and `rlinf/envs/real/`.
-- **Unit tests:** CI runs each file in its own process and stops Ray between files. To reproduce, `export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests`, then `pytest tests/unit_tests/test_worker.py; ray stop`. Scheduler doctests: `pytest --doctest-modules rlinf/scheduler`.
-- **Embodied e2e:** with `REPO_PATH` set, run `bash tests/e2e_tests/embodied/run.sh <config>` (or `run_async.sh`), where `<config>` is a file name from `tests/e2e_tests/embodied/` without `.yaml`. An optional second argument selects the render backend (default `egl`). With `run.sh`, configs whose names contain `mock` run real-world envs against the fake vendor SDKs in `tests/robot_mocks/`.
-
----
-
-## Code structure
-
-- **`.agents/skills/`** – Canonical project skills shared by Codex, Cursor, and Claude. Claude discovers the same files through symlinks in `.claude/skills/`.
-- **`rlinf/`** – Main package:
-  - `agents/` – Agent logic (reasoning, tools).
-  - `algorithms/` – Advantages, losses, registry, rewards (math, code, searchr1, vqa).
-  - `config.py` – Hydra config, `SupportedModel`, `SupportedEnvType`, validation.
-  - `data/` – Datasets for embodied, reasoning, agent.
-  - `envs/` – ManiSkill, LIBERO, IsaacLab, CALVIN, MetaWorld, Behavior, RoboCasa, FrankaSim, RealWorld, RoboTwin, Habitat, OpenSora world model; `get_env_cls()` in `envs/__init__.py`.
-  - `hybrid_engines/` – SGLang/vLLM rollout integration.
-  - `models/` – Embodiment (OpenVLA, OpenVLA-OFT, OpenPI, GR00T, MLP/CNN/Flow/CMA) and reasoning wiring.
-  - `runners/` – Embodied (sync/async), reasoning, coding_online_rl, agent, SFT, eval.
-  - `scheduler/` – Cluster, Worker, WorkerGroup, channel, manager, placement, dynamic_scheduler.
-  - `utils/` – Logging, placement, data iter, distributed, checkpoint, resharding.
-  - `workers/` – Actor (FSDP/Megatron), rollout (HF/server), env (sync/async), reward, replay buffer.
-- **`examples/`** – Entrypoints and YAML: embodiment, reasoning, coding_online_rl, searchr1, sft, wideseek_r1.
-- **`tests/`** – `unit_tests/`, `e2e_tests/` (embodied, agent, reasoning), scheduler tests; e2e configs under `e2e_tests/embodied/*.yaml`.
-- **`requirements/`** – `install.sh` (targets: embodied, reason, docs; `--model`, `--env`), optional deps in subdirs.
-- **`docker/`** – Dockerfile and build targets per model/env.
-- **`ray_utils/`** – `start_ray.sh` (multi-node head/worker), `check_ray.sh`, `realworld/setup_before_ray.sh`.
-- **`toolkits/`** – Checkpoint converters, verifiers, eval scripts, replay buffer, auto-placement.
-- **`docs/`** – Sphinx RST (EN/ZH): start, tutorials, examples, APIs, FAQ.
-
----
-
-## How RLinf runs
-
-You launch one entry script (e.g. `train_embodied_agent.py`, `train_async.py`). It builds a **Cluster** (Ray must already be up), figures **component placement** (actor, rollout, env, reward, agent), and starts **Worker** groups. A **Runner** drives the loop: rollout → reward → advantage → actor update (and any inference/engine lifecycle). Cluster config lives in YAML under `cluster:`: `num_nodes`, `component_placement`, `node_groups` (labels, node_ranks, env_configs, optional hardware e.g. Franka). Placement (e.g. `HybridComponentPlacement`, `ModelParallelComponentPlacement`) maps components to node groups and hardware ranks. Workers are Ray remote actors with `MASTER_*`, `RANK`, etc.; they can `send`/`recv` across groups. Training backends: FSDP or Megatron. Rollout: SGLang or vLLM. Runners pick loss/advantage from config (PPO, GRPO, SAC, etc.).
-
----
-
-## Single-node and multi-node
-
-**Single machine:** Install via Docker or `bash requirements/install.sh embodied --model <model> --env <env>` (set `REPO_PATH` and any asset paths). Ray may auto-start; or run `ray start --head`. Use a config with `cluster.num_nodes: 1` (e.g. from `examples/embodiment/config/`). Launch with `bash examples/embodiment/run_embodiment.sh <config_name>` or `python examples/embodiment/train_embodied_agent.py --config-name <config_name>`, and set env vars the example needs (e.g. `MUJOCO_GL=egl`, `ROBOT_PLATFORM`).
-
-**Multiple machines:** On each node, *before* `ray start`: set `export RLINF_NODE_RANK=<0..N-1>` (unique) and optionally `RLINF_COMM_NET_DEVICES`. Head: `ray start --head --port=6379 --node-ip-address=<head_ip>`. Workers: `ray start --address=<head_ip>:6379`. You can use `ray_utils/start_ray.sh`. Set `cluster.num_nodes` to the total; optionally use `node_groups` and `component_placement` (see `rlinf/scheduler/cluster/config.py` and the [heterogeneous cluster tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/guides/hetero.html)). Run the entry script *only on the head*; it attaches to the existing Ray cluster and schedules workers by placement.
-
----
-
-## Configuration guides
-
-- **Placement and throughput:** Configure `cluster.component_placement` (collocated vs disaggregated vs hybrid, node groups, hardware ranks). See [placement tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/placement.html) and [execution modes](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/execution_modes.html).
-- **OOM:** Tune env (`total_num_envs`, `group_size`), rollout (batch/seq, `gpu_memory_utilization`, `enable_offload`), actor (`micro_batch_size`, `global_batch_size`, `gradient_checkpointing`, `enable_offload`). Example configs in `examples/embodiment/config/`. See [FAQ](https://rlinf.readthedocs.io/en/latest/rst_source/resources/faq.html) for SGLang/memory issues.
-- **Multi-node and hetero:** Set `cluster.num_nodes`; set `RLINF_NODE_RANK` (and optionally `RLINF_COMM_NET_DEVICES`) **before** `ray start` on each node—Ray captures env at start time. Optional `node_groups` and `component_placement` in YAML; `env_configs` (e.g. `env_vars`, `python_interpreter_path`) are applied at worker allocation. See [heterogeneous cluster](https://rlinf.readthedocs.io/en/latest/rst_source/guides/hetero.html) and `rlinf/scheduler/cluster/config.py`.
-
----
-
-## Metrics, checkpoints, and evaluation
-
-- **Metrics:** Runners use `MetricLogger`; set `runner.logger.logger_backends` (e.g. tensorboard, wandb, swanlab). Namespaces include `train/`, `eval/`, `env/`, `rollout/`, `time/`. See [logger tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/guides/logger.html).
-- **Checkpoints:** Saved every `runner.save_interval` under `.../checkpoints/global_step_<N>/`. To resume, set `runner.resume_dir` to that path and relaunch; some runners support `resume_dir: auto`. See [checkpoint resume tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/guides/resume.html).
-- **Evaluation:** During training, `runner.val_check_interval` triggers validation. Standalone embodied: `bash evaluations/run_eval.sh <benchmark> <config_name>` (configs under `evaluations/<benchmark>/`); see [Evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/index.html). Reasoning/LLM: see [LLMEvalKit](https://github.com/RLinf/LLMEvalKit).
-
----
-
-## When things go wrong
-
-For debugging (breakpoints, rendering/EGL, network, NCCL/CUDA, timeouts), see the [FAQ](https://rlinf.readthedocs.io/en/latest/rst_source/resources/faq.html) in Further reading.
-
----
-
-## Key ideas and plugging in
-
-**Config** (`rlinf/config.py`): `build_config` / `validate_cfg` produce the full DictConfig. New model or env types go into `SupportedModel` / `SupportedEnvType` and validation.
-
-**Cluster and placement:** `ClusterConfig` and strategies in `rlinf/scheduler/placement/`, `rlinf/utils/placement.py`. Placement controls where actor/rollout/env run (one node vs many, GPU vs CPU, heterogeneous).
-
-**Algorithms:** Advantage and loss functions are registered in `rlinf/algorithms/` (registry + decorators); rewards are registered in `rlinf/algorithms/rewards/`. Config keys `algorithm.adv_type` and `algorithm.loss_type` select them. See [Extending RLinf: algorithms, models, envs](#extending-rlinf-algorithms-models-envs) for step-by-step instructions.
-
-**Models (embodied):** Register in `SupportedModel` in `config.py`, implement under `rlinf/models/embodiment/<name>/` (e.g. `BasePolicy`), wire in config and workers. Use add-install-docker-ci-e2e for install/Docker/CI. Details in the extension section below.
-
-**Environments:** Register in `SupportedEnvType` and `get_env_cls()` in `rlinf/envs/__init__.py`, implement under `rlinf/envs/<name>/`. Use add-install-docker-ci-e2e and add-example-doc-model-env for install and docs. Details below.
-
-**Workers:** Subclass `Worker`, implement `initialize` and your API, launch with `create_group(...).launch(...)`. Use `self.log_info` / `log_warning` / `log_error`; no print.
-
-**Runners:** They own the training loop. New task type = new runner + entry script that builds Cluster, placement, worker groups, and calls the runner.
-
----
-
-## Extending RLinf: algorithms, models, envs
-
-### New algorithms (advantage, loss, reward)
-
-**Advantage function**
-
-- Implement a function that takes the same keyword args as existing ones (e.g. `rewards`, `values`, `dones`, `gamma`, `loss_mask`, …) and returns `(advantages, returns)`. See `rlinf/algorithms/advantages.py` (e.g. `compute_gae_advantages_and_returns`) for signatures.
-- Register it: `from rlinf.algorithms.registry import register_advantage` then `@register_advantage("my_adv")` on your function. The name is case-normalized to lowercase.
-- In config YAML set `algorithm.adv_type: my_adv`. Actor workers call `calculate_adv_and_returns(adv_type=...)` which dispatches via `get_adv_and_returns(name)`.
-- For non-GAE styles (e.g. GRPO, Reinforce++), `rlinf/algorithms/utils.py` may need to compute scores first; check how `adv_type` is used in `calculate_adv_and_returns` and in the actor worker.
-
-**Policy loss**
-
-- Implement a function that accepts the kwargs passed by the actor (e.g. `logprobs`, `old_logprobs`, `advantages`, `clip_ratio_low`, `clip_ratio_high`, `loss_mask`, …) and returns `(loss_tensor, metrics_dict)`. See `rlinf/algorithms/losses.py` (e.g. `compute_ppo_actor_loss`, `compute_ppo_actor_critic_loss`, `compute_grpo_actor_loss_fn`).
-- Register: `from rlinf.algorithms.registry import register_policy_loss` then `@register_policy_loss("my_loss")`.
-- In config set `algorithm.loss_type: my_loss`. For PPO-style actor+critic you need a critic and value loss; the unified entry is `policy_loss(loss_type=..., **kwargs)` in `registry.py`. Add validation in `rlinf/config.py` if your loss has special requirements (e.g. `validate_cfg` already checks `loss_type == "actor_critic"` for value head).
-
-**Reward**
-
-- Add a reward class (e.g. under `rlinf/algorithms/rewards/<domain>/`) that matches the interface expected by the reward worker (e.g. callable or class with a clear contract for prompt/completions/ids).
-- In `rlinf/algorithms/rewards/__init__.py`: import the class, then `register_reward("my_reward", MyRewardClass)`. The registry is `reward_registry`; lookup via `get_reward_class(name)`.
-- Wire the reward name in config and in the runner/reward worker so the correct class is instantiated and used. For reasoning/agent tasks the config path may be under `reward.path` or similar.
-
-### New embodied model
-
-- **Registration:** In `rlinf/config.py`, add a new value to the `SupportedModel` enum: `MY_MODEL = ("my_model", "embodied")`. Use `get_supported_model(model_type)` in validation so `model.model_type: my_model` is accepted.
-- **Implementation:** Create a package under `rlinf/models/embodiment/my_model/`. For policies that fit the embodied actor interface, inherit from `rlinf.models.embodiment.base_policy.BasePolicy` and implement `default_forward` and `predict_action_batch`; add other forward types (e.g. `sac_forward`, `crossq_forward`) if the algorithm needs them. For HuggingFace-based VLAs, follow the pattern in the docs: register config and processor in `rlinf/models/__init__.py` (`get_model_config_and_processor`), then implement an action model that wraps generation and optional value head.
-- **Config and workers:** Ensure `build_config` / default configs provide the right `model.model_type`, checkpoint paths, and any model-specific options. Actor and rollout workers already branch on `cfg.actor.model.model_type` / `cfg.rollout.model.model_type`; add branches or a factory so your model is instantiated and used. For FSDP+HuggingFace, see the [new model (FSDP) tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_model_fsdp.html); for Megatron there is a separate [new model (Megatron) tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_model_megatron.html).
-- **Install and CI:** If the model needs extra deps or a dedicated venv, add it to `requirements/install.sh` (e.g. `SUPPORTED_MODELS`, and an `install_my_model()` or branch in the model switch). For Docker and e2e: use the skill `.agents/skills/add-install-docker-ci-e2e` (install script, Dockerfile stage, CI job, e2e config under `tests/e2e_tests/embodied/`).
-
-### New environment
-
-- **Registration:** In `rlinf/envs/__init__.py`, add a member to `SupportedEnvType`: e.g. `MY_ENV = "my_env"`. In `get_env_cls(env_type, env_cfg=None, ...)` add an `elif env_type == SupportedEnvType.MY_ENV:` branch that imports your env class and returns it (lazy import to avoid loading heavy deps at import time). If the env needs a task id (like IsaacLab), use `env_cfg` and document the expected shape.
-- **Implementation:** Create `rlinf/envs/my_env/` with at least one module defining a gym-style env (e.g. `gymnasium.Env`): `reset`, `step`, and the usual attributes (`observation_space`, `action_space`). Follow the [new environment tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_env.html) for the expected structure (e.g. vectorized `num_envs`, `group_size`, `ret_device`). If your env uses custom action formatting, add a branch in `rlinf/envs/action_utils.py` in `prepare_actions(env_type, ...)` so rollout/workers pass correctly shaped actions.
-- **Config:** Set `env.train.env_type` and `env.eval.env_type` to the string value of your enum (e.g. `my_env`). Add any env-specific defaults or validation in `rlinf/config.py` (e.g. `validate_cfg` already has env-specific checks for ManiSkill, Behavior, etc.; add similar ones if needed).
-- **Install and docs:** For install/Docker/CI, use `.agents/skills/add-install-docker-ci-e2e` (add env to `SUPPORTED_ENVS`, install logic, e2e config). For example docs and RST, use `.agents/skills/add-example-doc-model-env`.
-
----
-
-## Style and contributing
-
-### Engineering and review preferences
-
-Use these preferences when designing, refactoring, implementing, or reviewing
-RLinf:
-
-- Preserve behavior before simplifying an implementation. Trace the complete
-  call path and compare every affected backend, driver, environment, and task
-  with the baseline. Treat a difference as intentional only when it is named,
-  documented, and tested. Do not call a parameter or field vestigial until its
-  builders, defaulting paths, serialization, and runtime consumers have been
-  checked.
-- Prefer small, explicit, composable abstractions. Give each concept one clear
-  responsibility and one stable name; avoid parallel vocabularies, convenience
-  APIs that conceal ownership, and dynamic machinery that a direct constructor
-  or method can express. Use a registry when independently developed components
-  need extension without adding branches to a central factory.
-- Design invalid states out of the API when practical. Resource ownership,
-  lifecycle order, partial-failure rollback, cleanup, and reconnect behavior
-  should be explicit. Cleanup must be idempotent, and a resource must have one
-  clear owner.
-- Optimize public APIs for developers who do not know the scheduler or hardware
-  internals. Keep the common local path direct; introduce remote placement,
-  process boundaries, and resource sharing only when the task requires them.
-  Public names, accepted input types, return types, and constructor forms must be
-  discoverable from type hints and docstrings.
-- Evaluate an abstraction through composition and extension, not only through
-  its smallest example. A new component should combine with existing components
-  without special-case wiring and should work through the same user-facing API
-  in local and remote configurations.
-- Review the whole affected surface, not only the newest diff. For cross-cutting
-  refactors, inspect every implementation, handle, builder, task, environment,
-  test, and documentation path that participates in the contract.
-- Verify contracts at the appropriate layers: focused regression tests,
-  reusable conformance suites, mock SDK tests, local/remote parity checks, and
-  end-to-end tests where hardware or integration behavior matters.
-- Keep docstrings and comments concise and natural. Document the public
-  contract, invariants, ownership, and non-obvious reasons; do not narrate the
-  implementation, repeat the signature, advertise the design, or mention an
-  absent dependency unless that fact changes how a caller uses the code.
-
-### Where a test goes
-
-`tests/unit_tests/` holds one file per core component, named for the component:
-`test_comm.py`, `test_worker.py`, `test_placement.py`, `test_channel.py`,
-`test_cluster_config.py`, `test_weight_syncer.py`, `test_robotics.py`,
-`test_real_env.py`, `test_data.py`, `test_models.py`, `test_utils.py`. A fix
-or a feature adds its cases to the file for the component it touches.
-
-Do not add a file per change. A new file needs a new component, not a new bug:
-`test_<the_fix_i_just_made>.py` is the thing this rule exists to prevent, and a
-reviewer should ask for it to be folded into the component's file. The same goes
-for a file named after a symptom, a platform, or a single function.
-
-Test the component through the contract a caller uses. A test that reaches past
-that contract into private attributes pins the implementation rather than the
-behaviour, and breaks on refactors that changed nothing a caller can see. Where
-a value is only observable inside the implementation -- a unit conversion, a
-wire format -- test it at the layer that owns it, and let the layer above assert
-what it can see.
-
-Mocks describe the world outside RLinf: vendor SDKs, hardware, remote services.
-`tests/robot_mocks/` is the shared set for robots. A test whose body is mostly
-mock setup is usually asserting that the mocks were called, which no future
-regression will fail. Prefer a real object, a fake at the process edge, or no
-test at all.
-
-Delete a test that has stopped earning its place. Coverage of a line is not the
-point; catching a regression is. If you cannot say which change would break a
-test, it is not protecting anything.
-
-### Writing and communication
-
-These rules apply to all language communication in the project, including
-documentation, issues and pull requests, review comments, design discussions,
-release notes, commit messages, and user-facing replies.
-
-- Treat narrative continuity as a basic requirement for every article and
-  substantive explanation, not a convention limited to code documentation. The
-  first prose sentence states directly what the page explains, enables, routes,
-  or lets the reader look up; do not postpone that purpose behind background.
-  The rest of the opening establishes the reader's situation, result, scope, and
-  reading order; each section connects to the state established before it;
-  paragraphs form a dependency chain; and examples are introduced and
-  interpreted. When teaching an interface, explain its operations in caller
-  order, including the relevant inputs, returns, and lifecycle effects. Indexes
-  and reference pages may do this compactly, but are not exempt from a clear
-  purpose and deliberate order.
-- Use natural, professional technical language. Write like an engineer explaining
-  a system clearly: neither casual developer chat nor formal bureaucracy. Avoid
-  colloquial phrases such as “看看长什么样”, “等需要时再看”, and “不用跟着改”, as
-  well as canned phrases such as “本文旨在”, “本节将”, and “进行相关操作”.
-- Explain before naming. Start from the concrete situation, state the relevant
-  distinction in ordinary language, introduce the exact class, method, field,
-  config, or API name, connect it to one example, and add edge cases only after
-  the normal path is clear. Headings must be understandable before their sections
-  are read; do not introduce an unexplained implementation term in a heading.
-- Guide readers from common use to implementation detail. Show the normal local
-  workflow first, then a common extension, composition with existing components,
-  remote or distributed use, and finally ownership or scheduler internals. Do
-  not make the table of contents mirror an internal class hierarchy.
-- Use examples that complete a real workflow. When explaining an extensible
-  abstraction, show how the new component composes with an existing one, how a
-  caller reads or controls it, and how it participates in the relevant task or
-  environment. An isolated class definition is not sufficient.
-- Treat technical accuracy as part of writing quality. Check signatures, types,
-  return values, lifecycle behavior, configuration names, and call sites against
-  the code. If an API accepts two related types, explain what each represents and
-  why both are accepted before using them interchangeably in examples.
-- Write English directly and precisely. Prefer concrete nouns and verbs, vary
-  sentence and paragraph shape, and avoid chatty transitions, promotional
-  summaries, and formulaic prose.
-- Write Chinese according to natural Chinese logic rather than mirroring English
-  clause order. Use clear, restrained written technical language, full-width
-  punctuation, and one space between Chinese and English terms or numbers.
-- Keep English and Chinese pages equivalent in meaning and structure without
-  translating sentence by sentence.
-- Keep familiar developer terms in English when translation sounds unusual or
-  makes the code harder to search, including `policy`, `key`, `value`, `mapping`,
-  `endpoint`, `worker`, `binding`, `wrapper`, `mock SDK`, `contract`, `shape`,
-  `schema`, and `API`. In RL prose, write `policy`, not “策略”.
-- Do not hard-wrap Chinese prose in RST. Keep each prose paragraph or prose list
-  item on one source line because reStructuredText renders internal newlines as
-  visible spaces. Preserve structural line breaks in headings, directives,
-  tables, and code blocks.
-- For documentation about adding tasks that run on physical hardware, use “New
-  Real-World Tasks” in English and “新增真机任务” in Chinese.
-
-Code identifiers, protocol fields, and literal log or error text still follow
-their source definitions. The voice rules in `docs/STYLE_GUIDE.md` apply to all
-project communication; its document structure and RST layout rules apply only to
-documentation.
-
-Google Python style; Ruff for lint/format; docstrings and type hints on public APIs. Logging: `rlinf.utils.logging.get_logger()` or Workers’ `self.log_*`. Config YAML: static values only; no computed fields; don’t overwrite user-facing fields in code. Commits: [Conventional Commits](https://www.conventionalcommits.org/), ~72-char subject, imperative; every commit `Signed-off-by:` (e.g. `git commit -s`) to certify compliance with the [Developer Certificate of Origin (DCO)](DCO). PRs: same title format, fill template, link issues; for perf-sensitive changes include test results. New behavior needs tests (unit or e2e); if e2e needs GPUs/hardware, document and skip appropriately in CI. Full details: [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## Further reading
-
-- [Docs (EN)](https://rlinf.readthedocs.io/en/latest/) · [中文](https://rlinf.readthedocs.io/zh-cn/latest/)
-- [Installation](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html) · [VLA quickstart](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html)
-- [Example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) · configs in `examples/embodiment/config/`, `examples/reasoning/`, etc.
-- Tutorials: [placement / cluster / YAML](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/index.html), [hybrid / disaggregated](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/execution_modes.html), [heterogeneous cluster](https://rlinf.readthedocs.io/en/latest/rst_source/guides/hetero.html), [extend (new env/model)](https://rlinf.readthedocs.io/en/latest/rst_source/extending/overview.html), [RL algorithms](https://rlinf.readthedocs.io/en/latest/rst_source/reference/index.html), [logger (metrics)](https://rlinf.readthedocs.io/en/latest/rst_source/guides/logger.html), [checkpoint resume](https://rlinf.readthedocs.io/en/latest/rst_source/guides/resume.html)
-- Evaluation: [Evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/index.html) · [LLMEvalKit](https://github.com/RLinf/LLMEvalKit)
-- [APIs](https://rlinf.readthedocs.io/en/latest/rst_source/reference/api/index.html) (actor, channel, cluster, placement, worker, env, data, …) · [FAQ](https://rlinf.readthedocs.io/en/latest/rst_source/resources/faq.html)
+This file tells coding agents how to build, test, and change RLinf so that the result passes CI and review. `CLAUDE.md` is a symlink to it. It holds only rules that apply across the repository: the contribution process is in [CONTRIBUTING.md](CONTRIBUTING.md), writing and documentation rules are in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md), and step-by-step workflows are skills under `.agents/skills/`. When this file disagrees with the code, the code is right; fix this file in the same change.
+
+RLinf is a distributed reinforcement learning framework for embodied and agentic AI. A run starts from one entry script that builds a Ray-backed `Cluster`, places the actor, rollout, env, reward, and agent components on hardware, launches each as a `Worker` group, and hands control to a runner that loops through rollout, reward, advantage, and update. Configuration is Hydra YAML. Training uses FSDP or Megatron; LLM rollout uses SGLang or vLLM. User-facing workflows such as installation, placement, multi-node setup, memory tuning, checkpoint resume, metrics, and evaluation are documented under `docs/source-en/rst_source/` (`start/`, `concepts/`, `guides/`, `extending/`, and `resources/faq.rst`).
+
+## Working with a human submitter
+
+- A human submits and answers for every change. Push, open or edit PRs and issues, and post review comments only when the user asks for that action and has seen the content.
+- Before starting a fix or feature, search open PRs and issues for the same work (`gh pr list --repo RLinf/RLinf --search "<keywords>"`) and tell the user about any overlap.
+- When a requirement is ambiguous or a constraint blocks the change, stop and ask. Do not leave `TODO(agent)` or similar placeholders in code; record known limitations in the PR description.
+- Report results as they are: which tests ran, on what hardware, and which failed or were skipped. State in the PR description that an AI assistant was used.
+
+## Setup and commands
+
+`requirements/install.sh` builds a uv virtual environment (`.venv` unless `--venv` says otherwise) for one target: `embodied`, `agentic`, or `docs`. `--platform` selects a non-NVIDIA accelerator (`amd`, `ascend`, `musa`, `kunlun`, `biren`).
+
+```bash
+bash requirements/install.sh embodied --model <model> --env <env>
+bash requirements/install.sh agentic --engine sglang            # or vllm
+bash requirements/install.sh --no-flash-attn embodied --env dummy  # the unit-test CI environment
+bash requirements/install.sh docs --venv .docs-venv
+```
+
+Lint runs through pre-commit: Ruff lint and format, plus Conventional Commit and sign-off checks on the commit message.
+
+```bash
+pre-commit install --hook-type commit-msg
+pre-commit run --all-files
+```
+
+CI runs each unit-test file in its own pytest process and stops Ray between files. `ray stop` is machine-wide, so on a shared host check `ray status` for other users' runs first.
+
+```bash
+export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+pytest tests/unit_tests/test_worker.py; ray stop
+pytest --doctest-modules rlinf/scheduler
+```
+
+Embodied end-to-end tests need GPUs and model assets. `<config>` is a file name in `tests/e2e_tests/embodied/` without `.yaml`; the optional second argument is the render backend (default `egl`). Use `run_async.sh` for async configs.
+
+```bash
+REPO_PATH=$(pwd) bash tests/e2e_tests/embodied/run.sh <config>
+```
+
+Docs must build in both languages with no new warnings:
+
+```bash
+sphinx-build -b html docs/source-en docs/build/html-en
+sphinx-build -b html docs/source-zh docs/build/html-zh
+```
+
+## Repository map
+
+- `rlinf/scheduler/` – `Cluster`, `Worker` and `WorkerGroup`, channels, collectives, placement, and the hardware and accelerator layer.
+- `rlinf/workers/` – actor (FSDP, Megatron), critic, rollout (HF, SGLang, vLLM), env, reward, inference, agent, and SFT workers.
+- `rlinf/runners/` – training and evaluation loops, one per task family (embodied sync and async, reasoning, agent, SFT, offline RL).
+- `rlinf/algorithms/` – advantage, loss, and reward registries.
+- `rlinf/models/` – model builders (`register_model`, `get_model`); embodied policies live in `models/embodiment/`.
+- `rlinf/envs/` – simulators in `sim/<name>/`, real-world envs in `real/`, and `get_env_cls()` in `__init__.py`.
+- `rlinf/robotics/` – robots, parts, and adapters behind the real-world envs.
+- `rlinf/hybrid_engines/` – FSDP, Megatron, SGLang, and vLLM integration and weight syncing.
+- `rlinf/config.py` – `build_config`, `validate_cfg`, and `SupportedModel`.
+- `examples/` – entry scripts and Hydra configs: `embodiment/`, `reasoning/`, `agent/`, `sft/`, `offline_rl/`, and others.
+- `evaluations/` – standalone embodied evaluation: `bash evaluations/run_eval.sh <benchmark> <config>`.
+- `tests/` – `unit_tests/`, `e2e_tests/`, `robot_mocks/` (fake vendor SDKs), and `parity_tests/`.
+- `requirements/`, `docker/`, `ray_utils/`, `toolkits/`, and `docs/` (Sphinx, `source-en/` and `source-zh/`).
+
+## Rules CI and reviewers enforce
+
+- **Accelerators.** Unit tests run on CPU, NVIDIA, AMD, Ascend, and MUSA runners. In code that runs on an accelerator, call `self.torch_platform` in a worker (`Worker.torch_platform` elsewhere) rather than `torch.cuda`, and keep tests runnable without a GPU unless the behavior under test needs one. Vendor-specific behavior belongs in `rlinf/scheduler/hardware/accelerators/`.
+- **Optional dependencies.** Simulators, robot SDKs, and model-specific packages are not installed in every environment. Import them inside the function or branch that uses them, as `get_env_cls()` does.
+- **Registration is per process.** A registry entry made in the driver does not reach Ray workers. In-tree components register at module import; out-of-tree code registers through `RLINF_EXT_MODULE` (see `extending/new_model_fsdp.rst`).
+- **Package layout.** Every directory under `rlinf/` has an `__init__.py` (`tests/unit_tests/check_missing_init.py`), and every Python file starts with the Apache-2.0 header `# Copyright <year> The RLinf Authors.` (Ruff `CPY001`).
+- **Ruff scopes.** Docstring rules (`D`) apply only to `rlinf/scheduler/`, and annotation rules (`ANN`) only to `rlinf/robotics/` and `rlinf/envs/real/`. Public APIs everywhere still need Google-style docstrings and type hints.
+- **Comments and docstrings.** Keep them short and written for someone reading the current code. State the contract, invariants, ownership, and any non-obvious reason; do not narrate the implementation, repeat the signature, or advertise the design. Leave out corner cases a caller never meets and the history of a fix (what broke, how it was found, what was tried); that belongs in the commit message or PR description. A corner case earns a comment only when the code would otherwise look wrong or invite a "simplification" that reintroduces the bug, and then one sentence says why.
+- **CI path filters.** `.github/workflows/ci-tests.yml` maps paths to test jobs, and its `filter-coverage-test` job fails when a changed `.py`, test, or root `.yaml` file matches no filter. When you add or move files, add them to the filter whose tests exercise them. The `CI Test` workflow, including unit tests, runs only on non-draft PRs labeled `run-ci`; lint and the PR title check run on every PR.
+- **Config YAML.** Values are static: no computed or dynamic values, and as few references to other fields as possible. Code never overwrites a field a user can set; derive values in `rlinf/config.py`. Start a new config from the closest current one on `main`.
+- **Logging and errors.** Use `self.log_info`, `self.log_warning`, and `self.log_error` in a `Worker` and `rlinf.utils.logging.get_logger()` elsewhere; never `print`. Assertion and exception messages say what was expected and what was found, not just the failed condition.
+- **Multi-node.** Each node exports a unique `RLINF_NODE_RANK` (and optionally `RLINF_COMM_NET_DEVICES`) before `ray start`, because Ray captures the environment when it starts. The entry script runs only on the head node.
+
+## Extending RLinf
+
+Each extension point is a registry or an enum. Register the component, select it in config, and follow the guide (under `docs/source-en/rst_source/`) for the full workflow, including install, Docker, CI, and docs.
+
+| Component | Register with | Selected by | Guide |
+|---|---|---|---|
+| Advantage | `@register_advantage(name)` in `rlinf/algorithms/registry.py` | `algorithm.adv_type` | `rlinf/algorithms/advantages.py` |
+| Policy loss | `@register_policy_loss(name)` in `rlinf/algorithms/registry.py` | `algorithm.loss_type` | `rlinf/algorithms/losses.py` |
+| Rule-based reward | `register_reward(name, cls)` in `rlinf/algorithms/rewards/__init__.py` | `reward.reward_type` | existing rewards in `rlinf/algorithms/rewards/` |
+| Model | `register_model(model_type, builder, category=...)` in `rlinf/models/__init__.py`; embodied policies subclass `BasePolicy` | `model.model_type` | `extending/new_model_fsdp.rst`, `extending/new_model_megatron.rst` |
+| Simulator | a `SupportedEnvType` member and a lazy-import branch in `get_env_cls()`; code in `rlinf/envs/sim/<name>/`; action formatting in `prepare_actions()` in `rlinf/envs/action_utils.py` | `env.train.env_type`, `env.eval.env_type` | `extending/new_env.rst` |
+| Robot or real-world task | `rlinf/robotics/` and `rlinf/envs/real/`, with fakes in `tests/robot_mocks/` | `env_type: real` | `extending/new_robot.rst`, `extending/new_task.rst` |
+| Task family | a runner in `rlinf/runners/` and an entry script in `examples/` | entry script | `concepts/execution_flow.rst` |
+
+## Tests
+
+- `tests/unit_tests/` has one file per component, named for it (`test_worker.py`, `test_placement.py`, `test_robotics.py`, and so on). Add cases to the file of the component you change. A new file needs a new component; a file named after a fix, symptom, platform, or single function belongs in the component's file.
+- Test through the contract a caller uses. A value visible only inside an implementation, such as a unit conversion or a wire format, is tested at the layer that owns it.
+- Mock only what lies outside RLinf: vendor SDKs, hardware, and remote services. Robot fakes live in `tests/robot_mocks/`, and e2e configs whose names contain `mock` run real-world envs against them. A test that is mostly mock setup only proves the mocks were called; use a real object, a fake at the process edge, or no test.
+- Mark a test that hosts parts in real scheduler workers with `@pytest.mark.placement`.
+- Delete a test when you cannot name the change that would make it fail.
+- New user-facing behavior needs a unit or e2e test. If the test needs GPUs, assets, or hardware that CI lacks, say so in the PR and ask the maintainers.
+
+## Design and review principles
+
+- Preserve behavior before simplifying. Trace the full call path and compare every affected backend, driver, environment, and task with the baseline; a difference is intentional only when it is named, documented, and tested. Before calling a field vestigial, check its builders, defaults, serialization, and runtime consumers.
+- Prefer small, explicit abstractions with one responsibility and one stable name. Avoid parallel vocabularies, convenience APIs that hide ownership, and dynamic machinery that a direct constructor or method can express. Use a registry when independently developed components must extend a central factory.
+- Design invalid states out of the API. Make ownership, lifecycle order, partial-failure rollback, and reconnect behavior explicit; give each resource one owner and make cleanup idempotent.
+- Keep the common local path direct. Introduce remote placement, process boundaries, and shared resources only when the task needs them, and keep the same API in local and remote configurations. Public names, accepted types, and return types must be discoverable from type hints and docstrings.
+- Judge an abstraction by how it composes with existing components, not by its smallest example.
+- Review the whole contract, not only the newest diff: every implementation, builder, task, environment, test, and document that participates in it.
+
+## Commits, PRs, and writing
+
+- Commit subjects follow Conventional Commits (`<type>(<scope>): <description>`, imperative, about 72 characters). Every commit carries a `Signed-off-by:` trailer (`git commit -s`), which certifies the [DCO](DCO) for the human author; use that person's Git identity, never an agent's.
+- PR titles are stricter than commit subjects: the description after `: ` is at most 50 characters, starts with a lowercase letter, has no trailing period, and is plain ASCII. The `create-pr` skill fills `.github/PULL_REQUEST_TEMPLATE.md` and checks both title and body with `python3 .agents/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>`. Include the commands you ran and their results; a change that can move training curves needs curves.
+- All project writing, including PR descriptions, review comments, and commit messages, follows the voice rules in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md); its page-structure and RST rules apply to documentation only. Change the English and Chinese docs together.
+
+## Skills
+
+Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a symlink to each. Use the one that matches the task:
+
+| Task | Skill |
+|---|---|
+| Open a PR, or fix a PR title or description | `create-pr` |
+| Review a PR against CONTRIBUTING.md | `review-pr` |
+| Write or restructure a docs page | `refine-docs` |
+| Check docs against the code and EN/ZH parity | `docs-check` |
+| Add the example page for a new model or env | `add-example-doc-model-env` |
+| Add a publication page | `add-publication-docs` |
+| Add install, Docker, CI, and e2e support for a new model or env | `add-install-docker-ci-e2e` |
+| Write or review `install.sh` and Dockerfile changes | `install-check` |
+| Build a model or env venv and run its e2e test | `test-install` |
+
+## Maintaining agent instructions
+
+- This file is loaded on every agent request. Keep it under 200 lines, and add a rule only when it applies across the repository and an agent would get it wrong without being told.
+- Put guidance for one area in that area's docs page, in a skill, or in an `AGENTS.md` inside the directory, with a `CLAUDE.md` symlink beside it.
+- Refer to code by symbol or search pattern instead of copying lists that drift, such as supported models, envs, or test files. Check every path, command, and API you add against the code.
+- When a new rule supersedes an old one, remove or merge the old one in the same change.
+- Add a skill only under `.agents/skills/`, with a folder name that matches the `name` in its `SKILL.md`, and add its symlink in `.claude/skills/`.
