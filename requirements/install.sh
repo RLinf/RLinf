@@ -73,6 +73,12 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Package names inserted into the pyproject.toml `exclude-dependencies` array
+# by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
+# version constraints), these make the resolver ignore the package entirely.
+# Use this for packages with no wheel for the target ABI, where an override
+# can't help (e.g. tensorflow-addons has no cp312 wheel for any version
+PLATFORM_EXCLUDE_DEPS=()
 # Extra flags appended to every `uv sync`. Set by configure_<platform>.
 PLATFORM_UV_SYNC_ARGS=()
 # Whether the venv exposes the interpreter's system site-packages.
@@ -97,7 +103,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren" "metax")
 TEST_BUILD=${TEST_BUILD:-0}
 UNINSTALL_FA4=${UNINSTALL_FA4:-0}
 # Set by select_flash_attn_variant: 1 when this venv keeps FA4 and skips FA2.
@@ -151,14 +157,15 @@ Common options:
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
                            ROCm), ascend (experimental, NPU), musa (experimental, Moore
-                           Threads), kunlun (experimental, Kunlunxin), or biren (experimental,
-                           SUPA). Sets UV_TORCH_BACKEND where applicable (auto / rocm<version> /
-                           cpu); export UV_TORCH_BACKEND yourself to bypass (e.g.
+                           Threads), kunlun (experimental, Kunlunxin), biren (experimental,
+                           SUPA), or metax (experimental, MetaX MACA). Sets UV_TORCH_BACKEND
+                           where applicable (auto / rocm<version> / cpu); export
+                           UV_TORCH_BACKEND yourself to bypass (e.g.
                            UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI and adds
-                           torch-npu in install_ascend_extras. MUSA and Biren install no torch:
-                           run inside the corresponding vendor runtime and reuse its torch stack
-                           via a --system-site-packages venv. KUNLUN clones the training-suite
-                           image's complete torch environment into --venv using
+                           torch-npu in install_ascend_extras. MUSA, Biren, and MetaX install
+                           no torch: run inside the corresponding vendor runtime and reuse its
+                           torch stack via a --system-site-packages venv. KUNLUN clones the
+                           training-suite image's complete torch environment into --venv using
                            /opt/clone-uv-env.sh, so torch/torch-kunlun and their dependencies
                            are reused.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
@@ -1013,6 +1020,32 @@ EOF
     echo "[install.sh] kunlun: using ${VENV_DIR} (python=${PYTHON_VERSION}, torch=${image_torch})."
 }
 
+configure_metax() {
+    # The CUDA-compatible MACA build of torch ships preinstalled in the
+    # MetaX MACA base image; it drives MACA devices through the standard
+    # torch.cuda API.
+    configure_vendor_torch_platform metax "is this a MetaX MACA container?"
+    PLATFORM_VENDOR_DISTS=(torch torchvision torchaudio flash_attn)
+    # No MACA build of TensorFlow exists; gr00t/starvla pull it in via
+    # their dependency trees. Resolve it for the solver, never write it
+    # into the venv: those models stay unsupported on metax until a MACA
+    # TensorFlow build lands.
+    PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "tensorflow" "--no-install-package" "tensorflow_datasets")
+    # scipy: the image's scipy requires numpy>=2, which the numpy<2 override
+    # makes unusable (tensorboard -> tensorflow -> scipy.sparse fails on
+    # np.long); pin a scipy that still accepts numpy<2.
+    # ray: pin 2.47.0, whose dashboard agent starts within the raylet's
+    # startup wait (2.5x can exceed it and crash the raylet). The MACA image
+    # ships no ray, so it must be installed, not just resolved.
+    # tensorflow: openvla==0.0.3 pins tensorflow==2.15.0, which has no
+    # cp312 wheels and the MACA image interpreter is Python 3.12. Override
+    # to the first TF line that ships cp312 wheels and still accepts
+    # numpy<2; it is never installed (--no-install-package above), this
+    # only unblocks the resolver for the openvla/starvla venvs.
+    PLATFORM_EXCLUDE_DEPS=("tensorflow-addons")
+    PLATFORM_EXTRA_OVERRIDES=("numpy<2" "scipy==1.13.1" "ray==2.47.0" "tensorflow==2.16.1")
+}
+
 
 # Envs that need a different torch than the project default (Isaac Sim /
 # OmniGibson need 2.5.1) declare it here, so configure_platform and
@@ -1049,6 +1082,7 @@ configure_platform() {
         musa)    configure_musa ;;
         kunlun)  configure_kunlun ;;
         biren)   configure_biren ;;
+        metax)   configure_metax ;;
     esac
     echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
@@ -1273,6 +1307,102 @@ else:
 EOF
 }
 
+install_metax_extras() {
+    # pymxsml is an optional SML binding shipped with the MACA SDK; the
+    # MetaxGPUManager falls back to parsing mx-smi when it is missing.
+    if ! python -c "import pymxsml" >/dev/null 2>&1; then
+        if compgen -G "/opt/maca/share/mxsml/pymxsml-*.whl" >/dev/null; then
+            echo "[install.sh] metax: installing pymxsml from the MACA SDK."
+            pip3 install /opt/maca/share/mxsml/pymxsml-*.whl \
+                || echo "[install.sh] metax: WARNING: pymxsml install failed; mx-smi fallback will be used." >&2
+        else
+            echo "[install.sh] metax: pymxsml wheel not found under /opt/maca/share/mxsml; mx-smi fallback will be used." >&2
+        fi
+    fi
+
+    # TF 2.16 (the first cp312 TensorFlow line, forced by the resolver
+    # override on the image's Python 3.12) ships protobuf 4-era generated
+    # code, while Ray pulls protobuf>=6 via googleapis-common-protos>=1.75.1
+    # (protobuf 6 gencode); either side crashes at import or in the ray
+    # dashboard. Pin the protobuf 4 line with matching gencode in venvs that
+    # actually installed TensorFlow (mirrors install_ascend_tensorflow_pins).
+    if python -c "import importlib.util as _u; exit(0 if _u.find_spec('tensorflow') else 1)" 2>/dev/null; then
+        echo "[install.sh] metax: pinning protobuf 4.25.3 + googleapis-common-protos<1.75.1 for TensorFlow"
+        uv pip install "protobuf==4.25.3" "googleapis-common-protos<1.75.1"
+    fi
+
+    # Nothing else to install; just fail here rather than mid-training.
+    python - <<'EOF'
+import importlib.metadata as metadata
+import sys
+
+# Checkable without a device, unlike `import torch`.
+try:
+    metadata.distribution("torch")
+except metadata.PackageNotFoundError:
+    print(
+        "[install.sh] --platform metax requires torch to be installed for "
+        "the image's interpreter. Run this inside a MetaX MACA container.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# The image's torch is CUDA-API-compatible, so the device check goes
+# through the standard torch.cuda interface.
+# Only possible where a device is visible, i.e. not in a docker build.
+try:
+    import torch
+
+    available = torch.cuda.is_available()
+except Exception as exc:
+    print(
+        f"[install.sh] metax: torch {metadata.version('torch')} present; "
+        f"skipping the device check ({type(exc).__name__}). This is expected "
+        "during a docker build.",
+        file=sys.stderr,
+    )
+else:
+    if available:
+        print(
+            f"[install.sh] metax: torch {torch.__version__}, "
+            f"{torch.cuda.device_count()} device(s)"
+        )
+    else:
+        print(
+            "[install.sh] WARNING: torch is installed but reports no "
+            "available MetaX device. At runtime that means the container "
+            "was started without the MetaX container runtime.",
+            file=sys.stderr,
+        )
+EOF
+
+    # These are renamed between torch releases (nvidia-cuda-runtime-cu12 ->
+    # nvidia-cuda-runtime -> ...), so sweep by prefix. nvidia-ml-py is a
+    # pure-python NVML binding others import defensively, so keep it. Any
+    # package whose version carries a '+metax...' local tag is a
+    # MetaX-adapted build from the base image and must never be removed.
+    local cuda_pkgs
+    cuda_pkgs=$(uv pip list --format json 2>/dev/null \
+        | python -c '
+import json
+import re
+import sys
+
+for pkg in json.load(sys.stdin):
+    name, version = pkg["name"], pkg["version"]
+    if "metax" in version.lower():
+        continue
+    if re.match(r"^(nvidia|cuda)[-_]", name) and name != "nvidia-ml-py":
+        print(name)
+' \
+        | tr '\n' ' ' || true)
+    if [ -n "$cuda_pkgs" ]; then
+        echo "[install.sh] metax: removing CUDA-only wheels: ${cuda_pkgs}"
+        # shellcheck disable=SC2086
+        uv pip uninstall $cuda_pkgs || true
+    fi
+}
+
 install_platform_extras() {
     case "$PLATFORM" in
         nvidia)  install_nvidia_extras ;;
@@ -1281,6 +1411,7 @@ install_platform_extras() {
         musa)    install_musa_extras ;;
         kunlun)  install_kunlun_extras ;;
         biren)   install_biren_extras ;;
+        metax)   install_metax_extras ;;
     esac
 }
 
@@ -1495,7 +1626,8 @@ apply_torch_override() {
     fi
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
-        && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ]; then
+        && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
 
@@ -1523,6 +1655,30 @@ apply_torch_override() {
             sed -i "/^override-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
         done
         echo "[install.sh] Added override-dependencies entries: ${PLATFORM_EXTRA_OVERRIDES[*]}"
+    fi
+
+    if [ ${#PLATFORM_EXCLUDE_DEPS[@]} -gt 0 ]; then
+        # Unlike override-dependencies, exclude-dependencies makes the resolver
+        # ignore the package entirely (no wheel lookup). Insert each entry after
+        # the opening bracket, in reverse so the final order matches the array
+        # order. The trap restores the original on exit.
+        if grep -q '^exclude-dependencies = \[' "$PYPROJECT_FILE"; then
+            local j
+            for (( j=${#PLATFORM_EXCLUDE_DEPS[@]}-1; j>=0; j-- )); do
+                local entry="${PLATFORM_EXCLUDE_DEPS[j]}"
+                sed -i "/^exclude-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
+            done
+        else
+            # No exclude-dependencies array yet; create one just above
+            # override-dependencies so [tool.uv] stays grouped.
+            local joined=""
+            local entry
+            for entry in "${PLATFORM_EXCLUDE_DEPS[@]}"; do
+                joined="${joined}${joined:+, }\"${entry}\""
+            done
+            sed -i "/^override-dependencies = \\[\$/i exclude-dependencies = [${joined}]" "$PYPROJECT_FILE"
+        fi
+        echo "[install.sh] Added exclude-dependencies entries: ${PLATFORM_EXCLUDE_DEPS[*]}"
     fi
 
     if [ "$needs_torch_rewrite" -eq 0 ]; then
