@@ -219,6 +219,11 @@ class AcceleratorManager:
         raise NotImplementedError
 
     @staticmethod
+    def setup_worker_torch():
+        """Install torch adaptations for a worker process on this accelerator."""
+        return None
+
+    @staticmethod
     def get_device_type() -> str:
         """Get the device type."""
         raise NotImplementedError
@@ -451,6 +456,13 @@ class AcceleratorUtil:
             manager = AcceleratorManager.manager_register[accelerator_type]
             return manager.get_torch_platform()
         raise ValueError(f"Unsupported accelerator type: {accelerator_type}")
+
+    @staticmethod
+    def setup_worker_torch(accelerator_type: AcceleratorType) -> None:
+        """Install torch adaptations for a worker process on this accelerator."""
+        manager = AcceleratorManager.manager_register.get(accelerator_type)
+        if manager is not None:
+            manager.setup_worker_torch()
 
     @staticmethod
     def get_device_type(accelerator_type: AcceleratorType) -> str | None:

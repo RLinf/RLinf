@@ -136,6 +136,7 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
             env_obs,
             image_size=self.image_size,
             num_view_slots=self.num_view_slots,
+            device=device,
         )
         images = [
             [v.to(device) if torch.is_tensor(v) else v for v in view_list]

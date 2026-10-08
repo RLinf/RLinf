@@ -38,8 +38,13 @@ def build_examples_from_env_obs(
     state_adapter_name: str,
     prepare_state_tensor: Callable[..., Optional[torch.Tensor]],
     include_state: bool = True,
+    image_device: Any = None,
 ) -> list[dict[str, Any]]:
-    """Convert env observations into starVLA 'examples' format."""
+    """Convert env observations into starVLA 'examples' format.
+
+    With ``image_device`` set, each sample's views stay uint8 tensors on that
+    device instead of PIL images, for the device preprocessing path.
+    """
     main_images = env_obs["main_images"]
     extra_view_images = env_obs.get("extra_view_images")
     wrist_images = env_obs.get("wrist_images")
@@ -55,23 +60,38 @@ def build_examples_from_env_obs(
             arr = np.clip(arr, 0, 255).astype(np.uint8)
         return Image.fromarray(arr)
 
-    main_images_np = to_numpy(main_images)
-    extra_view_images_np = (
-        to_numpy(extra_view_images) if extra_view_images is not None else None
-    )
-    wrist_images_np = to_numpy(wrist_images) if wrist_images is not None else None
+    if image_device is not None:
+
+        def to_views(x: Any) -> torch.Tensor:
+            t = x if torch.is_tensor(x) else torch.as_tensor(np.asarray(x))
+            return t.to(torch.uint8).to(image_device, non_blocking=True)
+
+        main_images_np = to_views(main_images)
+        extra_view_images_np = (
+            to_views(extra_view_images) if extra_view_images is not None else None
+        )
+        wrist_images_np = to_views(wrist_images) if wrist_images is not None else None
+    else:
+        main_images_np = to_numpy(main_images)
+        extra_view_images_np = (
+            to_numpy(extra_view_images) if extra_view_images is not None else None
+        )
+        wrist_images_np = to_numpy(wrist_images) if wrist_images is not None else None
+
+    def view(img):
+        return img if image_device is not None else to_pil(img)
 
     examples: list[dict[str, Any]] = []
     for i in range(main_images_np.shape[0]):
-        views: list[Image.Image] = [to_pil(main_images_np[i])]
+        views = [view(main_images_np[i])]
         for stack in (extra_view_images_np, wrist_images_np):
             if stack is None:
                 continue
             arr = stack[i]
             if arr.ndim == 4:
-                views.extend(to_pil(arr[v]) for v in range(arr.shape[0]))
+                views.extend(view(arr[v]) for v in range(arr.shape[0]))
             elif arr.ndim == 3:
-                views.append(to_pil(arr))
+                views.append(view(arr))
 
         sample: dict[str, Any] = {
             "image": views,

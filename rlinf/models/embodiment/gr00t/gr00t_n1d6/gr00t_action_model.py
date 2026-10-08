@@ -23,7 +23,6 @@ import torch
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
-from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
 from torch import nn
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
@@ -546,7 +545,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                     processor_cfg["statistics"] = json.load(f)
                 with open(processor_path / "embodiment_id.json", "r") as f:
                     processor_cfg["embodiment_id_mapping"] = json.load(f)
-                modality_transform = Gr00tN1d6Processor(**processor_cfg)
+                from rlinf.models.embodiment.gr00t.gr00t_n1d6.device_transform import (
+                    BatchedEagleProcessor,
+                )
+
+                modality_transform = BatchedEagleProcessor(**processor_cfg)
                 modality_config = getattr(modality_transform, "modality_configs", None)
             else:
                 processor = AutoProcessor.from_pretrained(
@@ -771,6 +774,8 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         if not decode_state:
             decode_state = None
 
+        if hasattr(self._modality_transform, "set_device"):
+            self._modality_transform.set_device(next(self.parameters()).device)
         normalized_input = self.apply_transforms(obs_copy)
 
         for key in normalized_input:

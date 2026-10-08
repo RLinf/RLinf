@@ -45,13 +45,15 @@ def _build_oft_vlm_inputs(
     examples: list[dict[str, Any]],
 ) -> dict[str, torch.Tensor]:
     """Build OFT prompt format by appending action-token placeholders."""
-    batch_images = [to_pil_preserve(example["image"]) for example in examples]
+    from ..utils.vlm_preprocess import build_device_vlm_inputs, get_train_image_size
+
+    device_views = bool(examples) and torch.is_tensor(examples[0]["image"][0])
+    if not device_views:
+        batch_images = [to_pil_preserve(example["image"]) for example in examples]
     instructions = [example["lang"] for example in examples]
 
-    from ..utils.vlm_preprocess import get_train_image_size
-
     train_obs_image_size = get_train_image_size(starvla_model)
-    if train_obs_image_size:
+    if not device_views and train_obs_image_size:
         batch_images = starvla_resize_images(
             batch_images, target_size=train_obs_image_size
         )
@@ -70,6 +72,10 @@ def _build_oft_vlm_inputs(
     instructions = [instruction + prompt_suffix for instruction in instructions]
 
     qwen_vl_interface = getattr(starvla_model, "qwen_vl_interface", None)
+    if device_views and hasattr(qwen_vl_interface, "processor"):
+        return build_device_vlm_inputs(
+            starvla_model, examples, qwen_vl_interface, instructions=instructions
+        )
     build_inputs = getattr(qwen_vl_interface, "build_qwenvl_inputs", None)
     # TODO: Whether this fallback is necessary. need further test
     if not callable(build_inputs):

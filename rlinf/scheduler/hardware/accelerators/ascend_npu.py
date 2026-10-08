@@ -15,6 +15,7 @@
 # Override of Ray's NPUAcceleratorManager
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/npu.py
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
@@ -22,6 +23,8 @@ from typing import TYPE_CHECKING, Optional
 from ray._private.accelerators.npu import NPUAcceleratorManager
 
 from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
@@ -31,6 +34,98 @@ if TYPE_CHECKING:
 @dataclass
 class AscendNPUProfileConfig(ProfileConfig):
     """Ascend NPU profiling configuration."""
+
+
+def boolean_attention_mask(attn_mask, _cache={}):
+    """The boolean form of a {0, -inf} float mask, or None if it carries biases.
+
+    Verifying the mask forces a device sync, and HF models pass one mask tensor
+    through every layer, so the verdict is cached per live tensor identity.
+    """
+    import weakref
+
+    import torch
+
+    if attn_mask is None or not attn_mask.dtype.is_floating_point:
+        return None
+    entry = _cache.get(id(attn_mask))
+    if entry is not None:
+        ref, version, result = entry
+        if ref() is attn_mask and version == attn_mask._version:
+            return result
+    floor = torch.finfo(attn_mask.dtype).min * 0.5
+    keep = attn_mask >= 0
+    result = keep if bool((keep | (attn_mask <= floor)).all()) else None
+    if len(_cache) >= 8:
+        _cache.clear()
+    _cache[id(attn_mask)] = (weakref.ref(attn_mask), attn_mask._version, result)
+    return result
+
+
+def install_npu_sdpa_mask_cast() -> bool:
+    """Cast {0, -inf} float SDPA masks to boolean so the NPU keeps its fused kernel.
+
+    torch-npu decomposes SDPA into matmul-softmax for floating masks (4-13x
+    slower); the additive causal masks HF models build are boolean in content.
+    Masks carrying real biases are left untouched. Idempotent; returns whether
+    the wrapper is installed.
+    """
+    import torch
+
+    functional = torch.nn.functional
+    if getattr(functional.scaled_dot_product_attention, "_rlinf_npu_mask_cast", False):
+        return True
+    if not (hasattr(torch, "npu") and torch.npu.is_available()):
+        return False
+
+    original = functional.scaled_dot_product_attention
+
+    def scaled_dot_product_attention(
+        query, key, value, attn_mask=None, *args, **kwargs
+    ):
+        if attn_mask is not None and attn_mask.dtype.is_floating_point:
+            floor = torch.finfo(attn_mask.dtype).min * 0.5
+            keep = attn_mask >= 0
+            if bool((keep | (attn_mask <= floor)).all()):
+                attn_mask = keep
+        return original(query, key, value, attn_mask, *args, **kwargs)
+
+    scaled_dot_product_attention._rlinf_npu_mask_cast = True
+    functional.scaled_dot_product_attention = scaled_dot_product_attention
+    logger.info("NPU SDPA float-mask cast installed (FlashAttentionScore path).")
+    return True
+
+
+def install_npu_fused_rotary() -> bool:
+    """Serve HF Llama's rotary embedding from ``npu_rotary_mul`` (3x faster).
+
+    Module-level, so every Llama-family model built afterwards picks it up.
+    Idempotent; returns whether the patch is installed.
+    """
+    import torch
+
+    if not (hasattr(torch, "npu") and torch.npu.is_available()):
+        return False
+    try:
+        import torch_npu
+        from transformers.models.llama import modeling_llama
+    except ImportError:
+        return False
+    if getattr(modeling_llama.apply_rotary_pos_emb, "_rlinf_npu_fused", False):
+        return True
+
+    def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+        cos = cos.unsqueeze(unsqueeze_dim)
+        sin = sin.unsqueeze(unsqueeze_dim)
+        return (
+            torch_npu.npu_rotary_mul(q, cos, sin),
+            torch_npu.npu_rotary_mul(k, cos, sin),
+        )
+
+    apply_rotary_pos_emb._rlinf_npu_fused = True
+    modeling_llama.apply_rotary_pos_emb = apply_rotary_pos_emb
+    logger.info("NPU fused rotary embedding installed for Llama models.")
+    return True
 
 
 @AcceleratorManager.register_manager(AcceleratorType.NPU)
@@ -120,6 +215,12 @@ class AscendNPUManager(AcceleratorManager):
     def get_device_type() -> str:
         """Get the device type."""
         return "npu"
+
+    @staticmethod
+    def setup_worker_torch():
+        """Install the fused-kernel SDPA and rotary-embedding routes."""
+        install_npu_sdpa_mask_cast()
+        install_npu_fused_rotary()
 
     @staticmethod
     def get_accel_pg_options(options: Optional["CollectiveGroupOptions"]):

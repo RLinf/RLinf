@@ -19,7 +19,8 @@ SFT cold-start, PPO training, evaluation, and visualization.
 
    RLinf supports GR00T-N1.5, GR00T-N1.6, and GR00T-N1.7. N1.6 introduced the Flow-Matching Action Head, FSDP-based training, and stronger cross-embodiment support. N1.7 further upgrades the official backbone to Cosmos-Reason2-2B / Qwen3-VL and expands the official universal state/action space. Version-specific differences are marked with **N1.5** / **N1.6** / **N1.7** labels.
    The AMD, Ascend, and MUSA instructions on this page cover N1.5 with LIBERO
-   or ManiSkill; validate N1.6, N1.7, and IsaacLab separately on those backends.
+   or ManiSkill, and Ascend additionally runs N1.6 and N1.7; validate the rest
+   separately on those backends.
 
 Overview
 --------
@@ -550,8 +551,9 @@ Run on Different Hardware Backends
 ----------------------------------
 
 NVIDIA uses the version-specific setup above. AMD ROCm, Huawei Ascend CANN, and
-Moore Threads MUSA support GR00T N1.5 on LIBERO and ManiSkill. N1.6, N1.7, and
-IsaacLab remain outside this non-NVIDIA recipe.
+Moore Threads MUSA support GR00T N1.5 on LIBERO and ManiSkill, and Ascend also
+supports N1.6 and N1.7 on LIBERO. N1.6 and N1.7 on AMD and MUSA, and IsaacLab
+on every non-NVIDIA backend, remain unvalidated.
 
 AMD ROCm
 ~~~~~~~~
@@ -590,17 +592,22 @@ Inside the published RLinf container, activate the N1.5 environment:
 
    source switch_env gr00t
 
-For a native installation, select N1.5 and LIBERO explicitly:
+For a native installation, select the version and LIBERO explicitly:
 
 .. code-block:: bash
 
    bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
    source .venv/bin/activate
 
+For N1.6 or N1.7, use ``--model gr00t_n1d6`` or ``--model gr00t_n1d7`` with
+``--env maniskill_libero``.
+
 Add ``--use-mirror`` for downloads from mainland China. The installer builds
 ``decord`` from source when needed on aarch64, applies the Ascend TensorFlow
-pins, and skips CUDA flash-attention. RLinf applies the N1.5 NPU patches when
-loading the model.
+pins, and skips CUDA flash-attention. RLinf applies each version's NPU patches
+when loading the model: fused RMSNorm and rotary kernels, flash-attention
+served from Transformers' Ascend integration, and an attention-mask layout the
+NPU kernel accepts.
 
 .. include:: _ascend_torch.rst
 

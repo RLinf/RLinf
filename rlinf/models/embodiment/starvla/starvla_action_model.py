@@ -31,6 +31,7 @@ from .dispatch import get_default_forward_handler, get_rollout_handler
 from .utils import action_space as action_space_utils
 from .utils import data_pipeline as data_pipeline_utils
 from .utils import state as state_utils
+from .utils import vlm_preprocess as vlm_input_utils
 from .utils.profile import (
     infer_hidden_size,
     infer_policy_profile,
@@ -222,8 +223,15 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         del return_obs
 
         # Build examples based on env_obs and state adapter.
+        # Device-tensor views feed the batched processor path; families whose
+        # builder needs PIL keep the host conversion.
+        iface = vlm_input_utils.resolve_vlm_interface(self.starvla_model)
+        image_device = (
+            next(self.parameters()).device if hasattr(iface, "processor") else None
+        )
         examples = data_pipeline_utils.build_examples_from_env_obs(
             env_obs=env_obs,
+            image_device=image_device,
             state_adapter_name=self.state_adapter_type,
             prepare_state_tensor=partial(
                 state_utils.prepare_state_tensor,

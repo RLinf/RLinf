@@ -17,6 +17,8 @@ from pathlib import Path
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from .npu_patches import apply_npu_patches, restore_npu_patches
+
 _SUPPORTED_EMBODIMENT_TAGS = (
     "behavior_r1_pro",
     "gr1",
@@ -50,57 +52,64 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         "gr00t.data.embodiment_tags.EMBODIMENT_TAG_MAPPING",
         "rlinf.models.embodiment.gr00t.embodiment_tags.EMBODIMENT_TAG_MAPPING",
     )
+
+    # Register the accelerator-specific patches (a no-op off Ascend) before
+    # applying, and restore the process-global ones once construction finishes.
+    npu_patch_state = apply_npu_patches(Patcher)
     Patcher.apply()
 
-    from gr00t.data.embodiment_tags import EmbodimentTag
+    try:
+        from gr00t.data.embodiment_tags import EmbodimentTag
 
-    from rlinf.models.embodiment.gr00t.gr00t_n1d6.gr00t_action_model import (
-        GR00T_N1_6_ForRLActionPrediction,
-    )
-    from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
-
-    embodiment_tag_by_cfg = {
-        "libero_panda": EmbodimentTag.LIBERO_PANDA,
-        "libero_franka": EmbodimentTag.LIBERO_FRANKA,
-        "isaaclab_franka": EmbodimentTag.ISAACLAB_FRANKA,
-        "maniskill_widowx": EmbodimentTag.MANISKILL_WIDOWX,
-        "robocasa_panda_omron": EmbodimentTag.ROBOCASA_PANDA_OMRON,
-        "gr1": EmbodimentTag.GR1,
-        "behavior_r1_pro": EmbodimentTag.BEHAVIOR_R1_PRO,
-        "new_embodiment": EmbodimentTag.NEW_EMBODIMENT,
-        "so101": EmbodimentTag.NEW_EMBODIMENT,
-        "so100": EmbodimentTag.NEW_EMBODIMENT,
-    }
-    emb_tag = embodiment_tag_by_cfg.get(cfg.embodiment_tag)
-    if emb_tag is None:
-        raise ValueError(
-            f"Invalid or unsupported embodiment tag: {cfg.embodiment_tag}. "
-            f"Supported tags are: {list(_SUPPORTED_EMBODIMENT_TAGS)}."
+        from rlinf.models.embodiment.gr00t.gr00t_n1d6.gr00t_action_model import (
+            GR00T_N1_6_ForRLActionPrediction,
         )
+        from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
 
-    model_path = Path(cfg.model_path)
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model path does not exist: {model_path}")
+        embodiment_tag_by_cfg = {
+            "libero_panda": EmbodimentTag.LIBERO_PANDA,
+            "libero_franka": EmbodimentTag.LIBERO_FRANKA,
+            "isaaclab_franka": EmbodimentTag.ISAACLAB_FRANKA,
+            "maniskill_widowx": EmbodimentTag.MANISKILL_WIDOWX,
+            "robocasa_panda_omron": EmbodimentTag.ROBOCASA_PANDA_OMRON,
+            "gr1": EmbodimentTag.GR1,
+            "behavior_r1_pro": EmbodimentTag.BEHAVIOR_R1_PRO,
+            "new_embodiment": EmbodimentTag.NEW_EMBODIMENT,
+            "so101": EmbodimentTag.NEW_EMBODIMENT,
+            "so100": EmbodimentTag.NEW_EMBODIMENT,
+        }
+        emb_tag = embodiment_tag_by_cfg.get(cfg.embodiment_tag)
+        if emb_tag is None:
+            raise ValueError(
+                f"Invalid or unsupported embodiment tag: {cfg.embodiment_tag}. "
+                f"Supported tags are: {list(_SUPPORTED_EMBODIMENT_TAGS)}."
+            )
 
-    config = Gr00tN1d6Config.from_pretrained(str(model_path))
-    _action_dim = cfg.get("action_dim")
-    if _action_dim is not None:
-        config.action_dim = _action_dim
+        model_path = Path(cfg.model_path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
 
-    processor_path = OmegaConf.select(cfg, "processor_path", default=None)
+        config = Gr00tN1d6Config.from_pretrained(str(model_path))
+        _action_dim = cfg.get("action_dim")
+        if _action_dim is not None:
+            config.action_dim = _action_dim
 
-    model = GR00T_N1_6_ForRLActionPrediction.from_pretrained(
-        config=config,
-        local_model_path=str(model_path),
-        pretrained_model_name_or_path=str(model_path),
-        torch_dtype=torch_dtype,
-        embodiment_tag=emb_tag,
-        denoising_steps=cfg.denoising_steps,
-        output_action_chunks=cfg.num_action_chunks,
-        obs_converter_type=cfg.obs_converter_type,
-        rl_head_config=cfg.rl_head_config,
-        processor_path=processor_path,
-    )
+        processor_path = OmegaConf.select(cfg, "processor_path", default=None)
+
+        model = GR00T_N1_6_ForRLActionPrediction.from_pretrained(
+            config=config,
+            local_model_path=str(model_path),
+            pretrained_model_name_or_path=str(model_path),
+            torch_dtype=torch_dtype,
+            embodiment_tag=emb_tag,
+            denoising_steps=cfg.denoising_steps,
+            output_action_chunks=cfg.num_action_chunks,
+            obs_converter_type=cfg.obs_converter_type,
+            rl_head_config=cfg.rl_head_config,
+            processor_path=processor_path,
+        )
+    finally:
+        restore_npu_patches(Patcher, npu_patch_state)
 
     model.to(torch_dtype)
     if cfg.rl_head_config.add_value_head and hasattr(model.action_head, "value_head"):
