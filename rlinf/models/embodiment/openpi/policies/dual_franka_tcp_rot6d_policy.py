@@ -50,7 +50,11 @@ def _rearrange_state(state: np.ndarray) -> np.ndarray:
 
 
 def _extract_extra_views(data: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Return (base, right_wrist) from stacked (inference) or split (training)."""
+    """Return (left_wrist, right_wrist) from stacked (inference) or split (training).
+
+    Env leftover cameras are sorted by name after popping the base/main view,
+    so extra[0] is ``left_wrist_*`` and extra[1] is ``right_wrist_*``.
+    """
     stacked = data.get("observation/extra_view_image")
     if stacked is not None:
         extra = np.asarray(stacked)
@@ -72,8 +76,8 @@ class DualFrankaTcpRot6dInputs(transforms.DataTransformFn):
         state = _rearrange_state(data["observation/state"])
         state = transforms.pad_to_dim(state, self.action_dim)
 
-        left_wrist_image = _parse_image(data["observation/image"])
-        base_image, right_wrist_image = _extract_extra_views(data)
+        base_image = _parse_image(data["observation/image"])
+        left_wrist_image, right_wrist_image = _extract_extra_views(data)
 
         inputs = {
             "state": state,
