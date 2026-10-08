@@ -75,6 +75,7 @@ env:
     total_num_envs: 64  # Total number of parallel environments for training
     max_steps_per_rollout_epoch: 512
     max_episode_steps: 512 # max episode steps for truncation
+    group_size: ${algorithm.group_size}
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     reset_gripper_open: False
