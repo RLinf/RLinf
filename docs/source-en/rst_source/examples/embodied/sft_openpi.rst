@@ -298,6 +298,64 @@ Launch:
 Logs and checkpoints go under ``runner.logger.log_path``, saved every
 ``runner.save_interval`` steps at ``.../checkpoints/global_step_<N>/``.
 
+Pi0.5 Base Checkpoint Download and Conversion
+--------------------------------------------
+
+The π₀.₅ JAX base checkpoint is available at
+``gs://openpi-assets/checkpoints/pi05_base``. The downloaded directory contains
+``params/`` and must be converted to the RLinf OpenPI layout before use as
+``actor.model.model_path``. Replace the YAML's ``/path/to/...`` placeholders
+with actual paths on your server.
+
+Run from the RLinf repository root in the OpenPI environment with JAX / Orbax
+installed. Downloading requires the Google Cloud CLI:
+
+.. code:: bash
+
+   mkdir -p /path/to/checkpoints/jax
+   gcloud storage cp --recursive \
+     gs://openpi-assets/checkpoints/pi05_base /path/to/checkpoints/jax/
+
+Prepare task-specific ``norm_stats.json`` first (see normalization statistics
+above). This example uses BEHAVIOR's 32-step horizon. ``--input-model`` must
+point to the directory containing ``params/``:
+
+.. code:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+     --input-model /path/to/checkpoints/jax/pi05_base \
+     --input-norm-stats /path/to/task/norm_stats.json \
+     --output-model /path/to/pi05_base_openpi \
+     --output-norm-stats /path/to/pi05_base_openpi/task/norm_stats.json \
+     --action-dim 32 \
+     --action-horizon 32 \
+     --max-token-len 200
+
+The converter defaults to π₀.₅; do not add ``--no-pi05``. Other π₀.₅ SFT
+recipes use the same workflow with ``--action-horizon`` matching their existing
+configs: 10 for ManiSkill RLT, and 20 for Franka RLT and dual-Franka. Conversion
+does not require changing action dimensions, image counts, or training settings
+in the YAML.
+
+Verify that the output directory contains ``model.safetensors`` and
+``config.json``. Replace the ``actor.model.model_path`` placeholder with that
+output directory and point ``actor.model.openpi_data.norm_stats_path`` at the
+statistics for the same task, for example:
+
+.. code:: yaml
+
+   actor:
+     model:
+       model_path: /path/to/pi05_base_openpi
+       openpi_data:
+         norm_stats_path: /path/to/pi05_base_openpi/task/norm_stats.json
+
+Checkpoints already in the RLinf OpenPI layout need no further conversion.
+Official OpenPI PyTorch checkpoints (with ``paligemma_with_expert.*`` keys)
+still require ``openpi_pytorch_to_openpi`` even when they contain
+``model.safetensors``. See ``rlinf/utils/ckpt_convertor/openpi/README.md`` for
+that command.
+
 Pi0.5 + BEHAVIOR-1K
 -------------------
 
@@ -331,7 +389,7 @@ The streaming loader reads only ``data:`` (no hidden defaults). Change at least:
 
    actor:
      model:
-       model_path: /path/to/pi05_base_pytorch_new   # new-format fp32 base weights
+       model_path: /path/to/pi05_base_openpi   # new-format fp32 base weights
        openpi:
          task: sft
        openpi_data:

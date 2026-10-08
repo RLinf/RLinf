@@ -69,8 +69,11 @@ actor:
   # path-free shape template). The experiment config supplies the filesystem
   # paths so the model template stays reusable.
   model:
-    # New-format fp32 base checkpoint (exactly what the reference trainer loads).
-    model_path: /path/to/pi05_base_pytorch_new
+    # Download JAX base: gs://openpi-assets/checkpoints/pi05_base
+    # Convert with jax_to_openpi; model_path must point to the local output
+    # directory containing RLinf OpenPI model.safetensors.
+    # Download/conversion steps: docs/source-en/rst_source/examples/embodied/sft_openpi.rst
+    model_path: /path/to/pi05_base_openpi
     openpi:
       task: sft
     openpi_data:
