@@ -527,12 +527,7 @@ class CollectEpisode(gym.Wrapper):
                 continue
             info_with_intervene = copy.deepcopy(raw_info)
 
-            if (
-                "intervene_flag" in info_with_intervene
-                and "intervene_action" in info_with_intervene
-            ):
-                if info_with_intervene["intervene_flag"].all():
-                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
+            np_action = self._action_for_lerobot_frame(np_action, info_with_intervene)
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)
             seg_id = int(seg_ids[i]) if i < len(seg_ids) else 0
             frame = LeRobotFrame.from_values(
@@ -686,6 +681,36 @@ class CollectEpisode(gym.Wrapper):
         if found_any:
             return is_success
         return self._episode_success[env_idx]
+
+    def _action_for_lerobot_frame(
+        self, np_action: np.ndarray | None, info: Any
+    ) -> np.ndarray | None:
+        """Return this frame's action, one action vector.
+
+        ``RealWorldEnv.chunk_step`` stacks every sub-step's expert action and
+        writes the flattened ``[num_envs, chunk * action_dim]`` vector onto the
+        last info only. LeRobot stores one action per frame. When that
+        flattened vector is present, keep the last sub-step, which is the step
+        this info belongs to. The slice and intervention flag come from
+        :meth:`LeRobotFrame._executed_action`.
+        """
+        if np_action is None or not isinstance(info, dict):
+            return np_action
+        step = np.asarray(np_action).reshape(-1)
+        step_dim = int(step.size)
+        if step_dim <= 0:
+            return np_action
+        has_intervention = "intervene_action" in info and "intervene_flag" in info
+        if has_intervention:
+            expert = self._to_numpy(info["intervene_action"])
+            expert_size = 0 if expert is None else int(np.asarray(expert).size)
+            if expert_size == 0 or expert_size % step_dim != 0:
+                return step
+        executed, intervened = LeRobotFrame._executed_action(step, info, step_dim)
+        if has_intervention:
+            info["intervene_action"] = np.asarray(executed, dtype=np.float32)
+            info["intervene_flag"] = np.array([intervened], dtype=bool)
+        return executed
 
     @staticmethod
     def _intervene_flag_from_info(info: Any) -> bool:

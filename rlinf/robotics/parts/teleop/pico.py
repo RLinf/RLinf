@@ -300,8 +300,11 @@ class PicoTcp(Pico):
         "end_effector": ActionKind.GRIPPER,
     }
 
-    #: Absolute pose commands are clipped to the environment action space.
+    #: Absolute pose commands are clipped into the environment action space.
     CLIPS_TO_ACTION_SPACE = True
+
+    #: Collection sends zeros while idle; those must not reach an absolute TCP env.
+    APPLIES_WHILE_IDLE = True
 
     def __init__(
         self,
@@ -312,6 +315,9 @@ class PicoTcp(Pico):
     ) -> None:
         super().__init__(gripper=gripper, side=side, **pico_config)
         self.hold_current_when_inactive = bool(hold_current_when_inactive)
+        # Absolute TCP collection sends zeros when idle. Those zeros must not
+        # reach the env, or the arm walks toward the origin after grip release.
+        self.APPLIES_WHILE_IDLE = self.hold_current_when_inactive
         self._holding_after_release = False
         self._last_command: Optional[np.ndarray] = None
 
@@ -379,15 +385,30 @@ class PicoTcp(Pico):
             return TeleopAction(parts=self._split(self._last_command), info=info)
 
         if self.hold_current_when_inactive:
-            # Leave the gripper unset so the policy command remains active.
+            # Keep driving after grip release so collection zeros cannot walk
+            # an absolute TCP env toward the origin. Latch the measured pose
+            # once: the last command is often still ahead of the arm, and
+            # chasing it is the drift after the operator lets go.
+            if self._holding_after_release:
+                self._last_command = self._pose_to_command(pose)
+                self._holding_after_release = False
+            hold_pose = (
+                self._last_command[:-1]
+                if self._last_command is not None
+                else self._pose_to_command(pose)[:-1]
+            )
             return TeleopAction(
-                parts={"arm": self._pose_to_command(pose)[:-1]}, info=info
+                parts={"arm": hold_pose},
+                driving=True,
+                info={**info, "pico_holding": True},
             )
 
         return TeleopAction(info=info)
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
-        """Return a pose command that holds the measured arm position."""
+        """Return a pose command that holds the arm where it was left."""
+        if self._last_command is not None:
+            return {"arm": self._last_command[:-1]}
         return {"arm": self._pose_to_command(self._measured_pose(context))[:-1]}
 
     def on_action_chunk_begin(self) -> None:

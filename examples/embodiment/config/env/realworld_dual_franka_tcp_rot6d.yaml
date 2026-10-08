@@ -16,7 +16,9 @@ teleop: none
 # euler'd without hitting gimbal on wrist pitch ≈ ±90°.
 use_relative_frame: False
 no_gripper: False
-main_image_key: left_wrist_0_rgb
+# LeRobot ``image`` comes from this key. Base/scene cam is the main view;
+# wrists land in extra_view_image-0 / extra_view_image-1 (sorted leftover names).
+main_image_key: base_0_rgb
 
 video_cfg:
   save_video: False
@@ -43,10 +45,12 @@ override_cfg:
   # transfer) don't get half-clipped — the old left-only-negative-y /
   # right-only-positive-y split silently snapped commanded xyz to 0 across
   # the entire handover region while leaving rot6d untouched.
+  # z min is 0.02 so a table-height TCP (about 0.08 m) is not clipped up to 0.1.
   ee_pose_limit_min:
-    - [0.3, -0.4, 0.1, -3.1416, -3.1416, -3.1416]
-    - [0.3, -0.4, 0.1, -3.1416, -3.1416, -3.1416]
+    - [0.3, -0.4, 0.02, -3.1416, -3.1416, -3.1416]
+    - [0.3, -0.4, 0.02, -3.1416, -3.1416, -3.1416]
+  # x max is 0.9 so a Robotiq TCP near the forward reach is not clipped at 0.8 m.
   ee_pose_limit_max:
-    - [0.8,  0.4, 0.7, 3.1416, 3.1416, 3.1416]
-    - [0.8,  0.4, 0.7, 3.1416, 3.1416, 3.1416]
+    - [0.9,  0.4, 0.7, 3.1416, 3.1416, 3.1416]
+    - [0.9,  0.4, 0.7, 3.1416, 3.1416, 3.1416]
   success_hold_steps: 1
