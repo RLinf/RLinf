@@ -46,12 +46,9 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         assert self.toolcall_parser is not None, (
             "toolcall_parser must be set in searchr1"
         )
-
-        # Inserting tool info requires re-encode token_ids, so the recompute_logprobs must be true.
-        if self.cfg.runner.task_type != "reasoning_eval":
-            assert self.cfg.algorithm.recompute_logprobs, (
-                "search r1 must use recompute_logprobs"
-            )
+        # recompute_logprobs is optional (P2). Base class already sets
+        # return_logprobs = not recompute_logprobs, so when recompute=False,
+        # sglang returns logprobs and truncate_after_stop keeps alignment.
 
     async def pre_process_query(
         self, prompt_ids: list[int], answer: str
@@ -70,7 +67,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         self, generate_context: dict[str, Any], output: MultiAgentLoopOutput
     ) -> MultiAgentLoopOutput:
         # Compute reward from all LLM-generated tokens (excluding tool responses)
-        final_response_text = self.tokenizer.decode(
+        final_response_text = self.agentic_tokenizer.decode(
             generate_context["all_llm_response_ids"]
         )
         reward_score = compute_score(
@@ -83,7 +80,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         # Store trajectory-level info for eval
         output.extra_fields["llm_reward"] = reward_score
         output.extra_fields["response_text"] = final_response_text
-        output.extra_fields["prompt_text"] = self.tokenizer.decode(
+        output.extra_fields["prompt_text"] = self.agentic_tokenizer.decode(
             generate_context.get("problem_prompt_ids", [])
         )
         # Per-turn details: each turn's input and output text
@@ -91,8 +88,12 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         for single_turn_output in output.single_turn_outputs:
             turns.append(
                 {
-                    "input": self.tokenizer.decode(single_turn_output.prompt_ids),
-                    "output": self.tokenizer.decode(single_turn_output.response_ids),
+                    "input": self.agentic_tokenizer.decode(
+                        single_turn_output.prompt_ids
+                    ),
+                    "output": self.agentic_tokenizer.decode(
+                        single_turn_output.response_ids
+                    ),
                 }
             )
         output.extra_fields["turns"] = turns
@@ -120,24 +121,36 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             turn_prompt_ids, sampling_params={"max_new_tokens": max_resp_len}
         )
         llm_response_ids: list[int] = generate_result["output_ids"]
+        llm_response_logprobs = (
+            generate_result["logprobs"] if self.return_logprobs else None
+        )
 
         if len(llm_response_ids) > max_resp_len:
             llm_response_ids = llm_response_ids[:max_resp_len]
-        llm_response_text = self.tokenizer.decode(llm_response_ids)
+            if llm_response_logprobs is not None:
+                llm_response_logprobs = llm_response_logprobs[:max_resp_len]
 
-        # split </search> manually
-        if "</search>" in llm_response_text:
-            llm_response_text = llm_response_text.split("</search>")[0] + "</search>"
-            llm_response_ids = self.tokenizer.encode(llm_response_text)
+        # Truncate at </search> in token space (no re-encode, keeps logprobs aligned).
+        # content_start_offset skips the reasoning block
+        content_start = self.agentic_tokenizer.content_start_offset(llm_response_ids)
+        llm_response_ids, matched = self.agentic_tokenizer.truncate_after_stop(
+            response_ids=llm_response_ids,
+            stop_str="</search>",
+            start=content_start,
+        )
+        if llm_response_logprobs is not None:
+            llm_response_logprobs = llm_response_logprobs[: len(llm_response_ids)]
+        llm_response_text = self.agentic_tokenizer.decode(llm_response_ids)
 
         llm_output = AgentLoopOutput(
             prompt_ids=copy.deepcopy(turn_prompt_ids),
             response_ids=llm_response_ids,
+            response_logprobs=llm_response_logprobs,
         )
         generate_context["all_llm_response_ids"] += llm_response_ids
 
         if len(llm_response_ids) == max_resp_len:
-            return False, None, None, llm_output
+            return False, None, llm_response_text, llm_output
 
         return True, llm_response_ids, llm_response_text, llm_output
 
@@ -167,22 +180,24 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             message = {"role": "tool", "content": tool_response.text}
             tool_messages.append(message)
 
-        # Tokenize tool responses
-        tool_response_ids: list[int] = self.tokenizer.encode(
-            tool_messages[0]["content"], add_special_tokens=False
+        # Tokenize tool response via agentic tokenizer (text mode = plain
+        # encode, model-agnostic). Returns the full next-turn prompt.
+        prefix_with_llm = turn_prompt_ids + llm_response_ids
+        next_turn_prompt_ids = self.agentic_tokenizer.get_tool_response_ids(
+            prefix_with_llm, tool_messages, mode="text"
         )
+        appended_len = len(next_turn_prompt_ids) - len(prefix_with_llm)
         max_tool_resp_len = self.max_resp_len - (
             len(turn_prompt_ids) + len(llm_response_ids) - len(problem_prompt_ids)
         )
-        if len(tool_response_ids) > max_tool_resp_len:
+        if appended_len > max_tool_resp_len:
             return False, None
 
-        next_turn_prompt_ids = turn_prompt_ids + llm_response_ids + tool_response_ids
         if self.print_outputs:
             # add anything you want to print
             trace_prints.append(
                 {
-                    "prompt": self.tokenizer.decode(turn_prompt_ids),
+                    "prompt": self.agentic_tokenizer.decode(turn_prompt_ids),
                     "generate": llm_response_text,
                     "tool_resp": tool_messages,
                 }
