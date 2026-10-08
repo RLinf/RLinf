@@ -17,6 +17,8 @@ import gc
 import inspect
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -2139,6 +2141,111 @@ class TestMultiChannelProcessGroupFailures:
 
         assert exc_info.value is error
         self._assert_failure_log(caplog, str(error))
+
+
+def _run_isolated(script: str, *args: str, timeout: float) -> None:
+    """Run ``script`` in a fresh interpreter so a native abort fails only this test."""
+    result = subprocess.run(
+        [sys.executable, "-c", script, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+class TestMultiChannelProcessGroupCreation:
+    """Tests that comm-queue threads can create process groups concurrently."""
+
+    def test_concurrent_creation_does_not_abort(self) -> None:
+        """Torch < 2.7 aborts here if a constructor registers without the GIL."""
+        _run_isolated(
+            """
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+
+import torch.distributed as dist
+from rlinf.scheduler.collective.multi_channel_pg import MultiChannelProcessGroup
+
+
+def create(worker):
+    for i in range(400):
+        group = MultiChannelProcessGroup._create_process_group(
+            backend="gloo", store=dist.HashStore(), world_size=1, rank=0,
+            group_name=f"race-{worker}-{i}", timeout=timedelta(seconds=10),
+        )
+        assert group.rank() == 0 and group.size() == 1
+        dist.destroy_process_group(group)
+
+
+with ThreadPoolExecutor(max_workers=8) as pool:
+    list(pool.map(create, range(8)))
+""",
+            timeout=300,
+        )
+
+    def test_creation_allows_crossed_peer_order(self, tmp_path) -> None:
+        """Each rank joins a second pair while its first pair is still waiting."""
+        _run_isolated(
+            """
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+import multiprocessing
+import sys
+import time
+
+import torch
+import torch.distributed as dist
+from rlinf.scheduler.collective.multi_channel_pg import MultiChannelProcessGroup
+
+def rank_main(rank, path):
+    # First attempts form a cycle: 0 waits for 1, 1 for 2, and 2 for 0.
+    outgoing = rank
+    incoming = (rank - 1) % 3
+
+    def connect(pair):
+        members = (pair, (pair + 1) % 3)
+        local_rank = members.index(rank)
+        group = MultiChannelProcessGroup._create_process_group(
+            backend="gloo", store=dist.FileStore(f"{path}/{pair}", 2),
+            rank=local_rank, world_size=2, group_name=f"pair-{pair}",
+            timeout=timedelta(seconds=10),
+        )
+        subgroup = MultiChannelProcessGroup._split_process_group(
+            group, backend="gloo", group_name=f"split-{pair}",
+            timeout=timedelta(seconds=10),
+        )
+        for current in (group, subgroup):
+            value = torch.tensor([rank + 1.0])
+            dist.all_reduce(value, group=current)
+            assert value.item() == sum(member + 1 for member in members)
+        dist.destroy_process_group(subgroup)
+        dist.destroy_process_group(group)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(connect, outgoing)
+        time.sleep(0.2)
+        second = pool.submit(connect, incoming)
+        first.result()
+        second.result()
+
+context = multiprocessing.get_context("fork")
+children = [context.Process(target=rank_main, args=(rank, sys.argv[1])) for rank in range(3)]
+try:
+    for child in children:
+        child.start()
+    for child in children:
+        child.join(20)
+    assert all(child.exitcode == 0 for child in children), [child.exitcode for child in children]
+finally:
+    for child in children:
+        if child.is_alive():
+            child.terminate()
+        child.join()
+""",
+            str(tmp_path),
+            timeout=75,
+        )
 
 
 if __name__ == "__main__":
