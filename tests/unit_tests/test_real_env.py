@@ -127,6 +127,7 @@ def _assert_legacy_transition(env) -> None:
         ("rlinf.envs.real.lekiwi", "LeKiwiDriveEnv", {}),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
         ("rlinf.envs.real.r2", "R2ReachEnv", {}),
+        ("rlinf.envs.real.ur5", "UR5ReachEnv", {}),
     ],
 )
 def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, override):

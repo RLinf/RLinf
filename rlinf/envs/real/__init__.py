@@ -41,6 +41,7 @@ _ROBOT_PACKAGES = (
     ".piper",
     ".r2",
     ".so101",
+    ".ur5",
     ".xsquare",
     ".yam",
 )
