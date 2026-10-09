@@ -19,6 +19,7 @@ import copy
 import inspect
 import json
 import random
+import shutil
 import time
 from types import SimpleNamespace
 from unittest import mock
@@ -61,6 +62,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
@@ -86,6 +88,131 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+def _scalar_trajectory(value: float) -> Trajectory:
+    """One-sample trajectory so checkpoint tests write only tiny files."""
+    return Trajectory(max_episode_length=1, rewards=torch.full((1, 1, 1), float(value)))
+
+
+def test_memory_checkpoint_indexes_only_cached_trajectories(tmp_path):
+    """A memory checkpoint records only the trajectories still held in cache."""
+    checkpoint = tmp_path / "checkpoint"
+    buffer = TrajectoryReplayBuffer(sample_window_size=2)
+    restored = None
+    try:
+        for value in range(3):
+            buffer.add_trajectories([_scalar_trajectory(value)])
+        original_stats = buffer.get_stats()
+        buffer.save_checkpoint(str(checkpoint))
+        assert buffer.get_stats() == original_stats
+
+        index = json.loads((checkpoint / "trajectory_index.json").read_text())
+        metadata = json.loads((checkpoint / "metadata.json").read_text())
+        assert index["trajectory_id_list"] == [1, 2]
+        assert metadata["size"] == 2
+        assert metadata["total_samples"] == 2
+        assert metadata["trajectory_counter"] == 3
+        assert len(list(checkpoint.glob("trajectory_*.pt"))) == 2
+
+        restored = TrajectoryReplayBuffer(sample_window_size=2)
+        restored.load_checkpoint(str(checkpoint))
+        assert restored.get_stats()["num_trajectories"] == 2
+        assert restored.get_stats()["total_samples"] == 2
+    finally:
+        buffer.close()
+        if restored is not None:
+            restored.close()
+        shutil.rmtree(checkpoint, ignore_errors=True)
+
+
+def test_auto_save_checkpoint_copies_current_window(tmp_path):
+    """An auto-save checkpoint copies the current window, not a stale sample window."""
+    source = tmp_path / "buffer"
+    checkpoint = tmp_path / "checkpoint"
+    buffer = TrajectoryReplayBuffer(
+        auto_save=True,
+        auto_save_path=str(source),
+        cache_size=3,
+        sample_window_size=2,
+    )
+    restored = None
+    try:
+        buffer.add_trajectories([_scalar_trajectory(0)])
+        buffer.add_trajectories([_scalar_trajectory(1)])
+        buffer.sample(1)
+        buffer.add_trajectories([_scalar_trajectory(2)])
+        original_stats = buffer.get_stats()
+        buffer.save_checkpoint(str(checkpoint))
+        assert buffer.get_stats() == original_stats
+
+        index = json.loads((checkpoint / "trajectory_index.json").read_text())
+        metadata = json.loads((checkpoint / "metadata.json").read_text())
+        assert index["trajectory_id_list"] == [1, 2]
+        assert metadata["size"] == 2
+        assert metadata["total_samples"] == 2
+        assert metadata["trajectory_counter"] == 3
+        assert len(list(checkpoint.glob("trajectory_*.pt"))) == 2
+
+        restored = TrajectoryReplayBuffer(sample_window_size=2)
+        restored.load_checkpoint(str(checkpoint))
+        assert restored.get_stats()["num_trajectories"] == 2
+        assert restored.get_stats()["total_samples"] == 2
+    finally:
+        buffer.close()
+        if restored is not None:
+            restored.close()
+        shutil.rmtree(source, ignore_errors=True)
+        shutil.rmtree(checkpoint, ignore_errors=True)
+
+
+def test_auto_save_checkpoint_resaves_restored_window(tmp_path):
+    """A resumed auto-save buffer copies old and newly written trajectories."""
+    source = tmp_path / "source"
+    first_checkpoint = tmp_path / "first_checkpoint"
+    resumed_source = tmp_path / "resumed_source"
+    second_checkpoint = tmp_path / "second_checkpoint"
+    buffer = TrajectoryReplayBuffer(
+        auto_save=True,
+        auto_save_path=str(source),
+        sample_window_size=2,
+    )
+    resumed = TrajectoryReplayBuffer(
+        auto_save=True,
+        auto_save_path=str(resumed_source),
+        sample_window_size=2,
+    )
+    restored = None
+    try:
+        for value in range(3):
+            buffer.add_trajectories([_scalar_trajectory(value)])
+        buffer.save_checkpoint(str(first_checkpoint))
+
+        resumed.load_checkpoint(str(first_checkpoint))
+        resumed.add_trajectories([_scalar_trajectory(3)])
+        resumed.save_checkpoint(str(second_checkpoint))
+
+        index = json.loads((second_checkpoint / "trajectory_index.json").read_text())
+        metadata = json.loads((second_checkpoint / "metadata.json").read_text())
+        assert index["trajectory_id_list"] == [2, 3]
+        assert metadata["size"] == 2
+        assert metadata["total_samples"] == 2
+        assert metadata["trajectory_counter"] == 4
+        assert len(list(second_checkpoint.glob("trajectory_*.pt"))) == 2
+
+        restored = TrajectoryReplayBuffer(sample_window_size=2)
+        restored.load_checkpoint(str(second_checkpoint))
+        assert restored.get_stats()["num_trajectories"] == 2
+        assert restored.get_stats()["total_samples"] == 2
+    finally:
+        buffer.close()
+        resumed.close()
+        if restored is not None:
+            restored.close()
+        shutil.rmtree(source, ignore_errors=True)
+        shutil.rmtree(first_checkpoint, ignore_errors=True)
+        shutil.rmtree(resumed_source, ignore_errors=True)
+        shutil.rmtree(second_checkpoint, ignore_errors=True)
 
 
 class TestD4RLDataset:
