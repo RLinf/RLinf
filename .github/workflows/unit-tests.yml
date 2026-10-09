@@ -200,34 +200,42 @@ jobs:
       - name: Create environment and install dependencies
         shell: bash
         run: |
-          uv venv
-          source .venv/bin/activate
-          uv build
-          export WHL_FILE=$(ls $(pwd)/dist/rlinf-*.whl)
-          export REQ_DIR=$(pwd)/requirements/agentic
-          cd
+          # Same interpreter and cache as the other embodied jobs. Ignore a
+          # runner uv.toml: a pinned torch backend such as cu124 has no
+          # torch 2.11 wheel, and installing from the repo would apply the
+          # pyproject override. The install below therefore leaves the checkout.
           unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
+          unset UV_TORCH_BACKEND
+          export UV_NO_CONFIG=1
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          uv pip install $WHL_FILE[embodied]
-          uv pip install $WHL_FILE[agentic]
-          env -u UV_TORCH_BACKEND uv pip install -r $REQ_DIR/vllm_0.8.5_cu12.txt
-          env -u UV_TORCH_BACKEND uv pip install --no-deps vllm==0.8.5
-          env -u UV_TORCH_BACKEND uv pip install -r $REQ_DIR/sglang_0.4.6.post5_cu12.txt
-          cd -
+          uv python install 3.11.14
+          uv venv --python 3.11.14
+          source .venv/bin/activate
+          uv build
+          whl_file=$(ls "$(pwd)"/dist/rlinf-*.whl)
+          req_dir="$(pwd)/requirements/agentic"
+          # Leave the checkout so uv does not treat this repo as the project
+          # being installed. `cd` with no argument depends on HOME.
+          (
+            cd /
+            uv pip install "${whl_file}[embodied]"
+            uv pip install "${whl_file}[agentic]"
+            uv pip install -r "${req_dir}/vllm_0.8.5_cu12.txt"
+            uv pip install --no-deps "vllm==0.8.5"
+            uv pip install -r "${req_dir}/sglang_0.4.6.post5_cu12.txt"
+          )
 
       - name: Check package import
         shell: bash
         timeout-minutes: 20
         run: |
           source .venv/bin/activate
-          export PACKAGE_PATH=$(pwd)
-          export PYTHONPATH=/workspace/dataset/Megatron-LM:$PYTHONPATH
-          cd
-          python $PACKAGE_PATH/tests/unit_tests/check_import_rlinf_package.py
-          cd -
+          package_path="$(pwd)"
+          export PYTHONPATH=/workspace/dataset/Megatron-LM:${PYTHONPATH:-}
+          cd /
+          python "${package_path}/tests/unit_tests/check_import_rlinf_package.py"
       
       - name: Clean up
         run: |
