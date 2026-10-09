@@ -71,6 +71,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         SO101Robot,
         Turtle2Config,
         Turtle2Robot,
+        UR5Config,
+        UR5Robot,
     )
 
 #: Public symbols grouped by defining module for lazy loading.
@@ -108,6 +110,8 @@ _MODULE_GROUPS: dict[str, tuple[str, ...]] = {
         "SO101Robot",
         "Turtle2Config",
         "Turtle2Robot",
+        "UR5Config",
+        "UR5Robot",
     ),
     ".adapters": (
         "LegacyObservationAdapter",
@@ -174,6 +178,8 @@ __all__ = [
     "SO101Robot",
     "Turtle2Config",
     "Turtle2Robot",
+    "UR5Config",
+    "UR5Robot",
     "VectorActionAdapter",
     "VectorActionBinding",
     "build_robot",

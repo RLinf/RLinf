@@ -124,6 +124,7 @@ def _assert_legacy_transition(env) -> None:
             {"step_frequency": 10000.0},
         ),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
+        ("rlinf.envs.real.ur5", "UR5ReachEnv", {}),
     ],
 )
 def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, override):

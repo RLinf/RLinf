@@ -25,6 +25,7 @@ from .gim_arm import GimArmConfig, GimArmRobot
 from .piper import PiperConfig, PiperRobot
 from .so101 import SO101Config, SO101Robot
 from .turtle2 import Turtle2Config, Turtle2Robot
+from .ur5 import UR5Config, UR5Robot
 
 __all__ = [
     "DOSW1Robot",
@@ -43,4 +44,6 @@ __all__ = [
     "SO101Robot",
     "Turtle2Config",
     "Turtle2Robot",
+    "UR5Config",
+    "UR5Robot",
 ]
