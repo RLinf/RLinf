@@ -90,9 +90,6 @@ agentic = [
     "mcp",
 ]
 embodied = [
-    # Floor matches the agentic engine pins. Without it, a wheel install
-    # outside this project backtracks to transformers 4.12 and tokenizers
-    # 0.10.3, which has no Python 3.11 wheel.
     "transformers>=4.51,<=4.57.6",
     "torchcodec",
     "peft",

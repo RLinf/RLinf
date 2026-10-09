@@ -2649,14 +2649,10 @@ install_dexbotic_model() {
             local dexbotic_path
             dexbotic_path=$(clone_or_reuse_repo DEXBOTIC_PATH "$VENV_DIR/dexbotic" https://github.com/dexmal/dexbotic.git -b 0.2.0)
             maybe_build_decord_from_source
-            # Dexbotic leaves tokenizers unpinned. A loose resolve selects
-            # tokenizers 0.10.3, which has no Python 3.11 wheel and then fails
-            # to build because the image has no Rust compiler. transformers
-            # 4.53.2 requires tokenizers>=0.21,<0.22, which ships wheels.
-            uv pip install -e "$dexbotic_path" "transformers==4.53.2" "tokenizers>=0.21,<0.22"
+            uv pip install -e "$dexbotic_path" "transformers==4.53.2"
 
             install_${ENV_NAME}_env
-            uv pip install "transformers==4.53.2" "tokenizers>=0.21,<0.22"
+            uv pip install transformers==4.53.2
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for Dexbotic model." >&2
