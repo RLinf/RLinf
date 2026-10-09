@@ -992,6 +992,48 @@ def test_every_env_reaches_a_real_connection_through_the_tree():
             dual.child("left").owner
 
 
+def test_ur5_arm_runs_its_lifecycle_against_the_fake_sdk():
+    """The UR5 driver opens, reads, commands, and closes over the fake SDK.
+
+    Declared without a node rank, the arm opens in this process, so the whole
+    contract runs without a scheduler: joints and tool pose come back the
+    declared shapes, an action carries only the joint target, and a repeated
+    disconnect stays idempotent.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms import Arm
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+        from rlinf.robotics.robots import UR5Robot
+
+        assert Arm.backend("ur_rtde") is UR5Arm
+        # The robot composes just the arm; no cameras are configured.
+        assert list(
+            UR5Robot.build(
+                robot_ip="127.0.0.1", node_rank=0, env_idx=0, worker_rank=0
+            ).children
+        ) == ["arm"]
+
+        arm = UR5Arm("127.0.0.1")
+        assert not arm.is_connected
+        arm.connect()
+        try:
+            assert arm.is_robot_up()
+            observation = arm.get_observation()
+            assert observation["arm_joint_position"].shape == (6,)
+            assert observation["tcp_pose"].shape == (7,)
+            sent = arm.send_action({"joint_position": np.zeros(6)})
+            assert sent["joint_position"].shape == (6,)
+            with pytest.raises(KeyError):
+                arm.send_action({"tcp_pose": np.zeros(7)})
+        finally:
+            arm.disconnect()
+        assert not arm.is_connected
+        # A second disconnect must not raise.
+        arm.disconnect()
+
+
 def _arm_with_a_camera_of_its_own(log):
     """Build an arm with an independently connected wrist camera."""
 

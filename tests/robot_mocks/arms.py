@@ -1038,6 +1038,80 @@ class FreeToolKinematics:
         return YamIKResult(reason is None, joints, 0.0, 0.0, 0.0, reason)
 
 
+def ur_rtde() -> dict[str, types.ModuleType]:
+    """Fake ``ur_rtde`` exposing the UR5 control and receive interfaces.
+
+    The real SDK ships two top-level modules, ``rtde_control`` and
+    ``rtde_receive``. Both report radians and metres, so a test can assert that
+    RLinf carries the tool pose as a quaternion. The receive side reports a
+    fixed reachable configuration; the control side records commands.
+    """
+
+    #: A reachable UR5 configuration, in radians.
+    HOME_Q = (0.0, -1.57, 1.57, -1.57, -1.57, 0.0)
+    #: Tool pose as the SDK reports it: ``[x, y, z]`` metres then an axis-angle
+    #: rotation vector in radians.
+    HOME_TCP_POSE = (0.4, 0.0, 0.3, 0.0, 0.0, 0.0)
+
+    class RTDEReceiveInterface:
+        def __init__(self, host, *_args, **_kwargs):
+            self.host = host
+            self._connected = True
+
+        def getActualQ(self):
+            return list(HOME_Q)
+
+        def getActualTCPPose(self):
+            return list(HOME_TCP_POSE)
+
+        def isConnected(self):
+            return self._connected
+
+        def disconnect(self):
+            self._connected = False
+
+        def reconnect(self):
+            self._connected = True
+            return True
+
+    class RTDEControlInterface:
+        def __init__(self, host, *_args, **_kwargs):
+            self.host = host
+            self._connected = True
+            #: Joint targets received, for assertions.
+            self.sent: list[list[float]] = []
+
+        def moveJ(self, q, *_args, **_kwargs):
+            self.sent.append(list(q))
+            return True
+
+        def servoJ(self, q, *_args, **_kwargs):
+            self.sent.append(list(q))
+            return True
+
+        def isConnected(self):
+            return self._connected
+
+        def disconnect(self):
+            self._connected = False
+
+        def reconnect(self):
+            self._connected = True
+            return True
+
+        def stopScript(self):
+            pass
+
+    return {
+        "rtde_control": module(
+            "rtde_control", RTDEControlInterface=RTDEControlInterface
+        ),
+        "rtde_receive": module(
+            "rtde_receive", RTDEReceiveInterface=RTDEReceiveInterface
+        ),
+    }
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return fake arm SDKs keyed by import name."""
     made = {"franky": franky()}
@@ -1045,4 +1119,5 @@ def modules(**_: Any) -> dict[str, types.ModuleType]:
     made.update(lerobot())
     made.update(pyagxarm())
     made.update(i2rt())
+    made.update(ur_rtde())
     return made
