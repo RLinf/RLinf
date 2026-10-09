@@ -107,6 +107,15 @@ class ClusterEnvVar(str, Enum):
     Set explicitly when workers do not share a filesystem with the launch node.
     """
 
+    SIMULATED_GPUS_PER_NODE = "SIMULATED_GPUS_PER_NODE"
+    """Test-only: chunk each node's accelerators into pseudo-nodes of this size.
+
+    Lets a single machine simulate a multi-node layout (e.g. an 8-GPU node as
+    two 4-GPU nodes) for placement-level cross-node tests. This overrides a
+    node-size fact at the cluster layer only; consumers (e.g. rollout
+    placement) still derive everything from the (pseudo-)node grouping.
+    """
+
 
 class PathEnvMergeMode(str, Enum):
     """Merge mode for path-like worker env vars."""
@@ -134,6 +143,7 @@ class Cluster:
         ClusterEnvVar.NET_EMULATION: "0",
         ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
         ClusterEnvVar.CODE_WORKING_DIR: "0",
+        ClusterEnvVar.SIMULATED_GPUS_PER_NODE: None,
     }
     PATH_LIKE_ENV_VARS = {
         "PYTHONPATH",
