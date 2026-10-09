@@ -385,5 +385,13 @@ class InferenceHTTPClient:
                 sock_read=None,
             ),
         ) as resp:
-            resp.raise_for_status()
+            # aiohttp's ClientResponseError is NOT picklable (CIMultiDictProxy
+            # headers), so Ray replaces the real cause with "can't pickle"
+            # when the failure crosses an RPC boundary. Re-raise as a
+            # serializable RuntimeError carrying the status and response body.
+            if resp.status >= 400:
+                text = await resp.text()
+                raise RuntimeError(
+                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
+                )
             return await resp.json()

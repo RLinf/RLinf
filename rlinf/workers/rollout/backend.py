@@ -23,11 +23,10 @@ This module must stay backend-neutral: only RLinf types and plain Python
 types appear in the signatures. Backend-specific imports belong in the
 backend implementations.
 
-Temporary state: `SGLangWorker` and `VLLMWorker` still duplicate their
-orchestration. This round deliberately does not merge them — that is a
-settled architecture decision (2026-09-10: keep two subclasses; the ABC is
-a cross-worker contract, not shared implementation). Trigger for revisiting:
-an explicit new proposal to unify the two worker classes.
+`SGLangWorker` and `VLLMWorker` intentionally keep separate orchestration;
+this ABC is the shared contract, not shared implementation. Unifying the
+two worker classes would be an explicit follow-up, not a consequence of
+this interface.
 """
 
 from abc import ABC, abstractmethod
