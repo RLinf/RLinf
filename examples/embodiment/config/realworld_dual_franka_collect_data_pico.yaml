@@ -144,9 +144,9 @@ env:
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
+      save_dir: ${runner.logger.log_path}
       resume: True
-      export_format: "lerobot"
+      export_format: [replay_buffer, lerobot_dataset]
       only_success: True
       robot_type: "dual_FR3"
       fps: 10

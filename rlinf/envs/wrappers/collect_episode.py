@@ -20,7 +20,10 @@ import json
 import os
 import pickle
 import re
+import shutil
+import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
 
@@ -31,7 +34,16 @@ import torch
 from rlinf.data.schema.embodied_types import LeRobotFrame
 from rlinf.utils.logging import get_logger
 
-_VALID_FORMATS = ("pickle", "lerobot")
+_FORMAT_ALIASES = {
+    "pickle": "pickle",
+    "pickle_episode": "pickle",
+    "lerobot": "lerobot",
+    "lerobot_dataset": "lerobot",
+}
+
+# Bound the queue while covering the measured multi-second v2 episode save.
+# 240 three-view 640x480 RGB frames occupy about 633 MiB, not a whole episode.
+_MAX_PENDING_FUTURES = 240
 
 
 _ID_DIR_RE = re.compile(r"^id_(\d+)$")
@@ -86,7 +98,9 @@ class CollectEpisode(gym.Wrapper):
 
     Args:
         env: The gymnasium environment to wrap.
-        save_dir: Directory for saving collected episode data.
+        save_dir: Parent directory for collected episode data. Pickle episodes
+            are written under ``save_dir/pickle_episode``, and LeRobot shards
+            under ``save_dir/lerobot_dataset``.
         rank: Worker rank for file naming in distributed settings. Defaults to 0.
         num_envs: Number of parallel environments. Defaults to 1.
         show_goal_site: Whether to show goal visualization in renders.
@@ -97,13 +111,25 @@ class CollectEpisode(gym.Wrapper):
         fps: FPS for LeRobot metadata. Defaults to 10.
         only_success: Whether to save only successful episodes. Defaults to False.
         finalize_interval: Call ``writer.finalize()`` every this many completed
-            episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
-            ``0`` disables periodic flushing (lerobot only). Defaults to 100.
-        resume: If True and ``export_format == "lerobot"``, reuse ``save_dir``
-            across sessions — new episodes land in a fresh ``id_{N}`` shard
-            (N = sum of episodes across pre-existing shards) so the in-progress
-            write never touches previously-finalized data. Ignored for pickle.
-            Defaults to False.
+            non-streaming LeRobot episodes to flush ``info.json`` and
+            ``stats.json`` as a checkpoint. Streaming LeRobot collection writes
+            each kept episode to its own shard and finalizes that shard after
+            the episode save finishes. ``0`` disables periodic non-streaming
+            flushing. Defaults to 100.
+        resume: If True and ``export_format == "lerobot"``, reuse the
+            ``lerobot_dataset`` directory across sessions — new episodes land
+            in a fresh ``id_{N}`` shard
+            (N = max existing shard id + 1) so the in-progress write never
+            touches previously-finalized or partially-written data. Ignored
+            for pickle. Defaults to False.
+        streaming: If True and ``export_format == "lerobot"``, write each
+            recorded frame to the LeRobot dataset immediately instead of
+            buffering the whole episode in memory. Images land on disk
+            per-frame via the dataset's async image writer, so RAM usage stays
+            flat regardless of episode length. Every recorded episode is saved
+            — successful or not — with the episode-level ``is_success`` flag
+            stamped at episode end, so ``only_success`` filtering does not
+            apply in this mode. Defaults to False.
     """
 
     def __init__(
@@ -119,19 +145,27 @@ class CollectEpisode(gym.Wrapper):
         only_success: bool = False,
         finalize_interval: int = 100,
         resume: bool = False,
+        streaming: bool = False,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
         else:
             self.env = env
 
-        if export_format not in _VALID_FORMATS:
+        canonical_format = _FORMAT_ALIASES.get(export_format)
+        if canonical_format is None:
             raise ValueError(
                 f"Unsupported export_format={export_format!r}, "
-                f"expected one of {_VALID_FORMATS}"
+                f"expected one of {tuple(_FORMAT_ALIASES)}"
             )
+        export_format = canonical_format
+        if streaming and export_format != "lerobot":
+            raise ValueError("streaming=True requires export_format='lerobot'")
 
-        self.save_dir = save_dir
+        format_dir = (
+            "pickle_episode" if export_format == "pickle" else "lerobot_dataset"
+        )
+        self.save_dir = os.path.join(save_dir, format_dir)
         self.rank = rank
         self.num_envs = num_envs
         self.show_goal_site = show_goal_site
@@ -140,9 +174,26 @@ class CollectEpisode(gym.Wrapper):
         self.fps = fps
         self.only_success = only_success
         self.finalize_interval = finalize_interval
+        self.streaming = streaming
+
+        # Streaming-mode per-env episode state. Only one previous observation
+        # (the pre-action frame) is kept per env; everything else is written
+        # to disk as it is recorded.
+        self._stream_prev_obs: list[Any] = [None] * num_envs
+        self._stream_frames: list[int] = [0] * num_envs
+        self._stream_invalid: list[bool] = [False] * num_envs
+        self._stream_success_marks: list[list[Optional[bool]]] = [
+            [] for _ in range(num_envs)
+        ]
+        self._stream_task: list[Optional[str]] = [None] * num_envs
+        # Per-shard JSONL sidecar holding per-frame state/actions (streaming).
+        self._stream_sidecar = None
+        self._stream_sidecar_episode_start = 0
+        self._stream_sidecar_root: Optional[str] = None
 
         self._preexisting_episode_count = 0
         self._next_shard_id = 0
+        self._save_futures_lock = Lock()
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
@@ -150,10 +201,10 @@ class CollectEpisode(gym.Wrapper):
                 (
                     self._preexisting_episode_count,
                     self._next_shard_id,
-                ) = _scan_existing_lerobot_shards(save_dir, rank)
+                ) = _scan_existing_lerobot_shards(self.save_dir, rank)
             self._episodes_written = (
                 self._preexisting_episode_count
-            )  # guarded by _lerobot_lock
+            )  # guarded by _save_futures_lock
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -161,10 +212,20 @@ class CollectEpisode(gym.Wrapper):
             thread_name_prefix=f"collect_episode_export_rank_{self.rank}",
         )
         self._futures: list[Future] = []
+        self._save_executor: Optional[ThreadPoolExecutor] = (
+            ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"collect_episode_save_rank_{self.rank}",
+            )
+            if export_format == "lerobot" and streaming
+            else None
+        )
+        self._save_futures: list[Future] = []
 
         # Per-environment episode state.
         self._episode_ids = [0] * num_envs
         self._episode_success = [False] * num_envs
+        self._episode_discarded = [False] * num_envs
         self._segment_ids: list[int] = [0] * num_envs
         self._global_step = 0
         # Holds the post-reset obs for auto-reset envs to prepend to next episode.
@@ -208,6 +269,12 @@ class CollectEpisode(gym.Wrapper):
         Returns:
             Tuple of (observation, info) from the underlying environment.
         """
+        if self.streaming:
+            self._drain_save_futures()
+            # Finish an in-progress recording before the next episode begins.
+            for env_idx in range(self.num_envs):
+                self._stream_end_episode(env_idx)
+
         self._buffers = [self._new_buffer() for _ in range(self.num_envs)]
         self._episode_success = [False] * self.num_envs
         self._pending_obs = [None] * self.num_envs
@@ -232,8 +299,12 @@ class CollectEpisode(gym.Wrapper):
         Returns:
             Tuple of (obs, reward, terminated, truncated, info).
         """
+        if self.streaming:
+            self._drain_save_futures()
         obs, reward, terminated, truncated, info = self.env.step(action, **kwargs)
         self._record_step(action, obs, reward, terminated, truncated, info)
+        if self.streaming:
+            info["recording_invalid"] = np.array(self._stream_invalid, dtype=bool)
         self._maybe_flush(terminated, truncated)
         return obs, reward, terminated, truncated, info
 
@@ -250,6 +321,8 @@ class CollectEpisode(gym.Wrapper):
         Returns:
             Tuple of (obs_list, rewards, terminations, truncations, infos_list).
         """
+        if self.streaming:
+            self._drain_save_futures()
         obs_list, rewards, terminations, truncations, infos_list = self.env.chunk_step(
             chunk_actions
         )
@@ -293,15 +366,53 @@ class CollectEpisode(gym.Wrapper):
     def close(self):
         if self._closed:
             return None
+        result = None
+        primary_error = None
+        env_close_attempted = False
+        try:
+            # Release robot hardware before potentially lengthy dataset finalization.
+            try:
+                if hasattr(self.env, "close"):
+                    env_close_attempted = True
+                    result = self.env.close()
+            except BaseException as error:
+                primary_error = error
+            self._finalize_lerobot()
+        except BaseException as error:
+            if primary_error is None:
+                primary_error = error
+        try:
+            self._wait_futures()
+        except BaseException as error:
+            if primary_error is None:
+                primary_error = error
+        try:
+            try:
+                if self._executor is not None:
+                    self._executor.shutdown(wait=True)
+                    self._executor = None
+            finally:
+                try:
+                    if not env_close_attempted and hasattr(self.env, "close"):
+                        result = self.env.close()
+                finally:
+                    try:
+                        self._wait_save_futures()
+                    except BaseException as error:
+                        if primary_error is None:
+                            primary_error = error
+                    try:
+                        if self._save_executor is not None:
+                            self._save_executor.shutdown(wait=True)
+                            self._save_executor = None
+                    except BaseException as error:
+                        if primary_error is None:
+                            primary_error = error
+        finally:
+            if primary_error is not None:
+                raise primary_error
         self._closed = True
-        self._finalize_lerobot()
-        self._wait_futures()
-        if self._executor is not None:
-            self._executor.shutdown(wait=True)
-            self._executor = None
-        if hasattr(self.env, "close"):
-            return self.env.close()
-        return None
+        return result
 
     def _new_buffer(self) -> dict[str, list]:
         return {
@@ -321,6 +432,10 @@ class CollectEpisode(gym.Wrapper):
         infos) get a leading reset entry; action-aligned fields (actions,
         segment_ids) stay empty and fill on the first regular step.
         """
+        if self.streaming:
+            self._stream_prev_obs[env_idx] = env_obs
+            self._stream_update_task(env_idx, env_obs)
+            return
         buf = self._buffers[env_idx]
         buf["observations"].append(env_obs)
         buf["rewards"].append(0.0)
@@ -377,8 +492,17 @@ class CollectEpisode(gym.Wrapper):
             record_reset = self._bool_from_env_info(env_info, "record_reset")
             pre_record = self._bool_from_env_info(env_info, "pre_record")
 
+            self._episode_discarded[env_idx] = self._bool_from_env_info(
+                env_info, "episode_discarded"
+            )
+            self._update_success(env_idx, env_info)
+
             if record_reset:
-                self._buffers[env_idx] = self._new_buffer()
+                if self.streaming:
+                    # Write-all: the recording being replaced is still saved.
+                    self._stream_end_episode(env_idx)
+                else:
+                    self._buffers[env_idx] = self._new_buffer()
                 self._episode_success[env_idx] = False
                 self._segment_ids[env_idx] = 0
                 self._seed_reset_frame(env_idx, env_obs)
@@ -390,16 +514,17 @@ class CollectEpisode(gym.Wrapper):
             if self._bool_from_env_info(env_info, "segment_advance"):
                 self._segment_ids[env_idx] += 1
 
-            buf = self._buffers[env_idx]
-            buf["observations"].append(env_obs)
-            buf["actions"].append(self._slice_copy(action, env_idx))
-            buf["rewards"].append(self._slice_copy(reward, env_idx))
-            buf["terminated"].append(self._slice_copy(terminated, env_idx))
-            buf["truncated"].append(self._slice_copy(truncated, env_idx))
-            buf["infos"].append(env_info)
-            buf["segment_ids"].append(int(self._segment_ids[env_idx]))
-
-            self._update_success(env_idx, self._slice_data(env_info, env_idx))
+            if self.streaming:
+                self._stream_record_frame(env_idx, action, env_obs, env_info)
+            else:
+                buf = self._buffers[env_idx]
+                buf["observations"].append(env_obs)
+                buf["actions"].append(self._slice_copy(action, env_idx))
+                buf["rewards"].append(self._slice_copy(reward, env_idx))
+                buf["terminated"].append(self._slice_copy(terminated, env_idx))
+                buf["truncated"].append(self._slice_copy(truncated, env_idx))
+                buf["infos"].append(env_info)
+                buf["segment_ids"].append(int(self._segment_ids[env_idx]))
 
     def _reset_env_buffer(self, env_idx: int) -> None:
         """Advance episode counter, clear the buffer, and carry over pending obs."""
@@ -425,6 +550,15 @@ class CollectEpisode(gym.Wrapper):
     def _maybe_flush(self, terminated, truncated) -> None:
         """Save finished episodes and reset their buffers."""
         for env_idx in range(self.num_envs):
+            if self.streaming:
+                if self._scalar_flag(terminated, env_idx) or self._scalar_flag(
+                    truncated, env_idx
+                ):
+                    self._stream_end_episode(env_idx)
+                continue
+            if self._episode_discarded[env_idx]:
+                self._reset_env_buffer(env_idx)
+                continue
             is_success = self._get_episode_success(self._buffers[env_idx], env_idx)
             done_by_term = self._scalar_flag(terminated, env_idx)
             done_by_trunc = self._scalar_flag(truncated, env_idx)
@@ -477,6 +611,259 @@ class CollectEpisode(gym.Wrapper):
             self._submit(
                 self._write_pickle, os.path.join(self.save_dir, filename), episode_data
             )
+
+    # ------------------------------------------------------------------
+    # Streaming mode (lerobot only)
+    # ------------------------------------------------------------------
+
+    def _stream_update_task(self, env_idx: int, env_obs: Any) -> None:
+        """Track the latest task description carried by an observation."""
+        if not isinstance(env_obs, dict) or "task_descriptions" not in env_obs:
+            return
+        desc = env_obs["task_descriptions"]
+        if isinstance(desc, (list, tuple)):
+            desc = desc[env_idx] if len(desc) == self.num_envs else desc[0]
+        self._stream_task[env_idx] = str(desc)
+
+    def _stream_record_frame(
+        self, env_idx: int, action: Any, env_obs: Any, env_info: Any
+    ) -> None:
+        """Convert one recorded step into a LeRobot frame and write it out.
+
+        Mirrors the per-step transformation of ``_buffer_to_lerobot_ep``:
+        the frame pairs the *pre-action* observation with this step's action,
+        overwrites the action with ``intervene_action`` on fully-intervened
+        steps, and skips steps missing a state or action.
+        """
+        if self._stream_invalid[env_idx]:
+            return
+        self._drain_futures()
+        if len(self._futures) >= _MAX_PENDING_FUTURES:
+            self._stream_invalid[env_idx] = True
+            self.logger.error(
+                "Recording queue full (%s/%s); episode %s recording stopped. "
+                "Teleoperation continues. Its recorded prefix will be isolated "
+                "outside the training dataset. End this recording and start a new one "
+                "after the writer catches up.",
+                len(self._futures),
+                _MAX_PENDING_FUTURES,
+                self._episode_ids[env_idx],
+            )
+            return
+        prev_obs = self._stream_prev_obs[env_idx]
+        self._stream_prev_obs[env_idx] = env_obs
+        self._stream_update_task(env_idx, env_obs)
+        self._stream_success_marks[env_idx].append(
+            self._extract_success_from_info(env_info)
+        )
+
+        np_action = self._to_numpy(self._slice_data(action, env_idx))
+        if (
+            isinstance(env_info, dict)
+            and "intervene_flag" in env_info
+            and "intervene_action" in env_info
+            and np.asarray(env_info["intervene_flag"]).all()
+        ):
+            np_action = self._to_numpy(env_info["intervene_action"])
+
+        frame = LeRobotFrame.from_values(
+            observation=prev_obs,
+            action=np_action,
+            task=self._stream_task[env_idx] or "unknown task",
+            intervene_flag=self._intervene_flag_from_info(env_info),
+            segment_id=int(self._segment_ids[env_idx]),
+        )
+        if frame is None:
+            return
+
+        # ``is_success``/``done`` are stamped episode-level by ``save_episode``
+        # once the outcome is known.
+        self._submit(
+            self._stream_add_frame, frame.to_dict(episode_success=False, done=False)
+        )
+        self._stream_frames[env_idx] += 1
+
+    def _stream_episode_success(self, env_idx: int) -> bool:
+        """Episode success from per-step marks plus the sticky flag.
+
+        Same precedence as ``_get_episode_success`` without the info buffer.
+        """
+        if self._episode_success[env_idx]:
+            return True
+        found_any = False
+        is_success = False
+        for mark in self._stream_success_marks[env_idx]:
+            if mark is not None:
+                found_any = True
+                is_success = is_success or mark
+        if found_any:
+            return is_success
+        return self._episode_success[env_idx]
+
+    def _stream_end_episode(self, env_idx: int) -> None:
+        """Close the in-progress streaming episode and start a fresh one."""
+        if self._stream_frames[env_idx] > 0:
+            if self._episode_discarded[env_idx]:
+                self._submit(self._stream_discard_episode)
+            else:
+                self._submit(
+                    self._stream_finish_episode,
+                    self._stream_episode_success(env_idx)
+                    and not self._stream_invalid[env_idx],
+                    self._stream_invalid[env_idx],
+                )
+        self._episode_discarded[env_idx] = False
+        self._episode_ids[env_idx] += 1
+        self._episode_success[env_idx] = False
+        self._segment_ids[env_idx] = 0
+        self._stream_frames[env_idx] = 0
+        self._stream_invalid[env_idx] = False
+        self._stream_success_marks[env_idx] = []
+        # Auto-reset envs carry the post-reset obs over as the next episode's
+        # first frame, mirroring ``_reset_env_buffer``.
+        self._stream_prev_obs[env_idx] = self._pending_obs[env_idx]
+        self._pending_obs[env_idx] = None
+        self._pending_info[env_idx] = None
+
+    def _stream_discard_episode(self) -> None:
+        """Discard only the current unpublished episode, after queued frames."""
+        with self._lerobot_lock:
+            if self._lerobot_writer is None or self._lerobot_writer.dataset is None:
+                return
+            dataset = self._lerobot_writer.dataset
+            # LeRobot v2 only removes images when its image_writer is enabled;
+            # our streaming writer writes PNGs directly and disables that queue.
+            for key in dataset.meta.camera_keys:
+                paths = dataset.episode_buffer[key]
+                if paths:
+                    shutil.rmtree(Path(paths[0]).parent)
+            dataset.clear_episode_buffer()
+            if self._stream_sidecar is not None:
+                self._stream_sidecar.seek(self._stream_sidecar_episode_start)
+                self._stream_sidecar.truncate()
+                self._stream_sidecar.flush()
+            self.logger.info("Discarded the current unpublished episode")
+
+    def _stream_add_frame(self, frame: dict[str, Any]) -> None:
+        """Writer-thread entry: create the dataset lazily, then add one frame."""
+        with self._lerobot_lock:
+            writer = self._ensure_lerobot_writer(frame)
+            writer.add_frame(frame)
+            self._write_stream_sidecar(writer, frame)
+
+    def _write_stream_sidecar(self, writer: Any, frame: dict[str, Any]) -> None:
+        """Append the frame's small fields to a per-shard JSONL sidecar.
+
+        Called under ``_lerobot_lock`` right after ``add_frame``. Images are
+        already durable per-frame, but ``state``/``actions`` only reach disk
+        when ``save_episode`` finishes writing the (image-embedding) parquet,
+        which can take minutes for long episodes; the sidecar makes the joint
+        data crash-safe and cheap to read for tooling such as hand-eye
+        calibration.
+        """
+        dataset = writer.dataset
+        if dataset is None:
+            return
+        root = getattr(dataset, "root", None)
+        if root is None:
+            return
+        if self._stream_sidecar_root != str(root):
+            self._stream_sidecar_close()
+            self._stream_sidecar = open(
+                os.path.join(str(root), "stream_frames.jsonl"), "a"
+            )
+            self._stream_sidecar_root = str(root)
+        episode_index = int(dataset.meta.total_episodes)
+        frame_index = int(dataset.episode_buffer["size"]) - 1
+        line = {
+            "episode": episode_index,
+            "frame": frame_index,
+            "state": np.asarray(frame["state"]).tolist(),
+            "actions": np.asarray(frame["actions"]).tolist(),
+        }
+        if frame_index == 0:
+            self._stream_sidecar_episode_start = self._stream_sidecar.tell()
+        self._stream_sidecar.write(json.dumps(line) + "\n")
+        self._stream_sidecar.flush()
+
+    def _stream_sidecar_close(self) -> None:
+        if self._stream_sidecar is not None:
+            self._stream_sidecar.close()
+            self._stream_sidecar = None
+            self._stream_sidecar_root = None
+
+    def _stream_finish_episode(
+        self, is_success: bool, recording_invalid: bool = False
+    ) -> None:
+        """Writer-thread entry: detach kept episodes for background saving."""
+        with self._lerobot_lock:
+            if self._lerobot_writer is None or self._lerobot_writer.dataset is None:
+                return
+            if recording_invalid:
+                self._stream_isolate_invalid_episode()
+                return
+            writer = self._lerobot_writer
+            self._stream_sidecar_close()
+            self._lerobot_writer = None
+        self._submit_save(self._save_detached_stream_episode, writer, is_success)
+
+    def _stream_isolate_invalid_episode(self) -> None:
+        """Move the active invalid episode out of the training shard."""
+        dataset = self._lerobot_writer.dataset
+        invalid_root = dataset.root / "invalid_episodes"
+        invalid_root.mkdir(exist_ok=True)
+        archive = tempfile.mkdtemp(prefix="overflow_", dir=invalid_root)
+        buffer = dataset.episode_buffer
+        # Preserve the contiguous recorded prefix for diagnosis, but never
+        # publish it as a regular LeRobot training episode.
+        for key in dataset.meta.camera_keys:
+            if not buffer[key]:
+                continue
+            image_dir = os.path.dirname(buffer[key][0])
+            destination = os.path.join(archive, key)
+            shutil.move(image_dir, destination)
+            buffer[key] = [
+                os.path.join(destination, os.path.basename(path))
+                for path in buffer[key]
+            ]
+        with open(os.path.join(archive, "frames.pkl"), "wb") as frames:
+            pickle.dump(buffer, frames)
+        with open(dataset.root / "recording_errors.jsonl", "a") as errors:
+            errors.write(
+                json.dumps(
+                    {
+                        "episode_index": dataset.meta.total_episodes,
+                        "reason": "recording_queue_overflow",
+                        "saved_frames": buffer["size"],
+                        "archive": archive,
+                    }
+                )
+                + "\n"
+            )
+        if self._stream_sidecar is not None:
+            self._stream_sidecar.seek(self._stream_sidecar_episode_start)
+            self._stream_sidecar.truncate()
+            self._stream_sidecar.flush()
+        dataset.clear_episode_buffer()
+        self.logger.error("Isolated an incomplete episode at %s", archive)
+
+    def _save_detached_stream_episode(self, writer: Any, is_success: bool) -> None:
+        """Save and finalize one detached streaming shard."""
+        primary_error = None
+        try:
+            writer.save_episode(is_success=is_success)
+            with self._save_futures_lock:
+                self._episodes_written += 1
+        except BaseException as error:
+            primary_error = error
+        try:
+            if writer.dataset is not None:
+                writer.finalize()
+        except BaseException as error:
+            if primary_error is None:
+                primary_error = error
+        if primary_error is not None:
+            raise primary_error
 
     def _buffer_to_lerobot_ep(
         self, buf: dict, env_idx: int, is_success: bool
@@ -554,8 +941,13 @@ class CollectEpisode(gym.Wrapper):
         steps[-1]["done"] = np.array([True], dtype=bool)
         return steps
 
-    def _ensure_lerobot_writer(self, ep_data: dict):
-        """Get-or-create the LeRobot writer. Must be called under ``_lerobot_lock``."""
+    def _ensure_lerobot_writer(self, first_frame: dict):
+        """Get-or-create the LeRobot writer. Must be called under ``_lerobot_lock``.
+
+        Args:
+            first_frame: The episode's first frame dict, used to derive the
+                dataset schema when the dataset does not exist yet.
+        """
         from rlinf.data.storage.lerobot import LeRobotDatasetWriter
 
         if self._lerobot_writer is None:
@@ -563,7 +955,7 @@ class CollectEpisode(gym.Wrapper):
         shard_id = self._next_shard_id
 
         if self._lerobot_writer.dataset is None:
-            first = ep_data[0]
+            first = first_frame
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
@@ -572,6 +964,10 @@ class CollectEpisode(gym.Wrapper):
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
+                # Image writes run in the existing export thread, never in
+                # forked workers inheriting live camera/CAN descriptors.
+                image_writer_processes=0,
+                image_writer_threads=0,
                 image_shape=first["image"].shape if "image" in first else None,
                 state_dim=int(first["state"].shape[-1]),
                 action_dim=int(first["actions"].shape[-1]),
@@ -606,22 +1002,45 @@ class CollectEpisode(gym.Wrapper):
 
     def _write_lerobot_episode(self, ep_data: dict) -> None:
         with self._lerobot_lock:
-            writer = self._ensure_lerobot_writer(ep_data)
+            writer = self._ensure_lerobot_writer(ep_data[0])
             writer.add_episode(ep_data)
-            self._episodes_written += 1
-            count = self._episodes_written
-            if self.finalize_interval > 0 and count % self.finalize_interval == 0:
+            with self._save_futures_lock:
+                self._episodes_written += 1
+                count = self._episodes_written
+            if (
+                not self.streaming
+                and self.finalize_interval > 0
+                and count % self.finalize_interval == 0
+            ):
                 writer.finalize()
 
     def _finalize_lerobot(self) -> None:
         """Drain pending futures then write the LeRobot dataset metadata."""
         if self.export_format != "lerobot":
             return
-        self._wait_futures()
-        with self._lerobot_lock:
-            if self._lerobot_writer is not None:
-                self._lerobot_writer.finalize()
-                self._lerobot_writer = None
+        primary_error = None
+        try:
+            self._wait_futures()
+        except BaseException as error:
+            primary_error = error
+        writer = None
+        try:
+            with self._lerobot_lock:
+                self._stream_sidecar_close()
+                if self._lerobot_writer is not None:
+                    writer = self._lerobot_writer
+                    self._lerobot_writer = None
+        except BaseException as error:
+            if primary_error is None:
+                primary_error = error
+        if writer is not None:
+            try:
+                writer.finalize()
+            except BaseException as error:
+                if primary_error is None:
+                    primary_error = error
+        if primary_error is not None:
+            raise primary_error
 
     def _write_pickle(self, save_path: str, episode_data: dict) -> None:
         with open(save_path, "wb") as f:
@@ -631,22 +1050,81 @@ class CollectEpisode(gym.Wrapper):
         if self._executor is None:
             return
         self._futures.append(self._executor.submit(fn, *args))
-        self.logger.info(f"Futures queue length: {len(self._futures)}")
+        self.logger.debug(f"Futures queue length: {len(self._futures)}")
         self._drain_futures()
+        # Backpressure: cap in-flight write tasks so a slow disk turns into
+        # loop latency instead of unbounded memory growth.
+        # Streaming rejects new frames before submission when full; episode
+        # closing tasks contain no images and must retain their FIFO order.
+        while not self.streaming and len(self._futures) > _MAX_PENDING_FUTURES:
+            self._futures.pop(0).result()
+
+    def _submit_save(self, fn, *args) -> None:
+        if self._save_executor is None:
+            raise RuntimeError("streaming save executor is not available")
+        future = self._save_executor.submit(fn, *args)
+        with self._save_futures_lock:
+            self._save_futures.append(future)
+            queue_len = len(self._save_futures)
+        self.logger.debug(f"Save futures queue length: {queue_len}")
 
     def _drain_futures(self) -> None:
+        done = []
         remaining = []
         for f in self._futures:
             if f.done():
-                f.result()
+                done.append(f)
             else:
                 remaining.append(f)
         self._futures = remaining
+        first_error = self._settle_futures(done)
+        if first_error is not None:
+            raise first_error
 
     def _wait_futures(self) -> None:
-        for f in self._futures:
-            f.result()
+        futures = self._futures
         self._futures = []
+        first_error = self._settle_futures(futures)
+        if first_error is not None:
+            raise first_error
+
+    def _drain_save_futures(self) -> None:
+        with self._save_futures_lock:
+            done = []
+            remaining = []
+            for f in self._save_futures:
+                if f.done():
+                    done.append(f)
+                else:
+                    remaining.append(f)
+            self._save_futures = remaining
+        first_error = self._settle_futures(done)
+        if first_error is not None:
+            raise first_error
+
+    def _wait_save_futures(self) -> None:
+        first_error = None
+        while True:
+            with self._save_futures_lock:
+                futures = self._save_futures
+                self._save_futures = []
+            if not futures:
+                break
+            first_error = self._settle_futures(futures, first_error)
+        if first_error is not None:
+            raise first_error
+
+    @staticmethod
+    def _settle_futures(
+        futures: list[Future], first_error: Optional[BaseException] = None
+    ) -> Optional[BaseException]:
+        for f in futures:
+            try:
+                f.result()
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+        return first_error
 
     def _finalize_on_exit(self) -> None:
         self.close()

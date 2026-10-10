@@ -358,7 +358,7 @@ data from the collection config:
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 Then launch collection:
 
@@ -366,7 +366,9 @@ Then launch collection:
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-After collection, place the LeRobot dataset on the training node and compute
+The LeRobot shard is ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``,
+which directly contains ``data/`` and ``meta/``. After collection, place that
+shard on the training node and compute
 normalization statistics for the RLT OpenPI dataconfig. ``repo_id`` should
 match ``actor.openpi_data.repo_id`` and
 ``rollout.rlt_feature_model.openpi_data.repo_id`` in the Stage 1 / Stage 2

@@ -134,7 +134,7 @@ env:
     is_eval: true
     data_collection:
       enabled: true
-      save_dir: ${runner.logger.log_path}/collected_data
+      save_dir: ${runner.logger.log_path}
       export_format: pickle
       only_success: false
       gae_gamma: 0.8

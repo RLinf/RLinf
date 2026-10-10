@@ -1,0 +1,122 @@
+# Set every station-specific value before launching the collector.
+defaults:
+  - env/realworld_dual_yam_joint@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: yam
+      placement: 0
+  node_groups:
+    - label: yam
+      node_ranks: 0
+      hardware:
+        type: DualYam
+        configs:
+          - node_rank: 0
+            left_follower:
+              ee_mass: null
+              channel: ${oc.env:YAM_LEFT_FOLLOWER_CAN}
+              arm_type: yam
+              gripper_type: flexible_4310
+              gripper_limits: null
+            right_follower:
+              ee_mass: null
+              channel: ${oc.env:YAM_RIGHT_FOLLOWER_CAN}
+              arm_type: yam
+              gripper_type: flexible_4310
+              gripper_limits: null
+            cameras:
+              - name: top_rgb
+                serial: ${oc.env:YAM_TOP_CAMERA_SERIAL}
+                camera_type: realsense
+                resolution: [640, 480]
+                fps: 30
+              - name: left_rgb
+                serial: ${oc.env:YAM_LEFT_CAMERA_SERIAL}
+                camera_type: realsense
+                resolution: [640, 480]
+                fps: 30
+              - name: right_rgb
+                serial: ${oc.env:YAM_RIGHT_CAMERA_SERIAL}
+                camera_type: realsense
+                resolution: [640, 480]
+                fps: 30
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: dual-yam-pico-collection
+    logger_backends: [tensorboard]
+  num_data_episodes: 50
+  record_task_description: true
+
+seed: 1234
+
+env:
+  group_name: EnvGroup
+  eval:
+    max_episode_steps: 10000
+    max_steps_per_rollout_epoch: 10000
+    auto_reset: false
+    ignore_terminations: false
+    teleop: yam_pico
+    pico:
+      hand: dual
+      zmq_addr: ${oc.env:YAM_PICO_ZMQ_ADDR}
+      position_scale: 0.3
+      rotation_scale: 0.3
+      rotation_delta_frame: operator
+      control_threshold: 0.85
+      max_stale_s: 0.2
+      max_position_delta: 0.005
+      max_rotation_delta: 0.03
+      max_tick_s: 0.1
+      ik_backtrack_attempts: 3
+      wait_for_record_button: true
+      log_control_timing: true
+      record_button: right_menu_button
+      discard_button: left_menu_button
+      button_debounce_s: 0.2
+      keyboard_enabled: false
+      left:
+        operator_to_robot_yaw: ${oc.env:YAM_LEFT_OPERATOR_TO_ROBOT_YAW}
+      right:
+        operator_to_robot_yaw: ${oc.env:YAM_RIGHT_OPERATOR_TO_ROBOT_YAW}
+      ik:
+        site_name: grasp_site
+        solver: quadprog
+        max_iters: 30
+        dt: 0.01
+        position_tolerance: 0.001
+        rotation_tolerance: 0.01
+        max_solve_s: 0.03
+    override_cfg:
+      enforce_runtime_joint_limits: true
+      step_frequency: 30.0
+      manual_episode_control_only: true
+      reset:
+        enabled: false
+      park_on_close:
+        enabled: false
+    data_collection:
+      enabled: true
+      save_dir: ${runner.logger.log_path}
+      export_format: lerobot_dataset
+      streaming: true
+      only_success: false
+      robot_type: dual_yam
+      fps: 30
+      finalize_interval: 10

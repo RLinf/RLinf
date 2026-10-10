@@ -16,7 +16,7 @@
 
 Example:
     python examples/reward/preprocess_reward_dataset.py \
-        --raw-data-path logs/xxx/collected_data \
+        --raw-data-path logs/xxx/pickle_episode \
         --output-dir logs/xxx/processed_reward_data
 """
 
@@ -304,7 +304,7 @@ def parse_args() -> argparse.Namespace:
         "--raw-data-path",
         type=str,
         required=True,
-        help="Path to raw collected_data directory containing .pkl episode files.",
+        help="Directory of raw .pkl episode files, such as {save_dir}/pickle_episode.",
     )
     parser.add_argument(
         "--output-dir",
