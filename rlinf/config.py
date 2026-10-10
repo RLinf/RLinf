@@ -301,10 +301,8 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"rollout.sglang.backend_type must be 'engine' or 'server', "
             f"but got {backend_type!r}."
         )
-        # Only the default serving worker (serving_mode unset, SGLangWorker)
-        # is wired to the backend abstraction; the embodied and worker_http
-        # workers do not read backend_type, so 'server' would be silently
-        # ignored there instead of rejected.
+        # Only SGLangWorker (serving_mode unset) reads backend_type; the
+        # embodied / worker_http workers would silently ignore 'server'.
         assert not (serving_mode is not None and backend_type == "server"), (
             f"rollout.sglang.serving_mode={serving_mode!r} does not support "
             f"backend_type=server; the server backend is only implemented for "

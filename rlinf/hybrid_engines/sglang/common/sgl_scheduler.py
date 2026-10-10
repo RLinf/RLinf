@@ -351,11 +351,9 @@ class Scheduler(_Scheduler):
         self._rlinf_worker = Worker(
             parent_address=parent_address, world_size=self.tp_size, rank=self.tp_rank
         )
-        # Passed in explicitly by the rollout backend. Historically this was
-        # derived as `self._rlinf_worker.get_parent_rank()` (the parent rollout
-        # worker's group rank), which equals the model instance id only while
-        # one worker hosts one engine. Both values are logged so a future
-        # divergence (multi-node server mode) is visible in the logs.
+        # Explicit rather than get_parent_rank(): the parent is the entry
+        # process, whose rank differs from the instance id once an instance
+        # spans nodes. Both values are logged.
         self.model_instance_id = model_instance_id
         self.weight_reload = weight_reload
         if weight_reload == "sync":

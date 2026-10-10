@@ -67,11 +67,8 @@ class OnlineRouterWorker(Worker):
         self._server_host = cfg.rollout_server.online_router.get("host", "0.0.0.0")
         self._server_port = cfg.rollout_server.online_router.get("port", 8081)
         self._rollout_instance_num = placement.rollout_num_model_instances
-        # Map each model-instance id to the worker-group rank of its entry
-        # process. execute_on() selects worker-group process ranks, and the
-        # router's RPCs must land on the entry process (the only process
-        # with an HTTP client to the server subprocess in multi-node
-        # server mode). Single-node degenerates to identity.
+        # execute_on() takes process ranks; route each instance to its
+        # entry process, the only one with an HTTP client.
         self._rollout_entry_ranks = [
             placement.rollout_model_instance_entry_process_rank(i)
             for i in range(self._rollout_instance_num)

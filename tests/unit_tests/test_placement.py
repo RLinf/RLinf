@@ -784,10 +784,9 @@ class TestModelParallelComponentPlacement:
         )
 
     def test_auto_mode_rejects_cross_node_rollout(self, monkeypatch):
-        # Auto scheduler's migration assumes one node per
-        # rollout model instance; the combination must fail at construction
-        # (not inside the scheduler loop). Two pseudo nodes of 2 GPUs each:
-        # rollout "4-9" spans 3 instances-nodes at tp=6.
+        # Auto-scheduler + cross-node must fail at construction. 2-GPU
+        # pseudo nodes, rollout 4-9 at tp=6: one instance across 3 pseudo
+        # nodes.
         config = DictConfig(
             {
                 "cluster": {
@@ -1023,11 +1022,8 @@ class TestRolloutModelInstanceLayout:
             ModelParallelComponentPlacement(config, cluster)
 
     def test_unequal_node_share_single_node_instances_ok(self):
-        # 2 nodes x 8 GPUs, actor 0-5,
-        # rollout 6-15 (node 0 carries a share of 2, node 1 a share of 8),
-        # tp=2. Every share is a whole multiple of tp*pp, so instances stay
-        # within one node: 5 single-node instances, NO equal-share
-        # requirement, gpus_per_process == tp*pp.
+        # Shares 2 and 8 with tp=2: every share is a multiple of tp*pp, so
+        # 5 single-node instances and no equal-share requirement.
         config = self._make_config(
             {"actor": "0-5", "rollout": "6-15", "reward": "6-15"},
             rollout_tp=2,
@@ -1063,11 +1059,8 @@ class TestRolloutModelInstanceLayout:
         assert [p.cluster_node_rank for p in rollout_placements] == [0, 1, 1, 1, 1]
 
     def test_unequal_share_not_multiple_of_tp_pp_raises(self):
-        # 2 nodes x 8 GPUs, rollout 4-13: node 0 carries a share of 4,
-        # node 1 a share of 6. tp*pp=4 fits in the smallest share, but 6 is
-        # not a whole multiple of 4, and the shares are unequal - neither
-        # the single-node nor the cross-node reading is legal; the error
-        # must name both fixes.
+        # Shares 4 and 6 with tp=4: neither all multiples of tp*pp nor
+        # equal, so the error must name both fixes.
         config = self._make_config({"actor,rollout,reward": "4-13"}, rollout_tp=4)
         cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
 
@@ -1075,10 +1068,8 @@ class TestRolloutModelInstanceLayout:
             ModelParallelComponentPlacement(config, cluster)
 
     def test_actor_weight_dst_address_cross_node(self, monkeypatch):
-        # Actor send addresses must target the instance's
-        # ENTRY process rank, not the instance id. Cross-node layout: 8
-        # GPUs split into 2-GPU pseudo nodes, rollout 0-7 with tp=4 =>
-        # 2 instances spanning 2 pseudo nodes each, entry processes 0 and 2.
+        # Send addresses use the entry process rank, not the instance id.
+        # 2-GPU pseudo nodes, rollout 0-7, tp=4: entries 0 and 2.
         from rlinf.workers.rollout.utils import (
             CollocateRankMapper,
             instance_ids_to_entry_process_ranks,

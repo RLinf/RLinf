@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -121,10 +121,8 @@ async def negotiate_model_instance_dist_addr(
     try:
         result = await asyncio.wait_for(work.async_wait(), timeout=timeout_s)
     except asyncio.TimeoutError as e:
-        # Known accepted cost: the executor thread stays blocked on this
-        # work's _done event (AsyncFuncWork has no cancel). The training
-        # run is expected to stop after this error anyway - do NOT try to
-        # cancel the work.
+        # AsyncFuncWork cannot be cancelled; its thread stays blocked,
+        # acceptable because the run stops on this error.
         nnodes = placement.rollout_nnodes_per_model_instance
         model_instance_id = placement.rollout_model_instance_id(worker._rank)
         node_rank = placement.rollout_node_rank_in_model_instance(worker._rank)
