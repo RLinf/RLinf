@@ -35,6 +35,12 @@ def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
     return build_dual_franka_sft_dataloader
 
 
+def _load_libero_sfp_sft_dataloader() -> SftDataLoaderBuilder:
+    from rlinf.data.datasets.openpi.libero import build_libero_sfp_sft_dataloader
+
+    return build_libero_sfp_sft_dataloader
+
+
 def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
     from rlinf.data.datasets.openpi.official_sft_data_loader import (
         build_official_openpi_sft_dataloader,
@@ -48,10 +54,11 @@ def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
 _SFT_DATALOADER_BUILDERS = {
     "behavior": _load_behavior_sft_dataloader,
     "dualfranka": _load_dual_franka_sft_dataloader,
+    "libero_sfp": _load_libero_sfp_sft_dataloader,
     "official": _load_official_openpi_sft_dataloader,
 }
 
-_DEDICATED_ENVS = ("behavior", "dualfranka")
+_DEDICATED_ENVS = ("behavior", "dualfranka", "libero_sfp")
 
 
 def _resolve_env(config_name: str) -> str:

@@ -182,7 +182,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     batch = next(self.data_iter)
                     self._data_iter_offset = 1
 
-                loss, step_metrics = self.get_train_model_output(batch)
+                loss, step_metrics = self.get_train_model_output(
+                    batch,
+                    micro_batch_index=idx,
+                    gradient_accumulation=self.gradient_accumulation,
+                )
                 append_to_dict(metrics, step_metrics)
 
                 loss = loss / self.gradient_accumulation
@@ -222,7 +226,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
     @abstractmethod
     def get_train_model_output(
-        self, batch: dict[str, Any]
+        self,
+        batch: dict[str, Any],
+        *,
+        micro_batch_index: int = 0,
+        gradient_accumulation: int = 1,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         raise NotImplementedError
 

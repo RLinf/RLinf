@@ -3,7 +3,7 @@ LIBERO Evaluation
 
 LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo), with suites including Spatial, Object, Goal, and Long. RLinf supports parallel VLA policy evaluation on LIBERO with task-level success metrics.
 
-Related training docs: :doc:`../../examples/embodied/libero`, :doc:`../../examples/embodied/sft_fastwam`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
+Related training docs: :doc:`../../examples/embodied/libero`, :doc:`../../examples/embodied/sft_fastwam`, :doc:`../../examples/embodied/sft_pi05_sfp`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
 
 Environment Setup
 -----------------
@@ -32,6 +32,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_openpi_pi05_eval.yaml``
      - Spatial
      - π₀.₅
+   * - ``libero_spatial_openpi_pi05_sfp_eval.yaml``
+     - Spatial
+     - π₀.₅ SFP
    * - ``libero_spatial_starvla_eval.yaml``
      - Spatial
      - StarVLA
