@@ -363,6 +363,7 @@ class AcceleratorUtil:
         AcceleratorType.MUSA_GPU,
         AcceleratorType.KUNLUN_XPU,
         AcceleratorType.BIREN_GPU,
+        AcceleratorType.METAX_GPU,
     ]
 
     @staticmethod

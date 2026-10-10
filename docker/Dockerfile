@@ -125,24 +125,17 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
                 /etc/apt/sources.list; \
         fi; \
     fi
-# runit-systemd is Ubuntu <= 22.04; the MetaX base image is 24.04 (noble),
-# where it was renamed runit-run.
-RUN if [ "${RLINF_PLATFORM}" = "metax" ]; then \
-        RUNIT_PKG=runit-run; \
-    else \
+# The runit integration package depends on the base distribution's repositories.
+RUN apt-get update && \
+    if apt-cache show runit-systemd >/dev/null 2>&1; then \
         RUNIT_PKG=runit-systemd; \
+    else \
+        RUNIT_PKG=runit-run; \
     fi && \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get install -y --no-install-recommends \
             git vim libibverbs-dev liblz4-dev libzstd-dev openssh-server sudo runit tmux \
             build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
             wget unzip curl "${RUNIT_PKG}"
-
-# MetaX has no EGL support: install OSMesa for MuJoCo offscreen rendering.
-RUN if [ "${RLINF_PLATFORM}" = "metax" ]; then \
-        apt-get update && \
-        apt-get install -y --no-install-recommends \
-        libosmesa6 libosmesa6-dev && rm -rf /var/lib/apt/lists/*; \
-    fi
 
 
 ##################################################################################################

@@ -18,8 +18,9 @@ TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
-# googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
-RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
+# Keep Ray's protobuf runtime and generated code compatible. Platforms with
+# older TensorFlow builds also pin googleapis-common-protos here.
+RAY_COMPAT_DEPS=("protobuf>=6.33.5,<7")
 # ManiSkill and RoboTwin both run on SAPIEN, and RoboTwin's dependencies do not
 # install it.
 SAPIEN_SPEC="sapien==3.0.1; platform_system == 'Linux' and platform_machine == 'x86_64' and python_version < '3.14'"
@@ -77,7 +78,7 @@ PLATFORM_EXTRA_OVERRIDES=()
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
 # Use this for packages with no wheel for the target ABI, where an override
-# can't help (e.g. tensorflow-addons has no cp312 wheel for any version
+# can't help (e.g. tensorflow-addons has no cp312 wheel for any version).
 PLATFORM_EXCLUDE_DEPS=()
 # Extra flags appended to every `uv sync`. Set by configure_<platform>.
 PLATFORM_UV_SYNC_ARGS=()
@@ -1026,10 +1027,8 @@ configure_metax() {
     # torch.cuda API.
     configure_vendor_torch_platform metax "is this a MetaX MACA container?"
     PLATFORM_VENDOR_DISTS=(torch torchvision torchaudio flash_attn)
-    # No MACA build of TensorFlow exists; gr00t/starvla pull it in via
-    # their dependency trees. Resolve it for the solver, never write it
-    # into the venv: those models stay unsupported on metax until a MACA
-    # TensorFlow build lands.
+    # Skip TensorFlow during the base sync. Model-specific pip installs can
+    # still require its CPU build for data processing.
     PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "tensorflow" "--no-install-package" "tensorflow_datasets")
     # scipy: the image's scipy requires numpy>=2, which the numpy<2 override
     # makes unusable (tensorboard -> tensorflow -> scipy.sparse fails on
@@ -1040,8 +1039,9 @@ configure_metax() {
     # tensorflow: openvla==0.0.3 pins tensorflow==2.15.0, which has no
     # cp312 wheels and the MACA image interpreter is Python 3.12. Override
     # to the first TF line that ships cp312 wheels and still accepts
-    # numpy<2; it is never installed (--no-install-package above), this
-    # only unblocks the resolver for the openvla/starvla venvs.
+    # numpy<2. Keep its protobuf runtime compatible with Ray's generated code
+    # throughout resolution and the final dependency installation.
+    RAY_COMPAT_DEPS=("protobuf==4.25.3" "googleapis-common-protos<1.75.1")
     PLATFORM_EXCLUDE_DEPS=("tensorflow-addons")
     PLATFORM_EXTRA_OVERRIDES=("numpy<2" "scipy==1.13.1" "ray==2.47.0" "tensorflow==2.16.1")
 }
@@ -1318,17 +1318,6 @@ install_metax_extras() {
         else
             echo "[install.sh] metax: pymxsml wheel not found under /opt/maca/share/mxsml; mx-smi fallback will be used." >&2
         fi
-    fi
-
-    # TF 2.16 (the first cp312 TensorFlow line, forced by the resolver
-    # override on the image's Python 3.12) ships protobuf 4-era generated
-    # code, while Ray pulls protobuf>=6 via googleapis-common-protos>=1.75.1
-    # (protobuf 6 gencode); either side crashes at import or in the ray
-    # dashboard. Pin the protobuf 4 line with matching gencode in venvs that
-    # actually installed TensorFlow (mirrors install_ascend_tensorflow_pins).
-    if python -c "import importlib.util as _u; exit(0 if _u.find_spec('tensorflow') else 1)" 2>/dev/null; then
-        echo "[install.sh] metax: pinning protobuf 4.25.3 + googleapis-common-protos<1.75.1 for TensorFlow"
-        uv pip install "protobuf==4.25.3" "googleapis-common-protos<1.75.1"
     fi
 
     # Nothing else to install; just fail here rather than mid-training.
@@ -1645,16 +1634,20 @@ apply_torch_override() {
         echo "[install.sh] Set torchcodec override to ${_torchcodec_spec} for torch ${_eff_torch}"
     fi
 
-    if [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -gt 0 ]; then
+    # Replace the default protobuf override rather than adding a conflicting
+    # second pin. The same policy is enforced after all model/env installs.
+    sed -i -E '/^override-dependencies = \[/,/^\]/ { /"protobuf[<>=!]/d; }' "$PYPROJECT_FILE"
+    local extra_overrides=("${RAY_COMPAT_DEPS[@]}" "${PLATFORM_EXTRA_OVERRIDES[@]}")
+    if [ ${#extra_overrides[@]} -gt 0 ]; then
         # Insert each extra override right after the opening bracket of the
         # override-dependencies array. Done in reverse so the final order
         # matches the array order. The trap restores the original on exit.
         local i
-        for (( i=${#PLATFORM_EXTRA_OVERRIDES[@]}-1; i>=0; i-- )); do
-            local entry="${PLATFORM_EXTRA_OVERRIDES[i]}"
+        for (( i=${#extra_overrides[@]}-1; i>=0; i-- )); do
+            local entry="${extra_overrides[i]}"
             sed -i "/^override-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
         done
-        echo "[install.sh] Added override-dependencies entries: ${PLATFORM_EXTRA_OVERRIDES[*]}"
+        echo "[install.sh] Added override-dependencies entries: ${extra_overrides[*]}"
     fi
 
     if [ ${#PLATFORM_EXCLUDE_DEPS[@]} -gt 0 ]; then
@@ -2465,7 +2458,7 @@ install_openpi_model() {
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+            uv pip install "${RAY_COMPAT_DEPS[@]}"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -3492,7 +3485,7 @@ install_robocasa_env() {
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
     
     uv pip install -e "$robocasa_dir"
-    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
     python -m robocasa.scripts.setup_macros
 }
 
@@ -3526,7 +3519,7 @@ install_robocasa365_env() {
     uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
     uv pip install --no-deps mujoco==3.3.1
-    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
 
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
         rm -rf "$assets_path"
@@ -4211,9 +4204,9 @@ main() {
     esac
 
     install_platform_extras
-    # Last step: env/model pip installs may have downgraded protobuf.
-    echo "[install.sh] Ensuring ${RAY_COMPAT_PROTOBUF_SPEC} for Ray dashboard/agent"
-    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+    # Env/model installs may have changed the protobuf runtime or gencode.
+    echo "[install.sh] Ensuring ${RAY_COMPAT_DEPS[*]} for Ray dashboard/agent"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
 }
 
 main "$@"
