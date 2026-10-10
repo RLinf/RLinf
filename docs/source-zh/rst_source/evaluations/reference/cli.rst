@@ -35,7 +35,8 @@ CLI 参考
 
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model/RLinf-Pi05-SFT \
-     env.eval.total_num_envs=64 \
+     env.eval.total_num_envs=128 \
+     env.eval.max_steps_per_rollout_epoch=960 \
      runner.ckpt_path=/path/to/checkpoint.pt
 
 支持的 benchmark 前缀
