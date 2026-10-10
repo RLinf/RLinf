@@ -235,6 +235,30 @@ def test_fault_holds_both_and_requires_release_before_reengagement(station, faul
     )
 
 
+def test_ik_miss_retries_without_aborting_the_recording(station):
+    """One failed IK solve holds that arm for the frame and keeps the take."""
+    station.arms["left"].held = True
+    info = press(station, "right_menu_button")[-1]
+    assert info["record_reset"] and not info["pre_record"]
+
+    station.kinematics["left"].fail = True
+    info = station.env.step(np.zeros(14))[-1]
+    assert info["left_ik_fault"] == "injected_failure"
+    assert info["yam_pico_fault"] is None
+    assert station.device.fault is None
+    assert not info["pre_record"]
+    assert not info["record_reset"]
+    assert info["keyboard_event"] is None
+    assert not info["left"]
+
+    station.kinematics["left"].fail = False
+    info = station.env.step(np.zeros(14))[-1]
+    assert info["left_ik_fault"] is None
+    assert info["yam_pico_fault"] is None
+    assert not info["pre_record"]
+    assert info["left"]
+
+
 def test_record_edges_abort_and_success_preserve_only_manual_boundary(station):
     station.arms["left"].held = True
     info = press(station, "right_menu_button")[-1]

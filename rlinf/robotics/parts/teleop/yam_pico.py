@@ -467,7 +467,6 @@ class YamPico(TeleopDevice):
         results = {}
         poses = {}
         reason = None
-        ik_fault = None
         for i, side in enumerate(SIDES):
             arm = measured[i * 7 : i * 7 + 7]
             infos[f"{side}_joint_step_fraction"] = 1.0
@@ -554,14 +553,14 @@ class YamPico(TeleopDevice):
                 if not result.success:
                     # Hold only this arm, retaining references for the next
                     # frame. The other arm can still execute a valid solution.
-                    ik_fault = f"{side}:ik:{result.reason}"
+                    missed = f"{side}:ik:{result.reason}"
                     self._grippers[i] = measured[i * 7 + 6]
                     now = time.monotonic()
                     if now - self._last_ik_warning >= 1.0:
                         self._logger.warning(
                             "YAM VR holding %s arm this frame, retrying: %s",
                             side,
-                            ik_fault,
+                            missed,
                         )
                         self._last_ik_warning = now
                     continue
@@ -601,7 +600,7 @@ class YamPico(TeleopDevice):
             or not all(arm.ready for arm in self._experts.values())
         ):
             self.hold_until_released("stale_after_ik")
-        infos["yam_pico_fault"] = self._fault or ik_fault
+        infos["yam_pico_fault"] = self._fault
         return (measured if self._fault else target), infos
 
     def _solve_with_backtracking(

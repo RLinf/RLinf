@@ -208,12 +208,13 @@ class YamPicoEpisode(gym.Wrapper):
         if info.get("action_rejected") is not None:
             controller.hold_until_released(f"runtime:{info['action_rejected']}")
         record, discard = self._events(info)
+        # Only a latched hold ends the take. A one-frame IK miss is reported
+        # on {side}_ik_fault and retried without aborting the recording.
         fault = controller.fault
-        frame_fault = fault or info.get("yam_pico_fault")
         event: Optional[str] = None
         reset_record = False
         manual_done = False
-        if frame_fault is not None or discard or truncated:
+        if fault is not None or discard or truncated:
             reset_record = self._recording
             self._recording = False
             event = "abort" if reset_record else None
@@ -229,7 +230,7 @@ class YamPicoEpisode(gym.Wrapper):
                 reset_record = True
                 event = "start"
 
-        info["yam_pico_fault"] = frame_fault
+        info["yam_pico_fault"] = fault
         # The collector closes the previous streaming shard on record_reset.
         # Mark an explicit discard before that close so it drops the shard.
         info["episode_discarded"] = bool(discard and reset_record)
