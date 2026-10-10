@@ -71,7 +71,7 @@
    * - 字段
      - 说明
    * - Observation
-     - 腕部/全局相机视角加双臂机器人状态。
+     - LeRobot ``image`` 是全局相机 ``base_0_rgb``；左右腕进入 extra views。状态是双臂机器人状态。
    * - Action
      - 双臂 tcp_rot6d：``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``。
    * - Reward
@@ -179,6 +179,8 @@
 * ``SFT_DATASET_REPO_ID``：转换后的数据集 ID，通常是
   ``<repo_id>/tcp_rot6d_v1``。
 * ``MODEL_PATH``：``node 0`` 上的部署 checkpoint 目录。
+* 共享环境 ``realworld_dual_franka_tcp_rot6d`` 的 TCP xyz 限位是
+  x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，z ∈ [0.02, 0.7]。``target_ee_pose`` 必须落在这个盒子里。
 
 
 硬件检查
@@ -464,8 +466,10 @@ checkpoint，转化方法如下：
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 可复用采集阶段的 Ray 集群，也可使用相同环境变量重新启动。策略启动由
-:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用
-``realworld_eval_dual_franka``。
+:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护。双节点部署使用
+``realworld_eval_dual_franka``。GPU 与两台机械臂在同一台机器上、并且要重叠执行
+动作和推理时，使用 ``realworld_dual_franka_pi05_RTC``。复位后按键盘或脚踏的
+``a`` 才开始策略。
 
 部署阶段脚踏按键：
 

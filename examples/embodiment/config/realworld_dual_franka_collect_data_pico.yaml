@@ -162,9 +162,6 @@ env:
         - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
       success_hold_steps: 1
       use_dense_reward: False
-      # The env can read depth into main_depths / extra_view_depths. The LeRobot
-      # exporter currently stores RGB only, so this does not add depth columns.
-      enable_camera_depth: False
 
 
     data_collection:

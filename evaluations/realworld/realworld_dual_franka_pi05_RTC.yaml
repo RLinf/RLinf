@@ -1,0 +1,119 @@
+defaults:
+  - env/realworld_dual_franka_tcp_rot6d@env.eval
+  - model/pi0_5@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+    rollout:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: LEFT_ROBOT_IP                    # Replace: left arm FCI IP
+            right_robot_ip: RIGHT_ROBOT_IP                  # Replace: right arm FCI IP
+            base_camera_serials:
+              - BASE_CAMERA_SERIAL                          # Replace: librealsense device serial
+            base_camera_type: realsense
+            left_camera_serials:
+              - LEFT_CAMERA_SERIAL                          # Replace: librealsense device serial
+            left_camera_type: realsense
+            right_camera_serials:
+              - RIGHT_CAMERA_SERIAL                         # Replace: librealsense device serial
+            right_camera_type: realsense
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: LEFT_GRIPPER_CONNECTION    # Replace: /dev/serial/by-id/...
+            right_gripper_connection: RIGHT_GRIPPER_CONNECTION  # Replace: /dev/serial/by-id/...
+            left_controller_node_rank: 0
+            right_controller_node_rank: 0
+            node_rank: 0
+            compliance:
+              translational_stiffness: 1000
+              rotational_stiffness: 60
+              translational_clip: 0.02
+              rotational_clip: 0.06
+              max_step: 0.02
+              max_step_rad: 0.08
+              max_delta_tau: 0.2
+
+runner:
+  task_type: embodied_eval
+  only_eval: True
+  rtc:
+    enabled: True
+    inject_delay_ms: 0
+    min_exec_horizon: 2
+    initial_delay_steps: 1
+    delay_buffer_size: 8
+  logger:
+    log_path: "../results"
+    experiment_name: "dual-franka-pi05-rtc"
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # a starts the policy, c marks success, b marks failure.
+    keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
+    keyboard_reward_wrapper: eval_control
+    rollout_epoch: 1
+    max_steps_per_rollout_epoch: 1000
+    max_episode_steps: 1000
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    override_cfg:
+      task_description: TASK_DESCRIPTION  # Replace: prompt for the SFT policy
+      enable_camera_player: False
+      target_ee_pose:                         # Replace if your workspace differs
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+      max_num_steps: 10000
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: False
+      robot_type: "dual_FR3"
+      fps: 10
+
+rollout:
+  group_name: "RolloutGroup"
+  pipeline_stage_num: 1
+  model:
+    model_path: MODEL_PATH  # Replace: dual-arm pi05 SFT checkpoint
+    num_action_chunks: 20
+    action_dim: 20
+    num_steps: 10
+    openpi:
+      task: eval
+      config_name: "pi05_dualfranka_tcp_rot6d"
+      # Pi0.5 otherwise tokenizes state into the prompt.
+      discrete_state_input: false
+      action_horizon: 20
+      rtc_enabled: ${runner.rtc.enabled}
+      rtc_guidance_mode: "approx"
+      rtc_guidance_clip: 5.0
+    openpi_data:
+      norm_stats_path: /path/to/norm_stats.json  # Replace: norm stats from the SFT dataset
+
+# RTCEnvWorker checks this even though eval loads rollout.model.
+actor:
+  model:
+    model_type: openpi

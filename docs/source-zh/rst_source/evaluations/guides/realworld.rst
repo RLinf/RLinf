@@ -81,7 +81,7 @@ Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../e
      - π₀
 
 若 ``evaluations/realworld/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``）。详见 :doc:`../reference/cli`。
-Dual Franka 部署目前通过该回退路径使用 ``realworld_eval_dual_franka``。
+双节点 Dual Franka 部署通过该回退路径使用 ``realworld_eval_dual_franka``。单机 RTC 评测使用 ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``。
 
 启动前检查
 ----------
@@ -335,10 +335,21 @@ RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_desc
 Dual Franka 部署
 ----------------
 
-Dual Franka SFT 部署复用统一评测启动器，并通过配置回退使用
-``examples/embodiment/config/realworld_eval_dual_franka.yaml``。
-将 ``rollout.model.model_path`` 设为已同步的 checkpoint 目录，将
+双臂评测有两份配置。
+
+``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 是双节点回退配置。
+``run_eval.sh`` 在 ``evaluations/realworld/`` 找不到同名文件时使用它。将
+``rollout.model.model_path`` 设为已同步的 checkpoint 目录，将
 ``actor.model.openpi_data.repo_id`` 设为包含 ``norm_stats.json`` 的 repo id。
+
+``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` 是单机 RTC 评测：
+GPU、两台机械臂和三路相机在同一台机器上。动作是 20 维 tcp_rot6d，
+``openpi.config_name`` 为 ``pi05_dualfranka_tcp_rot6d``，主相机是 ``base_0_rgb``。
+把 ``MODEL_PATH``、``norm_stats`` 路径、机械臂 IP、相机 serial、夹爪串口、
+``keyboard_device`` 和 ``TASK_DESCRIPTION`` 换成自己的值。复位完成后，在这台
+USB 键盘或脚踏上按 ``a`` 才开始策略；``c`` 记成功，``b`` 记失败。终端里按 ``a``
+无效。无图形界面时保持 ``enable_camera_player: False``。``max_steps_per_rollout_epoch``
+必须能被 20 整除。
 
 .. code-block:: bash
 
@@ -347,7 +358,10 @@ Dual Franka SFT 部署复用统一评测启动器，并通过配置回退使用
        actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
        env.eval.override_cfg.task_description="handover the object"
 
-完整采集、SFT、checkpoint 同步与脚踏按键流程见 :doc:`../../examples/embodied/dual_franka`。
+   bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
+
+完整采集、SFT、checkpoint 同步与按键流程见 :doc:`../../examples/embodied/dual_franka`
+和 :doc:`../../examples/embodied/dual_franka_pico_dagger`。
 
 查看结果
 --------
@@ -362,7 +376,7 @@ Dual Franka SFT 部署复用统一评测启动器，并通过配置回退使用
 --------
 
 - **安全：** 评测前确认工作空间限位与急停功能正常；首次评测降低 ``rollout_epoch``。
-- **节点拓扑：** ``env`` worker 必须部署在可直连 Franka 的节点；``node_ranks`` 须与 ``RLINF_NODE_RANK`` 一致。PnP 与 Dual Franka 为双节点，自定义任务评测为单机。
+- **节点拓扑：** ``env`` worker 必须部署在可直连 Franka 的节点；``node_ranks`` 须与 ``RLINF_NODE_RANK`` 一致。PnP 与 ``realworld_eval_dual_franka`` 为双节点；自定义任务评测和 ``realworld_dual_franka_pi05_RTC`` 为单机。
 - **相机未找到：** 在控制节点运行 ``python -m toolkits.realworld_check.test_franka_camera``，核对 ``camera_serials``。
 - **动作异常：** 检查 ``norm_stats.json`` 是否位于 ``model_path/<repo_id>/``，以及 ``openpi.config_name`` 是否与训练一致。
 - **Ray 只见一个节点：** 检查防火墙、``RLINF_COMM_NET_DEVICES`` 与 head IP 是否可被其他节点访问。

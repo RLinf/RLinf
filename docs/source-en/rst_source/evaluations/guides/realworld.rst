@@ -81,7 +81,7 @@ The following examples live under ``evaluations/realworld/``:
      - π₀
 
 If ``evaluations/realworld/<config>.yaml`` is missing, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.task_type: embodied_eval`` and ``runner.only_eval: True``). See :doc:`../reference/cli`.
-Dual Franka deployment currently uses this fallback path with ``realworld_eval_dual_franka``.
+Two-node Dual Franka deployment uses this fallback path with ``realworld_eval_dual_franka``. Single-workstation RTC evaluation uses ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``.
 
 Pre-flight Checks
 -----------------
@@ -335,11 +335,24 @@ For data collection, SFT training, and deployment on custom tasks, see :doc:`../
 Dual Franka Deployment
 ----------------------
 
-Dual Franka SFT deployment reuses the unified evaluation launcher with the
-fallback config ``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
-Set ``rollout.model.model_path`` to the staged checkpoint directory and
-``actor.model.openpi_data.repo_id`` to the repo id that contains
+There are two dual-arm evaluation configs.
+
+``examples/embodiment/config/realworld_eval_dual_franka.yaml`` is the two-node
+fallback. ``run_eval.sh`` uses it when ``evaluations/realworld/`` has no file
+of the same name. Set ``rollout.model.model_path`` to the staged checkpoint
+directory and ``actor.model.openpi_data.repo_id`` to the repo id that contains
 ``norm_stats.json``.
+
+``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` is the
+single-workstation RTC evaluation: the GPU, both arms, and the three cameras
+are on one machine. Actions are 20-dimensional tcp_rot6d,
+``openpi.config_name`` is ``pi05_dualfranka_tcp_rot6d``, and the main camera is
+``base_0_rgb``. Replace ``MODEL_PATH``, the ``norm_stats`` path, arm IPs,
+camera serials, gripper ports, ``keyboard_device``, and ``TASK_DESCRIPTION``.
+After the arms home, press ``a`` on that USB keyboard or pedal to start the
+policy; ``c`` marks success and ``b`` marks failure. Typing ``a`` in the
+terminal does nothing. Keep ``enable_camera_player: False`` on a machine
+without a display. ``max_steps_per_rollout_epoch`` must be divisible by 20.
 
 .. code-block:: bash
 
@@ -348,8 +361,11 @@ Set ``rollout.model.model_path`` to the staged checkpoint directory and
        actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
        env.eval.override_cfg.task_description="handover the object"
 
-For the full collection, SFT, checkpoint staging, and pedal-control workflow,
-see :doc:`../../examples/embodied/dual_franka`.
+   bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
+
+For collection, SFT, checkpoint staging, and the key workflow, see
+:doc:`../../examples/embodied/dual_franka` and
+:doc:`../../examples/embodied/dual_franka_pico_dagger`.
 
 Viewing Results
 ---------------
@@ -364,7 +380,7 @@ FAQ
 ---
 
 - **Safety:** Verify workspace limits and emergency stop before evaluation; use a small ``rollout_epoch`` on the first run.
-- **Node topology:** ``env`` workers must run on nodes with direct Franka access; ``node_ranks`` must match ``RLINF_NODE_RANK``. PnP and Dual Franka use two nodes; custom-task eval uses one.
+- **Node topology:** ``env`` workers must run on nodes with direct Franka access; ``node_ranks`` must match ``RLINF_NODE_RANK``. PnP and ``realworld_eval_dual_franka`` use two nodes. Custom-task eval and ``realworld_dual_franka_pi05_RTC`` use one.
 - **Cameras not found:** Run ``python -m toolkits.realworld_check.test_franka_camera`` on the control node and verify ``camera_serials``.
 - **Abnormal actions:** Check that ``norm_stats.json`` is under ``model_path/<repo_id>/`` and that ``openpi.config_name`` matches training.
 - **Ray shows only one node:** Check firewall rules, ``RLINF_COMM_NET_DEVICES``, and that the head IP is reachable from other nodes.
