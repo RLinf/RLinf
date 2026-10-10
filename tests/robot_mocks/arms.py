@@ -175,6 +175,7 @@ def franky() -> types.ModuleType:
 def ros() -> dict[str, types.ModuleType]:
     """Return fake ``rospy`` and Franka ROS message modules."""
     published: list[tuple[str, Any]] = []
+    subscribers: list[Any] = []
 
     class Publisher:
         """Record the declared message type and published messages."""
@@ -193,11 +194,17 @@ def ros() -> dict[str, types.ModuleType]:
             self.name = name
             self.callback = callback
             self.data_class = data_class
+            self.active = True
+            subscribers.append(self)
             self.publish()
 
         def publish(self, message=None):
             """Publish a supplied or default message to the topic."""
-            self.callback(message if message is not None else self.data_class())
+            if self.active:
+                self.callback(message if message is not None else self.data_class())
+
+        def unregister(self):
+            self.active = False
 
     class _Timer:
         """Run a ROS timer callback on a daemon thread."""
@@ -257,6 +264,7 @@ def ros() -> dict[str, types.ModuleType]:
         signal_shutdown=lambda *_a: None,
     )
     rospy.published = published
+    rospy.subscribers = subscribers
 
     pose = _message(
         header=types.SimpleNamespace(stamp=0.0, frame_id=""),
