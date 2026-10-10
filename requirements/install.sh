@@ -111,7 +111,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvla_v2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -2696,6 +2696,224 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_lingbot_vla_v2_model() (
+    set -Eeuo pipefail
+if [ "$ENV_NAME" != "robotwin" ] || [ "$PLATFORM" != "nvidia" ]; then
+    echo "LingBot-VLA V2 installation requires --env robotwin --platform nvidia." >&2
+    exit 2
+fi
+if [ "$USER_SET_PYTHON" = 1 ] && [[ ! "$PYTHON_VERSION" =~ ^3\.12(\.[0-9]+)?$ ]]; then
+    echo "LingBot-VLA V2 requires Python 3.12; set PYTHON to its interpreter." >&2
+    exit 2
+fi
+if [ -n "$TORCH_VERSION$TRANSFORMERS_VERSION$SGLANG_VERSION$VLLM_VERSION$ENGINE$ROCM_VERSION" ] ||
+    [ "$USE_MIRRORS" = 1 ] || [ "$DISABLE_FLASH_ATTN" = 1 ]; then
+    echo "LingBot-VLA V2 uses pinned dependencies; version overrides, --use-mirror and --no-flash-attn are unsupported." >&2
+    exit 2
+fi
+if [ "$NO_ROOT" -eq 0 ]; then
+    bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
+fi
+REPO_DIR=$(dirname "$SCRIPT_DIR")
+VENV_DIR=$(realpath -m "$VENV_DIR")
+if [[ -e "$VENV_DIR" ]]; then
+    echo "Refusing to modify existing environment: $VENV_DIR" >&2
+    exit 2
+fi
+GIT_SSL_VERIFY="${LINGBOT_VLA_V2_GIT_SSL_VERIFY:-true}"
+case "$GIT_SSL_VERIFY" in
+    true|false) ;;
+    *) echo "LINGBOT_VLA_V2_GIT_SSL_VERIFY must be true or false." >&2; exit 2 ;;
+esac
+unset PYTHONPATH PYTHONHOME PIP_TARGET PIP_PREFIX PIP_USER GIT_SSL_NO_VERIFY
+install_uv
+# The CUDA extensions below are compiled with the nvcc that torch will find, and torch
+# rejects a toolkit whose major version differs from its own CUDA build.
+NVCC="${CUDA_HOME:-${CUDA_PATH:-}}"
+NVCC="${NVCC:+$NVCC/bin/nvcc}"
+NVCC="${NVCC:-$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)}"
+CUDA_TOOLKIT_VERSION=$("$NVCC" --version 2>/dev/null | sed -nE 's/.*release ([0-9]+\.[0-9]+).*/\1/p')
+case "${CUDA_TOOLKIT_VERSION%%.*}" in
+    12) export UV_TORCH_BACKEND=cu128 ;;
+    13) export UV_TORCH_BACKEND=cu130 ;;
+    *)
+        echo "LingBot-VLA V2 needs a CUDA 12 or 13 toolkit; found '${CUDA_TOOLKIT_VERSION:-none}' at $NVCC." >&2
+        exit 2
+        ;;
+esac
+# Copied files keep the sapien and mplib patches below out of uv's shared cache.
+export UV_LINK_MODE=copy
+export PYTHONNOUSERSITE=1
+export PIP_REQUIRE_VIRTUALENV=true
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export MAX_JOBS="${MAX_JOBS:-4}"
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;9.0}"
+export FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80;90}"
+LINGBOT_VLA_V2_REVISION=951475ae1b1d87553e7dc47c97b53a3d695c0d13
+ROBOTWIN_V2_REVISION=0008ae6800df9f75fc8de7098bacb01735fd8fd2
+BOOTSTRAP_PYTHON=$(command -v "${PYTHON:-python3.12}")
+"$BOOTSTRAP_PYTHON" -I -c 'import sys; assert sys.version_info[:2] == (3, 12), "Python 3.12 is required"'
+"$BOOTSTRAP_PYTHON" -I -m venv --without-pip "$VENV_DIR"
+PYTHON_BIN="$VENV_DIR/bin/python"
+export VIRTUAL_ENV="$VENV_DIR"
+export PATH="$VENV_DIR/bin:$PATH"
+trap 'echo "Installation failed at line $LINENO; incomplete environment: $VENV_DIR" >&2' ERR
+uv_pip_install() {
+    # RLinf's [tool.uv] overrides pin the default torch stack, not this model's.
+    uv pip install --no-config --python "$PYTHON_BIN" "$@"
+}
+# uv installs every package here; pip is only needed by the uninstall and freeze steps.
+echo "=== Bootstrap packaging tools in isolated environment ==="
+uv_pip_install --upgrade pip setuptools==80.9.0 wheel
+if [[ "$GIT_SSL_VERIFY" == false ]]; then
+    echo "WARNING: Git HTTPS certificate verification is disabled for the LingBot-VLA V2, RoboTwin and LeRobot checkouts; use only on a trusted network." >&2
+fi
+echo "=== Check GitHub connectivity (http.sslVerify=$GIT_SSL_VERIFY) ==="
+git -c "http.sslVerify=$GIT_SSL_VERIFY" ls-remote https://github.com/robbyant/lingbot-vla-v2.git HEAD
+clone_v2_source() {
+    # Usage: clone_v2_source ENV_VAR_NAME DEFAULT_DIR GIT_URL REVISION
+    # Reuses an existing checkout named by ENV_VAR_NAME; otherwise fetches only the
+    # pinned commit. LeRobot's LFS objects are test artifacts, so they are skipped.
+    # Runs inside $(...), so the http.sslVerify override never reaches later git+ builds.
+    local count="${GIT_CONFIG_COUNT:-0}" target attempt
+    export "GIT_CONFIG_KEY_${count}=http.sslVerify" "GIT_CONFIG_VALUE_${count}=$GIT_SSL_VERIFY"
+    export GIT_CONFIG_COUNT=$((count + 1)) GIT_LFS_SKIP_SMUDGE=1
+    target="$(printenv "$1" 2>/dev/null || true)"
+    if [[ -n "$target" && -d "$target" ]]; then
+        git -C "$target" checkout --detach "$4" >&2 || return 1
+    else
+        target="${target:-$2}"
+        git init -q "$target" || return 1
+        for attempt in 1 2 3 4; do
+            git -C "$target" fetch --depth 1 "$3" "$4" >&2 && break
+            [ "$attempt" -lt 4 ] || return 1
+            sleep $(( attempt * 5 ))
+        done
+        git -C "$target" checkout -q --detach FETCH_HEAD >&2 || return 1
+    fi
+    echo "$target"
+}
+LINGBOT_VLA_V2_PATH=$(realpath "$(clone_v2_source LINGBOT_VLA_V2_SOURCE "$VENV_DIR/lingbot-vla-v2" https://github.com/robbyant/lingbot-vla-v2.git "$LINGBOT_VLA_V2_REVISION")")
+ROBOTWIN_PATH=$(realpath "$(clone_v2_source ROBOTWIN_V2_SOURCE "$VENV_DIR/RoboTwin" https://github.com/RoboTwin-Platform/RoboTwin.git "$ROBOTWIN_V2_REVISION")")
+LEROBOT_PATH=$(realpath "$(clone_v2_source LEROBOT_V2_SOURCE "$VENV_DIR/lerobot" https://github.com/huggingface/lerobot.git 58f70b6bd370864139a3795ac3497a9eae8c42d5)")
+"$PYTHON_BIN" -I - "$LINGBOT_VLA_V2_PATH" "$ROBOTWIN_PATH" <<'LINGBOT_V2_COMPAT'
+import ast
+import sys
+from pathlib import Path
+
+lingbot_dir, robotwin_dir = map(Path, sys.argv[1:])
+replacements = [
+    (
+        robotwin_dir / "envs/_base_task.py",
+        '        self.setup_scene()\n',
+        '        self.setup_scene(camera_shader=kwags.get("camera_shader", "rt"))\n',
+    ),
+    (
+        robotwin_dir / "envs/_base_task.py",
+        '        sapien.render.set_camera_shader_dir("rt")\n'
+        '        sapien.render.set_ray_tracing_samples_per_pixel(32)\n'
+        '        sapien.render.set_ray_tracing_path_depth(8)\n'
+        '        sapien.render.set_ray_tracing_denoiser("oidn")\n',
+        '        camera_shader = kwargs.get("camera_shader", "rt")\n'
+        '        sapien.render.set_camera_shader_dir(camera_shader)\n'
+        '        if camera_shader == "rt":\n'
+        '            sapien.render.set_ray_tracing_samples_per_pixel(32)\n'
+        '            sapien.render.set_ray_tracing_path_depth(8)\n'
+        '            sapien.render.set_ray_tracing_denoiser("oidn")\n',
+    ),
+    (
+        robotwin_dir / "robotwin/envs/vector_env.py",
+        '                        task.close_env()\n'
+        '                        trial_seed += 1\n',
+        '                        task.close_env()\n'
+        '                        if not isinstance(e, UnStableError) or trial_seed - self.env_seed >= 20:\n'
+        '                            raise\n'
+        '                        trial_seed += 1\n',
+    ),
+    (
+        lingbot_dir / "lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py",
+        '                    _full_len = query_states.shape[1]\n'
+        '                    _full_block_mask = build_block_mask(\n'
+        '                        attention_mask,\n'
+        '                        self.qwenvl.config.text_config.num_attention_heads,\n'
+        '                        _full_len,\n'
+        '                        _full_len,\n'
+        '                    )\n',
+        '                    query_length = query_states.shape[1]\n'
+        '                    key_value_length = key_states.shape[1]\n'
+        '                    if attention_mask.shape[-2:] != (query_length, key_value_length):\n'
+        '                        raise ValueError("flex_cached mask shape must match Q/KV lengths")\n'
+        '                    _full_block_mask = build_block_mask(\n'
+        '                        attention_mask,\n'
+        '                        self.qwenvl.config.text_config.num_attention_heads,\n'
+        '                        query_length,\n'
+        '                        key_value_length,\n'
+        '                    )\n',
+    ),
+]
+updated = {}
+for path, original, replacement in replacements:
+    text = updated.get(path, path.read_text())
+    if text.count(replacement) == 1:
+        continue
+    if text.count(original) != 1:
+        raise RuntimeError(f"Unexpected dependency source; refusing to modify {path}")
+    updated[path] = text.replace(original, replacement, 1)
+for path, text in updated.items():
+    ast.parse(text, filename=str(path))
+for path, text in updated.items():
+    path.write_text(text)
+print("LingBot-VLA V2 compatibility: raster rendering, bounded setup retries, rectangular KV-cache mask")
+LINGBOT_V2_COMPAT
+"$PYTHON_BIN" -I - "$ROBOTWIN_PATH" <<'PY'
+import site
+import sys
+from pathlib import Path
+
+(Path(site.getsitepackages()[0]) / "robotwin_release.pth").write_text(sys.argv[1] + "\n")
+PY
+
+echo "=== Install CUDA PyTorch and runtime dependencies ==="
+CONSTRAINTS="$VENV_DIR/lingbotvla_v2_constraints.txt"
+cp "$SCRIPT_DIR/embodied/models/lingbotvla_v2.txt" "$CONSTRAINTS"
+printf '\ntorch==2.11.0\ntorchvision==0.26.0\ntorchaudio==2.11.0\n' >> "$CONSTRAINTS"
+export UV_CONSTRAINT="$CONSTRAINTS"
+uv_pip_install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0
+"$PYTHON_BIN" -I - "$REPO_DIR/pyproject.toml" "$VENV_DIR/rlinf_runtime.txt" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+project = tomllib.loads(Path(sys.argv[1]).read_text())["project"]
+requirements = project["dependencies"] + project["optional-dependencies"]["embodied"]
+Path(sys.argv[2]).write_text("\n".join(requirements) + "\n")
+PY
+uv_pip_install -r "$VENV_DIR/rlinf_runtime.txt" -r "$SCRIPT_DIR/embodied/models/lingbotvla_v2.txt" -r "$SCRIPT_DIR/embodied/envs/common.txt"
+uv_pip_install --no-deps -e "$REPO_DIR" -e "$LINGBOT_VLA_V2_PATH" -e "$LEROBOT_PATH"
+uv_pip_install --no-deps -e "$LINGBOT_VLA_V2_PATH/lingbotvla/models/vla/vision_models/lingbot-depth" -e "$LINGBOT_VLA_V2_PATH/lingbotvla/models/vla/vision_models/MoGe"
+uv_pip_install mplib==0.2.1 gymnasium==0.29.1 open3d 'zarr<3' openai warp-lang==1.11.1 "$SAPIEN_SPEC"
+# pytorch3d's v0.7.9 tag is given as its commit, like curobo below, so uv can reuse the
+# wheels it builds for them from its cache.
+uv_pip_install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git@33824be3cbc87a7dd1db0f6a9a9de9ac81b2d0ba
+uv_pip_install setuptools_scm
+uv_pip_install --no-build-isolation git+https://github.com/NVlabs/curobo.git@d64c4b005459db10c5dd867d8b30a87d5bda9bdb
+uv_pip_install --no-build-isolation flash-attn==2.8.3
+"$PYTHON_BIN" -I - <<'PY'
+from pathlib import Path
+
+import mplib
+import sapien
+
+urdf = Path(sapien.__file__).parent / "wrapper/urdf_loader.py"
+urdf.write_text(urdf.read_text().replace('open(urdf_file, "r")', 'open(urdf_file, "r", encoding="utf-8")').replace('open(srdf_file, "r")', 'open(srdf_file, "r", encoding="utf-8")'))
+planner = Path(mplib.__file__).parent / "planner.py"
+planner.write_text(planner.read_text().replace("if np.linalg.norm(delta_twist) < 1e-4 or collide or not within_joint_limit:", "if np.linalg.norm(delta_twist) < 1e-4 or not within_joint_limit:"))
+PY
+"$PYTHON_BIN" -I -m pip uninstall -y pynvml
+"$PYTHON_BIN" -I -m pip freeze --all > "$VENV_DIR/installed-packages.txt"
+echo "Installation completed: $VENV_DIR"
+)
+
 install_abot_m0_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -4008,6 +4226,11 @@ main() {
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
+                    ;;
+                lingbotvla_v2)
+                    install_lingbot_vla_v2_model
+                    # The pinned venv needs none of the uv sync post-install steps below.
+                    return
                     ;;
                 abot_m0)
                     install_abot_m0_model

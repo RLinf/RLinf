@@ -25,7 +25,7 @@
       :link: vla_wam_index
       :link-type: doc
 
-      对具身模型做 RL 微调 —— π₀、GR00T、StarVLA、Lingbot-VLA 等。
+      对具身模型做 RL 微调 —— π₀、GR00T、StarVLA、LingBot-VLA 1.0 / 2.0 等。
 
    .. grid-item-card:: 世界模型
       :link: world_model_index
