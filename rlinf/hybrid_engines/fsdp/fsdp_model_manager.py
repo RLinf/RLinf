@@ -39,7 +39,10 @@ from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
-from rlinf.hybrid_engines.fsdp.optim import build_adamw
+from rlinf.hybrid_engines.fsdp.optim import (
+    build_adamw,
+    validate_adamw_mixed_precision,
+)
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
@@ -607,6 +610,9 @@ class FSDPModelManager:
             )
 
         use_fp32_master_params = self._cfg.optim.get("use_fp32_master_params", False)
+        validate_adamw_mixed_precision(
+            model, use_fp32_master_params=use_fp32_master_params
+        )
 
         # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
         # for NO_SHARD models. Sharded scalar parameters cannot use this path.

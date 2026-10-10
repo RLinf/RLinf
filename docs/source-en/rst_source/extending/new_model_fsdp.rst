@@ -370,3 +370,36 @@ use the global policy; nested wrappers retain their own policies. Set
 When inputs must retain FP32 precision, as with Pi05 actions and timesteps,
 set global ``cast_root_forward_inputs: false`` to avoid rounding them to BF16
 before they reach that wrapper.
+
+Retaining Low-Precision Gradients
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``keep_low_precision_grads`` defaults to ``false`` in both the global policy
+and named policies. FSDP converts reduced gradients back to the parameters'
+original dtype for the optimizer. Set it to ``true`` to retain the reduction
+dtype and reduce gradient storage when that dtype uses fewer bytes.
+
+When retained gradients differ from the original parameter dtype, native AdamW
+cannot update them. Enable the actor's FP32 optimizer alongside the policy:
+
+.. code-block:: yaml
+
+   actor:
+     optim:
+       use_fp32_master_params: true
+     fsdp_config:
+       mixed_precision:
+         param_dtype: bf16
+         reduce_dtype: bf16
+         buffer_dtype: fp32
+         keep_low_precision_grads: true
+
+The same flag is available in ``mixed_precision_policies`` for individual
+wrappers. ``actor.optim.use_fp32_master_params`` selects ``FP32MasterAdamW``
+for the whole actor, preserving its parameter groups and optimizer settings.
+It converts gradients to FP32 during updates, keeps FP32 optimizer states, and
+maintains FP32 master weights for BF16/FP16 parameters. This adds optimizer
+memory for low-precision parameters. Incompatible policies fail during optimizer
+initialization with instructions to enable this optimizer or disable gradient
+retention. With ``reduce_dtype: fp32``, gradient retention does not reduce
+storage for originally FP32 parameters.
