@@ -105,6 +105,7 @@ jobs:
           
       - name: Install dependencies
         run: |
+          unset UV_DEFAULT_INDEX
           export UV_LINK_MODE=copy
           source .venv/bin/activate
           uv pip install -r requirements/agentic/agentlightning_constraints.txt
