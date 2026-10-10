@@ -23,10 +23,10 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from PIL import Image
 
-from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.envs.utils import (
     center_crop_image,
     list_of_dict_to_dict_of_list,
+    partition_success_seeds,
     valid_action_mask_from_counts,
 )
 

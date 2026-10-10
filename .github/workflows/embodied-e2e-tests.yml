@@ -2103,3 +2103,35 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-robodojo-env-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create RoboDojo environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env robodojo
+
+      - name: RoboDojo environment smoke test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export OMNI_KIT_ACCEPT_EULA=YES
+          export ACCEPT_EULA=Y
+          export ROBODOJO_ASSETS_ROOT=${ROBODOJO_ASSETS_ROOT:-/workspace/dataset/robodojo}
+          python tests/e2e_tests/embodied/robodojo_env_smoke.py
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
