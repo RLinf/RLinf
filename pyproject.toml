@@ -91,6 +91,8 @@ agentic = [
 ]
 embodied = [
     "transformers>=4.51,<=4.57.6",
+    # pyarrow 26 errors on import unless NumPy is >= 2. This extra resolves 1.26.4.
+    "pyarrow>=15,<26",
     "torchcodec",
     "peft",
     "timm",
