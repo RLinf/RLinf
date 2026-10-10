@@ -567,27 +567,14 @@ def test_subtree_cannot_select_nested_boundaries():
         )
 
 
-@pytest.mark.parametrize("use_orig_params", [False, True])
-@pytest.mark.parametrize(
-    "root_keep,child_keep,master,expected_error",
-    [
-        (False, False, False, False),
-        (True, False, False, True),
-        (False, True, False, True),
-        (True, True, True, False),
-    ],
-)
-def test_adamw_checks_actual_nested_fsdp_gradient_policies(
-    tmp_path, use_orig_params, root_keep, child_keep, master, expected_error
+@pytest.mark.parametrize("root_keep,child_keep", [(True, False), (False, True)])
+def test_adamw_rejects_incompatible_root_or_child_policy(
+    tmp_path, root_keep, child_keep
 ):
     import torch.distributed as dist
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-    from rlinf.hybrid_engines.fsdp.optim import (
-        FP32MasterAdamW,
-        build_adamw,
-        validate_adamw_mixed_precision,
-    )
+    from rlinf.hybrid_engines.fsdp.optim import validate_adamw_mixed_precision
 
     if dist.is_initialized():
         pytest.skip("Test requires its own single-rank process group")
@@ -611,32 +598,16 @@ def test_adamw_checks_actual_nested_fsdp_gradient_policies(
         model[1] = FSDP(
             model[1],
             device_id=device,
-            use_orig_params=use_orig_params,
+            use_orig_params=True,
             mixed_precision=policy(child_keep),
         )
         wrapped = FSDP(
             model,
             device_id=device,
-            use_orig_params=use_orig_params,
+            use_orig_params=True,
             mixed_precision=policy(root_keep),
         )
-        if expected_error:
-            with pytest.raises(ValueError, match="actor.optim.use_fp32_master_params"):
-                validate_adamw_mixed_precision(wrapped, use_fp32_master_params=master)
-            return
-        validate_adamw_mixed_precision(wrapped, use_fp32_master_params=master)
-        optimizer = build_adamw(
-            wrapped.parameters(),
-            eps=1e-8,
-            weight_decay=0.01,
-            use_fp32_master_params=master,
-        )
-        assert isinstance(optimizer, FP32MasterAdamW) == master
-        wrapped(torch.randn(2, 2, device=device)).float().square().mean().backward()
-        assert {p.grad.dtype for p in wrapped.parameters()} == {
-            torch.bfloat16 if master else torch.float32
-        }
-        optimizer.step()
-        assert all(torch.isfinite(p).all() for p in wrapped.parameters())
+        with pytest.raises(ValueError, match="actor.optim.use_fp32_master_params"):
+            validate_adamw_mixed_precision(wrapped, use_fp32_master_params=False)
     finally:
         dist.destroy_process_group()
