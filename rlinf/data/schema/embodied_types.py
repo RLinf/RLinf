@@ -1578,6 +1578,8 @@ class LeRobotFrame:
 
         intervention_action = LeRobotChunk._to_numpy(info["intervene_action"])
         intervention_flag = LeRobotChunk._to_numpy(info["intervene_flag"])
+        if intervention_action is None or intervention_flag is None:
+            return action, False
         if intervention_action.size > action_dim:
             chunk_count = intervention_action.reshape(-1, action_dim).shape[0]
             intervention_action = intervention_action.reshape(-1, action_dim)[-1]
