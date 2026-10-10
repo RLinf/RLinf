@@ -1777,6 +1777,19 @@ def test_history_reward_assignment_matches_main_across_chunks():
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
 
 
+def test_reward_model_output_replaces_env_reward_by_default():
+    cfg = _config(env={"train": {"auto_reset": False}})
+    cfg.reward = {}
+    collector = _make(cfg)
+    key = TrajectoryKey(3, 0, 0, 0, 0)
+    env = _env_part(key, initial_transition=EnvTransition())
+    env.transition.reward_model_output = torch.tensor([[3.0]])
+
+    [(_, trajectory)] = _collect(collector, _policy(key), env)
+
+    assert torch.equal(trajectory.rewards, torch.tensor([[[3.0]]]))
+
+
 @pytest.mark.parametrize("loss_type", ["rlt_ac", "rlt_td3"])
 def test_rlt_output_matches_main_transition_and_intervention_behavior(loss_type):
     collector = _make(_config(algorithm={"loss_type": loss_type}))
