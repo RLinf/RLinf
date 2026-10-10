@@ -46,7 +46,7 @@ env:
     no_gripper: False
     pico:
       zmq_addr: "ipc:///tmp/vr_data.ipc"
-      position_scale: 1.0
+      position_scale: 1.2
       rotation_scale: 1.0
       calibration:
         button: "trigger"
