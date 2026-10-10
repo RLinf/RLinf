@@ -20,13 +20,15 @@ import torch
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import (
-    MixedPrecision,
     StateDictType,
 )
 from torch.optim import Optimizer
 
-from rlinf.config import torch_dtype_from_precision
 from rlinf.hybrid_engines.fsdp import FSDP, CPUOffload
+from rlinf.hybrid_engines.fsdp.mixed_precision import (
+    build_mixed_precision,
+    get_mixed_precision_wrap_policy,
+)
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
@@ -144,17 +146,16 @@ class FSDPStrategy(FSDPStrategyBase):
             - FSDP: The wrapped FSDP model.
         """
         mixed_precision_config = self.cfg.fsdp_config.mixed_precision
-        param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
-        reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
-        buffer_dtype = torch_dtype_from_precision(mixed_precision_config.buffer_dtype)
-        mixed_precision = MixedPrecision(
-            param_dtype=param_dtype,
-            reduce_dtype=reduce_dtype,
-            buffer_dtype=buffer_dtype,
-            cast_forward_inputs=mixed_precision_config.get("cast_forward_inputs", True),
-            cast_root_forward_inputs=mixed_precision_config.get(
-                "cast_root_forward_inputs", True
-            ),
+        mixed_precision = build_mixed_precision(
+            {
+                **dict(mixed_precision_config),
+                "cast_forward_inputs": mixed_precision_config.get(
+                    "cast_forward_inputs", True
+                ),
+                "cast_root_forward_inputs": mixed_precision_config.get(
+                    "cast_root_forward_inputs", True
+                ),
+            }
         )
 
         sharding_strategy = get_sharding_strategy(
@@ -166,6 +167,9 @@ class FSDPStrategy(FSDPStrategyBase):
             config=self.cfg.fsdp_config,
             is_lora=self.cfg.model.is_lora,
             model_type=self.cfg.model.model_type,
+        )
+        auto_wrap_policy = get_mixed_precision_wrap_policy(
+            model, self.cfg.fsdp_config, auto_wrap_policy, mixed_precision
         )
 
         backward_prefetch = get_backward_prefetch_strategy(

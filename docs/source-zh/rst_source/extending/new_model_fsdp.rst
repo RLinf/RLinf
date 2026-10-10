@@ -261,3 +261,68 @@ RL 逻辑保持在模型内部。
   vision encoder、projector、value head 等关键模块按预期参与 FSDP wrapping；否则可能
   出现训练性能下降、显存不合理或某些模块未被正确切分的问题。
 
+
+按 Wrapper 设置混合精度（FSDP1）
+----------------------------------
+
+``mixed_precision`` 是全局默认 MP 策略。在 ``wrappers`` 中选择模块，
+在 ``mixed_precision_policies`` 中定义 MP 策略，用 ``mixed_precision_rules``
+将两者的名称配对，覆盖对应 wrapper 的全局默认策略。下面的 Pi05 示例让
+精度敏感模块使用 FP32，其他部分使用 BF16：
+
+.. code-block:: yaml
+
+   fsdp_config:
+     strategy: fsdp
+     sharding_strategy: no_shard
+     use_orig_params: true
+     mixed_precision:
+       param_dtype: bf16
+       reduce_dtype: fp32
+       buffer_dtype: fp32
+       cast_root_forward_inputs: false
+     wrappers:
+       projections:
+         wrap_names: [action_in_proj, action_out_proj, time_mlp_in, time_mlp_out]
+       norms_and_embedding:
+         module_classes:
+           - rlinf.models.embodiment.openpi.modules.gemma.RMSNorm
+           - torch.nn.modules.conv.Conv2d
+       vision_mlps:
+         module_names: ["img.encoder.layers.*.mlp"]
+         wrap_mode: subtree
+     mixed_precision_policies:
+       fp32:
+         param_dtype: fp32
+         reduce_dtype: fp32
+         buffer_dtype: fp32
+         cast_forward_inputs: true
+     mixed_precision_rules:
+       projections: fp32
+       norms_and_embedding: fp32
+       vision_mlps: fp32
+     amp_autocast:
+       enabled: false
+
+每个 wrapper 选择一种匹配方式：``module_names`` 支持完整模块路径和
+``img.encoder.layers.*.mlp`` 等 glob；``module_classes`` 匹配 Python 类的完整限定名；
+``wrap_names`` 匹配已有的 ``_fsdp_wrap_name`` 标签。Pi05 在模型初始化时
+为 projection 模块设置这些标签。
+
+通过 ``wrap_mode`` 控制包装边界：
+
+- ``individual`` （默认）：每个命中模块分别包装，保留自动子包装。
+- ``subtree``：每个命中模块的完整子树分别包装，内部不再创建 wrapper。
+  本例为每层 MLP 创建一个 FP32 wrapper。
+- ``combined``：将所有命中模块合到现有共同父模块，内部不再创建 wrapper；
+  需要选中该父模块下的所有参数和 buffer。
+
+每个 wrapper 管理的参数必须具有一致的原始 dtype，混合 ``requires_grad``
+需要设置 ``use_orig_params: true``。subtree 和 combined 边界不能与其他
+显式选择的 wrapper 重叠。
+
+命名策略必须填写三个 dtype 字段。未绑定规则的 wrapper 使用全局策略，
+嵌套 wrapper 保留各自策略。设置 ``cast_forward_inputs: true``，在 FP32
+wrapper 边界转换输入。输入需要保留 FP32 精度时，例如 Pi05 的 action 和
+timestep，将全局 ``cast_root_forward_inputs`` 设为 ``false``，避免输入到达
+该 wrapper 前已被舍入到 BF16。

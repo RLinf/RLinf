@@ -304,3 +304,69 @@ load it inside ``build_my_model`` before returning the model instance.
   wrapping as expected. Otherwise, you may encounter degraded training
   performance, unreasonable memory usage, or modules that are not sharded
   correctly.
+
+Per-Wrapper Mixed Precision (FSDP1)
+----------------------------------------
+
+Use ``mixed_precision`` as the global default MP policy. Select wrappers in
+``wrappers``, define their MP policies in ``mixed_precision_policies``, and bind
+the names in ``mixed_precision_rules`` to override that default. This Pi05
+example keeps sensitive modules in FP32 while using BF16 elsewhere:
+
+.. code-block:: yaml
+
+   fsdp_config:
+     strategy: fsdp
+     sharding_strategy: no_shard
+     use_orig_params: true
+     mixed_precision:
+       param_dtype: bf16
+       reduce_dtype: fp32
+       buffer_dtype: fp32
+       cast_root_forward_inputs: false
+     wrappers:
+       projections:
+         wrap_names: [action_in_proj, action_out_proj, time_mlp_in, time_mlp_out]
+       norms_and_embedding:
+         module_classes:
+           - rlinf.models.embodiment.openpi.modules.gemma.RMSNorm
+           - torch.nn.modules.conv.Conv2d
+       vision_mlps:
+         module_names: ["img.encoder.layers.*.mlp"]
+         wrap_mode: subtree
+     mixed_precision_policies:
+       fp32:
+         param_dtype: fp32
+         reduce_dtype: fp32
+         buffer_dtype: fp32
+         cast_forward_inputs: true
+     mixed_precision_rules:
+       projections: fp32
+       norms_and_embedding: fp32
+       vision_mlps: fp32
+     amp_autocast:
+       enabled: false
+
+Choose one selector per wrapper: ``module_names`` matches exact module paths
+or globs such as ``img.encoder.layers.*.mlp``; ``module_classes`` matches qualified Python
+class names; ``wrap_names`` matches existing ``_fsdp_wrap_name`` tags. Pi05 assigns
+these tags to its projection modules during model initialization.
+
+Set ``wrap_mode`` to control the boundaries:
+
+- ``individual`` (default): wrap each match and retain automatic child wrapping.
+- ``subtree``: wrap each match's complete subtree, with no inner wrappers.
+  The example creates one FP32 wrapper for each layer's MLP.
+- ``combined``: wrap all matches under their existing common parent, with no
+  inner wrappers. Include all parameters and buffers under that parent.
+
+Each wrapper's managed parameters must share their original dtype. Mixed
+``requires_grad`` requires ``use_orig_params: true``. Subtree and combined
+boundaries must not overlap other explicitly selected wrappers.
+
+Specify all three dtype fields in each named policy. Wrappers without a binding
+use the global policy; nested wrappers retain their own policies. Set
+``cast_forward_inputs: true`` to convert inputs at an FP32 wrapper boundary.
+When inputs must retain FP32 precision, as with Pi05 actions and timesteps,
+set global ``cast_root_forward_inputs: false`` to avoid rounding them to BF16
+before they reach that wrapper.
