@@ -257,3 +257,18 @@ Ray 会在启动时捕获环境变量，因此必须在每个节点上 ``ray sta
 
    rollout:
      attention_backend: triton
+
+创建通信组时 worker 中止
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**现象：** worker 在连接新的对端时退出，日志中的第一条原生错误为：
+
+.. code-block:: text
+
+   pybind11_object_dealloc(): Tried to deallocate unregistered instance!
+
+随后进程收到 ``SIGABRT``，driver 端只报告 actor 已退出。
+
+**可能原因：** PyTorch 2.7 之前，``torch.distributed`` 中有若干构造函数（包括 Gloo 后端和 ``TCPStore``）在未持有 GIL 的情况下登记新建的 Python 对象。RLinf 在不同线程上为不同对端创建通信组，两次登记可能重叠，从而破坏 pybind11 记录存活对象的表。BEHAVIOR 环境（PyTorch 2.5.1）和 Ascend 默认环境（PyTorch 2.6.0）都受影响。
+
+**修复：** 在这些版本上，RLinf 改用持有 GIL 完成登记的构造函数来创建 Gloo 后端和通信组选项，Gloo 通信组因此不再触发该问题。``TCPStore`` 以及 ``TORCH_DISTRIBUTED_DEBUG=DETAIL`` 启用的调试包装没有这样的构造函数；``TCPStore`` 每个通信组只创建一次，因此仍可能偶发中止。条件允许时，请使用 PyTorch 2.7 及以上版本。报告问题时，请附上 PyTorch 版本和第一份原生调用栈，Ray 的 ``actor died`` 信息不足以判断原因。
