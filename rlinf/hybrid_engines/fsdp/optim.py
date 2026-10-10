@@ -157,6 +157,16 @@ class FP32MasterAdamW(Optimizer):
             stripped_state = dict(saved_state)
             param = saved_to_current.get(param_id)
             if param is not None:
+                if (
+                    saved_state
+                    and param.dtype != torch.float32
+                    and "fp32_master_param" not in saved_state
+                ):
+                    raise ValueError(
+                        "Cannot restore FP32MasterAdamW for non-FP32 parameters "
+                        "without fp32_master_param. Resume with the original optimizer "
+                        "or start a new optimizer from model weights."
+                    )
                 extracted = {}
                 for key in (*self._FP32_STATE_KEYS, "step"):
                     value = stripped_state.pop(key, None)

@@ -45,11 +45,15 @@ from datetime import timedelta
 import pytest
 import torch
 import torch.distributed as dist
+from omegaconf import OmegaConf
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, OffloadPolicy
 
+from rlinf.config import validate_fp32_master_adamw_config, validate_fsdp_cfg
+from rlinf.hybrid_engines.fsdp.optim import FP32MasterAdamW, build_adamw
 from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.utils import warmup_optimizer_state
 
 # The timeout a bare init_process_group() installs is backend-specific -- 30
 # minutes for NCCL and Gloo, 3636 seconds for HCCL on Ascend -- so no test here
@@ -59,6 +63,180 @@ from rlinf.scheduler.cluster import Cluster
 # them.
 CONFIGURED_TIMEOUT = timedelta(minutes=97)
 RLINF_DEFAULT_TIMEOUT = timedelta(minutes=180)
+
+
+@pytest.mark.parametrize("is_lora", [False, True])
+def test_fp32_master_full_training_config(is_lora):
+    cfg = OmegaConf.create(
+        {
+            "model": {"model_type": "openpi", "is_lora": is_lora},
+            "optim": {"use_fp32_master_params": True},
+            "fsdp_config": {
+                "strategy": "fsdp",
+                "sharding_strategy": "no_shard",
+                "mixed_precision": {},
+            },
+        }
+    )
+    validated = validate_fsdp_cfg(cfg)
+    assert validated.optim.use_fp32_master_params
+    assert validated.fsdp_config.use_orig_params
+
+
+@pytest.mark.parametrize(
+    "strategy,sharding", [("fsdp2", "no_shard"), ("fsdp", "full_shard")]
+)
+def test_fp32_master_rejects_unsupported_sharding(strategy, sharding):
+    with pytest.raises(ValueError, match="only FSDP1 training"):
+        validate_fp32_master_adamw_config(strategy=strategy, sharding_strategy=sharding)
+
+
+def test_fp32_master_accumulates_small_updates():
+    native = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
+    master = torch.nn.Parameter(native.detach().clone())
+    reference = torch.nn.Parameter(native.detach().float())
+    opts = [
+        build_adamw([{"params": [native], "lr": 5e-6}], eps=1e-8, weight_decay=0.01),
+        build_adamw(
+            [{"params": [master], "lr": 5e-6}],
+            eps=1e-8,
+            weight_decay=0.01,
+            use_fp32_master_params=True,
+        ),
+        torch.optim.AdamW([reference], lr=5e-6, foreach=False),
+    ]
+    for _ in range(1000):
+        for param, opt in zip((native, master, reference), opts):
+            param.grad = torch.ones_like(param)
+            opt.step()
+    assert torch.equal(native, torch.ones_like(native))
+    assert not torch.equal(master, native)
+    torch.testing.assert_close(master, reference.bfloat16(), rtol=0, atol=0)
+    torch.testing.assert_close(
+        opts[1].state[master]["fp32_master_param"], reference, rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+def test_fp32_master_accumulation_clipping_and_resume(dtype, tmp_path):
+    param = torch.nn.Parameter(torch.tensor([0.25, -0.5, 1.0], dtype=dtype))
+    reference = torch.nn.Parameter(param.detach().float().clone())
+    options = {"lr": 5e-4, "betas": (0.8, 0.95), "eps": 1e-6, "weight_decay": 0.1}
+    opt = FP32MasterAdamW([param], **options)
+    warmup_optimizer_state(opt)
+    ref_opt = torch.optim.AdamW([reference], **options, foreach=False)
+    resumed = resumed_opt = None
+    for step in range(12):
+        opt.zero_grad()
+        # Accumulate in the model dtype, as backward does, and give the FP32
+        # reference the same effective clipped gradient.
+        for microbatch in range(3):
+            (param * (step + microbatch + 1) / 3).sum().backward()
+        torch.nn.utils.clip_grad_norm_([param], max_norm=0.3)
+        reference.grad = param.grad.float().clone()
+        if resumed is not None:
+            resumed.grad = param.grad.clone()
+            resumed_opt.step()
+        opt.step()
+        ref_opt.step()
+        torch.testing.assert_close(param, reference.to(dtype), rtol=0, atol=0)
+        if resumed is not None:
+            torch.testing.assert_close(param, resumed, rtol=0, atol=0)
+            for key, state in opt.state[param].items():
+                torch.testing.assert_close(
+                    state, resumed_opt.state[resumed][key], rtol=0, atol=0
+                )
+        if step == 5:
+            path = tmp_path / "optimizer.pt"
+            torch.save({"param": param.detach(), "optimizer": opt.state_dict()}, path)
+            saved = torch.load(path, weights_only=True)
+            resumed = torch.nn.Parameter(saved["param"].clone())
+            resumed_opt = FP32MasterAdamW([resumed], lr=1.0)
+            resumed_opt.load_state_dict(saved["optimizer"])
+            for key in ("exp_avg", "exp_avg_sq"):
+                assert resumed_opt.state[resumed][key].dtype == torch.float32
+
+
+@pytest.mark.parametrize("checkpoint_format", ["local_shard", "dcp"])
+@pytest.mark.parametrize("use_orig_params", [False, True])
+def test_fp32_master_fsdp_checkpoint(
+    single_rank_env, tmp_path, checkpoint_format, use_orig_params
+):
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import StateDictOptions
+    from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
+
+    from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
+    from rlinf.hybrid_engines.fsdp.utils import FSDPVersion
+
+    dist.init_process_group("gloo")
+
+    def make_training_state():
+        model = FullyShardedDataParallel(
+            torch.nn.Linear(3, 2, bias=False).to(dtype=torch.bfloat16),
+            device_id=torch.device("cpu"),
+            use_orig_params=use_orig_params,
+            sharding_strategy=ShardingStrategy.NO_SHARD,
+        )
+        optimizer = FP32MasterAdamW(model.parameters(), lr=5e-6)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2)
+        checkpoint = Checkpoint(
+            model,
+            optimizer,
+            scheduler,
+            StateDictOptions(full_state_dict=False, cpu_offload=True),
+            FSDPVersion.FSDP,
+            checkpoint_format,
+        )
+        return model, optimizer, scheduler, checkpoint
+
+    def update(model, optimizer, scheduler):
+        optimizer.zero_grad()
+        model(torch.ones(2, 3, dtype=torch.bfloat16)).float().sum().backward()
+        optimizer.step()
+        scheduler.step()
+
+    model, optimizer, scheduler, checkpoint = make_training_state()
+    for _ in range(7):
+        update(model, optimizer, scheduler)
+    path = tmp_path / "checkpoint"
+    if checkpoint_format == "dcp":
+        dcp.save({"train": checkpoint}, checkpoint_id=path)
+    else:
+        torch.save(checkpoint.state_dict(), path)
+
+    restored, restored_opt, restored_scheduler, restored_checkpoint = (
+        make_training_state()
+    )
+    if checkpoint_format == "dcp":
+        dcp.load({"train": restored_checkpoint}, checkpoint_id=path)
+    else:
+        restored_checkpoint.load_state_dict(torch.load(path, weights_only=False))
+
+    # A BF16-only restore can produce identical model weights but lose the
+    # accumulated sub-ULP update. Check optimizer state before and after stepping.
+    for next_step in (False, True):
+        if next_step:
+            update(model, optimizer, scheduler)
+            update(restored, restored_opt, restored_scheduler)
+        assert scheduler.state_dict() == restored_scheduler.state_dict()
+        for original, loaded in zip(model.parameters(), restored.parameters()):
+            torch.testing.assert_close(original, loaded, rtol=0, atol=0)
+            for key, value in optimizer.state[original].items():
+                torch.testing.assert_close(
+                    value, restored_opt.state[loaded][key], rtol=0, atol=0
+                )
+
+
+def test_fp32_master_rejects_native_low_precision_optimizer_state():
+    param = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
+    native = torch.optim.AdamW([param], lr=5e-6)
+    param.grad = torch.ones_like(param)
+    native.step()
+    master = FP32MasterAdamW([param], lr=5e-6)
+    with pytest.raises(ValueError, match="without fp32_master_param"):
+        master.load_state_dict(native.state_dict())
+    assert not master.state
 
 
 def free_port() -> str:

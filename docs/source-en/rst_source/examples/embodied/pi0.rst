@@ -344,6 +344,40 @@ The following is an ``openpi`` example. Launch it with
 
 - Control the critic position via ``value_after_vlm``: when True, the critic is connected after the VLM module output; when False, the critic input is from the action expert module output. π\ :sub:`0.5`\  PPO should set ``value_after_vlm: True``.
 
+**Optional FP32 Master Parameters**
+
+With ``actor.model.precision: null``, OpenPI keeps some parameters in BF16.
+At small learning rates, an AdamW update can round back to the same BF16 value.
+To accumulate these updates in FP32 while keeping the model's forward dtype,
+enable FP32 master parameters in your experiment YAML:
+
+.. code:: yaml
+
+   actor:
+     model:
+       precision: null
+       is_lora: False
+     optim:
+       use_fp32_master_params: True
+     fsdp_config:
+       strategy: fsdp
+       sharding_strategy: no_shard
+       use_orig_params: True
+
+This option supports full fine-tuning and LoRA with FSDP1 ``no_shard``.
+It preserves the model's existing frozen parameters, including the VLM when
+``openpi.train_expert_only: True``. The default remains native AdamW; leave this option disabled to retain its
+existing precision and memory behavior.
+FP32 master parameters and optimizer moments use more memory; the optimizer
+stores eight extra bytes per trainable BF16 parameter compared with BF16 AdamW.
+
+Resume with the same optimizer setting and a training checkpoint containing
+optimizer state. Model weights alone cannot restore accumulated FP32 updates.
+To switch from native AdamW, load model weights and start a new optimizer;
+its BF16 optimizer checkpoint has no FP32 master parameters to restore.
+Because this option changes the effective updates, check learning rate and
+noise settings for your task before reusing a training recipe.
+
 **2.2 Algorithm Configuration**
 
 In the paper, we provide two technical approaches, flow-noise and flow-sde, to fine-tune π\ :sub:`0`\  and π\ :sub:`0.5`\  models. Specifically, you can choose different technical approaches by switching the following configuration:

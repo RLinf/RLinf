@@ -316,6 +316,27 @@ LIBERO PPO 常见写法是 ``num_action_chunks: 5``，而 ``pi0_libero`` 官方 
 
 - 通过 ``value_after_vlm`` 控制 critic 的位置：当该参数为 True 时，critic 接入到 VLM 模块的输出后；为 False 时，critic 的输入为 action expert 模块的输出。π\ :sub:`0.5`\  PPO 应设 ``value_after_vlm: True``。
 
+**可选的 FP32 master 参数**
+
+设置 ``actor.model.precision: null`` 时，OpenPI 会保留部分参数的 BF16 类型。学习率较小时，AdamW 更新后的权重可能被舍入回原值。可以在实验 YAML 中启用 FP32 master 参数，让小幅更新在 FP32 中累积，同时保持模型前向计算的数据类型：
+
+.. code:: yaml
+
+   actor:
+     model:
+       precision: null
+       is_lora: False
+     optim:
+       use_fp32_master_params: True
+     fsdp_config:
+       strategy: fsdp
+       sharding_strategy: no_shard
+       use_orig_params: True
+
+此选项支持 FSDP1 ``no_shard`` 下的全量微调与 LoRA，并保留模型原有的参数冻结设置，包括 ``openpi.train_expert_only: True`` 时冻结的 VLM。默认仍使用原生 AdamW；不启用此选项即可保留原有的精度和内存行为。FP32 master 参数和优化器动量会增加内存用量；相较于 BF16 AdamW，每个可训练的 BF16 参数需要额外八字节的优化器存储空间。
+
+恢复训练时，请保持相同的优化器设置，并使用包含优化器状态的训练 checkpoint。仅有模型权重无法恢复已累积的 FP32 更新。若要从原生 AdamW 切换，请加载模型权重并新建优化器；原生 BF16 优化器的 checkpoint 不含可恢复的 FP32 master 参数。此选项会改变实际参数更新，因此复用训练配方前应检查当前任务的学习率与噪声设置。
+
 **2.2 算法配置**
 
 在论文中，我们提供 flow-noise 和 flow-sde 两种技术方案来微调 π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 模型。具体而言，你可以通过切换如下配置来选择不同的技术方案：

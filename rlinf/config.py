@@ -477,14 +477,13 @@ def validate_fp32_master_adamw_config(
     *,
     strategy: str,
     sharding_strategy: str,
-    is_lora: bool,
 ) -> None:
     """Validate the FSDP configurations exercised by FP32 master AdamW."""
     strategy = str(strategy).lower()
     sharding_strategy = str(sharding_strategy).lower()
-    if strategy != "fsdp" or sharding_strategy != "no_shard" or not is_lora:
+    if strategy != "fsdp" or sharding_strategy != "no_shard":
         raise ValueError(
-            "use_fp32_master_params currently supports only FSDP1 LoRA training "
+            "use_fp32_master_params currently supports only FSDP1 training "
             "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
         )
 
@@ -636,11 +635,9 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             )
 
         if cfg.get("optim", {}).get("use_fp32_master_params", False):
-            model_cfg = cfg.get("model", {}) or {}
             validate_fp32_master_adamw_config(
                 strategy=cfg.fsdp_config.strategy,
                 sharding_strategy=cfg.fsdp_config.sharding_strategy,
-                is_lora=bool(model_cfg.get("is_lora", False)),
             )
 
     return cfg
