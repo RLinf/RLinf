@@ -72,6 +72,7 @@ from rlinf.scheduler.cluster.utils import (
     pack_dataclass_tensors,
     unpack_dataclass_tensors,
 )
+from rlinf.utils.data_iter_utils import get_iterator_k_split
 from rlinf.utils.env_helpers import SmoothInterveneController
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
@@ -550,6 +551,78 @@ def test_split_dict_to_chunk_returns_requested_number_of_chunks():
     assert len(chunks) == 4
     assert [chunk["values"].tolist() for chunk in chunks] == [[0], [1], [], []]
     assert [chunk["sample_ids"] for chunk in chunks] == [["a"], ["b"], [], []]
+
+
+@pytest.mark.parametrize(
+    "batch_size,num_splits,expected_sizes",
+    [
+        (9, 4, [3, 2, 2, 2]),
+        (23, 5, [5, 5, 5, 4, 4]),
+        (10, 3, [4, 3, 3]),
+        (2, 4, [1, 1, 0, 0]),
+        (0, 3, [0, 0, 0]),
+    ],
+)
+@pytest.mark.parametrize("shuffle", [False, True])
+def test_microbatch_iterator_preserves_uneven_batch(
+    batch_size, num_splits, expected_sizes, shuffle
+):
+    """Uneven tensor and list fields keep every sample in the same order."""
+    tokens = torch.arange(batch_size * 6).reshape(batch_size, 6)
+    batch = {
+        "input_ids": tokens,
+        "attention_mask": tokens % 2 == 0,
+        "sample_ids": [f"sample-{i}" for i in range(batch_size)],
+    }
+    expected_order = (
+        torch.randperm(batch_size, generator=torch.Generator().manual_seed(1234))
+        if shuffle
+        else torch.arange(batch_size)
+    )
+
+    chunks = list(
+        get_iterator_k_split(
+            batch,
+            num_splits,
+            enforce_divisible_batch=False,
+            shuffle=shuffle,
+            shuffle_seed=1234,
+        )
+    )
+
+    assert [chunk["input_ids"].shape[0] for chunk in chunks] == expected_sizes
+    assert [len(chunk["sample_ids"]) for chunk in chunks] == expected_sizes
+    torch.testing.assert_close(
+        torch.cat([chunk["input_ids"] for chunk in chunks]), tokens[expected_order]
+    )
+    torch.testing.assert_close(
+        torch.cat([chunk["attention_mask"] for chunk in chunks]),
+        (tokens % 2 == 0)[expected_order],
+    )
+    assert [item for chunk in chunks for item in chunk["sample_ids"]] == [
+        f"sample-{i}" for i in expected_order.tolist()
+    ]
+
+
+@pytest.mark.parametrize(
+    "num_splits,expected_sizes", [(3, [2, 2, 2]), ([1, 3, 2], [1, 3, 2])]
+)
+def test_microbatch_iterator_preserves_strict_and_explicit_splits(
+    num_splits, expected_sizes
+):
+    batch = {"input_ids": torch.arange(6), "sample_ids": list(range(6))}
+    chunks = list(get_iterator_k_split(batch, num_splits))
+    assert [len(chunk["input_ids"]) for chunk in chunks] == expected_sizes
+    assert [len(chunk["sample_ids"]) for chunk in chunks] == expected_sizes
+    torch.testing.assert_close(
+        torch.cat([chunk["input_ids"] for chunk in chunks]), batch["input_ids"]
+    )
+    assert [item for chunk in chunks for item in chunk["sample_ids"]] == list(range(6))
+
+
+def test_microbatch_iterator_rejects_nondivisible_strict_batch():
+    with pytest.raises(AssertionError, match="batch size configuration"):
+        get_iterator_k_split({"input_ids": torch.arange(9)}, 4)
 
 
 class _LegacyDataset:
