@@ -217,15 +217,10 @@ class SGLangServerBackend(RolloutBackend):
         )
         self._process.start()
         if self._node_rank != 0:
-            # Non-entry nodes have no real HTTP frontend (launch_server
-            # blocks and only a dummy /health server binds). The entry
-            # node's single init_rlinf_worker still reaches every scheduler
-            # of the model instance: ZMQ delivers only to tp rank 0 (or to
-            # each DP-group leader under DP attention), and the remaining
-            # TP ranks receive the request via the schedulers' own
-            # broadcast over the instance-wide gloo group. So there is
-            # nothing to drive from here; worker-level RPCs are gated on
-            # the model-instance entry.
+            # Non-entry nodes have no HTTP frontend. The entry's
+            # init_rlinf_worker still reaches every scheduler: sglang
+            # delivers it to tp rank 0 (or each DP-group leader under DP
+            # attention), which broadcasts to the whole TP group.
             return
         self._client = InferenceHTTPClient(self._process.get_server_url())
         await self._client.async_run_task_method(

@@ -136,11 +136,9 @@ def _derive_rollout_node_layout(
         f"of tp*pp so model instances stay within one node."
     )
     share = shares[0]
-    # sglang splits one instance's TP*PP ranks evenly across its nodes
-    # (_compute_parallelism_ranks assumes an equal split). A share that
-    # does not divide tp*pp would silently mismatch what sglang expects
-    # on each node: e.g. share 6, tp=8 => 2 nodes x 6 GPUs per process,
-    # while sglang wants 4 per node.
+    # sglang splits an instance's tp*pp ranks evenly across its nodes;
+    # e.g. share 6 with tp=8 would give 6 GPUs per process where sglang
+    # expects 4.
     assert tp_pp % share == 0, (
         f"Cross-node rollout requires tp*pp ({tp_pp}) to be divisible by the "
         f"per-node GPU share ({share}) derived from component_placement; "
@@ -288,11 +286,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._reward_gpus = self._get_component_hardware("reward")
         self._critic_gpus = self._get_component_hardware("critic")
         self._cluster_num_gpus = cluster.num_accelerators
-        # Pure data only: placement must stay picklable into
-        # ray-less processes (the sglang Engine ZMQ path and the server
-        # HTTP payload both pickle it), so the Cluster object - which
-        # holds Ray actor handles - must NOT be stored. Capture the one
-        # fact the rollout layer derives from it.
+        # Store plain data, not the Cluster: placement is pickled into
+        # non-Ray processes (sglang server/schedulers), where Ray actor
+        # handles cannot be unpickled.
         self._node_accelerator_ranks = cluster.accelerator_ranks
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
@@ -389,10 +385,8 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         )
 
         self._recompute_rollout_node_layout()
-        # Auto scheduler's worker migration assumes a single node per
-        # rollout model instance; reject the cross-node combination at
-        # construction time instead of failing obscurely in the
-        # scheduler loop later.
+        # Auto-scheduler migration assumes one node per instance; reject
+        # here rather than fail inside the scheduler loop.
         assert not (
             self._placement_mode == PlacementMode.AUTO
             and self.rollout_nnodes_per_model_instance > 1
@@ -764,10 +758,8 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def rollout_num_model_instances(self) -> int:
-        # Number of complete model instances (model replicas). Renamed from
-        # rollout_dp_size: that name collided with sglang's dp_size, which
-        # counts attention-DP groups INSIDE one instance - a different
-        # quantity that appears in the same YAML.
+        # Number of model replicas (not sglang's dp_size, which counts
+        # attention-DP groups inside one instance).
         return self._rollout_num_gpus // (
             self._config.rollout.get("tensor_parallel_size", 1)
             * self._config.rollout.get("pipeline_parallel_size", 1)
@@ -775,13 +767,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def rollout_gpus_per_node(self) -> int:
-        # Rollout GPUs on each (pseudo-)physical node carrying rollout.
-        # DERIVED from component_placement (see _rollout_gpu_groups_by_node),
-        # never a config key and never a cluster average. Only defined when
-        # one model instance spans nodes: single-node-per-
-        # instance layouts must not use this quantity for any derivation.
-        # RLINF_SIMULATED_GPUS_PER_NODE is a test-only hook that fakes the
-        # node size (cluster-layer fact).
+        # Rollout GPUs per node, derived from component_placement; only
+        # defined for cross-node layouts. RLINF_SIMULATED_GPUS_PER_NODE
+        # (tests only) overrides the node size.
         if not self._rollout_layout.cross_node:
             raise RuntimeError(
                 "rollout_gpus_per_node is only defined when one rollout "
@@ -799,20 +787,14 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def rollout_gpus_per_process(self) -> int:
-        # GPUs held by each rollout worker process (= the
-        # num_hardware_per_process handed to PackedPlacementStrategy).
-        # Equals rollout_tp_size * rollout_pp_size unless an instance
-        # spans nodes.
+        # GPUs per rollout worker process: tp*pp, or the per-node share
+        # when an instance spans nodes.
         return self._rollout_layout.gpus_per_process
 
     @property
     def rollout_num_worker_processes(self) -> int:
-        # Size of the rollout WorkerGroup, i.e. the number of rollout worker
-        # processes (NOT scheduler subprocesses). Equals
-        # rollout_num_model_instances on a single node; equals
-        # num_instances * nnodes_per_instance once one instance spans nodes.
-        # Anything needing "WorkerGroup size / worker process rank" must use
-        # this, not rollout_num_model_instances.
+        # Rollout WorkerGroup size = instances * nodes per instance. Use
+        # this, not rollout_num_model_instances, for worker process ranks.
         return self.rollout_num_model_instances * self.rollout_nnodes_per_model_instance
 
     def rollout_model_instance_id(self, worker_process_rank: int) -> int:
@@ -903,11 +885,9 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         self._rollout_gpus = self._get_component_hardware("rollout")
         self._reward_gpus = self._get_component_hardware("reward")
         self._cluster_num_gpus = cluster.num_accelerators
-        # Pure data only: placement must stay picklable into
-        # ray-less processes (the sglang Engine ZMQ path and the server
-        # HTTP payload both pickle it), so the Cluster object - which
-        # holds Ray actor handles - must NOT be stored. Capture the one
-        # fact the rollout layer derives from it.
+        # Store plain data, not the Cluster: placement is pickled into
+        # non-Ray processes (sglang server/schedulers), where Ray actor
+        # handles cannot be unpickled.
         self._node_accelerator_ranks = cluster.accelerator_ranks
         assert self._rollout_gpus is not None, (
             "Rollout GPUs must be specified in the component_placement config."

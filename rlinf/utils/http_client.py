@@ -385,10 +385,9 @@ class InferenceHTTPClient:
                 sock_read=None,
             ),
         ) as resp:
-            # aiohttp's ClientResponseError is NOT picklable (CIMultiDictProxy
-            # headers), so Ray replaces the real cause with "can't pickle"
-            # when the failure crosses an RPC boundary. Re-raise as a
-            # serializable RuntimeError carrying the status and response body.
+            # ClientResponseError is not picklable and Ray would hide it
+            # behind "can't pickle"; raise a RuntimeError with status and
+            # body instead.
             if resp.status >= 400:
                 text = await resp.text()
                 raise RuntimeError(

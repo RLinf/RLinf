@@ -65,12 +65,9 @@ class SGLangWorker(Worker):
             config_rollout = self._cfg.rollout
         self._cfg_rollout = config_rollout
         self._placement = placement
-        # Whether this process is the entry (node rank 0) of its model
-        # instance. Only the entry consumes channels and drives the HTTP
-        # control plane; the other ranks of a cross-node instance just
-        # keep their sglang server subprocess alive.
-        # Degenerates to True on single-node layouts, where every process
-        # is its instance's entry.
+        # Only the entry (node_rank 0) of a model instance serves channels
+        # and the HTTP control plane; other ranks just keep their sglang
+        # subprocess alive. Always True on a single node.
         self._is_model_instance_entry = (
             placement.rollout_node_rank_in_model_instance(self._rank) == 0
         )
@@ -178,13 +175,9 @@ class SGLangWorker(Worker):
         else:
             load_format = "auto"
 
-        # moe_dp_size / moe_a2a_backend / enable_deterministic_inference only
-        # exist on newer sglang; passing a keyword the installed version does
-        # not define is a TypeError even when the value is the default, so
-        # only forward the ones it has. enable_deterministic_inference
-        # gives token-level determinism for the Engine/Server EXACT
-        # comparison pair; default False matches sglang's own default, so
-        # configs that never set it are unaffected.
+        # Older sglang lacks some of these fields and rejects unknown
+        # kwargs even at default values; forward only those the installed
+        # ServerArgs defines.
         version_dependent_args = {
             "moe_dp_size": self._cfg_rollout.sglang.get("moe_dp_size", 1),
             "moe_a2a_backend": self._cfg_rollout.sglang.get("moe_a2a_backend", None),
@@ -255,12 +248,9 @@ class SGLangWorker(Worker):
         )
 
         if self._cfg_rollout.sglang.get("backend_type", "engine") == "server":
-            # Server-only: skip sglang's HTTP warmup. launch_server fires a
-            # deterministic batched greedy request before serving, which the
-            # Engine backend never runs; it leaves radix-cache/allocator state
-            # that makes the two backends non-comparable. RLinf does its own
-            # readiness check (_wait_for_http_health), so the warmup is
-            # redundant.
+            # Skip sglang's HTTP warmup: the Engine backend never runs it,
+            # and the cache state it leaves makes Server outputs differ from
+            # Engine. Readiness is checked via /health.
             server_args.skip_server_warmup = True
 
         self.log_on_first_rank(f"{server_args=}")
@@ -373,10 +363,9 @@ class SGLangWorker(Worker):
                 node_rank = self._placement.rollout_node_rank_in_model_instance(
                     self._rank
                 )
-                # Rendezvous derives instance id / entry rank itself from
-                # the placement (single source of truth for the layout
-                # formulas); node_rank and nnodes are re-derived here only
-                # because the server subprocess also needs them as flags.
+                # Cross-node: all ranks of an instance start sglang with
+                # the entry node's dist_init_addr, agreed via one broadcast.
+                # Single-node passes no multi-node kwargs.
                 host, port = await negotiate_model_instance_dist_addr(
                     self, self._placement
                 )
@@ -404,10 +393,8 @@ class SGLangWorker(Worker):
             **server_multi_node_kwargs,
         )
         if multi_node_server:
-            # The entry broadcasts readiness over the
-            # instance-internal group after its /health + registration
-            # pass; non-entry ranks keep watching their own subprocess
-            # instead of returning after the 2s spawn check.
+            # Entry broadcasts ready/failed after /health; non-entry ranks
+            # wait for it while watching their own subprocess.
             await self._initialize_multi_node_server_backend()
         else:
             await self._backend.initialize()
@@ -587,13 +574,9 @@ class SGLangWorker(Worker):
         return seq_group_info
 
     async def rollout(self, input_channel: Channel, output_channel: Channel):
-        # Non-entry process of a cross-node instance: neither get nor put -
-        # the entry process of the instance services the whole channel.
-        # The timer must still be recorded, explicitly under the same key
-        # as the entry's: the runner's consume_duration() pops "rollout"
-        # on every process of the group and a missing key raises
-        # ValueError. The near-zero duration is invisible under
-        # the default max reduction.
+        # Non-entry: no channel I/O, but still record the "rollout" timer
+        # under the entry's key: the runner pops it on every rank
+        # (max-reduced, so ~0 is harmless).
         if not self._is_model_instance_entry:
             with self.worker_timer("rollout"):
                 return
@@ -695,11 +678,8 @@ class SGLangWorker(Worker):
         ).async_wait()
 
     async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
-        # The gate must precede the first input_channel.get(): the runner
-        # calls this on the whole worker group and every worker races on
-        # the same queue, so a non-entry consumer would steal requests and
-        # drop them (generate_and_send early-returns without writing the
-        # output channel).
+        # Gate before get(): every rank consumes the same queue, and a
+        # non-entry rank would drop the requests it takes.
         if not self._is_model_instance_entry:
             return
         while True:

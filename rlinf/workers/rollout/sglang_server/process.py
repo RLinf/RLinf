@@ -69,10 +69,8 @@ def _run_sglang_server(
     _ensure_no_proxy_for_localhost()
     os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
 
-    # Strip proxy env vars so sglang's internal HTTP calls (e.g. the
-    # tokenizer-manager / scheduler IPC that /get_server_info touches)
-    # don't tunnel through a user-configured proxy — otherwise the router's
-    # discover_metadata step hangs and worker registration fails.
+    # Bypass user proxies for sglang's local HTTP calls; otherwise router
+    # metadata discovery hangs.
     with no_proxy_env():
         if server_type == "embodied":
             from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
@@ -242,11 +240,9 @@ class SGLangServerProcess:
         """
         assert self._server_proc is None, "sglang server already initialized."
 
-        # Acquire two distinct free ports: one for HTTP, one for the
-        # internal torch.distributed bootstrap. Multi-node has no local
-        # dist port - the rendezvous address negotiated by the entry node
-        # already carries one - but every node still needs a legal HTTP
-        # port (the non-0 nodes bind a dummy health server on it).
+        # Every node needs an HTTP port (non-entry nodes bind a dummy
+        # /health); a local dist port only on single node, cross-node uses
+        # the negotiated dist_init_addr.
         http_port = self._acquire_free_port(max_port_num=MAX_SGLANG_HTTP_PORT)
         if self._dist_init_addr is None:
             dist_port = self._acquire_free_port()
@@ -307,10 +303,9 @@ class SGLangServerProcess:
                     is_alive=lambda: self._server_proc.is_alive(),
                 )
             except RuntimeError as e:
-                # When the wait failed because the child
-                # exited, surface the exception the child wrote to the
-                # ready pipe (launch_server layer only; scheduler-level
-                # tracebacks live in the child's stderr = this log).
+                # If the child exited, include the error it wrote to the
+                # pipe (launch_server level only; scheduler tracebacks are
+                # in this log).
                 child_failure = self.poll_child_failure()
                 self._log_error(f"sglang server failed to become healthy: {e!r}")
                 self.terminate()
@@ -325,10 +320,8 @@ class SGLangServerProcess:
             self._log_info(f"sglang server ready at {self.get_server_url()}")
             return
 
-        # Non-entry node: launch_server blocks (never returns) on this rank;
-        # instance-wide readiness is the entry node's /health. A brief
-        # liveness check catches spawn-level failures with a local message
-        # instead of surfacing as a cryptic remote timeout.
+        # Non-entry: launch_server never returns here and readiness is the
+        # entry's /health; only check that the child survived spawn.
         time.sleep(2.0)
         if not proc.is_alive():
             msg = (
