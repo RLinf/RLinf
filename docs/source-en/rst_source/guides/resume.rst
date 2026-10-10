@@ -68,7 +68,9 @@ Key points
 FSDP/FSDP2 Checkpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-FSDP/FSDP2 Checkpoint's file structure looks like this:
+FSDP/FSDP2 uses either DCP (``torch.distributed.checkpoint``) or a per-rank
+``local_shard`` checkpoint, depending on the actor worker. The default DCP
+layout is:
 
 .. code-block:: text
 
@@ -81,12 +83,35 @@ FSDP/FSDP2 Checkpoint's file structure looks like this:
    │       │   ├── __2_0.distcp
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
-   │           └── full_weigths.pt
+   │           └── full_weights.pt
    └── global_step_20/
        └── …
 
-FSDP/FSDP2 saves and loads checkpoints via DCP (torch.distributed.checkpoint), resulting in a set of distributed checkpoint files (.distcp).
-Each file contains a slice of model parameters, optimizer state, and RNG state.
+DCP stores the training state across distributed checkpoint files (``.distcp``).
+The optional ``model_state_dict/full_weights.pt`` export contains model weights;
+resume training from the complete checkpoint directory to restore optimizer,
+scheduler, and RNG state as well.
+
+Some workers save one file per rank instead. SAC and DAgger select
+``local_shard`` when ``actor.fsdp_config.use_orig_params`` is true, while IQL
+uses it for its policy, critic, and value models. For example, the SAC actor
+directory for two ranks contains:
+
+.. code-block:: text
+
+   global_step_10/actor/
+   └── local_shard_checkpoint/
+       ├── checkpoint_rank_0.pt
+       └── checkpoint_rank_1.pt
+
+Each file contains that rank's model shards, optimizer state, scheduler state,
+and RNG state. FSDP2 restores the saved local tensors into the current model's
+distributed parameters, including parameters split unevenly across ranks.
+Keep the same model, FSDP version, world size, sharding configuration, and
+rank-to-shard mapping when resuming from this format. ``local_shard`` does not
+redistribute shards for a different topology. Preserve every rank file and
+use the same launcher and configuration with ``runner.resume_dir`` as below;
+the worker selects the corresponding checkpoint format automatically.
 
 
 Resuming training
@@ -120,5 +145,4 @@ Resuming training
 
    To verify resumption, look for the log line.  
    If the next training step starts at 30, then the resume is working well!
-
 

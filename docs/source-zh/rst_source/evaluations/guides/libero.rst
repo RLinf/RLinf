@@ -88,7 +88,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - MolmoAct2
    * - ``libero_10_pi0_fast_eval.yaml``
      - Long (libero_10)
-     - PI0-FAST
+     - π₀-FAST
 
 DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend 见 :doc:`cosmos3_sglang`。
 
