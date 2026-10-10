@@ -418,6 +418,7 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   source .venv/bin/activate
 
 Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
 ``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
@@ -548,7 +549,32 @@ Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``). Point
 ``reward.api.api_base`` at an external OpenAI-compatible endpoint, or leave it empty
 and let RLinf launch a Ray-managed SGLang server/router via
 :doc:`../guides/sglang_server`.
-See ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``:
+
+This configuration needs a Qwen3-VL + SGLang environment with ``sglang_router``.
+The embodied E2E workflow creates ``.venv`` with the install command below and
+activates it before running this configuration; the workflow does not specify a
+Docker image. The ``agentic-rlinf0.4-maniskill_libero`` image provides the
+ManiSkill/LIBERO base, but its preinstalled ``openvla`` environment lacks
+``sglang_router``. If ``python`` is unavailable in the image shell, activate
+the preinstalled environment to run the installer. From a separate RLinf
+checkout, run:
+
+.. code-block:: bash
+
+   source /opt/venv/openvla/bin/activate
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
+     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   source .venv/bin/activate
+   python -c "import sglang_router; from importlib.metadata import version; print(version('sglang'))"
+
+``openvla`` only makes ``python`` available to run the installer in an image
+shell that lacks it; run the configuration in the new ``.venv``. Running
+``source switch_env openvla`` does not install ``sglang_router``.
+If the container has the required system dependencies but no sudo access,
+append ``--no-root`` to the install command.
+In ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``, set
+``reward.model.model_path`` to the actual Qwen3-VL model path. The default
+``router_server_args.tensor_parallel_size: 2`` needs two available GPUs.
 
 .. code-block:: yaml
 

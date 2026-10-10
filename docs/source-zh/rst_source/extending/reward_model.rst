@@ -412,6 +412,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   source .venv/bin/activate
 
 标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
@@ -538,7 +539,18 @@ API 推理仍只支持 ``buffered_vlm``。
 设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``）。可指向外部
 OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
 :doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
-参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：
+
+这份配置需要包含 ``sglang_router`` 的 Qwen3-VL + SGLang 环境。仓库的 embodied E2E 工作流使用下面的安装命令创建 ``.venv``，并在激活后运行该配置；工作流未指定 Docker 镜像。``agentic-rlinf0.4-maniskill_libero`` 镜像可以提供 ManiSkill/LIBERO 基础环境，但预装的 ``openvla`` 环境缺少 ``sglang_router``。在该镜像内运行时，如果当前 shell 找不到 ``python``，先激活预装环境以运行安装脚本。在独立的 RLinf 检出目录中执行：
+
+.. code-block:: bash
+
+   source /opt/venv/openvla/bin/activate
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
+     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   source .venv/bin/activate
+   python -c "import sglang_router; from importlib.metadata import version; print(version('sglang'))"
+
+``openvla`` 仅用于在缺少 ``python`` 的 shell 中启动安装脚本；运行配置时使用新建的 ``.venv``。``source switch_env openvla`` 不会安装 ``sglang_router``。如果容器内没有 sudo 权限，但已具备所需系统依赖，可在安装命令末尾加 ``--no-root``。参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``，将 ``reward.model.model_path`` 从示例路径改为实际的 Qwen3-VL 模型路径。默认 ``router_server_args.tensor_parallel_size: 2`` 需要两张可用 GPU。
 
 .. code-block:: yaml
 
