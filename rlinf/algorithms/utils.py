@@ -418,9 +418,16 @@ def expand_to_target_dim(tensor, target_shape):
     return tensor
 
 
-def safe_normalize(array, loss_mask):
+def safe_normalize(
+    array: torch.Tensor, loss_mask: Optional[torch.Tensor]
+) -> torch.Tensor:
+    """Normalize using the mean and sample standard deviation of valid entries.
+
+    With fewer than two valid entries, return the input unchanged because the
+    sample standard deviation is undefined. A ``None`` mask selects all entries.
+    """
     valid_array = array[loss_mask]
-    if len(valid_array) > 0:
+    if valid_array.numel() > 1:
         mean = valid_array.mean()
         std = valid_array.std()
         array = (array - mean) / (std + 1e-5)

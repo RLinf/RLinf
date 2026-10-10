@@ -40,6 +40,8 @@ def compute_gae_advantages_and_returns(
     This function implements Generalized Advantage Estimation (GAE) to compute
     advantages and returns for PPO training. The advantages are normalized
     using mean and standard deviation for stable training.
+    Normalization of advantages or returns is skipped when fewer than two
+    entries are valid under ``loss_mask``.
 
     Args:
         rewards (torch.Tensor): Rewards per timestep. Shape: [seq_len, bsz].
