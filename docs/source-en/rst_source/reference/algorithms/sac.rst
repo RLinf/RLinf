@@ -1,4 +1,4 @@
-Soft Actor-Critic (SAC) Algorithm
+Soft Actor-Critic (SAC)
 ==================================
 
 1. Introduction
