@@ -25,6 +25,7 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.workers.rollout.utils import get_embodied_rollout_worker
 
 mp.set_start_method("spawn", force=True)
 
@@ -46,7 +47,9 @@ def main(cfg) -> None:
     # ``apxinf`` is an eval-only in-process backend. vLLM is intentionally not
     # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    rollout_backend = str(cfg.rollout.get("rollout_backend", "huggingface")).lower()
+    if rollout_backend == "hf":
+        rollout_backend = "huggingface"
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
     if rollout_backend == "apxinf":
@@ -85,6 +88,16 @@ def main(cfg) -> None:
         rollout_placement = component_placement.get_strategy("rollout")
         rollout_group = rollout_worker_cls.create_group(cfg).launch(
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+    elif rollout_backend == "phyai":
+        rollout_group = (
+            get_embodied_rollout_worker(cfg)
+            .create_group(cfg)
+            .launch(
+                cluster,
+                name=cfg.rollout.group_name,
+                placement_strategy=rollout_placement,
+            )
         )
     else:
         raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
