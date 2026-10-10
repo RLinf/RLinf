@@ -63,6 +63,18 @@ class FrankyArm(BaseArm):
     JOINT_DAMPING: ClassVar[list[float]] = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
     #: Speed scale for position-controlled motions such as reset_joint.
     DYNAMICS_FACTOR: ClassVar[float] = 0.2
+    #: JointMotion vel/acc/jerk scales. Impedance stop leaves residual dq;
+    #: a 0.2-scaled Ruckig start then trips acceleration_discontinuity.
+    RESET_VELOCITY_FACTOR: ClassVar[float] = 0.1
+    RESET_ACCELERATION_FACTOR: ClassVar[float] = 0.05
+    RESET_JERK_FACTOR: ClassVar[float] = 0.03
+    #: Extra slowdown applied if the first JointMotion hits a C2 reflex.
+    RESET_RETRY_FACTOR: ClassVar[float] = 0.5
+    #: rad/s. JointMotion must start from rest.
+    RESET_STILL_DQ: ClassVar[float] = 0.02
+    RESET_STILL_TIMEOUT_S: ClassVar[float] = 2.0
+    #: rad. Skip JointMotion when already at the reset configuration.
+    RESET_AT_TARGET: ClassVar[float] = 1e-2
     #: SCHED_FIFO priority requested for the control thread.
     RT_PRIORITY: ClassVar[int] = 80
     #: Floor on the timestep used for velocity feedforward, in seconds.
@@ -560,12 +572,71 @@ class FrankyArm(BaseArm):
         self._check_tracking_motion()
         self._stop_tracking_motion()
         self._stop_cart_tracking_motion()
+        # Impedance stop leaves a live control session; join so JointMotion
+        # is not spliced onto a non-zero commanded acceleration.
+        self._safe_join()
+        self._robot.recover_from_errors()
+        self._wait_for_joint_rest()
+
+        target = np.clip(
+            np.asarray(positions, dtype=np.float64),
+            JOINT_LIMITS_LOWER,
+            JOINT_LIMITS_UPPER,
+        )
+        current = np.asarray(self._robot.state.q, dtype=np.float64)
+        if float(np.max(np.abs(current - target))) < self.RESET_AT_TARGET:
+            return
+        self._move_reset_joints(target)
+
+    def _wait_for_joint_rest(self) -> None:
+        """Block until measured joint velocity is small enough for JointMotion."""
+        deadline = time.monotonic() + self.RESET_STILL_TIMEOUT_S
+        dq = np.asarray(self._robot.state.dq, dtype=np.float64)
+        while time.monotonic() < deadline:
+            if float(np.max(np.abs(dq))) < self.RESET_STILL_DQ:
+                return
+            time.sleep(self.SETTLE_POLL_INTERVAL)
+            dq = np.asarray(self._robot.state.dq, dtype=np.float64)
+        self._logger.warning(
+            "FrankyArm at %s still moving (max |dq|=%.4f rad/s) before JointMotion.",
+            self._robot_ip,
+            float(np.max(np.abs(dq))),
+        )
+
+    def _reset_dynamics(self, scale: float = 1.0) -> Any:
+        return self._franky.RelativeDynamicsFactor(
+            self.RESET_VELOCITY_FACTOR * scale,
+            self.RESET_ACCELERATION_FACTOR * scale,
+            self.RESET_JERK_FACTOR * scale,
+        )
+
+    def _move_reset_joints(self, target: np.ndarray) -> None:
         franky = self._franky
         motion = franky.JointMotion(
-            franky.JointState(position=np.asarray(positions, dtype=np.float64)),
+            franky.JointState(position=target),
             reference_type=franky.ReferenceType.Absolute,
+            relative_dynamics_factor=self._reset_dynamics(),
         )
-        self._robot.move(motion)
+        try:
+            self._robot.move(motion)
+            return
+        except Exception as error:
+            if "discontinuity" not in str(error):
+                raise
+            self._logger.warning(
+                "JointMotion reflex at %s (%s); recovering and retrying slower.",
+                self._robot_ip,
+                error,
+            )
+        self._robot.recover_from_errors()
+        self._wait_for_joint_rest()
+        self._robot.move(
+            franky.JointMotion(
+                franky.JointState(position=target),
+                reference_type=franky.ReferenceType.Absolute,
+                relative_dynamics_factor=self._reset_dynamics(self.RESET_RETRY_FACTOR),
+            )
+        )
 
     def cleanup(self) -> None:
         """Stop any motion in flight; the arm holds nothing else to release."""

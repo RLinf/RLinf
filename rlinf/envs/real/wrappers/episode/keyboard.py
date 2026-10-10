@@ -55,6 +55,11 @@ class KeyboardListener:
         )
         self.listener.start()
         self.last_intervene = 0
+        _logger.info(
+            "KeyboardListener reading %s (%s). Episode keys are a/b/c on this device.",
+            self.device.path,
+            getattr(self.device, "name", ""),
+        )
 
     def _open_keyboard_device(self) -> Any:
         override_path = os.environ.get("RLINF_KEYBOARD_DEVICE")
@@ -155,25 +160,13 @@ class KeyboardListener:
         while True:
             try:
                 for event in self.device.read_loop():
-                    if event.type != self._ecodes.EV_KEY:
-                        continue
-
-                    key = self._event_to_key(event.code)
-                    if key is None:
-                        continue
-
-                    if event.value == 1:
-                        # Enqueue the initial press only, not key-repeat events.
-                        with self.state_lock:
-                            self.latest_data["key"] = key
-                            self._press_events.append(key)
-                    elif event.value == 2:
-                        with self.state_lock:
-                            self.latest_data["key"] = key
-                    elif event.value == 0:
-                        with self.state_lock:
-                            if self.latest_data["key"] == key:
-                                self.latest_data["key"] = None
+                    try:
+                        self._handle_event(event)
+                    except Exception:
+                        _logger.exception(
+                            "Keyboard device %s dropped one event; listener stays up.",
+                            device_path,
+                        )
             except OSError as exc:
                 if exc.errno != errno.ENODEV:
                     _logger.error(
@@ -203,6 +196,27 @@ class KeyboardListener:
                     except (FileNotFoundError, OSError):
                         continue
                 _logger.info("Keyboard device %s reopened.", device_path)
+
+    def _handle_event(self, event: Any) -> None:
+        if event.type != self._ecodes.EV_KEY:
+            return
+
+        key = self._event_to_key(event.code)
+        if key is None:
+            return
+
+        if event.value == 1:
+            # Enqueue the initial press only, not key-repeat events.
+            with self.state_lock:
+                self.latest_data["key"] = key
+                self._press_events.append(key)
+        elif event.value == 2:
+            with self.state_lock:
+                self.latest_data["key"] = key
+        elif event.value == 0:
+            with self.state_lock:
+                if self.latest_data["key"] == key:
+                    self.latest_data["key"] = None
 
     def _event_to_key(self, key_code: int) -> str | None:
         key_name = self._ecodes.bytype[self._ecodes.EV_KEY].get(key_code)
