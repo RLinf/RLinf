@@ -36,6 +36,7 @@ from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import get_scheduler_channel
 from rlinf.utils.data_process import process_image_data
+from rlinf.utils.dtype_check import warn_on_weight_dtype_mismatch
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.utils import RunningStatusManager, print_vllm_outputs
 
@@ -352,6 +353,13 @@ class VLLMWorker(Worker):
             "max_num_seqs": self._cfg.rollout.max_running_requests,
             "enable_sleep_mode": True,  # it enables offload weights
         }
+        # Flag checkpoints whose declared dtype differs from the stored weights
+        # (e.g. fp16 weights with a bf16 config.json) before they are loaded.
+        warn_on_weight_dtype_mismatch(
+            self._cfg.rollout.model.model_path,
+            serving_dtype=engine_kwargs["dtype"],
+            log=self.log_warning,
+        )
         # `task` was dropped from EngineArgs after 0.8.5; generation is inferred.
         if "task" in {field.name for field in fields(EngineArgs)}:
             engine_kwargs["task"] = "generate"

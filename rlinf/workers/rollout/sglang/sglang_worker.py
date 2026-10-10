@@ -33,6 +33,7 @@ from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
+from rlinf.utils.dtype_check import warn_on_weight_dtype_mismatch
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.sglang import Engine, io_struct
 from rlinf.workers.rollout.utils import (
@@ -177,6 +178,14 @@ class SGLangWorker(Worker):
                     f"sglang ServerArgs has no field {name!r}; "
                     f"the configured value {value!r} is ignored"
                 )
+
+        # Flag checkpoints whose declared dtype differs from the stored weights
+        # (e.g. fp16 weights with a bf16 config.json) before they are loaded.
+        warn_on_weight_dtype_mismatch(
+            self._cfg_rollout.model.model_path,
+            serving_dtype=torch_dtype_from_precision(self._cfg_rollout.model.precision),
+            log=self.log_warning,
+        )
 
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
