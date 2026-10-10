@@ -13,16 +13,19 @@
 # limitations under the License.
 
 import logging
+import math
 from enum import Enum, auto
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from omegaconf import DictConfig
 
 from rlinf.scheduler import (
     Cluster,
     ComponentPlacement,
+    FlexiblePlacementStrategy,
     PackedPlacementStrategy,
 )
+from rlinf.scheduler.cluster.cluster import ClusterEnvVar
 
 
 class PlacementMode(Enum):
@@ -83,6 +86,165 @@ def placement_mode_to_rollout_sync_mode(
     )
 
 
+class _RolloutNodeLayout(NamedTuple):
+    """Derived multi-node rollout layout.
+
+    Attributes:
+        cross_node: True when one model instance spans multiple nodes.
+        gpus_per_node: The (equal) rollout GPU share per node. Only defined
+            when `cross_node` is True; single-node-per-instance layouts do
+            not use this quantity for any derivation.
+        nnodes_per_model_instance: Nodes one model instance spans (sglang
+            ServerArgs' `nnodes`). Always 1 when not `cross_node`.
+        gpus_per_process: GPUs each rollout worker process holds
+            (= num_hardware_per_process). `tp * pp` when not `cross_node`.
+    """
+
+    cross_node: bool
+    gpus_per_node: Optional[int]
+    nnodes_per_model_instance: int
+    gpus_per_process: int
+
+
+def _derive_rollout_node_layout(
+    rollout_gpu_groups: list[list[int]], tp_pp: int
+) -> _RolloutNodeLayout:
+    """Decide whether model instances span nodes, and derive the layout.
+
+    Derivation order:
+    1. If every node's share is >= tp*pp and divisible by tp*pp, instances
+       stay within one node (nnodes=1) and the shares need NOT be equal -
+       each node simply hosts whole instances.
+    2. Otherwise the layout is treated as cross-node: every node must carry
+       an EQUAL share, and tp*pp must be divisible by that share because
+       sglang splits an instance's ranks evenly across its nodes.
+    """
+    shares = [len(group) for group in rollout_gpu_groups]
+    assert shares, "Rollout GPUs must cover at least one accelerator."
+    if min(shares) >= tp_pp and all(share % tp_pp == 0 for share in shares):
+        return _RolloutNodeLayout(
+            cross_node=False,
+            gpus_per_node=None,
+            nnodes_per_model_instance=1,
+            gpus_per_process=tp_pp,
+        )
+    # Cross-node: equal per-node share is required.
+    assert all(share == shares[0] for share in shares), (
+        f"Rollout requires an equal GPU share on every node carrying it "
+        f"(got per-node shares {shares} with tp*pp={tp_pp}); either give "
+        f"every node the same share, or make each share a whole multiple "
+        f"of tp*pp so model instances stay within one node."
+    )
+    share = shares[0]
+    # sglang splits one instance's TP*PP ranks evenly across its nodes
+    # (_compute_parallelism_ranks assumes an equal split). A share that
+    # does not divide tp*pp would silently mismatch what sglang expects
+    # on each node: e.g. share 6, tp=8 => 2 nodes x 6 GPUs per process,
+    # while sglang wants 4 per node.
+    assert tp_pp % share == 0, (
+        f"Cross-node rollout requires tp*pp ({tp_pp}) to be divisible by the "
+        f"per-node GPU share ({share}) derived from component_placement; "
+        f"either make tp*pp a whole multiple of the share so instances can "
+        f"span nodes, or make each node's share a whole multiple of tp*pp "
+        f"so model instances stay within one node."
+    )
+    return _RolloutNodeLayout(
+        cross_node=True,
+        gpus_per_node=share,
+        nnodes_per_model_instance=math.ceil(tp_pp / share),
+        gpus_per_process=min(tp_pp, share),
+    )
+
+
+def rollout_backend_supports_cross_node_instances(rollout_cfg: DictConfig) -> bool:
+    """Whether the configured rollout backend can host cross-node instances.
+
+    Single definition site of the backend whitelist for rollout model
+    instances spanning multiple nodes. This is the
+    CURRENT-VERSION capability boundary, not a design verdict: only the
+    sglang server backend implements the multi-node path (rendezvous /
+    ``dist_init_addr`` / entry-process RPC gating). vLLM cross-node is a
+    planned extension - when it lands, extend only this function and drop
+    the matching rejection in one place.
+    """
+    backend = rollout_cfg.get("rollout_backend", None)
+    if backend != "sglang":
+        return False
+    sglang_cfg = rollout_cfg.get("sglang", None)
+    backend_type = sglang_cfg.get("backend_type", "engine") if sglang_cfg else "engine"
+    return backend_type == "server"
+
+
+def _assert_cross_node_backend_supported(
+    rollout_cfg: DictConfig, layout: _RolloutNodeLayout
+) -> None:
+    """Readable startup-time rejection of cross-node-incapable backends.
+
+    Without this, e.g. the sglang Engine backend or vLLM would start every
+    rollout process with tp*pp GPUs that a single node cannot see and fail
+    deep inside the backend with a cryptic error.
+    """
+    if layout.nnodes_per_model_instance <= 1:
+        return
+    backend = rollout_cfg.get("rollout_backend", None)
+    sglang_cfg = rollout_cfg.get("sglang", None)
+    backend_type = sglang_cfg.get("backend_type", "engine") if sglang_cfg else "engine"
+    assert rollout_backend_supports_cross_node_instances(rollout_cfg), (
+        f"Cross-node rollout model instances "
+        f"(nnodes_per_model_instance={layout.nnodes_per_model_instance}) are "
+        f"only supported by the sglang server backend in the current version "
+        f"(configured: rollout_backend={backend!r}"
+        + (f", sglang.backend_type={backend_type!r}" if backend == "sglang" else "")
+        + "). vLLM cross-node support is a planned extension."
+    )
+
+
+def _rollout_gpu_groups_by_node(
+    rollout_gpus: list[int], node_accelerator_ranks: list[list[int]]
+) -> list[list[int]]:
+    """Group the rollout hardware ranks by (pseudo-)physical node.
+
+    Takes the per-node accelerator ranks as plain data (captured at
+    placement construction), not a live ``Cluster``, so the
+    caller stays pickle-safe.
+
+    The per-node share is DERIVED from component_placement - it is neither a
+    config key nor a cluster average (`num_accelerators // num_nodes` breaks on
+    heterogeneous clusters and clusters with accelerator-less nodes). Nodes
+    carrying no rollout GPUs are skipped.
+
+    Test hook: `RLINF_SIMULATED_GPUS_PER_NODE` chunks each physical node's
+    accelerators into pseudo-nodes of that size, so one machine can simulate
+    a multi-node layout. The hook fakes a node-size (cluster-layer) fact only;
+    the rollout layer always derives.
+
+    Returns one list of rollout ranks per (pseudo-)node, in node order. The
+    shares may be UNEQUAL: whether that is legal is decided downstream by
+    `_derive_rollout_node_layout` (equal shares are only required when a
+    model instance spans nodes).
+    """
+    node_accel_ranks = node_accelerator_ranks
+    simulated = Cluster.get_sys_env_var(ClusterEnvVar.SIMULATED_GPUS_PER_NODE)
+    if simulated is not None:
+        node_size = int(simulated)
+        assert node_size > 0, (
+            f"{ClusterEnvVar.SIMULATED_GPUS_PER_NODE} must be a positive "
+            f"integer, got '{simulated}'."
+        )
+        flat_ranks = [rank for ranks in node_accel_ranks for rank in ranks]
+        node_accel_ranks = [
+            flat_ranks[i : i + node_size] for i in range(0, len(flat_ranks), node_size)
+        ]
+    rollout_set = set(rollout_gpus)
+    groups = []
+    for ranks in node_accel_ranks:
+        share = [rank for rank in ranks if rank in rollout_set]
+        if share:
+            groups.append(share)
+    assert groups, "Rollout GPUs must cover at least one accelerator."
+    return groups
+
+
 class HybridComponentPlacement(ComponentPlacement):
     """Hybrid component placement that allows components to run on any sets of GPUs."""
 
@@ -126,6 +288,12 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         self._reward_gpus = self._get_component_hardware("reward")
         self._critic_gpus = self._get_component_hardware("critic")
         self._cluster_num_gpus = cluster.num_accelerators
+        # Pure data only: placement must stay picklable into
+        # ray-less processes (the sglang Engine ZMQ path and the server
+        # HTTP payload both pickle it), so the Cluster object - which
+        # holds Ray actor handles - must NOT be stored. Capture the one
+        # fact the rollout layer derives from it.
+        self._node_accelerator_ranks = cluster.accelerator_ranks
         assert self._actor_gpus is not None, (
             "Actor GPUs must be specified in the component_placement config."
         )
@@ -138,9 +306,14 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         assert self._actor_gpus == list(
             range(self._actor_gpus[0], self._actor_gpus[-1] + 1)
         ), f"Actor GPUs {self._actor_gpus} must be continuous."
-        assert self._rollout_gpus == list(
-            range(self._rollout_gpus[0], self._rollout_gpus[-1] + 1)
-        ), f"Rollout GPUs {self._rollout_gpus} must be continuous."
+        assert (
+            self._rollout_gpus
+            == list(range(self._rollout_gpus[0], self._rollout_gpus[-1] + 1))
+            or self._is_disaggregated()
+        ), (
+            f"Rollout GPUs {self._rollout_gpus} must be continuous, unless "
+            f"the placement is disaggregated."
+        )
         if self._inference_gpus is not None:
             assert self._inference_gpus == list(
                 range(self._inference_gpus[0], self._inference_gpus[-1] + 1)
@@ -215,6 +388,24 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
         )
 
+        self._recompute_rollout_node_layout()
+        # Auto scheduler's worker migration assumes a single node per
+        # rollout model instance; reject the cross-node combination at
+        # construction time instead of failing obscurely in the
+        # scheduler loop later.
+        assert not (
+            self._placement_mode == PlacementMode.AUTO
+            and self.rollout_nnodes_per_model_instance > 1
+        ), (
+            "Auto scheduler does not support cross-node rollout model "
+            "instances (rollout spans "
+            f"{self.rollout_nnodes_per_model_instance} nodes per instance). "
+            "Disable cluster.auto_scheduler or keep each rollout model "
+            "instance on a single node."
+        )
+        # Cross-node layouts need a backend that actually injects the
+        # multi-node parameters (single whitelist).
+        _assert_cross_node_backend_supported(self._config.rollout, self._rollout_layout)
         self._generate_placements()
 
     def _is_auto(self):
@@ -272,6 +463,52 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             and rollout_gpu_set.isdisjoint(critic_inference_gpu_set)
         )
 
+    def _rollout_placement_strategy(self):
+        """Build the rollout placement strategy.
+
+        Continuous rollout intervals (all existing configs) keep using
+        PackedPlacementStrategy unchanged. Discontinuous intervals
+        (disaggregated-only) use FlexiblePlacementStrategy: each node's GPU
+        share is chunked by gpus_per_process and the chunks are laid out in
+        node order, so one instance's processes get consecutive ranks -
+        matching rollout_model_instance_id(rank) = rank // nnodes.
+        """
+        gpus = self._rollout_gpus
+        if gpus == list(range(gpus[0], gpus[-1] + 1)):
+            return PackedPlacementStrategy(
+                gpus[0],
+                gpus[-1],
+                num_hardware_per_process=self.rollout_gpus_per_process,
+            )
+        assert self.is_disaggregated, (
+            f"Discontinuous rollout GPUs {gpus} are only supported in "
+            f"disaggregated mode."
+        )
+        per_process = self.rollout_gpus_per_process
+        hardware_ranks_list = [
+            group[i : i + per_process]
+            for group in self._rollout_gpu_groups
+            for i in range(0, len(group), per_process)
+        ]
+        return FlexiblePlacementStrategy(hardware_ranks_list)
+
+    def _recompute_rollout_node_layout(self) -> None:
+        """(Re)derive the per-node rollout GPU groups and node layout.
+
+        Called from `__init__`, and again from the AUTO branch when
+        `use_pre_process_policy` extends the rollout GPU interval. Pure
+        derivation: legality checks (auto-scheduler, backend whitelist)
+        run at the call sites after the layout settles.
+        """
+        self._rollout_gpu_groups = _rollout_gpu_groups_by_node(
+            self._rollout_gpus, self._node_accelerator_ranks
+        )
+        self._rollout_layout = _derive_rollout_node_layout(
+            self._rollout_gpu_groups,
+            self.rollout_tp_size
+            * self._config.rollout.get("pipeline_parallel_size", 1),
+        )
+
     def _generate_placements(self):
         if self._placement_mode == PlacementMode.COLLOCATED:
             self._placements["actor"] = PackedPlacementStrategy(
@@ -287,11 +524,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             # rank r shares a device with actor rank r, which no longer holds
             # once sglang assigns its own attention coordinates. send/recv
             # already picks IPC or NCCL by detecting same-device pairs.
-            self._placements["rollout"] = PackedPlacementStrategy(
-                self._rollout_gpus[0],
-                self._rollout_gpus[-1],
-                num_hardware_per_process=self.rollout_tp_size,
-            )
+            # Cross-node layout legality is asserted by
+            # _derive_rollout_node_layout (runs in __init__ unconditionally).
+            self._placements["rollout"] = self._rollout_placement_strategy()
             if self._reward_gpus:
                 self._placements["reward"] = PackedPlacementStrategy(
                     self._reward_gpus[0], self._reward_gpus[-1]
@@ -301,12 +536,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                     self._critic_gpus[0], self._critic_gpus[-1]
                 )
         elif self._placement_mode == PlacementMode.DISAGGREGATED:
-            num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
-            self._placements["rollout"] = PackedPlacementStrategy(
-                self._rollout_gpus[0],
-                self._rollout_gpus[-1],
-                num_hardware_per_process=num_gpus_per_rollout_dp,
-            )
+            self._placements["rollout"] = self._rollout_placement_strategy()
             if self._inference_gpus is not None:
                 # TODO check the placement name
                 self._placements[
@@ -353,13 +583,17 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                     list(range(1 + self._actor_gpus[-1])) + self._rollout_gpus
                 )
                 self._rollout_num_gpus = len(self._rollout_gpus)
+                self._recompute_rollout_node_layout()
+                # Re-check the backend whitelist: the extended rollout
+                # interval may have made instances cross-node.
+                _assert_cross_node_backend_supported(
+                    self._config.rollout, self._rollout_layout
+                )
 
-            num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
-            self._placements["rollout"] = PackedPlacementStrategy(
-                self._rollout_gpus[0],
-                self._rollout_gpus[-1],
-                num_hardware_per_process=num_gpus_per_rollout_dp,
-            )
+            # Cross-node layout legality is asserted by
+            # _derive_rollout_node_layout (runs in __init__ and again from
+            # _recompute_rollout_node_layout above).
+            self._placements["rollout"] = self._rollout_placement_strategy()
 
             if self._inference_gpus is not None:
                 self._placements["inference"] = PackedPlacementStrategy(
@@ -529,11 +763,77 @@ class ModelParallelComponentPlacement(ComponentPlacement):
         return self._critic_inference_num_gpus
 
     @property
-    def rollout_dp_size(self) -> int:
+    def rollout_num_model_instances(self) -> int:
+        # Number of complete model instances (model replicas). Renamed from
+        # rollout_dp_size: that name collided with sglang's dp_size, which
+        # counts attention-DP groups INSIDE one instance - a different
+        # quantity that appears in the same YAML.
         return self._rollout_num_gpus // (
             self._config.rollout.get("tensor_parallel_size", 1)
             * self._config.rollout.get("pipeline_parallel_size", 1)
         )
+
+    @property
+    def rollout_gpus_per_node(self) -> int:
+        # Rollout GPUs on each (pseudo-)physical node carrying rollout.
+        # DERIVED from component_placement (see _rollout_gpu_groups_by_node),
+        # never a config key and never a cluster average. Only defined when
+        # one model instance spans nodes: single-node-per-
+        # instance layouts must not use this quantity for any derivation.
+        # RLINF_SIMULATED_GPUS_PER_NODE is a test-only hook that fakes the
+        # node size (cluster-layer fact).
+        if not self._rollout_layout.cross_node:
+            raise RuntimeError(
+                "rollout_gpus_per_node is only defined when one rollout "
+                "model instance spans nodes; this layout keeps every "
+                "instance within a single node."
+            )
+        return self._rollout_layout.gpus_per_node
+
+    @property
+    def rollout_nnodes_per_model_instance(self) -> int:
+        # Number of physical nodes one model instance spans. Directly
+        # corresponds to sglang ServerArgs' nnodes. Always 1 when instances
+        # do not span nodes.
+        return self._rollout_layout.nnodes_per_model_instance
+
+    @property
+    def rollout_gpus_per_process(self) -> int:
+        # GPUs held by each rollout worker process (= the
+        # num_hardware_per_process handed to PackedPlacementStrategy).
+        # Equals rollout_tp_size * rollout_pp_size unless an instance
+        # spans nodes.
+        return self._rollout_layout.gpus_per_process
+
+    @property
+    def rollout_num_worker_processes(self) -> int:
+        # Size of the rollout WorkerGroup, i.e. the number of rollout worker
+        # processes (NOT scheduler subprocesses). Equals
+        # rollout_num_model_instances on a single node; equals
+        # num_instances * nnodes_per_instance once one instance spans nodes.
+        # Anything needing "WorkerGroup size / worker process rank" must use
+        # this, not rollout_num_model_instances.
+        return self.rollout_num_model_instances * self.rollout_nnodes_per_model_instance
+
+    def rollout_model_instance_id(self, worker_process_rank: int) -> int:
+        """Map a rollout worker process rank to its model instance id."""
+        return worker_process_rank // self.rollout_nnodes_per_model_instance
+
+    def rollout_node_rank_in_model_instance(self, worker_process_rank: int) -> int:
+        """Rank of a worker process's node within its model instance.
+
+        Directly corresponds to sglang ServerArgs' node_rank.
+        """
+        return worker_process_rank % self.rollout_nnodes_per_model_instance
+
+    def rollout_model_instance_entry_process_rank(self, model_instance_id: int) -> int:
+        """WorkerGroup rank of a model instance's entry process (node_rank==0).
+
+        All execute_on(...) calls targeting a specific model instance must go
+        through this - passing model_instance_id directly would hit a
+        non-entry process once an instance spans multiple nodes.
+        """
+        return model_instance_id * self.rollout_nnodes_per_model_instance
 
     @property
     def rollout_tp_size(self) -> int:
@@ -603,6 +903,12 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         self._rollout_gpus = self._get_component_hardware("rollout")
         self._reward_gpus = self._get_component_hardware("reward")
         self._cluster_num_gpus = cluster.num_accelerators
+        # Pure data only: placement must stay picklable into
+        # ray-less processes (the sglang Engine ZMQ path and the server
+        # HTTP payload both pickle it), so the Cluster object - which
+        # holds Ray actor handles - must NOT be stored. Capture the one
+        # fact the rollout layer derives from it.
+        self._node_accelerator_ranks = cluster.accelerator_ranks
         assert self._rollout_gpus is not None, (
             "Rollout GPUs must be specified in the component_placement config."
         )
@@ -623,14 +929,27 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
             f"Rollout TP size {self.rollout_tp_size} must be less than or equal to Rollout world size {self.rollout_world_size}."
         )
 
+        self._rollout_gpu_groups = _rollout_gpu_groups_by_node(
+            self._rollout_gpus, self._node_accelerator_ranks
+        )
+        self._rollout_layout = _derive_rollout_node_layout(
+            self._rollout_gpu_groups,
+            self.rollout_tp_size
+            * self._config.rollout.get("pipeline_parallel_size", 1),
+        )
+        # Cross-node layouts need a backend that actually injects the
+        # multi-node parameters (single whitelist).
+        _assert_cross_node_backend_supported(self._config.rollout, self._rollout_layout)
         self._generate_placements()
 
     def _generate_placements(self):
         assert self._placement_mode == PlacementMode.COLLOCATED
+        # Cross-node layout legality is asserted by
+        # _derive_rollout_node_layout (runs in __init__ unconditionally).
         self._placements["rollout"] = PackedPlacementStrategy(
             self._rollout_gpus[0],
             self._rollout_gpus[-1],
-            num_hardware_per_process=self.rollout_tp_size,
+            num_hardware_per_process=self.rollout_gpus_per_process,
             stride=1,
         )
         if self._reward_gpus:
@@ -659,11 +978,53 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
         return False
 
     @property
-    def rollout_dp_size(self) -> int:
+    def rollout_num_model_instances(self) -> int:
+        # See ModelParallelComponentPlacement.rollout_num_model_instances
+        # (renamed from rollout_dp_size; shared semantics).
         return self._rollout_num_gpus // (
             self._config.rollout.get("tensor_parallel_size", 1)
             * self._config.rollout.get("pipeline_parallel_size", 1)
         )
+
+    @property
+    def rollout_gpus_per_node(self) -> int:
+        # See ModelParallelComponentPlacement.rollout_gpus_per_node:
+        # derived from component_placement, never a config key; only
+        # defined when one model instance spans nodes.
+        if not self._rollout_layout.cross_node:
+            raise RuntimeError(
+                "rollout_gpus_per_node is only defined when one rollout "
+                "model instance spans nodes; this layout keeps every "
+                "instance within a single node."
+            )
+        return self._rollout_layout.gpus_per_node
+
+    @property
+    def rollout_nnodes_per_model_instance(self) -> int:
+        # See ModelParallelComponentPlacement.rollout_nnodes_per_model_instance.
+        return self._rollout_layout.nnodes_per_model_instance
+
+    @property
+    def rollout_gpus_per_process(self) -> int:
+        # See ModelParallelComponentPlacement.rollout_gpus_per_process.
+        return self._rollout_layout.gpus_per_process
+
+    @property
+    def rollout_num_worker_processes(self) -> int:
+        # See ModelParallelComponentPlacement.rollout_num_worker_processes.
+        return self.rollout_num_model_instances * self.rollout_nnodes_per_model_instance
+
+    def rollout_model_instance_id(self, worker_process_rank: int) -> int:
+        """Map a rollout worker process rank to its model instance id."""
+        return worker_process_rank // self.rollout_nnodes_per_model_instance
+
+    def rollout_node_rank_in_model_instance(self, worker_process_rank: int) -> int:
+        """Rank of a worker process's node within its model instance."""
+        return worker_process_rank % self.rollout_nnodes_per_model_instance
+
+    def rollout_model_instance_entry_process_rank(self, model_instance_id: int) -> int:
+        """WorkerGroup rank of a model instance's entry process (node_rank==0)."""
+        return model_instance_id * self.rollout_nnodes_per_model_instance
 
     @property
     def rollout_tp_size(self) -> int:

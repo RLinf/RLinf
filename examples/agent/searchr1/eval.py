@@ -63,8 +63,8 @@ def main(cfg) -> None:
     )
     assert (
         len(agentloop_placement_strategy._node_ranks)
-        == component_placement.rollout_dp_size
-    ), "agentloop worker num now should be equal to rollout dp size"
+        == component_placement.rollout_num_worker_processes
+    ), "agentloop worker num now should be equal to rollout worker process num"
     agentloop_group = Searchr1AgentLoopWorker.create_group(
         cfg, component_placement
     ).launch(

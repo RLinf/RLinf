@@ -151,7 +151,7 @@ class ReasoningEvalRunner:
 
     def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         if split_size is None:
-            split_size = self.component_placement.rollout_dp_size
+            split_size = self.component_placement.rollout_num_model_instances
         assert self.total_batch_size % split_size == 0, (
             f"Total batch size {self.total_batch_size} is not divisible by number of splits {split_size}"
         )
