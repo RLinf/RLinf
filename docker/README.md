@@ -18,10 +18,12 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 ### Additional build arguments
 
-- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), `musa` (Moore Threads), or `kunlun` (Kunlunxin). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image.
-- Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `KUNLUN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, `MUSA_BASE_IMAGE`, or `KUNLUN_BASE_IMAGE` directly.
+- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), `musa` (Moore Threads), `kunlun` (Kunlunxin), or `metax` (MetaX MACA). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image.
+- Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `KUNLUN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, `MUSA_BASE_IMAGE`, `KUNLUN_BASE_IMAGE`, or `METAX_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
 - `UNINSTALL_FA4` (default `1`) — on the `reason` target, uninstalls `flash-attn-4` during the image build and installs FA2 instead. FA2 also runs on GPUs older than sm90 (for example A100), and Docker builds cannot see the GPU, so `install.sh` cannot make this choice by itself. Set it to `0` for an image that runs only on Hopper or newer: it keeps FA4 and skips FA2, since a venv carries exactly one flash-attention variant. The published FA4 image carries a `-fa4` tag suffix.
+
+The common image setup selects `runit-systemd` or `runit-run` from the base distribution's available packages. Embodied installs use `requirements/sys_deps.sh` for rendering libraries, including OSMesa on every platform.
 
 Example with non-default args:
 
@@ -167,6 +169,44 @@ docker buildx build \
     --build-arg PLATFORM=kunlun \
     -t rlinf:embodied-maniskill_libero-kunlun .
 ```
+
+### Building for MetaX (MACA)
+
+`PLATFORM=metax` builds on top of a MetaX MACA base image that already carries
+the MACA stack (mx-smi, MCCL) and a CUDA-compatible MACA build of torch.
+`install.sh` therefore installs no torch of its own — it creates the venv with
+`--system-site-packages` on the image's interpreter and skips every CUDA-only
+package (flash-attn, apex, and the vLLM/SGLang kernels); the image's torch
+drives MACA devices through the standard `torch.cuda` API. Override
+`METAX_BASE_IMAGE` to use another MACA base image.
+
+MetaX scheduler transfers request the `mccl` backend; the vendor runtime must
+register that backend for CUDA tensors. The installer pins TensorFlow to
+2.16.1 for Python 3.12 and keeps
+`protobuf==4.25.3` with `googleapis-common-protos<1.75.1` during dependency
+resolution and the final installation pass.
+
+Build with BuildKit — the legacy builder resolves every `FROM` in the
+Dockerfile, including the CUDA and ROCm bases on Docker Hub that a MetaX host
+often cannot reach.
+
+```shell
+DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile \
+    --build-arg BUILD_TARGET=embodied-maniskill_libero \
+    --build-arg PLATFORM=metax \
+    -t rlinf:embodied-maniskill_libero .
+
+docker run -it --ipc=host --shm-size=100g --net=host --uts=host --privileged=true --group-add video \
+    rlinf:embodied-maniskill_libero bash
+```
+
+Every platform builds the same model set. The shared `requirements/sys_deps.sh`
+installs OSMesa for software rendering. Since MetaX GPUs have no EGL support,
+run MuJoCo-based embodied e2e tests with the OSMesa backend, e.g.
+`bash tests/e2e_tests/embodied/run.sh libero_10_ppo_openpi_pi05_metax osmesa`.
+ManiSkill tests also pass on MetaX with the CPU physics backend — SAPIEN has
+no MACA build, so `sim_backend=cpu` and a single env are required, e.g.
+`bash tests/e2e_tests/embodied/run.sh maniskill_async_ppo_openvla osmesa env.train.init_params.sim_backend=cpu env.eval.init_params.sim_backend=cpu env.train.total_num_envs=1 env.eval.total_num_envs=1`.
 
 # Using the Docker Image
 

@@ -2157,6 +2157,48 @@ def _run_isolated(script: str, *args: str, timeout: float) -> None:
 class TestMultiChannelProcessGroupCreation:
     """Tests that comm-queue threads can create process groups concurrently."""
 
+    @pytest.mark.skipif(
+        dist.is_backend_available("mccl"), reason="uses a fake MCCL backend"
+    )
+    def test_metax_uses_mccl_backend(self, tmp_path) -> None:
+        """A vendor backend failure must propagate instead of selecting Gloo."""
+        _run_isolated(
+            """
+import logging
+import sys
+from types import SimpleNamespace
+
+import pytest
+import torch.distributed as dist
+from rlinf.scheduler.collective.multi_channel_pg import MultiChannelProcessGroup
+from rlinf.scheduler.hardware import AcceleratorType
+
+
+def unavailable_backend(store, rank, size, timeout):
+    raise RuntimeError("vendor collective runtime unavailable")
+
+
+# Emulate the MCCL registration supplied by the vendor runtime.
+dist.Backend.register_backend("mccl", unavailable_backend, devices=["cuda"])
+worker = SimpleNamespace(
+    accelerator_type=AcceleratorType.METAX_GPU,
+    accelerator_model="MetaX C550",
+)
+group = MultiChannelProcessGroup(
+    0, 1, SimpleNamespace(workers=[worker]), logger=logging.getLogger("test-metax")
+)
+with pytest.raises(RuntimeError, match="vendor collective runtime unavailable"):
+    group.init(
+        init_method=f"file://{sys.argv[1]}/store",
+        world_size=1,
+        rank=0,
+        group_name="metax",
+    )
+""",
+            str(tmp_path),
+            timeout=30,
+        )
+
     def test_concurrent_creation_does_not_abort(self) -> None:
         """Torch < 2.7 aborts here if a constructor registers without the GIL."""
         _run_isolated(

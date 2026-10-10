@@ -123,6 +123,7 @@ class AcceleratorType(str, Enum):
     MUSA_GPU = "MUSA_GPU"
     KUNLUN_XPU = "KUNLUN_XPU"
     BIREN_GPU = "BIREN_GPU"
+    METAX_GPU = "METAX_GPU"
 
 
 class AcceleratorManager:
@@ -362,6 +363,7 @@ class AcceleratorUtil:
         AcceleratorType.MUSA_GPU,
         AcceleratorType.KUNLUN_XPU,
         AcceleratorType.BIREN_GPU,
+        AcceleratorType.METAX_GPU,
     ]
 
     @staticmethod
