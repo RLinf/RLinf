@@ -18,10 +18,6 @@ import dataclasses
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
-from sglang.srt.managers.io_struct import (
-    ReleaseMemoryOccupationReqInput,
-    ResumeMemoryOccupationReqInput,
-)
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
@@ -34,10 +30,15 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.workers.rollout.sglang import Engine, io_struct
+from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang.backends import SGLangEngineBackend, make_backend
+from rlinf.workers.rollout.sglang_server.rendezvous import (
+    broadcast_instance_readiness,
+    negotiate_model_instance_dist_addr,
+    wait_for_instance_readiness,
+)
 from rlinf.workers.rollout.utils import (
     MetaInfoStatsCollector,
-    RolloutEngineStats,
     RunningStatusManager,
     print_sglang_outputs,
 )
@@ -64,6 +65,14 @@ class SGLangWorker(Worker):
             config_rollout = self._cfg.rollout
         self._cfg_rollout = config_rollout
         self._placement = placement
+        # Only the entry (node_rank 0) of a model instance serves channels
+        # and the HTTP control plane; other ranks just keep their sglang
+        # subprocess alive. Always True on a single node.
+        self._is_model_instance_entry = (
+            placement.rollout_node_rank_in_model_instance(self._rank) == 0
+        )
+        # Set in init_worker(); declared here so RPC methods can check it.
+        self._backend = None
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._cfg_rollout.model.model_path,
@@ -144,7 +153,12 @@ class SGLangWorker(Worker):
             }
         return sampling_params
 
-    def _init_engine(self):
+    def _build_server_args(self) -> dict:
+        """Build the shared sglang ServerArgs kwargs for the rollout backend.
+
+        Engine and Server backends consume the same product, so
+        version-compatibility branches live here only once.
+        """
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
         load_format = "dummy"  # dummy means randomize init weight
@@ -161,12 +175,15 @@ class SGLangWorker(Worker):
         else:
             load_format = "auto"
 
-        # moe_dp_size / moe_a2a_backend only exist on newer sglang; passing a
-        # keyword the installed version does not define is a TypeError even
-        # when the value is the default, so only forward the ones it has.
+        # Older sglang lacks some of these fields and rejects unknown
+        # kwargs even at default values; forward only those the installed
+        # ServerArgs defines.
         version_dependent_args = {
             "moe_dp_size": self._cfg_rollout.sglang.get("moe_dp_size", 1),
             "moe_a2a_backend": self._cfg_rollout.sglang.get("moe_a2a_backend", None),
+            "enable_deterministic_inference": self._cfg_rollout.sglang.get(
+                "enable_deterministic_inference", False
+            ),
         }
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
@@ -230,8 +247,30 @@ class SGLangWorker(Worker):
             **version_dependent_args,
         )
 
+        if self._cfg_rollout.sglang.get("backend_type", "engine") == "server":
+            # Skip sglang's HTTP warmup: the Engine backend never runs it,
+            # and the cache state it leaves makes Server outputs differ from
+            # Engine. Readiness is checked via /health.
+            server_args.skip_server_warmup = True
+
         self.log_on_first_rank(f"{server_args=}")
-        self._engine = Engine(**dataclasses.asdict(server_args))
+        return dataclasses.asdict(server_args)
+
+    @property
+    def _engine(self):
+        """Compat property: only available with the Engine backend.
+
+        Kept for `SGLangAgentWorkerWithHTTPServer` (the serving_mode=
+        worker_http path). TODO: remove this compat property once the
+        worker_http path has test coverage.
+        """
+        if not isinstance(self._backend, SGLangEngineBackend):
+            raise RuntimeError(
+                "self._engine is only available with "
+                "rollout.sglang.backend_type=engine; serving_mode=worker_http "
+                "does not support backend_type=server"
+            )
+        return self._backend.engine
 
     def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
@@ -240,13 +279,21 @@ class SGLangWorker(Worker):
             self.async_meta_stats_collector.finalize()
 
         self.log_info(f"Stopping SGLang worker {self._rank} ...")
-        self._engine.shutdown()
+        if self._backend is not None:
+            self._backend.shutdown()
         self.log_info(f"SGLang worker {self._rank} stopped.")
 
     async def _validate_weight_at_first(self):
         """
         Run a test prompt batch and print its output.
+
+        Non-entry processes of a cross-node instance skip this: the
+        entry's generate already runs on every node's TP ranks, so a
+        second validation from here would be redundant (and has no HTTP
+        client to run through).
         """
+        if not self._is_model_instance_entry:
+            return
         input_ids = self._tokenizer(self._validate_prompts).input_ids
         engine_results, _ = await self.async_generate(
             input_ids=input_ids,
@@ -269,10 +316,10 @@ class SGLangWorker(Worker):
         Asynchronously generate text using the underlying SGLang engine and return
         the engine result together with the original input_ids, answers, and idx.
 
-        This wrapper calls self._engine.async_generate(...) and forwards the provided
-        arguments. Because the SGLang engine does not include the original input_ids
-        in its response, this method returns the input_ids alongside the engine
-        result for downstream use.
+        This wrapper calls the rollout backend's async_generate(...) and forwards
+        the provided arguments. Because the backend does not include the original
+        input_ids in its response, this method returns the request_info alongside
+        the engine result for downstream use.
 
         Args:
             prompt (List[str] | str | None): Same as SGLang engine's prompt argument.
@@ -285,7 +332,7 @@ class SGLangWorker(Worker):
         Returns:
             Tuple[Dict, Any | None]: A tuple containing the engine result and the original request_info.
         """
-        result = await self._engine.async_generate(
+        result = await self._backend.async_generate(
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
@@ -297,61 +344,134 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
-        self._init_engine()
-        if self.weight_reload == "sync":
-            await self._engine.tokenizer_manager.run_task_method(
-                io_struct.TaskMethodInput(
-                    method_name="init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        self.weight_reload,
-                        self._placement,
-                        self._cfg,
-                    ),
+        assert self.weight_reload in ("sync", "cpu", None), (
+            f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
+        )
+        backend_type = self._cfg_rollout.sglang.get("backend_type", "engine")
+        model_instance_id = self._placement.rollout_model_instance_id(self._rank)
+        # Multi-node server mode: every rank of a model instance must launch
+        # its sglang subprocess with an identical dist_init_addr pointing at
+        # the entry node, so the ranks rendezvous (one broadcast) before the
+        # backend spawns anything. Single-node layouts inject nothing:
+        # no rendezvous, no multi-node kwargs.
+        server_multi_node_kwargs = {}
+        multi_node_server = False
+        if backend_type == "server":
+            nnodes = self._placement.rollout_nnodes_per_model_instance
+            if nnodes > 1:
+                multi_node_server = True
+                node_rank = self._placement.rollout_node_rank_in_model_instance(
+                    self._rank
                 )
-            )
-            self.log_info(f"SGLang worker {self._rank} initialized.")
+                # Cross-node: all ranks of an instance start sglang with
+                # the entry node's dist_init_addr, agreed via one broadcast.
+                # Single-node passes no multi-node kwargs.
+                host, port = await negotiate_model_instance_dist_addr(
+                    self, self._placement
+                )
+                server_multi_node_kwargs = {
+                    "dist_init_addr": f"{host}:{port}",
+                    "nnodes": nnodes,
+                    "node_rank": node_rank,
+                }
+        self._backend = make_backend(
+            backend_type,
+            server_args=self._build_server_args(),
+            rlinf_ctx=RlinfContext(
+                parent_address=self.worker_address,
+                weight_reload=self.weight_reload,
+                placement=self._placement,
+                cfg=self._cfg,
+                # One model instance spans nnodes rollout workers; every
+                # rank of the instance maps to the same id (degenerates to
+                # the worker rank on single-node).
+                model_instance_id=model_instance_id,
+            ),
+            acquire_free_port=self.acquire_free_port,
+            log_info=self.log_info,
+            log_error=self.log_error,
+            **server_multi_node_kwargs,
+        )
+        if multi_node_server:
+            # Entry broadcasts ready/failed after /health; non-entry ranks
+            # wait for it while watching their own subprocess.
+            await self._initialize_multi_node_server_backend()
+        else:
+            await self._backend.initialize()
+        self.log_info(f"SGLang worker {self._rank} initialized.")
+        if self.weight_reload == "sync":
             if self._cfg_rollout.validate_weight:
                 await self._validate_weight_at_first()
             if self._placement.is_collocated:
                 await self.offload_engine()
             if self._use_auto_scheduler:
                 asyncio.create_task(self._scheduler.main_loop())
-        elif self.weight_reload == "cpu" or self.weight_reload is None:
-            await self._engine.tokenizer_manager.run_task_method(
-                io_struct.TaskMethodInput(
-                    method_name="init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        self.weight_reload,
-                    ),
-                )
-            )
-            self.log_info(f"SGLang worker {self._rank} initialized.")
-            if self.weight_reload == "cpu" and self._placement.is_collocated:
+        elif self.weight_reload == "cpu":
+            if self._placement.is_collocated:
                 await self.offload_engine()
-        else:
-            assert False, (
-                f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
+
+    async def _initialize_multi_node_server_backend(self) -> None:
+        """Server-backend init with instance-wide readiness signaling.
+
+        Entry: on failure, broadcast ``("failed", reason)``
+        best-effort (a non-entry rank may already be gone - never let the
+        signal mask the original error) and re-raise; on success, broadcast
+        ``("ready",)``. Non-entry: spawn + 2s check (inside
+        ``initialize()``), then wait for the entry's signal while polling
+        own subprocess liveness.
+        """
+        if self._is_model_instance_entry:
+            try:
+                await self._backend.initialize()
+            except Exception as e:
+                try:
+                    await broadcast_instance_readiness(
+                        self,
+                        self._placement,
+                        ready=False,
+                        reason=repr(e),
+                        timeout_s=30.0,
+                    )
+                except Exception:
+                    self.log_warning(
+                        "Failed to signal 'failed' to the non-entry ranks of "
+                        "this model instance; they will hit their readiness "
+                        "timeout instead."
+                    )
+                raise
+            await broadcast_instance_readiness(
+                self, self._placement, ready=True, timeout_s=300.0
             )
+            return
+        await self._backend.initialize()
+        await wait_for_instance_readiness(
+            self,
+            self._placement,
+            child_alive=self._backend.is_server_process_alive,
+            poll_child_failure=self._backend.poll_server_process_failure,
+        )
 
     async def offload_engine(self):
         """
         Release the model weights from the SGLang engine.
+
+        Non-entry process of a cross-node instance: no-op - the entry's
+        offload request reaches this node's schedulers through sglang's
+        request broadcast.
         """
+        if not self._is_model_instance_entry:
+            return
         assert self.weight_reload is not None
-        await self._engine.tokenizer_manager.release_memory_occupation(
-            obj=ReleaseMemoryOccupationReqInput()
-        )
+        await self._backend.offload()
 
     async def onload_engine(self):
         """
         Onload the model weights from cpu to the SGLang engine.
         """
+        if not self._is_model_instance_entry:
+            return
         assert self.weight_reload == "cpu"
-        await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput()
-        )
+        await self._backend.onload()
 
     async def onload_kv_cudagraph(self):
         """
@@ -362,27 +482,26 @@ class SGLangWorker(Worker):
         the actor has offloaded its model (avoids both models on GPU
         simultaneously).
         """
-        await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
-        )
+        if not self._is_model_instance_entry:
+            return
+        await self._backend.onload(tags=["kv_cache", "cuda_graph"])
 
     async def abort_generation(self):
         """Abort the generation."""
-        await self._engine.tokenizer_manager.abort_generation(
-            obj=io_struct.AbortGenerationInput()
-        )
+        if not self._is_model_instance_entry:
+            return
+        await self._backend.abort_generation()
 
     async def sync_model_from_actor(self):
         """Update the weights of the SGLang engine."""
-        await self._engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput()
-        )
+        if not self._is_model_instance_entry:
+            return
+        await self._backend.sync_weights()
 
     async def check_running_state(self):
-        state = await self._engine.tokenizer_manager.run_task_method(
-            io_struct.TaskMethodInput(method_name="get_scheduler_running_state")
-        )
-        state = RolloutEngineStats(**state)
+        if not self._is_model_instance_entry:
+            return None
+        state = await self._backend.get_running_state()
 
         return state
 
@@ -455,6 +574,12 @@ class SGLangWorker(Worker):
         return seq_group_info
 
     async def rollout(self, input_channel: Channel, output_channel: Channel):
+        # Non-entry: no channel I/O, but still record the "rollout" timer
+        # under the entry's key: the runner pops it on every rank
+        # (max-reduced, so ~0 is harmless).
+        if not self._is_model_instance_entry:
+            with self.worker_timer("rollout"):
+                return
         self.log_on_first_rank("Start generation...")
         request: RolloutRequest = input_channel.get()
         groups = request.to_seq_group_infos()
@@ -522,15 +647,21 @@ class SGLangWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
     ):
+        # Second line of defense behind rollout_serverless' entry gate:
+        # this is a fire-and-forget task, so an
+        # exception here would be swallowed - return instead.
+        if not self._is_model_instance_entry:
+            return
         final_sampling_params = self._sampling_params
         if sampling_params is not None and len(sampling_params) > 0:
             final_sampling_params = copy.deepcopy(self._sampling_params)
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        result = await self._engine.async_generate(
+        result = await self._backend.async_generate(
             input_ids=prompt_ids,
             sampling_params=final_sampling_params,
+            image_data=None,
             return_logprob=self._return_logprobs,
         )
         # sglang will trim matched stop in result text, so we should only return output_ids
@@ -547,6 +678,10 @@ class SGLangWorker(Worker):
         ).async_wait()
 
     async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
+        # Gate before get(): every rank consumes the same queue, and a
+        # non-entry rank would drop the requests it takes.
+        if not self._is_model_instance_entry:
+            return
         while True:
             rollout_request = await input_channel.get(async_op=True).async_wait()
             asyncio.create_task(

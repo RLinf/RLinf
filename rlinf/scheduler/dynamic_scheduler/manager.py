@@ -80,9 +80,14 @@ class ComponentManager(ABC):
 
         assert self.component_role in self.component_placement._components
 
-        self.init_instance_num = getattr(
-            component_placement, f"{self.component_role}_dp_size"
-        )
+        if self.component_role == "rollout":
+            # Rollout instances may span multiple nodes (server mode), so
+            # the instance count is exposed under a dedicated property.
+            self.init_instance_num = component_placement.rollout_num_model_instances
+        else:
+            self.init_instance_num = getattr(
+                component_placement, f"{self.component_role}_dp_size"
+            )
         self.init_gpu_num = getattr(
             component_placement, f"{self.component_role}_world_size"
         )

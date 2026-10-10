@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import base64
 import os
+import pickle
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -32,6 +34,15 @@ _PROXY_ENV_VARS = (
     "HTTPS_PROXY",
     "ALL_PROXY",
 )
+
+
+def _b64_payload(obj: Any) -> dict:
+    """Wrap a pickled object as the body of an /rlinf/* control request.
+
+    Mirrors the wire format of the /rlinf/* routes mounted by
+    `rlinf.hybrid_engines.sglang.common.http_routes`.
+    """
+    return {"payload_b64": base64.b64encode(pickle.dumps(obj)).decode()}
 
 
 @contextmanager
@@ -96,14 +107,17 @@ class InferenceHTTPClient:
     # ------------------------------------------------------------------
     def generate(
         self,
-        prompt: Optional[str] = None,
-        input_ids: Optional[list[int]] = None,
-        sampling_params: Optional[dict] = None,
-        return_logprob: bool = False,
-    ) -> dict:
+        prompt: Optional[list[str] | str] = None,
+        input_ids: Optional[list[list[int]] | list[int]] = None,
+        sampling_params: Optional[list[dict] | dict] = None,
+        return_logprob: list[bool] | bool = False,
+        image_data: Optional[list] = None,
+    ) -> dict | list:
         return self.post(
             "/generate",
-            self._generate_body(prompt, input_ids, sampling_params, return_logprob),
+            self._generate_body(
+                prompt, input_ids, sampling_params, return_logprob, image_data
+            ),
         )
 
     def chat_completion(
@@ -131,14 +145,17 @@ class InferenceHTTPClient:
     # ------------------------------------------------------------------
     async def async_generate(
         self,
-        prompt: Optional[str] = None,
-        input_ids: Optional[list[int]] = None,
-        sampling_params: Optional[dict] = None,
-        return_logprob: bool = False,
-    ) -> dict:
+        prompt: Optional[list[str] | str] = None,
+        input_ids: Optional[list[list[int]] | list[int]] = None,
+        sampling_params: Optional[list[dict] | dict] = None,
+        return_logprob: list[bool] | bool = False,
+        image_data: Optional[list] = None,
+    ) -> dict | list:
         return await self._apost(
             "/generate",
-            self._generate_body(prompt, input_ids, sampling_params, return_logprob),
+            self._generate_body(
+                prompt, input_ids, sampling_params, return_logprob, image_data
+            ),
         )
 
     async def async_chat_completion(
@@ -160,6 +177,37 @@ class InferenceHTTPClient:
                 return resp.status == 200
         except (aiohttp.ClientError, TimeoutError):
             return False
+
+    async def async_release_memory_occupation(
+        self, tags: Optional[list[str]] = None
+    ) -> dict:
+        body = {} if tags is None else {"tags": tags}
+        return await self._apost("/release_memory_occupation", body)
+
+    async def async_resume_memory_occupation(
+        self, tags: Optional[list[str]] = None
+    ) -> dict:
+        body = {} if tags is None else {"tags": tags}
+        return await self._apost("/resume_memory_occupation", body)
+
+    async def async_run_task_method(self, obj: Any) -> Any:
+        """POST a pickled TaskMethodInput to ``/rlinf/run_task_method``.
+
+        The result is unpickled from the response, so arbitrary Python
+        objects (e.g. a scheduler state dict) come back intact. Callers
+        must only target servers they trust — the route unpickles the
+        body (loopback-bound in server-mode rollout).
+        """
+        resp = await self._apost("/rlinf/run_task_method", _b64_payload(obj))
+        return pickle.loads(base64.b64decode(resp["payload_b64"]))
+
+    async def async_sync_hf_weight(self, obj: Any = None) -> None:
+        """Trigger an actor-to-rollout weight sync round via HTTP."""
+        await self._apost("/rlinf/sync_hf_weight", _b64_payload(obj))
+
+    async def async_abort_generation(self, obj: Any = None) -> None:
+        """Abort all in-flight generations via HTTP."""
+        await self._apost("/rlinf/abort_generation", _b64_payload(obj))
 
     # ------------------------------------------------------------------
     # Session management
@@ -195,10 +243,11 @@ class InferenceHTTPClient:
     # ------------------------------------------------------------------
     @staticmethod
     def _generate_body(
-        prompt: Optional[str],
-        input_ids: Optional[list[int]],
-        sampling_params: Optional[dict],
-        return_logprob: bool,
+        prompt: Optional[list[str] | str],
+        input_ids: Optional[list[list[int]] | list[int]],
+        sampling_params: Optional[list[dict] | dict],
+        return_logprob: list[bool] | bool,
+        image_data: Optional[list] = None,
     ) -> dict:
         body: dict = {"return_logprob": return_logprob}
         if prompt is not None:
@@ -207,6 +256,8 @@ class InferenceHTTPClient:
             body["input_ids"] = input_ids
         if sampling_params is not None:
             body["sampling_params"] = sampling_params
+        if image_data is not None:
+            body["image_data"] = image_data
         return body
 
     def post(
@@ -334,5 +385,12 @@ class InferenceHTTPClient:
                 sock_read=None,
             ),
         ) as resp:
-            resp.raise_for_status()
+            # ClientResponseError is not picklable and Ray would hide it
+            # behind "can't pickle"; raise a RuntimeError with status and
+            # body instead.
+            if resp.status >= 400:
+                text = await resp.text()
+                raise RuntimeError(
+                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
+                )
             return await resp.json()
