@@ -337,6 +337,10 @@ class SGLangWorker(Worker):
                 weight_reload=self.weight_reload,
                 placement=self._placement,
                 cfg=self._cfg,
+                # Single-node: one engine per rollout worker, so the worker's
+                # group rank IS the model instance id. Multi-node (batch 2)
+                # replaces this with the placement-derived property.
+                model_instance_id=self._rank,
             ),
             acquire_free_port=self.acquire_free_port,
             log_info=self.log_info,

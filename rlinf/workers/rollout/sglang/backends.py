@@ -77,6 +77,7 @@ class SGLangEngineBackend(RolloutBackend):
                     self._rlinf_ctx.weight_reload,
                     self._rlinf_ctx.placement,
                     self._rlinf_ctx.cfg,
+                    self._rlinf_ctx.model_instance_id,
                 ),
             )
         )
@@ -199,6 +200,7 @@ class SGLangServerBackend(RolloutBackend):
                     self._rlinf_ctx.weight_reload,
                     self._rlinf_ctx.placement,
                     self._rlinf_ctx.cfg,
+                    self._rlinf_ctx.model_instance_id,
                 ),
             )
         )

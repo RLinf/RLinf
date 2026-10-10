@@ -121,7 +121,8 @@ class Scheduler(_Scheduler):
         memory_reserved = torch.cuda.memory_reserved() / 2**30
 
         self._rlinf_worker.log_info(
-            f"[dp {self._rlinf_worker.get_parent_rank()}-tp {self.tp_rank}] {text} "
+            f"[dp {self._rlinf_worker.get_parent_rank()}-"
+            f"mi {self.model_instance_id}-tp {self.tp_rank}] {text} "
             f"{memory_allocated=:.2f} GiB, {memory_reserved=:.2f} GiB, "
             f"{free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB"
         )
@@ -302,7 +303,9 @@ class Scheduler(_Scheduler):
                 )
             else:
                 self._rlinf_worker.log_info(
-                    f"sglang: validate_weight success at rank {self._rlinf_worker.get_parent_rank()}"
+                    f"sglang: validate_weight success at dp rank "
+                    f"{self._rlinf_worker.get_parent_rank()}, "
+                    f"model instance id {self.model_instance_id}"
                 )
             self.weight_norm_dict = None
 
@@ -342,11 +345,18 @@ class Scheduler(_Scheduler):
         weight_reload: Literal["sync", "cpu", None] = "sync",
         placement: ModelParallelComponentPlacement = None,
         config: DictConfig = None,
+        model_instance_id: int | None = None,
     ):
         # WARNNING(wyq): Is world_size == self.tp_size when we enable EP in MoE?
         self._rlinf_worker = Worker(
             parent_address=parent_address, world_size=self.tp_size, rank=self.tp_rank
         )
+        # Passed in explicitly by the rollout backend. Historically this was
+        # derived as `self._rlinf_worker.get_parent_rank()` (the parent rollout
+        # worker's group rank), which equals the model instance id only while
+        # one worker hosts one engine. Both values are logged so a future
+        # divergence (multi-node server mode) is visible in the logs.
+        self.model_instance_id = model_instance_id
         self.weight_reload = weight_reload
         if weight_reload == "sync":
             self.cfg = config
@@ -354,12 +364,12 @@ class Scheduler(_Scheduler):
             self.placement_mode = placement.placement_mode
             self.rollout_sync_mode = placement._rollout_sync_mode
             rollout_rank_map = RankMapper.get_rollout_rank_to_actor_rank_map(placement)
-            # Rollout's transmission coordinates are (engine_id,
-            # rank_in_engine), independent of sglang's internal attention
+            # Rollout's transmission coordinates are (model_instance_id,
+            # rank_in_instance), independent of sglang's internal attention
             # sharding coordinates. Each tp rank receives from its source actor
             # rank directly.
             rollout_key = (
-                self._rlinf_worker.get_parent_rank(),
+                self.model_instance_id,
                 self._rlinf_worker._rank,
             )
             self.actor_weight_rank = rollout_rank_map[rollout_key]
@@ -384,7 +394,9 @@ class Scheduler(_Scheduler):
                 self.weight_norm_dict = validate_weight_init(model)
 
             self._rlinf_worker.log_info(
-                f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, tp rank {self.tp_rank}, corresponding actor weight rank = {self.actor_weight_rank}"
+                f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
+                f"model instance id {self.model_instance_id}, tp rank {self.tp_rank}, "
+                f"corresponding actor weight rank = {self.actor_weight_rank}"
             )
         elif weight_reload == "cpu":
             # save state dict to cpu
@@ -396,12 +408,16 @@ class Scheduler(_Scheduler):
             torch.cuda.synchronize()
 
             self._rlinf_worker.log_info(
-                f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, tp rank {self.tp_rank}, load weight from cpu"
+                f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
+                f"model instance id {self.model_instance_id}, tp rank {self.tp_rank}, "
+                f"load weight from cpu"
             )
         elif weight_reload is None:
             # save state dict to cpu
             self._rlinf_worker.log_info(
-                f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, tp rank {self.tp_rank}, no sync weight"
+                f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
+                f"model instance id {self.model_instance_id}, tp rank {self.tp_rank}, "
+                f"no sync weight"
             )
 
     def get_scheduler_running_state(self):
