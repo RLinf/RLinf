@@ -1,4 +1,4 @@
-env_type: realworld
+env_type: real
 
 total_num_envs: 1
 auto_reset: false
