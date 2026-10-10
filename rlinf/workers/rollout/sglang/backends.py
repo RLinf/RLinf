@@ -16,8 +16,8 @@
 
 `SGLangEngineBackend` wraps the in-process sglang :class:`Engine`. Every
 method body is a verbatim move of the corresponding `self._engine.*` call
-from `SGLangWorker`; that equivalence is a hard constraint (plan decision
-2.3) so Stage 0 Engine/Server comparison stays attributable.
+from `SGLangWorker`; that equivalence is a hard constraint so Engine/Server
+comparison stays attributable.
 
 `SGLangServerBackend` runs the same rollout contract against a spawned
 sglang HTTP server subprocess (plan: server mode).
@@ -59,11 +59,10 @@ class SGLangEngineBackend(RolloutBackend):
     def tokenizer_manager(self):
         """The sglang TokenizerManager of the wrapped Engine.
 
-        sglang-specific accessor (plan section 9.3): consumers that need the
+        sglang-specific accessor: consumers that need the
         real sglang object (e.g. `SGLangAgentWorkerWithHTTPServer`) go through
         here instead of reaching into backend internals. Currently reached
-        indirectly via `SGLangWorker._engine`; this accessor is reserved for
-        the later decoupling.
+        indirectly via `SGLangWorker._engine`.
         """
         return self.engine.tokenizer_manager
 
@@ -153,11 +152,17 @@ class SGLangServerBackend(RolloutBackend):
         acquire_free_port: Callable[[Optional[int]], int],
         log_info: Callable[[str], None],
         log_error: Callable[[str], None],
+        nnodes: int = 1,
+        node_rank: int = 0,
+        dist_init_addr: Optional[str] = None,
     ):
         super().__init__(server_args, rlinf_ctx)
         self._acquire_free_port = acquire_free_port
         self._log_info = log_info or (lambda msg: None)
         self._log_error = log_error or (lambda msg: None)
+        self._nnodes = nnodes
+        self._node_rank = node_rank
+        self._dist_init_addr = dist_init_addr
         self._process: Optional[SGLangServerProcess] = None
         self._client: Optional[InferenceHTTPClient] = None
 
@@ -179,11 +184,31 @@ class SGLangServerBackend(RolloutBackend):
             )
         return self._process.get_server_url()
 
+    def is_server_process_alive(self) -> bool:
+        """Whether the sglang server subprocess is still running."""
+        return self._process is not None and self._process.is_child_alive()
+
+    def poll_server_process_failure(
+        self,
+    ) -> Optional[tuple[Optional[int], Optional[str]]]:
+        """Dead-child probe: ``(exitcode, pipe_error)`` or ``None`` if alive.
+
+        Feeds the non-entry readiness wait - see
+        ``SGLangServerProcess.poll_child_failure`` for what the pipe does
+        and does not carry.
+        """
+        if self._process is None:
+            return (None, None)
+        return self._process.poll_child_failure()
+
     async def initialize(self) -> None:
         self._process = SGLangServerProcess(
             server_args_kwargs=dict(self._server_args),
             acquire_free_port=self._acquire_free_port,
             server_type="srt",
+            nnodes=self._nnodes,
+            node_rank=self._node_rank,
+            dist_init_addr=self._dist_init_addr,
             bind_host="127.0.0.1",
             advertise_host="127.0.0.1",
             apply_rlinf_patch=True,
@@ -191,6 +216,17 @@ class SGLangServerBackend(RolloutBackend):
             log_error=self._log_error,
         )
         self._process.start()
+        if self._node_rank != 0:
+            # Non-entry nodes have no real HTTP frontend (launch_server
+            # blocks and only a dummy /health server binds). The entry
+            # node's single init_rlinf_worker still reaches every scheduler
+            # of the model instance: ZMQ delivers only to tp rank 0 (or to
+            # each DP-group leader under DP attention), and the remaining
+            # TP ranks receive the request via the schedulers' own
+            # broadcast over the instance-wide gloo group. So there is
+            # nothing to drive from here; worker-level RPCs are gated on
+            # the model-instance entry.
+            return
         self._client = InferenceHTTPClient(self._process.get_server_url())
         await self._client.async_run_task_method(
             io_struct.TaskMethodInput(
@@ -263,6 +299,9 @@ def make_backend(
     acquire_free_port: Optional[Callable[[Optional[int]], int]] = None,
     log_info: Optional[Callable[[str], None]] = None,
     log_error: Optional[Callable[[str], None]] = None,
+    nnodes: int = 1,
+    node_rank: int = 0,
+    dist_init_addr: Optional[str] = None,
 ) -> RolloutBackend:
     """Select a rollout backend implementation by config value.
 
@@ -276,6 +315,13 @@ def make_backend(
             port lock); required by the server backend.
         log_info: Worker-bound info logger (server backend only).
         log_error: Worker-bound error logger (server backend only).
+        nnodes: Nodes spanned by one model instance (server backend only,
+            multi-node; the engine backend is always single-node).
+        node_rank: This process's node rank within its model instance
+            (server backend only, multi-node).
+        dist_init_addr: Rendezvous `host:port` on the entry node,
+            negotiated via `negotiate_model_instance_dist_addr` (server
+            backend only, multi-node).
 
     Returns:
         A backend instance (not yet initialized).
@@ -293,5 +339,8 @@ def make_backend(
             acquire_free_port=acquire_free_port,
             log_info=log_info,
             log_error=log_error,
+            nnodes=nnodes,
+            node_rank=node_rank,
+            dist_init_addr=dist_init_addr,
         )
     raise ValueError(f"Unsupported rollout.sglang.backend_type: {backend_type!r}")

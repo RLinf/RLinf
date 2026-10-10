@@ -41,6 +41,7 @@ def _run_sglang_server(
     dist_port: int,
     ready_pipe,
     apply_rlinf_patch: bool = False,
+    dist_init_addr: Optional[str] = None,
 ) -> None:
     """Child-process entrypoint: launches a single sglang HTTP server.
 
@@ -97,7 +98,13 @@ def _run_sglang_server(
             from sglang.srt.entrypoints.http_server import launch_server
             from sglang.srt.server_args import ServerArgs
 
-            server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
+            # Multi-node: the rendezvous address negotiated by the entry
+            # node is authoritative (identical on every node of the model
+            # instance); single-node uses the loopback address.
+            if dist_init_addr is not None:
+                server_args_kwargs["dist_init_addr"] = dist_init_addr
+            else:
+                server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
             server_args = ServerArgs(**server_args_kwargs)
             # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
             # polling /health either way, so the pipe is only used to surface exceptions.
@@ -164,13 +171,12 @@ class SGLangServerProcess:
 
     Standalone counterpart of the ``SGLangServerWorker.init_server`` /
     ``shutdown`` orchestration, for callers that are not a ``Worker``
-    (planned consumer: ``SGLangServerBackend``). ``acquire_free_port`` is
+    (the server backend layer). ``acquire_free_port`` is
     injected so port allocation still goes through the caller's port lock.
 
-    Temporary state: the orchestration now exists twice — here and in
-    ``SGLangServerWorker`` (whose class body is deliberately untouched this
-    round). Trigger for consolidating: ``SGLangServerWorker`` gains test
-    coverage or is retired.
+    TODO: this orchestration is duplicated in ``SGLangServerWorker``;
+    consolidate the two once ``SGLangServerWorker`` has test coverage
+    or is retired.
     """
 
     def __init__(
@@ -178,6 +184,9 @@ class SGLangServerProcess:
         server_args_kwargs: dict,
         acquire_free_port: Callable[[Optional[int]], int],
         server_type: str = "srt",
+        nnodes: int = 1,
+        node_rank: int = 0,
+        dist_init_addr: Optional[str] = None,
         bind_host: str = "0.0.0.0",
         advertise_host: Optional[str] = None,
         apply_rlinf_patch: bool = False,
@@ -189,11 +198,25 @@ class SGLangServerProcess:
                 f"Unsupported server_type {server_type!r}; "
                 "expected 'srt' (language model) or 'embodied' (VLA/diffusion)."
             )
+        if not 0 <= node_rank < max(nnodes, 1):
+            raise ValueError(f"node_rank {node_rank} out of range for nnodes {nnodes}.")
+        if nnodes > 1 and server_type != "srt":
+            raise ValueError(
+                "Multi-node launch is only supported for server_type='srt'."
+            )
+        if nnodes > 1 and dist_init_addr is None:
+            raise ValueError(
+                "dist_init_addr (the entry node's rendezvous host:port) is "
+                "required when nnodes > 1."
+            )
         if apply_rlinf_patch:
             _assert_sglang_supports_rlinf_patch()
         self._server_args_kwargs = dict(server_args_kwargs)
         self._acquire_free_port = acquire_free_port
         self._server_type = server_type
+        self._nnodes = nnodes
+        self._node_rank = node_rank
+        self._dist_init_addr = dist_init_addr
         self._bind_host = bind_host
         self._advertise_host = advertise_host
         self._apply_rlinf_patch = apply_rlinf_patch
@@ -205,7 +228,13 @@ class SGLangServerProcess:
         self._ready_pipe = None
 
     def start(self) -> None:
-        """Spawn the sglang server subprocess and wait for /health.
+        """Spawn the sglang server subprocess and establish readiness.
+
+        Node rank 0 waits for ``/health`` (its readiness covers the whole
+        model instance, since the entry node's health wait covers every
+        node's schedulers). Non-zero node ranks only verify the child
+        survived spawn: they never serve the real HTTP frontend, so their
+        local ``/health`` says nothing about model loading.
 
         On failure the subprocess is torn down via ``terminate`` before
         ``RuntimeError`` is re-raised, so the caller can retry or fail fast
@@ -214,17 +243,30 @@ class SGLangServerProcess:
         assert self._server_proc is None, "sglang server already initialized."
 
         # Acquire two distinct free ports: one for HTTP, one for the
-        # internal torch.distributed bootstrap.
+        # internal torch.distributed bootstrap. Multi-node has no local
+        # dist port - the rendezvous address negotiated by the entry node
+        # already carries one - but every node still needs a legal HTTP
+        # port (the non-0 nodes bind a dummy health server on it).
         http_port = self._acquire_free_port(max_port_num=MAX_SGLANG_HTTP_PORT)
-        dist_port = self._acquire_free_port()
+        if self._dist_init_addr is None:
+            dist_port = self._acquire_free_port()
+        else:
+            dist_port = 0
 
         server_kwargs = dict(self._server_args_kwargs)
         server_kwargs["host"] = self._bind_host
         server_kwargs["port"] = http_port
+        if self._nnodes > 1:
+            # Only multi-node injects these; nnodes=1 passes no
+            # multi-node kwargs at all.
+            server_kwargs["nnodes"] = self._nnodes
+            server_kwargs["node_rank"] = self._node_rank
 
         self._log_info(
             f"Launching sglang server (server_type={self._server_type}): "
             f"http=:{http_port}, dist_port={dist_port}, "
+            f"dist_init_addr={self._dist_init_addr}, "
+            f"node_rank={self._node_rank}/{self._nnodes}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
         )
 
@@ -241,6 +283,7 @@ class SGLangServerProcess:
                 dist_port,
                 child_pipe,
                 self._apply_rlinf_patch,
+                self._dist_init_addr,
             ),
             daemon=False,
         )
@@ -256,17 +299,75 @@ class SGLangServerProcess:
 
             self._advertise_host = ray.util.get_node_ip_address()
 
-        try:
-            _wait_for_http_health(
-                host=self._advertise_host,
-                port=http_port,
-                is_alive=lambda: self._server_proc.is_alive(),
+        if self._node_rank == 0:
+            try:
+                _wait_for_http_health(
+                    host=self._advertise_host,
+                    port=http_port,
+                    is_alive=lambda: self._server_proc.is_alive(),
+                )
+            except RuntimeError as e:
+                # When the wait failed because the child
+                # exited, surface the exception the child wrote to the
+                # ready pipe (launch_server layer only; scheduler-level
+                # tracebacks live in the child's stderr = this log).
+                child_failure = self.poll_child_failure()
+                self._log_error(f"sglang server failed to become healthy: {e!r}")
+                self.terminate()
+                if child_failure is not None:
+                    exitcode, child_error = child_failure
+                    raise RuntimeError(
+                        f"{e} Child process exited with code {exitcode}: "
+                        f"{child_error or '<no exception captured>'}. See the "
+                        f"worker log for the child's full traceback."
+                    ) from e
+                raise
+            self._log_info(f"sglang server ready at {self.get_server_url()}")
+            return
+
+        # Non-entry node: launch_server blocks (never returns) on this rank;
+        # instance-wide readiness is the entry node's /health. A brief
+        # liveness check catches spawn-level failures with a local message
+        # instead of surfacing as a cryptic remote timeout.
+        time.sleep(2.0)
+        if not proc.is_alive():
+            msg = (
+                f"sglang server subprocess on node_rank {self._node_rank} of "
+                f"{self._nnodes} exited during spawn; see the worker log."
             )
-        except RuntimeError as e:
-            self._log_error(f"sglang server failed to become healthy: {e!r}")
+            self._log_error(msg)
             self.terminate()
-            raise
-        self._log_info(f"sglang server ready at {self.get_server_url()}")
+            raise RuntimeError(msg)
+        self._log_info(
+            f"sglang server node_rank={self._node_rank}/{self._nnodes} spawned; "
+            f"readiness is delegated to the entry node's /health."
+        )
+
+    def is_child_alive(self) -> bool:
+        """Whether the sglang server subprocess is still running."""
+        return self._server_proc is not None and self._server_proc.is_alive()
+
+    def poll_child_failure(self) -> Optional[tuple[Optional[int], Optional[str]]]:
+        """Report a dead child: ``(exitcode, pipe_error)``; ``None`` if alive.
+
+        The ready pipe only carries exceptions raised by the
+        ``launch_server`` layer (the child writes ``repr(e)`` right before
+        dying); scheduler-level failures (OOM, NCCL errors) leave it empty.
+        This limitation is accepted: the goal is naming *which
+        node* failed and where its log is, not recovering the traceback.
+        """
+        proc = self._server_proc
+        if proc is None or proc.is_alive():
+            return None
+        proc.join()
+        error: Optional[str] = None
+        if self._ready_pipe is not None:
+            try:
+                if self._ready_pipe.poll(0):
+                    error = str(self._ready_pipe.recv())
+            except Exception:
+                error = None
+        return (proc.exitcode, error)
 
     def get_server_url(self) -> str:
         """Return the advertised ``http://host:port`` URL for this server."""
@@ -277,6 +378,11 @@ class SGLangServerProcess:
     def is_healthy(self) -> bool:
         if self._server_proc is None or not self._server_proc.is_alive():
             return False
+        if self._node_rank != 0:
+            # Non-entry nodes only run a dummy /health server, whose 200
+            # says nothing about model loading; liveness is the honest
+            # local signal.
+            return True
         try:
             url = f"http://{self._advertise_host}:{self._server_port}/health"
             return (
