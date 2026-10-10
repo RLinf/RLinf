@@ -335,7 +335,7 @@ LeRobot 格式数据：
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 然后启动采集：
 
@@ -343,7 +343,8 @@ LeRobot 格式数据：
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-采集完成后，将 LeRobot 数据集放到训练节点，并为当前 RLT OpenPI dataconfig
+LeRobot shard 位于 ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``，
+其中直接包含 ``data/`` 和 ``meta/``。采集完成后，将这个 shard 放到训练节点，并为当前 RLT OpenPI dataconfig
 计算归一化统计。``repo_id`` 需要与 Stage 1 / Stage 2 配置中的
 ``actor.openpi_data.repo_id`` 和 ``rollout.rlt_feature_model.openpi_data.repo_id`` 保持一致：
 

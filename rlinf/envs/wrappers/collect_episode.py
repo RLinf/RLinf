@@ -34,7 +34,12 @@ import torch
 from rlinf.data.schema.embodied_types import LeRobotFrame
 from rlinf.utils.logging import get_logger
 
-_VALID_FORMATS = ("pickle", "lerobot")
+_FORMAT_ALIASES = {
+    "pickle": "pickle",
+    "pickle_episode": "pickle",
+    "lerobot": "lerobot",
+    "lerobot_dataset": "lerobot",
+}
 
 # Bound the queue while covering the measured multi-second v2 episode save.
 # 240 three-view 640x480 RGB frames occupy about 633 MiB, not a whole episode.
@@ -93,7 +98,9 @@ class CollectEpisode(gym.Wrapper):
 
     Args:
         env: The gymnasium environment to wrap.
-        save_dir: Directory for saving collected episode data.
+        save_dir: Parent directory for collected episode data. Pickle episodes
+            are written under ``save_dir/pickle_episode``, and LeRobot shards
+            under ``save_dir/lerobot_dataset``.
         rank: Worker rank for file naming in distributed settings. Defaults to 0.
         num_envs: Number of parallel environments. Defaults to 1.
         show_goal_site: Whether to show goal visualization in renders.
@@ -109,8 +116,9 @@ class CollectEpisode(gym.Wrapper):
             each kept episode to its own shard and finalizes that shard after
             the episode save finishes. ``0`` disables periodic non-streaming
             flushing. Defaults to 100.
-        resume: If True and ``export_format == "lerobot"``, reuse ``save_dir``
-            across sessions — new episodes land in a fresh ``id_{N}`` shard
+        resume: If True and ``export_format == "lerobot"``, reuse the
+            ``lerobot_dataset`` directory across sessions — new episodes land
+            in a fresh ``id_{N}`` shard
             (N = max existing shard id + 1) so the in-progress write never
             touches previously-finalized or partially-written data. Ignored
             for pickle. Defaults to False.
@@ -144,15 +152,20 @@ class CollectEpisode(gym.Wrapper):
         else:
             self.env = env
 
-        if export_format not in _VALID_FORMATS:
+        canonical_format = _FORMAT_ALIASES.get(export_format)
+        if canonical_format is None:
             raise ValueError(
                 f"Unsupported export_format={export_format!r}, "
-                f"expected one of {_VALID_FORMATS}"
+                f"expected one of {tuple(_FORMAT_ALIASES)}"
             )
+        export_format = canonical_format
         if streaming and export_format != "lerobot":
             raise ValueError("streaming=True requires export_format='lerobot'")
 
-        self.save_dir = save_dir
+        format_dir = (
+            "pickle_episode" if export_format == "pickle" else "lerobot_dataset"
+        )
+        self.save_dir = os.path.join(save_dir, format_dir)
         self.rank = rank
         self.num_envs = num_envs
         self.show_goal_site = show_goal_site
@@ -188,7 +201,7 @@ class CollectEpisode(gym.Wrapper):
                 (
                     self._preexisting_episode_count,
                     self._next_shard_id,
-                ) = _scan_existing_lerobot_shards(save_dir, rank)
+                ) = _scan_existing_lerobot_shards(self.save_dir, rank)
             self._episodes_written = (
                 self._preexisting_episode_count
             )  # guarded by _save_futures_lock

@@ -35,7 +35,7 @@ data:
   # Paths to preprocessed split datasets.
   # Generate them first with:
   #   python examples/reward/preprocess_reward_dataset.py \
-  #       --raw-data-path /path/to/collected_data \
+  #       --raw-data-path /path/to/pickle_episode \
   #       --output-dir /path/to/processed_reward_data
   train_data_paths: "/workspace/dataset/data/sft-ci-data/reward_training/train.pt"
   val_data_paths: "/workspace/dataset/data/sft-ci-data/reward_training/val.pt"

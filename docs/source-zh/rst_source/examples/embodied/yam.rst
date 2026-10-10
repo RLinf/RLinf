@@ -45,4 +45,4 @@
 
 按住某侧手柄的 grip 可接管对应机械臂，松开即结束接管。示例将右菜单键映射为开始或结束一条录制，将左菜单键映射为丢弃当前录制。正式采集前，请在本站 PICO 设备上确认按键事件能送达。丢弃只会移除当前未完成的 episode；故障或超时的录制仍可能保存为未成功的 episode。
 
-启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志，LeRobot 数据位于该目录的 ``collected_data/rank_*/`` 中。流式写入会保存已录制片段，包括未成功片段，并标记 ``is_success``。使用数据前，请检查该标记和三路 RGB 图像；任务是否成功仍由现场操作员判断。
+启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志。该配方设置 ``export_format: lerobot_dataset``，因此不会写 ``demo_buffer/``；LeRobot 数据位于该目录的 ``lerobot_dataset/rank_*/`` 中，供 OpenPI SFT 与 HG-DAgger 读取。流式写入会保存已录制片段，包括未成功片段，并标记 ``is_success``。使用数据前，请检查该标记和三路 RGB 图像；任务是否成功仍由现场操作员判断。三种格式的用途见 :doc:`../../guides/data_collection`。

@@ -25,12 +25,12 @@ This script expands a LeRobot dataset into easy-to-read files:
 
 Normal usage:
     python3 toolkits/lerobot/visualize_lerobot_dataset.py \\
-        --dataset-path /path/to/collected_data \\
+        --dataset-path /path/to/lerobot_dataset/rank_0/id_0 \\
         --output-dir /path/to/output
 
 With mp4 export:
     python3 toolkits/lerobot/visualize_lerobot_dataset.py \\
-        --dataset-path /path/to/collected_data \\
+        --dataset-path /path/to/lerobot_dataset/rank_0/id_0 \\
         --output-dir /path/to/output \\
         --export-mp4 --mp4-fps 30
 
@@ -52,8 +52,8 @@ from pathlib import Path
 from typing import Any
 
 # Edit these two paths for your normal workflow.
-DATASET_PATH = "collected_data"
-OUTPUT_DIR = "collected_data_visualized"
+DATASET_PATH = "lerobot_dataset"
+OUTPUT_DIR = "lerobot_visualized"
 
 JPEG_QUALITY = 95
 

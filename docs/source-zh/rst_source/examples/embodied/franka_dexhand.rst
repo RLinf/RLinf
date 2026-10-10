@@ -110,7 +110,7 @@ reward model 侧与 :doc:`franka_reward_model` 中的 Franka 真机流程一致�
 
 - ``end_effector_type: "ruiyan_hand"``
 - 数据手套遥操作参数
-- ``data_collection``，用于以 ``pickle`` 格式导出原始 episode
+- ``data_collection``，同时写出 ``replay_buffer``（``demo_buffer/``）和 ``pickle_episode``（``pickle_episode/``）
 
 RL 训练使用 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``。
 启动前需要填写：

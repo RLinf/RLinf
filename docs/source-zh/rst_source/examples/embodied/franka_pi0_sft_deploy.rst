@@ -176,7 +176,7 @@
   env:
     data_collection:
       enabled: True
-      export_format: "lerobot"
+      export_format: lerobot_dataset
 
 
 在采集过程中，使用空间鼠标操作机械臂进行任务。
@@ -185,7 +185,7 @@
 
 采集脚本默认在收集 20 个 episode 后结束（可通过配置中的 ``num_data_episodes`` 字段修改），
 采集到的 LeRobot 格式数据会保存在
-``logs/<running-timestamp>/collected_data`` 路径下。
+``logs/<running-timestamp>/lerobot_dataset/rank_*/id_*/`` 路径下。
 
 第三步：SFT 训练 Pi0
 ----------------------------------------

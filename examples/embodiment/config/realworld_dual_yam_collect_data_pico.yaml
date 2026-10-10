@@ -62,7 +62,6 @@ runner:
     logger_backends: [tensorboard]
   num_data_episodes: 50
   record_task_description: true
-  save_demos: false
 
 seed: 1234
 
@@ -114,8 +113,8 @@ env:
         enabled: false
     data_collection:
       enabled: true
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: lerobot
+      save_dir: ${runner.logger.log_path}
+      export_format: lerobot_dataset
       streaming: true
       only_success: false
       robot_type: dual_yam

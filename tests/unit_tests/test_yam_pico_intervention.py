@@ -356,7 +356,7 @@ def test_streaming_lerobot_writes_three_views_and_14d_vectors(station, tmp_path)
     finally:
         collector.close()
 
-    shard = tmp_path / "rank_0/id_0"
+    shard = tmp_path / "lerobot_dataset/rank_0/id_0"
     data_files = list(shard.glob("data/**/*.parquet"))
     assert len(data_files) == 1
     table = parquet.read_table(data_files[0])
