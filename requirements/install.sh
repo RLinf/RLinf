@@ -62,6 +62,10 @@ DISABLE_NATTEN=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
 PLATFORM_TORCHCODEC_SPEC=""
+# torch-npu requirement for a torch line that needs a specific post build
+# (Ascend 950 with CANN 9.1). Empty means install_ascend_extras pins torch-npu to
+# the installed torch version. Set by configure_ascend.
+PLATFORM_TORCH_NPU_SPEC=""
 # Whether apply_torch_override should rewrite the pyproject.toml `torchcodec`
 # pin from ==0.2 to >=0.5. The ==0.2 line in override-dependencies has wheels
 # only for x86_64 + torch 2.5/2.6, so it breaks on AMD (torch 2.8 from rocm
@@ -717,10 +721,8 @@ configure_amd() {
 }
 
 configure_ascend() {
-    # Ascend NPU uses CPU torch from PyPI plus torch-npu installed via
-    # install_ascend_extras. No platform-specific wheel index is needed
-    # because there's no ascend-tagged torch on PyTorch's index — torch-npu
-    # is the standalone package that adds the NPU backend at runtime.
+    # Ascend NPU uses CPU torch plus torch-npu, the standalone package that adds
+    # the NPU backend at runtime (installed by install_ascend_extras).
     PLATFORM_TORCH_STR=""
     PLATFORM_TORCH_INDEX=""
     PLATFORM_TORCH_PACKAGES=()
@@ -743,12 +745,48 @@ configure_ascend() {
     PLATFORM_UV_SYNC_ARGS=("--no-install-package" "torchcodec")
     PLATFORM_SYSTEM_SITE_PACKAGES=0
     PLATFORM_VENV_HOOK=""
-    PLATFORM_COMMON_REQ_EXCLUDE_RE=""
-    # torch-npu tracks torch 1:1 and needs a matching CANN (2.11.0 wants CANN
-    # 8.5.0), so Ascend stays on torch 2.6. Bump with the hosts' CANN.
+    # tensorflow_graphics pulls in TensorFlow, which segfaults when it is imported
+    # after torch on Ascend, and the nvidia-* lines are CUDA libraries. No Ascend
+    # model or environment uses them.
+    PLATFORM_COMMON_REQ_EXCLUDE_RE='^[[:space:]]*(tensorflow_graphics|nvidia-)'
+    # openpi requires jax[cuda12]==0.5.3, whose extra brings the JAX CUDA plugin
+    # and the nvidia-* wheels. The override keeps jax 0.5.3, which
+    # orbax-checkpoint needs, and drops the extra.
+    if [ "$MODEL" = "openpi" ]; then
+        PLATFORM_EXTRA_OVERRIDES+=("jax==0.5.3")
+    fi
+    # torch-npu tracks torch 1:1 and needs a matching CANN, so the torch line
+    # follows the chip: Ascend 950 (CANN 9.1) uses torch 2.10, 910B stays on 2.6.
+    # --torch overrides the pin; ASCEND_CHIP names the chip where npu-smi is
+    # unavailable, e.g. when building an image.
+    local ascend_chip="${ASCEND_CHIP:-}"
+    if [ -z "$ascend_chip" ] && command -v npu-smi >/dev/null 2>&1; then
+        ascend_chip=$(npu-smi info 2>/dev/null | grep -oiE 'Ascend9[0-9]{2}[A-Za-z]*' | head -1)
+    fi
     if [ -z "$TORCH_VERSION" ]; then
-        TORCH_VERSION="2.6.0"
-        echo "[install.sh] ascend: pinning torch ${TORCH_VERSION} to match torch-npu/CANN (pass --torch to override)."
+        case "${ascend_chip,,}" in
+            *950*)
+                TORCH_VERSION="2.10.0"
+                PLATFORM_TORCH_NPU_SPEC="torch-npu==2.10.0.post4"
+                ;;
+            *)
+                TORCH_VERSION="2.6.0"
+                ;;
+        esac
+        echo "[install.sh] ascend: chip='${ascend_chip:-unknown}', pinning torch ${TORCH_VERSION} to match torch-npu/CANN (pass --torch to override)."
+    fi
+    # PyPI's x86_64 torch wheels are CUDA builds that pull in the nvidia-* wheels,
+    # so x86_64 hosts take the +cpu build from the PyTorch CPU index. PyPI's
+    # aarch64 wheels are CPU builds already.
+    if ! is_aarch64_platform; then
+        PLATFORM_TORCH_STR="+cpu"
+        if [ "$USE_MIRRORS" -eq 1 ]; then
+            PLATFORM_TORCH_INDEX="https://mirrors.tencent.com/pytorch-wheels/whl/cpu"
+        else
+            PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+        fi
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+        echo "[install.sh] ascend: routing torch ${TORCH_VERSION}+cpu through ${PLATFORM_TORCH_INDEX}."
     fi
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         # `cpu` keeps `uv pip install torch ...` calls fetching the CPU build
@@ -1111,10 +1149,11 @@ EOF
     # torch-npu imports a few packages at runtime (`yaml`, `decorator`) but
     # doesn't declare them in its wheel metadata, so install them explicitly.
     uv pip install pyyaml decorator
-    echo "[install.sh] Installing torch-npu==${torch_ver} to match torch"
-    uv pip install "torch-npu==${torch_ver}" \
-        || (echo "[install.sh] Pinned torch-npu==${torch_ver} failed; falling back to latest compatible build." >&2 \
-            && uv pip install torch-npu)
+    # A prefix pin also matches torch-npu's post releases (2.6.0.post5,
+    # 2.10.0.post4), which an exact ==2.6.0 would not.
+    local torch_npu_spec="${PLATFORM_TORCH_NPU_SPEC:-torch-npu==${torch_ver}.*}"
+    echo "[install.sh] Installing ${torch_npu_spec} to match torch ${torch_ver}"
+    uv pip install "$torch_npu_spec"
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
         echo "source /usr/local/Ascend/ascend-toolkit/set_env.sh" >> "$VENV_DIR/bin/activate"
     fi

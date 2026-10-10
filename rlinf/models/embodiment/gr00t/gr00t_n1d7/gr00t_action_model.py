@@ -1187,7 +1187,7 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         device_type = getattr(self.device, "type", "cpu")
         autocast_context = (
             torch.autocast(device_type=device_type, dtype=self.compute_dtype)
-            if device_type == "cuda"
+            if device_type in ("cuda", "npu")
             else nullcontext()
         )
         with torch.inference_mode(), autocast_context:
