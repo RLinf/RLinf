@@ -1,7 +1,7 @@
 资源
 ====
 
-资源页收录项目理念、更新、论文、发布说明和故障排查内容。
+资源页收录项目理念、维护者政策、更新、论文、发布说明和故障排查内容。
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -11,6 +11,12 @@
       :link-type: doc
 
       RLinf 背后的设计理念、性能数据与 SOTA 结果。
+
+   .. grid-item-card:: 维护者政策
+      :link: maintainer_policy
+      :link-type: doc
+
+      通过持续贡献与同行评审，从贡献者逐步成长为维护者。
 
    .. grid-item-card:: 博客
       :link: blog/index
@@ -46,6 +52,7 @@
    :hidden:
 
    为什么选择 RLinf <why_rlinf>
+   维护者政策 <maintainer_policy>
    博客 <blog/index>
    论文 <publications/index>
    v0.1 & v0.2 发布说明 <release_v0.1_v0.2>

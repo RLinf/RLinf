@@ -1,8 +1,8 @@
 Resources
 =========
 
-Use Resources for the project rationale, updates, publications, release notes,
-and troubleshooting.
+Use Resources for the project rationale, maintainer policy, updates, publications,
+release notes, and troubleshooting.
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -12,6 +12,12 @@ and troubleshooting.
       :link-type: doc
 
       The design, performance numbers, and SOTA results behind RLinf.
+
+   .. grid-item-card:: Maintainer Policy
+      :link: maintainer_policy
+      :link-type: doc
+
+      Grow from contributor to maintainer through sustained contributions and peer review.
 
    .. grid-item-card:: Blog
       :link: blog/index
@@ -47,6 +53,7 @@ and troubleshooting.
    :hidden:
 
    Why RLinf <why_rlinf>
+   Maintainer Policy <maintainer_policy>
    Blog <blog/index>
    Publications <publications/index>
    v0.1 & v0.2 Release Notes <release_v0.1_v0.2>
