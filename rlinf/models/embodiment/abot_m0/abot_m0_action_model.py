@@ -527,7 +527,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
                 prev_logprobs, runtime_action_dim
             )
 
-        values = values.mean(dim=-1, keepdim=False)
+        # ``[B, 1]``, matching the ``prev_values`` stored during rollout.
+        values = values.mean(dim=-1, keepdim=True)
 
         return {
             "logprobs": log_probs.float(),

@@ -822,6 +822,30 @@ def test_value_loss_is_unchanged_by_the_metric_computation():
     assert not metrics["critic/value_clip_ratio"].requires_grad
 
 
+@pytest.mark.parametrize(
+    "values, returns, prev_values",
+    [
+        (torch.zeros(4), torch.arange(4.0).reshape(4, 1), torch.zeros(4, 1)),
+        (torch.zeros(4, 1), torch.arange(4.0), torch.zeros(4)),
+        (torch.zeros(4, 1), torch.arange(4.0).reshape(4, 1), torch.zeros(4)),
+    ],
+)
+def test_critic_loss_rejects_operands_that_would_broadcast(
+    values, returns, prev_values
+):
+    # A [B] value prediction against [B, 1] returns broadcasts to [B, B], which
+    # trains every prediction against every return instead of its own.
+    with pytest.raises(ValueError, match="identical shapes"):
+        compute_ppo_critic_loss(
+            values=values,
+            returns=returns,
+            prev_values=prev_values,
+            value_clip=VALUE_CLIP,
+            huber_delta=HUBER_DELTA,
+            loss_mask=None,
+        )
+
+
 def test_create_builds_expected_sampler_types():
     constant = DelaySampler.create(
         OmegaConf.create({"type": "constant", "delay": 0.12})
