@@ -1387,6 +1387,11 @@ install_engine_requirements() {
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
         printf '%s\n' "$engine_specs" > "$engine_req"
+        # Same as the requirements file above: a direct wheel URL is not rewritten
+        # by git insteadOf.
+        if [ -n "$GITHUB_PREFIX" ]; then
+            sed -i "s|https://github.com/|${GITHUB_PREFIX}https://github.com/|g" "$engine_req"
+        fi
         env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" --no-deps -r "$engine_req"
         rm -f "$engine_req"
     fi
@@ -2649,7 +2654,7 @@ install_dexbotic_model() {
             local dexbotic_path
             dexbotic_path=$(clone_or_reuse_repo DEXBOTIC_PATH "$VENV_DIR/dexbotic" https://github.com/dexmal/dexbotic.git -b 0.2.0)
             maybe_build_decord_from_source
-            uv pip install -e "$dexbotic_path"
+            uv pip install -e "$dexbotic_path" "transformers==4.53.2"
 
             install_${ENV_NAME}_env
             uv pip install transformers==4.53.2

@@ -31,13 +31,14 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/09] 🔥 RLinf refactors real-world robots and environments, using a unified robotics interface to manage hardware, tasks, and rollout wrappers separately. Docs: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html), [Robotics Architecture](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics_architecture.html), [Real-World Tasks and Environments](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/realworld_envs.html), [Add a Robot](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_robot.html), [Add a Real-World Task](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_task.html), [Teleoperation](https://rlinf.readthedocs.io/en/latest/rst_source/guides/teleoperation.html).
 - [2026/09] 🔥 RLinf supports RL on π₀-FAST. Doc: [π₀-FAST](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html).
 - [2026/09] 🔥 RLinf supports Biren GPUs. PR: [Biren GPU support (#1581)](https://github.com/RLinf/RLinf/pull/1581).
 - [2026/09] 🔥 RLinf supports ApxInf-accelerated evaluation of π₀.₅ on LIBERO. RLinf keeps the native OpenPI transform chain and enters the engine through its L1 inference interface. Doc: [ApxInf LIBERO eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/libero.html#apxinf-backend).
 - [2026/09] 🔥 RLinf supports FSDP supervised fine-tuning and batched LIBERO evaluation for [FastWAM](https://github.com/yuantianyuan01/FastWAM). Doc: [FastWAM Evaluation and SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html).
 - [2026/08] 🔥 RLinf supports SFT and SGLang-based evaluation of NVIDIA's omnimodal world model, Cosmos3. Docs: [Cosmos3 SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html), [SGLang eval](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/cosmos3_sglang.html).
 - [2026/08] 🎉 RLinf is officially welcomed into the **PyTorch Ecosystem**! We will continue to bring scalable embodied and agentic RL to PyTorch users, pushing model intelligence into the real world. Blog: [PyTorch Ecosystem Landscape Q3 Update](https://pytorch.org/blog/pytorch-ecosystem-landscape-q3-update/).
-- [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf).
+- [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training).
 - [2026/08] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](docs/source-en/rst_source/examples/video_models.rst).
 - [2026/08] 🔥 RLinf supports Moore Threads (MUSA), Huawei Ascend (CANN), and AMD (ROCm). See the [hardware support matrix](#hardware-support) for model/environment combinations and setup instructions.
 - [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html).
@@ -51,6 +52,10 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
 - [2026/07] 🎉 RLinf v0.3 is released with major upgrades in the real-world RL full pipeline (data collection → SFT → RL → deployment), more simulators and SOTA models, and system-level optimizations. Release notes: [RLinf v0.3](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.3.html).
 - [2026/07] 🔥 RLinf supports RLT for online RL fine-tuning of VLA policies. Doc: [RLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html).
+
+<details>
+<summary><b>More updates</b></summary>
+
 - [2026/06] 🔥 RLinf supports STEAM for offline advantage estimation and policy optimization. Doc: [STEAM](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.7](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.7](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning with the Polaris simulator. Doc: [RL on Polaris](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/polaris.html).
@@ -72,10 +77,6 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/04] 🔥 RLinf supports reinforcement learning fine-tuning for [StarVLA](https://github.com/starVLA/starVLA). Doc: [StarVLA](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html).
 - [2026/04] 🔥 RLinf now supports HG-DAgger (Human-Gated DAgger) for real-world online training. Doc: [HG-DAgger for Real-World Franka](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/hg-dagger.html).
 - [2026/03] 🔥 RLinf now supports Stereolabs ZED cameras and Robotiq 2F-85 / 2F-140 grippers for Franka real-world RL. Doc: [Franka with ZED & Robotiq](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html).
-
-<details>
-<summary><b>More updates</b></summary>
-
 - [2026/03] 🎉 RLinf v0.2 is released with major upgrades in Real-World RL and Multi-Agent RL. Release notes: [RLinf v0.2](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.1_v0.2.html).
 - [2026/03] 🔥 RLinf supports reinforcement learning fine-tuning for LIBERO-Pro & LIBERO-Plus. Doc: [LIBERO-Pro & LIBERO-Plus](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark).
 - [2026/03] 🔥 RLinf supports DAgger for embodied policies. Doc: [DAgger for Embodied Policies](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html).
@@ -378,7 +379,7 @@ We are excited to see a growing ecosystem of projects building on top of or inte
 - [pi-StepNFT](https://github.com/wangst0181/pi-StepNFT): Extends RLinf for step-level training and optimization of π-series VLA models.
 - [Dexbotic](https://github.com/dexmal/dexbotic): A robotics + RL system integrating RLinf for scalable training and deployment of embodied agents.
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): A digital twin + robotics platform leveraging RLinf for large-scale embodied RL training.
-- [IsaacLab](https://github.com/isaac-sim/IsaacLab/tree/develop/scripts/reinforcement_learning/rlinf): Official integration of RLinf within IsaacLab, enabling seamless reinforcement learning workflows on top of NVIDIA Isaac Sim based robotics environments.
+- [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): Official integration of RLinf within IsaacLab, enabling seamless reinforcement learning workflows on top of NVIDIA Isaac Sim based robotics environments.
 - [RISE](https://github.com/OpenDriveLab/RISE): A robot reinforcement learning framework based on a compositional world model, using RLinf for online reinforcement learning.
 
 💡 Want to feature your project here? Open a PR and we’ll be happy to include it!
