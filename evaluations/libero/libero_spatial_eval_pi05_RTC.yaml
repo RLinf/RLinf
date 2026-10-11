@@ -6,6 +6,13 @@ defaults:
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
 cluster:
   num_nodes: 1
   component_placement:
@@ -153,6 +160,7 @@ rollout:
       action_chunk: ${rollout.model.num_action_chunks}
       train_expert_only: True
       action_env_dim: 7
+      model_action_dim: 32
       noise_method: "flow_sde"
       add_value_head: False
       value_after_vlm: False
