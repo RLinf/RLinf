@@ -40,7 +40,7 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   
-  group_size: 8  # number of groups per rollout step
+  group_size: 8  # number of trajectories per group
   
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level

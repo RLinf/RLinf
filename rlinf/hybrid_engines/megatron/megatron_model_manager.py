@@ -29,6 +29,7 @@ from omegaconf import DictConfig
 from rlinf.config import build_config, build_transformer_config
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
+from rlinf.utils.attention import resolve_attn_implementation
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
 from rlinf.utils.logging import get_logger
@@ -197,9 +198,6 @@ class MegatronModelManager:
 
         self._cfg = cfg
         self.mbridge = cfg.megatron.get("mbridge", False)
-        # if use the megatron-mbridge need patch some function
-        if self.mbridge:
-            self.patch_mbrdige_function()
 
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
@@ -236,18 +234,6 @@ class MegatronModelManager:
 
         # Patch Megatron MoE token dispatcher if FUSCO is available and conditions are met
         self.patch_megatron_moe_dispatcher()
-
-    def patch_mbrdige_function(self):
-        from rlinf.utils.patcher import Patcher
-
-        Patcher.clear()
-        Patcher.add_patch(
-            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils.get_rope_index",
-            "rlinf.hybrid_engines.megatron.utils.get_rope_index",
-        )
-        Patcher.apply()
-
-        self._logger.info("Use the megatron-Mbrdige, patched the fix function Success.")
 
     def patch_megatron_moe_dispatcher(self):
         if HAVE_FUSCO:
@@ -338,7 +324,7 @@ class MegatronModelManager:
         provider.mrope_section = mrope_section
         provider.position_embedding_type = position_embedding_type
         if hasattr(provider, "vision_config"):
-            provider.vision_config._attn_implementation = "flash_attention_2"
+            provider.vision_config._attn_implementation = resolve_attn_implementation()
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(

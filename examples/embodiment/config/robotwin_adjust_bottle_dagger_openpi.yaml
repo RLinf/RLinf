@@ -48,6 +48,19 @@ algorithm:
     beta_decay: 0.99
     # False enables classic DAgger: student-acted data is re-labeled by expert.
     only_save_expert: False
+    # Store one observation/action pair per environment step. The rolling
+    # LeRobot dataset reconstructs action chunks for OpenPI training.
+    online_lerobot:
+      enabled: True
+      only_success: True
+      robot_type: "aloha"
+      fps: 10
+      finalize_interval: 8
+      data_path: "/path/to/robotwin_lerobot"
+      rolling_lerobot_window_size: 50000
+      lerobot_num_workers: 0
+      # Start training once the rolling dataset contains this many frames.
+      min_frames: 1024
 
   gamma: 0.99
 
@@ -66,6 +79,9 @@ env:
   group_name: "EnvGroup"
   # enable_offload: False
   train:
+    # Online LeRobot stores one observation per action. RoboTwin skips
+    # intermediate renders unless this is false.
+    skip_intermediate_renders: False
     rollout_epoch: 1
     total_num_envs: 64
     reward_coef: ${algorithm.reward_coef}
@@ -142,7 +158,7 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
+  micro_batch_size: 8
   global_batch_size: 1024
   seed: 1234
   enable_offload: False

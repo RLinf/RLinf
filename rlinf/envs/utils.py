@@ -131,6 +131,21 @@ def recursive_to_device(obj, device):
         return obj
 
 
+def valid_action_mask_from_counts(counts: Any, chunk_size: int) -> torch.Tensor:
+    """Build a ``[B, C]`` prefix mask from per-environment executed action counts.
+
+    The count includes the episode-ending action. Later padded slots are false.
+    """
+    if isinstance(counts, torch.Tensor):
+        count_tensor = counts.detach().to(dtype=torch.long)
+    else:
+        count_tensor = torch.as_tensor(np.asarray(counts), dtype=torch.long)
+    if count_tensor.ndim == 0:
+        count_tensor = count_tensor.unsqueeze(0)
+    action_indices = torch.arange(chunk_size, device=count_tensor.device)
+    return action_indices.unsqueeze(0) < count_tensor.unsqueeze(1)
+
+
 def list_of_dict_to_dict_of_list(
     list_of_dict: list[dict[str, Any]],
 ) -> dict[str, list[Any]]:
