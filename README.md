@@ -9,6 +9,7 @@
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/WeChat%20Group-green?logo=wechat&amp"></a>
+<a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://img.shields.io/badge/Slack%20Channel-4A154B?logo=slack&logoColor=white"></a>
 </div>
 
 <div align="center">
