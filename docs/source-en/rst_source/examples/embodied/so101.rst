@@ -242,13 +242,30 @@ input device. Set ``RLINF_KEYBOARD_DEVICE`` to a stable
 ``/dev/input/by-id/...`` path when the machine exposes more than one keyboard.
 
 The dataset is written below the run's ``collected_data`` directory. Set its
-path and repository ID in the SFT YAML before training.
+direct LeRobot dataset root (the directory containing ``meta/info.json``) in
+the SFT YAML before training.
 
 SO-101 state and action vectors use one canonical six-value format throughout
 collection, storage, SFT, and evaluation: the first five values are absolute
 joint positions in radians, and the sixth value is gripper opening in the
 range ``0`` (closed) to ``1`` (open). Norm statistics must be computed from
 this same representation.
+
+Compute the padded OpenPI statistics from the same dataset before SFT. Run the
+command from the RLinf repository with the embodied environment activated:
+
+.. code-block:: bash
+
+   export HF_LEROBOT_HOME=/absolute/path/to/datasets
+   python toolkits/lerobot/calculate_norm_stats.py \
+     --config-name pi05_so101_joint \
+     --repo-id so101_dataset
+
+Set ``HF_LEROBOT_HOME`` to the parent directory containing the direct dataset
+root before running the command. The command writes ``norm_stats.json`` below
+the OpenPI asset directory for the selected data config. Set that file explicitly as
+``actor.model.openpi_data.norm_stats_path`` in the SFT YAML and use the same
+file in the evaluation model config.
 
 Both collection and evaluation reuse ``SO101ReachEnv-v1`` for the SO-101
 joint-space observations, actions, and reset lifecycle. Set the same
@@ -260,8 +277,8 @@ Train and Evaluate a Local Policy
 ----------------------------------
 
 RLinf provides an SO-101 joint-space SFT configuration and a local
-fixed-checkpoint evaluation configuration. Copy the dataset path, repository
-ID, base checkpoint, and normalization-statistics paths into
+fixed-checkpoint evaluation configuration. Copy the direct LeRobot dataset
+root, base checkpoint, and normalization-statistics paths into
 ``examples/sft/config/realworld_sft_openpi_so101.yaml``, then launch SFT through
 the shared entrypoint:
 

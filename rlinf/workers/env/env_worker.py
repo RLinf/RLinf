@@ -671,6 +671,10 @@ class EnvWorker(Worker):
                 except BaseException as exc:  # noqa: BLE001 - preserve eval result
                     self.log_warning("Failed to close real eval environment: %s", exc)
 
+    def cleanup_eval_envs(self) -> None:
+        """Park and close real evaluation environments at runner shutdown."""
+        self._cleanup_real_eval_envs()
+
     @staticmethod
     def _success_from_info(env_info: dict[str, Any]) -> bool:
         """Return whether an evaluation info mapping reports success."""
@@ -1256,14 +1260,17 @@ class EnvWorker(Worker):
         input_channel: Channel,
         rollout_channel: Channel,
         control_channel: Channel | None = None,
+        cleanup: bool = False,
     ):
         """Run standard evaluation and handle operator aborts gracefully.
 
         ``KeyboardAbort`` is an intentional operator shutdown signal from the
         real-environment episode wrapper, not a failed evaluation.  Convert it
-        into an empty metric result after the common real-environment cleanup
-        runs so the Ray worker does not report a fatal remote exception.
-        Unexpected exceptions keep their original propagation semantics.
+        into an empty metric result after cleaning up the real environment so
+        the Ray worker does not report a fatal remote exception.  Periodic
+        training evaluations keep their environment open for the next cycle;
+        one-shot callers pass ``cleanup=True`` and the runner shuts down with
+        :meth:`cleanup_eval_envs`.
         """
         self._eval_cleanup_done = False
         try:
@@ -1273,9 +1280,11 @@ class EnvWorker(Worker):
         except KeyboardAbort:
             self._request_eval_stop(control_channel)
             self.log_info("Operator requested evaluation abort; shutting down cleanly.")
+            self._cleanup_real_eval_envs()
             return {}
         finally:
-            self._cleanup_real_eval_envs()
+            if cleanup:
+                self._cleanup_real_eval_envs()
 
     @staticmethod
     def _request_eval_stop(control_channel: Channel | None) -> None:

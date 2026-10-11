@@ -240,8 +240,14 @@ def create_so101_sft_data_loader(
     dist_rank: int,
     dist_world_size: int,
     data_kwargs: dict[str, Any] | None = None,
+    discrete_state_input: bool | None = None,
 ) -> SO101SftDataLoader:
-    """Build the local LeRobot SO-101 loader and current model transforms."""
+    """Build the local LeRobot SO-101 loader and current model transforms.
+
+    ``discrete_state_input`` is the model setting from the SFT YAML.  Passing
+    it into the transform builder keeps the training input contract identical
+    to the transforms installed by the inference model factory.
+    """
     if raw_action_dim != _RAW_ACTION_DIM:
         raise ValueError(
             f"SO-101 raw action dim must be {_RAW_ACTION_DIM}, got {raw_action_dim}."
@@ -293,6 +299,7 @@ def create_so101_sft_data_loader(
         model_path,
         config_name,
         data_kwargs=resolved_data_kwargs,
+        discrete_state_input=discrete_state_input,
     )
     source = _TransformedDataset(
         dataset,
@@ -373,5 +380,8 @@ def build_so101_sft_dataloader(
         dist_rank=rank,
         dist_world_size=world_size,
         data_kwargs=data_kwargs,
+        discrete_state_input=OmegaConf.select(
+            openpi_cfg, "discrete_state_input", default=None
+        ),
     )
     return loader, loader.data_config()

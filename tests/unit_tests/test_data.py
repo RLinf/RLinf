@@ -129,24 +129,46 @@ def test_so101_pi05_config_uses_discrete_state_input():
 
 
 def test_so101_norm_stats_match_padded_model_dimension():
-    """Reject six-dimensional stats before OpenPI applies them to 32D inputs."""
+    """Require OpenPI stats for both vectors and match the padded model size."""
+    pytest.importorskip("openpi")
+    from openpi.shared.normalize import NormStats
+
     from rlinf.models.embodiment.openpi.transforms.pipeline import (
         select_so101_norm_stats,
     )
 
     valid = {
-        key: {name: np.zeros(32, dtype=np.float32) for name in ("mean", "std")}
+        key: NormStats(
+            mean=np.zeros(32, dtype=np.float32),
+            std=np.ones(32, dtype=np.float32),
+            q01=np.zeros(32, dtype=np.float32),
+            q99=np.ones(32, dtype=np.float32),
+        )
         for key in ("state", "actions")
     }
     selected = select_so101_norm_stats(valid, action_dim=32)
     assert set(selected) == {"state", "actions"}
 
     invalid = {
-        "state": {"mean": np.zeros(6), "std": np.ones(6)},
-        "actions": {"mean": np.zeros(6), "std": np.ones(6)},
+        key: NormStats(
+            mean=np.zeros(6, dtype=np.float32),
+            std=np.ones(6, dtype=np.float32),
+            q01=np.zeros(6, dtype=np.float32),
+            q99=np.ones(6, dtype=np.float32),
+        )
+        for key in ("state", "actions")
     }
     with pytest.raises(ValueError, match=r"state\.mean.*\(32,\)"):
         select_so101_norm_stats(invalid, action_dim=32)
+
+    with pytest.raises(ValueError, match="both 'state' and 'actions'"):
+        select_so101_norm_stats({"state": valid["state"]}, action_dim=32)
+
+    with pytest.raises(ValueError, match="must be NormStats"):
+        select_so101_norm_stats(
+            {"state": {"mean": np.zeros(32)}, "actions": valid["actions"]},
+            action_dim=32,
+        )
 
 
 def test_so101_repack_preserves_canonical_units():

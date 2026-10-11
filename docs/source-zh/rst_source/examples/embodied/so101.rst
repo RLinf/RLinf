@@ -176,16 +176,27 @@ follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``
 
 keyboard wrapper 使用 ``a`` 开始或放弃录制，使用 ``b`` 切换 segment，使用 ``c`` 保存成功 episode，使用 ``q`` 安全停止采集。运行账号必须有权读取选定的 Linux input device；如果主机上有多个键盘设备，请将 ``RLINF_KEYBOARD_DEVICE`` 设为稳定的 ``/dev/input/by-id/...`` 路径。
 
-数据会写入本次运行目录下的 ``collected_data``。训练前，将这个路径和 repository ID 填入 SFT YAML。
+数据会写入本次运行目录下的 ``collected_data``。训练前，将其中直接包含 ``meta/info.json`` 的 LeRobot dataset 根目录填入 SFT YAML。
 
 SO-101 的 state 和 action 在采集、存储、SFT 与评测中统一使用六维数据格式：前 5 维是绝对关节位置，单位为弧度；第 6 维是夹爪开度，``0`` 表示关闭，``1`` 表示张开。norm stats 也必须从这套表示计算。
+
+在 SFT 前，使用同一数据集计算 OpenPI 需要的 padded norm stats。进入 RLinf 仓库并激活 embodied 环境后运行：
+
+.. code-block:: bash
+
+   export HF_LEROBOT_HOME=/absolute/path/to/datasets
+   python toolkits/lerobot/calculate_norm_stats.py \
+     --config-name pi05_so101_joint \
+     --repo-id so101_dataset
+
+运行前将 ``HF_LEROBOT_HOME`` 设为包含该 dataset 根目录的父目录。命令会把 ``norm_stats.json`` 写入该 data config 对应的 OpenPI asset 目录。将这个文件显式填入 SFT YAML 的 ``actor.model.openpi_data.norm_stats_path``，并在评测模型配置中继续使用同一文件。
 
 数采与评测都复用 ``SO101ReachEnv-v1`` 提供 SO-101 的关节空间观测、动作和 reset 生命周期。评测配置中的 ``task_description`` 应与 SFT 使用的 instruction 保持一致，使 fixed checkpoint 收到训练时的任务指令；操作者通过 ``b`` 或 ``c`` 记录评测结果。
 
 本地训练与 fixed-checkpoint 推理
 --------------------------------
 
-RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配置。先在 ``examples/sft/config/realworld_sft_openpi_so101.yaml`` 中填写 dataset 路径、repository ID、基础 checkpoint 和 norm stats 路径，再通过统一 SFT 入口启动训练：
+RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配置。先在 ``examples/sft/config/realworld_sft_openpi_so101.yaml`` 中填写直接包含 ``meta/info.json`` 的 dataset 根目录、基础 checkpoint 和 norm stats 路径，再通过统一 SFT 入口启动训练：
 
 .. code-block:: bash
 

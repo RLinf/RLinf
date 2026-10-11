@@ -76,9 +76,7 @@ class SO101Inputs(transforms.DataTransformFn):
             )
 
         image = _parse_image(data["observation/image"])
-        if self.model_type == _model.ModelType.PI0_FAST:
-            image_names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
-        elif self.model_type in (_model.ModelType.PI0, _model.ModelType.PI05):
+        if self.model_type in (_model.ModelType.PI0, _model.ModelType.PI05):
             image_names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
         else:
             raise ValueError(f"Unsupported OpenPI model type: {self.model_type}")

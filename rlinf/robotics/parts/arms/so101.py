@@ -614,7 +614,7 @@ class SO101Arm(BaseArm):
             self._check_gripper_monitor()
             self._gripper_target = None
             if start_at is not None:
-                time.sleep(max(0.0, start_at - time.monotonic()))
+                time.sleep(max(0.0, start_at - time.time()))
             for index, frame in enumerate(plan.frames()):
                 action = {
                     **{

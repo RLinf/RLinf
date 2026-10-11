@@ -85,6 +85,13 @@ def select_so101_norm_stats(
         for key, value in norm_stats.items()
         if key in {"state", "actions"}
     }
+    missing = {"state", "actions"} - selected.keys()
+    if missing:
+        missing_keys = ", ".join(sorted(missing))
+        raise ValueError(
+            "SO-101 norm stats must contain both 'state' and 'actions'; "
+            f"missing: {missing_keys}."
+        )
     if action_dim is None:
         return selected
     if action_dim <= 0:

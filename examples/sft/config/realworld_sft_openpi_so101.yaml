@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5@actor.model
+  - model/so101_pi05@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
   - _self_
@@ -10,15 +10,16 @@ hydra:
   output_subdir: null
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config/
 
 # SO-101 joint-space SFT on the OpenPI Pi0.5 path. The custom LeRobot
 # loader handles sampling and collation; model-facing transforms come from the
 # canonical RLinf pi05_so101_joint data config.
 #
-# Replace the path and repository placeholders below before launching. When
-# train_data_paths points directly at a dataset, repo_id may remain empty. When
-# it points at an HF_LEROBOT_HOME-style parent, set repo_id to the dataset's
-# relative repository ID.
+# Replace the dataset root and asset placeholders below before launching.
+# train_data_paths must point directly at a LeRobot dataset root containing
+# meta/info.json. The loader does not combine a parent directory with a
+# separate repo_id field.
 #
 # Norm stats are loaded from <assets_dir>/<asset_id>/norm_stats.json and should
 # match the padded model tensors (state/actions last dim = openpi.model_action_dim).
@@ -43,7 +44,6 @@ runner:
 
 data:
   train_data_paths: /path/to/so101_dataset
-  repo_id: "<repo_id>/so101_joint_v1"
   num_workers: 4
 
 algorithm:
@@ -64,6 +64,9 @@ actor:
     num_action_chunks: 20
     action_dim: 6
     openpi:
+      # The SO-101 model template supplies the six-dimensional action/state
+      # shape; SFT only changes the task-specific mode and paths.
+      task: sft
       config_name: "pi05_so101_joint"
       # Network prediction horizon (Pi0Config.action_horizon). Matches official
       # TrainConfig for pi05_so101_joint. Distinct from action_chunk /
@@ -74,6 +77,7 @@ actor:
       assets_dir: /path/to/openpi_assets
       asset_id: "<repo_id>"
     openpi_data:
+      repo_id: null
       # The SO-101 statistics are external to the base model checkpoint. Keep
       # this path explicit so the official OpenPI loader and the RLinf model
       # factory consume the same normalization file.

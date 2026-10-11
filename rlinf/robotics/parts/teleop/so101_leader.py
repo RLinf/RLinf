@@ -407,7 +407,7 @@ class SO101Leader(TeleopDevice):
                 self._set_torque(True)
                 torque_enabled = True
                 if start_at is not None:
-                    time.sleep(max(0.0, start_at - time.monotonic()))
+                    time.sleep(max(0.0, start_at - time.time()))
                 deadline = time.monotonic()
                 for index, frame in enumerate(plan.frames(), start=1):
                     values = np.concatenate(

@@ -73,6 +73,7 @@ class EmbodiedEvalRunner:
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
+            cleanup=True,
             **env_kwargs,
         )
         rollout_handle: Handle = self.rollout.evaluate(

@@ -60,6 +60,8 @@ env:
     max_steps_per_rollout_epoch: 1800
     override_cfg:
       max_num_steps: 1800
+      # Match the 15 Hz collection/control cadence used by the SO-101 data.
+      step_frequency: 15.0
       # Replace with the safe reset pose for your setup.
       reset_joint_qpos: [0.0, 0.0, 0.0, 0.0, 0.0]
       reset_duration: 3.0

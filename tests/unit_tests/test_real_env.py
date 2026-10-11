@@ -125,7 +125,7 @@ def test_standard_real_eval_cleanup_parks_before_close():
     worker._evaluate_standard = Mock(side_effect=RuntimeError("eval failed"))
 
     with pytest.raises(RuntimeError, match="eval failed"):
-        worker.evaluate(Mock(), Mock())
+        worker.evaluate(Mock(), Mock(), cleanup=True)
 
     worker._cleanup_real_eval_envs()
 
@@ -156,6 +156,31 @@ def test_standard_real_eval_cleanup_closes_after_park_failure():
 
     assert env.events == ["park", "close"]
     worker.log_warning.assert_called_once()
+
+
+def test_standard_real_eval_keeps_environment_for_periodic_evaluation():
+    """Periodic standard evaluation must leave a real env reusable."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker._accelerator_type = None
+    worker._timer_metrics = {}
+
+    class FakeEnv:
+        def __init__(self):
+            self.events = []
+
+        def close(self):
+            self.events.append("close")
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker._evaluate_standard = Mock(return_value={})
+
+    assert worker.evaluate(Mock(), Mock()) == {}
+    assert env.events == []
+
+    worker.cleanup_eval_envs()
+    assert env.events == ["close"]
 
 
 def test_real_world_env_close_can_retry_after_inner_close_failure():
@@ -208,7 +233,7 @@ def test_standard_real_eval_keyboard_abort_is_clean_shutdown():
         side_effect=KeyboardAbort("operator requested evaluation abort")
     )
 
-    assert worker.evaluate(Mock(), Mock()) == {}
+    assert worker.evaluate(Mock(), Mock(), cleanup=True) == {}
     assert env.events == ["park", "close"]
     worker.log_info.assert_called_once()
 
@@ -1081,8 +1106,8 @@ def test_teleop_streamer_close_waits_for_inflight_tick():
     assert streamer._thread is None
 
 
-def test_composed_teleop_reset_failure_breaks_synchronized_barrier():
-    """A failed device preparation must release the environment reset wait."""
+def test_composed_teleop_reset_failure_is_reported():
+    """A failed device preparation is surfaced by the reset lifecycle."""
     from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
 
     class FailingGroup:
@@ -1108,25 +1133,10 @@ def test_composed_teleop_reset_failure_breaks_synchronized_barrier():
 
     device = ComposedTeleop(FailingGroup(), {})
     kwargs = device.before_reset(ResetEnv(), {})
-    barrier = kwargs["options"]["_teleop_reset_barrier"]
-    result = []
-
-    def wait_for_reset_start():
-        try:
-            barrier.wait()
-        except threading.BrokenBarrierError:
-            result.append("broken")
-
-    waiter = threading.Thread(target=wait_for_reset_start)
-    waiter.start()
     device._reset_thread.join()
-    waiter.join(timeout=0.5)
-    try:
-        assert not waiter.is_alive()
-        assert result == ["broken"]
-    finally:
-        barrier.abort()
-        waiter.join(timeout=1.0)
+    assert "_teleop_reset_start_at" in kwargs["options"]
+    with pytest.raises(RuntimeError, match="leader reset failed"):
+        device.reset(ResetEnv())
 
 
 def test_so101_env_without_park_config_is_a_noop():
