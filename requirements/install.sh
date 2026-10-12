@@ -3238,6 +3238,7 @@ install_d4rl_env() {
 
     uv pip install "mujoco-py==2.1.2.14"
     uv pip install "tqdm"
+    uv pip install "numpy<2" --force-reinstall
 }
 
 install_liberopro_env() {
