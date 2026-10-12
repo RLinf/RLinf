@@ -46,9 +46,9 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         assert self.toolcall_parser is not None, (
             "toolcall_parser must be set in searchr1"
         )
-        # recompute_logprobs is optional (P2). Base class already sets
-        # return_logprobs = not recompute_logprobs, so when recompute=False,
-        # sglang returns logprobs and truncate_after_stop keeps alignment.
+        # recompute_logprobs=False is supported: truncation keeps response_ids
+        # a prefix of the engine's output_ids, so rollout logprobs are sliced
+        # to match instead of being recomputed.
 
     async def pre_process_query(
         self, prompt_ids: list[int], answer: str
@@ -130,16 +130,20 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             if llm_response_logprobs is not None:
                 llm_response_logprobs = llm_response_logprobs[:max_resp_len]
 
-        # Truncate at </search> in token space (no re-encode, keeps logprobs aligned).
-        # content_start_offset skips the reasoning block
-        content_start = self.agentic_tokenizer.content_start_offset(llm_response_ids)
-        llm_response_ids, matched = self.agentic_tokenizer.truncate_after_stop(
+        # Truncate at </search> in token space (no re-encode, keeps logprobs
+        # aligned), skipping this turn's reasoning block.
+        content_start = self.agentic_tokenizer.content_start_offset(
+            llm_response_ids, prompt_ids=turn_prompt_ids
+        )
+        llm_response_ids, _ = self.agentic_tokenizer.truncate_after_stop(
             response_ids=llm_response_ids,
             stop_str="</search>",
             start=content_start,
         )
         if llm_response_logprobs is not None:
             llm_response_logprobs = llm_response_logprobs[: len(llm_response_ids)]
+        # Used by generate_tool_response to parse only the content region.
+        generate_context["content_start"] = content_start
         llm_response_text = self.agentic_tokenizer.decode(llm_response_ids)
 
         llm_output = AgentLoopOutput(
@@ -163,8 +167,12 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         llm_response_ids,
         llm_response_text,
     ):
-        # Extract tool calls from response
-        _, tool_requests = await self.toolcall_parser(llm_response_text)
+        # Parse only the content region: a <search> inside the reasoning block
+        # was only thought about and must not be dispatched.
+        content_text = self.agentic_tokenizer.decode(
+            llm_response_ids[generate_context["content_start"] :]
+        )
+        _, tool_requests = await self.toolcall_parser(content_text)
         if tool_requests == []:
             return False, None
 
@@ -179,19 +187,20 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         for tool_response in tool_responses:
             message = {"role": "tool", "content": tool_response.text}
             tool_messages.append(message)
-
-        # Tokenize tool response via agentic tokenizer (text mode = plain
-        # encode, model-agnostic). Returns the full next-turn prompt.
-        prefix_with_llm = turn_prompt_ids + llm_response_ids
-        next_turn_prompt_ids = self.agentic_tokenizer.get_tool_response_ids(
-            prefix_with_llm, tool_messages, mode="text"
+        assert len(tool_messages) == 1, (
+            "search-r1 expects exactly one tool response per turn; "
+            f"got {len(tool_messages)}. A multi-call toolcall_parser changes "
+            "what the next turn sees and needs its own evaluation."
         )
-        appended_len = len(next_turn_prompt_ids) - len(prefix_with_llm)
+
+        # Plain-text encode (model-agnostic); returns only the appended ids.
+        tool_response_ids = self.agentic_tokenizer.append_tool_response(tool_messages)
         max_tool_resp_len = self.max_resp_len - (
             len(turn_prompt_ids) + len(llm_response_ids) - len(problem_prompt_ids)
         )
-        if appended_len > max_tool_resp_len:
+        if len(tool_response_ids) > max_tool_resp_len:
             return False, None
+        next_turn_prompt_ids = turn_prompt_ids + llm_response_ids + tool_response_ids
 
         if self.print_outputs:
             # add anything you want to print

@@ -109,8 +109,7 @@ class AgentLoopWorker(Worker):
         self.agentic_tokenizer = get_agentic_tokenizer(
             cfg.rollout.model.model_path,
             cfg.agentloop.get("agentic_tokenizer", "default"),
-            cfg.agentloop.get("chat_template_kwargs", None),
-            cfg.rollout.model.get("trust_remote_code", False),
+            trust_remote_code=cfg.rollout.model.trust_remote_code,
         )
         self.tokenizer = self.agentic_tokenizer.tokenizer  # back-compat alias
         self.toolcall_parser = None
