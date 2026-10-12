@@ -21,7 +21,7 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 - `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), `musa` (Moore Threads), or `kunlun` (Kunlunxin). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image.
 - Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `KUNLUN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, `MUSA_BASE_IMAGE`, or `KUNLUN_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
-- `UNINSTALL_FA4` — set to `1` on the `reason` target to uninstall `flash-attn-4` during the image build. Transformer Engine then uses FA2, which runs on GPUs older than sm90 (for example A100). Docker builds cannot see the GPU, so `install.sh` cannot make this choice by itself. Leave unset (default `0`) when the image will run on Hopper or newer.
+- `UNINSTALL_FA4` (default `1`) — on the `reason` target, uninstalls `flash-attn-4` during the image build and installs FA2 instead. FA2 also runs on GPUs older than sm90 (for example A100), and Docker builds cannot see the GPU, so `install.sh` cannot make this choice by itself. Set it to `0` for an image that runs only on Hopper or newer: it keeps FA4 and skips FA2, since a venv carries exactly one flash-attention variant. The published FA4 image carries a `-fa4` tag suffix.
 
 Example with non-default args:
 

@@ -2744,3 +2744,89 @@ def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
     assert metadata[0][0].total_num_frames == 5
     assert metadata[0][0].frames_indices == [0, 1, 2, 3, 4]
     assert metadata[1][1].total_num_frames == 5
+
+
+# --------------------------------------------------------------------------
+# VLM SFT collate: transformers >= 5 emits mm_token_type_ids
+# --------------------------------------------------------------------------
+
+
+def _vlm_sft_sample(idx, seq_len, mm_token_type_ids):
+    """A sample shaped like ``Robo2VLMSFTDataset.encode_prompt`` output."""
+    return SimpleNamespace(
+        idx=idx,
+        length=seq_len,
+        prompt=torch.arange(1, seq_len + 1, dtype=torch.long),
+        answer="a",
+        solution="s",
+        image_data=None,
+        prompt_text="p",
+        meta={},
+        attention_mask=torch.ones(seq_len, dtype=torch.long),
+        label_mask=torch.zeros(seq_len, dtype=torch.bool),
+        multi_modal_inputs={
+            "pixel_values": torch.randn(4, 3, 2, 2),
+            "image_grid_thw": torch.tensor([[1, 2, 2]]),
+            "mm_token_type_ids": mm_token_type_ids,
+        },
+    )
+
+
+def test_vlm_collate_left_pads_mm_token_type_ids_like_prompts():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    # The three processor output shapes seen in the wild: (1, L) tensor,
+    # plain list, and (L,) tensor.
+    samples = [
+        _vlm_sft_sample(0, 9, torch.tensor([[0, 0, 1, 1, 0, 0, 1, 1, 0]])),
+        _vlm_sft_sample(1, 5, [0, 1, 1, 0, 0]),
+        _vlm_sft_sample(2, 7, torch.tensor([0, 1, 1, 1, 1, 0, 0])),
+    ]
+
+    batch = collate_fn(samples)
+
+    mm_ids = batch["multi_modal_inputs"]["mm_token_type_ids"]
+    assert mm_ids.shape == (3, 9)
+    assert mm_ids.dtype == torch.long
+
+    for i, sample in enumerate(samples):
+        pad_len = 9 - sample.length
+        # Left padding is 0 (text token) and masked by attention_mask.
+        assert (mm_ids[i, :pad_len] == 0).all()
+        assert (batch["attention_mask"][i, :pad_len] == 0).all()
+        # Valid part matches the processor output bit-for-bit.
+        expected = torch.as_tensor(
+            sample.multi_modal_inputs["mm_token_type_ids"], dtype=torch.long
+        ).flatten()
+        assert torch.equal(mm_ids[i, pad_len:], expected)
+        # Padding positions line up with the prompt's padding positions.
+        assert (batch["prompt"][i, :pad_len] == 0).all()
+
+    assert isinstance(batch["multi_modal_inputs"]["pixel_values"], list)
+    assert batch["multi_modal_inputs"]["image_grid_thw"].shape == (3, 3)
+
+
+def test_vlm_collate_stacks_mm_token_type_ids_without_padding():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    samples = [
+        _vlm_sft_sample(0, 5, torch.tensor([0, 1, 1, 0, 0])),
+        _vlm_sft_sample(1, 5, torch.tensor([[0, 0, 1, 1, 0]])),
+    ]
+
+    batch = collate_fn(samples)
+
+    mm_ids = batch["multi_modal_inputs"]["mm_token_type_ids"]
+    assert mm_ids.shape == (2, 5)
+    assert torch.equal(mm_ids[0], torch.tensor([0, 1, 1, 0, 0]))
+    assert torch.equal(mm_ids[1], torch.tensor([0, 0, 1, 1, 0]))
+
+
+def test_vlm_collate_still_rejects_unknown_mm_keys():
+    from rlinf.data.datasets.vlm.collate_fn import collate_fn
+
+    sample = _vlm_sft_sample(0, 5, torch.tensor([0, 1, 1, 0, 0]))
+    sample.multi_modal_inputs["some_future_field"] = torch.zeros(5)
+
+    with pytest.raises(ValueError, match="Unsupported multi_modal_input key"):
+        collate_fn([sample])

@@ -156,6 +156,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     """
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
     from cosmos_framework.configs.base.config import make_config
+    from cosmos_framework.utils import distributed as cosmos_distributed
     from cosmos_framework.utils.config_helper import override
     from cosmos_framework.utils.flags import Device as _CosmosDevice
     from cosmos_framework.utils.lazy_config import instantiate
@@ -195,7 +196,14 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                     "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
                 )
 
-        cosmos3_cfg.validate()
+        # cosmos probes on CPU unless get_backend() == "nccl", which RLinf's lazily
+        # bound group never reports; the probe is diagnostic only, so skip it.
+        _ensure_world_communicator = cosmos_distributed.ensure_world_communicator
+        cosmos_distributed.ensure_world_communicator = lambda *args, **kwargs: None
+        try:
+            cosmos3_cfg.validate()
+        finally:
+            cosmos_distributed.ensure_world_communicator = _ensure_world_communicator
         cosmos3_cfg.freeze()
 
         # Materialize on CPU: net(bf16 ~27GB) + net_ema(fp32 ~54GB) ~= 81GB would

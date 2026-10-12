@@ -48,6 +48,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
+from rlinf.utils.attention import resolve_attn_implementation
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import (
     collect_param_names_need_sync,
@@ -175,7 +176,7 @@ class FSDPModelManager:
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
             trust_remote_code=True,
-            attn_implementation="flash_attention_2",
+            attn_implementation=resolve_attn_implementation(),
         )
 
         if use_gptq:
