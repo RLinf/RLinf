@@ -1,0 +1,42 @@
+defaults:
+  - robotwin_click_bell_ppo_lingbotvlav2
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+runner:
+  max_epochs: 2
+  max_steps: 2
+  val_check_interval: -1
+  save_interval: 2
+  logger:
+    experiment_name: robotwin_vla2_ppo_smoke
+
+env:
+  train:
+    total_num_envs: 4
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    video_cfg:
+      save_video: false
+    task_config:
+      step_lim: 100
+  eval:
+    total_num_envs: 4
+    video_cfg:
+      save_video: false
+
+actor:
+  global_batch_size: 4
+  optim:
+    # 2 optimizer steps per training step: warm the critic, then update both.
+    critic_warmup_steps: 2
+  model:
+    model_path: /workspace/dataset/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+    tokenizer_path: /workspace/dataset/Qwen3-VL-4B-Instruct
+    lingbotvlav2:
+      training_config_path: /workspace/dataset/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+      robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
+      stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json

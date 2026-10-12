@@ -385,10 +385,11 @@ RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft, openpi, and lingbotvla envs
+# Install openvla-oft, openpi, lingbotvla, and lingbotvlav2 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env robotwin && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvlav2 --model lingbotvlav2 --env robotwin
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets

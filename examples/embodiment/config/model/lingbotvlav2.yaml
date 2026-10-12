@@ -1,0 +1,24 @@
+model_type: lingbotvlav2
+# Fill in absolute paths for the model and its assets before running.
+model_path: ""
+tokenizer_path: ""
+# Storage dtype of the trainable weights. Rollout and eval use bf16; the PPO
+# actor overrides this to fp32. Compute is bf16 in both.
+precision: bf16
+num_action_chunks: 50
+action_dim: 14
+is_lora: false
+num_steps: 10
+# Keep the MoE/GEMM batch shape identical in rollout and actor likelihood replay.
+forward_micro_batch_size: 1
+noise_level: 0.3
+add_value_head: true
+value_type: chunk_level
+value_head:
+  hidden_sizes: [512, 128]
+  activation: relu
+lingbotvlav2:
+  training_config_path: ""
+  robot_config_path: ""
+  stats_path: ""
+  attention_implementation: eager

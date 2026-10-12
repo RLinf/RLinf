@@ -35,6 +35,8 @@ replicated ``ddp`` dimension exists beside it.
 
 The units. A model that reads embedding weights directly sets
 ``_fsdp_wrap_embeddings = False`` so they are gathered with the enclosing unit.
+A unit may also store its trainable weights in fp32 beside frozen bf16 weights:
+FSDP2 computes both in ``param_dtype`` and steps the fp32 shards.
 """
 
 import logging
@@ -313,3 +315,60 @@ def test_a_model_can_keep_its_embeddings_in_the_enclosing_unit(single_rank_env):
     policy = _shard(policy)
 
     assert not isinstance(policy.block.head.table, FSDPModule)
+
+
+class _MixedBlock(torch.nn.Module):
+    """A frozen bf16 layer and a trainable fp32 layer in one FSDP unit."""
+
+    def __init__(self):
+        super().__init__()
+        self.backbone = torch.nn.Linear(8, 8).to(torch.bfloat16).requires_grad_(False)
+        self.head = torch.nn.Linear(8, 8)
+
+    def forward(self, x):
+        return self.head(self.backbone(x))
+
+
+class _MixedPolicy(torch.nn.Module):
+    _no_split_modules = ["_MixedBlock"]
+
+    def __init__(self):
+        super().__init__()
+        self.block = _MixedBlock()
+
+    def forward(self, x):
+        return self.block(x)
+
+
+def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
+    single_rank_env,
+):
+    """A step far below bf16 resolution still lands on fp32 trainable shards.
+
+    LingBot-VLA V2 trains its action expert this way next to a frozen bf16
+    backbone; with bf16 storage, AdamW steps this small round back to the old
+    weights.
+    """
+    torch.manual_seed(0)
+    policy = _MixedPolicy()
+    before = policy.block.head.weight.detach().clone()
+    policy = apply_fsdp2_to_model(
+        policy,
+        {},
+        create_device_mesh(1),
+        MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
+        OffloadPolicy(),
+        reshard_after_forward=True,
+    )
+    optimizer = torch.optim.AdamW(
+        [p for p in policy.parameters() if p.requires_grad], lr=1e-6
+    )
+
+    output = policy(torch.randn(4, 8, dtype=torch.bfloat16))
+    output.float().square().mean().backward()
+    optimizer.step()
+
+    after = policy.block.head.weight.full_tensor()
+    assert output.dtype == torch.bfloat16
+    assert after.dtype == torch.float32
+    assert (after != before).all()

@@ -142,6 +142,11 @@ algorithm
      - Discount factor.
    * - ``algorithm.gae_lambda``
      - GAE smoothing factor.
+   * - ``algorithm.max_recompute_logprob_gap``
+     - With ``algorithm.recompute_logprobs``, stop training when the summed
+       log-probability of any sample differs between rollout and actor by more
+       than this value. ``null`` (default) only logs the largest difference as
+       ``actor/rollout_train_joint_logprob_gap_max``.
 
 ``algorithm.group_size`` (responses per prompt; always > 1 for GRPO) is shared and
 documented in :doc:`basic_config`.
