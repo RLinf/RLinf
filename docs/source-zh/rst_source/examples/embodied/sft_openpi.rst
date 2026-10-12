@@ -254,6 +254,55 @@ LIBERO 与真机 Franka
 
 日志和 checkpoint 写在 ``runner.logger.log_path`` 下，每 ``runner.save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/``。
 
+Pi0.5 基础 checkpoint 下载与转换
+----------------------------------------
+
+π₀.₅ 的 JAX 基座位于 ``gs://openpi-assets/checkpoints/pi05_base``。下载后的目录包含
+``params/``，需要先转换为 RLinf OpenPI 格式，才能填入 ``actor.model.model_path``。
+YAML 中的 ``/path/to/...`` 是占位路径，请替换为服务器上的实际目录。
+
+在 RLinf 仓库根目录、安装了 JAX / Orbax 的 OpenPI 环境中执行以下命令；下载需要 Google Cloud CLI：
+
+.. code:: bash
+
+   mkdir -p /path/to/checkpoints/jax
+   gcloud storage cp --recursive \
+     gs://openpi-assets/checkpoints/pi05_base /path/to/checkpoints/jax/
+
+先准备当前任务的 ``norm_stats.json``（见上文归一化统计），再转换。以下以 BEHAVIOR 的
+32-step horizon 为例；``--input-model`` 应指向包含 ``params/`` 的父目录：
+
+.. code:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+     --input-model /path/to/checkpoints/jax/pi05_base \
+     --input-norm-stats /path/to/task/norm_stats.json \
+     --output-model /path/to/pi05_base_openpi \
+     --output-norm-stats /path/to/pi05_base_openpi/task/norm_stats.json \
+     --action-dim 32 \
+     --action-horizon 32 \
+     --max-token-len 200
+
+转换器默认处理 π₀.₅，不要添加 ``--no-pi05``。其他 π₀.₅ SFT 配方使用相同流程，
+转换参数中的 ``--action-horizon`` 按已有配置填写：ManiSkill RLT 为 10，Franka RLT 和
+dual-Franka 为 20。无需为转换修改 YAML 中的动作维度、图像数或训练参数。
+
+确认输出目录包含 ``model.safetensors`` 和 ``config.json``，然后把
+``actor.model.model_path`` 的占位值替换为转换输出目录，并将
+``actor.model.openpi_data.norm_stats_path`` 指向同一任务的统计文件，例如：
+
+.. code:: yaml
+
+   actor:
+     model:
+       model_path: /path/to/pi05_base_openpi
+       openpi_data:
+         norm_stats_path: /path/to/pi05_base_openpi/task/norm_stats.json
+
+已经是 RLinf OpenPI 格式的 checkpoint 无需重复转换。官方 OpenPI PyTorch 格式
+（权重键为 ``paligemma_with_expert.*``）即使有 ``model.safetensors``，仍需使用
+``openpi_pytorch_to_openpi`` 转换；命令见 ``rlinf/utils/ckpt_convertor/openpi/README.md``。
+
 Pi0.5 + BEHAVIOR-1K
 ----------------------------------------
 
@@ -286,7 +335,7 @@ Pi0.5 + BEHAVIOR-1K
 
    actor:
      model:
-       model_path: /path/to/pi05_base_pytorch_new   # 新格式 fp32 基础权重
+       model_path: /path/to/pi05_base_openpi   # 新格式 fp32 基础权重
        openpi:
          task: sft
        openpi_data:

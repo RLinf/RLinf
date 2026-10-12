@@ -59,7 +59,11 @@ actor:
   seed: 0
 
   model:
-    model_path: /path/to/pi05_base_pytorch_new
+    # Download JAX base: gs://openpi-assets/checkpoints/pi05_base
+    # Convert with jax_to_openpi; model_path must point to the local output
+    # directory containing RLinf OpenPI model.safetensors.
+    # Download/conversion steps: docs/source-en/rst_source/examples/embodied/sft_openpi.rst
+    model_path: /path/to/pi05_base_openpi
     # Dual-Franka tcp_rot6d: 20-dim env actions
     # [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip], 20-step env/SFT window.
     num_action_chunks: 20
