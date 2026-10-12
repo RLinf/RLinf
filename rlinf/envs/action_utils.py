@@ -14,6 +14,7 @@
 
 import numpy as np
 import torch
+from scipy.spatial.transform import Rotation as R
 
 from rlinf.config import SupportedModel
 from rlinf.envs import SupportedEnvType
@@ -326,6 +327,29 @@ def prepare_actions_for_roboverse(
     return chunk_actions
 
 
+def prepare_actions_for_dexjoco(raw_chunk_actions) -> np.ndarray:
+    """Convert per-arm ``[pos3, rotvec3, hand16]`` actions to DexJoCo task actions.
+
+    A 44-dim action holds the right arm, then the left arm. The result is
+    ``[pose7, hand16]`` or ``[right_pose7, left_pose7, right_hand16, left_hand16]``,
+    where each pose is a position and a scalar-first quaternion.
+    """
+    arms = np.split(raw_chunk_actions, raw_chunk_actions.shape[-1] // 22, axis=-1)
+    poses = [
+        np.concatenate(
+            [
+                arm[..., :3],
+                R.from_rotvec(arm[..., 3:6].reshape(-1, 3))
+                .as_quat(scalar_first=True)
+                .reshape(*arm.shape[:-1], 4),
+            ],
+            axis=-1,
+        )
+        for arm in arms
+    ]
+    return np.concatenate(poses + [arm[..., 6:] for arm in arms], axis=-1)
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -432,6 +456,10 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_polaris(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.DEXJOCO:
+        chunk_actions = prepare_actions_for_dexjoco(
+            raw_chunk_actions=raw_chunk_actions,
         )
     else:
         chunk_actions = raw_chunk_actions
