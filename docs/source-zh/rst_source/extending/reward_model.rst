@@ -410,8 +410,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   bash requirements/install.sh embodied --env maniskill_libero --model sglang
    source .venv/bin/activate
 
 标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
@@ -545,8 +544,7 @@ OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
 .. code-block:: bash
 
    source /opt/venv/openvla/bin/activate
-   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   bash requirements/install.sh embodied --env maniskill_libero --model sglang
    source .venv/bin/activate
    python -c "import sglang_router; from importlib.metadata import version; print(version('sglang'))"
 

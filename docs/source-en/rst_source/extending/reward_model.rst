@@ -416,8 +416,7 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   bash requirements/install.sh embodied --env maniskill_libero --model sglang
    source .venv/bin/activate
 
 Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
@@ -562,8 +561,7 @@ checkout, run:
 .. code-block:: bash
 
    source /opt/venv/openvla/bin/activate
-   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+   bash requirements/install.sh embodied --env maniskill_libero --model sglang
    source .venv/bin/activate
    python -c "import sglang_router; from importlib.metadata import version; print(version('sglang'))"
 
