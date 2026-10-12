@@ -31,7 +31,7 @@ Eval configs reference model presets from ``examples/embodiment/config/model/`` 
    * - LingBotVLA
      - ``lingbotvla``
      - ``robotwin_click_bell_lingbotvla_eval``, ``robotwin_place_shoe_lingbotvla_eval``
-   * - PI0-FAST
+   * - π₀-FAST (LeRobot)
      - ``pi0_fast``
      - ``libero_10_pi0_fast_eval``
 

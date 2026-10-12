@@ -398,8 +398,10 @@ class EnvWorker(Worker):
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
-        """
-        This function is used to interact with the environment.
+        """Execute a chunk and build environment output and LeRobot payload.
+
+        ``obs_list`` in the payload stays post-action. The caller prepends the
+        observation from before this chunk when a valid-action mask is present.
         """
         exec_actions = prepare_actions(
             raw_chunk_actions=chunk_actions["raw_actions"]
@@ -422,10 +424,18 @@ class EnvWorker(Worker):
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
             self.env_list[stage_id].chunk_step(chunk_actions)
         )
+        extracted_obs = obs_list
+        infos = infos_list
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
+        infos = infos or {}
+        valid_action_mask = None
+        if self.enable_online_lerobot and isinstance(infos, dict):
+            # The train env publishes this after auto-reset. Removing it keeps
+            # the mask out of the stored step metadata.
+            valid_action_mask = infos.pop("valid_action_mask", None)
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
@@ -485,6 +495,7 @@ class EnvWorker(Worker):
             "terminations": chunk_terminations,
             "truncations": chunk_truncations,
             "infos_list": infos_list,
+            "valid_action_mask": valid_action_mask,
         }
         return env_output, env_info, chunk_step_payload
 
@@ -1126,8 +1137,25 @@ class EnvWorker(Worker):
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
                     env_output, env_info, chunk_step_data = self.env_interact_step(
-                        actions, stage_id
+                        actions,
+                        stage_id,
                     )
+
+                    # LeRobot stores the observation from before each action.
+                    # The env returns the frame after each action, so prepend the
+                    # frame sent to the policy and drop the last post-action frame.
+                    if (
+                        self.enable_online_lerobot
+                        and chunk_step_data.get("valid_action_mask") is not None
+                    ):
+                        post_action_obs = chunk_step_data["obs_list"]
+                        if not isinstance(post_action_obs, (list, tuple)):
+                            post_action_obs = [post_action_obs]
+                        chunk_step_data["obs_list"] = [
+                            env_outputs[stage_id].obs,
+                            *post_action_obs[:-1],
+                        ]
+
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)
 
