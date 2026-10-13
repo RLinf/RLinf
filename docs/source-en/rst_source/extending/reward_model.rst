@@ -29,16 +29,17 @@ them into processed training splits with the preprocessing script.
 1.1 Enable Data Collection
 """"""""""""""""""""""""""
 
-Enable ``data_collection`` under ``env`` in your YAML config:
+Enable ``data_collection`` under ``env.eval`` in your YAML config (use ``env.train`` for training episodes):
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}
-       export_format: pickle_episode
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
 After training or evaluation starts, each ``export_format: pickle_episode`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
 

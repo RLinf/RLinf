@@ -27,16 +27,17 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 1.1 启用数据采集
 """"""""""""""""
 
-在 YAML 配置文件的 ``env`` 部分开启 ``data_collection``：
+在 YAML 配置文件的 ``env.eval`` 下开启 ``data_collection``；采集训练环境的数据时，改放在 ``env.train`` 下：
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}
-       export_format: pickle_episode
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
 启动训练或评估后，``export_format: pickle_episode`` 的每个 episode 会写入
 ``{save_dir}/pickle_episode/`` 下一个独立的 ``.pkl`` 文件，便于后续离线预处理。

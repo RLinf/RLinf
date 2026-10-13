@@ -44,11 +44,7 @@
          save_dir: ${runner.logger.log_path}
          export_format: [replay_buffer, lerobot_dataset]
 
-流式 LeRobot（例如双臂 YAM）只设 ``export_format: lerobot_dataset`` 和
-``streaming: true``。帧随录随写，内存不随 episode 变长。每条保留下来的录制单独
-成为一个 shard。成功和失败的录制都会写入，并标上 ``is_success``；``only_success``
-在流式模式下不起作用。操作员丢弃的录制和录制队列溢出不会进入正式 dataset。
-训练前把这些 shard 合并成一个 dataset，同时去掉失败的录制：
+流式 LeRobot（例如双臂 YAM）只设 ``export_format: lerobot_dataset`` 和 ``streaming: true``。帧随录随写，内存不随 episode 变长。每条保留下来的录制单独成为一个 shard。成功和失败的录制都会写入，并标上 ``is_success``；``only_success`` 在流式模式下不起作用。操作员丢弃的录制和录制队列溢出不会进入正式 dataset。训练前把这些 shard 合并成一个 dataset，同时去掉失败的录制：
 
 .. code-block:: bash
 
@@ -133,13 +129,7 @@
 
 **replay_buffer**
 
-只保存成功 episode。真机采集里，``manual_episode_control_only`` 为真时只看
-``manual_done``，否则 ``reward >= 0.5`` 或 ``manual_done`` 算成功。
-``recording_invalid`` 和 ``episode_discarded`` 不写入、也不计入成功次数。
-每条轨迹一个 ``trajectory_*.pt``，同目录还有 ``metadata.json`` 和
-``trajectory_index.json``。``intervene_flags`` 全为 1，RLPD 用它区分专家数据和
-在线策略数据。指向同一目录再次采集时增量写入。张量形状随机器人和相机变化，
-不是格式的一部分。
+只保存成功 episode。真机采集里，``manual_episode_control_only`` 为真时只看 ``manual_done``，否则 ``reward >= 0.5`` 或 ``manual_done`` 算成功。``recording_invalid`` 和 ``episode_discarded`` 不写入、也不计入成功次数。每条轨迹一个 ``trajectory_*.pt``，同目录还有 ``metadata.json`` 和 ``trajectory_index.json``。``intervene_flags`` 全为 1，RLPD 用它区分专家数据和在线策略数据。指向同一目录再次采集时增量写入。张量形状随机器人和相机变化，不是格式的一部分。
 
 .. code-block:: python
 
@@ -238,11 +228,7 @@
    )
    env.close()   # 刷出最后一批 episode
 
-``streaming: true`` 时每帧的各个视角立刻写成未压缩的 PNG，episode 结束再写
-parquet。parquet 原样保存这些字节，640x480 的一个视角每帧约占 0.9 MB 磁盘。成功和失败
-都保存，``is_success`` 在结束时写入。操作员丢弃会删掉当前未发布的 episode；
-录制队列溢出的片段移到该 shard 的 ``invalid_episodes/``，不作为正式 episode。
-流式 shard 旁还有 ``stream_frames.jsonl``，记录每帧的 ``state`` 和 ``actions``。
+``streaming: true`` 时每帧的各个视角立刻写成未压缩的 PNG，episode 结束再写 parquet。parquet 原样保存这些字节，640x480 的一个视角每帧约占 0.9 MB 磁盘。成功和失败都保存，``is_success`` 在结束时写入。操作员丢弃会删掉当前未发布的 episode；录制队列溢出的片段移到该 shard 的 ``invalid_episodes/``，不作为正式 episode。流式 shard 旁还有 ``stream_frames.jsonl``，记录每帧的 ``state`` 和 ``actions``。
 
 每步 info 先看 ``final_info`` 和 ``episode`` 里的 ``success_once``、
 ``success_at_end``、``success``，这些都没有再看 info 根字段。任一来源为真即记为成功。

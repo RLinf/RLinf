@@ -6,7 +6,7 @@
 准备设备
 --------
 
-准备两台配备 ``flexible_4310`` 夹爪的 YAM 从臂、3 台 RealSense 相机、PICO 头显与双手柄，以及 ZeroMQ PICO publisher。按 :doc:`PICO 软件准备 <franka_vr>` 准备 XRoboToolkit、PC Service 和 publisher，再安装 YAM 运行环境：
+准备两台配备 ``flexible_4310`` 夹爪的 YAM 从臂、3 台 RealSense 相机、PICO 头显与双手柄，以及 ZeroMQ PICO publisher。按 :ref:`PICO 软件准备 <pico-software-setup>` 准备 XRoboToolkit、PC Service 和 publisher，再安装 YAM 运行环境：
 
 .. code-block:: bash
 
@@ -40,7 +40,7 @@
 
 采集配置的 ``env.eval.pico.position_scale`` 和 ``rotation_scale`` 分别控制手柄平移与转动的目标比例，示例均为 ``0.3``；手柄移动 1 cm 对应 3 mm TCP 目标位移。``env.eval.override_cfg.max_joint_delta`` 限制每步关节目标相对当前反馈的差值，单位为 rad，不限制整段运动总幅度。
 
-publisher 地址按 :doc:`PICO publisher 配置 <franka_vr>` 获取：在 publisher PC 用 ``ip -brief address`` 找到 YAM 节点可访问的地址，端口取 ``configs/vr_bridge.yaml`` 的 ``zmq.ipc_addr``。consumer 填 ``tcp://<publisher-PC-address>:<port>``，不是头显 IP 或 ``0.0.0.0``；同机也可使用一致的 IPC 地址。
+publisher 地址按 :ref:`PICO publisher 配置 <pico-publisher-setup>` 获取：在 publisher PC 用 ``ip -brief address`` 找到 YAM 节点可访问的地址，端口取 ``configs/vr_bridge.yaml`` 的 ``zmq.ipc_addr``。consumer 填 ``tcp://<publisher-PC-address>:<port>``，不是头显 IP 或 ``0.0.0.0``；同机也可使用一致的 IPC 地址。
 
 yaw 需分别测量左右臂：校准时头显面向的水平方向为操作者 +X，左侧为 +Y，上方为 +Z。按模型与厂家坐标图，将操作者前方表示为对应基座水平面内的 ``(dx, dy)``，填 ``atan2(dy, dx)``，单位为 rad，正值绕基座 +Z 按右手定则旋转；用度测量时乘 π/180 换算。仅在水平坐标轴同向时填 0，不能用 yaw 补偿基座倾斜。启动时面向测量时的方向并松开两侧 grip；操作朝向改变后重新测量和校准。
 
@@ -58,7 +58,7 @@ yaw 需分别测量左右臂：校准时头显面向的水平方向为操作者 
    export YAM_LEFT_OPERATOR_TO_ROBOT_YAW='<measured-radians>'
    export YAM_RIGHT_OPERATOR_TO_ROBOT_YAW='<measured-radians>'
 
-前三个变量填入 ``DualYam`` 硬件配置中未设置的字段，也可以直接在 YAML 里写 ``left_can_channel``、``right_can_channel`` 和 ``camera_serials``。将占位符替换为本站确认过的值。示例配置位于 ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``，将环境 worker 和硬件放在同一个 Ray 节点。
+前三个变量填入 ``DualYam`` 硬件配置中未设置的字段，也可以直接在 YAML 里写 ``left_can_channel``、``right_can_channel`` 和 ``camera_serials``。将占位符替换为当前工作站核对过的值。示例配置位于 ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``，将环境 worker 和硬件放在同一个 Ray 节点。
 
 启动采集前，先在 YAM 节点检查 PICO 数据流：
 
@@ -77,14 +77,14 @@ yaw 需分别测量左右臂：校准时头显面向的水平方向为操作者 
 
 首次接管先逐臂小幅移动，核对方向与缩放；方向不符时松开两侧 grip、停止采集后修正配置，故障停机后由现场操作员确认状态再恢复。
 
-按住某侧手柄的 grip 可接管对应机械臂，松开即结束接管。示例为每条手臂各配置一项 ``pico``，各自经 YAM 模型的逆运动学（``override_cfg.ik``）把手柄位姿换算为关节目标。任一手柄掉线时，两条手臂都会保持不动，直到两侧 grip 都松开。``yam_episode`` 段将右菜单键映射为开始或结束一条录制，将左菜单键映射为丢弃当前录制。正式采集前，请在本站 PICO 设备上确认按键事件能送达。丢弃只会移除当前未完成的 episode；故障或超时的录制仍可能保存为未成功的 episode。
+按住某侧手柄的 grip 可接管对应机械臂，松开即结束接管。示例为每条手臂各配置一项 ``pico``，各自经 YAM 模型的逆运动学（``override_cfg.ik``）把手柄位姿换算为关节目标。任一手柄掉线时，两条手臂都会保持不动，直到两侧 grip 都松开。``yam_episode`` 段将右菜单键映射为开始或结束一条录制，将左菜单键映射为丢弃当前录制。正式采集前，请在当前工作站的 PICO 设备上确认按键事件能送达。丢弃只会移除当前未完成的 episode；故障或超时的录制仍可能保存为未成功的 episode。
 
-启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志。该配置设置 ``export_format: lerobot_dataset``。每条录制单独流式写入该目录 ``lerobot_dataset/rank_0/`` 下的一个 shard，未成功的录制也会保存，``is_success`` 为假。供 OpenPI SFT 或 HG-DAgger 使用前，把这些 shard 合并成一个 dataset，并去掉未成功的录制：
+启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志。该配置设置 ``export_format: lerobot_dataset``。每条录制单独流式写入该目录 ``lerobot_dataset/rank_0/`` 下的一个 shard，未成功的录制也会保存，``is_success`` 为假。供 OpenPI SFT 或 HG-DAgger 使用前，把这些 shard 合并成一个 dataset，并去掉未成功的录制。将下面路径中的 ``<timestamp>`` 替换为本次采集目录的时间戳：
 
 .. code-block:: bash
 
    python toolkits/lerobot/merge_lerobot_datasets.py \
-       --source-dir logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset \
+       --source-dir "logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset" \
        --output-dir logs/yam_merged \
        --only-success
 

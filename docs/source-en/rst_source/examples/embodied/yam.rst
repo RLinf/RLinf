@@ -6,7 +6,7 @@ Collect dual-arm YAM demonstrations with PICO controllers and three RealSense RG
 Prepare the station
 -------------------
 
-Use two YAM follower arms with ``flexible_4310`` grippers, three RealSense cameras, a PICO headset with two controllers, and a ZeroMQ PICO publisher. Follow :doc:`the PICO software setup <franka_vr>` to prepare XRoboToolkit, its PC Service, and the publisher. Install the YAM runtime in a Python environment:
+Use two YAM follower arms with ``flexible_4310`` grippers, three RealSense cameras, a PICO headset with two controllers, and a ZeroMQ PICO publisher. Follow :ref:`the PICO software setup <pico-software-setup>` to prepare XRoboToolkit, its PC Service, and the publisher. Install the YAM runtime in a Python environment:
 
 .. code-block:: bash
 
@@ -40,7 +40,7 @@ Confirm that the hardware is YAM with ``flexible_4310`` grippers. Open the two X
 
 The collection config's ``env.eval.pico.position_scale`` and ``rotation_scale`` scale controller translation and rotation into requested targets. Both are ``0.3`` in the example, so a 1 cm controller movement requests a 3 mm TCP displacement. ``env.eval.override_cfg.max_joint_delta`` limits each step's joint target relative to current feedback, in radians, rather than the total travel over a session.
 
-Obtain the publisher address using :doc:`the PICO publisher setup <franka_vr>`: run ``ip -brief address`` on the publisher PC to find an address reachable from the YAM node, and take the port from ``zmq.ipc_addr`` in ``configs/vr_bridge.yaml``. Set the consumer address to ``tcp://<publisher-PC-address>:<port>``, not the headset IP or ``0.0.0.0``; on the same host, a matching IPC address also works.
+Obtain the publisher address using :ref:`the PICO publisher setup <pico-publisher-setup>`: run ``ip -brief address`` on the publisher PC to find an address reachable from the YAM node, and take the port from ``zmq.ipc_addr`` in ``configs/vr_bridge.yaml``. Set the consumer address to ``tcp://<publisher-PC-address>:<port>``, not the headset IP or ``0.0.0.0``; on the same host, a matching IPC address also works.
 
 Measure yaw separately for each arm. During calibration, the headset's horizontal facing direction becomes operator +X, with +Y to the left and +Z up. Use the model and manufacturer's coordinate diagrams to express operator forward as ``(dx, dy)`` in each robot base's horizontal plane, then set yaw to ``atan2(dy, dx)`` in radians. Positive yaw follows the right-hand rule around base +Z; multiply degrees by π/180 to convert them. Use 0 only when the horizontal axes align; yaw cannot compensate for a tilted base. Face the measured direction and release both grips at startup, and remeasure and recalibrate if the operating direction changes.
 
@@ -67,7 +67,7 @@ Before launching collection, check the PICO data stream on the YAM node:
    python toolkits/realworld_check/test_pico_data.py \
        --zmq-addr "$YAM_PICO_ZMQ_ADDR"
 
-Confirm that the headset and both controller poses and button values change as you operate them, then press Ctrl-C to exit the check. On a fresh single-node host, start Ray and launch collection:
+Confirm that the headset pose, both controller poses, and button values change as you operate them, then press Ctrl-C to exit the check. On a fresh single-node host, start Ray and launch collection:
 
 .. code-block:: bash
 
@@ -79,12 +79,12 @@ On the first takeover, move one arm at a time through small motions to check dir
 
 Hold a controller's grip to control its corresponding arm; release it to stop taking over. The recipe gives ``pico`` one entry per arm, and each turns its controller's pose into joint targets through the YAM model's inverse kinematics, set in ``override_cfg.ik``. If either controller drops out, both arms hold until both grips are released. The ``yam_episode`` block maps the right menu button to start/end an episode and the left menu button to discard the current recording. Confirm these button events on your PICO setup before collecting task data. Discard removes only the current unfinished episode; faulted or truncated recordings can still be saved as unsuccessful episodes.
 
-The launcher writes logs under ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` by default. This recipe sets ``export_format: lerobot_dataset``. Each recorded take is streamed into its own shard under that run's ``lerobot_dataset/rank_0/``. Unsuccessful takes are saved too, with ``is_success`` false. Merge the shards into one dataset for OpenPI SFT or HG-DAgger, leaving those out:
+The launcher writes logs under ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` by default. This recipe sets ``export_format: lerobot_dataset``. Each recorded take is streamed into its own shard under that run's ``lerobot_dataset/rank_0/``. Unsuccessful takes are saved too, with ``is_success`` false. Merge the shards into one dataset for OpenPI SFT or HG-DAgger, leaving those out. Replace ``<timestamp>`` with the timestamp in your run's log directory:
 
 .. code-block:: bash
 
    python toolkits/lerobot/merge_lerobot_datasets.py \
-       --source-dir logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset \
+       --source-dir "logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset" \
        --output-dir logs/yam_merged \
        --only-success
 
