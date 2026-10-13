@@ -9,6 +9,7 @@
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/WeChat%20Group-green?logo=wechat&amp"></a>
+<a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20Channel?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack Channel"></a>
 </div>
 
 <div align="center">
@@ -31,6 +32,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/10] 🔥 RLinf supports MetaX (MACA) GPUs. PR: [MetaX GPU support (#1656)](https://github.com/RLinf/RLinf/pull/1656).
 - [2026/09] 🔥 RLinf refactors real-world robots and environments, using a unified robotics interface to manage hardware, tasks, and rollout wrappers separately. Docs: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html), [Robotics Architecture](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics_architecture.html), [Real-World Tasks and Environments](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/realworld_envs.html), [Add a Robot](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_robot.html), [Add a Real-World Task](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_task.html), [Teleoperation](https://rlinf.readthedocs.io/en/latest/rst_source/guides/teleoperation.html).
 - [2026/09] 🔥 RLinf supports RL on π₀-FAST. Doc: [π₀-FAST](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html).
 - [2026/09] 🔥 RLinf supports Biren GPUs. PR: [Biren GPU support (#1581)](https://github.com/RLinf/RLinf/pull/1581).
