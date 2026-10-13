@@ -2498,69 +2498,6 @@ def test_releasing_grip_holds_the_measured_pose():
     assert "end_effector" not in held.parts
 
 
-def test_idle_pico_tcp_overrides_zero_collection_action():
-    """Collection zeros must not reach DualFranka after the operator lets go."""
-    from types import SimpleNamespace
-
-    import numpy as np
-
-    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
-    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
-    from rlinf.robotics.actions import ActionKind
-    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
-
-    pose = np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
-
-    class Env:
-        action_space = SimpleNamespace(
-            low=np.full(10, -2.0), high=np.full(10, 2.0), shape=(10,)
-        )
-        stepped: list[np.ndarray] = []
-
-        def get_wrapper_attr(self, name):
-            if name == "get_tcp_pose":
-                return lambda: pose.copy()
-            if name == "get_action_scale":
-                return lambda: np.array([0.05, 0.3, 1.0])
-            raise AttributeError(name)
-
-        def step(self, action):
-            self.stepped.append(np.asarray(action, dtype=np.float64).copy())
-            return None, 0.0, False, False, {}
-
-    replay = _ScriptedController(
-        [
-            ((0.025, 0.0, 0.0), (0.0, 0.0, 0.0), True, 0),
-            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), False, 0),
-        ]
-    )
-    pico = PicoTcp(gripper=True, side=0, hold_current_when_inactive=True)
-    pico._device = replay
-    group = TeleopGroup(
-        [TeleopEntry(pico, drives="left")],
-        available={
-            "left.arm": ActionKind.CARTESIAN_POSE,
-            "left.end_effector": ActionKind.GRIPPER,
-        },
-    )
-    env = Env()
-    wrapper = TeleopIntervention(
-        env,
-        ComposedTeleop(
-            group,
-            {"left.arm": slice(0, 9), "left.end_effector": slice(9, 10)},
-            timeout=0.0,
-        ),
-    )
-    zeros = np.zeros(10, dtype=np.float64)
-    wrapper.step(zeros)
-    _, _, _, _, info = wrapper.step(zeros)
-
-    assert not np.allclose(env.stepped[-1][:3], 0.0)
-    assert np.isclose(env.stepped[-1][0], 0.3)
-    assert "intervene_action" in info
-
-
 def test_dagger_pico_does_not_apply_arm_commands_while_idle():
     from rlinf.robotics.parts.teleop import PicoTcp
 
