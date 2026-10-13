@@ -109,13 +109,13 @@ class BehaviorProcess:
             step_supports_kwargs or "render" in step_signature.parameters
         )
         self.step_supports_env_indices = "env_indices" in step_signature.parameters
-        self.skip_intermediate_obs_in_chunk = bool(
-            OmegaConf.select(cfg, "skip_intermediate_obs_in_chunk", default=False)
+        self.skip_intermediate_renders = bool(
+            OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
 
-        if self.skip_intermediate_obs_in_chunk and not self.step_supports_get_obs:
+        if self.skip_intermediate_renders and not self.step_supports_get_obs:
             self.logger.warning(
-                "skip_intermediate_obs_in_chunk is True but OmniGibson env step does not "
+                "skip_intermediate_renders is True but OmniGibson env step does not "
                 "support get_obs; this config will be ignored."
             )
 
@@ -203,7 +203,7 @@ class BehaviorProcess:
         results: list[tuple] = []
         for t in range(chunk_size):
             is_last = t == chunk_size - 1
-            need_obs = not self.skip_intermediate_obs_in_chunk or is_last
+            need_obs = not self.skip_intermediate_renders or is_last
             results.append(
                 self._step_shard(actions[:, t], env_indices, need_obs=need_obs)
             )
@@ -301,8 +301,8 @@ class BehaviorProcessPool:
         self.total_num_envs = total_num_envs
         self.num_env_subprocess = num_env_subprocess
         self.num_env_shard = total_num_envs // num_env_subprocess
-        self.skip_intermediate_obs_in_chunk = bool(
-            OmegaConf.select(cfg, "skip_intermediate_obs_in_chunk", default=False)
+        self.skip_intermediate_renders = bool(
+            OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
 
         # Create subprocess actors with a retry/backoff loop. Actor startup
@@ -453,7 +453,7 @@ class BehaviorProcessPool:
         merged_infos: list = []
         for t in range(chunk_size):
             is_last = t == chunk_size - 1
-            need_obs = not self.skip_intermediate_obs_in_chunk or is_last
+            need_obs = not self.skip_intermediate_renders or is_last
             obs_t: list | None = [None] * slice_num_envs if need_obs else None
             reward_t = torch.zeros(slice_num_envs, dtype=torch.float32)
             term_t = torch.zeros(slice_num_envs, dtype=torch.bool)
