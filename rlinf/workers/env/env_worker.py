@@ -354,7 +354,7 @@ class EnvWorker(Worker):
                     rank=self._rank,
                     num_envs=num_envs_per_stage,
                     export_format=getattr(
-                        env_cfg.data_collection, "export_format", "pickle"
+                        env_cfg.data_collection, "export_format", "pickle_episode"
                     ),
                     robot_type=getattr(env_cfg.data_collection, "robot_type", "panda"),
                     fps=getattr(env_cfg.data_collection, "fps", 10),

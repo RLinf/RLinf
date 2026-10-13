@@ -10,11 +10,12 @@ defaults to ``${runner.logger.log_path}``.
 - **Training or evaluation** enables ``data_collection`` under ``env``. The env
   worker writes one episode format at a time.
 
-The real-robot script accepts only ``replay_buffer``, ``pickle_episode``, and
-``lerobot_dataset``. ``pickle_episode`` and ``lerobot_dataset`` cannot be
-selected together. Omitting ``export_format`` writes ``replay_buffer`` and
-``lerobot_dataset``. The training env worker also accepts ``pickle`` and
-``lerobot`` as the latter two names.
+Both entry points take the same names: ``replay_buffer``, ``pickle_episode``,
+and ``lerobot_dataset``. ``pickle_episode`` and ``lerobot_dataset`` cannot be
+selected together, and the env worker writes no ``replay_buffer``. Omitting
+``export_format`` in the real-robot script writes ``replay_buffer`` and
+``lerobot_dataset``. The earlier names ``pickle`` and ``lerobot`` still select
+the two episode formats, with a deprecation warning.
 
 .. list-table::
    :header-rows: 1
@@ -46,10 +47,19 @@ To save a replay buffer and a LeRobot dataset from the real robot:
 
 Streaming LeRobot collection, such as dual-arm YAM, sets
 ``export_format: lerobot_dataset`` and ``streaming: true``. Frames are written
-as they are recorded, so memory does not grow with episode length. Successful
-and failed episodes are both stored and stamped with ``is_success``;
-``only_success`` does not apply while streaming. Operator discards and
-recording-queue overflows are not published into the dataset.
+as they are recorded, so memory does not grow with episode length. Each kept
+take becomes its own shard. Successful and failed takes are both stored and
+stamped with ``is_success``; ``only_success`` does not apply while streaming.
+Operator discards and recording-queue overflows are not published into the
+dataset. Merge the shards into one dataset before training, leaving out the
+unsuccessful takes:
+
+.. code-block:: bash
+
+   python toolkits/lerobot/merge_lerobot_datasets.py \
+       --source-dir logs/{timestamp}/lerobot_dataset \
+       --output-dir logs/{timestamp}/lerobot_merged \
+       --only-success
 
 To collect pickle episodes during training for a reward model:
 
@@ -60,12 +70,12 @@ To collect pickle episodes during training for a reward model:
        data_collection:
          enabled: True
          save_dir: ${runner.logger.log_path}
-         export_format: pickle
+         export_format: pickle_episode
          only_success: True
 
 ``maniskill_ppo_mlp_collect`` uses this setup. ``.pkl`` files land in
-``{save_dir}/pickle_episode/``. With ``export_format: lerobot``, shards land in
-``{save_dir}/lerobot_dataset/rank_*/id_*/``.
+``{save_dir}/pickle_episode/``. With ``export_format: lerobot_dataset``, shards
+land in ``{save_dir}/lerobot_dataset/rank_*/id_*/``.
 
 Real-robot teleoperation collection steps
 ------------------------------------------
@@ -103,8 +113,7 @@ is the log directory, the tree is:
 
    logs/{timestamp}/
    ├── demo_buffer/
-   ├── lerobot_dataset/rank_0/id_0/
-   └── pickle_episode/*.pkl
+   └── lerobot_dataset/rank_0/id_0/    # pickle_episode/*.pkl with that format
 
 Each successful trajectory in ``demo_buffer`` is a ``.pt`` file whose
 ``intervene_flags`` are all ones, marking expert data. To append data, point a
@@ -188,8 +197,9 @@ Contents:
 **lerobot_dataset**
 
 ``CollectEpisode`` writes one or more episodes into a shard at
-``lerobot_dataset/rank_{rank}/id_{N}/``. ``resume: true`` continues numbering
-from existing shards and does not rewrite finished data.
+``lerobot_dataset/rank_{rank}/id_{N}/``; a streaming run writes one kept take
+per shard. ``resume: true`` continues numbering from existing shards and does
+not rewrite finished data.
 
 .. code-block:: text
 
@@ -234,15 +244,16 @@ To wrap an environment in your own script, pass the parent directory as
    env = CollectEpisode(
        env=base_env,
        save_dir="./logs/run",
-       export_format="lerobot",   # or "pickle"
+       export_format="lerobot_dataset",   # or "pickle_episode"
        robot_type="panda",
        fps=10,
        only_success=True,
    )
    env.close()   # flush the remaining episodes
 
-With ``streaming: true``, each frame is written as a PNG immediately and the
-parquet is written when the episode ends. Successful and failed episodes are
+With ``streaming: true``, each frame's views are written as uncompressed PNGs
+immediately and the parquet is written when the episode ends. The parquet keeps
+those bytes, so a 640x480 view costs about 0.9 MB per frame on disk. Successful and failed episodes are
 both kept, and ``is_success`` is stamped at the end. An operator discard
 deletes the current unpublished episode. A recording-queue overflow is moved
 to ``invalid_episodes/`` inside that shard and is not published. A streaming

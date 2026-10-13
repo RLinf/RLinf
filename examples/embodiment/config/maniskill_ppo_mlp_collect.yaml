@@ -112,14 +112,14 @@ env:
     data_collection:
       enabled: True
       save_dir: ${runner.logger.log_path}
-      export_format: "pickle"
+      export_format: pickle_episode
       only_success: True       # set True to discard failed episodes
 
     # ── lerobot format ───────────────────────────────────────
     # data_collection:
     #   enabled: True
     #   save_dir: ${runner.logger.log_path}
-    #   export_format: "lerobot"  # shards land in save_dir/lerobot_dataset
+    #   export_format: lerobot_dataset  # shards land in save_dir/lerobot_dataset
     #   only_success: False       # set True to discard failed episodes
     #   robot_type: "panda"       # written to meta/info.json
     #   fps: 10                   # written to meta/info.json

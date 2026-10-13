@@ -35,10 +35,10 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
      data_collection:
        enabled: True
        save_dir: ${runner.logger.log_path}
-       export_format: "pickle"
+       export_format: pickle_episode
        only_success: False
 
-启动训练或评估后，``export_format: pickle`` 的每个 episode 会写入
+启动训练或评估后，``export_format: pickle_episode`` 的每个 episode 会写入
 ``{save_dir}/pickle_episode/`` 下一个独立的 ``.pkl`` 文件，便于后续离线预处理。
 
 对于 VLM Trend reward，RLinf 也提供了可直接运行的数据采集配置：

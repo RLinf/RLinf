@@ -320,7 +320,7 @@ Qwen VLM Reward Model（动作趋势判断）
        data_collection:
          enabled: True
          save_dir: /path/to/run
-         export_format: "pickle"
+         export_format: pickle_episode
          only_success: False
 
 采集技巧

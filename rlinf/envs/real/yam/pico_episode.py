@@ -14,11 +14,12 @@
 
 """Episode control for a dual YAM station driven by PICO controllers.
 
-The :class:`~rlinf.robotics.parts.teleop.yam_pico.YamPico` device decides where
-the arms go. This wrapper decides what counts as an episode: it turns the
+One :class:`~rlinf.robotics.parts.teleop.pico.PicoJoint` per arm decides where
+that arm goes. This wrapper decides what counts as an episode: it turns the
 controller buttons and the R/X keys into record, discard, and successful-end
 edges, keeps teleoperation ticking while it waits for the first record edge, and
-publishes the phase keys ``CollectEpisode`` reads.
+publishes the phase keys ``CollectEpisode`` reads. It also makes a fault on
+either arm hold both until both grips are released.
 
 It sits outside :class:`~rlinf.envs.real.wrappers.teleop.TeleopIntervention`,
 which merges the device's published state into ``info`` and writes the applied
@@ -28,33 +29,88 @@ action there as ``accepted_action``.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.real.wrappers.episode.keyboard import KeyboardListener
-from rlinf.robotics.parts.teleop.yam_pico import YamPico
+from rlinf.robotics.parts.teleop.pico import PicoJoint
 from rlinf.utils.logging import get_logger
-
-from .config import YamPicoConfig
 
 #: Keys the operator can press instead of reaching for a controller button.
 _KEYBOARD_KEYS = {"r": "record", "x": "discard"}
+
+#: Buttons that already move an arm or its gripper.
+_MOTION_BUTTONS = {"A", "B", "X", "Y", "grip", "trigger"}
+
+
+@dataclass
+class YamPicoEpisodeConfig:
+    """How the operator starts, discards, and ends a recording."""
+
+    record_button: str = "right_menu_button"
+    """Starts a recording, and ends it as a success when pressed again."""
+
+    discard_button: str = "left_menu_button"
+    """Drops the recording in progress."""
+
+    button_debounce_s: float = 0.2
+    """Presses closer together than this count once."""
+
+    keyboard_enabled: bool = False
+    """Also take R (record) and X (discard) from the keyboard."""
+
+    wait_for_record_button: bool = True
+    """Keep teleoperating after a reset until the record button is pressed."""
+
+    log_control_timing: bool = False
+    """Log the control loop's peak timings once a second."""
+
+    def __post_init__(self) -> None:
+        if (
+            not self.record_button
+            or not self.discard_button
+            or self.record_button == self.discard_button
+        ):
+            raise ValueError(
+                "yam_episode needs two different record and discard buttons, but "
+                f"got {self.record_button!r} and {self.discard_button!r}."
+            )
+        if {self.record_button, self.discard_button} & _MOTION_BUTTONS:
+            raise ValueError(
+                f"yam_episode buttons must not be motion buttons {sorted(_MOTION_BUTTONS)}, "
+                f"but got {self.record_button!r} and {self.discard_button!r}."
+            )
+        self.button_debounce_s = float(self.button_debounce_s)
+        if not np.isfinite(self.button_debounce_s) or self.button_debounce_s < 0:
+            raise ValueError(
+                "yam_episode.button_debounce_s must be finite and non-negative, "
+                f"but got {self.button_debounce_s}."
+            )
+        for name in (
+            "keyboard_enabled",
+            "wait_for_record_button",
+            "log_control_timing",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(
+                    f"yam_episode.{name} must be a bool, but got {getattr(self, name)!r}."
+                )
 
 
 class YamPicoEpisode(gym.Wrapper):
     """Record, discard, and end collection episodes from a PICO station.
 
-    Every step is driven by the device, so this wrapper never sees a policy
-    action it needs to arbitrate. It reads the device's episode buttons out of
-    ``info``, debounces them together with the keyboard, and reports the result
-    to the collector.
+    Every step is driven by the controllers, so this wrapper never sees a
+    policy action it needs to arbitrate. It reads their episode buttons,
+    debounces them together with the keyboard, and reports the result to the
+    collector.
 
     Args:
-        env: The environment to wrap, with the teleop device inside it.
-        config: Episode-control settings. These are the same ``pico`` block the
-            device reads its own settings from.
+        env: The environment to wrap, with the teleop devices inside it.
+        config: Episode-control settings, the ``yam_episode`` block.
         keyboard: Keyboard to poll instead of opening a real one.
 
     Raises:
@@ -64,15 +120,15 @@ class YamPicoEpisode(gym.Wrapper):
     def __init__(
         self,
         env: gym.Env,
-        config: YamPicoConfig | Mapping[str, Any] | None = None,
+        config: YamPicoEpisodeConfig | Mapping[str, Any] | None = None,
         *,
         keyboard: Any | None = None,
     ) -> None:
         super().__init__(env)
         self.config = (
             config
-            if isinstance(config, YamPicoConfig)
-            else YamPicoConfig(**dict(config or {}))
+            if isinstance(config, YamPicoEpisodeConfig)
+            else YamPicoEpisodeConfig(**dict(config or {}))
         )
         self._keyboard = keyboard
         self._recording = False
@@ -94,38 +150,33 @@ class YamPicoEpisode(gym.Wrapper):
     ) -> tuple[Any, dict[str, Any]]:
         """Reset episode state, then keep teleoperating until recording starts.
 
-        A manual episode boundary leaves the arms where they are, so the device
-        is told to keep each grip anchored across it. Any other reset re-anchors
-        both grips.
+        A manual episode boundary leaves the arms where they are, so each
+        controller is told to keep its grip anchored across it. Any other reset
+        re-anchors both grips.
         """
-        try:
-            self._ensure_keyboard()
-            controller = self._controller()
-            preserve = self._preserve_reference and not (
-                self.env.unwrapped.will_reset_to_configured_qpos(options)
-            )
-            self._preserve_reference = False
-            if preserve:
+        self._ensure_keyboard()
+        preserve = self._preserve_reference and not (
+            self.env.unwrapped.will_reset_to_configured_qpos(options)
+        )
+        self._preserve_reference = False
+        if preserve:
+            for controller in self._controllers():
                 controller.preserve_reference()
-            else:
-                self._previous_buttons = None
-            self._recording = False
-            obs, info = self.env.reset(seed=seed, options=options)
-            skip_wait = bool((options or {}).get("skip_wait_for_start", False))
-            if self.config.wait_for_record_button and not skip_wait:
-                while not self._recording:
-                    obs, _, _, _, info = self._tick(preview=True)
-            return obs, self._decorate(info, None, False)
-        except BaseException:
-            self.close()
-            raise
+        else:
+            self._previous_buttons = None
+        self._recording = False
+        obs, info = self.env.reset(seed=seed, options=options)
+        skip_wait = bool((options or {}).get("skip_wait_for_start", False))
+        if self.config.wait_for_record_button and not skip_wait:
+            while not self._recording:
+                obs, _, _, _, info = self._tick(preview=True)
+        return obs, self._decorate(info, None, False)
 
     def step(self, action: Any) -> tuple[Any, float, bool, bool, dict[str, Any]]:
         """Advance the environment and apply the episode transitions it caused.
 
         A control path that throws leaves the arms holding their last target, so
-        the device is latched and the stack released rather than left engaged
-        with a stale command.
+        the device is latched rather than left engaged with a stale command.
         """
         started = time.monotonic()
         try:
@@ -136,24 +187,17 @@ class YamPicoEpisode(gym.Wrapper):
         return self._finish(*result, started=started)
 
     def _abort_control(self) -> None:
-        """Hold both arms and release the stack after a control-path failure.
+        """Hold both arms after a control-path failure.
 
         A failure anywhere under this wrapper leaves the arms holding their
-        last target, so the device latches a fault that keeps them there until
-        both grips are released.
+        last target, so both controllers latch a fault that keeps them there
+        until both grips are released. Whoever owns the env closes it.
         """
         try:
-            self._controller().hold_until_released("control_error")
+            self._hold_until_released("control_error")
         except Exception:  # pragma: no cover - hardware failure path
             self._logger.exception("YAM PICO control-error latch failed")
-        try:
-            self.env.unwrapped.runtime.emergency_hold()
-        except Exception:  # pragma: no cover - hardware failure path
-            self._logger.exception("YAM PICO emergency hold failed")
-        try:
-            self.close()
-        except Exception:  # pragma: no cover - cleanup path
-            self._logger.exception("YAM PICO cleanup failed after control error")
+        self.env.unwrapped.emergency_hold()
 
     def close(self) -> None:
         """Close the keyboard and the environment, reporting the first failure."""
@@ -186,10 +230,12 @@ class YamPicoEpisode(gym.Wrapper):
         return self._finish(*result, started=started)
 
     def _preview_step(self) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        """Drive the arms through the device, bypassing the episode counter."""
+        """Drive the arms through the controllers, bypassing the episode counter."""
         sample = self._device().read(self.env, self._zero_action())
         if sample.action is None:
-            raise RuntimeError("yam_pico produced no target while waiting to record")
+            raise RuntimeError(
+                "The PICO arms produced no target while waiting to record"
+            )
         obs, info = self.env.unwrapped.teleop_tick(sample.action)
         return obs, 0.0, False, False, {**info, **sample.info}
 
@@ -204,13 +250,15 @@ class YamPicoEpisode(gym.Wrapper):
         started: float,
     ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
         """Turn one frame's controller state into the next episode state."""
-        controller = self._controller()
         if info.get("action_rejected") is not None:
-            controller.hold_until_released(f"runtime:{info['action_rejected']}")
-        record, discard = self._events(info)
+            self._hold_until_released(f"runtime:{info['action_rejected']}")
+        record, discard = self._events()
         # Only a latched hold ends the take. A one-frame IK miss is reported
         # on {side}_ik_fault and retried without aborting the recording.
-        fault = controller.fault
+        fault = self._fault()
+        if fault is not None:
+            # Either arm's fault holds both, until both grips are released.
+            self._hold_until_released(fault)
         event: Optional[str] = None
         reset_record = False
         manual_done = False
@@ -224,13 +272,14 @@ class YamPicoEpisode(gym.Wrapper):
                 event = "end_success"
                 reward, terminated, manual_done = 1.0, True, True
                 self._preserve_reference = True
-                controller.preserve_reference()
+                for controller in self._controllers():
+                    controller.preserve_reference()
             else:
                 self._recording = True
                 reset_record = True
                 event = "start"
 
-        info["yam_pico_fault"] = fault
+        info["pico_fault"] = fault
         # The collector closes the previous streaming shard on record_reset.
         # Mark an explicit discard before that close so it drops the shard.
         info["episode_discarded"] = bool(discard and reset_record)
@@ -249,8 +298,8 @@ class YamPicoEpisode(gym.Wrapper):
             )
         info["pico_active"] = info["left"] or info["right"]
         if (terminated or truncated) and not manual_done:
-            controller.hold_until_released("episode_ended")
-            self.env.unwrapped.runtime.emergency_hold()
+            self._hold_until_released("episode_ended")
+            self.env.unwrapped.emergency_hold()
         if self.config.log_control_timing:
             self._report_timing(info, started)
         return (
@@ -263,11 +312,12 @@ class YamPicoEpisode(gym.Wrapper):
 
     # Operator edges.
 
-    def _events(self, info: Mapping[str, Any]) -> tuple[bool, bool]:
+    def _events(self) -> tuple[bool, bool]:
         """Return the record and discard edges this frame produced."""
-        buttons = (
-            bool(info.get("pico_record", False)),
-            bool(info.get("pico_discard", False)),
+        pressed = [controller.buttons() for controller in self._controllers()]
+        buttons = tuple(
+            any(bool(state.get(button, False)) for state in pressed)
+            for button in (self.config.record_button, self.config.discard_button)
         )
         keyboard = self._poll_keyboard()
         now = time.monotonic()
@@ -318,19 +368,34 @@ class YamPicoEpisode(gym.Wrapper):
         """Return the composed device the intervention wrapper drives."""
         return self.env.get_wrapper_attr("device")
 
-    def _controller(self) -> YamPico:
-        """Return the PICO pair that owns the grips and the hold latch.
+    def _controllers(self) -> tuple[PicoJoint, ...]:
+        """Return the PICO controllers that own the grips and the hold latch.
 
         The intervention wrapper holds the composed device, which flattens all
         configured devices into one action vector. Episode control is specific
-        to the PICO pair inside it.
+        to the PICO arms inside it.
         """
-        for device in self._device().group.devices:
-            if isinstance(device, YamPico):
-                return device
-        raise RuntimeError(
-            "YamPicoEpisode needs a yam_pico device under the intervention wrapper"
+        controllers = tuple(
+            device
+            for device in self._device().group.devices
+            if isinstance(device, PicoJoint)
         )
+        if not controllers:
+            raise RuntimeError(
+                "YamPicoEpisode needs a pico device driving the arms under the "
+                "intervention wrapper, but found none."
+            )
+        return controllers
+
+    def _fault(self) -> Optional[str]:
+        """Return the first arm's latched fault, or ``None`` while both drive."""
+        return next((c.fault for c in self._controllers() if c.fault is not None), None)
+
+    def _hold_until_released(self, reason: str) -> None:
+        """Latch every arm not already held, until both grips are released."""
+        for controller in self._controllers():
+            if controller.fault is None:
+                controller.hold_until_released(reason)
 
     def _zero_action(self) -> np.ndarray:
         """Return an action the device's own parts overwrite entirely."""
@@ -355,7 +420,7 @@ class YamPicoEpisode(gym.Wrapper):
         if self._timing_started is None:
             self._timing_started = started
         self._timing_count += 1
-        self._timing_faults += int(info.get("yam_pico_fault") is not None)
+        self._timing_faults += int(info.get("pico_fault") is not None)
         metrics = {
             "gap": info.get("yam_command_interval_s", 0.0),
             "ik": sum(

@@ -48,14 +48,11 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.real import RealWorldEnv
+from rlinf.envs.wrappers.collect_episode import (
+    EPISODE_FORMATS,
+    resolve_export_formats,
+)
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
-
-_EXPORT_FORMATS = frozenset({"replay_buffer", "pickle_episode", "lerobot_dataset"})
-# CollectEpisode still takes these two argument values.
-_COLLECT_EPISODE_FORMAT = {
-    "pickle_episode": "pickle",
-    "lerobot_dataset": "lerobot",
-}
 
 
 class DataCollector(Worker):
@@ -143,30 +140,13 @@ class DataCollector(Worker):
         if dc_cfg is None:
             return frozenset({"replay_buffer"})
         raw = dc_cfg.get("export_format", ["replay_buffer", "lerobot_dataset"])
-        values = [raw] if isinstance(raw, str) else list(raw)
-        selected: list[str] = []
-        for value in values:
-            name = str(value)
-            if name not in _EXPORT_FORMATS:
-                known = ", ".join(sorted(_EXPORT_FORMATS))
-                raise ValueError(
-                    f"Unsupported export_format={value!r}. Expected one or more of: {known}."
-                )
-            if name not in selected:
-                selected.append(name)
-        episode_formats = [name for name in selected if name in _COLLECT_EPISODE_FORMAT]
-        if len(episode_formats) > 1:
-            raise ValueError(
-                "export_format can include replay_buffer plus only one of "
-                "pickle_episode or lerobot_dataset."
-            )
-        return frozenset(selected)
+        return frozenset(resolve_export_formats(raw))
 
     def _episode_export_format(self) -> str | None:
         """Return the CollectEpisode format, or ``None`` when it is not selected."""
-        for name, collect_format in _COLLECT_EPISODE_FORMAT.items():
+        for name in EPISODE_FORMATS:
             if name in self._export_formats:
-                return collect_format
+                return name
         return None
 
     def _configured_save_dir(self, cfg) -> str | None:

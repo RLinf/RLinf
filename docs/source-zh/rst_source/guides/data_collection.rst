@@ -10,10 +10,11 @@
 - **训练或评估**：在 ``env`` 的 ``data_collection`` 里打开。env worker 一次只写一种
   episode 格式。
 
-真机脚本只接受 ``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
-``pickle_episode`` 与 ``lerobot_dataset`` 不能同时选择。不写 ``export_format``
-时，默认写出 ``replay_buffer`` 和 ``lerobot_dataset``。训练里的 env worker 还接受
-``pickle`` 和 ``lerobot``，分别等同于后两个名字。
+两个入口使用同一组名字：``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
+``pickle_episode`` 与 ``lerobot_dataset`` 不能同时选择，env worker 不写
+``replay_buffer``。真机脚本不写 ``export_format`` 时，默认写出 ``replay_buffer``
+和 ``lerobot_dataset``。旧名字 ``pickle`` 和 ``lerobot`` 仍对应两种 episode
+格式，但会给出弃用警告。
 
 .. list-table::
    :header-rows: 1
@@ -44,9 +45,17 @@
          export_format: [replay_buffer, lerobot_dataset]
 
 流式 LeRobot（例如双臂 YAM）只设 ``export_format: lerobot_dataset`` 和
-``streaming: true``。帧随录随写，内存不随 episode 变长。成功和失败的 episode
-都会进入 dataset，并标上 ``is_success``；``only_success`` 在流式模式下不起作用。
-操作员丢弃的录制和录制队列溢出不会进入正式 dataset。
+``streaming: true``。帧随录随写，内存不随 episode 变长。每条保留下来的录制单独
+成为一个 shard。成功和失败的录制都会写入，并标上 ``is_success``；``only_success``
+在流式模式下不起作用。操作员丢弃的录制和录制队列溢出不会进入正式 dataset。
+训练前把这些 shard 合并成一个 dataset，同时去掉失败的录制：
+
+.. code-block:: bash
+
+   python toolkits/lerobot/merge_lerobot_datasets.py \
+       --source-dir logs/{timestamp}/lerobot_dataset \
+       --output-dir logs/{timestamp}/lerobot_merged \
+       --only-success
 
 训练中采集 pickle，供奖励模型使用：
 
@@ -57,12 +66,12 @@
        data_collection:
          enabled: True
          save_dir: ${runner.logger.log_path}
-         export_format: pickle
+         export_format: pickle_episode
          only_success: True
 
 ``maniskill_ppo_mlp_collect`` 就是这个用法。``.pkl`` 在
-``{save_dir}/pickle_episode/``。把 ``export_format`` 改成 ``lerobot`` 时，shard 在
-``{save_dir}/lerobot_dataset/rank_*/id_*/``。
+``{save_dir}/pickle_episode/``。把 ``export_format`` 改成 ``lerobot_dataset``
+时，shard 在 ``{save_dir}/lerobot_dataset/rank_*/id_*/``。
 
 真机遥操数采步骤
 ----------------
@@ -99,8 +108,7 @@
 
    logs/{timestamp}/
    ├── demo_buffer/
-   ├── lerobot_dataset/rank_0/id_0/
-   └── pickle_episode/*.pkl
+   └── lerobot_dataset/rank_0/id_0/    # 选 pickle_episode 时为 pickle_episode/*.pkl
 
 ``demo_buffer`` 里每条成功轨迹是一个 ``.pt``，``intervene_flags`` 全为 1，表示专家数据。
 追加数据时，让新的一次采集指向同一个 ``demo_buffer`` 目录。
@@ -180,8 +188,8 @@
 **lerobot_dataset**
 
 ``CollectEpisode`` 把一个或多个 episode 写成一个 shard：
-``lerobot_dataset/rank_{rank}/id_{N}/``。``resume: true`` 时从已有 shard
-往后编号，不改已写完的数据。
+``lerobot_dataset/rank_{rank}/id_{N}/``；流式采集每个 shard 只放一条保留的录制。
+``resume: true`` 时从已有 shard 往后编号，不改已写完的数据。
 
 .. code-block:: text
 
@@ -223,14 +231,15 @@
    env = CollectEpisode(
        env=base_env,
        save_dir="./logs/run",
-       export_format="lerobot",   # 或 "pickle"
+       export_format="lerobot_dataset",   # 或 "pickle_episode"
        robot_type="panda",
        fps=10,
        only_success=True,
    )
    env.close()   # 刷出最后一批 episode
 
-``streaming: true`` 时每帧立刻写成 PNG，episode 结束再写 parquet。成功和失败
+``streaming: true`` 时每帧的各个视角立刻写成未压缩的 PNG，episode 结束再写
+parquet。parquet 原样保存这些字节，640x480 的一个视角每帧约占 0.9 MB 磁盘。成功和失败
 都保存，``is_success`` 在结束时写入。操作员丢弃会删掉当前未发布的 episode；
 录制队列溢出的片段移到该 shard 的 ``invalid_episodes/``，不作为正式 episode。
 流式 shard 旁还有 ``stream_frames.jsonl``，记录每帧的 ``state`` 和 ``actions``。

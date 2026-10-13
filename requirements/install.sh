@@ -3123,7 +3123,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
+        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
@@ -3798,15 +3798,11 @@ install_dosw1_env() {
 }
 
 install_yam_env() {
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     uv pip install \
         --build-constraint "$SCRIPT_DIR/embodied/envs/yam-build-constraints.txt" \
         -r "$SCRIPT_DIR/embodied/envs/yam.txt"
     install_lerobot
-
-    local repo_root
-    repo_root="$(dirname "$SCRIPT_DIR")"
-    uv pip install -e "$repo_root" --no-deps
+    use_opencv_gui_wheel
 }
 
 install_habitat_env() {

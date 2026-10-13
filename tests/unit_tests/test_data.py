@@ -2257,7 +2257,9 @@ def test_replay_collector_skips_start_preview_and_aborted_transitions(
     )
     saved = []
     collector.replay_buffer = SimpleNamespace(
-        add_trajectories=saved.extend, close=lambda: None
+        add_trajectories=saved.extend,
+        close=lambda: None,
+        auto_save_path=str(tmp_path / "demo_buffer"),
     )
     env = Env()
     collector.env = env
@@ -2325,6 +2327,107 @@ def _policy_input() -> PolicyInput:
     return PolicyInput(
         obs={"states": torch.zeros(16, 4)},
     )
+
+
+def test_export_format_keeps_older_names_and_refuses_two_episode_stores():
+    from rlinf.envs.wrappers.collect_episode import resolve_export_formats
+
+    assert resolve_export_formats("pickle") == ("pickle_episode",)
+    assert resolve_export_formats(["replay_buffer", "lerobot"]) == (
+        "replay_buffer",
+        "lerobot_dataset",
+    )
+    with pytest.raises(ValueError, match="one of"):
+        resolve_export_formats(["pickle_episode", "lerobot_dataset"])
+    with pytest.raises(ValueError, match="Unsupported"):
+        resolve_export_formats("parquet")
+
+
+class _OperatorTakes:
+    """An env publishing the episode edges an operator's buttons produce.
+
+    Each step pops one edge: ``pre`` waits to record, ``start`` begins a take,
+    ``rec`` records a frame, ``discard`` drops the take, ``abort`` ends it
+    without success, and ``end`` ends it successfully.
+    """
+
+    def __init__(self, edges):
+        import gymnasium as gym
+
+        self.edges = list(edges)
+        self.tick = 0
+        self.observation_space = gym.spaces.Box(0, 1, (1,))
+        self.action_space = gym.spaces.Box(-1, 1, (1, 2))
+
+    def _observation(self):
+        return {
+            "states": np.full((1, 3), float(self.tick), dtype=np.float32),
+            "main_images": np.full((1, 8, 8, 3), self.tick % 255, dtype=np.uint8),
+            "task_descriptions": ["take"],
+        }
+
+    def reset(self, *, seed=None, options=None):
+        return self._observation(), {}
+
+    def step(self, action):
+        self.tick += 1
+        edge = self.edges.pop(0)
+        recording = edge in ("rec", "end")
+        info = {
+            "pre_record": np.array([not recording and edge != "start"]),
+            "record_reset": np.array([edge in ("start", "discard", "abort")]),
+            "episode_discarded": np.array([edge == "discard"]),
+            "success": np.array([edge == "end"]),
+        }
+        return (
+            self._observation(),
+            np.zeros(1),
+            np.array([edge == "end"]),
+            np.array([False]),
+            info,
+        )
+
+    def close(self):
+        return None
+
+
+def test_streaming_keeps_aborted_and_unfinished_takes_but_not_discards(tmp_path):
+    """Only an operator's discard drops recorded frames.
+
+    A take ended by a fault, or left open when collection stops, is still
+    saved, flagged unsuccessful, so the merge step can leave it out.
+    """
+    pytest.importorskip("lerobot")
+    pytest.importorskip("cv2")
+    parquet = pytest.importorskip("pyarrow.parquet")
+
+    edges = ["pre", "start", "rec", "rec", "discard", "pre"]
+    edges += ["start", "rec", "rec", "abort"]
+    edges += ["start", "rec", "end"]
+    edges += ["start", "rec", "rec"]
+    collector = CollectEpisode(
+        _OperatorTakes(edges),
+        str(tmp_path),
+        export_format="lerobot_dataset",
+        streaming=True,
+        fps=30,
+    )
+    try:
+        collector.reset()
+        for edge in edges:
+            collector.step(np.zeros((1, 2)))
+            if edge == "end":
+                collector.reset()
+    finally:
+        collector.close()
+
+    takes = []
+    for shard in sorted((tmp_path / "lerobot_dataset" / "rank_0").iterdir()):
+        for data in sorted(shard.glob("data/**/*.parquet")):
+            table = parquet.read_table(data)
+            success = np.asarray(table["is_success"][0].as_py()).reshape(-1)[0]
+            takes.append((table.num_rows, bool(success)))
+    assert takes == [(2, False), (2, True), (2, False)]
 
 
 def test_policy_input_compression_preserves_attached_env_parts(monkeypatch):

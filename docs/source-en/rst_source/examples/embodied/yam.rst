@@ -22,20 +22,18 @@ The installer includes the pinned ``i2rt`` backend and PICO transport dependenci
 Configure and collect
 ---------------------
 
-Set the two follower CAN interfaces, three camera serial numbers, PICO publisher address, and measured operator-to-robot yaw for each arm. Export these values **before** starting Ray so its environment worker receives them:
+Set the two follower CAN interfaces, the three camera serial numbers in top, left, right order, the PICO publisher address, and the measured operator-to-robot yaw for each arm. Export these values on the YAM node **before** starting Ray, so hardware enumeration and the environment worker receive them:
 
 .. code-block:: bash
 
-   export YAM_LEFT_FOLLOWER_CAN='<left-can-interface>'
-   export YAM_RIGHT_FOLLOWER_CAN='<right-can-interface>'
-   export YAM_TOP_CAMERA_SERIAL='<top-serial>'
-   export YAM_LEFT_CAMERA_SERIAL='<left-serial>'
-   export YAM_RIGHT_CAMERA_SERIAL='<right-serial>'
+   export LEFT_CAN_CHANNEL='<left-can-interface>'
+   export RIGHT_CAN_CHANNEL='<right-can-interface>'
+   export CAMERA_SERIALS='<top-serial>,<left-serial>,<right-serial>'
    export YAM_PICO_ZMQ_ADDR='tcp://<publisher-host>:5555'
    export YAM_LEFT_OPERATOR_TO_ROBOT_YAW='<measured-radians>'
    export YAM_RIGHT_OPERATOR_TO_ROBOT_YAW='<measured-radians>'
 
-Replace every placeholder with a value checked at your station. The example configuration is ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``. It assigns the environment worker and hardware to one Ray node. On a fresh single-node host, start Ray and launch collection:
+The first three fill the unset fields of the ``DualYam`` hardware config, which can also be written in the YAML as ``left_can_channel``, ``right_can_channel``, and ``camera_serials``. Replace every placeholder with a value checked at your station. The example configuration is ``examples/embodiment/config/realworld_dual_yam_collect_data_pico.yaml``. It assigns the environment worker and hardware to one Ray node. On a fresh single-node host, start Ray and launch collection:
 
 .. code-block:: bash
 
@@ -43,6 +41,15 @@ Replace every placeholder with a value checked at your station. The example conf
    ray start --head
    bash examples/embodiment/collect_data.sh realworld_dual_yam_collect_data_pico
 
-Hold a controller's grip to control its corresponding arm; release it to stop taking over. The recipe maps the right menu button to start/end an episode and the left menu button to discard the current recording. Confirm these button events on your PICO setup before collecting task data. Discard removes only the current unfinished episode; faulted or truncated recordings can still be saved as unsuccessful episodes.
+Hold a controller's grip to control its corresponding arm; release it to stop taking over. The recipe gives ``pico`` one entry per arm, and each turns its controller's pose into joint targets through the YAM model's inverse kinematics, set in ``override_cfg.ik``. If either controller drops out, both arms hold until both grips are released. The ``yam_episode`` block maps the right menu button to start/end an episode and the left menu button to discard the current recording. Confirm these button events on your PICO setup before collecting task data. Discard removes only the current unfinished episode; faulted or truncated recordings can still be saved as unsuccessful episodes.
 
-The launcher writes logs under ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` by default. This recipe sets ``export_format: lerobot_dataset``, so it does not write ``demo_buffer/``. LeRobot data is written under that run's ``lerobot_dataset/rank_*/`` directory and is read by OpenPI SFT and HG-DAgger. Streaming saves recorded episodes, including unsuccessful ones, with an ``is_success`` flag; inspect that flag and the three RGB views before using the dataset. A saved episode or an ``is_success`` flag does not replace the operator's task-result check. See :doc:`../../guides/data_collection` for how the three formats are used.
+The launcher writes logs under ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` by default. This recipe sets ``export_format: lerobot_dataset``, so it does not write ``demo_buffer/``. Each recorded take is streamed into its own shard under that run's ``lerobot_dataset/rank_0/``. Unsuccessful takes are saved too, with ``is_success`` false. Merge the shards into one dataset for OpenPI SFT or HG-DAgger, leaving those out:
+
+.. code-block:: bash
+
+   python toolkits/lerobot/merge_lerobot_datasets.py \
+       --source-dir logs/<timestamp>-realworld_dual_yam_collect_data_pico/lerobot_dataset \
+       --output-dir logs/yam_merged \
+       --only-success
+
+Frames are stored as uncompressed PNGs, about 0.9 MB per 640x480 view, so a one-minute take uses about 5 GB. Inspect the three RGB views before training; an ``is_success`` flag does not replace the operator's task-result check. See :doc:`../../guides/data_collection` for how the three formats are used.

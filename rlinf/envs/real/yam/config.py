@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runtime configuration for the RLinf-native dual YAM environment."""
+"""Task configuration for the dual YAM environment."""
 
 from __future__ import annotations
 
@@ -22,151 +22,9 @@ from typing import Any
 
 import numpy as np
 
+from rlinf.robotics.parts.arms.yam import YamIKConfig
+
 from .types import NUM_ARM_JOINTS
-
-
-@dataclass
-class YamIKConfig:
-    """Limits for one synchronous i2rt IK solve; timing is checked on return."""
-
-    site_name: str = "grasp_site"
-    solver: str = "quadprog"
-    max_iters: int = 30
-    dt: float = 0.01
-    position_tolerance: float = 0.001
-    rotation_tolerance: float = 0.01
-    max_solve_s: float = 0.03
-
-    def __post_init__(self) -> None:
-        if not self.site_name or not self.solver:
-            raise ValueError("IK site_name and solver must be nonempty")
-        if (
-            isinstance(self.max_iters, bool)
-            or not isinstance(self.max_iters, int)
-            or self.max_iters < 1
-        ):
-            raise ValueError("IK max_iters must be a positive integer")
-        for name in (
-            "dt",
-            "position_tolerance",
-            "rotation_tolerance",
-            "max_solve_s",
-        ):
-            value = float(getattr(self, name))
-            if not np.isfinite(value) or value <= 0:
-                raise ValueError(f"IK {name} must be finite and positive")
-            setattr(self, name, value)
-
-
-@dataclass
-class YamPicoConfig:
-    """Dual-controller PICO collection settings."""
-
-    hand: str = "dual"
-    zmq_addr: str = "ipc:///tmp/vr_data.ipc"
-    position_scale: float = 0.3
-    rotation_scale: float = 0.3
-    rotation_delta_frame: str = "operator"
-    control_threshold: float = 0.85
-    max_stale_s: float = 0.2
-    max_position_delta: float = 0.005
-    max_rotation_delta: float = 0.03
-    max_tick_s: float = 0.1
-    ik_backtrack_attempts: int = 0
-    record_button: str = "right_menu_button"
-    discard_button: str = "left_menu_button"
-    button_debounce_s: float = 0.2
-    keyboard_enabled: bool = False
-    wait_for_record_button: bool = True
-    # Log per-tick control-loop timing (camera wait vs compute vs gap).
-    log_control_timing: bool = False
-    left: dict[str, Any] = field(default_factory=dict)
-    right: dict[str, Any] = field(default_factory=dict)
-    ik: YamIKConfig | Mapping[str, Any] = field(default_factory=YamIKConfig)
-
-    def __post_init__(self) -> None:
-        if self.hand != "dual":
-            raise ValueError("YAM PICO collection requires hand='dual'")
-        if (
-            isinstance(self.ik_backtrack_attempts, bool)
-            or not isinstance(self.ik_backtrack_attempts, int)
-            or self.ik_backtrack_attempts < 0
-        ):
-            raise ValueError("pico.ik_backtrack_attempts must be a nonnegative integer")
-        if self.rotation_delta_frame not in ("operator", "controller_local"):
-            raise ValueError(
-                "pico.rotation_delta_frame must be operator or controller_local"
-            )
-        for name in (
-            "position_scale",
-            "rotation_scale",
-            "max_stale_s",
-            "max_position_delta",
-            "max_rotation_delta",
-            "max_tick_s",
-        ):
-            value = float(getattr(self, name))
-            if not np.isfinite(value) or value <= 0:
-                raise ValueError(f"pico.{name} must be finite and positive")
-            setattr(self, name, value)
-        if (
-            not np.isfinite(self.control_threshold)
-            or not 0 < self.control_threshold <= 1
-        ):
-            raise ValueError("pico.control_threshold must be within (0, 1]")
-        if not np.isfinite(self.button_debounce_s) or self.button_debounce_s < 0:
-            raise ValueError("pico.button_debounce_s must be finite and nonnegative")
-        if (
-            not isinstance(self.keyboard_enabled, bool)
-            or not isinstance(self.wait_for_record_button, bool)
-            or not isinstance(self.log_control_timing, bool)
-        ):
-            raise TypeError("PICO keyboard/wait/timing switches must be bools")
-        motion_buttons = {"A", "B", "X", "Y", "grip", "trigger"}
-        if (
-            not self.record_button
-            or not self.discard_button
-            or self.record_button == self.discard_button
-        ):
-            raise ValueError("PICO recording buttons must be nonempty and distinct")
-        if {self.record_button, self.discard_button} & motion_buttons:
-            raise ValueError("PICO recording buttons must not overlap motion buttons")
-        for side in ("left", "right"):
-            overrides = dict(getattr(self, side))
-            if set(overrides) - {"operator_to_robot_yaw"}:
-                raise ValueError(
-                    f"pico.{side} only supports operator_to_robot_yaw in v1"
-                )
-            if not np.isfinite(float(overrides.get("operator_to_robot_yaw", 0.0))):
-                raise ValueError(f"pico.{side}.operator_to_robot_yaw must be finite")
-            setattr(self, side, overrides)
-        if isinstance(self.ik, Mapping):
-            self.ik = YamIKConfig(**dict(self.ik))
-        if not isinstance(self.ik, YamIKConfig):
-            raise TypeError("pico.ik must be an IK configuration")
-
-    def expert_kwargs(self, side: str) -> dict[str, Any]:
-        """Build a normal Franka-compatible PicoExpert for one hand."""
-        if side not in {"left", "right"}:
-            raise ValueError("PICO side must be left or right")
-        return {
-            "hand": side,
-            "zmq_addr": self.zmq_addr,
-            "position_scale": self.position_scale,
-            "rotation_scale": self.rotation_scale,
-            "rotation_delta_frame": self.rotation_delta_frame,
-            "control_trigger": "grip",
-            "control_threshold": self.control_threshold,
-            "max_stale_s": self.max_stale_s,
-            "gripper_close_button": "X" if side == "left" else "A",
-            "gripper_open_button": "Y" if side == "left" else "B",
-            "calibration": {
-                "button": "trigger",
-                "auto_calibrate_on_start": True,
-                "required": True,
-            },
-            **getattr(self, side),
-        }
 
 
 def _default_joint_limit_min() -> list[list[float]]:
@@ -269,13 +127,14 @@ class DualYamJointEnvConfig:
     enforce_runtime_joint_limits: bool = True
     joint_limit_min: list[list[float]] = field(default_factory=_default_joint_limit_min)
     joint_limit_max: list[list[float]] = field(default_factory=_default_joint_limit_max)
-    feedback_timeout_s: float = 0.25
     camera_warmup_timeout_s: float = 10.0
     camera_frame_timeout_s: float = 1.0
     camera_stale_timeout_s: float = 2.0
     image_height: int = 128
     image_width: int = 128
-    dummy_camera_names: list[str] = field(
+    # Observation names of the cameras, in the order of the hardware's
+    # camera_serials.
+    camera_names: list[str] = field(
         default_factory=lambda: ["top_rgb", "left_rgb", "right_rgb"]
     )
     manual_episode_control_only: bool = False
@@ -285,6 +144,8 @@ class DualYamJointEnvConfig:
     park_on_close: YamResetConfig | Mapping[str, Any] = field(
         default_factory=YamResetConfig
     )
+    # Inverse kinematics a teleop device solves through to command joints.
+    ik: YamIKConfig | Mapping[str, Any] = field(default_factory=YamIKConfig)
 
     def __post_init__(self) -> None:
         if not isinstance(self.is_dummy, bool):
@@ -306,7 +167,6 @@ class DualYamJointEnvConfig:
                     "max_joint_delta_per_joint values must be positive and finite"
                 )
             self.max_joint_delta_per_joint = per_joint.tolist()
-        self.feedback_timeout_s = float(self.feedback_timeout_s)
         self.camera_warmup_timeout_s = float(self.camera_warmup_timeout_s)
         self.camera_frame_timeout_s = float(self.camera_frame_timeout_s)
         self.camera_stale_timeout_s = float(self.camera_stale_timeout_s)
@@ -322,7 +182,6 @@ class DualYamJointEnvConfig:
         scalar_values = {
             "step_frequency": self.step_frequency,
             "max_joint_delta": self.max_joint_delta,
-            "feedback_timeout_s": self.feedback_timeout_s,
             "camera_warmup_timeout_s": self.camera_warmup_timeout_s,
             "camera_frame_timeout_s": self.camera_frame_timeout_s,
             "camera_stale_timeout_s": self.camera_stale_timeout_s,
@@ -334,8 +193,6 @@ class DualYamJointEnvConfig:
             raise ValueError("step_frequency must be positive")
         if self.max_joint_delta <= 0:
             raise ValueError("max_joint_delta must be positive")
-        if self.feedback_timeout_s <= 0:
-            raise ValueError("feedback_timeout_s must be positive")
         if self.camera_warmup_timeout_s <= 0:
             raise ValueError("camera_warmup_timeout_s must be positive")
         if self.camera_frame_timeout_s <= 0:
@@ -362,6 +219,10 @@ class DualYamJointEnvConfig:
             self.park_on_close = YamResetConfig(**dict(self.park_on_close))
         elif not isinstance(self.park_on_close, YamResetConfig):
             raise TypeError("park_on_close must be a mapping or YamResetConfig")
+        if isinstance(self.ik, Mapping):
+            self.ik = YamIKConfig(**dict(self.ik))
+        elif not isinstance(self.ik, YamIKConfig):
+            raise TypeError("ik must be a mapping or YamIKConfig")
         for block, block_name in (
             (self.reset, "reset"),
             (self.park_on_close, "park_on_close"),
@@ -380,10 +241,12 @@ class DualYamJointEnvConfig:
                         f"{block_name} qpos for arm {arm_index} is outside joint limits"
                     )
         self.task_description = str(self.task_description)
-        names = [str(name) for name in self.dummy_camera_names]
+        names = [str(name) for name in self.camera_names]
         if not names or len(set(names)) != len(names):
-            raise ValueError("dummy_camera_names must be non-empty and unique")
-        self.dummy_camera_names = names
+            raise ValueError(
+                f"camera_names must be non-empty and unique, but got {names}."
+            )
+        self.camera_names = names
 
     @property
     def joint_step_limits(self) -> np.ndarray:

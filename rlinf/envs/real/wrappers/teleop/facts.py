@@ -22,7 +22,7 @@ environment expects joint targets or deltas.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import gymnasium as gym
 
@@ -54,6 +54,9 @@ class EnvFacts:
         joint_limit_min: Per-arm lower joint limits, when the env declares them.
         joint_limit_max: Per-arm upper joint limits, when the env declares them.
         joint_step_limits: Largest joint movement one control tick may command.
+        arm_kinematics: Builds the kinematic model of one arm, named by its
+            action branch (``None`` on a one-arm robot), for a device that
+            maps a Cartesian input onto joints.
     """
 
     layout: Mapping[str, slice]
@@ -63,6 +66,7 @@ class EnvFacts:
     joint_limit_min: Optional[tuple[tuple[float, ...], ...]] = None
     joint_limit_max: Optional[tuple[tuple[float, ...], ...]] = None
     joint_step_limits: Optional[tuple[float, ...]] = None
+    arm_kinematics: Optional[Callable[[Optional[str]], Any]] = None
 
     @classmethod
     def about(
@@ -84,4 +88,5 @@ class EnvFacts:
             joint_step_limits=(
                 None if step_limits is None else tuple(float(x) for x in step_limits)
             ),
+            arm_kinematics=getattr(env.unwrapped, "arm_kinematics", None),
         )

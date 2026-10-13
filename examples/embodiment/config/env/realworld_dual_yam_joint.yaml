@@ -11,6 +11,8 @@ use_fixed_reset_state_ids: false
 max_steps_per_rollout_epoch: 1000
 max_episode_steps: 1000
 main_image_key: top_rgb
+# Both arms carry a gripper.
+no_gripper: false
 
 video_cfg:
   save_video: false
@@ -34,7 +36,6 @@ override_cfg:
   joint_limit_max:
     - [3.14159, 3.66519, 3.14159, 1.5708, 1.5708, 2.0944]
     - [3.14159, 3.66519, 3.14159, 1.5708, 1.5708, 2.0944]
-  feedback_timeout_s: 0.25
   camera_warmup_timeout_s: 10.0
   camera_frame_timeout_s: 1.0
   camera_stale_timeout_s: 2.0

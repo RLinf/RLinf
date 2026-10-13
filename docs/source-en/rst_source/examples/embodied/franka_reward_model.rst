@@ -336,7 +336,7 @@ Enable ``data_collection`` to save each episode as a ``.pkl`` file:
        data_collection:
          enabled: True
          save_dir: /path/to/run
-         export_format: "pickle"
+         export_format: pickle_episode
          only_success: False
 
 Collection Tips

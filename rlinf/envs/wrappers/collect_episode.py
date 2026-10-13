@@ -34,12 +34,13 @@ import torch
 from rlinf.data.schema.embodied_types import LeRobotFrame
 from rlinf.utils.logging import get_logger
 
-_FORMAT_ALIASES = {
-    "pickle": "pickle",
-    "pickle_episode": "pickle",
-    "lerobot": "lerobot",
-    "lerobot_dataset": "lerobot",
-}
+#: Per-episode stores CollectEpisode writes, each into its own subdirectory.
+EPISODE_FORMATS = ("pickle_episode", "lerobot_dataset")
+#: Every store a collection run can write. The replay buffer is written by the
+#: real-robot collector, not by CollectEpisode.
+EXPORT_FORMATS = ("replay_buffer", *EPISODE_FORMATS)
+#: Earlier names of the episode formats, still accepted from older configs.
+_DEPRECATED_FORMATS = {"pickle": "pickle_episode", "lerobot": "lerobot_dataset"}
 
 # Bound the queue while covering the measured multi-second v2 episode save.
 # 240 three-view 640x480 RGB frames occupy about 633 MiB, not a whole episode.
@@ -47,6 +48,45 @@ _MAX_PENDING_FUTURES = 240
 
 
 _ID_DIR_RE = re.compile(r"^id_(\d+)$")
+
+
+def resolve_export_formats(value: Any) -> tuple[str, ...]:
+    """Resolve ``data_collection.export_format`` to the stores it selects.
+
+    Args:
+        value: One store name, or a list of them.
+
+    Returns:
+        The selected stores in the order given, without repeats.
+
+    Raises:
+        ValueError: If a name is unknown, or both episode formats are selected.
+    """
+    values = [value] if isinstance(value, str) else list(value)
+    selected: list[str] = []
+    for raw in values:
+        name = str(raw)
+        if name in _DEPRECATED_FORMATS:
+            get_logger().warning(
+                "export_format %r is deprecated; use %r.",
+                name,
+                _DEPRECATED_FORMATS[name],
+            )
+            name = _DEPRECATED_FORMATS[name]
+        if name not in EXPORT_FORMATS:
+            raise ValueError(
+                f"Unsupported export_format {raw!r}; expected one or more of "
+                f"{EXPORT_FORMATS}."
+            )
+        if name not in selected:
+            selected.append(name)
+    episode_formats = [name for name in selected if name in EPISODE_FORMATS]
+    if len(episode_formats) > 1:
+        raise ValueError(
+            "export_format can select replay_buffer plus one of "
+            f"{EPISODE_FORMATS}, but got {episode_formats}."
+        )
+    return tuple(selected)
 
 
 def _scan_existing_lerobot_shards(save_dir: str, rank: int) -> tuple[int, int]:
@@ -105,8 +145,8 @@ class CollectEpisode(gym.Wrapper):
         num_envs: Number of parallel environments. Defaults to 1.
         show_goal_site: Whether to show goal visualization in renders.
             Defaults to True.
-        export_format: Episode export format, ``"pickle"`` or ``"lerobot"``.
-            Defaults to ``"pickle"``.
+        export_format: Episode store, ``"pickle_episode"`` or
+            ``"lerobot_dataset"``. Defaults to ``"pickle_episode"``.
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
         only_success: Whether to save only successful episodes. Defaults to False.
@@ -116,20 +156,20 @@ class CollectEpisode(gym.Wrapper):
             each kept episode to its own shard and finalizes that shard after
             the episode save finishes. ``0`` disables periodic non-streaming
             flushing. Defaults to 100.
-        resume: If True and ``export_format == "lerobot"``, reuse the
+        resume: If True and ``export_format == "lerobot_dataset"``, reuse the
             ``lerobot_dataset`` directory across sessions — new episodes land
             in a fresh ``id_{N}`` shard
             (N = max existing shard id + 1) so the in-progress write never
             touches previously-finalized or partially-written data. Ignored
             for pickle. Defaults to False.
-        streaming: If True and ``export_format == "lerobot"``, write each
-            recorded frame to the LeRobot dataset immediately instead of
-            buffering the whole episode in memory. Images land on disk
-            per-frame via the dataset's async image writer, so RAM usage stays
-            flat regardless of episode length. Every recorded episode is saved
-            — successful or not — with the episode-level ``is_success`` flag
-            stamped at episode end, so ``only_success`` filtering does not
-            apply in this mode. Defaults to False.
+        streaming: If True and ``export_format == "lerobot_dataset"``, write
+            each recorded frame to the LeRobot dataset immediately instead of
+            buffering the whole episode in memory. Each frame's images reach
+            disk as it is recorded, so RAM stays flat however long the
+            episode. Every recorded episode is saved, successful or
+            not, with the episode-level ``is_success`` flag stamped at episode
+            end, so ``only_success`` filtering does not apply in this mode.
+            Defaults to False.
     """
 
     def __init__(
@@ -139,7 +179,7 @@ class CollectEpisode(gym.Wrapper):
         rank: int = 0,
         num_envs: int = 1,
         show_goal_site: bool = True,
-        export_format: str = "pickle",
+        export_format: str = "pickle_episode",
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
@@ -152,20 +192,19 @@ class CollectEpisode(gym.Wrapper):
         else:
             self.env = env
 
-        canonical_format = _FORMAT_ALIASES.get(export_format)
-        if canonical_format is None:
+        (export_format,) = resolve_export_formats(export_format)
+        if export_format not in EPISODE_FORMATS:
             raise ValueError(
-                f"Unsupported export_format={export_format!r}, "
-                f"expected one of {tuple(_FORMAT_ALIASES)}"
+                f"CollectEpisode writes one of {EPISODE_FORMATS}, but got "
+                f"export_format={export_format!r}."
             )
-        export_format = canonical_format
-        if streaming and export_format != "lerobot":
-            raise ValueError("streaming=True requires export_format='lerobot'")
+        if streaming and export_format != "lerobot_dataset":
+            raise ValueError(
+                "streaming=True requires export_format='lerobot_dataset', but "
+                f"got {export_format!r}."
+            )
 
-        format_dir = (
-            "pickle_episode" if export_format == "pickle" else "lerobot_dataset"
-        )
-        self.save_dir = os.path.join(save_dir, format_dir)
+        self.save_dir = os.path.join(save_dir, export_format)
         self.rank = rank
         self.num_envs = num_envs
         self.show_goal_site = show_goal_site
@@ -194,7 +233,7 @@ class CollectEpisode(gym.Wrapper):
         self._preexisting_episode_count = 0
         self._next_shard_id = 0
         self._save_futures_lock = Lock()
-        if export_format == "lerobot":
+        if export_format == "lerobot_dataset":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
             if resume:
@@ -217,7 +256,7 @@ class CollectEpisode(gym.Wrapper):
                 max_workers=1,
                 thread_name_prefix=f"collect_episode_save_rank_{self.rank}",
             )
-            if export_format == "lerobot" and streaming
+            if export_format == "lerobot_dataset" and streaming
             else None
         )
         self._save_futures: list[Future] = []
@@ -594,7 +633,7 @@ class CollectEpisode(gym.Wrapper):
         if not buf["actions"]:
             return
 
-        if self.export_format == "lerobot":
+        if self.export_format == "lerobot_dataset":
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
                 self._submit(self._write_lerobot_episode, ep_data)
@@ -977,10 +1016,14 @@ class CollectEpisode(gym.Wrapper):
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
-                # Image writes run in the existing export thread, never in
-                # forked workers inheriting live camera/CAN descriptors.
-                image_writer_processes=0,
-                image_writer_threads=0,
+                # Streaming writes its own images in this process, never in
+                # forked workers inheriting live camera/CAN descriptors. A
+                # batch export keeps the upstream writer.
+                **(
+                    {"image_writer_processes": 0, "image_writer_threads": 0}
+                    if self.streaming
+                    else {}
+                ),
                 image_shape=first["image"].shape if "image" in first else None,
                 state_dim=int(first["state"].shape[-1]),
                 action_dim=int(first["actions"].shape[-1]),
@@ -1029,7 +1072,7 @@ class CollectEpisode(gym.Wrapper):
 
     def _finalize_lerobot(self) -> None:
         """Drain pending futures then write the LeRobot dataset metadata."""
-        if self.export_format != "lerobot":
+        if self.export_format != "lerobot_dataset":
             return
         primary_error = None
         try:

@@ -12,22 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RLinf-native YAM environment without a yam-abc-reproduce dependency."""
+"""Dual-arm YAM tasks, and the env they are built on."""
 
 from rlinf.envs.real.registry import register_tasks
-from rlinf.envs.real.yam.config import (
-    DualYamJointEnvConfig,
-    YamPicoConfig,
-    YamResetConfig,
-)
-from rlinf.envs.real.yam.control_runtime import YamControlRuntime
+from rlinf.envs.real.yam.config import DualYamJointEnvConfig, YamResetConfig
 from rlinf.envs.real.yam.dual_yam_joint_env import DualYamJointEnv
 from rlinf.envs.real.yam.pico_episode import YamPicoEpisode
-from rlinf.envs.real.yam.types import (
-    DualYamState,
-    YamArmState,
-    YamCommandResult,
-)
+from rlinf.envs.real.yam.types import YamCommandResult
 
 #: Gymnasium IDs mapped to the YAM environments that build them. Registering
 #: the class, rather than an entry point of its own, is what lets the shared
@@ -37,13 +28,10 @@ TASKS: dict[str, type] = {"DualYamJointEnv-v1": DualYamJointEnv}
 _ENTRY_POINTS = register_tasks(__name__, globals(), TASKS)
 
 __all__ = [
+    "TASKS",
     "DualYamJointEnv",
     "DualYamJointEnvConfig",
-    "DualYamState",
-    "YamArmState",
     "YamCommandResult",
-    "YamControlRuntime",
-    "YamPicoConfig",
     "YamPicoEpisode",
     "YamResetConfig",
     *_ENTRY_POINTS,

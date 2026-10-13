@@ -37,10 +37,10 @@ Enable ``data_collection`` under ``env`` in your YAML config:
      data_collection:
        enabled: True
        save_dir: ${runner.logger.log_path}
-       export_format: "pickle"
+       export_format: pickle_episode
        only_success: False
 
-After training or evaluation starts, each ``export_format: pickle`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
+After training or evaluation starts, each ``export_format: pickle_episode`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
 
 For VLM Trend rewards, RLinf also provides a ready-to-run collection config:
 

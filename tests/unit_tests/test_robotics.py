@@ -2595,6 +2595,155 @@ def test_a_stale_pico_link_stops_driving_the_robot():
             pico.disconnect()
 
 
+def _settle(zmq, device, frame, wanted, tries=200):
+    """Publish ``frame`` until the controller reading reflects it."""
+    import time
+
+    zmq.frame = frame
+    for _ in range(tries):
+        time.sleep(0.003)
+        reading = device.get_observation()
+        if wanted(reading):
+            return reading
+    raise AssertionError(f"The PICO reading never reflected {frame}.")
+
+
+def _pico_joint(tool):
+    from rlinf.robotics.parts.teleop import PicoJoint
+
+    return PicoJoint(
+        kinematics=lambda: tool,
+        joints=slice(0, 6),
+        grip=slice(6, 7),
+        joint_step_limits=[0.05] * 6,
+        hand="right",
+        zmq_addr="tcp://x:1",
+    )
+
+
+def test_a_pico_moves_joints_toward_its_ik_solution_a_step_a_tick():
+    """The grip anchors the arm; motion solves through IK, one step a tick.
+
+    Released, the arm holds the joints it was let go at, not the measured
+    ones that sag under gravity.
+    """
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        tool = FreeToolKinematics()
+        pico = _pico_joint(tool)
+        context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+        pico.connect()
+        try:
+            released = _settle(zmq, pico, pico_packet(), lambda r: r["calibrated"])
+            idle = pico.action(released, context)
+            assert not idle.driving and pico.fault is None
+            assert np.allclose(idle.parts["arm"], [0.3, 0.0, 0.2, 0, 0, 0])
+
+            held = _settle(
+                zmq, pico, pico_packet(right={"grip": 1.0}), lambda r: r["held"]
+            )
+            anchored = pico.action(held, context)
+            assert anchored.driving
+            assert np.allclose(anchored.parts["arm"], [0.3, 0.0, 0.2, 0, 0, 0])
+
+            # 20 cm along the controller's -Z is 20 cm along the robot's +X:
+            # four ticks' worth, so this tick moves a quarter of the way.
+            moved = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0, "position": [0, 0, -0.2]}),
+                lambda r: r["position_delta"][0] > 0.19,
+            )
+            step = pico.action(moved, context)
+            assert np.allclose(step.parts["arm"], [0.35, 0.0, 0.2, 0, 0, 0], atol=1e-6)
+            assert step.info["joint_step_fraction"] == pytest.approx(0.25, abs=1e-4)
+
+            closed = _settle(
+                zmq,
+                pico,
+                pico_packet({"A": True}, right={"grip": 1.0}),
+                lambda r: r["grip_close"],
+            )
+            assert pico.action(closed, context).parts["end_effector"][0] == 0.0
+            let_go = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0}),
+                lambda r: r["held"] and not r["grip_close"],
+            )
+            assert pico.action(let_go, context).parts["end_effector"][0] == 0.0
+
+            # A pose IK cannot reach holds the joints this frame; the gripper
+            # stays where the operator put it.
+            tool.unreachable = True
+            missed = pico.action(let_go, context)
+            assert missed.info["ik_fault"] == "residual"
+            assert np.allclose(missed.parts["arm"], context["joint_positions"][:6])
+            assert missed.parts["end_effector"][0] == 0.0
+            tool.unreachable = False
+
+            gone = _settle(zmq, pico, pico_packet(), lambda r: not r["held"])
+            pico.action(gone, context)
+            sagged = {"joint_positions": np.array([0.29, 0, 0.19, 0, 0, 0, 1.0])}
+            assert np.allclose(
+                pico.action(gone, sagged).parts["arm"], [0.3, 0.0, 0.2, 0, 0, 0]
+            )
+        finally:
+            pico.disconnect()
+
+
+def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
+    """A controller that drops out must not drive again while still squeezed."""
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        pico = _pico_joint(FreeToolKinematics())
+        context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+        pico.connect()
+        try:
+            # Squeezed at startup: held until let go once.
+            held = pico_packet(right={"grip": 1.0})
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert not pico.action(reading, context).driving
+            reading = _settle(zmq, pico, pico_packet(), lambda r: not r["held"])
+            pico.action(reading, context)
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert pico.action(reading, context).driving
+
+            broken = pico_packet(
+                right={"grip": 1.0, "orientation": [0.0, 0.0, 0.0, 0.0]}
+            )
+            reading = _settle(zmq, pico, broken, lambda r: r.get("invalid_pose"))
+            faulted = pico.action(reading, context)
+            assert pico.fault == "right:unavailable" and not faulted.driving
+            assert np.allclose(faulted.parts["arm"], context["joint_positions"][:6])
+
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert not pico.action(reading, context).driving
+            assert pico.fault is not None
+
+            reading = _settle(zmq, pico, pico_packet(), lambda r: not r["held"])
+            pico.action(reading, context)
+            assert pico.fault is None
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert pico.action(reading, context).driving
+        finally:
+            pico.disconnect()
+
+
 def test_pico_builds_the_variant_the_arm_can_accept():
     """One config name, two meanings; the arm's declared kind picks which.
 
@@ -2605,33 +2754,53 @@ def test_pico_builds_the_variant_the_arm_can_accept():
     from types import SimpleNamespace
 
     from rlinf.robotics.actions import ActionKind
-    from rlinf.robotics.parts.teleop import Pico, PicoDelta, PicoTcp, TeleopDevice
+    from rlinf.robotics.parts.teleop import (
+        Pico,
+        PicoDelta,
+        PicoJoint,
+        PicoTcp,
+        TeleopDevice,
+    )
 
     def built_for(kind):
-        facts = SimpleNamespace(kinds={"arm": kind})
+        facts = SimpleNamespace(
+            kinds={"arm": kind},
+            layout={"arm": slice(0, 6), "end_effector": slice(6, 7)},
+            arm_kinematics=lambda side: None,
+            joint_step_limits=(0.05,) * 6,
+        )
         return TeleopDevice.named("pico").from_config({}, {}, facts).device
 
     delta = built_for(ActionKind.CARTESIAN_DELTA)
     pose = built_for(ActionKind.CARTESIAN_POSE)
+    joints = built_for(ActionKind.JOINT_POSITION)
 
     assert type(delta) is PicoDelta
     assert type(pose) is PicoTcp
-    # The config name resolves to the family, so either one is a Pico.
-    assert isinstance(delta, Pico) and isinstance(pose, Pico)
+    assert type(joints) is PicoJoint
+    # The config name resolves to the family, so each one is a Pico.
+    assert all(isinstance(device, Pico) for device in (delta, pose, joints))
 
 
 def test_the_pico_name_resolves_to_the_family_not_a_variant():
     """Whatever from_config returns must be an instance of what was named."""
     import inspect
 
-    from rlinf.robotics.parts.teleop import Pico, PicoDelta, PicoTcp, TeleopDevice
+    from rlinf.robotics.parts.teleop import (
+        Pico,
+        PicoDelta,
+        PicoJoint,
+        PicoTcp,
+        TeleopDevice,
+    )
 
     assert TeleopDevice.named("pico") is Pico
     # Abstract, so the family cannot be mistaken for one of its variants.
     assert inspect.isabstract(Pico)
-    # Siblings: neither variant is a kind of the other.
+    # Siblings: no variant is a kind of another.
     assert not issubclass(PicoTcp, PicoDelta)
     assert not issubclass(PicoDelta, PicoTcp)
+    assert not issubclass(PicoJoint, (PicoTcp, PicoDelta))
 
 
 def test_no_device_shadows_a_method_of_the_contract():
@@ -3996,6 +4165,11 @@ def test_every_shipped_robot_runs_on_faked_sdks():
             "enable_human_in_loop": False,
             "is_dummy": False,
             "gripper_width_max": 0.08,
+        },
+        "DualYam": {
+            "node_rank": 0,
+            "left_can_channel": "can0",
+            "right_can_channel": "can1",
         },
     }
     with mocked_sdks():
@@ -5757,6 +5931,75 @@ def test_so101_takes_no_separately_wired_end_effector():
 
     with pytest.raises(TypeError, match="gripper_connection"):
         SO101Arm.declare("/dev/mock-so101", gripper_connection="/dev/ttyUSB0")
+
+
+def test_yam_sends_joints_and_gripper_as_one_target():
+    """i2rt takes the six joints and the gripper together, so each carries both."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.arms.yam import YamArm
+
+        arm = YamArm.declare("can0")
+        arm.connect()
+        try:
+            robot = made["i2rt.robots.get_robot"].robots[-1]
+            # A follower holds position and starts at the pose it stands at.
+            assert robot.settings["zero_gravity_mode"] is False
+            assert robot.commands[-1] == pytest.approx(robot.rest)
+
+            station = PartGroup(arm=arm)
+            station.send_action(
+                {
+                    "arm": {
+                        "joint_position": [0.1, 0.2, 0.3, 0.0, 0.0, 0.0],
+                        "end_effector": {"target": [0.25]},
+                    }
+                }
+            )
+            assert robot.commands[-1] == pytest.approx([0.1, 0.2, 0.3, 0, 0, 0, 0.25])
+
+            reading = station.get_observation()["arm"]
+            assert reading["arm_joint_position"] == pytest.approx(
+                [0.1, 0.2, 0.3, 0, 0, 0]
+            )
+            assert reading["end_effector"]["state"] == pytest.approx([0.25])
+        finally:
+            arm.disconnect()
+        assert robot.closed
+
+
+def test_yam_refuses_stale_feedback_but_still_holds():
+    """A read reports its feedback time and fails past the timeout; a hold still
+    reaches the arm."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.arms.yam import YamArm
+
+        arm = YamArm.declare("can0", feedback_timeout_s=0.05)
+        arm.connect()
+        robot = made["i2rt.robots.get_robot"].robots[-1]
+        server = robot._server_thread
+        try:
+            # The server is up but has stopped stamping feedback.
+            robot._stop_event.set()
+            server.join()
+            robot._server_thread = SimpleNamespace(
+                is_alive=lambda: True, join=lambda timeout=None: None
+            )
+            robot._joint_state.timestamp = stamp = time.time()
+            assert arm.get_state().timestamp == stamp
+            time.sleep(0.1)
+            with pytest.raises(RuntimeError, match="old"):
+                arm.get_observation()
+
+            sent = len(robot.commands)
+            arm.hold()
+            assert len(robot.commands) == sent + 1
+        finally:
+            robot._server_thread = server
+            arm.disconnect()
 
 
 def test_franky_preserves_a_complete_compliance_object(franky_arm):
