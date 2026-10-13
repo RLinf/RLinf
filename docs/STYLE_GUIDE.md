@@ -308,6 +308,9 @@ word — the category, not a sentence:
 The category index pages keep their descriptive H1 (e.g. "Algorithms for
 Embodiment"); only the `examples/index.rst` toctree caption is the one-word form.
 
+Pages and captions about adding tasks that run on physical hardware use
+"New Real-World Tasks" in English and「新增真机任务」in Chinese.
+
 **Global navigation (sidebar-only).** The top bar is intentionally removed; place
 the logo/title, search field, and a compact utility row (version selector +
 repository link with a live GitHub star count) in the left sidebar, followed by
