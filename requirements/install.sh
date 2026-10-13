@@ -1387,6 +1387,11 @@ install_engine_requirements() {
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
         printf '%s\n' "$engine_specs" > "$engine_req"
+        # Same as the requirements file above: a direct wheel URL is not rewritten
+        # by git insteadOf.
+        if [ -n "$GITHUB_PREFIX" ]; then
+            sed -i "s|https://github.com/|${GITHUB_PREFIX}https://github.com/|g" "$engine_req"
+        fi
         env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" --no-deps -r "$engine_req"
         rm -f "$engine_req"
     fi
@@ -2649,7 +2654,7 @@ install_dexbotic_model() {
             local dexbotic_path
             dexbotic_path=$(clone_or_reuse_repo DEXBOTIC_PATH "$VENV_DIR/dexbotic" https://github.com/dexmal/dexbotic.git -b 0.2.0)
             maybe_build_decord_from_source
-            uv pip install -e "$dexbotic_path"
+            uv pip install -e "$dexbotic_path" "transformers==4.53.2"
 
             install_${ENV_NAME}_env
             uv pip install transformers==4.53.2
@@ -3233,6 +3238,7 @@ install_d4rl_env() {
 
     uv pip install "mujoco-py==2.1.2.14"
     uv pip install "tqdm"
+    uv pip install "numpy<2" --force-reinstall
 }
 
 install_liberopro_env() {
@@ -3366,9 +3372,18 @@ install_robocasa365_env() {
         git -C "$robocasa_dir" pull --ff-only origin main >&2
     fi
 
+    # RoboCasa365 pins lerobot==0.3.3. Do not replace it with the older
+    # LeRobot 0.1.0 used by other environments after installing RoboCasa.
+    # OpenPI's optional offline data loader still imports lerobot.common;
+    # PPO/eval do not use that loader, but SFT co-training needs an API update.
     uv pip install -e "$robocasa_dir"
-    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
+    # robosuite is installed without dependencies to preserve RoboCasa's
+    # MuJoCo pin, so install its QP solver requirement explicitly.
+    uv pip install "qpsolvers[quadprog]>=4.3.1"
+    # New dm-control releases require MuJoCo >=3.8, while RoboCasa pins 3.3.1.
+    # 1.0.28 requires MuJoCo >=3.2.7 and also satisfies gym-aloha's lower bound.
+    uv pip install --no-deps "dm-control==1.0.28"
     uv pip install --no-deps mujoco==3.3.1
     uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 
