@@ -250,9 +250,9 @@ Example dataset configuration:
 
 .. note::
 
-   Keep ``train_data_paths`` and ``data.k`` consistent between Step 1 and Step 2:
-   the advantage computation must score pairs at the same temporal stride the
-   critic was trained on.
+   Keep ``train_data_paths``, ``data.k``, and ``data.camera_keys`` consistent
+   between Step 1 and Step 2. Advantage computation must score the same datasets,
+   temporal stride, and camera views used to train the critic.
 
 Pipeline Tag System
 ~~~~~~~~~~~~~~~~~~~~~
@@ -290,6 +290,11 @@ defaults live in ``examples/offline_rl/config/model/steam_value_model.yaml``. Ke
 
 .. code:: yaml
 
+   runner:
+     max_epochs: -1
+     max_steps: 16000
+     save_interval: 1000
+
    data:
      train_data_paths:
        - dataset_path: /path/to/sft_dataset
@@ -303,6 +308,7 @@ defaults live in ``examples/offline_rl/config/model/steam_value_model.yaml``. Ke
      micro_batch_size: 32
      global_batch_size: 512
      model:
+       precision: fp32            # fp32 master parameters, bf16 FSDP forward
        num_bins: 32              # 2 = binary progress; >2 = multi-bin (even)
        ensemble_size: 3          # number of critics in the ensemble
        fusion_hidden_dim: 512
@@ -323,13 +329,13 @@ defaults live in ``examples/offline_rl/config/model/steam_value_model.yaml``. Ke
      - Default
      - Description
    * - ``data.k``
-     - ``required``
+     - ``32``
      - Max signed stride :math:`K`. In multi-bin mode ``2*K`` must be a multiple of ``num_bins``.
    * - ``actor.model.num_bins``
-     - ``2``
+     - ``32``
      - Bin count. ``2`` is binary progress; ``> 2`` (even) is multi-bin signed-stride classification.
    * - ``actor.model.ensemble_size``
-     - ``1``
+     - ``3``
      - Number of ensemble members. ``> 1`` enables worst-of-N aggregation and uncertainty stats.
 
 **Launch Command**
@@ -348,9 +354,17 @@ defaults live in ``examples/offline_rl/config/model/steam_value_model.yaml``. Ke
 
 **Key Metrics**
 
-- ``train/actor/loss``: cross-entropy over the signed-stride bins
-- ``train/actor/accuracy``: best-bin classification accuracy
-- ``train/actor/grad_norm``: gradient norm
+- ``train/loss``: cross-entropy over the signed-stride bins
+- ``train/accuracy``: exact-bin classification accuracy
+- ``train/accuracy_neighbor``: accuracy within the neighboring bin
+- ``train/grad_norm``: gradient norm
+
+To compare checkpoints on held-out episodes, add ``data.eval_data_paths`` and set
+``runner.val_check_interval`` to a positive interval. The corresponding metrics
+are logged under ``eval/loss``, ``eval/accuracy``, and
+``eval/accuracy_neighbor``; named datasets additionally use paths such as
+``eval/rollout_holdout/loss``. Select a critic checkpoint from held-out metrics
+rather than assuming the final training step generalizes best.
 
 Step 2: Compute Ensemble Advantages
 -----------------------------------
@@ -401,22 +415,22 @@ positive).
      - ``required``
      - Path to the Step 1 ensemble checkpoint (``actor`` directory).
    * - ``advantage.label_mode``
-     - ``required``
-     - ``threshold`` or ``quantile`` (no default — must be set explicitly).
+     - ``quantile``
+     - ``threshold`` or ``quantile``.
    * - ``advantage.positive_threshold``
      - ``null``
      - Signed-score threshold in :math:`[-1, 1]` (``label_mode=threshold`` only).
    * - ``advantage.rollout_quantile``
-     - ``null``
-     - Top fraction of rollout frames labelled True (``label_mode=quantile``, required).
+     - ``0.3``
+     - Top fraction of rollout frames labelled True (``label_mode=quantile``).
    * - ``advantage.expert_quantile``
-     - ``null``
+     - ``0.8``
      - Top fraction of sft frames labelled True (``label_mode=quantile``, optional).
    * - ``advantage.tag``
-     - ``required``
+     - ``steam_k32_ensemble3_q30``
      - Output tag; writes ``meta/advantages_{tag}.parquet``.
    * - ``data.k``
-     - ``required``
+     - ``32``
      - Pair stride; must match the Step 1 training ``data.k``.
 
 **Launch Command**
@@ -441,8 +455,41 @@ Step 3: CFG Training
 --------------------
 
 Policy optimization runs the shared CFG stage directly on the STEAM advantage
-parquets. Point the CFG config's ``data.advantage_tag`` at the Step 2
-``advantage.tag`` and launch:
+parquets. ``cfg_rl_openpi.yaml`` is shared with other offline-RL pipelines, so
+set both STEAM dataset paths as well as the tag written by Step 2. The runner is
+step-bounded: its 30,000-step limit matches the optimizer schedule.
+
+.. code:: yaml
+
+   runner:
+     max_epochs: -1
+     max_steps: 30000
+
+   data:
+     advantage_tag: steam_k32_ensemble3_q30
+     train_data_paths:
+       - dataset_path: /path/to/sft_dataset
+         type: sft
+         weight: 1.0
+       - dataset_path: /path/to/rollout_dataset
+         type: rollout
+         weight: 1.0
+
+   actor:
+     model:
+       model_path: /path/to/pi05_base_pytorch
+       openpi:
+         config_name: pi05_libero
+         train_expert_only: false
+
+The OpenPI config must match the dataset's observation and action contract. For
+the ManiSkill joint-control data described in :doc:`RLT <rlt>`, use
+``config_name: pi05_rlt_maniskill_joint`` and ``action_dim: 8``. The policy
+checkpoint must also contain the matching OpenPI normalization asset at
+``<model_path>/<asset_id>/norm_stats.json``; for this ManiSkill config the
+``asset_id`` is ``physical-intelligence/maniskill``.
+
+Launch after the paths and environment-specific model fields are set:
 
 .. code:: bash
 
@@ -450,6 +497,13 @@ parquets. Point the CFG config's ``data.advantage_tag`` at the Step 2
        data.advantage_tag=steam_k32_ensemble3_q30
 
 See :doc:`the CFG training stage <recap>` for the full CFG configuration and parameters.
+
+During training, monitor ``train/loss``, ``train/conditional_loss``,
+``train/unconditional_loss``, ``train/grad_norm``, and ``train/learning_rate``.
+A finite, stable loss verifies optimization but is not a task-level acceptance
+metric. Evaluate the final and selected intermediate policy checkpoints in the
+target environment and report success rate and episode count; see
+:doc:`Evaluation </rst_source/evaluations/index>` for the evaluation entrypoints.
 
 STEAM Results
 -------------
