@@ -1034,6 +1034,61 @@ def test_ur5_arm_runs_its_lifecycle_against_the_fake_sdk():
         arm.disconnect()
 
 
+def test_ur5_ros2_arm_runs_its_lifecycle_against_the_fake_driver():
+    """The ur_ros2 backend opens, reads, commands, and closes over fake rclpy.
+
+    It proves the behavior the backend owns on top of the ROS2 driver: a
+    joint_states message published out of order is reordered into the canonical
+    base-to-wrist order, and an action becomes a trajectory goal naming the
+    joints in that same order with the commanded positions.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms import Arm
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        assert Arm.backend("ur_ros2") is UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        assert not arm.is_connected
+        arm.connect()
+        try:
+            assert arm.is_robot_up()
+            observation = arm.get_observation()
+            assert observation["arm_joint_position"].shape == (6,)
+            assert observation["tcp_pose"].shape == (7,)
+            # The fake reports joints scrambled; the backend returns canonical
+            # base-to-wrist order (shoulder_pan, shoulder_lift, elbow, w1, w2, w3).
+            np.testing.assert_allclose(
+                observation["arm_joint_position"], [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+            )
+
+            target = np.array([0.1, -0.2, 0.3, -0.4, 0.5, -0.6])
+            sent = arm.send_action({"joint_position": target})
+            assert sent["joint_position"].shape == (6,)
+            with pytest.raises(KeyError):
+                arm.send_action({"tcp_pose": np.zeros(7)})
+
+            goal = rclpy.sent_goals[-1]
+            assert list(goal.trajectory.joint_names) == [
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ]
+            np.testing.assert_allclose(goal.trajectory.points[0].positions, target)
+        finally:
+            arm.disconnect()
+        assert not arm.is_connected
+        # A second disconnect must not raise.
+        arm.disconnect()
+
+
 def _arm_with_a_camera_of_its_own(log):
     """Build an arm with an independently connected wrist camera."""
 
