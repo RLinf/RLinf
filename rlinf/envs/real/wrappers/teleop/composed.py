@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -38,6 +38,7 @@ class ComposedTeleop(TeleopDevice):
             driving.
         streamer: Optional direct command stream that runs faster than
             ``env.step``.
+        sample_filter: Optional station safety filter applied before dispatch.
     """
 
     def __init__(
@@ -46,6 +47,7 @@ class ComposedTeleop(TeleopDevice):
         layout: Mapping[str, slice],
         timeout: Optional[float] = None,
         streamer: Optional[Any] = None,
+        sample_filter: Optional[Callable[[gym.Env, TeleopSample], TeleopSample]] = None,
     ) -> None:
         unknown = set(group.parts) - set(layout)
         if unknown:
@@ -56,6 +58,7 @@ class ComposedTeleop(TeleopDevice):
         self.group = group
         self.layout = dict(layout)
         self.streamer = streamer
+        self.sample_filter = sample_filter
         if streamer is not None:
             unknown = set(getattr(streamer, "DELIVERS", ())) - set(self.layout)
             if unknown:
@@ -133,6 +136,12 @@ class ComposedTeleop(TeleopDevice):
 
     def read(self, env: gym.Env, policy_action: np.ndarray) -> TeleopSample:
         """Read every device, then write each part into the action."""
+        sample = self._read(env, policy_action)
+        if self.sample_filter is not None:
+            sample = self.sample_filter(env, sample)
+        return sample
+
+    def _read(self, env: gym.Env, policy_action: np.ndarray) -> TeleopSample:
         parts, driving, info = self.group.action(self.context_from(env))
         if not parts:
             return TeleopSample(action=None, active=False, info=info)

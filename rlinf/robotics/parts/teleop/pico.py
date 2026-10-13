@@ -433,6 +433,7 @@ class PicoTcp(Pico):
 #: What every PicoJoint tick reports, so a recording keeps one schema whether
 #: or not the solver ran.
 _IK_REPORT = {
+    "ik_started_s": None,
     "joint_step_fraction": 1.0,
     "limiting_joint": 0,
     "ik_max_joint_delta": 0.0,
@@ -643,6 +644,7 @@ class PicoJoint(Pico):
             target, current, joints, grip
         )
         info.update(
+            ik_started_s=started if result.success else None,
             ik_attempts=attempts,
             ik_target_fraction=fraction,
             ik_initial_fault=first_fault,

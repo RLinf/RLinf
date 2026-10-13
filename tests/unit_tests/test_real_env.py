@@ -2999,7 +2999,8 @@ def test_yam_env_lets_a_joint_past_its_limit_move_back_but_not_further():
 
 
 @pytest.mark.placement
-def test_a_dropped_pico_holds_both_yam_arms_until_both_grips_release():
+@pytest.mark.parametrize("broken_side", ["left", "right"])
+def test_a_dropped_pico_holds_both_yam_arms_until_both_grips_release(broken_side):
     """Either controller dropping out holds both arms, even the one still valid.
 
     Neither arm drives again until both grips have been let go together.
@@ -3034,25 +3035,97 @@ def test_a_dropped_pico_holds_both_yam_arms_until_both_grips_release():
 
         held = {"grip": 1.0}
         broken = {"orientation": [0.0, 0.0, 0.0, 0.0]}
+        healthy_side = "right" if broken_side == "left" else "left"
+        moved = {**held, "position": [0.0, 0.0, -0.1]}
         try:
             zmq.frame = pico_packet()
             env.reset()
             assert tick(pico_packet())["pico_fault"] is None
-            assert tick(pico_packet(right=held))["right"]
+            assert tick(pico_packet(**{healthy_side: held}))[healthy_side]
 
-            # The left controller breaks while the right one still drives.
-            assert tick(pico_packet(left=broken, right=held))["pico_fault"]
-            moved = {**held, "position": [0.0, 0.0, -0.1]}
-            info = tick(pico_packet(left=broken, right=moved))
-            assert not info["right"]
-            assert np.allclose(info["accepted_action"][7:13], 0.0)
+            measured = base.get_joint_positions().copy()
+            info = tick(
+                pico_packet(
+                    {"X": True, "A": True},
+                    **{broken_side: broken, healthy_side: moved},
+                )
+            )
+            assert info["pico_fault"]
+            assert not info[healthy_side]
+            assert np.allclose(info["accepted_action"], measured)
 
-            # The left comes back, but the right grip never let go.
-            info = tick(pico_packet(right=moved))
-            assert info["pico_fault"] is not None and not info["right"]
+            info = tick(pico_packet(**{broken_side: broken, healthy_side: moved}))
+            assert not info[healthy_side]
+            assert np.allclose(info["accepted_action"], measured)
+
+            info = tick(pico_packet(**{healthy_side: moved}))
+            assert info["pico_fault"] is not None and not info[healthy_side]
 
             assert tick(pico_packet())["pico_fault"] is None
-            assert tick(pico_packet(right=held))["right"]
+            assert tick(pico_packet(**{healthy_side: held}))[healthy_side]
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+@pytest.mark.parametrize("left_slow", [False, True])
+def test_yam_pico_checks_successful_targets_after_both_ik_solves(left_slow):
+    import time
+
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    class SlowKinematics(FreeToolKinematics):
+        max_solve_s = 0.03
+        slow = False
+
+        def solve(self, target, seed, gripper):
+            if self.slow:
+                time.sleep(0.15)
+            return super().solve(target, seed, gripper)
+
+    with mocked_sdks():
+        from rlinf.envs.real.wrappers import build_stack
+        from rlinf.robotics.parts.transports import pico as transport
+
+        solvers = {side: SlowKinematics() for side in ("left", "right")}
+        base = _yam_env()
+        base.arm_kinematics = lambda side: solvers[side]
+        env = build_stack(
+            base,
+            {
+                "teleop": [{"pico": {"drives": "left"}}, {"pico": {"drives": "right"}}],
+                "no_gripper": False,
+                "pico": {"zmq_addr": "tcp://x:1", "max_tick_s": 0.1},
+                "yam_episode": {"wait_for_record_button": False},
+            },
+        )
+
+        def tick(frame):
+            transport.zmq.frame = frame
+            time.sleep(0.05)
+            return env.step(np.zeros(14, dtype=np.float32))[-1]
+
+        held = {"grip": 1.0}
+        moved = {**held, "position": [0.0, 0.0, -0.1]}
+        try:
+            transport.zmq.frame = pico_packet()
+            env.reset()
+            assert tick(pico_packet())["pico_fault"] is None
+            assert tick(pico_packet(left=held, right=held))["left"]
+            measured = base.get_joint_positions().copy()
+            solvers["left"].slow = left_slow
+            solvers["right"].slow = True
+            info = tick(pico_packet(left=moved, right=moved))
+            assert info["right_ik_fault"] == "solve_timeout"
+            if left_slow:
+                assert info["left_ik_fault"] == "solve_timeout"
+                assert info["pico_fault"] is None
+            else:
+                assert info["pico_fault"] == "left:stale_after_ik"
+                assert not info["left"] and not info["right"]
+            assert np.allclose(info["accepted_action"], measured)
         finally:
             env.close()
 
