@@ -38,7 +38,11 @@ from rlinf.hybrid_engines.fsdp.mixed_precision import (
     build_mixed_precision,
     get_mixed_precision_wrap_policy,
 )
-from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
+from rlinf.hybrid_engines.fsdp.utils import (
+    apply_fsdp2_to_model,
+    clip_grad_by_total_norm_,
+    create_device_mesh,
+)
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
 
@@ -248,6 +252,51 @@ def test_gradients_reduce_over_the_sharding_dimension(single_rank_env):
     replicated_only = init_device_mesh("cpu", (1,), mesh_dim_names=["ddp"])
     with pytest.raises(KeyError):
         gradient_reduction_group(replicated_only)
+
+
+@pytest.mark.parametrize("grad_dtype", [torch.bfloat16, torch.float32])
+def test_clip_grad_scales_gradients_in_place_in_their_own_dtype(grad_dtype):
+    """The clip scales ``p.grad`` itself, not a cast of it.
+
+    Megatron clips fp32 main grads, so its pre-clip cast was free; here grads
+    stay in the mixed-precision reduce dtype, and casting before ``mul_`` would
+    scale a temporary and leave every gradient unclipped.
+    """
+    # Keep the parameter in the grad dtype: torch requires ``p.grad`` to match
+    # ``p.dtype``, and under FSDP2 mixed precision both carry the low dtype.
+    weight = nn.Linear(2, 2, dtype=grad_dtype).weight
+    weight.grad = torch.full((2, 2), 2.0, dtype=grad_dtype)
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=1.0, total_norm=4.0)
+
+    assert weight.grad.dtype is grad_dtype
+    torch.testing.assert_close(weight.grad, torch.full((2, 2), 0.5, dtype=grad_dtype))
+
+
+def test_clip_grad_leaves_gradients_untouched_below_the_max_norm():
+    weight = nn.Linear(2, 2).weight
+    weight.grad = torch.full((2, 2), 2.0)
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=4.0, total_norm=3.0)
+
+    torch.testing.assert_close(weight.grad, torch.full((2, 2), 2.0))
+
+
+def test_clip_grad_scales_dtensor_shards_in_place(single_rank_env):
+    """FSDP2 gradients are DTensors, so scaling the local shard must reach ``p.grad``."""
+    from torch.distributed.tensor import DTensor, Shard
+
+    mesh = create_device_mesh(1)
+    weight = nn.Linear(2, 2, dtype=torch.bfloat16).weight
+    weight.grad = DTensor.from_local(
+        torch.full((2, 2), 2.0, dtype=torch.bfloat16), mesh, [Shard(0)]
+    )
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=1.0, total_norm=4.0)
+
+    torch.testing.assert_close(
+        weight.grad.to_local(), torch.full((2, 2), 0.5, dtype=torch.bfloat16)
+    )
 
 
 class _DomainTable(torch.nn.Module):
