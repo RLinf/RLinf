@@ -164,7 +164,7 @@ Important Stage 1 fields:
          repo_id: "realworld_peg_insertion_rlt_stage1"
        model_type: "openpi"
        is_lora: False
-       model_path: "/path/to/model"
+       model_path: "/path/to/pi05_base_openpi"
        num_action_chunks: 20
        action_dim: 7
        num_steps: 4
@@ -395,7 +395,7 @@ Edit the Stage 1 config paths before launch:
      openpi_data:
        repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
-       model_path: /path/to/model
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -565,7 +565,7 @@ Edit the data path in
 
    actor:
      model:
-       model_path: /path/to/pi05_base
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: pi05_rlt_maniskill_joint
        openpi_data:
