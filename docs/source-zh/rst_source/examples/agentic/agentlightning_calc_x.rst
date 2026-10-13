@@ -35,13 +35,19 @@ agent 会读取题目，生成推理过程与答案，并根据反馈做强化�
 安装
 ----------------------------------------
 
-RLinf 基础环境请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
-
-安装本示例依赖：
+AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 OpenTelemetry 1.45 修改了将 rollout span 路由到 Lightning Store 的 exporter 实现。创建基础环境后，请先安装兼容的 OpenTelemetry 依赖，再安装本示例的其他依赖：
 
 .. code-block:: bash
 
-   pip install "agentlightning==0.3.0" "litellm<1.95" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator"
+   cd /path/to/RLinf
+   bash requirements/install.sh agentic
+   source .venv/bin/activate
+   uv pip install -r requirements/agentic/agentlightning_constraints.txt
+   uv pip install "agentlightning==0.3.0" "litellm<1.95" \
+     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
+     "mcp-server-calculator" "openai==2.32.0"
+
+其他安装选项和支持的平台请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
 
 数据准备
 ----------------------------------------
