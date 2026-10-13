@@ -1112,6 +1112,163 @@ def ur_rtde() -> dict[str, types.ModuleType]:
     }
 
 
+def ur_ros2() -> dict[str, types.ModuleType]:
+    """Fake ``rclpy`` and ROS2 message/action modules for the UR5 ROS2 driver.
+
+    The ``ur_ros2`` backend subscribes to ``joint_states``, sends
+    ``FollowJointTrajectory`` goals, and calls the ``resend_robot_program``
+    service. This fake delivers one fixed joint reading at subscribe time -- so
+    no executor spin is needed -- and records the goals sent, for assertions.
+
+    The reading is published in a deliberately non-canonical joint order with
+    distinct values per joint, so a test can prove the backend reorders it into
+    the canonical base-to-wrist order.
+    """
+    #: joint_states as a driver might publish it: names out of canonical order,
+    #: each position distinct so reordering is observable.
+    REPORTED_NAMES = (
+        "elbow_joint",
+        "shoulder_lift_joint",
+        "shoulder_pan_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    )
+    REPORTED_POSITIONS = (0.3, 0.2, 0.1, 0.4, 0.5, 0.6)
+
+    #: Goals the action client received, exposed on the fake ``rclpy`` module.
+    sent_goals: list[Any] = []
+
+    class _Future:
+        def __init__(self, result: Any = None) -> None:
+            self._result = result
+
+        def done(self) -> bool:
+            return True
+
+        def result(self) -> Any:
+            return self._result
+
+    class _ResultWrap:
+        def __init__(self) -> None:
+            self.result = types.SimpleNamespace(error_code=0)
+
+    class _GoalHandle:
+        accepted = True
+
+        def get_result_async(self) -> "_Future":
+            return _Future(_ResultWrap())
+
+    class ActionClient:
+        def __init__(self, node: Any, action_type: Any, name: str) -> None:
+            self.name = name
+
+        def wait_for_server(self, timeout_sec: float = 0.0) -> bool:
+            return True
+
+        def send_goal_async(self, goal: Any) -> "_Future":
+            sent_goals.append(goal)
+            return _Future(_GoalHandle())
+
+    class _ServiceClient:
+        def wait_for_service(self, timeout_sec: float = 0.0) -> bool:
+            return True
+
+        def call_async(self, request: Any) -> "_Future":
+            return _Future(object())
+
+    class JointState:
+        def __init__(self) -> None:
+            self.name: list[str] = []
+            self.position: list[float] = []
+
+    class Node:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def create_subscription(self, msg_type, topic, callback, qos):
+            # Deliver one reading synchronously; the backend needs no spin.
+            message = JointState()
+            message.name = list(REPORTED_NAMES)
+            message.position = list(REPORTED_POSITIONS)
+            callback(message)
+            return object()
+
+        def create_client(self, srv_type, name):
+            return _ServiceClient()
+
+        def destroy_node(self) -> None:
+            pass
+
+    class SingleThreadedExecutor:
+        def add_node(self, node: Any) -> None:
+            pass
+
+        def spin(self) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            pass
+
+    class _Trajectory:
+        def __init__(self) -> None:
+            self.joint_names: list[str] = []
+            self.points: list[Any] = []
+
+    class _Goal:
+        def __init__(self) -> None:
+            self.trajectory = _Trajectory()
+
+    class FollowJointTrajectory:
+        Goal = _Goal
+
+    class JointTrajectoryPoint:
+        def __init__(self) -> None:
+            self.positions: list[float] = []
+            self.time_from_start: Any = None
+
+    class Duration:
+        def __init__(self, sec: int = 0, nanosec: int = 0) -> None:
+            self.sec = sec
+            self.nanosec = nanosec
+
+    class Trigger:
+        class Request:
+            pass
+
+    rclpy_module = module(
+        "rclpy",
+        ok=lambda: True,
+        init=lambda *a, **k: None,
+        shutdown=lambda *a, **k: None,
+    )
+    #: Test hook: the goals the fake action client received.
+    rclpy_module.sent_goals = sent_goals
+
+    return {
+        "rclpy": rclpy_module,
+        "rclpy.node": module("rclpy.node", Node=Node),
+        "rclpy.action": module("rclpy.action", ActionClient=ActionClient),
+        "rclpy.executors": module(
+            "rclpy.executors", SingleThreadedExecutor=SingleThreadedExecutor
+        ),
+        "sensor_msgs": module("sensor_msgs"),
+        "sensor_msgs.msg": module("sensor_msgs.msg", JointState=JointState),
+        "control_msgs": module("control_msgs"),
+        "control_msgs.action": module(
+            "control_msgs.action", FollowJointTrajectory=FollowJointTrajectory
+        ),
+        "std_srvs": module("std_srvs"),
+        "std_srvs.srv": module("std_srvs.srv", Trigger=Trigger),
+        "trajectory_msgs": module("trajectory_msgs"),
+        "trajectory_msgs.msg": module(
+            "trajectory_msgs.msg", JointTrajectoryPoint=JointTrajectoryPoint
+        ),
+        "builtin_interfaces": module("builtin_interfaces"),
+        "builtin_interfaces.msg": module("builtin_interfaces.msg", Duration=Duration),
+    }
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return fake arm SDKs keyed by import name."""
     made = {"franky": franky()}
@@ -1120,4 +1277,5 @@ def modules(**_: Any) -> dict[str, types.ModuleType]:
     made.update(pyagxarm())
     made.update(i2rt())
     made.update(ur_rtde())
+    made.update(ur_ros2())
     return made
