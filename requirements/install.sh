@@ -3744,8 +3744,10 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # >=0.3.0 uses the task-oriented config layout under embodichain_tasks.
-    uv pip install "embodichain>=0.3.0" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site --index-strategy unsafe-best-match
+    # Only dexsim-engine needs wheels from the vendor package server.
+    uv pip install "embodichain==0.3.0" \
+        --find-links http://pyp.open3dv.site:2345/simple/dexsim-engine/ \
+        --trusted-host pyp.open3dv.site
 }
 
 install_dosw1_env() {
