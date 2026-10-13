@@ -79,7 +79,7 @@ On the first takeover, move one arm at a time through small motions to check dir
 
 Hold a controller's grip to control its corresponding arm; release it to stop taking over. The recipe gives ``pico`` one entry per arm, and each turns its controller's pose into joint targets through the YAM model's inverse kinematics, set in ``override_cfg.ik``. If either controller drops out, both arms hold until both grips are released. The ``yam_episode`` block maps the right menu button to start/end an episode and the left menu button to discard the current recording. Confirm these button events on your PICO setup before collecting task data. Discard removes only the current unfinished episode; faulted or truncated recordings can still be saved as unsuccessful episodes.
 
-The launcher writes logs under ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` by default. This recipe sets ``export_format: lerobot_dataset``, so it does not write ``demo_buffer/``. Each recorded take is streamed into its own shard under that run's ``lerobot_dataset/rank_0/``. Unsuccessful takes are saved too, with ``is_success`` false. Merge the shards into one dataset for OpenPI SFT or HG-DAgger, leaving those out:
+The launcher writes logs under ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` by default. This recipe sets ``export_format: lerobot_dataset``. Each recorded take is streamed into its own shard under that run's ``lerobot_dataset/rank_0/``. Unsuccessful takes are saved too, with ``is_success`` false. Merge the shards into one dataset for OpenPI SFT or HG-DAgger, leaving those out:
 
 .. code-block:: bash
 

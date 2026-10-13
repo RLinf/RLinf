@@ -62,10 +62,10 @@
 
    </div>
 
-YAM PICO 数据采集
------------------
+YAM
+---
 
-使用 :doc:`YAM 指南 <embodied/yam>`，通过 PICO 双手柄和三路 RGB 相机采集双臂示教数据。
+进入 :doc:`YAM 页面 <embodied/yam_index>`，查看双臂配置与数据采集指南。
 
 Piper 与 SO101 配置
 --------------------------------
@@ -93,7 +93,7 @@ Piper 与 SO101 配置
 
    单臂 Franka <embodied/franka_index>
    双臂 Franka <embodied/dual_franka_index>
-   YAM PICO 数据采集 <embodied/yam>
+   YAM <embodied/yam_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>

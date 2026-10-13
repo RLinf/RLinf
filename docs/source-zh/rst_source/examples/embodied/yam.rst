@@ -79,7 +79,7 @@ yaw 需分别测量左右臂：校准时头显面向的水平方向为操作者 
 
 按住某侧手柄的 grip 可接管对应机械臂，松开即结束接管。示例为每条手臂各配置一项 ``pico``，各自经 YAM 模型的逆运动学（``override_cfg.ik``）把手柄位姿换算为关节目标。任一手柄掉线时，两条手臂都会保持不动，直到两侧 grip 都松开。``yam_episode`` 段将右菜单键映射为开始或结束一条录制，将左菜单键映射为丢弃当前录制。正式采集前，请在本站 PICO 设备上确认按键事件能送达。丢弃只会移除当前未完成的 episode；故障或超时的录制仍可能保存为未成功的 episode。
 
-启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志。该配置设置 ``export_format: lerobot_dataset``，因此不会写 ``demo_buffer/``。每条录制单独流式写入该目录 ``lerobot_dataset/rank_0/`` 下的一个 shard，未成功的录制也会保存，``is_success`` 为假。供 OpenPI SFT 或 HG-DAgger 使用前，把这些 shard 合并成一个 dataset，并去掉未成功的录制：
+启动脚本默认在 ``logs/<timestamp>-realworld_dual_yam_collect_data_pico/`` 下保存日志。该配置设置 ``export_format: lerobot_dataset``。每条录制单独流式写入该目录 ``lerobot_dataset/rank_0/`` 下的一个 shard，未成功的录制也会保存，``is_success`` 为假。供 OpenPI SFT 或 HG-DAgger 使用前，把这些 shard 合并成一个 dataset，并去掉未成功的录制：
 
 .. code-block:: bash
 

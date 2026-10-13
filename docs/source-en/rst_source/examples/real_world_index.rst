@@ -62,10 +62,10 @@ Choose a guide for hardware checks, teleoperation, data collection, sim-to-real 
 
    </div>
 
-YAM PICO Collection
--------------------
+YAM
+---
 
-Use :doc:`the YAM guide <embodied/yam>` to collect dual-arm demonstrations with PICO controllers and three RGB cameras.
+Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data collection guides.
 
 Piper and SO101 Setup
 ---------------------
@@ -93,7 +93,7 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
 
    Single-Arm Franka <embodied/franka_index>
    Dual-Arm Franka <embodied/dual_franka_index>
-   YAM PICO Collection <embodied/yam>
+   YAM <embodied/yam_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
