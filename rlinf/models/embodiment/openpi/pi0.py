@@ -401,6 +401,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            return_prefix=False,
         )[0]
 
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
@@ -813,6 +814,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            prefix_requires_grad=False,
         )[0]
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
         loss = torch.square(v_t - u_t)

@@ -147,19 +147,32 @@ def _normalize_wrap_targets(value):
 
 
 def _resolve_module_classes_to_wrap(module, module_classes_to_wrap):
-    resolved_module_classes = set()
-    for module_class in _normalize_wrap_targets(module_classes_to_wrap) or []:
-        if isinstance(module_class, str):
-            resolved_class = get_module_class_from_name(module, module_class)
-            if resolved_class is None:
-                raise Exception("Could not find the module class to wrap in the model.")
-            resolved_module_classes.add(resolved_class)
-        else:
-            raise TypeError(
-                "module_classes_to_wrap entries must be class name strings; "
-                f"got {type(module_class).__name__!r}"
+    """Resolve short or qualified module class names against the model tree."""
+    classes = {
+        cls
+        for child in module.modules()
+        for cls in type(child).__mro__
+        if issubclass(cls, torch.nn.Module)
+    }
+    resolved = set()
+    for target in _normalize_wrap_targets(module_classes_to_wrap) or []:
+        if not isinstance(target, str):
+            raise TypeError("module_classes_to_wrap entries must be class name strings")
+        matches = {
+            cls
+            for cls in classes
+            if target in (cls.__name__, f"{cls.__module__}.{cls.__qualname__}")
+        }
+        if not matches:
+            raise ValueError(
+                f"Module class selector {target!r} matched no non-root modules"
             )
-    return resolved_module_classes
+        if len(matches) > 1:
+            raise ValueError(
+                f"Ambiguous module class {target!r}; use a qualified class name"
+            )
+        resolved.update(matches)
+    return resolved
 
 
 def _fsdp2_fully_shard_supports_ignored_params() -> bool:
