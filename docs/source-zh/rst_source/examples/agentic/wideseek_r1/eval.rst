@@ -67,8 +67,7 @@ WideSeek-R1 评测
    Transformers 的 ``dtype="auto"``）会把权重上转为 bf16，在 WideSearch 上约损失
    3 分 avg@4（55.9 vs 59.0）。在 RLinf 之外部署该 checkpoint 时，请显式传入
    ``--dtype float16``。在 RLinf 内部无需额外设置：自带的评测与训练配置已指定
-   ``rollout.model.precision: fp16`` 并会传给 rollout 引擎；当 checkpoint 的声明
-   dtype 与权重存储 dtype 不一致时，rollout worker 也会在启动时打印警告
+   ``rollout.model.precision: fp16`` 并会传给 rollout 引擎
    （见 `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__）。
 
 下载模型后，在评测配置中设置本地模型路径：

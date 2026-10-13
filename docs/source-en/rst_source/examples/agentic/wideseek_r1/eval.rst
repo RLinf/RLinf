@@ -71,8 +71,7 @@ You may also evaluate your own Qwen3-series dense model.
    (55.9 vs 59.0). When serving this checkpoint outside RLinf, pass an explicit
    ``--dtype float16``. Inside RLinf no extra step is needed: the shipped eval
    and train configs set ``rollout.model.precision: fp16``, which is handed to
-   the rollout engine, and the rollout workers log a warning at startup when a
-   checkpoint's declared dtype does not match its stored weights
+   the rollout engine
    (see `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__).
 
 After downloading the model, set the local path in the evaluation config:
