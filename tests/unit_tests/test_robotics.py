@@ -4054,7 +4054,7 @@ def test_franky_reset_retries_after_acceleration_discontinuity(
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise RuntimeError(
-                'libfranka: Move command aborted: motion aborted by reflex! '
+                "libfranka: Move command aborted: motion aborted by reflex! "
                 '["joint_motion_generator_acceleration_discontinuity"]'
             )
         original_move(motion)
