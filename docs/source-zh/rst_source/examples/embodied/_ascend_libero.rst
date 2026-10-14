@@ -39,10 +39,10 @@
 
 ``CANN_VER`` 包含昇腾基础镜像 tag 中的硬件后缀。也可以通过 Dockerfile 的 ``ASCEND_BASE_IMAGE`` 参数指定完整的基础镜像地址。
 
-昇腾 950 需要 CANN 9.1；上面的镜像面向 Atlas 800T A2（910B），使用 CANN 9.0。``requirements/install.sh`` 会通过 ``npu-smi`` 读取芯片型号并安装对应版本：昇腾 950 使用 torch 2.10 与 ``torch-npu`` 2.10.0.post4，910B 使用 torch 2.6。在没有 NPU 驱动的机器上（例如构建镜像时），用 ``ASCEND_CHIP`` 指定芯片：
+昇腾 950 需要 CANN 9.1；上面的镜像面向 Atlas 800T A2（910B），使用 CANN 9.1.1。``requirements/install.sh`` 会通过 ``npu-smi`` 读取芯片型号：昇腾 950 使用 torch 2.10 与 ``torch-npu`` 2.10.0.post4。旧版默认组合将 torch 与 ``torch-npu`` 严格固定为 2.6.0，因为不同的 post 版本可能要求不同的 CANN。若芯片查询不可用或无法识别设备，安装脚本会使用该默认组合。用 ``ASCEND_CHIP`` 明确选择 950 对应的版本：
 
 .. code-block:: bash
 
    ASCEND_CHIP=Ascend950PR bash requirements/install.sh --platform ascend embodied --model openpi --env libero
 
-用 ``--torch <version>`` 可以覆盖默认版本。
+用 ``--torch <version>`` 可以覆盖默认版本并跳过设备查询；所选版本需要与宿主机 CANN 兼容。当 ``ASCEND_CHIP=Ascend950PR`` 且 torch 为 2.10.0 时，安装脚本仍将 ``torch-npu`` 固定为 2.10.0.post4。

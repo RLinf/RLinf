@@ -13,9 +13,9 @@ Environment Setup
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
+With ``--env libero``, the installer installs ``rlinf-libero``, downloads missing task assets, and resets LIBERO's path configuration to the active environment.
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, ``molmoact2``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
+Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, ``molmoact2``, ``gr00t_n1d7``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
 
 Example Configs
 ---------------
@@ -47,6 +47,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2
+   * - ``libero_spatial_gr00t_n1d7_eval.yaml``
+     - Spatial
+     - GR00T N1.7
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
      - π₀.₅
@@ -117,6 +120,58 @@ Copy or edit the target YAML and set at least ``rollout.model.model_path``. See 
 **Step 4: Check results**
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
+
+.. _libero-gr00t-n1d7-eval:
+
+GR00T N1.7 Evaluation
+---------------------
+
+Evaluate the official LIBERO-Spatial checkpoint with
+``libero_spatial_gr00t_n1d7_eval``. It runs the 500 fixed task/initial-state
+pairs for up to 256 steps each, executing 16 actions per predicted chunk.
+The task checkpoint supplies the policy and observation processor; the
+Cosmos-Reason2-2B directory supplies its backbone.
+
+Install ``--model gr00t_n1d7 --env libero`` and activate the environment as
+above. For Ascend 950, use the CANN 9.1 setup in
+:ref:`the GR00T hardware instructions <gr00t-hardware>`. Download both model
+directories before starting evaluation:
+
+.. code-block:: bash
+
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+   hf download nvidia/GR00T-N1.7-LIBERO --include "libero_spatial/*" --local-dir checkpoints/GR00T-N1.7-LIBERO
+
+Point the evaluation at the task subdirectory and the backbone directory:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_gr00t_n1d7_eval \
+     rollout.model.model_path="$PWD/checkpoints/GR00T-N1.7-LIBERO/libero_spatial" \
+     rollout.model.backbone_model_path="$PWD/checkpoints/Cosmos-Reason2-2B"
+
+For RL weights saved with a value head, keep these two model paths and add
+``runner.ckpt_path=/path/to/full_weights.pt`` and
+``rollout.model.add_value_head=True`` to the same command. The task checkpoint
+still supplies the processor and normalization statistics.
+
+On Ascend 950, select two NPUs in
+``evaluations/libero/libero_spatial_gr00t_n1d7_eval.yaml``:
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       env,rollout: 0-1
+
+This avoids the single-rank HCCL initialization failure on the validated
+CANN 9.1.0 stack. Enable OSMesa in the active environment:
+
+.. include:: ../../examples/embodied/_libero_osmesa.rst
+
+For CPU rendering, add ``+env.eval.skip_intermediate_renders=True`` and
+``env.eval.video_cfg.save_video=False`` to the launch command. Evaluation still
+uses the same fixed initial states and episode limits.
 
 .. _apxinf-backend:
 
