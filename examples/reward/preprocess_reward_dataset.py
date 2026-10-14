@@ -275,8 +275,8 @@ def preprocess_and_save_reward_datasets(
     for split_name, split_images in (("train", train_images), ("val", val_images)):
         if not split_images:
             raise ValueError(
-                f"The {split_name} split is empty: its episodes have no success "
-                f"frame, and each split needs at least one such episode. Collect "
+                f"The {split_name} split is empty because it has no episode with "
+                f"a success frame, and each split needs at least one. Collect "
                 f"more successful episodes into {raw_data_path}. Changing "
                 f"--val-split (now {val_split}) or --seed (now {random_seed}) "
                 f"only helps when several episodes contain success frames."
