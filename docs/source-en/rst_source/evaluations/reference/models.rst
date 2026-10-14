@@ -28,6 +28,9 @@ Eval configs reference model presets from ``examples/embodiment/config/model/`` 
    * - MolmoAct2
      - ``molmoact2``
      - ``libero_spatial_molmoact2_eval``, ``libero_object_molmoact2_eval``, ``libero_goal_molmoact2_eval``, ``libero_10_molmoact2_eval``
+   * - GR00T N1.7
+     - ``gr00t_n1d7``
+     - ``libero_spatial_gr00t_n1d7_eval``
    * - LingBotVLA
      - ``lingbotvla``
      - ``robotwin_click_bell_lingbotvla_eval``, ``robotwin_place_shoe_lingbotvla_eval``

@@ -13,9 +13,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
+使用 ``--env libero`` 时，安装脚本会安装 ``rlinf-libero``、下载缺失的任务 assets，并将 LIBERO 的路径配置重置为当前环境。
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2``、``gr00t_n1d7`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -47,6 +47,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2
+   * - ``libero_spatial_gr00t_n1d7_eval.yaml``
+     - Spatial
+     - GR00T N1.7
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
      - π₀.₅
@@ -117,6 +120,44 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 **Step 4：查看结果**
 
 终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
+
+.. _libero-gr00t-n1d7-eval:
+
+GR00T N1.7 评测
+----------------
+
+用 ``libero_spatial_gr00t_n1d7_eval`` 评测官方 LIBERO-Spatial checkpoint。该配置遍历 500 个固定的任务与初始状态组合，每条轨迹最多 256 步，每次执行预测动作块中的 16 个动作。任务 checkpoint 提供 policy 与观测 processor，Cosmos-Reason2-2B 目录提供 backbone。
+
+按前面的步骤安装 ``--model gr00t_n1d7 --env libero`` 并激活环境。在昇腾 950 上运行时，先按 :ref:`GR00T 硬件说明 <gr00t-hardware>` 准备 CANN 9.1 环境。启动评测前下载两个模型目录：
+
+.. code-block:: bash
+
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+   hf download nvidia/GR00T-N1.7-LIBERO --include "libero_spatial/*" --local-dir checkpoints/GR00T-N1.7-LIBERO
+
+评测时分别指定任务子目录与 backbone 目录：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_gr00t_n1d7_eval \
+     rollout.model.model_path="$PWD/checkpoints/GR00T-N1.7-LIBERO/libero_spatial" \
+     rollout.model.backbone_model_path="$PWD/checkpoints/Cosmos-Reason2-2B"
+
+若 RL 权重包含 value head，保留上述两个模型路径，并在同一启动命令中添加 ``runner.ckpt_path=/path/to/full_weights.pt`` 与 ``rollout.model.add_value_head=True``。任务 checkpoint 仍用于加载 processor 和归一化统计信息。
+
+在昇腾 950 上，修改 ``evaluations/libero/libero_spatial_gr00t_n1d7_eval.yaml``，选择两个 NPU：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       env,rollout: 0-1
+
+该 placement 避开已验证的 CANN 9.1.0 组合上的单 rank HCCL 初始化失败。在已激活的环境中启用 OSMesa：
+
+.. include:: ../../examples/embodied/_libero_osmesa.rst
+
+使用 CPU 渲染时，在启动命令中添加 ``+env.eval.skip_intermediate_renders=True`` 与 ``env.eval.video_cfg.save_video=False``。评测仍使用相同的固定初始状态与轨迹步数上限。
 
 .. _apxinf-backend:
 

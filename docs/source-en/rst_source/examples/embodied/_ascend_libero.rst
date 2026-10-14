@@ -53,13 +53,18 @@ The Dockerfile also accepts ``ASCEND_BASE_IMAGE`` to select a different full
 base-image reference.
 
 Ascend 950 needs CANN 9.1; the image above targets Atlas 800T A2 (910B) with
-CANN 9.0. ``requirements/install.sh`` reads the chip from ``npu-smi`` and
+CANN 9.1.1. ``requirements/install.sh`` reads the chip from ``npu-smi`` and
 installs the matching stack: torch 2.10 with ``torch-npu`` 2.10.0.post4 on
-Ascend 950, and torch 2.6 on 910B. On a host without the NPU driver, such as an
-image build, name the chip with ``ASCEND_CHIP``:
+Ascend 950. The legacy default keeps torch and ``torch-npu`` at exactly 2.6.0;
+post releases can require a different CANN version. If the chip query is
+unavailable or cannot identify the device, the installer uses that legacy
+default. Name the chip with ``ASCEND_CHIP`` to select the 950 stack explicitly:
 
 .. code-block:: bash
 
    ASCEND_CHIP=Ascend950PR bash requirements/install.sh --platform ascend embodied --model openpi --env libero
 
-Pass ``--torch <version>`` to override the pinned version.
+Pass ``--torch <version>`` to override the pinned version without probing the
+device. Choose a version compatible with the host CANN; when
+``ASCEND_CHIP=Ascend950PR`` and torch is 2.10.0, the installer keeps the
+``torch-npu`` 2.10.0.post4 pin.

@@ -158,8 +158,11 @@ Common options:
                            Threads), kunlun (experimental, Kunlunxin), or biren (experimental,
                            SUPA). Sets UV_TORCH_BACKEND where applicable (auto / rocm<version> /
                            cpu); export UV_TORCH_BACKEND yourself to bypass (e.g.
-                           UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI and adds
-                           torch-npu in install_ascend_extras. MUSA and Biren install no torch:
+                           UV_TORCH_BACKEND=cu124). Ascend uses CPU torch (the CPU wheel index
+                           on x86_64, PyPI on aarch64) and adds torch-npu. ASCEND_CHIP selects
+                           the chip when it cannot be detected: 950 uses torch 2.10.0 with
+                           torch-npu 2.10.0.post4; the legacy default is torch/torch-npu 2.6.0.
+                           MUSA and Biren install no torch:
                            run inside the corresponding vendor runtime and reuse its torch stack
                            via a --system-site-packages venv. KUNLUN clones the training-suite
                            image's complete torch environment into --venv using
@@ -760,20 +763,25 @@ configure_ascend() {
     # --torch overrides the pin; ASCEND_CHIP names the chip where npu-smi is
     # unavailable, e.g. when building an image.
     local ascend_chip="${ASCEND_CHIP:-}"
-    if [ -z "$ascend_chip" ] && command -v npu-smi >/dev/null 2>&1; then
-        ascend_chip=$(npu-smi info 2>/dev/null | grep -oiE 'Ascend9[0-9]{2}[A-Za-z]*' | head -1)
+    if [ -z "$TORCH_VERSION" ] && [ -z "$ascend_chip" ] && command -v npu-smi >/dev/null 2>&1; then
+        ascend_chip=$(npu-smi info 2>/dev/null | grep -oiE '(Ascend)?9[0-9]{2}[A-Za-z]+[0-9]*' | head -1) || ascend_chip=""
+        if [ -z "$ascend_chip" ]; then
+            echo "[install.sh] WARNING: could not detect the Ascend chip; using the legacy torch 2.6.0 stack. Set ASCEND_CHIP for a different chip." >&2
+        fi
     fi
     if [ -z "$TORCH_VERSION" ]; then
         case "${ascend_chip,,}" in
             *950*)
                 TORCH_VERSION="2.10.0"
-                PLATFORM_TORCH_NPU_SPEC="torch-npu==2.10.0.post4"
                 ;;
             *)
                 TORCH_VERSION="2.6.0"
                 ;;
         esac
         echo "[install.sh] ascend: chip='${ascend_chip:-unknown}', pinning torch ${TORCH_VERSION} to match torch-npu/CANN (pass --torch to override)."
+    fi
+    if [[ "${ascend_chip,,}" == *950* ]] && [ "$TORCH_VERSION" = "2.10.0" ]; then
+        PLATFORM_TORCH_NPU_SPEC="torch-npu==2.10.0.post4"
     fi
     # PyPI's x86_64 torch wheels are CUDA builds that pull in the nvidia-* wheels,
     # so x86_64 hosts take the +cpu build from the PyTorch CPU index. PyPI's
@@ -1149,9 +1157,9 @@ EOF
     # torch-npu imports a few packages at runtime (`yaml`, `decorator`) but
     # doesn't declare them in its wheel metadata, so install them explicitly.
     uv pip install pyyaml decorator
-    # A prefix pin also matches torch-npu's post releases (2.6.0.post5,
-    # 2.10.0.post4), which an exact ==2.6.0 would not.
-    local torch_npu_spec="${PLATFORM_TORCH_NPU_SPEC:-torch-npu==${torch_ver}.*}"
+    # Post releases target different CANN versions; keep the legacy exact pin
+    # unless configure_ascend selected a specific compatible build.
+    local torch_npu_spec="${PLATFORM_TORCH_NPU_SPEC:-torch-npu==${torch_ver}}"
     echo "[install.sh] Installing ${torch_npu_spec} to match torch ${torch_ver}"
     uv pip install "$torch_npu_spec"
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
