@@ -64,7 +64,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         if rollout_state:
             with pinned_offload_context():
                 for key, value in rollout_state.items():
-                    if torch.is_tensor(value) and value.is_cuda:
+                    if torch.is_tensor(value) and value.device.type != "cpu":
                         rollout_state[key] = value.to("cpu")
 
     def load_param_and_grad(self, device_id: int, load_grad: bool = False) -> None:
@@ -85,7 +85,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 else device_id
             )
             for key, value in rollout_state.items():
-                if torch.is_tensor(value) and not value.is_cuda:
+                if torch.is_tensor(value) and value.device.type == "cpu":
                     rollout_state[key] = value.to(device)
 
     def init_rollout_model(self) -> None:
@@ -344,6 +344,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                     ref_config.compile_transformer_forward = False
                 ref_model.eval()
                 ref_model.requires_grad_(False)
+                ref_model.prepare_nft_reference_model()
                 self._cached_ref_model = ref_model
             else:
                 ref_model = self._cached_ref_model

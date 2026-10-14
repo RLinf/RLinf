@@ -41,8 +41,8 @@ from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
-from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
 
 

@@ -2935,19 +2935,12 @@ install_dreamzero_model() {
 }
 
 install_paddle_gpu() {
-    # PaddlePaddle GPU build. The PyPI ``paddlepaddle`` package is CPU-only;
-    # the GPU build lives on the PaddlePaddle wheel index as
-    # ``paddlepaddle-gpu``.  Select the CUDA-12 index when the system CUDA
-    # major version is >= 12, otherwise fall back to the CUDA-11 index, and
-    # finally to the CPU package if no CUDA is detected.
     local paddle_ver="2.6.2"
-    local paddle_ver_cuda12="2.6.2.post120"
+    local paddle_gpu_ver=""
+    local paddle_gpu_index=""
     local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/whl/linux/cuda12.0/paddlepaddle_gpu.html"
     local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/mkl/avx_x86_64_gpu_cudnn_cudnn8_avx_mkl_paddlepaddle_gpu.html"
 
-    # Detect CUDA major version.  torch is already installed by
-    # create_and_sync_venv / install_common_embodied_deps, so
-    # detect_cuda_major_minor can probe torch.version.cuda.
     local cuda_mm cuda_major
     if cuda_mm=$(detect_cuda_major_minor) 2>/dev/null; then
         cuda_major="${cuda_mm%% *}"
@@ -2955,28 +2948,32 @@ install_paddle_gpu() {
         cuda_major=""
     fi
 
-    # Uninstall any CPU paddlepaddle that diffusion.txt might have pulled in.
     uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
 
     if [ -n "$cuda_major" ] && [ "$cuda_major" -ge 12 ]; then
-        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_ver_cuda12} for CUDA ${cuda_major}.x"
-        if pip install "paddlepaddle-gpu==${paddle_ver_cuda12}" \
-               -f "${paddle_gpu_index_cuda12}" 2>&1; then
-            return 0
-        fi
-        echo "[install.sh] CUDA 12 paddlepaddle-gpu install failed; trying CUDA 11 index." >&2
+        paddle_gpu_ver="2.6.2.post120"
+        paddle_gpu_index="$paddle_gpu_index_cuda12"
+    elif [ "$cuda_major" = "11" ]; then
+        paddle_gpu_ver="$paddle_ver"
+        paddle_gpu_index="$paddle_gpu_index_cuda11"
     fi
 
-    if [ -n "$cuda_major" ]; then
-        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_ver} for CUDA 11.x"
-        if pip install "paddlepaddle-gpu==${paddle_ver}" \
-               -f "${paddle_gpu_index_cuda11}" 2>&1; then
-            return 0
+    if [ -n "$paddle_gpu_ver" ]; then
+        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_gpu_ver} for CUDA ${cuda_major}.x"
+        # Keep PyPI's CUDA 11 wheel out of the CUDA 12 candidate set.
+        if python -m pip install --no-index \
+               --find-links "$paddle_gpu_index" \
+               "paddlepaddle-gpu==${paddle_gpu_ver}" 2>&1; then
+            if python -c 'import paddle; raise SystemExit(not paddle.device.is_compiled_with_cuda())'; then
+                return 0
+            fi
+            echo "[install.sh] Installed PaddlePaddle package is not CUDA-enabled." >&2
         fi
-        echo "[install.sh] GPU paddlepaddle-gpu install failed; falling back to CPU." >&2
+        echo "[install.sh] PaddlePaddle GPU install failed; falling back to CPU." >&2
+        uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
     fi
 
-    echo "[install.sh] No CUDA detected; installing CPU paddlepaddle==${paddle_ver}."
+    echo "[install.sh] Installing CPU paddlepaddle==${paddle_ver}."
     uv pip install "paddlepaddle==${paddle_ver}"
 }
 
