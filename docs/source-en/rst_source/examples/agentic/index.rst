@@ -41,10 +41,10 @@ The following examples include math reasoning RL and agentic AI workflows, such 
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="searchr1.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
+       <a href="searchr1/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="searchr1.html" style="text-decoration: underline; color: blue;">
+        <a href="searchr1/index.html" style="text-decoration: underline; color: blue;">
           <b>Search-R1 RL Training</b>
          </a><br>
          Train LLMs to answer questions by invoking search tools, RLinf accelerates the training process by 55%.
@@ -102,7 +102,7 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    WideSeek-R1 <wideseek_r1/index>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1>
+   Search-R1 <searchr1/index>
    rStar2 <rstar2>
    Math Reasoning <math_reasoning/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>

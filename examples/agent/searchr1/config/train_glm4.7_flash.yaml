@@ -53,7 +53,7 @@ runner:
 
 
 algorithm:
-  group_size: 8
+  group_size: 4
   n_minibatches: 4
   training_batch_size_per_gpu: 1 # micro batch size
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
@@ -102,14 +102,14 @@ data:
   type: math
   max_prompt_length: 4096
   filter_prompt_by_length: True
-  rollout_batch_size: 8
+  rollout_batch_size: 512
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
   answer_key: solutions
   apply_chat_template: True
   apply_chat_template_kwargs:
-    enable_thinking: true    # false makes the generation prompt end with the reasoning close marker
+    enable_thinking: false   # no-think run: generation prompt ends with the reasoning close marker
     clear_thinking: false    # keep reasoning blocks of earlier turns in the prompt
   shuffle: True
   validation_shuffle: True
@@ -186,8 +186,8 @@ rollout:
   validate_save_dir: null       # the directory to save the weights for comparison. if validate_weight is True, this will be used to save the weights for comparison.
   print_outputs: False          # whether to print the outputs (token ids, texts, etc.) of rollout engine.
 
-  max_running_requests: 64     # the maximum number of running requests in the rollout engine.
-  cuda_graph_max_bs: 128        # the maximum batch size for cuda graph. if the batch size is larger than this, cuda graph will not be used.
+  max_running_requests: 512    # the maximum number of running requests in the rollout engine (256 per DP with attn DP=2).
+  cuda_graph_max_bs: 256        # the maximum batch size for cuda graph. if the batch size is larger than this, cuda graph will not be used.
 
 
 reward:
