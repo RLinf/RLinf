@@ -75,7 +75,7 @@ env:
     max_steps_per_rollout_epoch: 25
     group_size: ${algorithm.group_size}
     assets_path: "/workspace/dataset/RoboTwin"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/train_seeds.json
 
   eval:
     rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
@@ -89,7 +89,7 @@ env:
     use_fixed_reset_state_ids: True
     is_eval: True
     assets_path: "/workspace/dataset/RoboTwin"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval

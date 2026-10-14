@@ -92,6 +92,18 @@
 渲染问题
 --------
 
+EGL 渲染使用哪块 GPU？
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 会为每个 worker 指定渲染设备：向驱动查询该 worker 所分配 GPU 对应的 EGL 索引，并将其
+导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo、robosuite）和 ``EGL_DEVICE_ID``\ （其他 EGL 渲染器，
+如 pyrender）。这一步是必要的，因为 EGL 设备索引与 CUDA 设备号属于两套不同的命名空间：EGL 会
+列出驱动可见的所有设备，因此当容器只分配到节点上的部分 GPU 时，CUDA 设备 0 通常\ **并不是**
+EGL 设备 0。
+
+仅当需要覆盖该选择时才手动设置 ``MUJOCO_EGL_DEVICE_ID``，显式设置的值始终优先。若将其设为
+CUDA 序号，在两套命名空间不一致时会渲染到错误的 GPU 上。
+
 RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -212,6 +224,30 @@ Gloo 超时 / “Global rank x is not part of group”
 2. 先解决 SGLang 的恢复/显存问题。  
 3. 重新启动作业（必要时也重启 Ray）。
 
+FSDP 集合通信被后端看门狗超时杀掉
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**现象：** 训练步仍在正常推进，FSDP actor 却被集合通信看门狗杀掉：
+
+.. code-block:: text
+
+   WorkNCCL(SeqNum=1878, OpType=_ALLGATHER_BASE, ..., Timeout(ms)=1800000) ran for
+   1800000 milliseconds before timing out.
+
+报错里的超时值来自后端自带的默认值——NCCL 和 Gloo 是 1800000 ms，昇腾 HCCL 是 3636000 ms。
+
+**可能原因：** 某个 rank 在两次 FSDP 集合通信之间耗时超过了这个时间——例如梯度累积步过大、
+checkpoint 写入过慢，或者该 rank 挂在调试器里，而其余 rank 都在 all-gather 处等待。
+
+**修复：** FSDP 的集合通信与 RLinf 其余 worker 间通信共用同一个超时，默认 180 分钟。
+用 ``RLINF_TIMEOUT`` 调大它（单位为分钟）：
+
+.. code-block:: bash
+
+   export RLINF_TIMEOUT=360
+
+Ray 会在启动时捕获环境变量，因此必须在每个节点上 ``ray start`` **之前** 导出。
+
 数值精度 / 推理后端
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -221,3 +257,18 @@ Gloo 超时 / “Global rank x is not part of group”
 
    rollout:
      attention_backend: triton
+
+创建通信组时 worker 中止
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**现象：** worker 在连接新的对端时退出，日志中的第一条原生错误为：
+
+.. code-block:: text
+
+   pybind11_object_dealloc(): Tried to deallocate unregistered instance!
+
+随后进程收到 ``SIGABRT``，driver 端只报告 actor 已退出。
+
+**可能原因：** PyTorch 2.7 之前，``torch.distributed`` 中有若干构造函数（包括 Gloo 后端和 ``TCPStore``）在未持有 GIL 的情况下登记新建的 Python 对象。RLinf 在不同线程上为不同对端创建通信组，两次登记可能重叠，从而破坏 pybind11 记录存活对象的表。BEHAVIOR 环境（PyTorch 2.5.1）和 Ascend 默认环境（PyTorch 2.6.0）都受影响。
+
+**修复：** 在这些版本上，RLinf 改用持有 GIL 完成登记的构造函数来创建 Gloo 后端和通信组选项，Gloo 通信组因此不再触发该问题。``TCPStore`` 以及 ``TORCH_DISTRIBUTED_DEBUG=DETAIL`` 启用的调试包装没有这样的构造函数；``TCPStore`` 每个通信组只创建一次，因此仍可能偶发中止。条件允许时，请使用 PyTorch 2.7 及以上版本。报告问题时，请附上 PyTorch 版本和第一份原生调用栈，Ray 的 ``actor died`` 信息不足以判断原因。

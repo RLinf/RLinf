@@ -22,6 +22,7 @@ from tqdm import tqdm
 
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
@@ -123,7 +124,9 @@ class CodingOnlineRLRunner:
         # Checkpoint loading
         logging.info(f"Load from checkpoint folder: {self.cfg.runner.resume_dir}")
         # set global step
-        self.global_steps = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
+        self.global_steps = parse_global_step_from_checkpoint_path(
+            self.cfg.runner.resume_dir
+        )
         logging.info(f"Setting global step to {self.global_steps}")
         print(f"Setting global step to {self.global_steps}")
 
@@ -301,7 +304,7 @@ class CodingOnlineRLRunner:
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
-        self.server_rollout.shutdown()
+        self.server_rollout.stop()
         self.online_router.server_stop()
         self.server_rollout.server_stop()
         # No need to wait for rollout_handle since rollout service runs continuously

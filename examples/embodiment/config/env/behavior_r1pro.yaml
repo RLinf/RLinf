@@ -9,7 +9,7 @@ use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 2000
 max_episode_steps: 2000 # max episode steps for truncation
 # pass the render process except the last frame in cache chunk in behavior env. set to False to save full video, but slower
-skip_intermediate_obs_in_chunk: True
+skip_intermediate_renders: True
 # parallel env running in env workers to speed up env.step
 num_env_subprocess: 1
 
@@ -119,7 +119,7 @@ omni_config:
     # activity_instance_dir should point to a directory of cached task instance JSON files.
     # RLinf scans filenames directly and supports official *_template.json and
     # *_template-tro_state.json instances.
-    # Use rlinf/envs/behavior/instance_generator.py to generate compatible files.
+    # Use rlinf/envs/sim/behavior/instance_generator.py to generate compatible files.
     # If set and instance_resample_mode is disabled, RLinf loads activity_instance_id from this directory.
     # This directory must match scene.scene_model.
     activity_instance_dir: null

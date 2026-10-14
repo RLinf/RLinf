@@ -1,6 +1,6 @@
 .. _dual-franka-pico-dagger-zh:
 
-双 Franka 使用 PICO 采集与 DAgger
+双臂 Franka 的 PICO 数据采集与 DAgger
 ================================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
@@ -65,7 +65,7 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
      - 用 PICO 双手遥操作采集 tcp_rot6d LeRobot 数据。
    * - HG-DAgger
      - ``realworld_dual_franka_dagger_openpi``
-     - 策略自主执行，PICO 接管帧作为专家数据进入 replay buffer。
+     - 策略自主执行，PICO 按臂接管；归档完整成功轨迹，并仅用全接管 action chunk 训练。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -95,22 +95,18 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 机器人节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。根据 Franka 官方
-`compatibility matrix <https://frankarobotics.github.io/docs/compatibility.html>`_
-选择 ``LIBFRANKA_VERSION``；避免使用 libfranka ``0.18.0``。
+在每台直接与 Franka 通信的机器人节点上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   export LIBFRANKA_VERSION=0.19.0       # 或 0.15.0，与固件匹配
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-``franka-franky`` 环境会安装 ``franka`` extra，其中包含 PICO consumer 侧所需的
-``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证
-流程见 :doc:`franka_vr`。
+``franka`` 环境会安装 Franky、相机和输入设备依赖，其中包含 PICO consumer 侧所需的 ``pyzmq``。PICO 头显、XRoboToolkit PC Service 和 ``vr_data_publisher`` 的安装与验证流程见 :doc:`franka_vr`。
 
 推理节点
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -164,9 +160,7 @@ Ray 节点布局
 
 .. warning::
 
-   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成
-   ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK``、
-   ``RLINF_KEYBOARD_DEVICE`` 和 ROS / Franka 相关环境变量配置。
+   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成 ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK``、``RLINF_KEYBOARD_DEVICE`` 以及 Franka 专用环境变量的配置。
 
 集群设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -253,9 +247,9 @@ env / PICO consumer，rank ``2`` 为右臂。
   RealSense / Lumos 相机 serial 或稳定 ``/dev/v4l/by-id`` 路径。
 * ``base_camera_type``、``left_camera_type``、``right_camera_type``：相机类型，
   通常为 ``realsense``、``lumos``、``lumos``。
-* ``left_gripper_type`` / ``right_gripper_type``：夹爪类型，Robotiq 夹爪填
-  ``robotiq``。
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：Robotiq 串口路径。
+* ``left_gripper_type`` / ``right_gripper_type``：左右夹爪类型。
+* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定
+  ``/dev/serial/by-id`` 路径。
 * ``left_controller_node_rank`` / ``right_controller_node_rank``：左右臂控制节点
   rank。采集配置通常为 ``0`` / ``1``；DAgger 三节点配置通常为 ``1`` / ``2``。
 * ``node_rank``：DualFranka 硬件配置所在的 env / PICO consumer 节点 rank。采集配置
@@ -280,7 +274,8 @@ PICO 手柄才会分别绑定到左 / 右机械臂。
 
    env:
      train:
-       use_pico: True
+       smooth_intervene: True
+       teleop: pico
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
          hand: "dual"
@@ -305,7 +300,37 @@ PICO 手柄才会分别绑定到左 / 右机械臂。
 采集和 DAgger 的 ``hold_current_when_inactive`` 语义不同：
 
 * 采集配置为 ``True``：未按 ``grip`` 的手臂保持当前 TCP，适合纯遥操作数据采集。
-* DAgger 配置为 ``False``：未按 ``grip`` 时保留策略动作，只把接管帧标为专家数据。
+* DAgger 配置为 ``False``：未按 ``grip`` 的手臂保留 rollout action；按下任意一侧
+  ``grip`` 时，只用对应侧的 PICO action 覆盖策略动作，另一侧仍保留 rollout action。
+
+双臂 DAgger 的接管与记录按臂合成。例如只接管左臂时，实际执行并写入
+``intervene_action`` 的 20D 动作为：
+
+.. code-block:: text
+
+   [左臂 PICO 10D action, 右臂 rollout 10D action]
+
+只接管右臂时则相反。任意一臂发生替换都会设置 ``intervene_flag=True``；只有两臂
+都未接管时才不会产生 intervention 记录。完整成功 episode 仍会由 online LeRobot
+collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
+``intervene_flag``，只暴露所有非 padding 帧均为人工纠正的 action chunk。
+
+
+机械臂柔顺性参数
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PICO 数采、DAgger 的 policy 执行和评估中，两条机械臂均使用 Franky 默认 Cartesian 参数，无需额外添加 ``compliance``。默认值和任务 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。双臂 TCP 任务默认不在 reset 时请求其他参数，因此初始刚度和误差限幅会持续生效。
+
+需要同时调整两条机械臂时，在 ``DualFranka`` 硬件条目中添加与机械臂 IP 同级的 ``compliance`` mapping。单侧 mapping 会替换该机械臂使用的共享 mapping，其中未填写的字段使用 Franky 默认值。例如：
+
+.. code-block:: yaml
+
+   compliance:
+     translational_stiffness: 900.0
+   left_compliance:
+     max_step: 0.02
+
+这里右臂使用 900 N/m 的刚度和默认的 3 cm 目标变化上限；左臂使用默认的 1000 N/m 刚度和 2 cm 上限。不填写 ``left_compliance`` 时，左臂也使用共享 mapping；填写 ``left_compliance: {}`` 则让左臂全部使用 backend 默认值。``right_compliance`` 遵循相同规则。这些参数也作用于 DAgger 中的 policy 目标。GELLO 关节遥操作使用关节控制，不受这些 Cartesian 参数影响。
 
 
 启动 PICO 数据流
@@ -369,8 +394,8 @@ PICO 操作：
 
 采集脚本会在 ``logs/<timestamp>/`` 下写出：
 
-* replay-buffer 轨迹：``demos/``
-* LeRobot 数据：``collected_data/rank_0/id_0/``，后续 shard 为 ``id_1``、``id_2``
+* replay-buffer 轨迹：``demo_buffer/``
+* LeRobot 数据：``lerobot_dataset/rank_0/id_0/``，后续 shard 为 ``id_1``、``id_2``
 
 PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数据动作就是
 tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``。
@@ -420,20 +445,42 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
    algorithm:
      dagger:
        only_save_expert: True
+       online_lerobot:
+         enabled: True
+         only_success: True
+         robot_type: "dual_FR3"
+         fps: 10
+         finalize_interval: 1
+         data_path: ${runner.logger.log_path}/online_lerobot
+         rolling_lerobot_window_size: 50000
+         min_frames: 1
+         lerobot_num_workers: 0
 
    env:
      train:
-       use_pico: True
+       smooth_intervene: True
+       teleop: pico
        keyboard_reward_wrapper: eval_control
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
          hand: "dual"
          hold_current_when_inactive: False
      eval:
-       use_pico: False
+       teleop: none
 
-``only_save_expert: True`` 表示 replay buffer 只保存 PICO 接管产生的专家帧。
-``env.eval.use_pico: False`` 表示评测阶段只看策略本身，不混入人工接管。
+``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
+
+``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式仅支持 PICO（``teleop: pico``），且当前要求每个 env worker pipeline stage 只运行一个环境。
+
+``only_success: True`` 表示失败 rollout 会被丢弃，只保存成功 episode；
+``only_save_expert: True`` 仍会归档完整的成功 episode，但训练只采样 action chunk
+内所有非 padding 帧均满足 ``intervene_flag=True`` 的起点。双臂任意一臂被替换时，
+该帧就会标记为接管，因此这样的 chunk 可能由一侧 PICO action 与另一侧 rollout
+action 共同组成。每个成功 episode 会立即归档到
+``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``。
+``env.eval.teleop: none`` 表示评测阶段只看策略本身，不混入人工接管。
+
+真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；这里的人工接管由 PICO intervention wrapper 决定。
 
 执行 DAgger
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -452,9 +499,10 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
 * ``c``：标记成功并结束当前 rollout。
 
 每次 episode 结束后，env 会 reset 并再次等待 ``a``。策略执行中只在需要纠正时按住
-``grip``，松开后让策略继续运行；这些接管片段会通过 ``info["intervene_action"]``
-进入 HG-DAgger 的 replay buffer。
-
+``grip``，松开后让策略继续运行。按住任意一侧 ``grip`` 时，该侧 PICO action 与
+另一侧 rollout action 会合成为完整 20D ``info["intervene_action"]``。成功结束后，
+整条 episode 经内存发送给 actor，并写入 online LeRobot shard；失败 episode 被丢弃。
+actor 保留完整物理归档，但只向训练暴露全程带接管标记的 action chunk。
 
 监控
 ----------------------------------------
@@ -467,13 +515,16 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
 
 推荐关注：
 
-* ``train/dagger/actor_loss``：基于接管数据的监督损失。
-* ``train/replay_buffer/num_trajectories``：已保存轨迹数量。
-* ``train/replay_buffer/total_samples``：可训练样本数。
+* ``train/dagger/actor_loss``：基于 expert-only action chunk 的监督损失。
+* ``train/lerobot_dataset/total_episodes``：actor 已接收的成功 episode 数量。
+* ``train/lerobot_dataset/physical_frames``：已接收的 LeRobot 物理帧数量。
+* ``train/lerobot_dataset/logical_samples``：rolling window 内符合专家条件、可训练的 chunk 起点数。
+* ``train/lerobot_dataset/num_sub_datasets``：当前加载的 LeRobot shard 数量。
 * ``train/actor/lr`` 和 ``train/actor/grad_norm``：训练稳定性。
 
-采集阶段可以直接查看 ``logs/<timestamp>/run_embodiment.log``，确认成功 episode
-计数和 LeRobot 写出路径。
+采集和在线 DAgger 阶段都可以查看 ``logs/<timestamp>/run_embodiment.log``，确认成功
+episode 计数和 LeRobot 写出路径。在线 DAgger shard 位于
+``logs/<timestamp>-realworld_dual_franka_dagger_openpi/online_lerobot/rank_0/``。
 
 
 故障排查

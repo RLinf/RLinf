@@ -1,3 +1,11 @@
+from __future__ import annotations
+
+import asyncio
+import importlib
+import importlib.util
+import json
+import logging
+
 # Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,20 +19,34 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import os
+import pickle
+import sys
+import tempfile
+import time
 import types
+import uuid
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest import mock
+from unittest.mock import patch
 
 import pytest
+import ray
+from omegaconf import OmegaConf
 
+import rlinf.scheduler.hardware.accelerators.nvidia_gpu as nv_module
 from rlinf.scheduler import (
     Cluster,
     NodePlacementStrategy,
     PackedPlacementStrategy,
+    Tracer,
     Worker,
     WorkerAddress,
 )
+from rlinf.scheduler.cluster.utils import DistributedRayLogCollector
+from rlinf.scheduler.hardware.accelerators.intel_gpu import IntelGPUManager
+from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
 from rlinf.scheduler.manager.coll_manager import CollectiveManager
 from rlinf.scheduler.manager.manager import Manager
 
@@ -264,3 +286,585 @@ class TestLoadUserExtensions:
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
+
+
+class LocalRayLogCollector(DistributedRayLogCollector):
+    """Collector variant using local temp directories for testing."""
+
+    def __init__(self, *args, logs_dir: Path, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._logs_dir = logs_dir
+
+    def _get_ray_logs_dir(self) -> Path:
+        return self._logs_dir
+
+    def _resolve_registered_workers(self, logs_dir: Path) -> None:
+        # Keep worker-to-log mapping fully controlled by each test.
+        return
+
+
+def _new_collector(logs_dir: Path, output_dir: Path) -> LocalRayLogCollector:
+    logger = logging.getLogger("test.distributed_log_collector")
+    return LocalRayLogCollector(
+        logger=logger,
+        output_dir=output_dir,
+        logs_dir=logs_dir,
+        poll_interval_s=0.1,
+    )
+
+
+def test_collector_is_pickleable_even_after_start(tmp_path: Path):
+    logs_dir = tmp_path / "ray_logs"
+    output_dir = tmp_path / "split_logs"
+    logs_dir.mkdir(parents=True)
+
+    collector = _new_collector(logs_dir=logs_dir, output_dir=output_dir)
+    assert collector.start() is True
+    try:
+        payload = pickle.dumps(collector)
+        restored = pickle.loads(payload)
+    finally:
+        collector.stop()
+
+    assert isinstance(restored, LocalRayLogCollector)
+    assert restored._thread is None
+    assert restored._started is False
+
+
+def test_process_once_reads_from_start_and_appends_incrementally(tmp_path: Path):
+    logs_dir = tmp_path / "ray_logs"
+    output_dir = tmp_path / "split_logs"
+    logs_dir.mkdir(parents=True)
+
+    worker_log = logs_dir / "worker-w1-j1-123.out"
+    worker_log.write_text("line-1\nline-2\n", encoding="utf-8")
+
+    collector = _new_collector(logs_dir=logs_dir, output_dir=output_dir)
+    collector._log_file_map[worker_log] = ("actor_group:0", "0")
+
+    collector._process_once(logs_dir, new_file_offset_from_start=True)
+    out_path = output_dir / "actor_group" / "rank_0.log"
+    assert out_path.read_text(encoding="utf-8") == "line-1\nline-2\n"
+
+    with worker_log.open("a", encoding="utf-8") as fp:
+        fp.write("line-3\n")
+    collector._process_once(logs_dir, new_file_offset_from_start=False)
+    assert out_path.read_text(encoding="utf-8") == "line-1\nline-2\nline-3\n"
+
+    collector.stop()
+
+
+def test_process_once_skips_historical_content_for_new_file_in_loop(tmp_path: Path):
+    logs_dir = tmp_path / "ray_logs"
+    output_dir = tmp_path / "split_logs"
+    logs_dir.mkdir(parents=True)
+
+    worker_log = logs_dir / "worker-w2-j2-456.err"
+    worker_log.write_text("old-line\n", encoding="utf-8")
+
+    collector = _new_collector(logs_dir=logs_dir, output_dir=output_dir)
+    collector._log_file_map[worker_log] = ("collector_group:1", "1")
+
+    # Background loop behavior: new files start at EOF (historical lines are skipped).
+    collector._process_once(logs_dir, new_file_offset_from_start=False)
+    out_path = output_dir / "collector_group" / "rank_1.log"
+    assert not out_path.exists()
+
+    with worker_log.open("a", encoding="utf-8") as fp:
+        fp.write("new-line\n")
+    collector._process_once(logs_dir, new_file_offset_from_start=False)
+    assert out_path.read_text(encoding="utf-8") == "new-line\n"
+
+    collector.stop()
+
+
+def test_start_stop_drains_remaining_logs_from_beginning(tmp_path: Path):
+    logs_dir = tmp_path / "ray_logs"
+    output_dir = tmp_path / "split_logs"
+    logs_dir.mkdir(parents=True)
+
+    collector = LocalRayLogCollector(
+        logger=logging.getLogger("test.distributed_log_collector.stop"),
+        output_dir=output_dir,
+        logs_dir=logs_dir,
+        poll_interval_s=2.0,
+    )
+    assert collector.start() is True
+
+    # Let the thread run one iteration with an empty mapping, then wait.
+    time.sleep(0.2)
+
+    worker_log = logs_dir / "worker-w3-j3-789.out"
+    worker_log.write_text("late-line-1\nlate-line-2\n", encoding="utf-8")
+    collector._log_file_map[worker_log] = ("late_group:0", "0")
+
+    # stop() performs drain with new_file_offset_from_start=True, so it should
+    # capture complete content even if the background thread did not process it yet.
+    collector.stop()
+
+    out_path = output_dir / "late_group" / "rank_0.log"
+    assert out_path.read_text(encoding="utf-8") == "late-line-1\nlate-line-2\n"
+
+
+class CollectorIntegrationWorker(Worker):
+    """Worker used for integration testing with Cluster and Ray."""
+
+    def __init__(self):
+        super().__init__()
+
+    def emit_test_log(self, token: str) -> int:
+        self.log_info(f"collector-integration-token {token}")
+        print(f"collector-integration-stdout {token}", flush=True)
+        print(f"collector-integration-stderr {token}", file=sys.stderr, flush=True)
+        return os.getpid()
+
+
+def _reset_cluster_singleton() -> None:
+    if ray.is_initialized():
+        ray.shutdown()
+    if hasattr(Cluster, "_instance"):
+        instance = getattr(Cluster, "_instance")
+        if instance is not None:
+            instance._has_initialized = False
+        delattr(Cluster, "_instance")
+    Cluster.NAMESPACE = Cluster.SYS_NAME
+
+
+def test_cluster_launch_collects_real_worker_logs(tmp_path: Path):
+    out_dir = tmp_path / "cluster_logs"
+    token = f"collector-token-{uuid.uuid4().hex}"
+    _reset_cluster_singleton()
+    tests_root = Path(__file__).resolve().parent
+    python_path_entries = [str(tests_root)]
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    if existing_pythonpath:
+        python_path_entries.append(existing_pythonpath)
+    python_path_value = os.pathsep.join(python_path_entries)
+    cluster_cfg = OmegaConf.create(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "node_groups": [
+                {
+                    "label": "train",
+                    "node_ranks": "0",
+                    "env_configs": [
+                        {
+                            "node_ranks": "0",
+                            "python_interpreter_path": sys.executable,
+                            "env_vars": [{"PYTHONPATH": python_path_value}],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    cluster = None
+    worker_group = None
+    try:
+        cluster = Cluster(cluster_cfg=cluster_cfg, distributed_log_dir=str(out_dir))
+        worker_group = CollectorIntegrationWorker.create_group().launch(
+            cluster=cluster,
+            placement_strategy=NodePlacementStrategy([0], node_group_label="train"),
+            name="collector_integration_group",
+        )
+        pids = worker_group.emit_test_log(token).wait()
+        assert len(pids) == 1
+        worker_pid = pids[0]
+
+        collector = cluster._distributed_log_collector
+        assert collector is not None
+        logs_dir = collector._get_ray_logs_dir()
+        assert logs_dir is not None
+
+        collector._stop_event.set()
+        if collector._thread is not None:
+            collector._thread.join(timeout=10)
+
+        candidates = []
+        bind_deadline = time.time() + 30
+        while time.time() < bind_deadline and len(candidates) == 0:
+            candidates = (
+                list(logs_dir.glob(f"worker-*-*-{worker_pid}.out"))
+                + list(logs_dir.glob(f"worker-*-{worker_pid}.out"))
+                + list(logs_dir.glob(f"worker-*-*-{worker_pid}.err"))
+                + list(logs_dir.glob(f"worker-*-{worker_pid}.err"))
+            )
+            if len(candidates) == 0:
+                time.sleep(0.5)
+        assert len(candidates) > 0, (
+            "Did not find Ray worker log files for launched worker pid "
+            f"{worker_pid} under {logs_dir}."
+        )
+        for candidate in candidates:
+            collector._log_file_map[candidate] = ("collector_integration_group:0", "0")
+            # Drop any offset the background loop may have recorded so the
+            # from-start read below begins at byte 0 and captures the token.
+            collector._file_offsets.pop(candidate, None)
+
+        target_log = out_dir / "collector_integration_group" / "rank_0.log"
+        deadline = time.time() + 30
+        content = ""
+        while time.time() < deadline:
+            collector._process_once(logs_dir, new_file_offset_from_start=True)
+            if target_log.exists():
+                content = target_log.read_text(encoding="utf-8")
+                if token in content:
+                    break
+            time.sleep(0.5)
+        assert token in content, (
+            "Did not find emitted integration token in collected worker log "
+            f"within timeout. Current content:\n{content}"
+        )
+        collector.stop()
+    finally:
+        if worker_group is not None:
+            worker_group._close()
+        _reset_cluster_singleton()
+
+
+class FakeProxy:
+    """Stand-in for the tracer ManagerProxy that records events in memory."""
+
+    def __init__(self):
+        self.events = []
+
+    def record(self, event):
+        self.events.append(event)
+
+
+class TestTracerManager:
+    """Server-side test: the Tracer manager writes events to a JSONL file."""
+
+    def test_record_and_finalize(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sub", "trace.jsonl")
+            # Construct the manager as a plain object (no Ray actor needed).
+            tracer = Tracer(path)
+            tracer.record({"name": "a", "ph": "B", "ts": 1, "pid": "p", "tid": "main"})
+            tracer.record({"name": "a", "ph": "E", "ts": 2, "pid": "p", "tid": "main"})
+            assert tracer.finalize() == os.path.abspath(path)
+
+            with open(path) as f:
+                events = [json.loads(line) for line in f]
+            assert [e["ph"] for e in events] == ["B", "E"]
+            assert all(e["name"] == "a" for e in events)
+
+
+class TestTracerEmit:
+    """Client-side test: the emit API forwards well-formed events, or no-ops."""
+
+    def teardown_method(self):
+        Tracer._unavailable = False
+        Tracer._labeled = False
+
+    def test_emit_forwards_events(self, monkeypatch):
+        proxy = FakeProxy()
+        monkeypatch.setattr(Tracer, "_get", classmethod(lambda cls: proxy))
+        monkeypatch.setattr(Tracer, "_pid", staticmethod(lambda: "driver"))
+        Tracer._labeled = False
+
+        with Tracer.trace_span("step", cat="runner", args={"i": 0}):
+            Tracer.trace_begin("inner", cat="actor")
+            Tracer.trace_end("inner", cat="actor")
+
+        @Tracer.trace_func(cat="dec")
+        def fn():
+            return 7
+
+        assert fn() == 7
+
+        # A one-time process_name metadata event labels the process.
+        meta = [e for e in proxy.events if e["ph"] == "M"]
+        assert len(meta) == 1
+        assert meta[0]["args"]["name"] == "driver"
+
+        # Duration events are well-formed and balanced per name.
+        spans = [e for e in proxy.events if e["ph"] in ("B", "E")]
+        assert all({"name", "cat", "ph", "ts", "pid", "tid"} <= e.keys() for e in spans)
+        step_begin = next(e for e in spans if e["name"] == "step" and e["ph"] == "B")
+        assert step_begin["cat"] == "runner" and step_begin["args"] == {"i": 0}
+        for name in ("step", "inner", "fn"):
+            phs = sorted(e["ph"] for e in spans if e["name"] == name)
+            assert phs == ["B", "E"]
+
+    def test_disabled_is_noop(self):
+        # When the tracer manager is unavailable, every emit API is a no-op.
+        Tracer._unavailable = True
+
+        Tracer.trace_begin("noop")
+        Tracer.trace_end("noop")
+        with Tracer.trace_span("noop"):
+            pass
+
+        @Tracer.trace_func
+        def fn():
+            return 42
+
+        assert fn() == 42
+        assert Tracer._get() is None
+
+
+if __name__ == "__main__":
+    import pytest
+
+    pytest.main([__file__, "-v"])
+
+
+@pytest.fixture(autouse=True)
+def _reset_profiling_flag():
+    """Reset module-level flag between tests for isolation."""
+    nv_module._nv_profiling_active = False
+    yield
+    nv_module._nv_profiling_active = False
+
+
+class TestStartStop:
+    """NvidiaGPUManager.start_profiling / stop_profiling drive torch.cuda.profiler."""
+
+    def test_start_sets_active_and_calls_cuda_profiler_start(self):
+        with patch("torch.cuda.profiler.start") as mock_start:
+            NvidiaGPUManager.start_profiling(step_idx=5)
+        assert NvidiaGPUManager.is_profiling_active() is True
+        mock_start.assert_called_once_with()
+
+    def test_stop_clears_active_and_calls_cuda_profiler_stop(self):
+        with patch("torch.cuda.profiler.start"):
+            NvidiaGPUManager.start_profiling()
+        with patch("torch.cuda.profiler.stop") as mock_stop:
+            NvidiaGPUManager.stop_profiling()
+        assert NvidiaGPUManager.is_profiling_active() is False
+        mock_stop.assert_called_once_with()
+
+    def test_double_start_is_idempotent(self):
+        with patch("torch.cuda.profiler.start") as mock_start:
+            NvidiaGPUManager.start_profiling()
+            NvidiaGPUManager.start_profiling()
+        assert mock_start.call_count == 1
+
+    def test_stop_without_start_is_noop(self):
+        with patch("torch.cuda.profiler.stop") as mock_stop:
+            NvidiaGPUManager.stop_profiling()
+        mock_stop.assert_not_called()
+
+
+class TestProfilingRangeSync:
+    """NvidiaGPUManager.profiling_range on sync code is transparent off / wraps on."""
+
+    def test_passes_through_when_inactive(self):
+        results = []
+        with NvidiaGPUManager.profiling_range("test/op"):
+            results.append(42)
+        assert results == [42]
+        assert NvidiaGPUManager.is_profiling_active() is False
+
+    def test_emits_range_when_active(self):
+        with patch("torch.cuda.profiler.start"):
+            NvidiaGPUManager.start_profiling()
+
+        with (
+            patch("torch.cuda.nvtx.range_push") as mock_range_push,
+            patch("torch.cuda.nvtx.range_pop") as mock_range_pop,
+        ):
+            with NvidiaGPUManager.profiling_range("test/op", color="green"):
+                pass
+
+        mock_range_push.assert_called_once_with("test/op")
+        mock_range_pop.assert_called_once_with()
+
+    def test_ends_range_on_exception(self):
+        with patch("torch.cuda.profiler.start"):
+            NvidiaGPUManager.start_profiling()
+
+        with (
+            patch("torch.cuda.nvtx.range_push") as mock_range_push,
+            patch("torch.cuda.nvtx.range_pop") as mock_range_pop,
+        ):
+            with pytest.raises(ValueError, match="oops"):
+                with NvidiaGPUManager.profiling_range("test/op"):
+                    raise ValueError("oops")
+
+        mock_range_push.assert_called_once_with("test/op")
+        mock_range_pop.assert_called_once_with()
+
+
+class TestProfilingRangeAsync:
+    """profiling_range works correctly inside async coroutines."""
+
+    def test_passes_through_when_inactive(self):
+        async def coro():
+            with NvidiaGPUManager.profiling_range("test/async_op"):
+                return 99
+
+        assert asyncio.run(coro()) == 99
+
+    def test_emits_range_when_active(self):
+        with patch("torch.cuda.profiler.start"):
+            NvidiaGPUManager.start_profiling()
+
+        async def coro():
+            with NvidiaGPUManager.profiling_range("test/async_op"):
+                return 7
+
+        with (
+            patch("torch.cuda.nvtx.range_push") as mock_range_push,
+            patch("torch.cuda.nvtx.range_pop") as mock_range_pop,
+        ):
+            result = asyncio.run(coro())
+
+        assert result == 7
+        mock_range_push.assert_called_once_with("test/async_op")
+        mock_range_pop.assert_called_once_with()
+
+
+def test_get_torch_platform_adds_ipc_collect_when_missing(monkeypatch):
+    torch_module = ModuleType("torch")
+    xpu_platform = SimpleNamespace()
+    torch_module.xpu = xpu_platform
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+
+    result = IntelGPUManager.get_torch_platform()
+
+    assert result is xpu_platform
+    assert hasattr(xpu_platform, "ipc_collect")
+    assert callable(xpu_platform.ipc_collect)
+    assert xpu_platform.ipc_collect() is None
+
+
+def test_get_torch_platform_keeps_existing_ipc_collect(monkeypatch):
+    torch_module = ModuleType("torch")
+    sentinel = object()
+
+    def _existing_ipc_collect():
+        return sentinel
+
+    xpu_platform = SimpleNamespace(ipc_collect=_existing_ipc_collect)
+    torch_module.xpu = xpu_platform
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+
+    result = IntelGPUManager.get_torch_platform()
+
+    assert result is xpu_platform
+    assert xpu_platform.ipc_collect is _existing_ipc_collect
+    assert xpu_platform.ipc_collect() is sentinel
+
+
+_PATCHER_UNDER_TEST = "_rlinf_utils_patcher_under_test"
+_TEST_MODULE_NAMES = (
+    "flash_attn",
+    "rlinf_test_missing_cuda_dep",
+    "rlinf_test_missing_cuda_pkg",
+    "rlinf_test_loaded_dep",
+)
+
+
+def _load_patcher_module():
+    patcher_path = (
+        Path(__file__).resolve().parents[2] / "rlinf" / "utils" / "patcher.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        _PATCHER_UNDER_TEST,
+        patcher_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+Patcher = _load_patcher_module().Patcher
+
+
+def _remove_test_modules() -> None:
+    for root_name in _TEST_MODULE_NAMES:
+        for module_name in list(sys.modules):
+            if module_name == root_name or module_name.startswith(f"{root_name}."):
+                del sys.modules[module_name]
+
+
+@pytest.fixture(autouse=True)
+def clean_patcher_state():
+    originals = {
+        name: sys.modules[name] for name in _TEST_MODULE_NAMES if name in sys.modules
+    }
+    _remove_test_modules()
+    Patcher.clear()
+    yield
+    Patcher.clear()
+    _remove_test_modules()
+    sys.modules.update(originals)
+
+
+def test_skip_import_registers_stub_immediately():
+    result = Patcher.skip_import("rlinf_test_missing_cuda_dep")
+
+    assert result is Patcher
+    stub_module = sys.modules["rlinf_test_missing_cuda_dep"]
+    assert stub_module.__name__ == "rlinf_test_missing_cuda_dep"
+    assert stub_module.some_kernel() is None
+
+
+def test_skip_import_supports_submodule_imports():
+    Patcher.skip_import("rlinf_test_missing_cuda_pkg")
+
+    submodule = importlib.import_module("rlinf_test_missing_cuda_pkg.bert_padding")
+    namespace = {}
+    exec(
+        "from rlinf_test_missing_cuda_pkg.bert_padding import unpad_input",
+        namespace,
+    )
+
+    assert submodule is sys.modules["rlinf_test_missing_cuda_pkg.bert_padding"]
+    assert namespace["unpad_input"]() is None
+
+
+def test_skip_import_preserves_loaded_modules():
+    loaded_module = types.ModuleType("rlinf_test_loaded_dep")
+    loaded_module.existing_value = object()
+    sys.modules["rlinf_test_loaded_dep"] = loaded_module
+
+    Patcher.skip_import("rlinf_test_loaded_dep")
+
+    assert sys.modules["rlinf_test_loaded_dep"] is loaded_module
+
+
+def test_clear_stub_import_removes_stub_tree_only():
+    Patcher.skip_import("rlinf_test_missing_cuda_dep")
+    importlib.import_module("rlinf_test_missing_cuda_dep.bert_padding")
+
+    result = Patcher.clear_stub_import("rlinf_test_missing_cuda_dep")
+
+    assert result is Patcher
+    assert "rlinf_test_missing_cuda_dep" not in sys.modules
+    assert "rlinf_test_missing_cuda_dep.bert_padding" not in sys.modules
+
+
+def test_clear_stub_import_preserves_real_modules():
+    real_module = types.ModuleType("rlinf_test_loaded_dep")
+    real_module.__file__ = "/site-packages/rlinf_test_loaded_dep/__init__.py"
+    sys.modules["rlinf_test_loaded_dep"] = real_module
+
+    Patcher.clear_stub_import("rlinf_test_loaded_dep")
+
+    assert sys.modules["rlinf_test_loaded_dep"] is real_module
+
+
+def test_clear_stub_import_removes_flash_attn_stub_tree_only():
+    Patcher.skip_import("flash_attn")
+    importlib.import_module("flash_attn.bert_padding")
+
+    Patcher.clear_stub_import("flash_attn")
+
+    assert "flash_attn" not in sys.modules
+    assert "flash_attn.bert_padding" not in sys.modules
+
+
+def test_clear_stub_import_preserves_real_flash_attn_module():
+    real_flash_attn = types.ModuleType("flash_attn")
+    real_flash_attn.__file__ = "/site-packages/flash_attn/__init__.py"
+    sys.modules["flash_attn"] = real_flash_attn
+
+    Patcher.clear_stub_import("flash_attn")
+
+    assert sys.modules["flash_attn"] is real_flash_attn

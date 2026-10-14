@@ -187,7 +187,7 @@ communicating correctly and producing valid TCP target readings:
 .. code-block:: bash
 
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python -m rlinf.envs.realworld.common.gello.gello_expert \
+   python -m rlinf.robotics.parts.teleop.gello \
        --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
 You should see continuously updating output like:
@@ -211,8 +211,7 @@ The key differences from the standard SpaceMouse config are:
 
    env:
      eval:
-       use_spacemouse: False
-       use_gello: True
+       teleop: gello
        gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"
 
 .. list-table:: GELLO-specific configuration fields
@@ -222,17 +221,13 @@ The key differences from the standard SpaceMouse config are:
    * - Field
      - Default
      - Description
-   * - ``use_gello``
-     - ``False``
-     - Enable GELLO teleoperation. Set to ``True`` to use GELLO instead of
-       SpaceMouse.
+   * - ``teleop``
+     - ``spacemouse``
+     - Set to ``gello`` to hand control to a leader arm.
    * - ``gello_port``
      - ``null``
-     - Serial port path of the GELLO device. Required when ``use_gello``
-       is ``True``.
-   * - ``use_spacemouse``
-     - ``True``
-     - Must be set to ``False`` when using GELLO.
+     - Serial port path of the GELLO device. Required when ``teleop``
+       is ``gello``.
 
 For full data collection instructions, refer to the
 **Data Collection with GELLO** section in :doc:`franka`.

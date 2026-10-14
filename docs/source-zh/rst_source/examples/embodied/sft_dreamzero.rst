@@ -72,11 +72,8 @@ DreamZero 监督微调和 Franka 真机部署
    git clone https://github.com/RLinf/dreamzero.git
    export DREAMZERO_PATH=/path/to/dreamzero
 
-**这些命令会：**
-
-1. 通过 ``requirements/install.sh`` 创建 DreamZero 专用 uv 虚拟环境。
-2. 默认只安装离线 SFT 依赖；如果需要仿真评测，则额外安装 LIBERO。
-3. 通过 ``DREAMZERO_PATH`` 让外部 DreamZero 包可导入；``examples/sft/run_vla_sft.sh`` 也会将其加入 ``PYTHONPATH``。
+``DREAMZERO_PATH`` 必须指向该 clone：``examples/sft/run_vla_sft.sh`` 会读取它，
+以便让外部 DreamZero 包可被导入。
 
 模型准备
 ----------------------------------------

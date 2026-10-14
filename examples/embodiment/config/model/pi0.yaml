@@ -1,25 +1,21 @@
 model_type: "openpi"
 
-# Model path - should be set in specific config files
-model_path: "/path/to/model/openpi"
-
+# Default Pi0 shape. Env-specific fields (config_name, action_dim,
+# num_action_chunks, task, …) are overridden in the experiment YAML.
 precision: null
+pi05: False
 
-# Action and chunk settings
-num_action_chunks: 10
-action_dim: 7
-
-# LoRA settings
 is_lora: False
 lora_rank: 32
 
-# Training settings
+num_action_chunks: 10
+action_dim: 7
 use_proprio: True
 num_steps: 4
 add_value_head: False
 
-# openpi specific parameters
 openpi:
+  task: rl
   config_name: "pi0_libero"
   num_images_in_input: 2
   noise_level: 0.5
@@ -30,12 +26,8 @@ openpi:
   noise_method: "flow_sde"
   add_value_head: ${..add_value_head}
   detach_critic_input: False
-  # DSRL specific configurations (disabled by default)
-  use_dsrl: False
-  dsrl_state_dim: 8
-  dsrl_action_noise_dim: 32
-  dsrl_num_q_heads: 10
-  dsrl_agg_q: "mean"
-  dsrl_image_latent_dim: 64
-  dsrl_state_latent_dim: 64
-  dsrl_hidden_dims: [128, 128, 128]
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 48
+  discrete_state_input: False

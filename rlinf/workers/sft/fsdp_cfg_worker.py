@@ -68,8 +68,8 @@ class FSDPCfgWorker(FSDPSftWorker):
         FSDPModelManager.__init__(self, cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
-        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
-        self.device = torch.cuda.current_device()
+        Worker.torch_platform.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+        self.device = Worker.torch_platform.current_device()
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -284,7 +284,13 @@ class FSDPCfgWorker(FSDPSftWorker):
 
         LeRobotDataset has a bug where episode_data_index doesn't match the
         original episode indices when filtering by episodes. This fixes that.
+
+        Dataset format v3.0 (lerobot >= 0.4) dropped ``episode_data_index``
+        along with the bug, so there is nothing to patch there.
         """
+        if getattr(dataset, "episode_data_index", None) is None:
+            return
+
         ep_idx_mapping = {ep: i for i, ep in enumerate(sorted(episodes))}
         max_ep_idx = max(episodes) + 1
 

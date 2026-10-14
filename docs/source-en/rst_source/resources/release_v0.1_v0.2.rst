@@ -13,31 +13,31 @@ Embodied Intelligence
 
 1. Core Capability Upgrades, highlighting Real-World Robotics RL and World Models
 
-- Supported Real-World RL with :doc:`XSquare Turtle2 <../examples/embodied/xsquare_turtle2>`.
+- Supported Real-World RL with `XSquare Turtle2 <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/xsquare_turtle2.html>`_.
 
-- Supported World Models as simulators for RL training, including :doc:`OpenSora <../examples/embodied/opensora>`, :doc:`Wan <../examples/embodied/wan>`, and :doc:`WoVR <publications/wovr>`.
+- Supported World Models as simulators for RL training, including `OpenSora <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/opensora.html>`_, `Wan <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/wan.html>`_, and `WoVR <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/publications/wovr.html>`_.
 
-- Vision-Language Model Supervised Fine‑Tuning adds supervised fine‑tuning (SFT) capabilities for vision‑language models (VLMs), supporting efficient fine‑tuning on custom datasets. Verified on the Robo2VLM dataset, achieving approximately 95% reproduction accuracy for `PR 708 <https://github.com/RLinf/RLinf/pull/708>`_ and `PR 781 <https://github.com/RLinf/RLinf/pull/781>`_ models. See :doc:`SFT VLM <../examples/embodied/sft_vlm>`.
+- Vision-Language Model Supervised Fine‑Tuning adds supervised fine‑tuning (SFT) capabilities for vision‑language models (VLMs), supporting efficient fine‑tuning on custom datasets. Verified on the Robo2VLM dataset, achieving approximately 95% reproduction accuracy for `PR 708 <https://github.com/RLinf/RLinf/pull/708>`_ and `PR 781 <https://github.com/RLinf/RLinf/pull/781>`_ models. See `SFT VLM <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/sft_vlm.html>`_.
 
-- Supported Real2Sim2Real RL training based on :doc:`GSEnv (ManiSkill-GS) <../examples/embodied/gsenv>`.
+- Supported Real2Sim2Real RL training based on `GSEnv (ManiSkill-GS) <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/gsenv.html>`_.
 
-- Supported RL-based Sim-Real Co-Training of the π(0.5) model with :doc:`Co-training <../examples/embodied/co_training>`.
+- Supported RL-based Sim-Real Co-Training of the π(0.5) model with `Co-training <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/co_training.html>`_.
 
 1. Model and Algorithm Ecosystem Expansion
 
-- Supported Dexbotic models and RL training with :doc:`Dexbotic <../examples/embodied/dexbotic>`.
+- Supported Dexbotic models and RL training with `Dexbotic <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/dexbotic.html>`_.
 
-- Improved support for :doc:`IsaacLab <../examples/embodied/isaaclab>`, especially for GR00T+IsaacLab.
+- Improved support for `IsaacLab <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/isaaclab.html>`_, especially for GR00T+IsaacLab.
 
-- Supported RL training of the openpi model family on :doc:`RoboTwin 2.0 <../examples/embodied/robotwin>`.
+- Supported RL training of the openpi model family on `RoboTwin 2.0 <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/robotwin.html>`_.
 
-- Supported RL with the :doc:`CALVIN benchmark <../examples/embodied/calvin>`.
+- Supported RL with the `CALVIN benchmark <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/calvin.html>`_.
 
-- Supported RL with the :doc:`RoboCasa benchmark <../examples/embodied/robocasa>`.
+- Supported RL with the `RoboCasa benchmark <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/robocasa.html>`_.
 
-- Supported DSRL (Diffusion Steering via Reinforcement Learning) for pi0 with :doc:`DSRL <../examples/embodied/dsrl>`.
+- Supported DSRL (Diffusion Steering via Reinforcement Learning) for pi0 with `DSRL <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/dsrl.html>`_.
 
-- Supported SAC training for flow matching policy with :doc:`SAC-Flow <../examples/embodied/sac_flow>`.
+- Supported SAC training for flow matching policy with `SAC-Flow <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/embodied/sac_flow.html>`_.
 
 1. Training Infrastructure Enhancements
 
@@ -60,13 +60,13 @@ Agentic RL
 
 1. Core Capability Upgrades, highlighting Multi-Agent RL
 
-- Native Multi‑Agent Training Support introduces extensible multi‑agent reinforcement learning algorithms and unified data interfaces, significantly reducing the entry barrier for multi‑agent tasks. Enables rapid reproduction of complex `PR 824 <https://github.com/RLinf/RLinf/pull/824>`_ such as :doc:`WideSeek-R1 <../examples/agentic/wideseek_r1/index>`.
+- Native Multi‑Agent Training Support introduces extensible multi‑agent reinforcement learning algorithms and unified data interfaces, significantly reducing the entry barrier for multi‑agent tasks. Enables rapid reproduction of complex `PR 824 <https://github.com/RLinf/RLinf/pull/824>`_ such as `WideSeek-R1 <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/agentic/wideseek_r1/index.html>`_.
 
-- PPO Support for Reasoning Tasks: `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_. Extends PPO algorithm support to reasoning tasks, further broadening RLinf’s applicability in complex reasoning and decision‑making scenarios with :doc:`Reasoning PPO <../examples/agentic/reasoning_ppo>`.
+- PPO Support for Reasoning Tasks: `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_. Extends PPO algorithm support to reasoning tasks, further broadening RLinf’s applicability in complex reasoning and decision‑making scenarios with `Reasoning PPO <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/agentic/reasoning_ppo.html>`_.
 
-- The Megatron-LM backend now supports the FUSCO communication library: `PR 783 <https://github.com/RLinf/RLinf/pull/783>`_. Delivers significant performance and scalability improvements for All-to-All communication during MoE model training and inference with :doc:`FUSCO <../examples/system/fusco>`.
+- The Megatron-LM backend now supports the FUSCO communication library: `PR 783 <https://github.com/RLinf/RLinf/pull/783>`_. Delivers significant performance and scalability improvements for All-to-All communication during MoE model training and inference with `FUSCO <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/system/fusco.html>`_.
 
-- Supported agentic reinforcement learning on :doc:`rStar2 <../examples/agentic/rstar2>` (`PR 522 <https://github.com/RLinf/RLinf/pull/522>`_) and :doc:`Search-R1 <../examples/agentic/searchr1>` (`PR 639 <https://github.com/RLinf/RLinf/pull/639>`_).
+- Supported agentic reinforcement learning on `rStar2 <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/agentic/rstar2.html>`_ (`PR 522 <https://github.com/RLinf/RLinf/pull/522>`_) and `Search-R1 <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/agentic/searchr1.html>`_ (`PR 639 <https://github.com/RLinf/RLinf/pull/639>`_).
 
 Other improvements and bug fixes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -98,9 +98,9 @@ Other improvements and bug fixes
 Documentation
 ^^^^^^^^^^^^^
 
-- Reorganized the structure of the :doc:`examples index <../examples/index>`, classified examples into embodied scenarios, agentic scenarios, and system-level optimizations.
+- Reorganized the structure of the `examples index <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/examples/index.html>`_, classified examples into embodied scenarios, agentic scenarios, and system-level optimizations.
 
-- Added the :doc:`FAQ <faq>` document for breakpoint debugging.
+- Added the `FAQ <https://rlinf.readthedocs.io/en/release-v0.2/rst_source/faq.html>`_ document for breakpoint debugging.
 
 - Added awesome work and adoption section in README
 

@@ -150,7 +150,7 @@ class SGLangRouterWorker(Worker):
         """Spawn the router subprocess with NO workers attached.
 
         Attach workers afterwards with :meth:`register_server`. On failure
-        the subprocess is torn down via ``shutdown`` before ``RuntimeError``
+        the subprocess is torn down via ``stop`` before ``RuntimeError``
         is re-raised, so the caller can retry or fail fast without leaking
         a zombie router process.
 
@@ -198,7 +198,7 @@ class SGLangRouterWorker(Worker):
             self._wait_for_router_health(self._port)
         except RuntimeError as e:
             self.log_error(f"sglang router failed to become healthy: {e!r}")
-            self.shutdown()
+            self.stop()
             raise
         self.log_info(f"sglang router ready at {self._router_url}")
 
@@ -386,12 +386,12 @@ class SGLangRouterWorker(Worker):
         resp.raise_for_status()
         return resp.json()
 
-    def shutdown(self) -> None:
+    def stop(self) -> None:
         """SIGTERM the router subprocess (and its process group)."""
         proc = self._proc
         if proc is None:
             return
-        self.log_info(f"Shutting down sglang router pid={proc.pid}.")
+        self.log_info(f"Stopping sglang router pid={proc.pid}.")
         try:
             pgid = os.getpgid(proc.pid)
             os.killpg(pgid, signal.SIGTERM)

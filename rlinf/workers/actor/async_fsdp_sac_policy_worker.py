@@ -125,9 +125,9 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
 
         mean_metric_dict = self.process_train_metrics(metrics)
 
-        torch.cuda.synchronize()
+        Worker.torch_platform.synchronize()
         torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        Worker.torch_platform.empty_cache()
         return mean_metric_dict
 
     async def stop(self):

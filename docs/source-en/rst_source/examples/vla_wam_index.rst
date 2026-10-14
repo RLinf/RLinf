@@ -1,13 +1,55 @@
 Embodied Models
 ===============
 
-This category groups examples in which the **model or policy class** is the headline. They show how to onboard a specific model family in RLinf — checkpoint loading, processor / config wiring, action head, lightweight MLP policies, and a reference RL fine-tuning recipe — independent of any single benchmark.
+Choose a model or policy class to find its installation, checkpoint, and RL training workflow. For examples organized by benchmark, see :doc:`simulators_index`.
 
-If you are starting from "I want to train or RL-fine-tune model *X*", this is the right entry point. For benchmark-driven examples see :doc:`simulators_index`.
+.. _model-hardware-support:
+
+Hardware Support
+----------------
+
+NVIDIA is the default backend in the model recipes. AMD ROCm, Huawei Ascend
+CANN, and Moore Threads MUSA also support the three model families below on
+LIBERO and ManiSkill. Follow a model link for installation and launch
+instructions. On non-CUDA backends, ManiSkill runs PhysX on CPU and selects the
+renderer independently.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 38
+
+   * - Model
+     - Hardware
+     - Environment and Scope
+   * - :doc:`OpenVLA-OFT <embodied/openvla_oft>`
+     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <openvla-oft-hardware>`
+     - LIBERO · ManiSkill
+   * - :doc:`GR00T N1.5 <embodied/gr00t>`
+     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <gr00t-hardware>`
+     - LIBERO · ManiSkill with a ``maniskill_widowx`` checkpoint
+   * - :doc:`π₀ / π₀.₅ (OpenPI) <embodied/pi0>`
+     - :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <pi0-hardware>`
+     - LIBERO · ManiSkill · :ref:`RoboTwin on ROCm <robotwin-hardware>`
+
+Model Recipes
+-------------
+
+Open a model page for the full workflow and its supported environments.
 
 .. raw:: html
 
    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/openvla_oft.html" style="display: block;"><img src="https://openvla-oft.github.io/static/images/libero_task_performance_results.png"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/openvla_oft.html" style="text-decoration: underline; color: blue;">
+           <b>OpenVLA-OFT</b>
+         </a><br>
+         LIBERO training on NVIDIA CUDA, AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA
+       </p>
+     </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/mlp.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg"
@@ -17,6 +59,17 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
            <b>RL on MLP Policy</b>
          </a><br>
          Train a lightweight MLP policy with PPO, SAC, or GRPO across simulation environments
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/pi0_fast.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/pi0_fast.html" style="text-decoration: underline; color: blue;">
+           <b>RL on π₀-FAST</b>
+         </a><br>
+         LeRobot π₀-FAST + LIBERO-Long + token-level GRPO
        </p>
      </div>
 
@@ -64,6 +117,18 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
        </p>
      </div>
 
+     <!-- TODO: swap for a 3:2 pic/molmoact2.png in RLinf/misc once available. -->
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/molmoact2.html" style="display: block;"><img src="https://raw.githubusercontent.com/allenai/molmoact2/main/assets/MolmoAct2.svg"
+            style="width: 100%; height: 200px; object-fit: contain; background: #ffffff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/molmoact2.html" style="text-decoration: underline; color: blue;">
+           <b>MolmoAct2 Evaluation</b>
+         </a><br>
+         Evaluate the official MolmoAct2-LIBERO checkpoint on LIBERO
+       </p>
+     </div>
+
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/lingbotvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
@@ -103,11 +168,14 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
    :hidden:
    :maxdepth: 2
 
+   OpenVLA-OFT <embodied/openvla_oft>
    MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
+   π₀-FAST <embodied/pi0_fast>
    GR00T <embodied/gr00t>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>
+   MolmoAct2 <embodied/molmoact2>
    Lingbot-VLA <embodied/lingbotvla>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>

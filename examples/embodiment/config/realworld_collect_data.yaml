@@ -39,7 +39,7 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: True
+    teleop: spacemouse
     max_episode_steps: 10000
     override_cfg:
       # Optional per-camera overrides keyed by RealSense serial number.
@@ -53,8 +53,8 @@ env:
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"      # or "pickle"
+      save_dir: ${runner.logger.log_path}
+      export_format: [replay_buffer, pickle_episode]
       only_success: True
       robot_type: "panda"
       fps: 10

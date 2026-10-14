@@ -20,7 +20,7 @@ detect_pkg_manager() {
 
 PKG_MANAGER=$(detect_pkg_manager)
 
-# Hardware platform (nvidia | amd). Passed by install.sh; defaults to nvidia
+# Hardware platform. Passed by install.sh; defaults to nvidia
 # when this script is invoked directly for backward compatibility.
 PLATFORM="${1:-nvidia}"
 
@@ -105,6 +105,7 @@ install_deps_apt() {
         libibverbs-dev \
         ncurses-term \
         mesa-utils \
+        libosmesa6 \
         libosmesa6-dev \
         freeglut3-dev \
         libglew-dev \
@@ -113,7 +114,12 @@ install_deps_apt() {
         libglvnd-dev \
         libglfw3-dev \
         libgl1-mesa-dev \
+        libgl1 \
         libglib2.0-0 \
+        libgtk2.0-dev \
+        libhidapi-hidraw0 \
+        libusb-1.0-0 \
+        libudev1 \
         libsm6 \
         libxext6 \
         libxrender-dev \
@@ -125,12 +131,14 @@ install_deps_apt() {
         libgomp1 \
         libexpat1 \
         libfontconfig1-dev \
+        liblz4-dev \
         libpython3-stdlib \
         imagemagick \
         libmagickwand-dev \
         libvulkan1 \
         vulkan-tools \
         libnuma1 \
+        libzstd-dev \
         mesa-vulkan-drivers || {
             echo "apt-get install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -165,8 +173,10 @@ install_deps_dnf() {
         mesa-libGLES \
         libglvnd-devel \
         glfw-devel \
+        mesa-libGL \
         mesa-libGL-devel \
         glib2 \
+        gtk2-devel \
         libSM \
         libXext \
         libXrender-devel \
@@ -178,8 +188,10 @@ install_deps_dnf() {
         libgomp \
         expat \
         fontconfig \
+        lz4-devel \
         python3-devel \
         numactl-libs-devel \
+        libzstd-devel \
         ImageMagick-devel || {
             echo "dnf install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -211,8 +223,10 @@ install_deps_yum() {
         mesa-libGLES \
         libglvnd-devel \
         glfw-devel \
+        mesa-libGL \
         mesa-libGL-devel \
         glib2 \
+        gtk2-devel \
         libSM \
         libXext \
         libXrender-devel \
@@ -224,8 +238,10 @@ install_deps_yum() {
         libgomp \
         expat \
         fontconfig \
+        lz4-devel \
         python3-devel \
         numactl-libs-devel \
+        libzstd-devel \
         ImageMagick-devel || {
             echo "yum install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -234,6 +250,7 @@ install_deps_yum() {
 
 install_deps_pacman() {
     # Pacman package names for Arch Linux
+    # gtk2 is AUR-only on Arch, so OpenCV's GTK+ 2 GUI dependency is not installed here.
     sudo pacman -Sy --noconfirm \
         linux-api-headers \
         wget \
@@ -266,7 +283,9 @@ install_deps_pacman() {
         libgomp \
         expat \
         fontconfig \
+        lz4 \
         numactl \
+        zstd \
         imagemagick || {
             echo "pacman install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -371,14 +390,13 @@ case "$PLATFORM" in
         echo "Installing rendering runtime config for AMD/Radeon"
         install_render_config_amd
         ;;
-    ascend)
-        # Ascend NPU systems are server-side and typically have no display
-        # GPU. Skip the EGL/Vulkan ICD config — embodied targets that need
-        # software rendering still get mesa drivers from the apt step.
-        echo "Skipping rendering runtime config on Ascend platform"
-        ;;
-    nvidia|*)
+    nvidia)
         echo "Installing rendering runtime config for NVIDIA"
         install_render_config_nvidia
+        ;;
+    *)
+        # Server-side, with no display GPU. Skip the EGL/Vulkan ICD config;
+        # software rendering still gets mesa drivers from the step above.
+        echo "Skipping rendering runtime config on ${PLATFORM} platform"
         ;;
 esac

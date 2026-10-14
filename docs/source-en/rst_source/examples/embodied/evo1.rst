@@ -92,9 +92,7 @@ Installation
 2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Install the Evo-1 native environment and LIBERO base dependencies in one command (the
-script clones the RLinf Evo-1 fork into ``.venv/Evo-1``, installs it into the venv,
-and handles dependency isolation):
+Install the Evo-1 native environment and LIBERO base dependencies in one command:
 
 .. code-block:: bash
 
@@ -180,8 +178,7 @@ Launch Commands
     export ROBOT_PLATFORM="LIBERO"
     bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
 
-``install.sh`` makes the Evo-1 source importable, so nothing else has to be set.
-If you checked the repo out yourself instead, point ``actor.model.evo1.repo_path``
+If you checked the Evo-1 repository out yourself, point ``actor.model.evo1.repo_path``
 (or the ``EVO1_REPO_PATH`` environment variable) at its root.
 
 To reproduce the RL result quickly on a single task, restrict training to one

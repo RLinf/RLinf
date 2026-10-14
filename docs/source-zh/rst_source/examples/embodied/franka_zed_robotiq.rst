@@ -193,13 +193,14 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 .. code-block:: bash
 
    python -c "
-   from rlinf.envs.realworld.common.gripper.robotiq_gripper import RobotiqGripper
+   from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
    g = RobotiqGripper(port='/dev/ttyUSB0')
-   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready}')
+   g.connect()
+   print(f'Position: {g.position:.4f} m, Ready: {g.is_ready()}')
    g.open()
    import time; time.sleep(1)
    g.close()
-   g.cleanup()
+   g.disconnect()
    "
 
 
@@ -219,7 +220,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu
@@ -241,7 +242,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
                camera_type: zed            # "realsense" 或 "zed"
                gripper_type: robotiq       # "franka" 或 "robotiq"
                gripper_connection: "/dev/ttyUSB0"
-               controller_node_rank: 1     # FrankaController 运行在 NUC 上
+               controller_node_rank: 1     # 机械臂控制连接运行在 NUC 上
                disable_validate: false
 
 .. list-table:: 新增硬件配置字段
@@ -263,7 +264,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
        为 ``"franka"`` 时忽略。
    * - ``controller_node_rank``
      - ``null``
-     - ``FrankaController`` 运行的节点 rank。为 ``null`` 时与 env worker
+     - 机械臂控制连接运行的节点 rank。为 ``null`` 时与 env worker
        共同部署。当机械臂和相机在不同机器上时需要设置。
 
 
@@ -316,15 +317,15 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    * - ``runner.num_data_episodes``
      - ``20``
      - 采集的 episode 数量，达到后脚本自动退出。
-   * - ``env.eval.use_spacemouse``
-     - ``True``
-     - 在采集过程中启用 SpaceMouse 遥操作。
+   * - ``env.eval.teleop``
+     - ``spacemouse``
+     - 采集过程中由哪种设备驱动机械臂。
    * - ``env.eval.data_collection.save_dir``
-     - ``${runner.logger.log_path}/collected_data``
-     - 采集数据的保存目录。
+     - ``${runner.logger.log_path}``
+     - 采集根目录。LeRobot 写到 ``{save_dir}/lerobot_dataset``，replay buffer 写到 ``{save_dir}/demo_buffer``。
    * - ``env.eval.data_collection.export_format``
-     - ``"lerobot"``
-     - 采集数据的导出格式。
+     - ``[replay_buffer, lerobot_dataset]``
+     - 同时写出 replay buffer 与 LeRobot。真机采集只接受 ``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
    * - ``env.eval.data_collection.only_success``
      - ``True``
      - 仅保存成功的 episode。
@@ -378,7 +379,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    bash examples/embodiment/collect_data.sh <config_name>
 
 采集过程中使用 SpaceMouse 遥操作机器人。脚本会在达到配置的 episode 数量后
-自动终止，数据保存在 ``logs/<时间戳>-<配置名>/collected_data/`` 目录下。
+自动终止，数据保存在 ``logs/<时间戳>-<配置名>/`` 下的 ``demo_buffer/`` 和 ``lerobot_dataset/``。
 
 采集完成后，将数据上传到训练节点，并在训练配置中将
 ``algorithm.demo_buffer.load_path`` 字段设置为数据路径。
@@ -422,6 +423,4 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
 
 **控制器节点 rank 不匹配**
 
-- 如果机械臂在 NUC (node 1) 上而相机在 GPU 服务器 (node 0) 上，
-  **必须** 在硬件配置中设置 ``controller_node_rank: 1``。否则控制器会尝试
-  在 node 0 上启动，该节点没有 ROS 或机械臂连接。
+- 如果机械臂在 NUC（node 1）上而相机在 GPU 服务器（node 0）上，**必须** 在硬件配置中设置 ``controller_node_rank: 1``。否则控制器会尝试在 node 0 上启动，而该节点与机械臂之间没有网络连接。

@@ -124,7 +124,7 @@ Download the `e5-base-v2 <https://huggingface.co/intfloat/e5-base-v2>`__ embeddi
 
 Download `qdrant <https://github.com/qdrant/qdrant/releases>`__ binary file and build a qdrant collection with follwing steps. First, Create a new folder and put the qdrant binary into this folder, to facilitate the subsequent storage of qdrant binary and constructed collection files.
 
-In `examples/agent/tools/search_local_server_qdrant/build_index_qdrant.sh` and `examples/agent/tools/search_local_server_qdrant/launch_local_server_qdrant.sh`, update the file paths for `WIKI2018_DIR`, `retriever_path`, and `qdrant_path` according to your downloaded wiki corpus, e5-base-v2, and qdrant paths.
+In `examples/agent/tools/search_local_server_qdrant/build_index.sh` and `examples/agent/tools/search_local_server_qdrant/launch_local_server.sh`, update the file paths for `WIKI2018_DIR`, `retriever_path`, and `qdrant_path` according to your downloaded wiki corpus, e5-base-v2, and qdrant paths.
 
 Use the following commands to build the qdrant wiki server collection:
 
@@ -139,9 +139,9 @@ Use the following commands to build the qdrant wiki server collection:
    /path/to/qdrant/qdrant &
 
    # Build qdrant collection
-   bash examples/agent/tools/search_local_server_qdrant/build_index_qdrant.sh
+   bash examples/agent/tools/search_local_server_qdrant/build_index.sh
 
-Run launch_local_server_qdrant.sh to start the Local Qdrant Wiki Server. Wait until server IP information is printed — indicating successful startup.
+Run launch_local_server.sh to start the Local Qdrant Wiki Server. Wait until server IP information is printed — indicating successful startup.
 
 .. code-block:: bash
 
@@ -149,7 +149,7 @@ Run launch_local_server_qdrant.sh to start the Local Qdrant Wiki Server. Wait un
    /path/to/qdrant/qdrant &
 
    # Launch qdrant-based wiki server
-   bash examples/agent/tools/search_local_server_qdrant/launch_local_server_qdrant.sh
+   bash examples/agent/tools/search_local_server_qdrant/launch_local_server.sh
 
 Qdrant uses the HNSW graph index algorithm by default. For details on optimizing the HNSW graph index, please refer to the `Qdrant documentation <https://qdrant.tech/documentation/guides/optimize/>`__.
 
@@ -200,10 +200,30 @@ Since Search-R1 will re-tokenize the model output, `recompute_logprobs`` should 
 
 Run `bash examples/agent/searchr1/run_train.sh` to start training.
 
-Standalone Evaluation
----------------------
+MA-FSDP Training
+~~~~~~~~~~~~~~~~
 
-Run the following commands to convert a Megatron checkpoint into a HuggingFace model:
+RLinf also provides an FSDP2 implementation of the Search-R1 multi-agent actor.
+Use `examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`, set the same
+model and dataset paths described above, and start it with:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp
+
+With `agentloop.is_dynamic_rollout_batch: True`, the entrypoint selects
+`MAFSDPActor` for `actor.training_backend: fsdp`. The configuration sets
+`actor.pack_traj: True`, which packs compatible turns from the same trajectory
+before FSDP training to avoid recomputing shared prefixes. Keep it enabled for
+the provided Search-R1 FSDP recipe.
+
+Checkpoint Export and Evaluation
+--------------------------------
+
+Checkpoint export depends on the training backend.
+
+For Megatron, run the following commands to convert a checkpoint into a
+HuggingFace model:
 
 .. code-block:: bash
 
@@ -230,6 +250,22 @@ Run the following commands to convert a Megatron checkpoint into a HuggingFace m
    rm -f "${CKPT_PATH_HF}"/*.done
    shopt -s extglob
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
+
+For FSDP, use the built-in FSDP converter rather than the Megatron
+commands above. Point it at the saved FSDP checkpoint and the matching resolved
+training configuration, then write the exported HuggingFace model to a new
+directory:
+
+.. code-block:: bash
+
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       convertor.train_config_path=/path/to/config.yaml \
+       convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
+       convertor.save_path=/path/to/hf_model
+
+`config.yaml` is written with the training run. The converter can also locate
+it automatically when it is stored near `convertor.ckpt_path`. Use the exported
+HuggingFace model for standalone evaluation.
 
 Fill the converted HuggingFace model path into
 `examples/agent/searchr1/config/eval_qwen2.5.yaml`:

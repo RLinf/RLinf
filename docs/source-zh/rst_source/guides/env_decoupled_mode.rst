@@ -4,9 +4,7 @@ Env Decoupled Mode
 ``env_decoupled_mode`` 是 RLinf embodied 任务中用于解耦 Env Worker 与 Rollout Worker
 通信的一种模式。它通过配置 ``runner.enable_decoupled_mode: true`` 开启。
 
-开启后，Env Worker 不再与固定的 Rollout Worker rank 一一绑定。Env Worker 会将观测
-数据放入共享 Channel，空闲的 Rollout Worker 可以动态获取 batch 进行推理，并在完成后
-将结果返回给原始 Env Worker。
+默认情况下，Env Worker 在此模式下不与固定的 Rollout Worker rank 绑定。Env Worker 将观测数据放入共享 Channel，空闲的 Rollout Worker 动态获取 batch 进行推理，完成后将结果返回给原始 Env Worker。
 
 该模式适用于 Env Worker 和 Rollout Worker 处理速度不一致的场景，尤其是仿真环境耗时波动较大、
 部分 Env Worker 容易阻塞，或希望 Rollout Worker 动态聚合多个 Env 请求进行批量推理时。
@@ -30,7 +28,7 @@ Env Decoupled Mode
 - 不配置 ``runner.enable_decoupled_mode`` 时，使用普通通信模式。
 - ``rollout_queue_size`` 控制 Rollout Worker 单次最多聚合多少组 Env 数据。
   设置为 ``0`` 时使用默认策略，此时 Rollout Worker 单次聚合的 Env 数据数量为
-  ``ceil(env_world_size // rollout_world_size)``。
+  ``env_world_size // rollout_world_size``。
 
 示例配置可参考：
 
@@ -73,12 +71,7 @@ Channel 排队时间。
 分组路由绑定
 ------------
 
-默认情况下 decoupled 模式使用单一全局池，任意 Rollout Worker 都可获取任意 Env batch。
-设置 ``rollout.enable_group_route_binding: true``（默认 ``false``）会将全局池划分为固定的
-分组绑定：Rollout Worker rank ``k`` 只服务自己的 Env 分组（env rank
-``k * ratio .. k * ratio + ratio - 1``，其中 ``ratio = env_world_size //
-rollout_world_size`` 并向上取整），最后一组可以包含较少的 Env Worker。每组通过独立的
-``route_key`` 隔离，不存在全局池，也没有跨组抢任务。
+如果每个 Rollout Worker 需要服务一组固定的 Env Worker，例如驱动固定的一组机器人，可在 decoupled 模式下开启 ``rollout.enable_group_route_binding``。该选项默认为 ``false``，使用前文介绍的共享池。
 
 .. code-block:: yaml
 
@@ -88,9 +81,9 @@ rollout_world_size`` 并向上取整），最后一组可以包含较少的 Env 
    rollout:
      enable_group_route_binding: true
 
-由此得到固定的 ``1`` Rollout : ``N`` Env-Worker 重叠，并可作为多个独立分组在机器人集群上复制，
-适用于每个 Rollout Worker 驱动一组固定机器人的真机 rollout 场景。只要
-``env_world_size >= rollout_world_size``，Env 与 Rollout 数量无需整除。
+Env Worker 的分组编号为 ``env_rank * rollout_world_size // env_world_size``，Rollout rank ``k`` 服务编号为 ``k`` 的分组。训练和评估都使用各组独立的 ``route_key``，请求在所属组内处理，结果返回发起请求的 Env Worker。
+
+Worker 数量须满足 ``env_world_size >= rollout_world_size``，但无需整除。例如，4 个 Env Worker 和 3 个 Rollout Worker 会分为包含 Env rank ``[0, 1]``、``[2]``、``[3]`` 的三组。每个 Rollout Worker 都有非空分组，各组大小最多相差 1。
 
 训练流程
 --------
@@ -99,7 +92,7 @@ rollout_world_size`` 并向上取整），最后一组可以包含较少的 Env 
 
 1. Env Worker 执行环境 step，得到 observation。
 2. Env Worker 将 observation 发送到 Rollout Channel。
-3. 任意 Rollout Worker 从 Channel 中动态获取一个或多个 Env batch。
+3. Rollout Worker 从共享池获取一个或多个 Env batch；开启分组绑定时，从所属分组获取。
 4. Rollout Worker 执行模型推理，生成 action 或 rollout result，并将结果返回给发送该请求的 Env Worker。
 5. Env Worker 根据返回结果继续进行环境交互。
 

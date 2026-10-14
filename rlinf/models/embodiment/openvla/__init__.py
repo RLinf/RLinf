@@ -23,6 +23,11 @@ from transformers import (
     AutoProcessor,
     AutoTokenizer,
 )
+from transformers.utils import is_flash_attn_2_available
+
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def get_model_config_and_input_processor(cfg: DictConfig):
@@ -81,6 +86,12 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         OpenVLAForRLActionPrediction,
     )
 
+    attn_implementation = cfg.attn_implementation
+    if attn_implementation == "flash_attention_2" and not is_flash_attn_2_available():
+        # flash-attn is not installed on non-CUDA backends such as Ascend.
+        logger.warning("flash_attn is unavailable; loading OpenVLA with sdpa.")
+        attn_implementation = "sdpa"
+
     model = OpenVLAForRLActionPrediction.from_pretrained(
         cfg.model_path,
         torch_dtype=torch_dtype,
@@ -91,7 +102,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         max_prompt_length=cfg.max_prompt_length,
         action_dim=cfg.action_dim,
         num_action_chunks=cfg.num_action_chunks,
-        attn_implementation=cfg.attn_implementation,
+        attn_implementation=attn_implementation,
         low_cpu_mem_usage=cfg.low_cpu_mem_usage,
         trust_remote_code=cfg.trust_remote_code,
     )

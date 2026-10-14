@@ -120,6 +120,7 @@ actor:
     noise_level: 0.1
     # openpi specific parameters
     openpi:
+      task: rl
       detach_critic_input: True
 
   optim:

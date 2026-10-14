@@ -126,7 +126,7 @@ A. Clone RLinf Repository
 .. code:: bash
 
    # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -161,7 +161,7 @@ A. Clone RLinf Repository
 .. code:: bash
 
    # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -425,14 +425,15 @@ A typical collection loop:
 5. The script exits after ``runner.num_data_episodes`` (default ``20``)
    saved episodes.
 
-Saved trajectories land in ``<log_path>/demos/``. Plug that path into the
-training config:
+Saved trajectories land in ``<log_path>/demo_buffer/``. The same
+config also writes raw episodes to ``<log_path>/pickle_episode/``.
+Point RLPD at the replay-buffer directory:
 
 .. code-block:: yaml
 
    algorithm:
      demo_buffer:
-       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demos"
+       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demo_buffer"
 
 Remove the ``demo_buffer`` block if you do not want RLPD.
 
@@ -534,7 +535,7 @@ Troubleshooting
     configuration.
   - The GPU node can ``ping`` the robot and TCP-connect on 50050–50053.
 
-**``RuntimeError: DOSW1SDKAdapter is not connected``**
+**``RuntimeError: DOSW1Connection is not connected``**
   Connect was never called successfully. Re-check the preceding logs for
   ``[DOSW1SDK] Connecting via AirbotRobot``.
 

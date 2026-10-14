@@ -92,8 +92,6 @@ Observation and Action
 Installation
 ------------
 
-To ensure perfect compatibility between the high-version Torch (2.8.0) and RLinf (Python 3.10), we have encapsulated the complex dependency isolation logic into an installation script. Please follow the steps below to build a hybrid environment.
-
 1. Clone the RLinf Repository
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -119,7 +117,7 @@ Run embodied training based on RoboTwin using the Docker image:
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-robotwin
+      rlinf/rlinf:agentic-rlinf0.4-robotwin
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -129,7 +127,7 @@ Please switch to the corresponding virtual environment via the built-in `switch_
 
 **Option 2: Custom Environment**
 
-Install the Lingbot-VLA native environment and RoboTwin base dependencies in one command (the script will automatically pull the lingbot-vla source code to the `.venv/lingbot-vla` directory and handle all high-risk dependency conflicts):
+Install the Lingbot-VLA native environment and RoboTwin base dependencies in one command:
 
 .. code-block:: bash
 

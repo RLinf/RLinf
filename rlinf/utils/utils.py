@@ -25,9 +25,9 @@ from typing import Any, Callable, Iterable, Literal, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+from rlinf.hybrid_engines.fsdp import DTensor
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 
@@ -196,13 +196,39 @@ def seed_everything(seed: int) -> int:
     return normalized_seed
 
 
-def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
-    """get a copy of the model states in CPU"""
+def retrieve_model_state_dict_in_cpu(
+    resident_model, offloaded_buffer=None, is_fsdp: bool = False
+):
+    """Return a pinned CPU copy of regular-module or FSDP local model states.
+
+    Args:
+        resident_model: A regular ``torch.nn.Module`` or an FSDP actor when
+            ``is_fsdp`` is set.
+        offloaded_buffer: Optional buffer to reuse for a regular-module CPU
+            state dict. FSDP state dicts do not support this buffer.
+        is_fsdp: Whether to retrieve local FSDP/FSDP2 state through its strategy.
+    """
+    if is_fsdp:
+        # FSDP/FSDP2 local state dicts contain DTensors. Keep them intact so
+        # ``load_model_with_state_dict`` can reconstruct the local shards.
+        if offloaded_buffer is not None:
+            raise ValueError(
+                "offloaded_buffer is unsupported for FSDP state dicts; "
+                "pass None so the strategy can preserve DTensor metadata."
+            )
+        return resident_model.get_model_state_dict(
+            cpu_offload=True,
+            full_state_dict=False,
+        )
+
     if offloaded_buffer is None:
         offloaded_buffer = {}
 
-    for name, item in model.state_dict().items():
+    state_dict = resident_model.state_dict()
+    for name, item in state_dict.items():
         if isinstance(item, torch.Tensor):
+            if isinstance(item, DTensor):
+                item = item.to_local()
             if name in offloaded_buffer:
                 offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
             else:
@@ -214,43 +240,63 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
-    from rlinf.scheduler.worker.worker import Worker
-
     Worker.torch_platform.synchronize()
     return offloaded_buffer
 
 
 @torch.no_grad()
 def swap_dict(
-    resident_model, cpu_weights, offload_onto_cpu=True, offloaded_buffer=None
+    resident_model,
+    cpu_weights,
+    offload_onto_cpu: bool = True,
+    offloaded_buffer=None,
+    is_fsdp: bool = False,
 ):
-    """swap the state dict with a specified state dict, and offload the current state dict onto CPU
-    if needed
-    """
-    if offloaded_buffer is None:
-        offloaded_buffer = {}
-
+    """Swap model weights and optionally retain the replaced weights on CPU."""
     if offload_onto_cpu:
+        if is_fsdp and offloaded_buffer is not None:
+            raise ValueError(
+                "offloaded_buffer is unsupported for FSDP weight swapping; "
+                "pass None so the strategy can preserve DTensor metadata."
+            )
         offloaded_buffer = retrieve_model_state_dict_in_cpu(
-            resident_model, offloaded_buffer
+            resident_model,
+            None if is_fsdp else offloaded_buffer,
+            is_fsdp=is_fsdp,
         )
 
-    resident_model.load_state_dict(cpu_weights)
+    if is_fsdp:
+        resident_model.load_model_with_state_dict(
+            cpu_weights,
+            cpu_offload=False,
+            full_state_dict=False,
+        )
+    else:
+        resident_model.load_state_dict(cpu_weights)
     return offloaded_buffer
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
-    """swap the weights into GPU, and then swap it out once return"""
+def cpu_weight_swap(
+    resident_model, cpu_weights, offloaded_buffer=None, is_fsdp: bool = False
+):
+    """Temporarily swap regular-module or FSDP/FSDP2 weights from CPU."""
     offloaded_buffer = swap_dict(
-        resident_model, cpu_weights, offloaded_buffer=offloaded_buffer
+        resident_model,
+        cpu_weights,
+        offloaded_buffer=offloaded_buffer,
+        is_fsdp=is_fsdp,
     )
 
     try:
         yield
-
     finally:
-        swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
+        swap_dict(
+            resident_model,
+            offloaded_buffer,
+            offload_onto_cpu=False,
+            is_fsdp=is_fsdp,
+        )
 
 
 def _get_nvtx_module():
@@ -306,19 +352,67 @@ def configure_batch_sizes(rank, mbs, gbs, dp=1):
     )
 
 
+def _reduce_mean(values: torch.Tensor, axis=None):
+    # Not every torch backend accepts `axis=None` for a full reduction
+    # (torch-musa raises "bad optional access"), so spell it out.
+    if axis is None:
+        return values.mean()
+    return values.mean(dim=axis)
+
+
+def _reduce_sum(values: torch.Tensor, axis=None):
+    if axis is None:
+        return values.sum()
+    return values.sum(dim=axis)
+
+
 def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
     if mask is None:
-        return values.mean(axis=axis)
+        return _reduce_mean(values, axis)
     elif (~mask).all():
-        return (values * mask).sum(axis=axis)
+        return _reduce_sum(values * mask, axis)
     else:
-        return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
+        return _reduce_sum(values * mask, axis) / _reduce_sum(mask, axis)
 
 
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute sum of tensor with a masked values."""
-    return (values * mask).sum(axis=axis)
+    return _reduce_sum(values * mask, axis)
+
+
+def masked_reduce(
+    values: torch.Tensor,
+    mask: Optional[torch.Tensor],
+    reducer: Literal["mean", "std", "min", "max"],
+    empty_value: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Reduce masked values to a scalar.
+
+    Empty masks return ``empty_value`` (zeros with ``values`` dtype/device if
+    omitted). Callers that need NaN for "mask is non-empty but all-invalid"
+    should substitute after the fact.
+    """
+    if empty_value is None:
+        empty_value = values.new_zeros(())
+    if mask is None:
+        mask = torch.ones_like(values, dtype=torch.bool)
+    else:
+        mask = torch.broadcast_to(mask.bool(), values.shape)
+
+    if reducer == "mean":
+        value = masked_mean(values, mask)
+    elif reducer == "std":
+        mean = masked_mean(values, mask)
+        value = masked_mean((values - mean) ** 2, mask).sqrt()
+    elif reducer == "min":
+        value = torch.where(mask, values, values.new_full((), float("inf"))).amin()
+    elif reducer == "max":
+        value = torch.where(mask, values, values.new_full((), float("-inf"))).amax()
+    else:
+        raise ValueError(f"Unsupported reducer: {reducer}")
+
+    return torch.where(mask.any(), value, empty_value)
 
 
 def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
@@ -365,33 +459,6 @@ def get_loss_agg_func(
         return masked_mean
     else:
         raise ValueError(f"Unsupported loss aggregation method: {loss_agg}")
-
-
-def reshape_entropy(
-    entropy: Optional[torch.Tensor],
-    entropy_type: str,
-    action_dim: int = 7,
-    batch_size: int = 1,
-) -> Optional[torch.Tensor]:
-    """
-    Reshape entropy based on the entropy type.If entropy is None, return None.
-    If entropy_type is "action_level", reshape entropy to [batch_size, seq_len] by summing over action_dim.
-    If entropy_type is "chunk_level", reshape entropy to [batch_size, seq_len]
-
-    Args:
-        entropy(Optional[torch.Tensor]): [B, seq_len * action_dim] or [B, seq_len] or None
-        entropy_type(str): "action_level" or "chunk_level"
-        action_dim(int): action dimension, default is 7
-
-    Returns:
-        entropy(Optional[torch.Tensor]): reshaped entropy or None
-    """
-    if entropy is not None:
-        if entropy_type == "action_level":
-            entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
-        elif entropy_type == "chunk_level":
-            entropy = entropy.sum(dim=-1)
-    return entropy
 
 
 def logprobs_from_logits_flash_attn(
@@ -534,6 +601,15 @@ class DualOutput:
 
 
 def output_redirector(func):
+    """Tee an entrypoint's output into ``main.log`` and end the process after it.
+
+    When the entrypoint returns, the process exits 0 at once, without running
+    interpreter teardown: on the torch 2.11 stack ray's core worker can
+    segfault there after the run has finished. When it raises, the exception
+    propagates and the process exits through the normal path with its own
+    exit code.
+    """
+
     @wraps(func)
     def wrapper(cfg, *args, **kwargs):
         log_path = os.path.join(
@@ -559,7 +635,7 @@ def output_redirector(func):
         try:
             sys.stdout = dual_out
             sys.stderr = dual_err
-            return func(cfg, *args, **kwargs)
+            func(cfg, *args, **kwargs)
 
         except Exception as e:
             import traceback
@@ -573,6 +649,11 @@ def output_redirector(func):
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+
+        # Only a run that returned gets here, so exiting 0 cannot hide a
+        # failure. Skipping teardown also skips atexit, so close the log first.
+        close()
+        os._exit(0)
 
     return wrapper
 
@@ -662,7 +743,7 @@ def get_rng_state() -> dict:
     }
     from rlinf.scheduler.worker.worker import Worker
 
-    if Worker.torch_platform.is_available():
+    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
         rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
     return rng_state
 
@@ -683,7 +764,11 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     from rlinf.scheduler.worker.worker import Worker
 
-    if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and Worker.torch_device_type in rng_state
+    ):
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
 
 

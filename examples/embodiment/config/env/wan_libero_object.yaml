@@ -1,4 +1,5 @@
-env_type: wan_wm
+env_type: world_model
+backend: wan
 task_suite_name: libero_object
 wm_env_type: libero
 

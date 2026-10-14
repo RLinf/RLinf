@@ -61,7 +61,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: RECAP value model SFT test
@@ -71,6 +70,14 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/offline_rl/run_recap_value_model_sft.sh recap_value_model_sft_libero
+
+      - name: RECAP value model SFT test without eval data
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_recap_value_model_sft.sh recap_value_model_sft_libero_no_eval
 
       - name: RECAP CFG OpenPI 0.5 test
         timeout-minutes: 20

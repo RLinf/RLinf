@@ -13,8 +13,6 @@ From the repository root:
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``. No separate ``LIBERO_PATH`` setup is required.
-
 Step 2: Prepare the Model
 -------------------------
 

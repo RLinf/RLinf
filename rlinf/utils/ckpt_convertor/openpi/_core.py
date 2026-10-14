@@ -14,8 +14,7 @@
 
 """Shared core for the OpenPI 0.5 checkpoint convertors.
 
-The four convertor modes (``jax2new``, ``old2new``, ``sft2new``, ``new2old``)
-all share the same plumbing: locating the ``model.safetensors`` inside a
+The convertor modes share the same plumbing: locating the ``model.safetensors`` inside a
 checkpoint directory, loading/saving safetensors state dicts, reading/writing
 ``config.json``, copying the norm-stats asset verbatim, and stripping the
 wrapper/FSDP prefixes that a trained checkpoint carries. That plumbing lives
@@ -34,9 +33,10 @@ from typing import Any, Mapping
 import torch
 
 # Wrapper / FSDP prefixes that may sit in front of the bare ``Pi0`` keys in a
-# trained checkpoint. ``OpenPiPytorchActionModel`` adds ``model.`` (the vendored
-# Pi0 lives at ``wrapper.model``); FSDP/compile may add the others. No bare Pi0
-# key begins with any of these, so stripping them is safe.
+# trained checkpoint. Older ``OpenPiPytorchActionModel`` checkpoints stored Pi0
+# under ``model.`` (``wrapper.model.llm``); after the inherit-Pi0 reorg the keys
+# are already bare (``llm.*``). FSDP/compile may add the other prefixes. No bare
+# Pi0 key begins with any of these, so stripping them is safe.
 _WRAPPER_PREFIXES = (
     "_fsdp_wrapped_module.",
     "_orig_mod.",
@@ -44,7 +44,7 @@ _WRAPPER_PREFIXES = (
     "model.",
 )
 
-# The norm-stats asset tree the new-format eval loader expects.
+# The norm-stats asset tree the OpenPI eval loader expects.
 NORM_STATS_SUBDIR = pathlib.Path("physical-intelligence") / "behavior"
 
 
@@ -102,8 +102,8 @@ def copy_config_json(
 def copy_norm_stats(src: str | pathlib.Path, dst: str | pathlib.Path) -> None:
     """Copy the norm-stats file from ``src`` to ``dst`` verbatim (straight copy).
 
-    This is the single definition shared by every mode (the old per-script
-    duplicates in ``old_to_new`` and ``sft_to_new_pytorch`` are folded here).
+    This is the single definition shared by every mode; per-converter copies are
+    intentionally folded here.
     """
     src = pathlib.Path(src)
     dst = pathlib.Path(dst)
@@ -116,7 +116,7 @@ def copy_norm_stats(src: str | pathlib.Path, dst: str | pathlib.Path) -> None:
 def cast_floats_to(
     state_dict: Mapping[str, torch.Tensor], dtype: torch.dtype
 ) -> dict[str, torch.Tensor]:
-    """Return a new state dict with floating-point tensors cast to ``dtype``.
+    """Return a copied state dict with floating-point tensors cast to ``dtype``.
 
     Integer/bool buffers are passed through unchanged.
     """
@@ -137,7 +137,7 @@ def strip_wrapper_prefix(
 
     Removes any leading combination of the known wrapper/FSDP prefixes from each
     key. When ``cast_dtype`` is given, floating-point tensors are cast to it (the
-    new-format eval loader validates that every checkpoint tensor is bf16);
+    OpenPI eval loader validates that every checkpoint tensor is bf16);
     integer/bool buffers are passed through. Two distinct source keys must never
     collapse to the same bare key, or a tensor would be silently dropped, so that
     raises instead.

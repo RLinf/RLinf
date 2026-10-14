@@ -52,8 +52,9 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           # One venv per engine: sglang and vllm pin the same kernel libraries to
           # different versions, so a shared venv breaks whichever is installed first.
-          bash requirements/install.sh agentic --engine sglang
-          bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
+          # params_resharding_release only supports Python <= 3.11.
+          bash requirements/install.sh agentic --python 3.11.14 --engine sglang
+          bash requirements/install.sh agentic --python 3.11.14 --venv .venv-vllm --engine vllm
 
       - name: Clone Megatron-011
         uses: actions/checkout@v5

@@ -37,10 +37,13 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
     """Fetch an attribute from a (possibly wrapped) gym/gymnasium env.
 
     Walks the wrapper stack so the attribute is found even when ``env`` is
-    nested, e.g. ``CollectEpisode(RecordVideo(base_env))``. This stays
-    compatible across versions: gymnasium >= 1.0 exposes ``get_wrapper_attr``
-    while older gymnasium/gym and custom wrappers rely on ``__getattr__``
-    delegation through plain ``getattr``.
+    nested, e.g. ``CollectEpisode(RecordVideo(base_env))``.
+
+    ``get_wrapper_attr`` is tried first, then the ``env`` chain is walked
+    directly. The fallback is what handles wrappers over an env that is not a
+    ``gymnasium.Env`` (world-model envs, for instance): ``get_wrapper_attr``
+    recurses into the wrapped env and raises there because the base env does not
+    define it.
 
     Args:
         env: The (possibly wrapped) environment.
@@ -54,8 +57,15 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
         try:
             return env.get_wrapper_attr(name)
         except AttributeError:
-            return default
-    return getattr(env, name, default)
+            pass
+
+    inner = env
+    while inner is not None:
+        try:
+            return getattr(inner, name)
+        except AttributeError:
+            inner = getattr(inner, "env", None)
+    return default
 
 
 def to_tensor(
@@ -119,6 +129,21 @@ def recursive_to_device(obj, device):
         return {k: recursive_to_device(v, device) for k, v in obj.items()}
     else:
         return obj
+
+
+def valid_action_mask_from_counts(counts: Any, chunk_size: int) -> torch.Tensor:
+    """Build a ``[B, C]`` prefix mask from per-environment executed action counts.
+
+    The count includes the episode-ending action. Later padded slots are false.
+    """
+    if isinstance(counts, torch.Tensor):
+        count_tensor = counts.detach().to(dtype=torch.long)
+    else:
+        count_tensor = torch.as_tensor(np.asarray(counts), dtype=torch.long)
+    if count_tensor.ndim == 0:
+        count_tensor = count_tensor.unsqueeze(0)
+    action_indices = torch.arange(chunk_size, device=count_tensor.device)
+    return action_indices.unsqueeze(0) < count_tensor.unsqueeze(1)
 
 
 def list_of_dict_to_dict_of_list(

@@ -91,8 +91,7 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 2. 安装依赖
 ~~~~~~~~~~~
 
-一条命令安装 Evo-1 原生环境与 LIBERO 基础依赖（脚本会把 RLinf 的 Evo-1 fork 克隆到
-``.venv/Evo-1``，将其安装进 venv，并处理依赖隔离）：
+一条命令安装 Evo-1 原生环境与 LIBERO 基础依赖：
 
 .. code-block:: bash
 
@@ -175,8 +174,8 @@ SDE 采样与 GRPO 的核心参数。
     export ROBOT_PLATFORM="LIBERO"
     bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
 
-``install.sh`` 已让 Evo-1 源码可被导入，无需额外设置。若你自行 clone 了该仓库，
-请把 ``actor.model.evo1.repo_path``（或环境变量 ``EVO1_REPO_PATH``）指向仓库根目录。
+若你自行 clone 了 Evo-1 仓库，请把 ``actor.model.evo1.repo_path``（或环境变量
+``EVO1_REPO_PATH``）指向仓库根目录。
 
 如需快速复现单任务上的 RL 效果，可用 ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``
 把训练限制到单个 LIBERO-Spatial 任务；几十个 GRPO step 内 ``env/success_at_end`` 就会从

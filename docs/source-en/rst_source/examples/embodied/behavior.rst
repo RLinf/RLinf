@@ -89,7 +89,7 @@ Installation
 .. include:: _setup_common.rst
 
 **Option 1: Docker image** — BEHAVIOR ships **two separate images**, one per model:
-``agentic-rlinf0.3-behavior`` (OpenVLA-OFT) and ``agentic-rlinf0.3-behavior-openpi``
+``agentic-rlinf0.4-behavior`` (OpenVLA-OFT) and ``agentic-rlinf0.4-behavior-openpi``
 (OpenPI). Each image bundles only its own virtual environment, so pull the one that
 matches the model you intend to train (there is no ``switch_env`` between them):
 
@@ -101,8 +101,8 @@ matches the model you intend to train (there is no ``switch_env`` between them):
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-behavior
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior
+      rlinf/rlinf:agentic-rlinf0.4-behavior
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
 
    # OpenPI model (separate image):
    docker run -it --rm --gpus all \
@@ -110,8 +110,8 @@ matches the model you intend to train (there is no ``switch_env`` between them):
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+      rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
 
    # In either image the matching virtual environment is already activated by default.
 
@@ -224,7 +224,7 @@ Launch a config with ``run_embodiment.sh``:
 
    - BEHAVIOR throughput → increase env GPU count first, then tune ``env.num_env_subprocess`` and ``env.train.total_num_envs``.
    - Each BEHAVIOR process can use roughly 10 GiB of VRAM; tune subprocess count for your GPU memory.
-   - Cached task instances → generate them with ``rlinf/envs/behavior/instance_generator.py`` and ``examples/embodiment/config/env/behavior_r1pro.yaml``.
+   - Cached task instances → generate them with ``rlinf/envs/sim/behavior/instance_generator.py`` and ``examples/embodiment/config/env/behavior_r1pro.yaml``.
    - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
 
@@ -253,16 +253,13 @@ helps reproducibility and evaluation in RLinf.
 
 After conversion, update ``behavior_openpi_pi05_eval.yaml`` as follows:
 
-1. Set ``actor.model.model_path`` and ``rollout.model.model_path`` to the converted model directory.
-2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both
-   ``env.train`` and ``env.eval`` (for example, ``4096``).
+1. Set ``rollout.model.model_path`` to the converted model directory.
+2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in
+   ``env.eval`` if you need longer trajectories (for example, ``4096``).
 
 .. code-block:: yaml
 
    env:
-     train:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
      eval:
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
@@ -277,7 +274,7 @@ Configure Further
 
 The BEHAVIOR env is driven by ``examples/embodiment/config/env/behavior_r1pro.yaml``.
 RLinf first loads OmniGibson's base config (``base_config_name``) and then applies the
-``omni_config`` overrides (see ``setup_omni_cfg`` in ``rlinf/envs/behavior/utils.py``).
+``omni_config`` overrides (see ``setup_omni_cfg`` in ``rlinf/envs/sim/behavior/utils.py``).
 The fields below control reset behavior, scene loading, simulator frequencies, and
 throughput — most have sensible defaults and only need tuning for custom tasks or
 performance.
@@ -330,7 +327,7 @@ performance.
      - ``True`` enables transition-rule state changes (e.g. slicing, cooking).
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` uses the numpy controller backend, usually faster in single-/moderate-parallel runs.
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - When ``True``, skips collecting intermediate observations inside an action chunk (large
        env-speed gain). Saved videos then show only the frames the policy observes at chunk boundaries.
    * - ``num_env_subprocess``
@@ -341,7 +338,7 @@ performance.
 Generating cached task instances
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rlinf/envs/behavior/instance_generator.py`` generates ``*_template.json`` and
+``rlinf/envs/sim/behavior/instance_generator.py`` generates ``*_template.json`` and
 ``*_template-tro_state.json`` files directly from ``behavior_r1pro.yaml`` (it reads
 ``scene_model``, ``activity_name``, ``activity_definition_id``, the robot config, and
 room-loading settings, then temporarily switches to online object sampling). It writes to
@@ -352,12 +349,12 @@ room-loading settings, then temporarily switches to online object sampling). It 
 
    cd /path/to/RLinf
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format template \
      --start-idx 1 --end-idx 50
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format tro_state \
      --start-idx 1 --end-idx 50
@@ -372,30 +369,29 @@ RLinf YAML directly and preserves ``activity_definition_id``.
 
 --------------
 
-**5. Evaluate with the PyTorch OpenPI (Pi0.5) code**
+**5. Evaluate a JAX-aligned Pi0.5 checkpoint**
 
-BEHAVIOR evaluation is also supported with the new **self-contained PyTorch
-OpenPI** code (model ``model_type: openpi_pytorch``; see
-:doc:`sft_openpi_pytorch` for the matching SFT flow). The eval config is:
+BEHAVIOR evaluation uses ``model_type: openpi``. For weights from
+:doc:`sft_openpi` or the OpenPI checkpoint convertor, the eval config is:
 
-- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``
 
 This config runs in eval-only mode (``runner.only_eval: True``) and consumes a
-**new-format** PyTorch checkpoint, i.e. one produced by the OpenPI checkpoint
-convertor (``ckpt_convertor.openpi`` ``old2new`` / ``sft2new``). Set the model
+converted checkpoint, i.e. one produced by the OpenPI checkpoint
+convertor (``ckpt_convertor.openpi`` ``openpi_pytorch_to_openpi`` /
+``sft_to_openpi``). Set the model
 paths directly in the config as ``/path/to/...`` placeholders:
 
-- ``rollout.model.model_path``: the new-format eval checkpoint.
-- ``rollout.model.openpi.assets_dir``: directory holding the BEHAVIOR norm-stats.
-  Norm stats resolve at ``{assets_dir}/{asset_id}/norm_stats.json``.
-- ``rollout.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece
-  tokenizer model.
+- ``rollout.model.model_path``: the eval checkpoint.
+
+Normalization statistics are loaded from the converted checkpoint's bundled
+``physical-intelligence/behavior/norm_stats.json`` asset.
 
 .. code:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
 

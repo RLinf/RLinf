@@ -30,14 +30,14 @@ Real-world training usually follows **one GPU training node + N robot control no
      - Runs ``actor``, ``rollout`` (and optional ``reward``); **only this node** runs the training entry script
    * - **1 … N**
      - Robot control
-     - Runs ``env`` workers and ``FrankaController``; one control-node rank per arm (see example docs for shared control nodes)
+     - Runs ``env`` workers and the Franka arm parts; one control-node rank per arm (see example docs for shared control nodes)
 
 All nodes must be on the **same LAN** (or overlay network; see :doc:`cloud_edge`), and
 ``cluster.num_nodes`` must match the number of nodes joined to Ray.
 
 .. important::
 
-   - Control nodes need Franka dependencies (ROS, libfranka, etc.); see :doc:`../examples/embodied/franka`.
+   - Control nodes need the Franka controller environment (Franky with bundled libfranka by default); see :doc:`../examples/embodied/franka`.
    - Ray freezes Python and env vars at ``ray start``; install dependencies on **each node** first.
    - Use ``ray_utils/realworld/setup_before_ray.sh`` to align per-node env before ``ray start``.
 
@@ -59,11 +59,11 @@ On **every node**, before ``ray start``:
    # If multiple NICs, pin the reachable interface, e.g.:
    # export RLINF_COMM_NET_DEVICES=eth0
 
-On control nodes, also source the ROS / Franka workspace if not in ``setup_before_ray.sh``:
+On control nodes, also activate the Franka environment if ``setup_before_ray.sh`` does not:
 
 .. code-block:: bash
 
-   source <your_catkin_ws>/devel/setup.bash
+   source .venv/bin/activate
 
 Step 2: Start Ray
 ~~~~~~~~~~~~~~~~~
@@ -175,8 +175,12 @@ When the **camera is on the GPU server** and the **arm and gripper are on a NUC*
 set camera/gripper types and ``controller_node_rank`` in ``hardware.configs``.
 Field details and collection examples are in :doc:`../examples/embodied/franka_zed_robotiq`.
 
-For training, place ``env`` on the GPU node group (camera capture) and pin
-``FrankaController`` to the NUC:
+For training, place ``env`` on the Franka node group so that it receives the
+Franka hardware configuration. The hardware config's ``node_rank: 0`` keeps the
+env worker on the GPU node for camera capture, while ``controller_node_rank: 1``
+places the arm and its end effector on the NUC. They are separate parts with
+separate connections, and both follow that rank because both are wired to the
+same machine:
 
 .. code-block:: yaml
 
@@ -187,7 +191,7 @@ For training, place ``env`` on the GPU node group (camera capture) and pin
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu

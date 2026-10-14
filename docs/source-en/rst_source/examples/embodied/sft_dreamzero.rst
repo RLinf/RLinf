@@ -74,11 +74,8 @@ Clone the DreamZero repository separately and set ``DREAMZERO_PATH`` before SFT 
    git clone https://github.com/RLinf/dreamzero.git
    export DREAMZERO_PATH=/path/to/dreamzero
 
-**What this does:**
-
-1. Creates a DreamZero-specific uv virtual environment through ``requirements/install.sh``.
-2. Installs only offline SFT dependencies by default, or adds LIBERO when you need simulator evaluation.
-3. Makes the external DreamZero package importable through ``DREAMZERO_PATH``; ``examples/sft/run_vla_sft.sh`` also appends it to ``PYTHONPATH``.
+``DREAMZERO_PATH`` must point at the clone: ``examples/sft/run_vla_sft.sh`` reads it to
+make the external DreamZero package importable.
 
 Model Preparation
 -----------------

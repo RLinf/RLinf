@@ -27,6 +27,7 @@ from omegaconf.omegaconf import DictConfig
 from tqdm import tqdm
 
 from rlinf.data.schema.embodied_types import RTCActionResponse, RTCRequest
+from rlinf.envs import SupportedEnvType
 from rlinf.scheduler import Channel, Worker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -81,7 +82,9 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
             rtc_request.request_type == "replan"
             and self._rtc_eval_model_actions is not None
         ):
-            from rlinf.models.embodiment.openpi.rtc_guidance import RTCGuidanceContext
+            from rlinf.models.embodiment.openpi.sampling.rtc_guidance import (
+                RTCGuidanceContext,
+            )
 
             rtc_context = RTCGuidanceContext(
                 prev_model_actions=self._rtc_eval_model_actions,
@@ -99,7 +102,8 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
 
         if rtc_request.request_type == "replan":
             if (
-                self.cfg.env.eval.env_type != "realworld"
+                SupportedEnvType(self.cfg.env.eval.env_type)
+                is not SupportedEnvType.REAL
                 and self.eval_chunk_pause_seconds > 0
             ):
                 delay_steps = max(
@@ -109,7 +113,10 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
                 elapsed = time.time() - start_time
                 if elapsed < target_time:
                     time.sleep(target_time - elapsed)
-            elif self.cfg.env.eval.env_type == "realworld" and self.inject_delay_ms > 0:
+            elif (
+                SupportedEnvType(self.cfg.env.eval.env_type) is SupportedEnvType.REAL
+                and self.inject_delay_ms > 0
+            ):
                 target_time = self.inject_delay_ms / 1000.0
                 elapsed = time.time() - start_time
                 if elapsed < target_time:

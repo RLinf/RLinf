@@ -42,6 +42,7 @@ from .routing import split_channel_message
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
+    from ..collective.tensor_compression import TensorCodecProvider
     from ..manager import WorkerInfo
     from .worker_group import WorkerGroup
 
@@ -482,6 +483,7 @@ class Worker(metaclass=WorkerMeta):
 
         # Setup communication envs
         self._setup_comm_envs()
+        self._setup_collective_resources()
 
         self._lock = threading.Lock()
         Worker.current_worker = self
@@ -568,19 +570,20 @@ class Worker(metaclass=WorkerMeta):
     ):
         """Send an object to a specific worker address in the collective group.
 
-        The function is specially optimized for torch.Tensor, List of torch.Tensor, Dict of torch.Tensor, and dataclass containing torch.Tensor, which go through NCCL when the contained tensors are on GPU. Otherwise, all communications go through GLOO.
+        The function is specially optimized for tensors, tensor lists or tuples,
+        tensor dictionaries, and dataclasses containing tensor fields. Supported
+        containers may mix CPU and accelerator tensors; each tensor uses its
+        corresponding communication path.
 
         .. note::
             Do not mix send with recv_tensor
 
         .. note::
-            We only use NCCL primitives when the list or dict values only contain GPU tensors. We also see complex dicts with deep hierarchy as common Python objects, which will be serialized into a CPU tensor and sent through GLOO.
+            Complex nested dictionaries are serialized as Python objects and sent
+            through the CPU communication path.
 
         .. note::
             When transferring GPU objects, the first send needs to be paired with a recv at the other end. Calling async send or recv first at both ends will result in communication hang, because NCCL communicators are established in a lazy manner when the first pair of send/recv is called.
-
-        .. note::
-            Do not mix CPU and GPU tensors in a list or dict.
 
         .. note::
             This method is not thread safe.
@@ -806,7 +809,7 @@ class Worker(metaclass=WorkerMeta):
         channel_name: str,
         maxsize: int = 0,
         distributed: bool = False,
-        node_rank: int = 0,
+        node_rank: Optional[int] = None,
         local: bool = False,
     ):
         """Create a new channel with the specified placement rank and maximum size.
@@ -815,7 +818,7 @@ class Worker(metaclass=WorkerMeta):
             channel_name (str): The name of the channel.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
             distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
-            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
+            node_rank (int): The node to place the channel on. Only valid when distributed is False. Defaults to None, which places the channel on the creating worker's node.
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
         Returns:
@@ -1529,6 +1532,51 @@ class Worker(metaclass=WorkerMeta):
                 self.log_warning(
                     f"{ccl_socket_env_var} is already set to {os.environ[ccl_socket_env_var]}, ignoring {Cluster.get_full_env_var_name(ClusterEnvVar.COMM_NET_DEVICES)}={self._comm_devices}"
                 )
+
+    def _setup_collective_resources(self) -> None:
+        """Initialize Worker-wide collective resources.
+
+        The collective configuration was validated once on the driver and
+        travels with the ``ClusterConfig``, so every Worker in the job resolves
+        the same settings and both ends of a transfer agree by construction.
+        """
+        from ..cluster.config import TensorBufferPoolConfig
+        from ..collective.tensor_buffer_pool import TensorBufferPool
+        from ..collective.tensor_compression import probe_tensor_codec_library
+
+        collective_config = Cluster().collective_config
+        self._tensor_compression_config = (
+            collective_config.tensor_compression
+            if collective_config is not None
+            else None
+        )
+        self._tensor_buffer_pool = TensorBufferPool(
+            collective_config.tensor_buffer_pool
+            if collective_config is not None
+            else TensorBufferPoolConfig()
+        )
+        self._tensor_codec_provider = None
+        self._tensor_codec_provider_lock = threading.Lock()
+
+        if (
+            self._tensor_compression_config is not None
+            and self._tensor_compression_config.enabled
+        ):
+            probe_tensor_codec_library(self._tensor_compression_config.codec)
+
+    def _get_tensor_codec_provider(self) -> "TensorCodecProvider":
+        """Return the lazily initialized Worker-wide codec provider."""
+        if self._tensor_codec_provider is not None:
+            return self._tensor_codec_provider
+
+        config = self._tensor_compression_config
+        if config is None or not config.enabled:
+            raise ValueError("Tensor compression is not enabled for this Worker.")
+
+        with self._tensor_codec_provider_lock:
+            if self._tensor_codec_provider is None:
+                self._tensor_codec_provider = config.create_codec_provider()
+        return self._tensor_codec_provider
 
     def _setup_logging(self):
         self._logger = logging.getLogger(self._worker_name)

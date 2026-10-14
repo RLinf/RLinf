@@ -13,7 +13,7 @@ This section documents the evaluation reference material: config structure, CLI 
    * - :doc:`CLI <cli>`
      - How to launch evaluations with ``run_eval.sh``, pass Hydra overrides, and auto-infer the benchmark from config names.
    * - :doc:`Models <models>`
-     - VLA models with example configs in ``evaluations/`` today (OpenPI, OpenVLA-OFT, StarVLA, DreamZero, LingBotVLA) and how to set ``model_path``.
+     - VLA models with example configs in ``evaluations/`` today (OpenPI, OpenVLA-OFT, StarVLA, DreamZero, MolmoAct2, LingBotVLA) and how to set ``model_path``.
    * - :doc:`Results <results>`
      - Where logs and rollout videos are written, terminal metrics such as ``eval/success_once``, and TensorBoard usage.
 

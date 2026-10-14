@@ -45,7 +45,7 @@ FUSCO高性能MoE通信库
 
    # download the shared library
    mkdir -p lib
-   curl -L -o lib/libfusco.so https://ghfast.top/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so
+   curl -L -o lib/libfusco.so https://gh-proxy.com/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so
 
 
 运行

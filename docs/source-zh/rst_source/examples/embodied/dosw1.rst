@@ -121,7 +121,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
    # 中国大陆用户可用下面这条加速下载：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -156,7 +156,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
    # 中国大陆用户可用下面这条加速下载：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -409,13 +409,13 @@ DOS-W1 的 episode 进度由机器人节点上的键盘监听器控制。只要�
 4. 成功后按 ``d`` 保存；如果这条不要了，按 ``r`` 放弃并重来。
 5. 达到 ``runner.num_data_episodes``（默认 ``20``）条后脚本自动退出。
 
-成功的轨迹会保存在 ``<log_path>/demos/``。把它填回训练配置：
+成功的轨迹会保存在 ``<log_path>/demo_buffer/``。同一配置还会把原始 episode 写到 ``<log_path>/pickle_episode/``。RLPD 读取 replay buffer 目录：
 
 .. code-block:: yaml
 
    algorithm:
      demo_buffer:
-       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demos"
+       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demo_buffer"
 
 若不启用 RLPD，直接去掉 ``demo_buffer`` 段即可。
 
@@ -509,7 +509,7 @@ Dummy 自检（可选）
     与四个端口是否与机器配置一致。
   - GPU 节点能否 ``ping`` 到机器人，并能在 50050–50053 建立 TCP 连接。
 
-**``RuntimeError: DOSW1SDKAdapter is not connected``**
+**``RuntimeError: DOSW1Connection is not connected``**
   connect 没有成功执行。回看此前日志中
   ``[DOSW1SDK] Connecting via AirbotRobot`` 一行的错误原因。
 

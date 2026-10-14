@@ -252,8 +252,8 @@ config above:
        router_url = router_group.get_router_url().wait()[0]
        # ... use router_url (see "Next: calling the router" below) ...
 
-       router_group.shutdown().wait()
-       server_group.shutdown().wait()
+       router_group.stop().wait()
+       server_group.stop().wait()
 
 
    if __name__ == "__main__":

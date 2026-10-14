@@ -248,6 +248,7 @@ class _LeRobotSource(TrajectorySource):
             decode_image_struct_batch,
             load_task_descriptions,
         )
+        from rlinf.data.storage.lerobot import episode_boundaries
 
         local_path = Path(dataset_path).absolute()
         self._dataset_label = str(local_path)
@@ -258,9 +259,7 @@ class _LeRobotSource(TrajectorySource):
         self._only_success = bool(only_success)
         self.dataset_type = dataset_type
 
-        eps = self.base.episode_data_index
-        self._ep_starts = [int(x) for x in eps["from"].tolist()]
-        self._ep_ends = [int(x) for x in eps["to"].tolist()]
+        self._ep_starts, self._ep_ends = episode_boundaries(self.base)
         if self.dataset_type == "sft":
             self._episode_success = None
         else:

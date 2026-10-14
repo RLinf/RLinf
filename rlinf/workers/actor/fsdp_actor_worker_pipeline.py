@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import asyncio
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
@@ -25,7 +24,7 @@ from rlinf.scheduler import Channel, CommMapper, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import compute_rollout_metrics
 from rlinf.utils.utils import unpack_batch
-from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 @dataclass
@@ -52,25 +51,35 @@ class PipelineEmbodiedFSDPActor(EmbodiedFSDPActor):
         self.global_batches_per_step = (
             self.micro_batches_per_step // self.gradient_accumulation
         )
+        self._pending_micro_batch_work = None
 
     def try_recv_micro_batch(
         self,
         input_channel: Channel,
     ) -> dict[str, torch.Tensor] | None:
-        try:
-            packed_batch = input_channel.get_nowait(
+        if self._pending_micro_batch_work is None:
+            self._pending_micro_batch_work = input_channel.get(
+                key=CommMapper.build_channel_key(
+                    self._rank, self._rank, "pipeline_actor"
+                ),
+                async_op=True,
+            )
+        if not self._pending_micro_batch_work.done():
+            return None
+        packed_batch = self._pending_micro_batch_work.wait()
+        self._pending_micro_batch_work = None
+        return unpack_batch(packed_batch)
+
+    def recv_micro_batch(self, input_channel: Channel) -> dict[str, torch.Tensor]:
+        if self._pending_micro_batch_work is None:
+            packed_batch = input_channel.get(
                 key=CommMapper.build_channel_key(
                     self._rank, self._rank, "pipeline_actor"
                 )
             )
-            return unpack_batch(packed_batch)
-        except asyncio.QueueEmpty:
-            return None
-
-    def recv_micro_batch(self, input_channel: Channel) -> dict[str, torch.Tensor]:
-        packed_batch = input_channel.get(
-            key=CommMapper.build_channel_key(self._rank, self._rank, "pipeline_actor")
-        )
+        else:
+            packed_batch = self._pending_micro_batch_work.wait()
+            self._pending_micro_batch_work = None
         return unpack_batch(packed_batch)
 
     def select_global_batch(

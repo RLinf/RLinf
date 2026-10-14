@@ -19,6 +19,13 @@ from rlinf.config import SupportedModel
 from rlinf.envs import SupportedEnvType
 
 
+def _is_openpi_family(model_type) -> bool:
+    """True for OpenPI policies loaded as ``openpi``."""
+    if model_type is None:
+        return False
+    return SupportedModel(model_type) == SupportedModel.OPENPI
+
+
 def prepare_actions_for_maniskill(
     raw_chunk_actions,
     num_action_chunks,
@@ -54,9 +61,11 @@ def prepare_actions_for_maniskill(
     actions["terminate_episode"] = np.array([0.0] * batch_size).reshape(-1, 1)  # [B, 1]
 
     actions = {k: torch.tensor(v, dtype=torch.float32) for k, v in actions.items()}
+    # Left on CPU: the env moves it to its own device, which is not always an
+    # accelerator (ManiSkill's CPU sim backend) nor always CUDA.
     actions = torch.cat(
         [actions["world_vector"], actions["rot_axangle"], actions["gripper"]], dim=1
-    ).cuda()
+    )
 
     chunk_actions = actions.reshape(-1, num_action_chunks, action_dim)
 
@@ -73,6 +82,7 @@ def prepare_actions_for_libero(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.GR00T_N1D6,
         SupportedModel.GR00T_N1D7,
+        SupportedModel.COSMOS3,
     ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
@@ -120,7 +130,7 @@ def prepare_actions_for_polaris(
     ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
-    elif SupportedModel(model_type) == SupportedModel.OPENPI:
+    elif _is_openpi_family(model_type):
         chunk_actions[..., -1] = torch.where(
             chunk_actions[..., -1] > 0.5,
             torch.ones_like(chunk_actions[..., -1]),
@@ -134,7 +144,7 @@ def prepare_actions_for_calvin(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
     else:
         chunk_actions[..., -1] = np.where(chunk_actions[..., -1] > 0, 1, -1)
@@ -171,7 +181,7 @@ def prepare_actions_for_robocasa(
 
     RoboCasa365 can override the env-side action schema via ``env.action_space``.
     The legacy RoboCasa path uses the named action-space mapping from
-    ``rlinf.envs.robocasa.utils``.
+    ``rlinf.envs.sim.robocasa.utils``.
     """
     action_space_cfg = {}
     if env_cfg is not None:
@@ -190,7 +200,7 @@ def prepare_actions_for_robocasa(
             "binarize_gripper_control", True
         )
 
-        if SupportedModel(model_type) == SupportedModel.OPENPI:
+        if _is_openpi_family(model_type):
             start_idx, end_idx = openpi_valid_action_slice
             actions_env = (
                 raw_chunk_actions[..., start_idx:end_idx].copy().astype(np.float32)
@@ -226,7 +236,7 @@ def prepare_actions_for_robocasa(
     # raw_chunk_actions shape: [num_chunks, 32]
     # Extract first action_dim (<=12) dimensions as valid action chunks
     # Then pad them to default actions to get (..., 12)-shaped action chunks for RobocasaEnv.step()
-    from rlinf.envs.robocasa.utils import (
+    from rlinf.envs.sim.robocasa.utils import (
         ROBOCASA_ALL_ACTION_DIM,
         ROBOCASA_DEFAULT_ACTION,
         get_action_ids,
@@ -287,7 +297,7 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
         )
     else:
         chunk_actions = raw_chunk_actions[..., :4]
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
     return chunk_actions
 
@@ -300,8 +310,8 @@ def prepare_actions_for_d4rl(
     # D4RL: take first action_dim dims from policy output
     raw = np.asarray(raw_chunk_actions, dtype=np.float32)
     chunk_actions = raw[..., :action_dim].copy()
-    # OPENPI: clip last dim to match continuous action space
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    # openpi: clip last dim to match continuous action space
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
     return chunk_actions
 
@@ -311,7 +321,7 @@ def prepare_actions_for_roboverse(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.where(chunk_actions[..., -1] < 0.0, 1.0, 0.0)
     return chunk_actions
 
@@ -339,7 +349,7 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.OPENSORAWM or env_type == SupportedEnvType.WANWM:
+    elif env_type == SupportedEnvType.WORLD_MODEL:
         # TODO: Implement prepare_actions_for_opensora_wm
         if wm_env_type == "libero":
             chunk_actions = prepare_actions_for_libero(
@@ -393,7 +403,7 @@ def prepare_actions(
             action_dim=action_dim,
             action_space=policy,
         )
-    elif env_type == SupportedEnvType.REALWORLD:
+    elif env_type == SupportedEnvType.REAL:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.GENESIS:
         chunk_actions = prepare_actions_for_genesis(
@@ -416,6 +426,8 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.DIFFUSION:
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:
         chunk_actions = prepare_actions_for_polaris(
             raw_chunk_actions=raw_chunk_actions,

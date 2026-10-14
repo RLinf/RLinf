@@ -44,12 +44,19 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-from lerobot.common.datasets.lerobot_dataset import (
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-)
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
 
 # Make the rlinf package importable regardless of the cwd the user launched from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
@@ -73,6 +80,7 @@ from rlinf.data.datasets.recap.utils import (
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )
+from rlinf.data.storage.lerobot import episode_boundaries  # noqa: E402
 from rlinf.models.embodiment.value_model.recap.modeling_critic import ValueCriticModel
 
 logger = logging.getLogger(__name__)
@@ -522,9 +530,8 @@ def compute_advantages_for_dataset(
     )
     extended_size = extended_end - shard_start
 
-    ep_ends = {}
-    for ep_idx in range(len(dataset.episode_data_index["to"])):
-        ep_ends[ep_idx] = int(dataset.episode_data_index["to"][ep_idx].item())
+    _, ep_end_list = episode_boundaries(dataset)
+    ep_ends = dict(enumerate(ep_end_list))
 
     if rank == 0:
         logger.info(

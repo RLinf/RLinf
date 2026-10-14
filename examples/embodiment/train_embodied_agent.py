@@ -64,6 +64,14 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACFSDPPolicy
 
         actor_worker_cls = RLTACFSDPPolicy
+    elif cfg.algorithm.loss_type == "rlt_td3":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for rlt_td3."
+            )
+        from rlinf.workers.actor.fsdp_rlt_td3_policy_worker import RLTTD3FSDPPolicy
+
+        actor_worker_cls = RLTTD3FSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_dagger":
         if use_training_pipeline:
             raise ValueError(
@@ -90,7 +98,7 @@ def main(cfg) -> None:
 
             actor_worker_cls = PipelineEmbodiedFSDPActor
         else:
-            from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+            from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
             actor_worker_cls = EmbodiedFSDPActor
 
@@ -166,9 +174,9 @@ def main(cfg) -> None:
     if reward_group is not None:
         reward_group.stop().wait()
     if router_group is not None:
-        router_group.shutdown().wait()
+        router_group.stop().wait()
     if server_group is not None:
-        server_group.shutdown().wait()
+        server_group.stop().wait()
 
 
 if __name__ == "__main__":

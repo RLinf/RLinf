@@ -57,23 +57,24 @@ Replay Buffer
 数据流程说明
 ------------------
 
-模型和环境交互的多轮数据会通过 Rollout Worker 收集，并转换为 `Trajectory`，然后通过 Channel 发送给 Actor Worker。
-Actor Worker 将 `Trajectory` 存入 `TrajectoryReplayBuffer`，并进行采样训练。
+模型和环境交互的多轮数据由 Rollout Worker 作为 trajectory part 发布。Actor Channel
+collector 将其转换为 `Trajectory`，Actor Worker 再将 `Trajectory` 存入
+`TrajectoryReplayBuffer` 并采样训练。
 
 
-Rollout Worker 收集轨迹数据流程
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Actor Channel 收集轨迹数据流程
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-rollout worker按时间累积 step 结果，收集轨迹的过程。其中
-`[obs₀, obs₁]` 为一个transition, `[act₀, r₀, dones, ... ]` 为一个 **ChunkStepResult**：
+Collector 按时间累积已配对的 chunk。其中 `[obs₀, obs₁]` 表示一个 transition，
+`[act₀, r₀, dones, ... ]` 表示一个 chunk：
 
 .. code-block:: text
 
    time →
    [ obs₀, obs₁, act₀, r₀, dones₀, ... ] ──┐
-   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── EmbodiedTrajectoryBuilder── Trajectory 
-   [ obs₂, obs₃, act₂, r₂, dones₂, ... ] ──┤                                │
-   [ obs₃, obs₄, act₃, r₃, dones₃, ... ] ──┘                           Channel(put)   
+   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── TrajectoryCollector ── Trajectory
+   [ obs₂, obs₃, act₂, r₂, dones₂, ... ] ──┤                         │
+   [ obs₃, obs₄, act₃, r₃, dones₃, ... ] ──┘                    Channel(put)
 
 Actor Worker 保存轨迹数据流程
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -112,6 +113,12 @@ Actor worker 从 Channel 接收 `Trajectory`，存入 `TrajectoryReplayBuffer`�
 - `local_rank`：当前 rank 只加载自己的那一份轨迹（0-based）
 - `world_size`：总 rank 数（分片数）
 - 维持各分片的 `size`、`total_samples`、`trajectory_counter` 一致性
+
+当 ``auto_save=False`` 时，``save_checkpoint(save_path)`` 保存内存缓存中仍保留的轨迹。checkpoint 索引按插入顺序列出这些轨迹，``size`` 和 ``total_samples`` 也只统计实际保存的数据。例如，``sample_window_size=2`` 的 buffer 添加五条轨迹后，保存的 ID 为 3 和 4。以 ``is_distributed=True``、``world_size=2`` 加载时，rank 0 获得 ID 3，rank 1 获得 ID 4。
+
+保存操作保持运行中的 buffer 不变。完整加载会保留后续轨迹的起始 ID，因此上述示例恢复后，新添加的轨迹从 ID 5 开始编号。``pt`` 和 ``pkl`` 两种格式保存的数据范围相同。
+
+当 ``auto_save=True`` 时，``save_checkpoint(save_path)`` 从自动落盘目录拷贝当前采样窗口。窗口是轨迹列表末尾的 ``sample_window_size`` 条；``sample_window_size`` 为 0，或列表更短时，保存列表中的全部轨迹。checkpoint 索引以及 ``size``、``total_samples`` 只统计这个窗口。窗口之外的轨迹仍留在自动落盘目录中。
 
 使用建议
 ------------

@@ -17,6 +17,9 @@ Environment Setup
 
 Supported models include ``openvla-oft``, ``openpi``, and ``lingbotvla`` — replace ``--model`` accordingly during installation.
 
+On AMD ROCm, install with ``--platform`` and set ``planner_backend: mplib`` in the task config;
+see :ref:`Run on Different Hardware Backends <robotwin-hardware>`.
+
 **RoboTwin repository and assets**
 
 Before evaluation, clone the RLinf-compatible branch and download simulation assets (see the training doc for details):
@@ -46,7 +49,7 @@ Set these before every evaluation run:
 
 **Docker (optional)**
 
-You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.3-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
+You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.4-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
 
 - OpenVLA-OFT: ``source switch_env openvla-oft``
 - OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ ): ``source switch_env openpi``
@@ -69,12 +72,12 @@ Available under ``evaluations/robotwin/``:
    * - ``robotwin_place_empty_cup_openpi_eval.yaml``
      - place_empty_cup
      - π₀
-   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
-     - adjust_bottle
-     - π₀
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
+   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
+     - adjust_bottle
+     - π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA
@@ -82,7 +85,7 @@ Available under ``evaluations/robotwin/``:
      - click_bell
      - LingBotVLA
 
-If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
+If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
 
 End-to-End Workflow
 -------------------
@@ -131,7 +134,7 @@ RoboTwin evaluation runs one trajectory per **success seed** in ``eval_seeds.jso
 Evaluation Protocol
 ~~~~~~~~~~~~~~~~~~~
 
-RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. Seeds are listed in ``rlinf/envs/robotwin/seeds/eval_seeds.json``, indexed by ``task_name``; the file currently covers **22 tasks** (150–320 seeds each).
+RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. Seeds are listed in ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``, indexed by ``task_name``; the file currently covers **22 tasks** (150–320 seeds each).
 
 In ``RoboTwinEnv``:
 
@@ -282,4 +285,4 @@ FAQ
 - **Robot platform:** Set ``ROBOT_PLATFORM=ALOHA`` to select the platform variant.
 - **GPU OOM:** Set ``env.enable_offload: True`` and ``rollout.enable_offload: True`` in the YAML, or reduce ``env.eval.total_num_envs``.
 - **Eval coverage:** See :ref:`robotwin-eval-config` above; default 128 parallel envs with ``use_fixed_reset_state_ids: True`` only covers a subset of seeds.
-- **Rendering issues:** On headless hosts, try ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa`` (``run_eval.sh`` sets these by default).
+- **Rendering issues:** ``run_eval.sh`` renders with EGL by default; on hosts without EGL, ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa``.

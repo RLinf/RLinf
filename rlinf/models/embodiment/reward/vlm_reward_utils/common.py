@@ -15,11 +15,12 @@
 from typing import Any
 
 import torch
-from transformers import AutoProcessor
 
 
 def load_vlm_processor(model_path: str, subprocessor_kwargs: Any = None):
     """Load an HF processor and optionally override nested subprocessor attrs."""
+    from transformers import AutoProcessor
+
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
     for subprocessor_name, kwargs in dict(subprocessor_kwargs or {}).items():
         subprocessor = getattr(processor, subprocessor_name, None)

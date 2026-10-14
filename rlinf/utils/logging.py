@@ -13,11 +13,54 @@
 # limitations under the License.
 
 
+import os
+
+
 def get_logger():
     """Get the logger instance of the current worker."""
     from rlinf.scheduler.worker import Worker
 
     return Worker.logger
+
+
+# Third-party (Megatron-Core) logging noise control
+_NOISY_MCORE_LOGGERS = (
+    "megatron.core.distributed.param_and_grad_buffer",
+    "megatron.core.distributed.distributed_data_parallel",
+    "megatron.core.optimizer",
+    "megatron.core.optimizer_param_scheduler",
+    "megatron.core.num_microbatches_calculator",
+)
+
+_THIRD_PARTY_LOGGING_CONFIGURED = False
+
+
+def configure_third_party_logging() -> None:
+    """Silence verbose third-party INFO logs unless running in DEBUG.
+
+    Mirrors ``RLINF_LOG_LEVEL`` (the same knob ``Worker._setup_logging``
+    reads, default ``INFO``): when it is anything other than ``DEBUG``,
+    raise the noisy Megatron-Core loggers to ``WARNING`` so the per-bucket
+    param dump is suppressed. Under ``DEBUG`` the full mcore dump is left
+    at its default (INFO) level for debugging.
+
+    Idempotent.
+    """
+    global _THIRD_PARTY_LOGGING_CONFIGURED
+    if _THIRD_PARTY_LOGGING_CONFIGURED:
+        return
+
+    import logging
+
+    level = os.environ.get("RLINF_LOG_LEVEL", "INFO").upper()
+    if level == "DEBUG":
+        _THIRD_PARTY_LOGGING_CONFIGURED = True
+        return
+
+    for name in _NOISY_MCORE_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+    _THIRD_PARTY_LOGGING_CONFIGURED = True
 
 
 _LIBAV_LOGS_SILENCED = False

@@ -95,7 +95,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.3-opensora``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.4-opensora``:
 
 .. code:: bash
 
@@ -104,8 +104,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-opensora
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-opensora
+      rlinf/rlinf:agentic-rlinf0.4-opensora
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-opensora
 
    # Inside the container, switch to the OpenVLA-OFT virtual environment:
    source switch_env openvla-oft
@@ -228,7 +228,8 @@ to ``1``, and ``num_action_chunks`` to ``8``.
          opensora_wm_hf_ckpt_path: /Pathto/model/RLinf-OpenSora-LIBERO-Spatial/
 
    # In env/train/opensora_libero_spatial.yaml:
-   env_type: opensora_wm
+   env_type: world_model
+   backend: opensora
    wm_env_type: libero
    # Initial image path for world model initialization
    initial_image_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset_for_rlinf_world_model_init/base_policy_rollout_buffer

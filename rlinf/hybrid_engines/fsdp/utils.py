@@ -55,6 +55,8 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
+from rlinf.scheduler.cluster import Cluster, ClusterEnvVar
+from rlinf.utils.logging import get_logger
 
 
 class FSDPVersion(str, Enum):
@@ -62,10 +64,54 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size):
+def create_device_mesh(world_size: int) -> DeviceMesh:
+    """Build the 1-D device mesh that FSDP shards over.
+
+    The default process group is created here rather than left to
+    ``init_device_mesh``. When no default group exists, ``init_device_mesh``
+    falls back to a bare ``init_process_group()``, which pins the group -- and
+    therefore every FSDP collective, since a mesh dimension that spans the whole
+    world reuses the default group -- to whatever watchdog timeout the backend
+    ships with: 30 minutes for NCCL and Gloo, around 60 for HCCL. All of them are
+    shorter than the timeout RLinf applies to its own inter-worker groups, and
+    none can be raised from the outside.
+
+    Args:
+        world_size (int): Number of ranks participating in FSDP.
+
+    Returns:
+        DeviceMesh: A 1-D mesh over ``world_size`` ranks named ``fsdp``.
+    """
+    if torch.distributed.is_initialized():
+        get_logger().warning(
+            "The default process group already exists, so FSDP collectives keep "
+            f"the timeout it was created with rather than "
+            f"{Cluster.get_full_env_var_name(ClusterEnvVar.TIMEOUT)}."
+        )
+    else:
+        # No backend is passed, so torch still resolves the per-device backend
+        # it would have picked on its own; only the timeout changes.
+        torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )
+
+
+def gradient_reduction_group(device_mesh: DeviceMesh) -> torch.distributed.ProcessGroup:
+    """Return the group a gradient's shards are spread over.
+
+    :func:`get_grad_norm` sums per-rank shard norms over this group, so it has
+    to span the sharding dimension and nothing else. Passing ``None`` yields one
+    rank's shard norm instead of the gradient's, and under hybrid sharding the
+    ``ddp`` dimension holds replicas whose norms would be counted once each.
+
+    Args:
+        device_mesh (DeviceMesh): The mesh FSDP was built over.
+
+    Returns:
+        torch.distributed.ProcessGroup: The group behind the ``fsdp`` dimension.
+    """
+    return device_mesh["fsdp"].get_group()
 
 
 def init_fn(x: torch.nn.Module):
@@ -101,19 +147,32 @@ def _normalize_wrap_targets(value):
 
 
 def _resolve_module_classes_to_wrap(module, module_classes_to_wrap):
-    resolved_module_classes = set()
-    for module_class in _normalize_wrap_targets(module_classes_to_wrap) or []:
-        if isinstance(module_class, str):
-            resolved_class = get_module_class_from_name(module, module_class)
-            if resolved_class is None:
-                raise Exception("Could not find the module class to wrap in the model.")
-            resolved_module_classes.add(resolved_class)
-        else:
-            raise TypeError(
-                "module_classes_to_wrap entries must be class name strings; "
-                f"got {type(module_class).__name__!r}"
+    """Resolve short or qualified module class names against the model tree."""
+    classes = {
+        cls
+        for child in module.modules()
+        for cls in type(child).__mro__
+        if issubclass(cls, torch.nn.Module)
+    }
+    resolved = set()
+    for target in _normalize_wrap_targets(module_classes_to_wrap) or []:
+        if not isinstance(target, str):
+            raise TypeError("module_classes_to_wrap entries must be class name strings")
+        matches = {
+            cls
+            for cls in classes
+            if target in (cls.__name__, f"{cls.__module__}.{cls.__qualname__}")
+        }
+        if not matches:
+            raise ValueError(
+                f"Module class selector {target!r} matched no non-root modules"
             )
-    return resolved_module_classes
+        if len(matches) > 1:
+            raise ValueError(
+                f"Ambiguous module class {target!r}; use a qualified class name"
+            )
+        resolved.update(matches)
+    return resolved
 
 
 def _fsdp2_fully_shard_supports_ignored_params() -> bool:
@@ -146,6 +205,28 @@ def _collect_ignored_params_for_fsdp2(
         if isinstance(sub, cls_tuple):
             out.update(sub.parameters())
     return out
+
+
+def _module_has_single_floating_dtype(module: torch.nn.Module) -> bool:
+    dtype = None
+    for param in module.parameters():
+        if not param.is_floating_point():
+            continue
+        if dtype is None:
+            dtype = param.dtype
+        elif param.dtype != dtype:
+            return False
+    return dtype is not None
+
+
+def _pi0_fast_dtype_auto_wrap_policy(
+    module: torch.nn.Module, recurse: bool, nonwrapped_numel: int
+) -> bool:
+    if recurse:
+        return True
+    if nonwrapped_numel <= 0:
+        return False
+    return _module_has_single_floating_dtype(module)
 
 
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
@@ -209,6 +290,14 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
 
     # Build policies list
     policies = []
+
+    if (
+        SupportedModel(model_type) == SupportedModel.PI0_FAST
+        and not use_custom_wrap_policy
+    ):
+        # PI0-Fast mixes small FP32 embedding/norm parameters with a BF16 backbone.
+        # FSDP flat parameters must have one dtype, so split only on dtype-uniform modules.
+        policies.append(_pi0_fast_dtype_auto_wrap_policy)
 
     if SupportedModel(model_type) in [
         SupportedModel.CNN_POLICY,
@@ -434,6 +523,10 @@ def apply_fsdp2_to_model(
     tie_word_embeddings = getattr(
         getattr(module, "config", None), "tie_word_embeddings", False
     )
+    # Models that read embedding weights directly opt out of per-embedding units.
+    wrap_embeddings = not tie_word_embeddings and getattr(
+        module, "_fsdp_wrap_embeddings", True
+    )
 
     modules_to_shard = []
 
@@ -445,7 +538,7 @@ def apply_fsdp2_to_model(
                 no_split_name_set
                 and getattr(submodule, "_fsdp_wrap_name", None) in no_split_name_set
             )
-            or (isinstance(submodule, torch.nn.Embedding) and not tie_word_embeddings)
+            or (isinstance(submodule, torch.nn.Embedding) and wrap_embeddings)
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
@@ -586,6 +679,36 @@ def get_lr_scheduler(
             return min_mult + (1.0 - min_mult) * cosine
 
         return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
+    elif lr_scheduler == "fastwam_cosine":
+        # FastWAM's official trainer uses a LinearLR warmup followed by a
+        # torch CosineAnnealingLR with eta_min=learning_rate*0.01.
+        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+
+        num_training_steps = max(int(num_training_steps), 1)
+        num_warmup_steps = min(max(int(num_warmup_steps), 0), num_training_steps - 1)
+        remaining_steps = max(num_training_steps - num_warmup_steps, 1)
+        eta_min = optimizer.param_groups[0]["lr"] * 0.01
+        main_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=remaining_steps,
+            eta_min=eta_min,
+            last_epoch=last_epoch,
+        )
+        if num_warmup_steps <= 0:
+            return main_scheduler
+
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=1.0 / num_warmup_steps,
+            end_factor=1.0,
+            total_iters=num_warmup_steps,
+            last_epoch=last_epoch,
+        )
+        return SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[num_warmup_steps],
+        )
     # PyTorch native
     elif lr_scheduler == "torch_constant":
         from torch.optim.lr_scheduler import ConstantLR
@@ -600,6 +723,31 @@ def get_lr_scheduler(
             T_max=num_training_steps,
             eta_min=1e-6,
         )
+    elif lr_scheduler == "lambda_linear":
+        # The cosmos-framework LambdaLinearScheduler used by the
+        # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/utils/functional/lr_scheduler.py
+        # Linear warmup from ``f_start`` to the peak ``f_max`` at
+        # ``num_warmup_steps``, then linear decay to ``f_min`` over the remaining
+        from torch.optim.lr_scheduler import LambdaLR
+
+        f_start, f_max = 1.0e-6, 1.0
+        if min_lr_rate is not None:
+            f_min = min_lr_rate
+        else:
+            f_min = 0.0
+
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return (f_max - f_start) * current_step / max(
+                    1, num_warmup_steps
+                ) + f_start
+            progress = (current_step - num_warmup_steps) / max(
+                1, num_training_steps - num_warmup_steps
+            )
+            progress = min(1.0, progress)
+            return f_min + (f_max - f_min) * (1.0 - progress)
+
+        return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
     else:
         raise NotImplementedError(f"Scheduler type {lr_scheduler} is not supported")
 
@@ -1056,46 +1204,34 @@ def generate_with_kv_cache(
     generated_attention_mask = attention_mask.to(dtype=torch.long)
     finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
 
+    # Qwen-VL models take 3D M-RoPE position ids. Compute them for the prompt
+    # here and advance them by one per decoded token: transformers 5 moved this
+    # bookkeeping out of prepare_inputs_for_generation and into generate().
+    rope_inputs = {
+        k: v
+        for k, v in multi_modal_inputs.items()
+        if k not in ("pixel_values", "pixel_values_videos")
+    }
+    position_ids, _ = model.model.get_rope_index(
+        input_ids, attention_mask=generated_attention_mask, **rope_inputs
+    )
+    next_position = position_ids.amax(dim=(0, 2)) + 1
+
+    model_inputs = {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        **multi_modal_inputs,
+    }
     past_key_values = None
 
     for step in range(max_new_tokens):
-        if step == 0:
-            # prefill: full prompt + multimodal
-            cache_position = torch.arange(
-                0,
-                generated_ids.size(1),
-                device=generated_ids.device,
-                dtype=torch.long,
-            )
-            model_inputs = model.prepare_inputs_for_generation(
-                input_ids=generated_ids,
-                attention_mask=generated_attention_mask,
-                use_cache=True,
-                cache_position=cache_position,
-                past_key_values=past_key_values,
-                **multi_modal_inputs,
-            )
-        else:
-            # decode: only last token + cache
-            new_generated_ids = generated_ids[:, -1:].contiguous()
-            start_pos = generated_attention_mask.size(1) - new_generated_ids.size(1)
-            cache_position = torch.arange(
-                start_pos,
-                generated_attention_mask.size(1),
-                device=generated_ids.device,
-                dtype=torch.long,
-            )
-
-            model_inputs = model.prepare_inputs_for_generation(
-                input_ids=new_generated_ids,
-                attention_mask=generated_attention_mask,
-                use_cache=True,
-                cache_position=cache_position,
-                past_key_values=past_key_values,
-            )
-
         with amp_context:
-            outputs = model(**model_inputs)
+            outputs = model(
+                **model_inputs,
+                attention_mask=generated_attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+            )
 
         logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
         past_key_values = (
@@ -1120,6 +1256,12 @@ def generate_with_kv_cache(
         generated_attention_mask = torch.cat(
             [generated_attention_mask, append_mask], dim=-1
         )
+
+        # decode: only the new token; images are already in the KV cache
+        model_inputs = {
+            "input_ids": next_token.unsqueeze(-1),
+            "position_ids": (next_position + step).view(1, -1, 1).expand(3, -1, -1),
+        }
 
         if eos_token_id is not None:
             finished = finished | (next_token == eos_token_id)

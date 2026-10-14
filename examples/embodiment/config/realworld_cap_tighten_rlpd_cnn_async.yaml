@@ -107,7 +107,7 @@ env:
   train:
     ignore_terminations: False
     total_num_envs: 1
-    use_spacemouse: True
+    teleop: spacemouse
     keyboard_reward_wrapper: single_stage # options: "single_stage", "multi_stage"
     no_gripper: False
     max_steps_per_rollout_epoch: 200

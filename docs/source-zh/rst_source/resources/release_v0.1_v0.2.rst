@@ -13,31 +13,31 @@ RLinf v0.2 聚焦两个核心方向：真实世界强化学习（Real-World RL�
 
 1. 核心能力升级（重点：真实机器人 RL 与世界模型）
 
-- 支持基于 :doc:`XSquare Turtle2 <../examples/embodied/xsquare_turtle2>` Arms 的真实世界强化学习
+- 支持基于 `XSquare Turtle2 <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/xsquare_turtle2.html>`_ Arms 的真实世界强化学习
 
-- 支持将世界模型作为 RL 训练模拟器，包括 :doc:`OpenSora <../examples/embodied/opensora>`、:doc:`Wan <../examples/embodied/wan>`、:doc:`WoVR <publications/wovr>`
+- 支持将世界模型作为 RL 训练模拟器，包括 `OpenSora <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/opensora.html>`_、`Wan <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/wan.html>`_、`WoVR <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/publications/wovr.html>`_
 
-- :doc:`SFT VLM <../examples/embodied/sft_vlm>` 能力支持在自定义数据集上高效微调，并在 Robo2VLM 数据集上验证 Qwen2.5‑VL 与 Qwen3‑VL 约 95% 的复现精度，详见 `PR 708 <https://github.com/RLinf/RLinf/pull/708>`_ 与 `PR 781 <https://github.com/RLinf/RLinf/pull/781>`_
+- `SFT VLM <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/sft_vlm.html>`_ 能力支持在自定义数据集上高效微调，并在 Robo2VLM 数据集上验证 Qwen2.5‑VL 与 Qwen3‑VL 约 95% 的复现精度，详见 `PR 708 <https://github.com/RLinf/RLinf/pull/708>`_ 与 `PR 781 <https://github.com/RLinf/RLinf/pull/781>`_
 
-- 支持基于 :doc:`GSEnv <../examples/embodied/gsenv>` 的 Real2Sim2Real 训练（ManiSkill-GS）
+- 支持基于 `GSEnv <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/gsenv.html>`_ 的 Real2Sim2Real 训练（ManiSkill-GS）
 
-- 支持 π(0.5) 模型的 :doc:`Co-training <../examples/embodied/co_training>` sim-real 协同训练
+- 支持 π(0.5) 模型的 `Co-training <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/co_training.html>`_ sim-real 协同训练
 
 1. 模型与算法生态扩展
 
-- 支持 :doc:`Dexbotic <../examples/embodied/dexbotic>` 模型及其 RL 训练
+- 支持 `Dexbotic <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/dexbotic.html>`_ 模型及其 RL 训练
 
-- 增强 :doc:`IsaacLab <../examples/embodied/isaaclab>` 支持，尤其是 gr00t+isaaclab
+- 增强 `IsaacLab <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/isaaclab.html>`_ 支持，尤其是 gr00t+isaaclab
 
-- 支持 openpi 模型家族在 :doc:`RoboTwin <../examples/embodied/robotwin>` 2.0 上训练
+- 支持 openpi 模型家族在 `RoboTwin <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/robotwin.html>`_ 2.0 上训练
 
-- 支持 :doc:`CALVIN <../examples/embodied/calvin>` 基准
+- 支持 `CALVIN <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/calvin.html>`_ 基准
 
-- 支持 :doc:`RoboCasa <../examples/embodied/robocasa>` 基准
+- 支持 `RoboCasa <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/robocasa.html>`_ 基准
 
-- 支持 Pi0 的 :doc:`DSRL <../examples/embodied/dsrl>`，即 Diffusion Steering via Reinforcement Learning
+- 支持 Pi0 的 `DSRL <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/dsrl.html>`_，即 Diffusion Steering via Reinforcement Learning
 
-- 支持 flow matching policy 的 :doc:`SAC-Flow <../examples/embodied/sac_flow>` 训练
+- 支持 flow matching policy 的 `SAC-Flow <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/embodied/sac_flow.html>`_ 训练
 
 1. 训练基础设施增强
 
@@ -60,13 +60,13 @@ Agentic 与 Reasoning RL
 
 1. 核心能力升级（重点：多智能体 RL）
 
-- 原生多智能体训练支持：引入可扩展多智能体算法与统一数据接口，显著降低任务门槛，可快速复现复杂方案（如 :doc:`WideSeek-R1 <../examples/agentic/wideseek_r1/index>`），详见 `PR 824 <https://github.com/RLinf/RLinf/pull/824>`_
+- 原生多智能体训练支持：引入可扩展多智能体算法与统一数据接口，显著降低任务门槛，可快速复现复杂方案（如 `WideSeek-R1 <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/agentic/wideseek_r1/index.html>`_），详见 `PR 824 <https://github.com/RLinf/RLinf/pull/824>`_
 
-- 推理任务 PPO 支持：将 PPO 能力扩展到推理场景（见 :doc:`Reasoning PPO <../examples/agentic/reasoning_ppo>`），详见 `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_
+- 推理任务 PPO 支持：将 PPO 能力扩展到推理场景（见 `Reasoning PPO <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/agentic/reasoning_ppo.html>`_），详见 `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_
 
-- Megatron-LM 后端支持 FUSCO 通信库，提升 MoE 训练/推理阶段 All-to-All 通信性能（见 :doc:`FUSCO <../examples/system/fusco>`），详见 `PR 783 <https://github.com/RLinf/RLinf/pull/783>`_
+- Megatron-LM 后端支持 FUSCO 通信库，提升 MoE 训练/推理阶段 All-to-All 通信性能（见 `FUSCO <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/system/fusco.html>`_），详见 `PR 783 <https://github.com/RLinf/RLinf/pull/783>`_
 
-- 支持 :doc:`rStar2 <../examples/agentic/rstar2>` 与 :doc:`Search-R1 <../examples/agentic/searchr1>` 的 agentic RL，详见 `PR 522 <https://github.com/RLinf/RLinf/pull/522>`_ 与 `PR 639 <https://github.com/RLinf/RLinf/pull/639>`_
+- 支持 `rStar2 <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/agentic/rstar2.html>`_ 与 `Search-R1 <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/agentic/searchr1.html>`_ 的 agentic RL，详见 `PR 522 <https://github.com/RLinf/RLinf/pull/522>`_ 与 `PR 639 <https://github.com/RLinf/RLinf/pull/639>`_
 
 其他改进与缺陷修复
 ^^^^^^^^^^^^^^^^^^
@@ -98,9 +98,9 @@ Agentic 与 Reasoning RL
 文档更新
 ^^^^^^^^
 
-- 重构 :doc:`examples index <../examples/index>` 结构，按 embodied/agentic/system 分类
+- 重构 `examples index <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/examples/index.html>`_ 结构，按 embodied/agentic/system 分类
 
-- 在 :doc:`FAQ <faq>` 中新增断点调试文档
+- 在 `FAQ <https://rlinf.readthedocs.io/zh-cn/release-v0.2/rst_source/faq.html>`_ 中新增断点调试文档
 
 - 在 README 新增 awesome work 与 adoption 板块。
 

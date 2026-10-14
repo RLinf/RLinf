@@ -119,10 +119,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-robotwin
+      rlinf/rlinf:agentic-rlinf0.4-robotwin
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-robotwin
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robotwin
 
 Switch to the matching virtual environment inside the image:
 
@@ -155,6 +155,9 @@ Install dependencies for the model you want to run:
    # bash requirements/install.sh embodied --model lingbotvla --env robotwin
 
    source .venv/bin/activate
+
+On AMD ROCm, add ``--platform`` and follow
+:ref:`Run on Different Hardware Backends <robotwin-hardware>`.
 
 Clone RoboTwin and download its assets:
 
@@ -266,7 +269,42 @@ and result interpretation.
 
 .. note::
 
-   The provided configs use train/eval seed files under ``rlinf/envs/robotwin/seeds/``.
+   The provided configs use train/eval seed files under ``rlinf/envs/sim/robotwin/seeds/``.
+
+.. _robotwin-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+NVIDIA uses the installation and launch above. RoboTwin also installs on AMD
+ROCm, with one change to the task config.
+
+AMD ROCm
+~~~~~~~~
+
+Install on a host with ROCm available:
+
+.. code:: bash
+
+   bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env robotwin
+   source .venv/bin/activate
+
+Omit ``--rocm`` to detect the installed version, add ``--use-mirror`` for
+mainland China, and replace ``--model`` with ``openvla-oft`` or ``lingbotvla``.
+
+``pytorch3d``, ``warp-lang`` and ``curobo`` are CUDA-only, so the installer
+skips them. They exist for the ``curobo`` motion planner, which means RoboTwin
+needs the other planner: set ``planner_backend: mplib`` in the task config. The
+``curobo`` default fails while the environment is being constructed. Everything
+else in the environment installs as it does on CUDA, and training launches with
+the same command:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
+
+RLinf publishes no ROCm RoboTwin image, so the Docker steps above apply to CUDA
+hosts only.
 
 Visualization and Results
 -------------------------

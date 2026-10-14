@@ -13,9 +13,11 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from importlib import import_module
 from typing import ClassVar, Optional, TypeVar
 
 import yaml
+from omegaconf import OmegaConf
 
 HardwareType = TypeVar("HardwareType")
 
@@ -46,6 +48,11 @@ class NodeHardwareConfig:
 
     _hardware_config_registry: ClassVar[dict[str, "type[HardwareConfig]"]] = {}
 
+    #: Imported on a lookup that misses, because a cluster config is parsed
+    #: before anything asks the extension package for a robot.
+    _REGISTRATION_MODULES: ClassVar[tuple[str, ...]] = ("rlinf.robotics.robots",)
+    _registrations_loaded: ClassVar[bool] = False
+
     @classmethod
     def register_hardware_config(cls, type: str):
         """Register a hardware config into the global registry.
@@ -60,16 +67,50 @@ class NodeHardwareConfig:
 
         return hardware_config_decorator
 
+    @classmethod
+    def _load_registrations(cls) -> Optional[BaseException]:
+        """Import the extension modules that register hardware configs.
+
+        Returns:
+            The first import failure, or ``None``. It is reported through the
+            lookup that needed it, since a config naming no type from that
+            extension is still valid.
+        """
+        if cls._registrations_loaded:
+            return None
+        cls._registrations_loaded = True
+        for module_name in cls._REGISTRATION_MODULES:
+            try:
+                import_module(module_name)
+            except ImportError as missing:
+                return missing
+        return None
+
+    @classmethod
+    def config_class(cls, hardware_type: str) -> "type[HardwareConfig]":
+        """Return the config class registered for a hardware type.
+
+        Raises:
+            ValueError: If no registered type matches.
+        """
+        found = cls._hardware_config_registry.get(hardware_type)
+        if found is not None:
+            return found
+        missing = cls._load_registrations()
+        found = cls._hardware_config_registry.get(hardware_type)
+        if found is None:
+            known = sorted(cls._hardware_config_registry)
+            reason = f" ({type(missing).__name__}: {missing})" if missing else ""
+            raise ValueError(
+                f"Unsupported hardware type: {hardware_type!r}. Registered "
+                f"types are {known}{reason}. Names are case sensitive."
+            )
+        return found
+
     def __post_init__(self):
         """Post-initialization to convert hardware_configs dicts to their respective dataclass instances."""
         self.type = str(self.type)
-        hardware_config_class = NodeHardwareConfig._hardware_config_registry.get(
-            self.type
-        )
-        if hardware_config_class is None:
-            raise ValueError(
-                f"Unsupported hardware type: {self.type}. Currently supported types only include: {list(self._hardware_config_registry.keys())}"
-            )
+        hardware_config_class = NodeHardwareConfig.config_class(self.type)
 
         from ..cluster import dataclass_arg_check
 
@@ -84,18 +125,22 @@ class NodeHardwareConfig:
                 error_suffix="in cluster node_group hardware yaml config",
             )
 
-        # Ensure all configs are unique
-        config_strs = [
-            yaml.dump(dict(config), sort_keys=True) for config in self.configs
+        # Ensure all configs are unique. Resolve to plain containers first:
+        # dict() leaves nested values as OmegaConf nodes, which yaml cannot
+        # represent under Python 3.10.
+        plain_configs = [
+            OmegaConf.to_container(OmegaConf.create(config), resolve=True)
+            for config in self.configs
         ]
+        config_strs = [yaml.dump(config, sort_keys=True) for config in plain_configs]
         assert len(config_strs) == len(set(config_strs)), (
             "Duplicate hardware configs found in node hardware config: \n"
             + "\n".join(
-                [yaml.dump(dict(config), sort_keys=False) for config in self.configs]
+                [yaml.dump(config, sort_keys=False) for config in plain_configs]
             )
         )
 
-        self.configs = [hardware_config_class(**config) for config in self.configs]
+        self.configs = [hardware_config_class(**config) for config in plain_configs]
 
 
 @dataclass
@@ -121,7 +166,7 @@ class HardwareResource:
 
     @property
     def count(self) -> int:
-        """Get the count of hardware infos."""
+        """Number of hardware infos."""
         return len(self.infos)
 
 

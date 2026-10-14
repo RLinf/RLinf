@@ -115,6 +115,7 @@ actor:
     policy_setup: "panda-ee-target-dpos"
     # openpi specific parameters
     openpi:
+      task: rl
       config_name: "pi05_gsenv"
       num_images_in_input: 1
       noise_level: 0.5

@@ -71,7 +71,7 @@ Installation
 .. code:: bash
 
    # For faster downloads in mainland China you can use:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -87,9 +87,9 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
    # For faster image pull in mainland China you can use:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Then switch to the OpenPI env inside the container:
 
@@ -113,7 +113,7 @@ Refer to the :doc:`ManiSkill example <maniskill>` for base asset setup, then dow
 
 .. code:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/maniskill/assets
+   cd <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
    # For faster download in some regions you can set:
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .

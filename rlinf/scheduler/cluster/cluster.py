@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import atexit
 import logging
 import os
 import re
@@ -20,6 +19,7 @@ import signal
 import sys
 import tempfile
 import time
+from datetime import timedelta
 from enum import Enum
 from importlib.metadata import version
 from pathlib import Path
@@ -27,14 +27,14 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import ray
 import ray.util.scheduling_strategies
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from packaging import version as vs
 from ray._private import ray_logging
 from ray.actor import ActorHandle
 from ray.util.state import list_actors
 
 from ..hardware.accelerators.accelerator import ProfileConfig
-from .config import ClusterConfig
+from .config import ClusterConfig, CollectiveConfig
 from .node import NodeGroupInfo, NodeInfo, NodeProbe
 from .utils import DistributedRayLogCollector, without_http_proxies
 
@@ -79,6 +79,13 @@ class ClusterEnvVar(str, Enum):
         export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
     """
 
+    NET_EMULATION = "NET_EMULATION"
+    """Whether ``cluster.net_emulation`` is enabled for this run.
+
+    Set to ``1`` by the driver when the net emulation manager is launched, so that
+    workers know to wait for it instead of silently sending undelayed.
+    """
+
     PATH_ENV_MERGE_MODE = "PATH_ENV_MERGE_MODE"
     """How to merge path-like env vars when allocating workers.
 
@@ -111,8 +118,6 @@ class PathEnvMergeMode(str, Enum):
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
 
-    _run_failed = False
-
     SYS_NAME = "RLinf"
     NAMESPACE = SYS_NAME
     LOGGING_LEVEL = os.getenv(
@@ -126,6 +131,7 @@ class Cluster:
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
         ClusterEnvVar.EXT_MODULE: None,
+        ClusterEnvVar.NET_EMULATION: "0",
         ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
         ClusterEnvVar.CODE_WORKING_DIR: "0",
     }
@@ -349,10 +355,7 @@ class Cluster:
             }
             if self._ray_code_sync_fragment is not None:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
-            ray.init(**ray_init_kwargs)
-
-        Cluster._install_failure_hook()
-        atexit.register(Cluster._shutdown_ray_at_exit)
+            self._start_local_ray(ray_init_kwargs)
 
         # Ray log collector
         if distributed_log_dir is not None:
@@ -388,6 +391,17 @@ class Cluster:
             + "\n".join(str(group) for group in self._node_groups)
         )
 
+        # Resolve net emulation before the env vars are pushed to the nodes, so that
+        # workers can tell an unlaunched manager from a disabled one.
+        net_emu_cfg = cluster_cfg.get("net_emulation", None) if cluster_cfg else None
+        if net_emu_cfg is not None and net_emu_cfg.get("enabled", False):
+            # Resolve to a plain dict so the actor does not need the config schema.
+            if isinstance(net_emu_cfg, DictConfig):
+                net_emu_cfg = OmegaConf.to_container(net_emu_cfg, resolve=True)
+            os.environ[Cluster.get_full_env_var_name(ClusterEnvVar.NET_EMULATION)] = "1"
+        else:
+            net_emu_cfg = None
+
         # Set environment variables
         self._set_scheduler_env_vars()
 
@@ -396,6 +410,7 @@ class Cluster:
             CollectiveManager,
             DeviceLockManager,
             Manager,
+            NetEmulationManager,
             NodeManager,
             PortLockManager,
             Tracer,
@@ -431,6 +446,11 @@ class Cluster:
                 self._tracer = self._launch_manager_actor(
                     Tracer, manager_node, runtime_env, tracer_cfg.get("output_file")
                 )
+            # Optional net emulation manager, launched only when emulation is enabled
+            if net_emu_cfg is not None:
+                self._net_emulation_manager = self._launch_manager_actor(
+                    NetEmulationManager, manager_node, runtime_env, net_emu_cfg
+                )
         except ValueError:
             raise Cluster.NamespaceConflictError
 
@@ -456,32 +476,25 @@ class Cluster:
                 # Mimic ray's sleep before shutdown to ensure log messages are flushed
                 time.sleep(0.5)
                 ray.shutdown(_exiting_interpreter=True)
-            Cluster._run_failed = True
             print("Exiting main process due to a failure upon worker execution.")
             exit(-1)
 
         signal.signal(signal.SIGUSR1, signal_handler)
 
-    @staticmethod
-    def _install_failure_hook():
-        previous = sys.excepthook
+    def _start_local_ray(self, ray_init_kwargs: dict[str, Any]):
+        """Start a local Ray instance, retrying once if the node fails to come up.
 
-        def hook(exc_type, exc_value, exc_tb):
-            Cluster._run_failed = True
-            previous(exc_type, exc_value, exc_tb)
-
-        sys.excepthook = hook
-
-    @staticmethod
-    def _shutdown_ray_at_exit():
-        if Cluster._run_failed:
-            return
+        Ray kills the raylet when a starting node misses its fixed 15s dashboard
+        agent deadline, which a loaded machine can hit.
+        """
         try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except Exception:
-            pass
-        os._exit(0)
+            ray.init(**ray_init_kwargs)
+        except Exception as first_failure:
+            self._logger.warning(
+                f"{Cluster.SYS_NAME} could not start a local Ray instance ({first_failure}). Starting it again."
+            )
+            ray.shutdown()
+            ray.init(**ray_init_kwargs)
 
     def _init_from_existing_managers(self):
         if not ray.is_initialized():
@@ -528,10 +541,49 @@ class Cluster:
         """Get the system environment variable for the cluster."""
         return os.environ.get(Cluster.get_full_env_var_name(env_var), default)
 
+    @staticmethod
+    def get_collective_timeout() -> timedelta:
+        """Get the timeout applied to every collective RLinf creates.
+
+        This covers the inter-worker process groups as well as the process group
+        the training backends collect over, so that one setting governs all of
+        them.
+
+        Returns:
+            timedelta: The value of ``RLINF_TIMEOUT`` interpreted as minutes.
+
+        Raises:
+            ValueError: If ``RLINF_TIMEOUT`` is not a positive integer.
+        """
+        timeout = Cluster.get_sys_env_var(
+            ClusterEnvVar.TIMEOUT, Cluster.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.TIMEOUT]
+        )
+        try:
+            minutes = int(timeout)
+        except ValueError:
+            raise ValueError(
+                "Invalid TIMEOUT value. It should be an integer representing minutes."
+            )
+        if minutes <= 0:
+            raise ValueError(
+                f"Invalid TIMEOUT value {minutes}. It should be a positive number of minutes."
+            )
+        return timedelta(minutes=minutes)
+
     @property
     def num_nodes(self):
         """Get the number of nodes in the cluster."""
         return self._num_nodes
+
+    @property
+    def collective_config(self) -> Optional["CollectiveConfig"]:
+        """Get the job-wide collective configuration, if one was provided.
+
+        The configuration is validated once on the driver and reaches every
+        Worker with the rest of the :class:`ClusterConfig`, so both ends of a
+        collective agree on it by construction.
+        """
+        return self._cluster_cfg.collective if self._cluster_cfg is not None else None
 
     @property
     def num_accelerators(self):
@@ -639,10 +691,7 @@ class Cluster:
 
         if profiling_cfg.output_dir is None:
             output_dir = tempfile.gettempdir()
-
-            from rlinf.utils.logging import get_logger
-
-            get_logger().warning(
+            logging.getLogger(cls.SYS_NAME).warning(
                 f"Profiling is enabled for worker group '{worker_group_name}' but no "
                 f"output directory is configured. Reports will be saved to: {output_dir}."
             )
@@ -800,13 +849,18 @@ class Cluster:
                 merged_env_vars,
                 self._runtime_code_sync_strip_roots,
             )
+        runtime_env_vars = {
+            key: value
+            for key, value in merged_env_vars.items()
+            if node.default_env_vars.get(key) != value
+        }
         runtime_env_worker = Cluster._combine_ray_runtime_env(
             Cluster._job_code_sync_fragment_for_child_runtime_env(
                 self._ray_code_sync_fragment
             ),
             {
                 "py_executable": python_interpreter_path,
-                "env_vars": merged_env_vars,
+                "env_vars": runtime_env_vars,
             },
         )
 

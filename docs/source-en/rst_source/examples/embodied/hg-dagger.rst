@@ -6,7 +6,7 @@ Using HG-DAgger with Franka
 
    Human-Gated DAgger workflow for collecting interventions and training a Franka policy online.
 
-Train a real-world Franka policy with Human-Gated DAgger. You will collect intervention data, compute OpenPI normalization stats, run SFT, then launch online HG-DAgger with expert-only steps saved for training.
+Train a real-world Franka policy with Human-Gated DAgger. You will collect intervention data, compute OpenPI normalization stats, run SFT, and then launch online HG-DAgger. During the online stage, LeRobot archives complete successful episodes: non-intervention frames retain the actions actually executed by the policy, while intervention frames store the human actions and ``intervene_flag``. With ``only_save_expert: True``, training samples only action chunks whose non-padded frames are all human interventions.
 
 Overview
 --------
@@ -34,10 +34,10 @@ Use human-gated interventions to improve a real-world Franka policy online.
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · SpaceMouse/operator
+      Franka · PICO
 
 | **You'll do:** collect intervention data → compute norm stats → run SFT → launch HG-DAgger → monitor interventions.
-| **Prerequisites:** :doc:`franka` · :doc:`sft_openpi` · Ray cluster · trained or base OpenPI checkpoint.
+| **Prerequisites:** :doc:`franka` · :doc:`franka_vr` · :doc:`sft_openpi` · Ray cluster · trained or base OpenPI checkpoint.
 
 Tasks
 ~~~~~
@@ -50,14 +50,14 @@ Tasks
      - Config / entry point
      - Description
    * - Collection
-     - ``realworld_collect_data``
-     - Collect real-world intervention demonstrations.
+     - ``realworld_collect_data_pico``
+     - Collect real-world demonstrations with PICO.
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - Train the student initialization.
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
-     - Run online intervention training with expert-only save mode.
+     - Archive complete successful trajectories with online LeRobot and train on fully intervened action chunks.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -88,38 +88,11 @@ The real-world pipeline uses **different environments on different nodes**:
 Robot / Env Node
 ~~~~~~~~~~~~~~~~
 
-Follow the controller-node setup in :doc:`franka` for firmware checks, RT
-kernel, ROS, and Franka controller dependencies.
-
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   docker run -it --rm \
-      --privileged \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-franka
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
-
-Then switch to the libfranka-compatible environment:
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
-
-Before ``ray start`` on the robot node, source the same ROS / Franka controller
-environment described in :doc:`franka`.
+Set up the robot node as described in the Installation section of
+:doc:`franka`: install the Franky-based ``franka`` environment directly, or use
+the ``franky`` venv in the Franka Docker image, with ``LIBFRANKA_VERSION``
+matching the firmware. Activate that environment before starting Ray. This
+recipe runs the OpenPI actor and rollout on a separate GPU node.
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -135,9 +108,9 @@ Use the same environment as simulator Pi0 DAgger.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Inside the container:
 
@@ -180,7 +153,7 @@ Run It
 1. Collect Human-Guided Real-World Data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Start from ``examples/embodiment/config/realworld_collect_data.yaml``. For the
+Start from ``examples/embodiment/config/realworld_collect_data_pico.yaml``. For the
 pick-and-place task, switch the env from peg insertion to bin relocation:
 
 .. code-block:: yaml
@@ -189,7 +162,8 @@ pick-and-place task, switch the env from peg insertion to bin relocation:
      - env/realworld_bin_relocation@env.eval
      - override hydra/job_logging: stdout
 
-Then fill in the robot configuration and keep LeRobot export enabled:
+Then fill in the robot configuration and PICO publisher address, and set the
+export format to LeRobot:
 
 .. code-block:: yaml
 
@@ -205,18 +179,38 @@ Then fill in the robot configuration and keep LeRobot export enabled:
 
    env:
      eval:
-       use_spacemouse: True
+       teleop: pico
+       pico:
+         zmq_addr: "ipc:///tmp/vr_data.ipc"
+         hand: "right"
+         control_trigger: "grip"
+         control_threshold: 0.85
+         gripper_close_button: "A"
+         gripper_open_button: "B"
+         position_scale: 1.0
+         rotation_scale: 1.0
+         max_stale_s: 0.2
+         calibration:
+           enabled: True
+           required: True
+           auto_calibrate_on_start: True
+           button: "trigger"
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          success_hold_steps: 1
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
-      data_collection:
-        enabled: True
-        save_dir: ${runner.logger.log_path}/collected_data
-        export_format: "lerobot"
-        only_success: True
-        robot_type: "panda"
-        fps: 10
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: [replay_buffer, lerobot_dataset]
+         only_success: True
+         robot_type: "panda"
+         fps: 10
+
+Before launching, start and verify the PICO data stream as described in
+:doc:`franka_vr`. The ``ipc://`` address above requires the publisher and env
+worker to run on the same machine; use ``tcp://<publisher_ip>:<port>`` when
+they run on different machines.
 
 Launch collection with your copied config:
 
@@ -226,8 +220,8 @@ Launch collection with your copied config:
 
 During teleoperation, the same run writes:
 
-- replay-buffer trajectories under ``logs/{timestamp}/demos/``
-- LeRobot data under ``logs/{timestamp}/collected_data/``
+- replay-buffer trajectories under ``logs/{timestamp}/demo_buffer/``
+- LeRobot data under ``logs/{timestamp}/lerobot_dataset/``
 
 For the collection format, see :doc:`../../guides/data_collection`.
 
@@ -250,7 +244,7 @@ OpenPI-specific dataset notes are documented in :doc:`sft_openpi`.
 3. Run OpenPI SFT
 ~~~~~~~~~~~~~~~~~
 
-Edit ``examples/sft/config/realworld_sft_openpi.yaml`` before launch:
+Edit ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` before launch:
 
 .. code-block:: yaml
 
@@ -267,7 +261,7 @@ Then run:
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 The SFT checkpoint is the student initialization for the online stage. For more
 OpenPI SFT details, see :doc:`sft_openpi`.
@@ -298,17 +292,42 @@ your cluster, cameras, target pose, and checkpoints:
 
    algorithm:
      dagger:
-       init_beta: 1.0
-       beta_schedule: "exponential"
-       beta_decay: 0.99
        only_save_expert: True
+       online_lerobot:
+         enabled: True
+         only_success: True
+         robot_type: "panda"
+         fps: 10
+         finalize_interval: 1
+         data_path: ${runner.logger.log_path}/online_lerobot
+         rolling_lerobot_window_size: 50000
+         min_frames: 1
+         lerobot_num_workers: 0
 
    env:
      train:
+       smooth_intervene: True
+       teleop: pico
+       pico:
+         zmq_addr: "ipc:///tmp/vr_data.ipc"
+         hand: "right"
+         control_trigger: "grip"
+         control_threshold: 0.85
+         gripper_close_button: "A"
+         gripper_open_button: "B"
+         position_scale: 1.0
+         rotation_scale: 1.0
+         max_stale_s: 0.2
+         calibration:
+           enabled: True
+           required: True
+           auto_calibrate_on_start: True
+           button: "trigger"
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
      eval:
+       teleop: none
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -322,6 +341,27 @@ your cluster, cameras, target pose, and checkpoints:
        model_path: "/path/to/pi0-model"
        openpi:
          config_name: "pi0_realworld"
+
+``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
+
+``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.teleop`` must be ``pico``. It also requires one environment per env-worker pipeline stage. ``env.eval.teleop: none`` keeps evaluation policy-only.
+
+``only_success: True`` discards failed episodes. ``only_save_expert: True`` keeps
+the complete successful episode in the LeRobot archive, but restricts the online
+sampler to chunk starts where every non-padded frame in the action chunk has
+``intervene_flag=True``. For ``num_action_chunks: 1``, this reduces to filtering
+individual frames. Within a successful episode:
+
+* non-intervention frames remain in the physical archive but are not exposed as
+  expert-only training samples;
+* human-intervention frames store the actions actually executed by the
+  intervention device and carry ``intervene_flag=True``;
+* ``finalize_interval: 1`` writes a LeRobot shard after every successful episode;
+* ``rolling_lerobot_window_size: 50000`` limits online sampling to the most
+  recent 50,000 expert-valid logical chunk starts, while older shards remain on
+  disk.
+
+The real-world DAgger config intentionally omits beta-related fields because it does not configure ``rollout.expert_model``. Beta only controls action mixing between a model expert and the student; real-world human intervention is determined by the PICO intervention wrapper enabled under ``env.train``.
 
 Launch HG-DAgger from the Ray head node:
 
@@ -338,10 +378,24 @@ Visualization and Results
 
    tensorboard --logdir ./logs
 
-**2. Useful Monitoring Metrics**
+**2. Online LeRobot Data**
 
-- ``train/dagger/actor_loss``: Supervised HG-DAgger loss on buffered intervention samples.
-- ``train/replay_buffer/num_trajectories``: Number of stored trajectories.
-- ``train/replay_buffer/total_samples``: Number of available replay samples.
+Each successful episode is written under the current run's log directory:
+
+.. code-block:: text
+
+   logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_0/
+   logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_1/
+   ...
+
+Failed episodes do not enter the online dataset.
+
+**3. Useful Monitoring Metrics**
+
+- ``train/dagger/actor_loss``: Supervised loss computed from expert-only action chunks.
+- ``train/lerobot_dataset/total_episodes``: Number of successful episodes received by the actor.
+- ``train/lerobot_dataset/physical_frames``: Number of received LeRobot physical frames.
+- ``train/lerobot_dataset/logical_samples``: Number of expert-valid trainable chunk starts in the rolling window.
+- ``train/lerobot_dataset/num_sub_datasets``: Number of currently loaded LeRobot shards.
 - ``train/actor/lr``: Learning rate.
 - ``train/actor/grad_norm``: Gradient norm.

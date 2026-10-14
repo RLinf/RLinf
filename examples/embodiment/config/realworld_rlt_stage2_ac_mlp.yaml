@@ -116,9 +116,7 @@ env:
     keyboard_reward_wrapper: rlt_policy_switch
     max_episode_steps: 300
     max_steps_per_rollout_epoch: 300
-    use_spacemouse: True
-    use_gello: False
-    use_pico: False
+    teleop: spacemouse
     no_gripper: False
     override_cfg:
       is_dummy: False
@@ -138,9 +136,7 @@ env:
     max_steps_per_rollout_epoch: 100
     use_fixed_reset_state_ids: False
     group_size: 1
-    use_spacemouse: True
-    use_gello: False
-    use_pico: False
+    teleop: spacemouse
     no_gripper: False
     override_cfg:
       is_dummy: False
@@ -179,18 +175,33 @@ rollout:
   # observations into the Stage2 obs dict: z_rl, proprio, ref_chunk.
   rlt_feature_model:
     model_type: "openpi"
-    precision: null
+    precision: bf16
     is_lora: False
+    num_action_chunks: 20
+    action_dim: 7
+    num_steps: 4
+    add_value_head: False
     # Checkpoint produced by examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml.
     model_path: "/path/to/stage1/checkpoint"
     openpi_data:
       # Must match the repo_id/config_name used to compute Stage1 OpenPI norm stats.
       repo_id: "realworld_peg_insertion_rlt_stage1"
     openpi:
+      task: eval
       config_name: "pi05_franka_state"
       num_images_in_input: 1
+      # Network prediction horizon (Pi0Config.action_horizon). Matches official
+      # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+      # / num_action_chunks, which is the env-executed (RLT) window.
+      action_horizon: 20
       action_chunk: ${actor.model.ref_num_action_chunks}
+      action_env_dim: ${rollout.rlt_feature_model.action_dim}
       num_steps: 4
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
       # Keep the collected 19D raw state as Stage2 proprio.
       state_indices: []
       noise_method: "flow_noise"
@@ -213,10 +224,11 @@ actor:
   seed: 1234
   enable_offload: False
 
-  # Do not add actor.model.model_path for Stage1; this block only defines the
-  # Stage2 head. Stage2 resume/load is controlled by runner.resume_dir/ckpt_path.
+  # Stage2 head only. Keep model_path null for scratch training; resume/load
+  # uses runner.resume_dir or runner.ckpt_path, not the Stage1 OpenPI ckpt.
   model:
     model_type: "rlt_mlp_policy"
+    model_path: null
 
     # RLT AC defaults to fp32 for Q-learning and target-update stability.
     precision: fp32

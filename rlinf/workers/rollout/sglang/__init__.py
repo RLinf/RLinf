@@ -31,7 +31,7 @@ sglang_version = None
 
 if package_version is None:
     raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.16"):
+elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
     sglang_version = package_version
     from rlinf.hybrid_engines.sglang.common import io_struct
     from rlinf.hybrid_engines.sglang.common.sgl_engine import (
@@ -40,7 +40,7 @@ elif package_version >= parse("0.4.4") and package_version <= parse("0.5.16"):
 else:
     raise ValueError(
         f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.16)."
+        "(supported range: >=0.4.4, <=0.5.19)."
     )
 
 __all__ = ["Engine", "io_struct"]

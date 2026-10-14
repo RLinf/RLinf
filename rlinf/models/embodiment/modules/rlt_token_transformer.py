@@ -75,11 +75,19 @@ class RLTSelfAttentionLayer(nn.Module):
         return ~mask.to(dtype=torch.bool)
 
     def forward(
-        self, x: torch.Tensor, mask: torch.Tensor | None = None
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        *,
+        attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        norm_weight = self.self_norm.weight
+        x = x.to(device=norm_weight.device, dtype=norm_weight.dtype)
         key_padding_mask = self._key_padding_mask(mask)
         if key_padding_mask is not None:
             key_padding_mask = key_padding_mask.to(device=x.device)
+        if attn_mask is not None:
+            attn_mask = attn_mask.to(device=x.device)
 
         residual = x
         x_norm = self.self_norm(x)
@@ -87,6 +95,7 @@ class RLTSelfAttentionLayer(nn.Module):
             x_norm,
             x_norm,
             x_norm,
+            attn_mask=attn_mask,
             key_padding_mask=key_padding_mask,
             need_weights=False,
         )[0]
@@ -96,14 +105,13 @@ class RLTSelfAttentionLayer(nn.Module):
 
 
 class RLTTokenEncoder(nn.Module):
-    """Compress VLA prefix embeddings into a small set of RL tokens."""
+    """Compress VLA prefix embeddings into a single RL token."""
 
     def __init__(
         self,
         *,
         input_dim: int = 2048,
         embed_dim: int = 2048,
-        num_rl_tokens: int = 1,
         prefix_seq_len: int = 768,
         num_layers: int = 2,
         num_heads: int = 8,
@@ -113,7 +121,6 @@ class RLTTokenEncoder(nn.Module):
         super().__init__()
         self.input_dim = int(input_dim)
         self.embed_dim = int(embed_dim)
-        self.num_rl_tokens = int(num_rl_tokens)
         self.prefix_seq_len = int(prefix_seq_len)
 
         self.input_proj = (
@@ -121,15 +128,11 @@ class RLTTokenEncoder(nn.Module):
             if self.input_dim != self.embed_dim
             else nn.Identity()
         )
-        self.rl_token_embed = nn.Parameter(
-            sinusoidal_pe_init(self.num_rl_tokens, self.embed_dim)
-        )
+        self.rl_token_embed = nn.Parameter(sinusoidal_pe_init(1, self.embed_dim))
         self.prefix_pos_enc = nn.Parameter(
             sinusoidal_pe_init(self.prefix_seq_len, self.embed_dim)
         )
-        self.rl_token_pos_enc = nn.Parameter(
-            sinusoidal_pe_init(self.num_rl_tokens, self.embed_dim)
-        )
+        self.rl_token_pos_enc = nn.Parameter(sinusoidal_pe_init(1, self.embed_dim))
         self.layers = nn.ModuleList(
             [
                 RLTSelfAttentionLayer(
@@ -173,7 +176,7 @@ class RLTTokenEncoder(nn.Module):
             mask = mask.to(device=prefix_embs.device, dtype=torch.bool)
             rl_mask = torch.ones(
                 batch_size,
-                self.num_rl_tokens,
+                1,
                 device=prefix_embs.device,
                 dtype=torch.bool,
             )
@@ -181,18 +184,17 @@ class RLTTokenEncoder(nn.Module):
 
         for layer in self.layers:
             x = layer(x, mask=mask)
-        return x[:, -self.num_rl_tokens :]
+        return x[:, -1:]
 
 
 class RLTTokenDecoder(nn.Module):
-    """Reconstruct VLA prefix embeddings from RL tokens."""
+    """Autoregressively reconstruct VLA prefix embeddings."""
 
     def __init__(
         self,
         *,
         input_dim: int = 2048,
         embed_dim: int = 2048,
-        num_rl_tokens: int = 1,
         prefix_seq_len: int = 768,
         num_layers: int = 2,
         num_heads: int = 8,
@@ -202,17 +204,15 @@ class RLTTokenDecoder(nn.Module):
         super().__init__()
         self.input_dim = int(input_dim)
         self.embed_dim = int(embed_dim)
-        self.num_rl_tokens = int(num_rl_tokens)
         self.prefix_seq_len = int(prefix_seq_len)
 
-        self.prefix_token_embed = nn.Parameter(
-            sinusoidal_pe_init(prefix_seq_len, embed_dim)
+        self.teacher_input_proj = (
+            nn.Linear(self.input_dim, self.embed_dim)
+            if self.input_dim != self.embed_dim
+            else nn.Identity()
         )
-        self.prefix_pos_enc = nn.Parameter(
-            sinusoidal_pe_init(prefix_seq_len, embed_dim)
-        )
-        self.rl_token_pos_enc = nn.Parameter(
-            sinusoidal_pe_init(num_rl_tokens, embed_dim)
+        self.decoder_pos_enc = nn.Parameter(
+            sinusoidal_pe_init(self.prefix_seq_len, self.embed_dim)
         )
         self.layers = nn.ModuleList(
             [
@@ -225,47 +225,81 @@ class RLTTokenDecoder(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-        self.output_proj = (
-            nn.Linear(self.embed_dim, self.input_dim)
-            if self.input_dim != self.embed_dim
-            else nn.Identity()
-        )
+        self.output_proj = nn.Linear(self.embed_dim, self.input_dim)
 
-    def forward(self, rl_tokens: torch.Tensor, target_seq_len: int | None = None):
-        target_seq_len = int(target_seq_len or self.prefix_seq_len)
+    def forward(
+        self,
+        rl_tokens: torch.Tensor,
+        target_embeddings: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        target_seq_len = target_embeddings.shape[1]
         if target_seq_len > self.prefix_seq_len:
             raise ValueError(
                 f"target sequence length {target_seq_len} exceeds configured "
                 f"prefix_seq_len {self.prefix_seq_len}."
             )
 
-        batch_size = rl_tokens.shape[0]
-        rl_pos = self.rl_token_pos_enc[: rl_tokens.shape[-2]].to(
-            device=rl_tokens.device, dtype=rl_tokens.dtype
+        frozen_targets = target_embeddings.detach().to(
+            device=rl_tokens.device,
+            dtype=rl_tokens.dtype,
         )
-        rl_tokens = rl_tokens + rl_pos
-        prefix_tokens = (
-            self.prefix_token_embed[:target_seq_len]
-            .to(device=rl_tokens.device, dtype=rl_tokens.dtype)
-            .unsqueeze(0)
-            .expand(batch_size, -1, -1)
-        )
-        prefix_pos = self.prefix_pos_enc[:target_seq_len].to(
-            device=rl_tokens.device, dtype=rl_tokens.dtype
-        )
-        prefix_tokens = prefix_tokens + prefix_pos
-        x = torch.cat([rl_tokens, prefix_tokens], dim=1)
+        shifted_targets = frozen_targets[:, :-1]
+        if mask is not None:
+            shifted_targets = shifted_targets.masked_fill(
+                ~mask[:, :-1]
+                .to(device=shifted_targets.device, dtype=torch.bool)
+                .unsqueeze(-1),
+                0,
+            )
 
+        shifted_targets = self.teacher_input_proj(shifted_targets)
+        decoder_inputs = torch.cat([rl_tokens, shifted_targets], dim=1)
+        decoder_inputs = decoder_inputs + self.decoder_pos_enc[:target_seq_len].to(
+            device=decoder_inputs.device,
+            dtype=decoder_inputs.dtype,
+        )
+
+        # Boolean MultiheadAttention masks use True for disallowed positions.
+        causal_mask = torch.triu(
+            torch.ones(
+                target_seq_len,
+                target_seq_len,
+                device=decoder_inputs.device,
+                dtype=torch.bool,
+            ),
+            diagonal=1,
+        )
+
+        decoder_input_mask = None
+        if mask is not None:
+            start_mask = torch.ones(
+                mask.shape[0],
+                1,
+                device=decoder_inputs.device,
+                dtype=torch.bool,
+            )
+            decoder_input_mask = torch.cat(
+                [
+                    start_mask,
+                    mask[:, :-1].to(
+                        device=decoder_inputs.device,
+                        dtype=torch.bool,
+                    ),
+                ],
+                dim=1,
+            )
+
+        x = decoder_inputs
         for layer in self.layers:
-            x = layer(x)
-        return self.output_proj(x[:, -target_seq_len:])
+            x = layer(x, mask=decoder_input_mask, attn_mask=causal_mask)
+        return self.output_proj(x)
 
 
 class RLTTokenTransformer(nn.Module):
-    """PyTorch implementation of openpi-RLT's RL-token encoder-decoder.
+    """RLT encoder with an autoregressive reconstruction objective.
 
-    Defaults produce a flattened z_rl feature of 2048 dimensions:
-    num_rl_tokens=1 and embed_dim=2048.
+    The single RL token produces a flattened z_rl feature of ``embed_dim``.
     """
 
     def __init__(
@@ -273,7 +307,6 @@ class RLTTokenTransformer(nn.Module):
         *,
         input_dim: int = 2048,
         embed_dim: int = 2048,
-        num_rl_tokens: int = 1,
         prefix_seq_len: int = 768,
         num_layers: int = 2,
         num_heads: int = 8,
@@ -283,13 +316,11 @@ class RLTTokenTransformer(nn.Module):
         super().__init__()
         self.input_dim = int(input_dim)
         self.embed_dim = int(embed_dim)
-        self.num_rl_tokens = int(num_rl_tokens)
         self.prefix_seq_len = int(prefix_seq_len)
 
         common_kwargs = {
             "input_dim": self.input_dim,
             "embed_dim": self.embed_dim,
-            "num_rl_tokens": self.num_rl_tokens,
             "prefix_seq_len": self.prefix_seq_len,
             "num_layers": num_layers,
             "num_heads": num_heads,
@@ -301,7 +332,7 @@ class RLTTokenTransformer(nn.Module):
 
     @property
     def z_dim(self) -> int:
-        return self.num_rl_tokens * self.embed_dim
+        return self.embed_dim
 
     def encode(
         self, prefix_embs: torch.Tensor, mask: torch.Tensor | None = None
@@ -314,15 +345,19 @@ class RLTTokenTransformer(nn.Module):
         return self.encode(prefix_embs, mask).reshape(prefix_embs.shape[0], -1)
 
     def decode(
-        self, rl_tokens: torch.Tensor, target_seq_len: int | None = None
+        self,
+        rl_tokens: torch.Tensor,
+        target_embeddings: torch.Tensor,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        return self.decoder(rl_tokens, target_seq_len)
+        return self.decoder(rl_tokens, target_embeddings, mask)
 
     def reconstruct(
         self, prefix_embs: torch.Tensor, mask: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        rl_tokens = self.encode(prefix_embs, mask)
-        reconstructed = self.decode(rl_tokens, prefix_embs.shape[-2])
+        frozen_prefix = prefix_embs.detach()
+        rl_tokens = self.encode(frozen_prefix, mask)
+        reconstructed = self.decode(rl_tokens, frozen_prefix, mask)
         return reconstructed, rl_tokens
 
     def loss(

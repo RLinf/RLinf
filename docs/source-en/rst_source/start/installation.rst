@@ -33,28 +33,28 @@ environment list.
 - Use ``--venv <dir>`` to choose the virtual environment directory.
 - Use ``--use-mirror`` for faster downloads from mainland China.
 - Use ``--python <version>`` only when a package requires it. The default is
-  Python 3.11.14; some environments such as ``behavior`` and ``d4rl`` require
+  Python 3.11.14, and Python 3.12.12 for the ``agentic`` target on its default
+  torch 2.11 stack; some environments such as ``behavior`` and ``d4rl`` require
   Python 3.10.
 - Use ``--torch <version>`` only when you need a different PyTorch wheel.
-- Use ``--platform amd`` or ``--platform ascend`` for experimental non-NVIDIA
-  installs. See :doc:`../guides/amd_rocm` and :doc:`../guides/ascend_cann`.
+- Select ``--platform amd``, ``--platform ascend``, or ``--platform musa`` for the matching hardware. Choose a supported model/environment combination in :ref:`the model gallery <model-hardware-support>` and follow its setup instructions.
 
 Option 2: Docker
 ----------------
 
 Each image bundles a ready-to-run stack (for example,
-``agentic-rlinf0.3-maniskill_libero``). Pull and run it, then select the model
+``agentic-rlinf0.4-maniskill_libero``). Pull and run it, then select the model
 environment inside the container:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+   docker pull rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero /bin/bash
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero /bin/bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
