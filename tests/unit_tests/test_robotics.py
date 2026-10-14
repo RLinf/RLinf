@@ -2402,7 +2402,6 @@ class _ScriptedController:
             "grip_open": grip > 0,
         }
 
-
     def connect(self):
         pass
 
@@ -2543,9 +2542,7 @@ def test_dagger_pico_does_not_apply_arm_commands_while_idle():
             "end_effector": ActionKind.GRIPPER,
         },
     )
-    device = ComposedTeleop(
-        group, {"arm": slice(0, 9), "end_effector": slice(9, 10)}
-    )
+    device = ComposedTeleop(group, {"arm": slice(0, 9), "end_effector": slice(9, 10)})
     env = Env()
     policy = np.full(10, 0.7)
     _, _, _, _, info = TeleopIntervention(env, device).step(policy)
