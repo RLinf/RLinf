@@ -240,6 +240,8 @@ def preprocess_observation(
             image = resize_with_pad_torch(image, *image_resolution)
 
         if train:
+            import torchvision.transforms.functional as TF
+
             # Convert from [-1, 1] to [0, 1] for augmentations
             image = image / 2.0 + 0.5
             # image is in (B, H, W, C) format
@@ -252,8 +254,6 @@ def preprocess_observation(
 
                 if "wrist" not in key:
                     # Random crop (95% of size) then resize back
-                    import torchvision.transforms.functional as TF
-
                     h, w = aug_image.shape[1], aug_image.shape[2]
                     crop_h, crop_w = int(h * 0.95), int(w * 0.95)
                     # generator=None draws from the global torch RNG
@@ -268,9 +268,9 @@ def preprocess_observation(
 
                 # Color jitter
                 # Simulate augmax ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5)
-                b = torch.rand(1, generator=rng).item() * 0.3
-                c = torch.rand(1, generator=rng).item() * 0.4
-                s = torch.rand(1, generator=rng).item() * 0.5
+                b = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.3
+                c = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.4
+                s = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.5
                 aug_image = TF.adjust_brightness(aug_image, 1.0 + b)
                 aug_image = TF.adjust_contrast(aug_image, 1.0 + c)
                 aug_image = TF.adjust_saturation(aug_image, 1.0 + s)

@@ -40,6 +40,12 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
+from rlinf.models.embodiment.openpi.modules.model import (
+    IMAGE_KEYS,
+    IMAGE_RESOLUTION,
+    Observation,
+    preprocess_observation,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -1272,6 +1278,81 @@ def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
         OpenPIApxInfAdapter(
             _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
         )
+
+
+def _openpi_observation(batch_size=2, amplitude=1.0):
+    """Same 2D gradient on every camera, with values in [-amplitude, amplitude]."""
+    height, width = IMAGE_RESOLUTION
+    rows = torch.linspace(-1, 1, height).view(height, 1, 1)
+    cols = torch.linspace(-1, 1, width).view(1, width, 1)
+    image = amplitude * (0.6 * rows + 0.4 * cols)
+    image = image.expand(batch_size, height, width, 3)
+    return Observation(
+        images={key: image.clone() for key in IMAGE_KEYS},
+        image_masks={
+            key: torch.ones(batch_size, dtype=torch.bool) for key in IMAGE_KEYS
+        },
+        state=torch.zeros(batch_size, 8),
+    )
+
+
+def test_openpi_train_preprocessing_without_rng_augments_every_camera():
+    torch.manual_seed(0)
+    observation = _openpi_observation()
+
+    first = preprocess_observation(observation, train=True)
+    second = preprocess_observation(observation, train=True)
+
+    for key in IMAGE_KEYS:
+        assert not torch.equal(first.images[key], second.images[key]), (
+            f"expected two train calls to augment {key} differently, got equal images"
+        )
+
+
+def test_openpi_color_jitter_darkens_and_brightens():
+    # A low-amplitude gray image keeps every jitter factor clear of clamping,
+    # so the mean moves with the brightness factor alone.
+    observation = _openpi_observation(batch_size=32, amplitude=0.3)
+
+    out = preprocess_observation(
+        observation, train=True, rng=torch.Generator().manual_seed(0)
+    )
+
+    key = "left_wrist_0_rgb"
+    shift = (out.images[key] - observation.images[key]).mean(dim=(1, 2, 3))
+    assert (shift < 0).any() and (shift > 0).any(), (
+        f"expected jitter to darken some images and brighten others, got {shift}"
+    )
+
+
+def test_openpi_train_preprocessing_accepts_a_wrist_camera_first():
+    keys = ("left_wrist_0_rgb", "base_0_rgb")
+
+    out = preprocess_observation(_openpi_observation(), train=True, image_keys=keys)
+
+    assert set(out.images) == set(keys)
+
+
+def test_openpi_train_preprocessing_is_reproducible_with_a_seeded_generator():
+    observation = _openpi_observation()
+
+    def augment(seed):
+        out = preprocess_observation(
+            observation, train=True, rng=torch.Generator().manual_seed(seed)
+        )
+        return out.images["base_0_rgb"]
+
+    assert torch.equal(augment(7), augment(7))
+    assert not torch.equal(augment(7), augment(8))
+
+
+def test_openpi_eval_preprocessing_leaves_images_unchanged():
+    observation = _openpi_observation()
+
+    out = preprocess_observation(observation, train=False)
+
+    for key in IMAGE_KEYS:
+        assert torch.equal(out.images[key], observation.images[key]), key
 
 
 def _cosmos3_sglang_cfg(batching_max_size=None):
