@@ -7,6 +7,7 @@
 
 - :doc:`../examples/embodied/franka` — RealSense + Franka 夹爪的标准真机流程
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED 相机 + Robotiq 夹爪的异构双节点部署
+- :doc:`../examples/embodied/franka_orbbec` — Orbbec 相机及对齐深度
 
 Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码同步等）见 :doc:`multi_node`；
 ``node_groups`` / ``component_placement`` 的通用语义见 :doc:`hetero`。
@@ -161,8 +162,6 @@ YAML 配置
                node_rank: 2
 
 按相同方式为第三台、第四台机械臂扩展 ``num_nodes``、``node_ranks``、``placement`` 与 ``hardware.configs``。
-
-使用 Orbbec 采集彩色图像和对齐深度时，先按 :doc:`orbbec` 安装 SDK 并单独验证相机，再将其加入机器人配置。
 
 相机与机械臂分机部署（ZED + Robotiq）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

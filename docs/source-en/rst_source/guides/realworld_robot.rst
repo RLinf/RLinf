@@ -8,6 +8,7 @@ For full hardware setup, dependencies, data collection, and task details, see:
 
 - :doc:`../examples/embodied/franka` — standard RealSense + Franka gripper workflow
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED camera + Robotiq gripper on split nodes
+- :doc:`../examples/embodied/franka_orbbec` — Orbbec camera with aligned depth
 
 For ``RLINF_NODE_RANK``, ``ray start``, and code sync, see :doc:`multi_node`.
 For ``node_groups`` / ``component_placement`` semantics, see :doc:`hetero`.
@@ -167,9 +168,6 @@ See ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_2arms.yam
 
 Extend ``num_nodes``, ``node_ranks``, ``placement``, and ``hardware.configs`` the same
 way for more arms.
-
-For Orbbec color and aligned depth capture, follow :doc:`orbbec` to install the
-camera SDK and verify the camera before adding it to a robot configuration.
 
 Split camera and arm (ZED + Robotiq)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

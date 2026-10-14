@@ -1,8 +1,8 @@
 .. Copyright 2026 The RLinf Authors.
    Licensed under the Apache License, Version 2.0.
 
-Orbbec Cameras
-==============
+Using Orbbec Cameras with Franka
+================================
 
 Read color images and aligned depth from an Orbbec USB camera through RLinf's
 camera interface. Start with a standalone camera, then use the same backend in
@@ -18,9 +18,13 @@ hosted on another node, use that node's worker environment:
 
 .. code-block:: bash
 
-   python -m pip install pyorbbecsdk2==2.1.2
+   python -m pip install --no-deps pyorbbecsdk2==2.1.2
 
-The distribution is named ``pyorbbecsdk2`` and its import is ``pyorbbecsdk``.
+``requirements/install.sh`` does not install this SDK. ``--no-deps`` keeps out
+the packages its examples use (Open3D, pygame, PyAV, pynput) and its NumPy pin,
+which can conflict with the versions RLinf installs. The camera backend needs
+only NumPy and OpenCV, which the RLinf robot environments already include. The
+distribution is named ``pyorbbecsdk2`` and its import is ``pyorbbecsdk``.
 Follow the `official Linux installation guide
 <https://orbbec.github.io/pyorbbecsdk/source/2_installation/install_the_package.html>`_
 for device permissions and platform requirements. The SDK is imported when
@@ -74,15 +78,18 @@ metres. Depth pixels are aligned to the color image through SDK calibration;
 zero denotes unavailable depth.
 
 ``resolution`` describes the output size in ``(width, height)`` order. The driver
-selects the nearest supported native resolution at the requested ``fps``,
-aligns depth to color, and resizes both to the output size. Color uses area
+selects the native color resolution nearest to it at the requested ``fps``. Depth
+uses the device's default depth resolution at that ``fps`` (640 × 576 on Femto
+Bolt), so changing the output size never changes the depth mode. Depth is
+aligned to color, and both are resized to the output size. Color uses area
 resampling; depth uses nearest-neighbor resampling to preserve measured values.
-Choosing an output aspect ratio different from the native color stream stretches
-the image. Unsupported frame rates fail with the available profiles rather than
-silently selecting a different rate.
+The selected native profiles are logged when the camera connects. An output
+aspect ratio different from the native color stream stretches the image and
+logs a warning. Unsupported frame rates fail with the available profiles rather
+than silently selecting a different rate.
 
-Use USB Power Carefully
------------------------
+Power Over USB Only
+-------------------
 
 For color-only operation, leave ``enable_depth=False``. This starts only the
 color stream. It does not start a depth stream or change laser and power settings.
@@ -99,13 +106,13 @@ silently switch to color-only observations. If startup fails or frames stop,
 check the adapter, cable, USB bandwidth, permissions, and competing camera
 processes. After correcting the connection, reconnect the camera. Reads use the
 shared camera timeout and reconnect behavior described in
-:doc:`../concepts/robotics_architecture`.
+:doc:`../../concepts/robotics_architecture`.
 
 Use the Camera in a Robot
 -------------------------
 
 Once the standalone read succeeds, compose the camera with other robot parts
-using the interface in :doc:`../concepts/robotics`. To place this same camera on
+using the interface in :doc:`../../concepts/robotics`. To place this same camera on
 a worker node, pass ``node_rank`` to ``Camera.of``; the worker owns the SDK and
 USB connection, while observation keys and units stay the same.
 
@@ -122,4 +129,4 @@ In the Franka environment's ``init_params``, set ``enable_camera_depth: true``
 when depth is needed; its default is ``false``. The Franka environment exposes
 depth in its ``depths`` observation mapping. A policy must consume that mapping
 to use depth for learning. Keep the arm and task settings from your existing
-configuration; :doc:`realworld_robot` describes the complete launch workflow.
+configuration; :doc:`../../guides/realworld_robot` describes the complete launch workflow.
