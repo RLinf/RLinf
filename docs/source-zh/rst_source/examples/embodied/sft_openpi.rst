@@ -85,25 +85,41 @@ OpenPI 监督微调
 
 BEHAVIOR / dual-Franka 的流式 SFT 加载器目前仍用 ``num_action_chunks`` 当数据窗口，这两份配方里才需要把它设成和官方 horizon 一样。
 
-精度与 FSDP：
+设置 ``actor.model.precision: fp32``，让原始参数和优化器更新使用 FP32。
+设置 ``actor.model.openpi.embed_dtype: bf16``，让主干激活和残差使用 BF16。
+``embed_dtype`` 未设置或为 null 时沿用 ``model.precision``；
+``precision: null`` 对应 BF16 激活。
+单独配置 FSDP：前向和反向计算使用 BF16 参数，梯度归约和 buffer 使用 FP32。
+共享模型模板使用 ``precision: null``，采用 OpenPI 的选择性 BF16/FP32 参数 dtype。
+BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配方设置 ``precision: fp32``。
 
-- ``actor.model.precision: null``\ （OpenPI 默认：Gemma / SigLIP 为 bf16，action head 为 fp32）。
-- ``actor.fsdp_config.sharding_strategy`` **必须** 为 ``no_shard``\ （``full_shard`` / ``shard_grad_op`` 会在启动时失败）。每个 rank 持有完整参数、梯度和 optimizer state。
-- FSDP dtype 绑到 ``actor.model.precision``。BEHAVIOR / RoboTwin 配方还会打开 ``gradient_checkpointing: True``，并用 ``actor.optim.lr_scheduler: openpi_cosine``\ （warmup 从 ``peak / (warmup + 1)`` 开始，再余弦衰减到 ``min_lr``）。
+选择 ``hybrid_engines/openpi_fsdp``，让 projection、RMSNorm 权重和视觉 embedding
+使用 FP32。该配方保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
+RLT Stage 1 配方还让 ``rlt_module`` 使用 FP32。
+
+OpenPI 使用 ``no_shard`` 和 ``use_orig_params: true``，每个 rank 持有完整参数、
+梯度和优化器状态。BEHAVIOR / RoboTwin 配方使用 ``openpi_cosine`` 学习率调度。
 
 .. code:: yaml
 
+   defaults:
+     - model/pi0_5@actor.model
+     - hybrid_engines/openpi_fsdp@actor.fsdp_config
+     - _self_
+
    actor:
      model:
-       precision: null
+       precision: fp32
        openpi:
          task: sft
+         embed_dtype: bf16
      fsdp_config:
        sharding_strategy: no_shard
+       use_orig_params: true
        mixed_precision:
-         param_dtype: ${actor.model.precision}
-         reduce_dtype: ${actor.model.precision}
-         buffer_dtype: ${actor.model.precision}
+         param_dtype: bf16
+         reduce_dtype: fp32
+         buffer_dtype: fp32
 
 Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 里不用单独写 SentencePiece 路径。
 
@@ -243,6 +259,7 @@ LIBERO 与真机 Franka
        is_lora: False                # LoRA 时改为 True，并设 lora_rank
        openpi:
          task: sft
+         embed_dtype: bf16
          config_name: "pi0_libero"   # 真机改为 pi0_realworld
 
 启动：
@@ -338,6 +355,7 @@ Pi0.5 + BEHAVIOR-1K
        model_path: /path/to/pi05_base_openpi   # 新格式 fp32 基础权重
        openpi:
          task: sft
+         embed_dtype: bf16
        openpi_data:
          norm_stats_path: /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json
 
@@ -366,6 +384,7 @@ Pi0 + RoboTwin
        action_dim: 14
        openpi:
          task: sft
+         embed_dtype: bf16
          config_name: "pi0_aloha_robotwin"
          num_images_in_input: 3
        openpi_data:

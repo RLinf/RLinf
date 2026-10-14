@@ -25,9 +25,9 @@ from typing import Any, Callable, Iterable, Literal, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+from rlinf.hybrid_engines.fsdp import DTensor
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 

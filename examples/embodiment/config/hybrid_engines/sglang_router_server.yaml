@@ -15,7 +15,6 @@ server:
   pp_size: ${..pipeline_parallel_size}
   mem_fraction_static: 0.85
   max_running_requests: 64
-  cuda_graph_max_bs: 64
   disable_cuda_graph: False
   enable_memory_saver: True
   enable_torch_compile: False
