@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
@@ -1815,3 +1816,75 @@ def test_openpi_rl_parent_train_preserves_frozen_vision_mode(train_expert_only):
     # Full SFT uses Pi0, whose train semantics continue to enable vision training.
     sft = _ImagePreprocessingPi0(True).eval().train()
     assert sft.training and sft.dropout.training
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Interpreter handoff uses POSIX FDs.")
+@pytest.mark.parametrize("explicit_interpreter", [False, True])
+def test_stack_cube_policy_process_interpreter_round_trip(
+    tmp_path, monkeypatch, explicit_interpreter
+):
+    from toolkits.lerobot.evaluate_stack_cube_openpi import (
+        receive_policy,
+        start_policy_process,
+        stop_policy_process,
+    )
+
+    interpreter = tmp_path / "model-python"
+    interpreter.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, numpy as np\n"
+        "from multiprocessing.connection import Connection\n"
+        "connection = Connection(int(sys.argv[-2]))\n"
+        "options = json.loads(sys.argv[-1])\n"
+        "connection.send({'ready': True, 'options': options})\n"
+        "while True:\n"
+        "    message = connection.recv()\n"
+        "    if message['command'] in ('close', 'eof'): break\n"
+        "    if message['command'] == 'error':\n"
+        "        connection.send({'error': 'inference failed'}); continue\n"
+        "    if message['command'] == 'silence': continue\n"
+        "    state = message['observation']['states']\n"
+        "    connection.send({'actions': np.full((1, 5, 7), state[0, 0], np.float32)})\n"
+        "connection.close()\n"
+    )
+    interpreter.chmod(0o700)
+    checkpoint, stats = tmp_path / "checkpoint", tmp_path / "norm_stats.json"
+    if not explicit_interpreter:
+        monkeypatch.setattr(sys, "executable", str(interpreter))
+    connection, process = start_policy_process(
+        checkpoint, stats, "1", True, interpreter if explicit_interpreter else None
+    )
+    try:
+        ready = receive_policy(connection, process, timeout=10)
+        assert ready["ready"]
+        assert ready["options"] == {
+            "checkpoint": str(checkpoint),
+            "stats": str(stats),
+            "gpu": "1",
+            "crop": True,
+        }
+        connection.send(
+            {
+                "command": "predict",
+                "observation": {"states": np.full((1, 8), 2.5, np.float32)},
+            }
+        )
+        np.testing.assert_array_equal(
+            receive_policy(connection, process, timeout=10)["actions"],
+            np.full((1, 5, 7), 2.5, np.float32),
+        )
+        connection.send({"command": "error"})
+        with pytest.raises(RuntimeError, match="inference failed"):
+            receive_policy(connection, process, timeout=10)
+        connection.send({"command": "silence"})
+        with pytest.raises(TimeoutError, match="deadline"):
+            receive_policy(connection, process, timeout=0)
+        if explicit_interpreter:
+            connection.send({"command": "eof"})
+            with pytest.raises(RuntimeError, match="closed|exited"):
+                receive_policy(connection, process, timeout=10)
+    finally:
+        stop_policy_process(connection, process)
+    stop_policy_process(connection, process)
+    assert process.returncode == 0
+    assert connection.closed

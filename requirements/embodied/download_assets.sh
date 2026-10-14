@@ -125,11 +125,12 @@ download_openpi_assets() {
 
 	export TOKENIZER_DIR="${root_dir}/.cache/openpi/"
 
-	if [ -f "$TOKENIZER_DIR/paligemma_tokenizer.model" ]; then
+	if [ -f "$TOKENIZER_DIR/big_vision/paligemma_tokenizer.model" ]; then
 		echo "[download_assets] OpenPI tokenizer already exists at $TOKENIZER_DIR, skipping download."
 	else
 		mkdir -p "$TOKENIZER_DIR"
-		retry_cmd hf download RLinf/openpi_tokenizer --local-dir "$TOKENIZER_DIR"
+		retry_cmd env HF_HUB_DISABLE_IMPLICIT_TOKEN=1 hf download RLinf/openpi_tokenizer \
+			--revision befaa248e4f82954b625a421658f933dfd1a97a0 --local-dir "$TOKENIZER_DIR"
 	fi
 }
 

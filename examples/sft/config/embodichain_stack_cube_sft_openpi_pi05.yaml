@@ -1,0 +1,19 @@
+defaults:
+- embodichain_stack_cube_sft_openpi_pi05_smoke
+- _self_
+runner:
+  logger:
+    experiment_name: embodichain_stack_cube_pi05
+  max_steps: 30000
+  save_interval: 1000
+data:
+  stateful_loader: true
+  train_data_paths: ${oc.env:STACK_CUBE_TRAIN_DATA,/workspace/datasets/embodichain_stack_cube/formal/train}
+  num_workers: 4
+actor:
+  model:
+    openpi_data:
+      norm_stats_path: ${oc.env:STACK_CUBE_NORM_STATS,/workspace/datasets/embodichain_stack_cube/formal/train/norm_stats.json}
+  optim:
+    total_training_steps: 30000
+    lr_warmup_steps: 1000

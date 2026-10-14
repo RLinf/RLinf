@@ -1,4 +1,5 @@
 # Copyright 2026 The RLinf Authors.
+# Copyright (c) 2021-2026 DexForce Technology Co., Ltd.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for real-world tasks, teleoperation, configuration, and layout."""
+"""Tests for real-world tasks, simulation integration, teleoperation and layout."""
 
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import io
 import os
 import pickle
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -83,6 +85,71 @@ from rlinf.scheduler.manager.net_emulation import (
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+
+def test_stack_cube_batched_scoring_distinguishes_reward_and_stability():
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    positions = torch.tensor(
+        [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+    ).repeat(6, 1, 1)
+    fingers = torch.full((6, 2), 0.04)
+    linear = torch.zeros(6, 3)
+    angular = torch.zeros(6, 3)
+    positions[1, 1, 0] += 0.05  # Misplaced middle cube.
+    fingers[2, 0] = 0.02  # One finger remains closed.
+    positions[3, 2, 2] = 0.08  # One-sided Isaac height check admits overlap.
+    linear[4, 1] = 0.03  # A moving stack earns reward but is not stable.
+    positions[5, 2, 2] = -0.051  # Dropped green cube.
+
+    result = stack_cube_metrics(positions, fingers, linear, angular)
+    assert result["baseline_success"].tolist() == [
+        True,
+        False,
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert result["stable_frame"].tolist() == [True, False, False, False, False, False]
+    assert result["failure"].tolist() == [False, False, False, False, False, True]
+
+
+def test_stack_cube_batched_scoring_uses_isaac_gripper_tolerance():
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    positions = torch.tensor(
+        [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+    ).repeat(2, 1, 1)
+    fingers = torch.tensor([[0.040103, 0.04], [0.040105, 0.04]])
+    result = stack_cube_metrics(
+        positions, fingers, torch.zeros(2, 3), torch.zeros(2, 3)
+    )
+    assert result["baseline_success"].tolist() == [True, False]
+
+
+@pytest.mark.parametrize("filename", ["boundary_trace.npz", "gpu_reward_trace.npz"])
+def test_stack_cube_scoring_matches_published_isaaclab_samples(filename):
+    """The frozen reference cases protect height and gripper boundary behavior."""
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    with np.load(_ROOT / "tests/fixtures/embodichain_stack_cube" / filename) as trace:
+        positions = torch.from_numpy(trace["positions"].reshape(-1, 3, 3))
+        fingers = torch.from_numpy(trace["fingers"].reshape(-1, 2))
+        result = stack_cube_metrics(
+            positions,
+            fingers,
+            torch.zeros(len(positions), 3),
+            torch.zeros(len(positions), 3),
+        )
+        expected = torch.from_numpy(trace["rewards"].reshape(-1))
+        torch.testing.assert_close(
+            result["baseline_success"].float(), expected, rtol=0, atol=0
+        )
+        if "failure" in trace:
+            torch.testing.assert_close(
+                result["failure"], torch.from_numpy(trace["failure"])
+            )
 
 
 def _robot_info(config):
@@ -4645,3 +4712,813 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
 
     assert selected_seed_0 == selected_seed_0_again
     assert selected_seed_0 != selected_seed_1
+
+
+# EmbodiChain configuration resolution and public task contracts.
+
+_BOUNDARY_ENV_ID = "SDKBoundaryEnv"
+_EMBODICHAIN_CONFIG_PREFIX = "rlinf/envs/sim/embodichain/configs"
+
+
+@pytest.fixture
+def embodichain_sdk_boundary(monkeypatch, tmp_path):
+    """Replace the external SDK while exercising the real adapter constructor."""
+    vendor = tmp_path / "vendor" / "embodichain"
+    vendor.mkdir(parents=True)
+    modules = {}
+    for name in (
+        "embodichain",
+        "embodichain.lab",
+        "embodichain.lab.gym",
+        "embodichain.lab.gym.envs",
+        "embodichain.lab.gym.utils",
+        "embodichain.lab.gym.utils.gym_utils",
+        "embodichain.lab.gym.utils.registration",
+        "embodichain.lab.sim",
+        "embodichain.utils",
+        "embodichain.utils.config_paths",
+        "embodichain.utils.utility",
+    ):
+        module = types.ModuleType(name)
+        module.__path__ = []
+        modules[name] = module
+        monkeypatch.setitem(sys.modules, name, module)
+    modules["embodichain"].__file__ = str(vendor / "__init__.py")
+    modules["embodichain.lab.gym.envs"].EmbodiedEnv = gym.Env
+    modules["embodichain.lab.gym.envs"].EmbodiedEnvCfg = SimpleNamespace
+    modules["embodichain.lab.gym.envs"].DemoSegment = SimpleNamespace
+    modules["embodichain.utils"].logger = SimpleNamespace(log_warning=lambda _: None)
+    registry = modules["embodichain.lab.gym.utils.registration"]
+    registry.register_env = lambda *args, **kwargs: lambda cls: cls
+    registry.discover_task_packages = lambda: []
+    registry.execute_init_hooks = lambda: []
+    captures = []
+    parsed_configs = []
+    original_sim_configs = []
+    built_configs = []
+
+    def config_to_cfg(payload, *, manager_modules, source_path):
+        captures.append((payload, Path(source_path)))
+        sim_cfg = SimpleNamespace(
+            headless=False,
+            sim_device="cuda:1",
+            gpu_id=7,
+            physics_dt=0.0075,
+            physics_cfg=SimpleNamespace(
+                backend="default", physics_dt=0.0075, gravity=(0.0, 0.0, -3.5)
+            ),
+            render_cfg=SimpleNamespace(renderer="hybrid", enable_render=False),
+        )
+        parsed = SimpleNamespace(seed=payload.get("seed", 0), sim_cfg=sim_cfg)
+        parsed_configs.append(parsed)
+        original_sim_configs.append(sim_cfg)
+        return parsed
+
+    modules["embodichain.lab.gym.utils.gym_utils"].config_to_cfg = config_to_cfg
+    modules["embodichain.lab.gym.utils.gym_utils"].get_manager_modules = lambda: []
+    modules["embodichain.lab.sim"].SimulationManagerCfg = SimpleNamespace
+    modules["embodichain.utils.config_paths"].resolve_config_path = lambda path: (
+        vendor.parent / Path(path)
+    )
+    modules["embodichain.utils.utility"].load_config = lambda path: (
+        OmegaConf.to_container(OmegaConf.load(path), resolve=True)
+    )
+    native = SimpleNamespace(
+        action_space=gym.spaces.Box(-1.0, 1.0, shape=(9,), dtype=np.float32),
+        close=lambda **kwargs: None,
+    )
+
+    def build_env(env_id, base_env_cfg):
+        built_configs.append((env_id, base_env_cfg))
+        return native
+
+    registry.build_env = build_env
+    return SimpleNamespace(
+        captures=captures,
+        vendor=vendor,
+        parsed_configs=parsed_configs,
+        original_sim_configs=original_sim_configs,
+        built_configs=built_configs,
+    )
+
+
+def _construct_embodichain_env(config_path):
+    from rlinf.envs.sim.embodichain import EmbodiChainEnv
+
+    return EmbodiChainEnv(
+        SimpleNamespace(
+            gym_config_path=str(config_path),
+            sim_device="cpu",
+            seed=4101,
+            auto_reset=False,
+            task_prompt="Boundary environment",
+        ),
+        num_envs=1,
+        seed_offset=0,
+        total_num_processes=1,
+        worker_info=SimpleNamespace(cluster_node_rank=0, rank=0),
+    )
+
+
+@pytest.mark.parametrize("layout", ["source", "installed_package"])
+@pytest.mark.parametrize(
+    "deployment", ["task.panda.yaml", "task.panda.formal_expert.yaml"]
+)
+def test_embodichain_package_config_resolves_away_from_cwd(
+    monkeypatch, tmp_path, layout, deployment
+):
+    """Packaged Stack Cube paths win over CWD and vendor-root decoys."""
+    from rlinf.envs.sim.embodichain import embodichain_env as adapter
+
+    source = Path(adapter.__file__).resolve()
+    if layout == "installed_package":
+        installed = tmp_path / "site" / "rlinf/envs/sim/embodichain"
+        installed.mkdir(parents=True)
+        shutil.copyfile(source, installed / source.name)
+        shutil.copytree(source.parent / "configs", installed / "configs")
+        monkeypatch.setattr(adapter, "__file__", str(installed / source.name))
+        expected_root = installed / "configs"
+    else:
+        expected_root = source.parent / "configs"
+    suffix = f"tasks/manipulation/stack_cube/{deployment}"
+    relative = f"rlinf/envs/sim/embodichain/configs/{suffix}"
+    decoy_root = tmp_path / "decoy"
+    decoy = decoy_root / relative
+    decoy.parent.mkdir(parents=True)
+    decoy.write_text("id: IncorrectVendorOverride\n")
+    monkeypatch.setenv("EMBODICHAIN_PATH", str(decoy_root))
+    monkeypatch.chdir(decoy_root)
+
+    selected = adapter._resolve_gym_config_path(relative)
+    assert selected == (expected_root / suffix).resolve()
+    payload = OmegaConf.load(selected)
+    assert payload.id == "RLinf-StackCube-Expert-v1"
+    assert (selected.parent / payload.environment.component).is_file()
+    assert (selected.parent / payload.embodiment.component).is_file()
+
+
+def test_embodichain_constructor_rejects_package_path_traversal(
+    monkeypatch, tmp_path, embodichain_sdk_boundary
+):
+    """An existing outside file cannot escape an RLinf package selector."""
+    outside = tmp_path / "outside.yaml"
+    outside.write_text(f"id: {_BOUNDARY_ENV_ID}\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="stay within the package"):
+        _construct_embodichain_env("rlinf/../../outside.yaml")
+    assert not embodichain_sdk_boundary.captures
+
+
+def test_embodichain_constructor_preserves_vendor_package_config_fallback(
+    monkeypatch, tmp_path, embodichain_sdk_boundary
+):
+    """Official env configurations remain selectable beside the SDK package."""
+    relative = "embodichain_tasks/configs/legacy.yaml"
+    expected = embodichain_sdk_boundary.vendor.parent / relative
+    expected.parent.mkdir(parents=True)
+    expected.write_text("id: OfficialLegacyEnv\nseed: 123\n")
+    monkeypatch.delenv("EMBODICHAIN_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    env = _construct_embodichain_env(relative)
+    try:
+        payload, selected = embodichain_sdk_boundary.captures[-1]
+        assert selected == expected.resolve()
+        assert payload["id"] == "OfficialLegacyEnv"
+    finally:
+        env.close()
+
+
+def test_embodichain_constructor_preserves_authored_simulation_config(
+    tmp_path, embodichain_sdk_boundary
+):
+    """Runtime placement leaves parsed physics, renderer and timing intact."""
+    path = tmp_path / "authored.yaml"
+    path.write_text(f"id: {_BOUNDARY_ENV_ID}\nseed: 4101\n")
+    env = _construct_embodichain_env(path)
+    try:
+        parsed = embodichain_sdk_boundary.parsed_configs[-1]
+        env_id, built = embodichain_sdk_boundary.built_configs[-1]
+        assert env_id == _BOUNDARY_ENV_ID
+        assert built is parsed
+        sim_cfg = built.sim_cfg
+        assert sim_cfg is embodichain_sdk_boundary.original_sim_configs[-1]
+        assert sim_cfg.physics_dt == 0.0075
+        assert sim_cfg.physics_cfg.backend == "default"
+        assert sim_cfg.physics_cfg.physics_dt == 0.0075
+        assert sim_cfg.physics_cfg.gravity == (0.0, 0.0, -3.5)
+        assert sim_cfg.render_cfg.renderer == "hybrid"
+        assert sim_cfg.render_cfg.enable_render is False
+        assert sim_cfg.headless is True
+        assert sim_cfg.sim_device == torch.device("cpu")
+        assert sim_cfg.gpu_id == 0
+    finally:
+        env.close()
+
+
+_PANDA_GRASP_FRAME = [
+    [0.0, 1.0, 0.0, 0.0],
+    [-1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "wrong_order", "missing_top", "closed", "moving", "interpenetration"],
+)
+def test_embodichain_stack_cube_physical_completion(fault):
+    """Program progress cannot substitute for both released, stable layers."""
+    pytest.importorskip("embodichain")
+    from rlinf.envs.sim.embodichain.stack_cube import evaluate_stack
+
+    positions = torch.tensor(
+        [[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]
+    )
+    fingers = torch.tensor([0.04, 0.04])
+    velocities = [0.0, 0.0, 0.0]
+    if fault == "wrong_order":
+        positions = positions[[0, 2, 1]]
+    elif fault == "missing_top":
+        positions[2] = torch.tensor([0.6, 0.1, 0.0234])
+    elif fault == "closed":
+        fingers[:] = 0.023
+    elif fault == "moving":
+        velocities[2] = 0.03
+    elif fault == "interpenetration":
+        positions[2, 2] -= 0.02
+    result = evaluate_stack(positions, fingers, velocities, [0.0] * 3)
+    assert result["stable_frame"] == (fault is None)
+    if fault in {"moving", "interpenetration"}:
+        assert result["baseline_success"]
+
+
+def test_embodichain_stack_cube_dwell_resets_after_instability():
+    """Separated stable frames cannot satisfy a consecutive one-second dwell."""
+    pytest.importorskip("embodichain")
+    from toolkits.lerobot.collect_embodichain_stack_cube import stable_completion_step
+
+    measurements = [{"stable_frame": True}] * 19 + [{"stable_frame": False}]
+    assert stable_completion_step(measurements + [{"stable_frame": True}] * 19) is None
+    assert stable_completion_step(measurements + [{"stable_frame": True}] * 20) == 40
+
+
+def test_stack_cube_eval_does_not_keep_transient_success_at_end():
+    from toolkits.lerobot.evaluate_stack_cube_openpi import summarize_episode
+
+    settled = {"layers": [True, True], "baseline_success": True, "stable_frame": True}
+    fallen = {"layers": [True, False], "baseline_success": False, "stable_frame": False}
+    result = summarize_episode([settled] * 20 + [fallen])
+    assert result["stable_once"]
+    assert result["first_stable_step"] == 20
+    assert not result["stable_at_end"]
+    assert not result["full_stack_at_end"]
+    assert result["first_layer_once"]
+
+
+def test_stack_cube_eval_requires_consecutive_physical_steps():
+    from toolkits.lerobot.evaluate_stack_cube_openpi import summarize_episode
+
+    settled = {"layers": [True, True], "baseline_success": True, "stable_frame": True}
+    moving = settled | {"stable_frame": False}
+    result = summarize_episode([settled] * 19 + [moving] + [settled] * 19)
+    assert result["full_stack_at_end"]
+    assert not result["stable_once"]
+    assert not result["stable_at_end"]
+
+
+def test_stack_cube_eval_preserves_frozen_denominator():
+    from toolkits.lerobot.evaluate_stack_cube_openpi import aggregate_reports
+
+    report = dict.fromkeys(
+        (
+            "first_layer_once",
+            "full_stack_once",
+            "full_stack_at_end",
+            "stable_once",
+            "stable_at_end",
+        ),
+        True,
+    )
+    result = aggregate_reports([report], expected=8)
+    assert result["rates"]["stable_at_end"] == 0.125
+    assert result["completed_episodes"] == 1
+    assert not result["complete"]
+
+
+def test_stack_cube_replay_rejects_changed_request(tmp_path):
+    import json
+
+    import pandas as pd
+
+    from toolkits.lerobot.evaluate_stack_cube_openpi import load_replay_episodes
+
+    episode = tmp_path / "episode_000"
+    (episode / "data/chunk-000").mkdir(parents=True)
+    request = {"seed": 7, "objects": {"blue": {"position": [0.4, 0.0, 0.0234]}}}
+    (episode / "report.json").write_text(
+        json.dumps({"request": request, "initial_state": {}})
+    )
+    pd.DataFrame({"action": [np.zeros(7, dtype=np.float32)]}).to_parquet(
+        episode / "data/chunk-000/episode_000000.parquet"
+    )
+    assert load_replay_episodes(tmp_path, [request])[7]["actions"].shape == (1, 7)
+    changed = request | {"objects": {"blue": {"position": [0.5, 0.0, 0.0234]}}}
+    with pytest.raises(ValueError, match="differs from frozen manifest"):
+        load_replay_episodes(tmp_path, [changed])
+
+
+def test_stack_cube_wrist_camera_matches_isaaclab_ros_pose():
+    """The attached camera preserves the reference optical axes and hand offset."""
+    import yaml
+    from scipy.spatial.transform import Rotation
+
+    root = Path(__file__).resolve().parents[2]
+    config = yaml.safe_load(
+        (
+            root
+            / "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml"
+        ).read_text()
+    )
+    camera = next(sensor for sensor in config["sensor"] if sensor["uid"] == "wrist")
+    extrinsics = camera["extrinsics"]
+    assert extrinsics["parent"] == "Panda/panda_hand"
+    np.testing.assert_allclose(extrinsics["pos"], [0.13, 0.0, -0.15], atol=1e-12)
+    # Reference: RLinf/IsaacLab 4246b6b4, Rewarded visuomotor camera, ROS WXYZ.
+    reference_ros = Rotation.from_quat(
+        [0.03701, 0.03701, -0.70614, -0.70614]
+    ).as_matrix()
+    configured_gl = Rotation.from_quat(extrinsics["quat"]).as_matrix()
+    np.testing.assert_allclose(
+        configured_gl @ np.diag([1, -1, -1]), reference_ros, atol=1e-12
+    )
+    assert camera["near"] == 0.1 and camera["far"] == 2.0
+    np.testing.assert_allclose(
+        camera["intrinsics"], [24.0 / 20.955 * 256] * 2 + [128.0, 128.0]
+    )
+
+
+def test_isaaclab_stack_eval_preserves_dataset_euler_and_signed_fingers():
+    from scipy.spatial.transform import Rotation
+
+    from toolkits.lerobot.evaluate_isaaclab_stack_cube_openpi import policy_observation
+
+    angles = np.array([0.2, -0.3, 0.4])
+    quat_xyzw = Rotation.from_euler("xyz", angles).as_quat()
+    raw = {
+        "policy": {
+            "eef_quat": torch.tensor(quat_xyzw[[3, 0, 1, 2]][None]),
+            "eef_pos": torch.tensor([[0.4, 0.1, 0.2]]),
+            "gripper_pos": torch.tensor([[0.04, -0.04]]),
+            "table_cam": torch.zeros(1, 8, 8, 3, dtype=torch.uint8),
+            "wrist_cam": torch.full((1, 8, 8, 3), 127, dtype=torch.uint8),
+        }
+    }
+    result = policy_observation(raw)
+    np.testing.assert_allclose(result["states"][0, 3:6], angles, atol=1e-6)
+    np.testing.assert_allclose(result["states"][0, 6:], [0.04, -0.04], atol=1e-6)
+    assert result["states"].shape == (1, 8)
+    assert result["main_images"].max() == 0
+    assert result["wrist_images"].min() == 127
+
+
+@pytest.fixture
+def embodichain_reward_sdk():
+    """Use the real SDK reward manager without creating a simulator."""
+    return pytest.importorskip(
+        "embodichain.lab.gym.envs.managers", exc_type=ImportError
+    )
+
+
+def test_embodichain_task_wrapper_dispatch(embodichain_reward_sdk, tmp_path):
+    """Native task IDs select a specialized wrapper without changing generic tasks."""
+    from rlinf.envs import get_env_cls
+    from rlinf.envs.sim.embodichain import EmbodiChainEnv, StackCubeEnv
+
+    path = (
+        _ROOT
+        / _EMBODICHAIN_CONFIG_PREFIX
+        / "tasks/manipulation/stack_cube/task.panda.yaml"
+    )
+    assert get_env_cls("embodichain", {"gym_config_path": str(path)}) is StackCubeEnv
+    generic = tmp_path / "generic.json"
+    generic.write_text('{"id": "generic-task"}')
+    assert (
+        get_env_cls("embodichain", {"gym_config_path": str(generic)}) is EmbodiChainEnv
+    )
+    assert get_env_cls("embodichain") is EmbodiChainEnv
+
+
+@pytest.fixture
+def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_reward_sdk):
+    """Run the native SDK step with deterministic physics and real reward terms."""
+    import json
+    from contextlib import nullcontext
+
+    native_name = "rlinf.envs.sim.embodichain.stack_cube"
+    previous_native = sys.modules.get(native_name)
+    native = importlib.import_module(native_name)
+    from rlinf.envs.sim.embodichain import StackCubeEnv
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    class Scene(native.StackCubeExpertEnv):
+        def __init__(self, cfg, *, protocol=None, **kwargs):
+            self.cfg = cfg
+            self._num_envs = cfg.num_envs
+            self.max_episode_steps = cfg.max_episode_steps
+            self.sim = SimpleNamespace(
+                device=torch.device("cpu"), render_frame=lambda: nullcontext()
+            )
+            self._profiler = SimpleNamespace(section=lambda *a, **kw: nullcontext())
+            self.event_manager = SimpleNamespace(available_modes=[])
+            self._replay_no_auto_reset = True
+            self._stack_protocol = protocol
+            self._stack_task_state = None
+            self._elapsed_steps = torch.zeros(self.num_envs, dtype=torch.int32)
+            self.closed = False
+            self.time = 0
+            self.seeds = torch.zeros(self.num_envs)
+            self.outcome = "early_done"
+            self.reward_manager = embodichain_reward_sdk.RewardManager(
+                cfg.rewards, self
+            )
+            if protocol is not None:
+                self._reset_stack_task_state()
+            scenes.append(self)
+
+        def reset_requests(self, requests, *, initial_states=None):
+            self.time = 0
+            self._elapsed_steps.zero_()
+            if self._stack_protocol is not None:
+                self._reset_stack_task_state()
+            self.reward_manager.reset()
+            self.seeds = torch.tensor([r["seed"] for r in requests])
+            return self.observation(), {}
+
+        def reset_request(self, request, *, initial_state=None):
+            return self.reset_requests([request])
+
+        def observation(self):
+            return {
+                "states": torch.stack(
+                    (self.seeds, torch.full_like(self.seeds, self.time)), dim=-1
+                ),
+                "task_descriptions": ["stack"] * self.num_envs,
+            }
+
+        def policy_observation(self, obs):
+            return obs
+
+        def step_relative(self, actions):
+            return self.step(actions)
+
+        def _advance_physics(self):
+            self.time += 1
+
+        def _preprocess_action(self, action):
+            return action
+
+        def _step_action(self, action):
+            return action
+
+        def _postprocess_action(self, action):
+            return action
+
+        def _update_physical_objective(self):
+            pass
+
+        def _hook_after_sim_step(self, **kwargs):
+            pass
+
+        def get_obs(self, **kwargs):
+            return self.observation()
+
+        def batch_stack_metrics(self):
+            positions = torch.tensor(
+                [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+            ).repeat(self.num_envs, 1, 1)
+            fingers = torch.full((self.num_envs, 2), 0.04)
+            linear = torch.zeros(self.num_envs, 3)
+            if self.outcome == "early_done":
+                fingers[:] = 0.02
+                if self.time >= 2:
+                    fingers[0] = 0.04
+                if self.num_envs > 1 and self.time >= 3:
+                    positions[1, 2, 2] = -0.1
+            elif self.time == 12:
+                linear[0, 0] = 0.03
+            return stack_cube_metrics(
+                positions, fingers, linear, torch.zeros(self.num_envs, 3)
+            )
+
+        def stack_metrics(self):
+            return self.batch_stack_metrics()
+
+        def close(self, **kwargs):
+            self.closed = True
+
+    scenes = []
+
+    monkeypatch.setattr(native, "StackCubeExpertEnv", Scene)
+    panda = tmp_path / "panda.urdf"
+    panda.write_text(
+        '<robot name="fixture"><link name="panda_tcp"/>'
+        '<joint name="panda_finger_joint1"/>'
+        '<joint name="panda_finger_joint2"/></robot>'
+    )
+    manifest = tmp_path / "requests.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "requests": [
+                    {"request_id": f"request-{i}", "seed": i} for i in range(256)
+                ]
+            }
+        )
+    )
+
+    def construct(num_envs=3, seed_offset=0, total_num_processes=1, **overrides):
+        cfg = {
+            "gym_config_path": str(
+                _ROOT
+                / _EMBODICHAIN_CONFIG_PREFIX
+                / "tasks/manipulation/stack_cube/task.panda.yaml"
+            ),
+            "panda_urdf": str(panda),
+            "request_manifest": str(manifest),
+            "sim_device": "cpu",
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "stack_cube_protocol": "isaaclab",
+            "max_episode_steps": 25,
+            "use_fixed_reset_state_ids": False,
+        }
+        cfg.update(overrides)
+        env = StackCubeEnv(
+            SimpleNamespace(**cfg),
+            num_envs,
+            seed_offset,
+            total_num_processes,
+            SimpleNamespace(cluster_node_rank=0, rank=0),
+        )
+        return env, scenes[-1]
+
+    try:
+        yield construct
+    finally:
+        if previous_native is None:
+            sys.modules.pop(native_name, None)
+
+
+@pytest.fixture
+def stack_cube_gym_config(tmp_path):
+    """Write a native deployment with caller-configured reward terms."""
+    directory = _ROOT / _EMBODICHAIN_CONFIG_PREFIX / "tasks/manipulation/stack_cube"
+
+    def write(rewards):
+        environment = OmegaConf.load(directory / "env.yaml")
+        environment.env.rewards = rewards
+        environment_path = tmp_path / "environment.yaml"
+        OmegaConf.save(environment, environment_path)
+        deployment = OmegaConf.load(directory / "task.panda.yaml")
+        deployment.environment.component = str(environment_path)
+        deployment.embodiment.component = str(
+            (directory / deployment.embodiment.component).resolve()
+        )
+        for key, value in deployment.task_program.items():
+            deployment.task_program[key] = str((directory / value).resolve())
+        path = tmp_path / "task.yaml"
+        OmegaConf.save(deployment, path)
+        return str(path)
+
+    return write
+
+
+@pytest.mark.parametrize("num_envs", [1, 8, 32])
+def test_stack_cube_task_uses_native_success_reward(stack_cube_ppo_adapter, num_envs):
+    """The native task config supplies one unscaled success bonus per scene."""
+    from embodichain.lab.gym.envs.managers.rewards import success_reward
+
+    env, scene = stack_cube_ppo_adapter(num_envs)
+    scene.outcome = "stability"
+    env.reset()
+    _, reward, terminated, _, info = env.step(torch.zeros(num_envs, 7))
+    torch.testing.assert_close(reward, torch.ones(num_envs), rtol=0, atol=0)
+    assert terminated.all()
+    assert set(info["rewards"]) == {"success"}
+    assert scene.reward_manager.get_functor_cfg("success").func is success_reward
+
+
+@pytest.mark.parametrize("weight", [0.0, 0.25])
+def test_stack_cube_reward_weight_changes_score_without_changing_termination(
+    stack_cube_ppo_adapter, stack_cube_gym_config, weight
+):
+    """A user-authored RewardCfg changes scores while preserving episode rules."""
+    path = stack_cube_gym_config(
+        {
+            "success": {
+                "func": "success_reward",
+                "mode": "add",
+                "weight": weight,
+                "params": {},
+            }
+        }
+    )
+    env, _ = stack_cube_ppo_adapter(gym_config_path=path)
+    env.reset()
+    _, rewards, terms, _, infos = env.chunk_step(torch.zeros(3, 5, 7))
+    assert rewards.tolist() == [[0, weight, 0, 0, 0], [0] * 5, [0] * 5]
+    assert terms[0].tolist() == [False, True, False, False, False]
+    assert terms[1].tolist() == [False, False, True, False, False]
+    assert infos[1]["rewards"]["success"].tolist() == [1, 0, 0]
+    env.reset()
+    _, reset_rewards, *_ = env.chunk_step(torch.zeros(3, 5, 7))
+    torch.testing.assert_close(reset_rewards, rewards, rtol=0, atol=0)
+
+
+def test_stack_cube_native_manager_rejects_invalid_term(
+    stack_cube_ppo_adapter, stack_cube_gym_config
+):
+    """The native SDK validates configured terms before the scene is returned."""
+    path = stack_cube_gym_config(
+        {
+            "success": {
+                "func": "missing_reward",
+                "mode": "add",
+                "weight": 1.0,
+                "params": {},
+            }
+        }
+    )
+    with pytest.raises((AttributeError, ValueError), match="missing_reward"):
+        stack_cube_ppo_adapter(gym_config_path=path)
+
+
+@pytest.mark.parametrize("preset", ["isaaclab", "evaluation"])
+@pytest.mark.parametrize("action_format", ["tensor", "numpy", "broadcast"])
+def test_stack_cube_adapter_preserves_native_reward(
+    stack_cube_ppo_adapter, monkeypatch, preset, action_format
+):
+    """The wrapper passes an SDK reward through independently of its metrics."""
+    env, scene = stack_cube_ppo_adapter(1, stack_cube_protocol=preset)
+    env.reset()
+    native_step = scene.step_relative
+
+    def step(actions):
+        obs, _, terminated, truncated, info = native_step(actions)
+        return obs, torch.tensor([2.75]), terminated, truncated, info
+
+    monkeypatch.setattr(scene, "step_relative", step)
+    action = {
+        "tensor": torch.zeros(1, 7),
+        "numpy": np.zeros((1, 7)),
+        "broadcast": np.zeros(7),
+    }[action_format]
+    _, reward, _, _, info = env.step(action)
+    assert reward.item() == 2.75
+    assert info["episode"]["return"].item() == 2.75
+    assert info["applied_action"].shape == (1, 7)
+    assert info["applied_action"].dtype == torch.float32
+
+
+def test_stack_cube_native_info_reads_preserve_dwell(stack_cube_ppo_adapter):
+    """Info and evaluation reads cannot count extra physical control steps."""
+    env, scene = stack_cube_ppo_adapter(
+        1, stack_cube_protocol="evaluation", max_episode_steps=40
+    )
+    scene.outcome = "stability"
+    env.reset()
+    for _ in range(31):
+        env.step(torch.zeros(1, 7))
+        assert not scene.get_info()["success"].any()
+        assert not scene.get_info()["success"].any()
+    _, reward, *_ = env.step(torch.zeros(1, 7))
+    assert reward.item() == 1.0
+
+
+def test_stack_cube_evaluation_reward_preserves_twenty_step_dwell(
+    stack_cube_ppo_adapter,
+):
+    """Evaluation scores require twenty consecutive stable frames after a reset."""
+    env, scene = stack_cube_ppo_adapter(
+        1, stack_cube_protocol="evaluation", max_episode_steps=40
+    )
+    scene.outcome = "stability"
+    env.reset()
+    rewards = []
+    for _ in range(40):
+        _, reward, terminated, _, info = env.step(torch.zeros(1, 7))
+        rewards.append(reward.item())
+        assert not terminated.any()
+        torch.testing.assert_close(
+            reward, info["episode"]["success_at_end"].float(), rtol=0, atol=0
+        )
+    # The scripted instability at frame 12 restarts the stable-frame count.
+    assert rewards == [0.0] * 31 + [1.0] * 9
+    env.reset()
+    _, reward, *_ = env.step(torch.zeros(1, 7))
+    assert reward.item() == 0.0
+
+
+def test_stack_cube_ppo_preserves_first_done_and_terminal_observations(
+    stack_cube_ppo_adapter,
+):
+    from rlinf.utils.metric_utils import compute_loss_mask
+
+    env, _ = stack_cube_ppo_adapter()
+    env.reset()
+    obs, rewards, terms, truncs, infos = env.chunk_step(torch.zeros(3, 5, 7))
+    assert rewards.tolist() == [[0, 1, 0, 0, 0], [0] * 5, [0] * 5]
+    assert terms.tolist() == [
+        [False, True, False, False, False],
+        [False, False, True, False, False],
+        [False] * 5,
+    ]
+    assert not truncs.any()
+    assert obs[-1]["states"][:, 1].tolist() == [5, 5, 5]
+    final = infos[-1]["final_observation"]["states"]
+    assert final[:2, 1].tolist() == [2, 3]
+    assert infos[-1]["_final_observation"].tolist() == [True, True, False]
+    loss_mask, _ = compute_loss_mask(torch.stack((torch.zeros_like(terms), terms)))
+    assert loss_mask[0].tolist() == [
+        [True, True, False, False, False],
+        [True, True, True, False, False],
+        [True] * 5,
+    ]
+    _, next_rewards, _, _, _ = env.chunk_step(torch.zeros(3, 5, 7))
+    assert not next_rewards.any()
+
+
+@pytest.mark.parametrize("num_envs", [1, 8, 32])
+def test_stack_cube_ppo_reset_cohorts_rotate_and_partial_reset_is_rejected(
+    stack_cube_ppo_adapter, num_envs
+):
+    env, _ = stack_cube_ppo_adapter(num_envs)
+    first, first_info = env.reset()
+    env.update_reset_state_ids()
+    second, second_info = env.reset()
+    assert first["states"][:, 0].tolist() == list(range(num_envs))
+    assert second["states"][:, 0].tolist() == list(range(num_envs, num_envs * 2))
+    assert first_info["reset_request_ids"] == [f"request-{i}" for i in range(num_envs)]
+    assert second_info["reset_request_seeds"] == list(range(num_envs, num_envs * 2))
+    if num_envs > 1:
+        with pytest.raises(NotImplementedError, match="full-batch"):
+            env.reset(options={"env_idx": [0]})
+        after_rejection, *_ = env.step(torch.zeros(num_envs, 7))
+        assert torch.equal(after_rejection["states"][:, 0], second["states"][:, 0])
+        assert after_rejection["states"][:, 1].tolist() == [1] * num_envs
+    fixed, _ = stack_cube_ppo_adapter(num_envs, use_fixed_reset_state_ids=True)
+    first_fixed, _ = fixed.reset()
+    fixed.update_reset_state_ids()
+    second_fixed, _ = fixed.reset()
+    assert torch.equal(first_fixed["states"], second_fixed["states"])
+
+
+def test_stack_cube_ppo_eval_counts_consecutive_steps_and_preserves_timeout(
+    stack_cube_ppo_adapter,
+):
+    env, scene = stack_cube_ppo_adapter(8, ignore_terminations=True)
+    scene.outcome = "stability"
+    env.reset()
+    for _ in range(5):
+        _, _, terms, truncs, infos = env.chunk_step(torch.zeros(8, 5, 7))
+        assert not terms.any()
+    assert truncs[:, -1].all()
+    assert not truncs[:, :-1].any()
+    assert infos[-1]["episode"]["success_at_end"].tolist() == [False] + [True] * 7
+    assert infos[-1]["final_observation"]["states"][:, 1].tolist() == [25] * 8
+    with pytest.raises(RuntimeError, match="Reset Stack Cube"):
+        env.step(torch.zeros(8, 7))
+
+
+def test_stack_cube_ppo_rejects_asynchronous_autoreset(stack_cube_ppo_adapter):
+    with pytest.raises(ValueError, match="auto_reset=false"):
+        stack_cube_ppo_adapter(8, auto_reset=True)
+
+
+def test_stack_cube_ppo_synchronous_autoreset_keeps_final_observation(
+    stack_cube_ppo_adapter,
+):
+    env, _ = stack_cube_ppo_adapter(
+        8, auto_reset=True, ignore_terminations=True, max_episode_steps=5
+    )
+    env.reset()
+    obs, _, _, truncs, infos = env.chunk_step(torch.zeros(8, 5, 7))
+    assert truncs[:, -1].all()
+    assert obs[-1]["states"][:, 1].tolist() == [0] * 8
+    assert obs[-1]["states"][:, 0].tolist() == list(range(8, 16))
+    final = infos[-1]["final_observation"]["states"]
+    assert final[:, 1].tolist() == [5] * 8
+    assert final[:, 0].tolist() == list(range(8))
+
+
+def test_stack_cube_ppo_workers_partition_rotating_requests(stack_cube_ppo_adapter):
+    first, _ = stack_cube_ppo_adapter(3, seed_offset=0, total_num_processes=2)
+    second, _ = stack_cube_ppo_adapter(3, seed_offset=1, total_num_processes=2)
+    for start in (0, 6):
+        first_obs, _ = first.reset()
+        second_obs, _ = second.reset()
+        assert first_obs["states"][:, 0].tolist() == list(range(start, start + 3))
+        assert second_obs["states"][:, 0].tolist() == list(range(start + 3, start + 6))
+        first.update_reset_state_ids()
+        second.update_reset_state_ids()

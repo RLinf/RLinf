@@ -1,0 +1,134 @@
+{
+  "checked_utc": "2026-10-13T14:31:59.537614+00:00",
+  "scope": "Native EmbodiChain RewardManager through the Stack Cube wrapper, verified by real GPU expert replay and source-level comparison with the pinned IsaacLab task. No optimizer updates or IsaacLab physics rollout.",
+  "configuration": "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+  "episode_protocol_key": "stack_cube_protocol",
+  "reward_term": "success",
+  "adapter_reward_computation": false,
+  "adapter_reward_configuration_parser": false,
+  "sdk_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+  "sdk_changes_required": false,
+  "unit_tests": {
+    "tests": 39,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "gpu_replay": {
+    "passed": true,
+    "checks": {
+      "all_replays_stable": true,
+      "initial_front_views_are_distinct": true
+    },
+    "num_envs": 8,
+    "distinct_validation_requests": 8,
+    "steps": 380,
+    "stable_at_end": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "episode_returns": [
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0
+    ],
+    "seconds": 183.810427055927,
+    "source_sha256": {
+      "rlinf/envs/sim/embodichain/stack_cube.py": "73c05314d40d88b4cd83064ca2599c7f0479de3d2272987ebcd447e23bd2d85b",
+      "rlinf/envs/sim/embodichain/embodichain_env.py": "42c9e909c86fbfc4e6ec32731eda1f6851e006d898f968d51da9096b32eca513",
+      "rlinf/envs/sim/embodichain/stack_cube_metrics.py": "c9e3e48dc943b10bc4d72787afbf7a42c5af8b7aee9a66216a794f4c88ecc693",
+      "rlinf/models/embodiment/openpi/tasks/rl.py": "6b5f8741fbe555c2a81f2f787fd22e4e7239c2c1ccc29fbe5557172086d23e3f",
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml": "14d34e2b471b6f908af85cb45bb60179f795e0c4b9638113df04e68998e7fa6d",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml": "c419be0f2fa18bb8d0264e01160b8111b394c53ea9c0d8755dc127f1d964f86a"
+    },
+    "requests_sha256": "853c8ae5fb1c7d40f5d7ac252e369217e605b8b2fe6079796a116cade7bd7978",
+    "panda_urdf_sha256": "bab737f22329c7e0d74084caeeae0771c1416fe5636ae82a95226c7d01d876de"
+  },
+  "isaaclab_measured_states": {
+    "scope": "Pinned IsaacLab RewardManager/ManagerBase class bodies, reward config and task predicate compiled unchanged from source; lightweight config and measured-state scene objects replace Omniverse runtime dependencies. This is source-level reward/termination validation, not an IsaacLab physics rollout.",
+    "isaaclab_commit": "4246b6b4f4a3e74ee20e002ed7536b1c788d39f4",
+    "scalar_rewards_compared": 3040,
+    "nonzero_rewards": 464,
+    "exact_match": true,
+    "maximum_absolute_error": 0.0,
+    "drop_predicate_match": true,
+    "isaaclab_weight": 20.0,
+    "isaaclab_step_dt": 0.05,
+    "manager_reset_verified": true,
+    "trace_sha256": "2a960e5594e6b1617ee28467b15e446617b8df0f15ee16286ab61fccbee52bdf",
+    "reference_source_sha256": {
+      "source/isaaclab/isaaclab/managers/manager_base.py": "4c843c5faf37f27cdf026099c5c41ee5228e61b6d2d48eb714df62a99ebb8bc8",
+      "source/isaaclab/isaaclab/managers/reward_manager.py": "5d41d6a376cfb456849d861c3232694ea5662cc38970e2e2c7e5152f156d88d7",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/mdp/terminations.py": "0a4dd136b304f7f16ff33cd3538799d4f30bd9743bcb7f0e40a0a139a89b5c52",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/config/franka/stack_ik_rel_visumotor_rewarded_env_cfg.py": "f3c9bb5f049debcf51ab9ff733a7c5ac7c55dc5817cb372c06d773376d20d7b7",
+      "source/isaaclab/isaaclab/envs/mdp/terminations.py": "d56d6e3fe9d5a8479e83c3601cc3f59aae62c6e293bc33ff28749e6a84c0552b",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/stack_env_cfg.py": "3cbec7e26b3ec661136e6edf288ede19b983e933da27f86e99f6a05e95f2dcad"
+    }
+  },
+  "isaaclab_boundary_states": {
+    "scope": "Pinned IsaacLab RewardManager/ManagerBase class bodies, reward config and task predicate compiled unchanged from source; lightweight config and measured-state scene objects replace Omniverse runtime dependencies. This is source-level reward/termination validation, not an IsaacLab physics rollout.",
+    "isaaclab_commit": "4246b6b4f4a3e74ee20e002ed7536b1c788d39f4",
+    "scalar_rewards_compared": 1055,
+    "nonzero_rewards": 44,
+    "exact_match": true,
+    "maximum_absolute_error": 0.0,
+    "drop_predicate_match": true,
+    "isaaclab_weight": 20.0,
+    "isaaclab_step_dt": 0.05,
+    "manager_reset_verified": true,
+    "trace_sha256": "a5d809770c9616c3eb9ac4b74bcdbff58cf3b4e3b48aca2d2c2e815ce57bacf9",
+    "reference_source_sha256": {
+      "source/isaaclab/isaaclab/managers/manager_base.py": "4c843c5faf37f27cdf026099c5c41ee5228e61b6d2d48eb714df62a99ebb8bc8",
+      "source/isaaclab/isaaclab/managers/reward_manager.py": "5d41d6a376cfb456849d861c3232694ea5662cc38970e2e2c7e5152f156d88d7",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/mdp/terminations.py": "0a4dd136b304f7f16ff33cd3538799d4f30bd9743bcb7f0e40a0a139a89b5c52",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/config/franka/stack_ik_rel_visumotor_rewarded_env_cfg.py": "f3c9bb5f049debcf51ab9ff733a7c5ac7c55dc5817cb372c06d773376d20d7b7",
+      "source/isaaclab/isaaclab/envs/mdp/terminations.py": "d56d6e3fe9d5a8479e83c3601cc3f59aae62c6e293bc33ff28749e6a84c0552b",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/stack_env_cfg.py": "3cbec7e26b3ec661136e6edf288ede19b983e933da27f86e99f6a05e95f2dcad"
+    }
+  },
+  "scalar_rewards_compared": 4095,
+  "maximum_absolute_error": 0.0,
+  "isaaclab_runtime": {
+    "launched": false,
+    "reason": "First-launch NVIDIA Omniverse EULA confirmation is pending; bootstrap exited at its prompt. Consent was not supplied by the agent.",
+    "fallback": "Manager class bodies, reward config and task functions compiled unchanged from pinned source. Lightweight config and measured-state scene objects replace runtime dependencies."
+  },
+  "audit_directory": "/workspace/eval/embodichain_stack_cube_sft_20261010/reward_alignment_20261013",
+  "audit_files_sha256": {
+    "compare_isaaclab_source.py": "cd3d4398447b02346e57f7e653b70bebb508159c8ead8f18c6c6f2d779d9fdf1",
+    "boundary_trace.npz": "a5d809770c9616c3eb9ac4b74bcdbff58cf3b4e3b48aca2d2c2e815ce57bacf9",
+    "gpu_replay/reward_trace.npz": "2a960e5594e6b1617ee28467b15e446617b8df0f15ee16286ab61fccbee52bdf",
+    "unit_tests.xml": "db04741f5ca9a6aec48180f22fc67656de7aa56050ab588c0c75dab98a9f65a3",
+    "docs_build.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+    "isaaclab_boundary.log": "70b7fdf3ba0185e7cbf910e42512c6b6337db77c4ed2c5f8b4a0195db1217386",
+    "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384"
+  },
+  "current_source_sha256": {
+    "rlinf/envs/sim/embodichain/embodichain_env.py": "42c9e909c86fbfc4e6ec32731eda1f6851e006d898f968d51da9096b32eca513",
+    "rlinf/envs/sim/embodichain/stack_cube.py": "73c05314d40d88b4cd83064ca2599c7f0479de3d2272987ebcd447e23bd2d85b",
+    "rlinf/envs/sim/embodichain/stack_cube_metrics.py": "c9e3e48dc943b10bc4d72787afbf7a42c5af8b7aee9a66216a794f4c88ecc693",
+    "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml": "c419be0f2fa18bb8d0264e01160b8111b394c53ea9c0d8755dc127f1d964f86a",
+    "examples/embodiment/config/env/embodichain_stack_cube.yaml": "12709a4039b4e501d43544a18bae18f7738a58b4d4b52452aaf450d295898d7a",
+    "toolkits/lerobot/verify_stack_cube_ppo.py": "aa2d8fab484d6b428071c6ab2d66707a2150bf7d3baeee276a7ce6b1b9b3a989",
+    "tests/unit_tests/test_real_env.py": "2775bc059e7139fd41cfea8e72ab80df7e7c9292f7a45d49741b3a1ce46b5b76"
+  },
+  "checks": {
+    "precommit_passed": true,
+    "en_sphinx_warnings": 0,
+    "zh_sphinx_warnings": 0,
+    "rst_markup_passed": true,
+    "doc_symbols_passed_with_verified_literals": true,
+    "source_hashes_match_current_files": true
+  }
+}

@@ -1,0 +1,5 @@
+# The model uses LeRobot v2.1 separately; keep the SDK's declared data API.
+lerobot==0.4.4
+packaging>=24.2,<26
+# Ray accepts this version; virtualenv21 requires packaging>=26.3.
+virtualenv==20.35.4

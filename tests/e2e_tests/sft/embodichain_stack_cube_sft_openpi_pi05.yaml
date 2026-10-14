@@ -1,0 +1,36 @@
+# A two-rank, two-update SFT/checkpoint integration test using public data.
+defaults:
+  - embodichain_stack_cube_sft_openpi_pi05_smoke
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config
+
+cluster:
+  component_placement:
+    actor,env,rollout: ${oc.env:STACK_CUBE_SFT_PLACEMENT,0-1}
+
+runner:
+  logger:
+    log_path: ${oc.env:STACK_CI_RUN}/sft
+    experiment_name: ci-test
+  max_steps: 1
+  save_interval: 1
+
+data:
+  train_data_paths: ${oc.env:STACK_CUBE_TRAIN_DATA}
+  num_workers: 0
+  stateful_loader: true
+
+actor:
+  global_batch_size: 2
+  model:
+    model_path: ${oc.env:STACK_CUBE_SFT_MODEL}
+    openpi_data:
+      norm_stats_path: ${oc.env:STACK_CUBE_NORM_STATS}
+  optim:
+    total_training_steps: 2
+    lr_warmup_steps: 0
+  fsdp_config:
+    training_state_save_interval: 1

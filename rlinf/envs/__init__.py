@@ -166,9 +166,9 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return GenesisEnv
     elif env_type == SupportedEnvType.EMBODICHAIN:
-        from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+        from rlinf.envs.sim.embodichain import get_embodichain_env_cls
 
-        return EmbodiChainEnv
+        return get_embodichain_env_cls(env_cfg)
     elif env_type == SupportedEnvType.ROBOVERSE:
         from rlinf.envs.sim.roboverse.roboverse_env import RoboVerseEnv
 

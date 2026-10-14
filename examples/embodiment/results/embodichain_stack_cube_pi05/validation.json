@@ -1,0 +1,474 @@
+{
+  "schema_version": 1,
+  "checked_utc": "2026-10-13T03:46:24.197486+00:00",
+  "scope": "ChangedCPUcontracts in isolatedPRworktree, same qualified model/simulator interpreters; not fullrepository or remoteCI.",
+  "model_environment": {
+    "passed": 88,
+    "skipped": 7,
+    "reason_for_skips": "SDK intentionally absent from model interpreter"
+  },
+  "SDK_environment": {
+    "passed": 7,
+    "skipped": 0
+  },
+  "unique_cases_passed": 95,
+  "selected_model_test_nodes": [
+    "tests/unit_tests/test_data.py::test_stack_cube_panda_preparation_preserves_meshes_and_control_contract",
+    "tests/unit_tests/test_data.py::test_stack_cube_normalization_keeps_episode_boundaries_and_all_frames",
+    "tests/unit_tests/test_data.py::test_stack_cube_normalization_rejects_nontraining_split",
+    "tests/unit_tests/test_data.py::test_stack_cube_requests_obey_spatial_contract",
+    "tests/unit_tests/test_data.py::test_stack_cube_smoke_requests_preserve_local_distribution",
+    "tests/unit_tests/test_data.py::test_stack_cube_assembly_preserves_videos_and_rejected_attempts",
+    "tests/unit_tests/test_data.py::test_stack_cube_offline_selection_covers_gripper_transitions_and_boundaries",
+    "tests/unit_tests/test_data.py::test_stack_cube_offline_noise_is_independent_of_selection_order",
+    "tests/unit_tests/test_data.py::test_openpi_stateful_resume_preserves_prefetch_and_epoch_tensors",
+    "tests/unit_tests/test_data.py::test_openpi_stateful_rank_partitions_preserve_upstream_order",
+    "tests/unit_tests/test_data.py::test_openpi_stateful_restore_rejects_incompatible_layout",
+    "tests/unit_tests/test_data.py::test_openpi_stateful_checkpoint_requires_final_data_manifest",
+    "tests/unit_tests/test_data.py::test_openpi_stateful_resume_nonzero_rank_with_workers",
+    "tests/unit_tests/test_data.py::test_openpi_stateful_factory_preserves_transforms",
+    "tests/unit_tests/test_models.py::test_openpi_rl_training_preserves_sft_pixels_and_replay_logprobs",
+    "tests/unit_tests/test_models.py::test_openpi_sft_checkpoint_load_preserves_policy_and_new_critic",
+    "tests/unit_tests/test_models.py::test_openpi_rl_parent_train_preserves_frozen_vision_mode",
+    "tests/unit_tests/test_models.py::test_openpi_sft_seed_controls_initialization_and_training",
+    "tests/unit_tests/test_models.py::test_openpi_sft_ranks_share_initial_weights_and_have_distinct_noise",
+    "tests/unit_tests/test_models.py::test_openpi_sft_checkpoint_rng_supersedes_fresh_initialization",
+    "tests/unit_tests/test_models.py::test_other_vla_sft_initialization_preserves_existing_rng_behavior",
+    "tests/unit_tests/test_models.py::test_openpi_fsdp_vision_wrap_owns_functional_stem_parameters",
+    "tests/unit_tests/test_models.py::test_stack_cube_policy_process_external_interpreter_round_trip",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_batched_scoring_distinguishes_reward_and_stability",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_batched_scoring_uses_isaac_gripper_tolerance",
+    "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_physical_completion",
+    "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_dwell_resets_after_instability",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_eval_does_not_keep_transient_success_at_end",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_eval_requires_consecutive_physical_steps",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_eval_preserves_frozen_denominator",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_replay_rejects_changed_request",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_wrist_camera_matches_isaaclab_ros_pose",
+    "tests/unit_tests/test_real_env.py::test_isaaclab_stack_eval_preserves_dataset_euler_and_signed_fingers",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_ppo_preserves_first_done_and_terminal_observations",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_ppo_reset_cohorts_rotate_and_partial_reset_is_rejected",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_ppo_eval_counts_consecutive_steps_and_preserves_timeout",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_ppo_rejects_asynchronous_autoreset",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_ppo_synchronous_autoreset_keeps_final_observation",
+    "tests/unit_tests/test_real_env.py::test_stack_cube_ppo_workers_partition_rotating_requests",
+    "tests/unit_tests/test_worker.py::test_openpi_ppo_worker_seed_reproduces_model_and_stream",
+    "tests/unit_tests/test_worker.py::test_openpi_ppo_actor_ranks_share_critic_initialization",
+    "tests/unit_tests/test_worker.py::test_openpi_rollout_explicit_seed_and_rank_control_sampling",
+    "tests/unit_tests/test_worker.py::test_openpi_rollout_restored_rng_is_not_reseeded_by_prediction",
+    "tests/unit_tests/test_worker.py::test_non_openpi_ppo_worker_preserves_previous_rng_behavior",
+    "tests/unit_tests/test_worker.py::test_stack_cube_worker_preflight_accepts_complete_formal_sft_export",
+    "tests/unit_tests/test_worker.py::test_stack_cube_worker_preflight_accepts_native_ppo_export",
+    "tests/unit_tests/test_worker.py::test_stack_cube_worker_preflight_accepts_marked_ppo_inference_export",
+    "tests/unit_tests/test_worker.py::test_stack_cube_worker_preflight_rejects_incomplete_ppo_export",
+    "tests/unit_tests/test_worker.py::test_stack_cube_worker_preflight_keeps_formal_validation_independent",
+    "tests/unit_tests/test_worker.py::test_stack_cube_worker_separate_interpreter_preserves_policy_protocol"
+  ],
+  "selected_SDK_test_nodes": [
+    "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_physical_completion",
+    "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_dwell_resets_after_instability"
+  ],
+  "CUDA_VISIBLE_DEVICES": "",
+  "GPU_jobs_launched_for_PR_checks": false,
+  "docs": {
+    "en_warnings": 0,
+    "zh_warnings": 0,
+    "autodoc_import_warnings_filtered_by_repository_harness": true,
+    "markup_passed": true,
+    "symbols_passed_with_verified_external_and_config_literals": true
+  },
+  "install_static_check": {
+    "exit_code": 1,
+    "baseline_candidates": 47,
+    "candidate_candidates": 48,
+    "new_candidate_review": "SDK clone is followed by fetch and detached checkout to fixed21531b77commit; allowed effectively pinned dependency. Existing47advisory findings retained."
+  },
+  "precommit_status": "Initialall-filescheckpassed; finalprecommitandDCOcommitresults are recorded in PRdescription.",
+  "source_log_sha256": {
+    "model_tests.log": "4653a61118917e93ba20e6a35efb21ad8e0958e18bf63f0792d6c40c38a562d6",
+    "SDK_tests.log": "2e8901abf11ff9bdc6e4f4a6afff075e344d367143e6fc2f05f97ca176a14a1a",
+    "model_tests.xml": "b0ac71241bedd2652bdc2571c852b22d88f680532e227fc4fbcd04b1bcff504e",
+    "SDK_tests.xml": "205212496a43251e61542592bbe4ac31be0c6e5553ba46afaaccfe2dd4c7feb3",
+    "docs_build.log": "30613f2756dd7a1fc43920d547dea2aab8153fbe5ffb1d093a0ffc05ed5da278",
+    "doc_symbols_verified.log": "47c83cdd1dc6cd097a766329f2378a054f2324946263c09417ff2d95389b0ce5",
+    "install_check_candidate.log": "5103f7a8344919a8b0ef9796f90839443dca8fb494a18233322fc93fadaf9995",
+    "install_check_baseline.log": "6fc2923de2b6af0ba38e6aec5b9892f10f48e774701df2820580ebdd71411597"
+  },
+  "obsolete_task_cleanup": {
+    "parent_commit": "caf38e9d3f1577ca6b4d48c5667661be17f6d502",
+    "deleted_files": [
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_gripper_absolute_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_phase_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_state_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_single_gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_gripper_absolute.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05_smoke_single_gpu.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05_smoke_4gpu.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_val_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_val_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_train_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_train_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/cobotmagic_vla.yaml",
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/franka_panda_vla.yaml",
+      "rlinf/envs/sim/embodichain/tasks/__init__.py",
+      "rlinf/envs/sim/embodichain/tasks/pick_place.py",
+      "examples/embodiment/config/env/embodichain_pick_place_correction.yaml",
+      "toolkits/lerobot/analyze_pick_place_multimodality.py",
+      "toolkits/lerobot/audit_embodichain_dataset.py",
+      "toolkits/lerobot/check_embodichain_smoke.py",
+      "toolkits/lerobot/collect_embodichain_dagger.py",
+      "toolkits/lerobot/create_embodichain_manifest.py",
+      "toolkits/lerobot/evaluate_embodichain_openpi.py",
+      "toolkits/standalone_eval_scripts/embodichain_openpi_eval.py",
+      "toolkits/standalone_eval_scripts/openpi_process_predictor.py",
+      "rlinf/models/embodiment/openpi/dataconfig/embodichain_dataconfig.py",
+      "rlinf/models/embodiment/openpi/policies/embodichain_policy.py"
+    ],
+    "model_regression": {
+      "command": "CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu python -m pytest -q -p no:cacheprovider tests/unit_tests/test_data.py tests/unit_tests/test_models.py tests/unit_tests/test_real_env.py tests/unit_tests/test_worker.py tests/unit_tests/test_fsdp.py -k 'openpi or embodichain or stack_cube'",
+      "passed": 137,
+      "skipped": 9,
+      "failed": 0,
+      "skip_reasons": {
+        "SDK_absent": 7,
+        "CUDA_unavailable": 2
+      }
+    },
+    "SDK_regression": {
+      "test_nodes": [
+        "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_physical_completion",
+        "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_dwell_resets_after_instability"
+      ],
+      "passed": 7,
+      "failed": 0
+    },
+    "distinct_passed_cases": 144,
+    "remaining_CUDA_cases_skipped": 2,
+    "docs": {
+      "en_warnings": 0,
+      "zh_warnings": 0,
+      "markup_passed": true,
+      "symbols_passed_with_verified_literals": true
+    },
+    "wheel": {
+      "wheel_sha256": "52f215ea80be6d0ee4861e36580356ab635c1adee427ce8ae1b0557499473a1e",
+      "remaining_task_yaml": [
+        "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/components/execution_policies/stack_cube.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/program.yaml"
+      ],
+      "deleted_files_absent": true,
+      "obsolete_entry_point_absent": true
+    },
+    "precommit_all_files": "passed",
+    "obsolete_references_in_current_code_configs_and_docs": 0,
+    "GPU_jobs_launched": false,
+    "training_rerun": false,
+    "log_sha256": {
+      "model_tests.log": "bb937ceee7f32c9b4d8cb5375d071159531a77c56df013461f45e03fb8eca598",
+      "model_tests.xml": "f8ddcf260751f0e3251ea11b241d6d6efa0725b49e1b0bd778bcd2d81dfc3e7d",
+      "SDK_tests.log": "0614faa03a6984312bf8af5fd82e68b9e0d2bf904508637d01dccd93d9306ba7",
+      "SDK_tests.xml": "dc2907a1f397e9ab2610b9cd2123df6de991f5089ef3c229dfad0955eaefca7c",
+      "docs_build.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+      "wheel_build.log": "b9c8a89b1bf377f81741c255ba989b5b24d5ba6956ec055fd0e0e3e2e33a2e8e"
+    }
+  },
+  "reward_manager_migration": {
+    "parent_commit": "ee7fa398d2649fa6dedacb5db043b713b714c626",
+    "sdk_changes_required": false,
+    "sdk_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+    "configuration": "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/rewards.yaml",
+    "tests": {
+      "model": {
+        "passed": 129,
+        "skipped": 26,
+        "failed": 0
+      },
+      "SDK": {
+        "passed": 38,
+        "skipped": 0,
+        "failed": 0
+      },
+      "distinct_passed": 153,
+      "remaining_skips": 2
+    },
+    "model_test_command": "CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu python -m pytest -q -p no:cacheprovider tests/unit_tests/test_data.py tests/unit_tests/test_models.py tests/unit_tests/test_real_env.py tests/unit_tests/test_worker.py tests/unit_tests/test_fsdp.py -k 'openpi or embodichain or stack_cube'",
+    "SDK_test_command": "CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu python -m pytest -q -p no:cacheprovider tests/unit_tests/test_real_env.py -k 'stack_cube or embodichain'",
+    "trace_parity_report": "reward_manager_parity.json",
+    "trace_cases": 14,
+    "scalar_rewards_compared": 74700,
+    "rtol": 0,
+    "atol": 0,
+    "random_predicate_scalar_comparisons": 36900,
+    "existing_episode_fields_preserved": true,
+    "invalid_term_constructor_cleanup_verified": true,
+    "docs": {
+      "en_warnings": 0,
+      "zh_warnings": 0,
+      "markup_passed": true,
+      "symbols_passed_with_verified_literals": true
+    },
+    "wheel": {
+      "yaml_resources": 9,
+      "reward_config_packaged": true,
+      "reward_config_sha256": "eb6d77e8fe39c27b6241180ffa394bc3c8a2772e73d51f476652f09a0a4b1068",
+      "wheel_sha256": "a12c28253602df2f52b468aaabed961b212d093782253966352b908ef3393ebb"
+    },
+    "precommit_all_files": "passed",
+    "GPU_jobs_launched": false,
+    "training_rerun": false,
+    "log_sha256": {
+      "model_tests.log": "8b48018c3f493da93b8b12b410875237daf841123f66d4fd6d28e98250544f38",
+      "model_tests.xml": "259ff03c53739975887d7f4e371fc8aa2a21c01de8a5573e4cf1c08599d1e35d",
+      "SDK_tests.log": "088e03902bb75b13a37b44e530c145cce5d8abe17e3a5ef399709680da912b5c",
+      "SDK_tests.xml": "ef2e22a04b9e43bbf3acf42d82355d7557f8895d237ce84269676ce329c49f75",
+      "docs_build.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+      "wheel_build.log": "ce6cd31557dedae132a0062b1786baae35f3a0f2f69ebcb82420a1d03502c1c4",
+      "trace_tests.log": "73c7f96972979cd5dd4e0a6fc253461d633226cdee3d3d1e57c24b1aa51e517b",
+      "trace_tests.xml": "0e794005a4bd56210d2abd2c0d15f706b636ddffe3ac3c41ab9f7307c0091aff"
+    }
+  },
+  "native_reward_pipeline_migration": {
+    "checked_utc": "2026-10-13T12:40:51.925353+00:00",
+    "parent_commit": "012398dddf1a732b0ee6cbf2b7caadfcb31d6055",
+    "scope": "Native SDK step with scripted physics; focused Stack Cube and EmbodiChain CPU contracts only.",
+    "sdk_changes_required": false,
+    "sdk_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+    "reward_functor": "embodichain.lab.gym.envs.managers.rewards.success_reward",
+    "reward_owner": "EmbodiChain EmbodiedEnv.step/_extend_reward and its native RewardManager",
+    "task_state_owner": "StackCubeExpertEnv.compute_task_state, updated once after physics",
+    "adapter_reward_computation": false,
+    "SDK_tests": {
+      "tests": 41,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 41
+    },
+    "trace_cases": 14,
+    "scalar_rewards_compared": 74700,
+    "tolerance": {
+      "rtol": 0,
+      "atol": 0
+    },
+    "existing_transition_fields_equal": true,
+    "trace_parity_report": "native_reward_parity.json",
+    "native_reward_pass_through_verified": true,
+    "repeated_info_reads_preserve_dwell_verified": true,
+    "GPU_jobs_launched": false,
+    "training_rerun": false,
+    "log_sha256": {
+      "SDK_tests.xml": "f6efcc99bdbaa682a50964060b6864f20cd700d5a0eafe1511604a301c82e311",
+      "trace_tests.log": "349107990477091f56aa33a98626193b644b3b396df1379eefa1bdf64088ee63",
+      "trace_tests.xml": "501266eb2a7cb5af3ba3c64cded5441b2d5ca40d9af841f8195c82a95cb0f8b1",
+      "docs_check.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "docs_symbols.log": "47c83cdd1dc6cd097a766329f2378a054f2324946263c09417ff2d95389b0ce5",
+      "docs-en.log": "e7a70f344f521fcfb655e11dc6a6a5fda08f80e56c0c6a7ce5ce70337430ffb8",
+      "docs-zh.log": "952d60ca57a4800501b86c3b17b510cd48d4033c5e3e1e715be349b7d1629254",
+      "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384"
+    },
+    "docs": {
+      "en_content_warnings": 0,
+      "zh_content_warnings": 0,
+      "mode": "Project docs-check helper with its default docs-only autodoc import filter.",
+      "strict_attempt": {
+        "en_exit_code": 1,
+        "zh_exit_code": 1,
+        "autodoc_import_warnings_per_language": 40,
+        "reason": "Docs-only interpreter cannot import RLinf autodoc targets; no content warnings."
+      },
+      "inline_markup_passed": true,
+      "symbols_passed_with_existing_verified_literals": true
+    },
+    "precommit_changed_files": "passed"
+  },
+  "native_gym_reward_alignment": {
+    "report": "isaaclab_reward_alignment.json",
+    "configuration": "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+    "episode_protocol_key": "stack_cube_protocol",
+    "reward_term": "success",
+    "adapter_reward_computation": false,
+    "adapter_reward_configuration_parser": false,
+    "unit_tests": {
+      "tests": 39,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "GPU_expert_replay": {
+      "scenes": 8,
+      "control_steps": 380,
+      "stable_at_end": 8
+    },
+    "scalar_rewards_compared": 4095,
+    "maximum_absolute_error": 0.0,
+    "isaaclab_runtime_launched": false,
+    "isaaclab_validation": "source-level; pending NVIDIA EULA confirmation prevents full runtime launch",
+    "training_rerun": false,
+    "checks": {
+      "precommit_passed": true,
+      "en_sphinx_warnings": 0,
+      "zh_sphinx_warnings": 0,
+      "rst_markup_passed": true,
+      "doc_symbols_passed_with_verified_literals": true,
+      "source_hashes_match_current_files": true
+    }
+  },
+  "native_reward_PR_base_integration": {
+    "merge_commit": "a4bba78baa2c05f677769ea9e35e37faed34dabc",
+    "merged_base_commit": "9b52a9831d1c0febd4615de3e75ca17f281cf963",
+    "tests": {
+      "suites": {
+        "post_merge_model_data.xml": {
+          "passed": 63,
+          "skipped": 0,
+          "failed": 0
+        },
+        "post_merge_model_fsdp.xml": {
+          "passed": 0,
+          "skipped": 0,
+          "failed": 0
+        },
+        "post_merge_model_models.xml": {
+          "passed": 23,
+          "skipped": 2,
+          "failed": 0
+        },
+        "post_merge_model_real_env.xml": {
+          "passed": 15,
+          "skipped": 25,
+          "failed": 0
+        },
+        "post_merge_model_worker.xml": {
+          "passed": 31,
+          "skipped": 0,
+          "failed": 0
+        },
+        "post_merge_sdk.xml": {
+          "passed": 39,
+          "skipped": 0,
+          "failed": 0
+        }
+      },
+      "model_passed": 132,
+      "model_skipped": 27,
+      "sdk_passed": 39,
+      "distinct_passed": 157,
+      "remaining_skips": [
+        [
+          "test_models",
+          "test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state[cuda-False]"
+        ],
+        [
+          "test_models",
+          "test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state[cuda-True]"
+        ]
+      ]
+    },
+    "model_test_execution": "One pytest process per file, selector openpi or embodichain or stack_cube; data also selected memory_checkpoint or auto_save_checkpoint. FSDP selector matched no cases.",
+    "SDK_test_selector": "tests/unit_tests/test_real_env.py -k stack_cube or embodichain",
+    "native_simulation_source_unchanged": true,
+    "precommit_all_files": "passed",
+    "docs": {
+      "en_warnings": 0,
+      "zh_warnings": 0,
+      "markup_passed": true,
+      "symbols_passed_with_verified_literals": true
+    },
+    "install": {
+      "shell_syntax": "passed",
+      "model_dependency_check": "passed",
+      "SDK_dependency_check": "passed",
+      "default_and_pinned_SDK_argument_checks": "passed",
+      "advisory_candidates_before": 48,
+      "advisory_candidates_after": 49,
+      "additional_advisory_reason": "Base branch mirror URL rewrite is a static-check false positive; the SDK clone remains pinned by fetch and detached checkout."
+    },
+    "wheel": {
+      "wheel_sha256": "f13b23b4fc634dc80e6cbd7abefd93b54c5f03e29a9f6d505ecb27e9ca9efb13",
+      "build_source_tree": "26dcaa96a70a0ac0d9e8f1da70094be3c750fb72",
+      "clean_source_archive_build": true,
+      "yaml_resources": [
+        "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/components/execution_policies/stack_cube.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/program.yaml"
+      ],
+      "native_success_term_packaged": true,
+      "obsolete_reward_presets_absent": true,
+      "superseded_tasks_absent": true
+    },
+    "training_rerun": false,
+    "log_sha256": {
+      "post_merge_clean_wheel.log": "05be20aac0603b7a4e31a80068b4a75bf9cce9d9ba2de229f170fa785b7cca8a",
+      "post_merge_docs.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "post_merge_model_data.log": "e0599d6824c5535a99e031e3181f57cbc0ae060cb47a120b0dc08f623caab600",
+      "post_merge_model_data.xml": "574b42d583a8c08ed4c431e1317e2eebb0b2cef139dbdbfee7d9c86e29c62383",
+      "post_merge_model_fsdp.log": "4c1b512e06dd7881ab27e03da56900627d8f738021ec5cfc2d0d0a8ea871451b",
+      "post_merge_model_fsdp.xml": "5927b609ad4f5533613a485ab9374847245d3a923206d6a27cf2856744aa8eb3",
+      "post_merge_model_models.log": "2e5d906789a9822ae81dc3964ff44a253101b1e879d90e0a9b8863b07ffece19",
+      "post_merge_model_models.xml": "253a46ad7d027c23c77907f1a39a92919153828d9f53c7fd0aad0149ccc66b60",
+      "post_merge_model_real_env.log": "9df9c2df46072f096238b6cfdcfdd0af354e7b5392f84a211e0eeade65fe8edf",
+      "post_merge_model_real_env.xml": "1c6459162d8a79936b5045145088db1e7a56752db8eb2c96e3208670eaf1d3ea",
+      "post_merge_model_worker.log": "c463280606ac088b3fed51f06da52f85e4a3e951b7948e252e9a768958ed6309",
+      "post_merge_model_worker.xml": "60232ce5de080ea54374f0fc7e72b42fb8bf09b2bc064b8cc6d6c5f460c60cf1",
+      "post_merge_precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+      "post_merge_sdk.log": "aca47282c40c2d99a8b50509210c581ab4bfb92fc6ab5a30f5d3cb9342a38f52",
+      "post_merge_sdk.xml": "cc4869db29442ef4b2a4e675799a2748d5b920fc12d570995a419058e5bae99e",
+      "post_merge_test_summary.json": "94cf54856a34fc3499bebed94c8d8e1f93720f1a488d82e3763549b368df920b",
+      "post_merge_wheel.log": "876ab7a0735f71a1b9e474cc7b8a137ad3321f0b5a0a070e17e352aaa43b7a4b",
+      "post_merge_wheel_validation.json": "ed366dae3e0ab335b7e2c8286b41fb7400d5f6bd3890257b7969699111adfd99"
+    }
+  },
+  "official_draft_integration": {
+    "report": "official_draft_validation.json",
+    "distinct_unit_tests_passed": 268,
+    "remaining_skips": [],
+    "sft_resume_passed": true,
+    "ppo_updates_from_resumed_SFT": 45,
+    "reward_scalar_comparisons": 4095
+  }
+}

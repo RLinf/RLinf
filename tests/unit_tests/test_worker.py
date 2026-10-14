@@ -1167,3 +1167,256 @@ def test_other_vla_sft_initialization_preserves_existing_rng_behavior(
     torch.nn.Linear(7, 32)
     _assert_sft_random_draws_equal(_sft_cpu_random_draws(), actual)
     assert torch.initial_seed() == 999
+
+
+def test_stack_cube_worker_preflight_accepts_complete_formal_sft_export(tmp_path):
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor = tmp_path / "global_step_2000/actor"
+    weights = actor / "model_state_dict/full_weights.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"export")
+    marker = actor / "checkpoint_metadata.json"
+    marker.write_text(json.dumps({"step": 2000, "complete": True}))
+    assert checkpoint_actor(actor)[0] == actor
+    assert checkpoint_actor(actor.parent)[1]["step"] == 2000
+    marker.write_text(json.dumps({"step": 2000, "complete": False}))
+    with pytest.raises(ValueError, match="complete SFT"):
+        checkpoint_actor(actor)
+    marker.write_text(json.dumps({"step": 2000, "complete": True}))
+    weights.unlink()
+    with pytest.raises(ValueError, match="full_weights.pt"):
+        checkpoint_actor(actor)
+
+
+@pytest.fixture
+def cpu_ppo_checkpoint(tmp_path):
+    import random
+
+    import numpy as np
+    import torch
+    from torch.distributed.checkpoint import save
+
+    actor = tmp_path / "global_step_5/actor"
+    actor.mkdir(parents=True)
+    model = torch.nn.Linear(2, 2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1.0)
+    model(torch.ones(1, 2)).sum().backward()
+    optimizer.step()
+    scheduler.step()
+    state = {
+        "model": model.state_dict(),
+        "optimizers": optimizer.state_dict(),
+        "lr_schedulers": [scheduler.state_dict()],
+        "rng": (
+            {
+                "cpu": torch.get_rng_state(),
+                "numpy": np.random.get_state(),
+                "random": random.getstate(),
+            },
+        ),
+        "fsdp_version": 1,
+    }
+    save({"fsdp_checkpoint": state}, checkpoint_id=actor / "dcp_checkpoint")
+    weights = actor / "model_state_dict/full_weights.pt"
+    weights.parent.mkdir()
+    torch.save(model.state_dict(), weights)
+    return actor
+
+
+def test_stack_cube_worker_preflight_accepts_native_ppo_export(cpu_ppo_checkpoint):
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor, metadata = checkpoint_actor(cpu_ppo_checkpoint.parent, checkpoint_kind="ppo")
+    assert actor == cpu_ppo_checkpoint
+    assert metadata["step"] == 5
+    assert metadata["complete"] is None
+    assert metadata["completion_marker_present"] is False
+    assert metadata["dcp_storage_ranges_complete"] is True
+    assert metadata["dcp_backing_files_bytes"]
+    with pytest.raises(FileNotFoundError):
+        checkpoint_actor(cpu_ppo_checkpoint)
+
+
+def test_stack_cube_worker_preflight_accepts_marked_ppo_inference_export(tmp_path):
+    import torch
+
+    from rlinf.hybrid_engines.fsdp.strategy.checkpoint import (
+        validate_checkpoint_for_resume,
+    )
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor = tmp_path / "published_ppo_model"
+    weights = actor / "model_state_dict/full_weights.pt"
+    weights.parent.mkdir(parents=True)
+    torch.save({"weight": torch.ones(2)}, weights)
+    (actor / "checkpoint_metadata.json").write_text(
+        json.dumps(
+            {
+                "step": 10,
+                "complete": True,
+                "checkpoint_kind": "ppo",
+                "save_training_state": False,
+            }
+        )
+    )
+    _, metadata = checkpoint_actor(actor, checkpoint_kind="ppo")
+    assert metadata["inference_only_export"] is True
+    with pytest.raises(ValueError, match="kind differs"):
+        checkpoint_actor(actor)
+    with pytest.raises(ValueError, match="inference weights only"):
+        validate_checkpoint_for_resume(str(actor))
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "truncated",
+        "missing_file",
+        "missing_rng",
+        "sft_marker",
+        "incomplete_marker",
+        "missing_export",
+    ],
+)
+def test_stack_cube_worker_preflight_rejects_incomplete_ppo_export(
+    cpu_ppo_checkpoint, fault
+):
+    from torch.distributed.checkpoint import FileSystemReader
+
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor = cpu_ppo_checkpoint
+    directory = actor / "dcp_checkpoint"
+    if fault in {"truncated", "missing_file"}:
+        shard = next(directory.glob("*.distcp"))
+        if fault == "truncated":
+            shard.write_bytes(b"")
+        else:
+            shard.unlink()
+    elif fault == "missing_rng":
+        metadata = FileSystemReader(directory).read_metadata()
+        del metadata.state_dict_metadata["fsdp_checkpoint.rng"]
+        with (directory / ".metadata").open("wb") as stream:
+            pickle.dump(metadata, stream)
+    elif fault == "sft_marker":
+        (actor / "openpi_loader_state.json").write_text("{}")
+    elif fault == "incomplete_marker":
+        (actor / "checkpoint_metadata.json").write_text(
+            json.dumps({"step": 5, "complete": False})
+        )
+    else:
+        (actor / "model_state_dict/full_weights.pt").unlink()
+    with pytest.raises((ValueError, FileNotFoundError)):
+        checkpoint_actor(actor, checkpoint_kind="ppo")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "test",
+        "ood",
+        "duplicate",
+        "duplicate_id",
+        "missing_id",
+        "overlap",
+        "short_train",
+    ],
+)
+def test_stack_cube_worker_preflight_keeps_formal_validation_independent(
+    tmp_path, fault
+):
+    from toolkits.lerobot.verify_stack_cube_workers import request_cohorts
+
+    train = [
+        {
+            "request_id": f"request-{seed}",
+            "seed": seed,
+            "split": "train",
+            "profile": "formal",
+        }
+        for seed in range(32)
+    ]
+    val = [
+        {
+            "request_id": f"request-{seed}",
+            "seed": seed,
+            "split": "val",
+            "profile": "formal",
+        }
+        for seed in range(100, 127)
+    ]
+    if fault == "test":
+        val[0]["split"] = "test"
+    elif fault == "ood":
+        val[0]["profile"] = "ood_position"
+    elif fault == "duplicate":
+        val[1]["seed"] = val[0]["seed"]
+    elif fault == "duplicate_id":
+        val[1]["request_id"] = val[0]["request_id"]
+    elif fault == "missing_id":
+        val[0].pop("request_id")
+    elif fault == "overlap":
+        train[0]["seed"] = val[0]["seed"]
+    elif fault == "short_train":
+        train.pop()
+    train_path, val_path = tmp_path / "train.json", tmp_path / "val.json"
+    train_path.write_text(json.dumps({"requests": train}))
+    val_path.write_text(json.dumps({"requests": val}))
+    if fault is None:
+        assert request_cohorts(train_path, val_path) == (train, val)
+    else:
+        with pytest.raises(ValueError):
+            request_cohorts(train_path, val_path)
+
+
+def test_stack_cube_worker_separate_interpreter_preserves_policy_protocol(tmp_path):
+    from omegaconf import OmegaConf
+
+    from toolkits.lerobot.verify_stack_cube_workers import configuration
+
+    paths = {}
+    for name in [
+        "checkpoint",
+        "norm_stats",
+        "train_requests",
+        "val_requests",
+        "panda_urdf",
+    ]:
+        path = tmp_path / name
+        path.mkdir() if name == "checkpoint" else path.write_text("{}")
+        paths[name] = path
+    arguments = SimpleNamespace(
+        **paths,
+        dependency_path=tmp_path / "model-reader",
+        output=tmp_path / "output",
+        gpu=3,
+        seed=0,
+        dry_run=True,
+        env_python=None,
+    )
+    shared = OmegaConf.to_container(configuration(arguments), resolve=True)
+    arguments.env_python = tmp_path / "simulator-python"
+    separate = OmegaConf.to_container(configuration(arguments), resolve=True)
+    assert len(separate["cluster"]["node_groups"]) == 2
+    model_group, sim_group = separate["cluster"]["node_groups"]
+    assert sim_group["env_configs"][0]["python_interpreter_path"] == str(
+        arguments.env_python
+    )
+    assert {"PYTHONPATH": str(Path(__file__).resolve().parents[2])} in sim_group[
+        "env_configs"
+    ][0]["env_vars"]
+    assert (
+        separate["cluster"]["component_placement"]["actor,rollout"]["node_group"]
+        == model_group["label"]
+    )
+    assert (
+        separate["cluster"]["component_placement"]["env"]["node_group"]
+        == sim_group["label"]
+    )
+    for cfg in (shared, separate):
+        cfg["cluster"].pop("node_groups")
+        cfg["cluster"].pop("component_placement")
+    assert shared == separate

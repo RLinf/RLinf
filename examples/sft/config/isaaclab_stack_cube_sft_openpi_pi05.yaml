@@ -1,0 +1,12 @@
+defaults:
+- embodichain_stack_cube_sft_openpi_pi05
+- _self_
+runner:
+  logger:
+    experiment_name: isaaclab_stack_cube_pi05
+data:
+  train_data_paths: ${oc.env:STACK_CUBE_TRAIN_DATA,/workspace/datasets/isaaclab_stack_cube/formal/train}
+actor:
+  model:
+    openpi_data:
+      norm_stats_path: ${oc.env:STACK_CUBE_NORM_STATS,/workspace/datasets/isaaclab_stack_cube/formal/train/norm_stats.json}

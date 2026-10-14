@@ -1,0 +1,14 @@
+{
+  "isaaclab_commit": "4246b6b4f4a3e74ee20e002ed7536b1c788d39f4",
+  "reference_source_sha256": {
+    "source/isaaclab/isaaclab/managers/manager_base.py": "4c843c5faf37f27cdf026099c5c41ee5228e61b6d2d48eb714df62a99ebb8bc8",
+    "source/isaaclab/isaaclab/managers/reward_manager.py": "5d41d6a376cfb456849d861c3232694ea5662cc38970e2e2c7e5152f156d88d7",
+    "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/mdp/terminations.py": "0a4dd136b304f7f16ff33cd3538799d4f30bd9743bcb7f0e40a0a139a89b5c52",
+    "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/config/franka/stack_ik_rel_visumotor_rewarded_env_cfg.py": "f3c9bb5f049debcf51ab9ff733a7c5ac7c55dc5817cb372c06d773376d20d7b7",
+    "source/isaaclab/isaaclab/envs/mdp/terminations.py": "d56d6e3fe9d5a8479e83c3601cc3f59aae62c6e293bc33ff28749e6a84c0552b",
+    "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/stack_env_cfg.py": "3cbec7e26b3ec661136e6edf288ede19b983e933da27f86e99f6a05e95f2dcad"
+  },
+  "scope": "Frozen simulated-state reward and failure samples, compared with the pinned IsaacLab source; no IsaacLab physics rollout.",
+  "boundary_samples": 1055,
+  "GPU_samples": 3040
+}
