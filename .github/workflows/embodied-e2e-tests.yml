@@ -866,6 +866,7 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           # Git rejects cached repositories created by a different runner UID.
           export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
+          printf 'UV_CACHE_DIR=%s\n' "$UV_CACHE_DIR" >> "$GITHUB_ENV"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
 
@@ -1099,7 +1100,8 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
+          printf 'UV_CACHE_DIR=%s\n' "$UV_CACHE_DIR" >> "$GITHUB_ENV"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
           export DECORD_PATH=/workspace/dataset/decord
@@ -1129,7 +1131,8 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
+          printf 'UV_CACHE_DIR=%s\n' "$UV_CACHE_DIR" >> "$GITHUB_ENV"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform ascend embodied --model openpi --env libero
 
@@ -1158,7 +1161,8 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
+          printf 'UV_CACHE_DIR=%s\n' "$UV_CACHE_DIR" >> "$GITHUB_ENV"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform ascend embodied --model openvla --env maniskill_libero
 
@@ -1643,7 +1647,8 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
+          printf 'UV_CACHE_DIR=%s\n' "$UV_CACHE_DIR" >> "$GITHUB_ENV"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           export DECORD_PATH=/workspace/dataset/decord
