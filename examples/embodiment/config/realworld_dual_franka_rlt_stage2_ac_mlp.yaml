@@ -161,7 +161,7 @@ env:
     total_num_envs: 1
     auto_reset: True
     ignore_terminations: False
-    main_image_key: base_0_rgb
+    main_image_key: left_wrist_0_rgb
     # USB keyboard b switches the rollout from the Stage1 policy to the Stage2 actor.
     # Pico A/B/X/Y stay gripper buttons.
     keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
@@ -189,7 +189,7 @@ env:
     total_num_envs: 1
     auto_reset: True
     ignore_terminations: False
-    main_image_key: base_0_rgb
+    main_image_key: left_wrist_0_rgb
     keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
     keyboard_reward_wrapper: rlt_policy_switch
     max_episode_steps: 1000

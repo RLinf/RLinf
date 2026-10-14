@@ -71,7 +71,7 @@
    * - 字段
      - 说明
    * - Observation
-     - LeRobot ``image`` 是全局相机 ``base_0_rgb``；左右腕进入 extra views。状态是双臂机器人状态。
+     - 腕部/全局相机视角加双臂机器人状态。
    * - Action
      - 双臂 tcp_rot6d：``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``。
    * - Reward

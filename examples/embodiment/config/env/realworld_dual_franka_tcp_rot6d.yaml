@@ -16,9 +16,7 @@ teleop: none
 # euler'd without hitting gimbal on wrist pitch ≈ ±90°.
 use_relative_frame: False
 no_gripper: False
-# LeRobot ``image`` comes from this key. Base/scene cam is the main view;
-# wrists land in extra_view_image-0 / extra_view_image-1 (sorted leftover names).
-main_image_key: base_0_rgb
+main_image_key: left_wrist_0_rgb
 
 video_cfg:
   save_video: False

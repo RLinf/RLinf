@@ -77,7 +77,7 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
    * - 字段
      - 说明
    * - Observation
-     - LeRobot ``image`` 来自全局相机 ``base_0_rgb``；左右腕按名称排序后进入 ``extra_view_image-0`` / ``extra_view_image-1``。状态是双臂 TCP / 夹爪。
+     - 左腕、右腕、全局相机，加双臂 TCP / 夹爪状态。
    * - Action
      - 双臂 tcp_rot6d：``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``。
    * - Reward

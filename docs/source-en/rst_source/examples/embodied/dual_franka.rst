@@ -71,7 +71,7 @@ Observation and Action
    * - Field
      - Description
    * - Observation
-     - LeRobot ``image`` is the base camera ``base_0_rgb``; the wrists are extra views. State is the dual-arm robot state.
+     - Wrist/global camera views plus dual-arm robot state.
    * - Action
      - Dual-arm tcp_rot6d: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
    * - Reward

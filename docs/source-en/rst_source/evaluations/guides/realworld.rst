@@ -347,7 +347,7 @@ directory and ``actor.model.openpi_data.repo_id`` to the repo id that contains
 single-workstation RTC evaluation: the GPU, both arms, and the three cameras
 are on one machine. Actions are 20-dimensional tcp_rot6d,
 ``openpi.config_name`` is ``pi05_dualfranka_tcp_rot6d``, and the main camera is
-``base_0_rgb``. Replace ``MODEL_PATH``, the ``norm_stats`` path, arm IPs,
+``left_wrist_0_rgb``. Replace ``MODEL_PATH``, the ``norm_stats`` path, arm IPs,
 camera serials, gripper ports, ``keyboard_device``, and ``TASK_DESCRIPTION``.
 After the arms home, press ``a`` on that USB keyboard or pedal to start the
 policy; ``c`` marks success and ``b`` marks failure. Typing ``a`` in the

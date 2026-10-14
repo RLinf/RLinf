@@ -344,7 +344,7 @@ Dual Franka 部署
 
 ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` 是单机 RTC 评测：
 GPU、两台机械臂和三路相机在同一台机器上。动作是 20 维 tcp_rot6d，
-``openpi.config_name`` 为 ``pi05_dualfranka_tcp_rot6d``，主相机是 ``base_0_rgb``。
+``openpi.config_name`` 为 ``pi05_dualfranka_tcp_rot6d``，主相机是 ``left_wrist_0_rgb``。
 把 ``MODEL_PATH``、``norm_stats`` 路径、机械臂 IP、相机 serial、夹爪串口、
 ``keyboard_device`` 和 ``TASK_DESCRIPTION`` 换成自己的值。复位完成后，在这台
 USB 键盘或脚踏上按 ``a`` 才开始策略；``c`` 记成功，``b`` 记失败。终端里按 ``a``

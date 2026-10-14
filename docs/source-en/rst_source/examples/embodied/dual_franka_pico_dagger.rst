@@ -81,7 +81,7 @@ Observation and Action
    * - Field
      - Description
    * - Observation
-     - LeRobot ``image`` is the base camera ``base_0_rgb``. The wrists land in ``extra_view_image-0`` / ``extra_view_image-1`` after the leftover names are sorted. State is dual-arm TCP / gripper.
+     - Left wrist, right wrist, and global camera views plus dual-arm TCP / gripper state.
    * - Action
      - Dual-arm tcp_rot6d: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
    * - Reward
