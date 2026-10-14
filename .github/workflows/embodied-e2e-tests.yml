@@ -1754,6 +1754,54 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-lingbotvla-v2-robotwin-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export PATH="${UV_PATH}:${PATH}"
+          # The pinned torch has no matching prebuilt flash-attn wheel, so the
+          # installer compiles it on the first run; its default of four jobs is
+          # far below what this runner has. The wheels it builds from pinned
+          # sources stay in UV_CACHE_DIR, so later runs skip flash-attn, pytorch3d
+          # and curobo compilation.
+          export MAX_JOBS=32
+          # V2 needs Python 3.12, which uv provides like for every other embodied
+          # job, so the runner needs no system Python 3.12.
+          uv python find 3.12 >/dev/null 2>&1 || uv python install 3.12
+          # The installer clones the pinned LingBot-VLA V2, RoboTwin and LeRobot
+          # sources into the venv. It patches and re-pins that RoboTwin checkout,
+          # so it must not be pointed at the shared clone the 1.0 test uses.
+          PYTHON="$(uv python find 3.12)" bash requirements/install.sh embodied --model lingbotvla_v2 --env robotwin
+
+      - name: RoboTwin-LingBotVLA-V2 GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          # The installer registers its RoboTwin checkout through a .pth file, so
+          # RoboTwin needs no PYTHONPATH entry; only its assets come from outside.
+          export ROBOTWIN_ASSETS_PATH=/workspace/dataset/RoboTwin
+          export LINGBOT_VLA_V2_PATH="${VIRTUAL_ENV}/lingbot-vla-v2"
+          export LINGBOT_VLA_V2_CHECKPOINT=/workspace/dataset/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+          export QWEN3VL_PATH=/workspace/dataset/Qwen3-VL-4B-Instruct
+          bash tests/e2e_tests/embodied/run.sh robotwin_grpo_lingbotvla_v2
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvlaoft-liberopro-test:
     runs-on: embodied
     steps:

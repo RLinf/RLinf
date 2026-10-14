@@ -27,7 +27,7 @@ Fine-tune a VLA on RoboTwin 2.0; OpenVLA-OFT + GRPO lifts average task success b
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenVLA-OFT · π₀ / π₀.₅ · Lingbot-VLA
+      OpenVLA-OFT · π₀ / π₀.₅ · LingBot-VLA 1.0 / 2.0
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -211,8 +211,21 @@ Download the SFT checkpoint that matches your config. Examples:
 
 .. include:: _model_path.rst
 
-For Lingbot-VLA recipes, point ``actor.model.model_path`` and
+For Lingbot-VLA 1.0 recipes, point ``actor.model.model_path`` and
 ``rollout.model.model_path`` at your Lingbot-VLA SFT checkpoint.
+
+For :doc:`LingBot-VLA 2.0 <lingbotvla_v2>`, follow the same flow as 1.0: install
+with ``--model lingbotvla_v2`` in place of ``--model lingbotvla``, point
+``LINGBOT_VLA_V2_CHECKPOINT`` at your LingBot-VLA 2.0 checkpoint
+(``actor.model.model_path`` reads it by default and ``rollout.model.model_path``
+inherits the actor path), and launch with the 2.0 config from the table below. 2.0
+checkpoints and configs are not interchangeable with 1.0. 2.0 reuses the generic
+``run_vla_sft.sh`` and ``run_embodiment.sh`` launchers; activate the installed
+``.venv`` and export ``LINGBOT_VLA_V2_PATH``, ``ROBOTWIN_PATH``, and the other
+required paths first, as described in the 2.0 guide. The Docker image above
+does not include 2.0; install it with ``requirements/install.sh`` or build the
+``embodied-robotwin-lingbotvla-v2`` Docker target. See the 2.0 guide for full
+installation and resource-preparation instructions.
 
 .. note::
 
@@ -250,6 +263,9 @@ Pick one recipe and launch training:
    * - Lingbot-VLA + GRPO
      - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
      - ``robotwin_click_bell_grpo_lingbotvla``
+   * - LingBot-VLA 2.0 + GRPO
+     - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla_v2.yaml``
+     - ``robotwin_click_bell_grpo_lingbotvla_v2``
 
 .. code:: bash
 

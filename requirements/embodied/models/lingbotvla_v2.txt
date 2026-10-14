@@ -1,0 +1,35 @@
+# Runtime pins from robbyant/lingbot-vla-v2@951475a. The accelerator stack is
+# pinned to RLinf's PyTorch 2.11.0 by requirements/install.sh for this model.
+transformers==4.57.3
+tokenizers==0.22.2
+datasets==3.6.0
+huggingface-hub==0.34.3
+safetensors==0.5.3
+qwen-vl-utils==0.0.11
+peft==0.15.2
+numpy==1.26.4
+numpydantic==1.8.1
+scipy==1.13.1
+pandas==2.3.1
+pyarrow==21.0.0
+pillow==11.3.0
+opencv-python-headless==4.11.0.86
+av==15.0.0
+imageio==2.34.2
+einops==0.8.1
+pyyaml==6.0.2
+blobfile==3.2.0
+sentencepiece==0.2.0
+hydra-core==1.3.2
+omegaconf==2.3.0
+jsonlines==4.0.0
+# RoboTwin's envs.utils package imports h5py at import time.
+h5py==3.14.0
+websockets==15.0.1
+seaborn==0.13.2
+ipdb==0.13.13
+torchcodec==0.11.1
+setuptools==80.9.0
+# Ray 2.58's dashboard agent imports google.rpc generated with protobuf 6.x.
+# Keep this aligned with the runtime used by the V2 embodied environment.
+protobuf==6.33.5

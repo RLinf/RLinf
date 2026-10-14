@@ -1,0 +1,174 @@
+defaults:
+  - env/robotwin_click_bell@env.train
+  - env/robotwin_click_bell@env.eval
+  - model/lingbotvla_v2@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0
+    rollout: 1-7
+    env: 1-7
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: robotwin_click_bell_grpo_lingbotvla_v2
+    logger_backends: [tensorboard]
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: false
+  val_check_interval: 20
+  save_interval: 20
+  weight_sync_interval: 1
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 2
+  update_epoch: 1
+  reward_type: action_level
+  logprob_type: token_level
+  entropy_type: token_level
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: token-mean
+  kl_beta: 0.05
+  entropy_bonus: 0.05
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 1.0
+  gae_lambda: 0.95
+  reward_coef: 5.0
+  filter_rewards: false
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
+
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 14
+    group_size: ${algorithm.group_size}
+    reward_coef: ${algorithm.reward_coef}
+    use_custom_reward: false
+    use_rel_reward: true
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 400
+    assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/train_seeds.json
+    enable_offload: true
+    task_config:
+      camera_shader: default
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        random_table_height: 0
+        random_light: false
+    video_cfg:
+      save_video: false
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 7
+    group_size: 1
+    reward_coef: ${algorithm.reward_coef}
+    use_custom_reward: false
+    use_rel_reward: true
+    is_eval: true
+    auto_reset: true
+    ignore_terminations: true
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 400
+    assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
+    enable_offload: true
+    task_config:
+      camera_shader: default
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        random_table_height: 0
+        random_light: false
+    video_cfg:
+      save_video: false
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: true
+  enable_torch_compile: true
+  torch_compile_mode: max-autotune-no-cudagraphs
+  pipeline_stage_num: 1
+  model:
+    model_type: lingbotvla_v2
+    model_path: ${actor.model.model_path}
+    tokenizer_path: ${actor.model.tokenizer_path}
+    precision: ${actor.model.precision}
+    attn_implementation: ${actor.model.attn_implementation}
+    attention_implementation: ${actor.model.attention_implementation}
+    moe_implementation: ${actor.model.moe_implementation}
+    num_action_chunks: ${actor.model.num_action_chunks}
+    action_dim: ${actor.model.action_dim}
+    action_env_dim: ${actor.model.action_env_dim}
+    num_steps: ${actor.model.num_steps}
+    noise_method: ${actor.model.noise_method}
+    noise_level: ${actor.model.noise_level}
+    add_value_head: ${actor.model.add_value_head}
+    rl_trainable_scope: ${actor.model.rl_trainable_scope}
+    is_lora: ${actor.model.is_lora}
+    lora_rank: ${actor.model.lora_rank}
+    lingbotvla_v2: ${actor.model.lingbotvla_v2}
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: 14
+  seed: 1234
+  enable_offload: true
+  model:
+    model_path: ${oc.env:LINGBOT_VLA_V2_CHECKPOINT}
+    tokenizer_path: ${oc.env:QWEN3VL_PATH}
+    lingbotvla_v2:
+      config_path: ${oc.env:LINGBOT_VLA_V2_PATH}
+      robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
+      robot_config_root: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs
+      stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    weight_decay: 0.01
+    clip_grad: 0.2
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
