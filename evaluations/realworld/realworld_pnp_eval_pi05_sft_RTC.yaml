@@ -2,8 +2,17 @@ defaults:
   - env/realworld_bin_relocation@env.train
   - env/realworld_bin_relocation@env.eval
   - model/pi0_5@actor.model
+  - model/pi0_5@rollout.model
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 2
@@ -108,7 +117,7 @@ env:
   train:
     ignore_terminations: True
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     chunk_pause_seconds: 0.4
     total_num_envs: 1
     main_image_key: wrist_1
@@ -123,7 +132,6 @@ env:
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       max_num_steps: 240
       binary_gripper_threshold: 0.1
       enable_gripper_penalty: False
@@ -131,7 +139,7 @@ env:
   eval:
     ignore_terminations: False
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     chunk_pause_seconds: 0.
     total_num_envs: 1
     main_image_key: wrist_2
@@ -144,7 +152,6 @@ env:
       is_dummy: False
       use_dense_reward: False
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       max_num_steps: 240
       binary_gripper_threshold: 0.02
       enable_gripper_penalty: False
@@ -173,6 +180,7 @@ rollout:
     num_steps: 10
     is_lora: False
     openpi:
+      task: eval
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2
       noise_method: "flow_sde"
@@ -201,6 +209,7 @@ actor:
     num_steps: 10
     is_lora: False
     openpi:
+      task: eval
       value_after_vlm: False
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2

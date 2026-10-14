@@ -82,11 +82,34 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self._data_iter_offset = 0
 
     def init_worker(self):
+        self._infer_total_training_steps()
         self.setup_model_and_optimizer()
 
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
+
+    def _infer_total_training_steps(self) -> None:
+        """Derive the scheduler horizon from an explicit null config value."""
+        optim_cfg = self.cfg.actor.optim
+        if (
+            "total_training_steps" not in optim_cfg
+            or optim_cfg.total_training_steps is not None
+        ):
+            return
+
+        steps_per_epoch = self.get_max_steps_per_epoch()
+        max_epochs = self.cfg.runner.get("max_epochs", -1)
+        max_steps = self.cfg.runner.get("max_steps", -1)
+
+        step_limits = []
+        if max_epochs > 0:
+            step_limits.append(steps_per_epoch * max_epochs)
+        if max_steps >= 0:
+            step_limits.append(max_steps)
+
+        total_steps = min(step_limits) if step_limits else steps_per_epoch
+        optim_cfg.total_training_steps = max(1, total_steps)
 
     def model_provider_func(self):
         model = get_model(self.cfg.actor.model)

@@ -53,7 +53,7 @@
      - ``realworld_collect_data_pico``
      - 使用 PICO 采集真机示教。
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - 训练 student 初始化。
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
@@ -88,38 +88,7 @@
 机器人 / Env 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-请先参考 :doc:`franka` 中的控制节点安装说明，完成固件检查、实时内核、ROS 与
-Franka 控制依赖的准备。
-
-**选项 1：Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm \
-      --privileged \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-franka
-      # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
-
-随后切换到与你的 libfranka 版本兼容的环境：
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
-
-在机器人节点执行 ``ray start`` 之前，请像 :doc:`franka` 中说明的那样，先
-source 对应的 ROS / Franka controller 环境。
+按 :doc:`franka` 的「安装」章节准备机器人节点：直接安装基于 Franky 的 ``franka`` 环境，或使用 Franka Docker 镜像中的 ``franky`` venv，并让 ``LIBFRANKA_VERSION`` 与固件匹配。启动 Ray 前先激活该环境。本示例在独立的 GPU 节点上运行 OpenPI actor 和 rollout。
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -137,7 +106,7 @@ source 对应的 ROS / Franka controller 环境。
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 进入容器后执行：
 
@@ -204,8 +173,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -269,7 +237,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 3. 运行 OpenPI SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-启动前，先修改 ``examples/sft/config/realworld_sft_openpi.yaml``：
+启动前，先修改 ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``：
 
 .. code-block:: yaml
 
@@ -286,7 +254,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 OpenPI SFT 细节
 可参考 :doc:`sft_openpi`。
@@ -332,8 +300,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -353,8 +320,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
      eval:
-       use_spacemouse: False
-       use_pico: False
+       teleop: none
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -371,7 +337,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
 
 ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
 
-``smooth_intervene: True`` 会在 PICO 接管持续到 action chunk 最后一帧时绕过下一次策略推理。env worker 使用 dummy chunk 持续驱动遥操 wrapper，并在松开 ``grip`` 或 episode 结束后恢复正常推理。该模式仅支持 PICO：必须 ``env.train.use_pico: True``，且 ``env.train.use_spacemouse: False``；同时要求每个 env worker pipeline stage 只运行一个环境。``env.eval.use_pico: False`` 表示评测阶段只运行策略，不启用人工接管。
+``smooth_intervene: True`` 会在 PICO 接管持续到 action chunk 最后一帧时绕过下一次策略推理。env worker 使用 dummy chunk 持续驱动遥操 wrapper，并在松开 ``grip`` 或 episode 结束后恢复正常推理。该模式仅支持 PICO：``env.train.teleop`` 必须是 ``pico``；同时要求每个 env worker pipeline stage 只运行一个环境。``env.eval.teleop: none`` 表示评测阶段只运行策略，不启用人工接管。
 
 ``only_success: True`` 会丢弃失败 episode。``only_save_expert: True`` 仍将完整的
 成功 episode 保存在 LeRobot 归档中，但在线 sampler 只暴露 action chunk 内所有非

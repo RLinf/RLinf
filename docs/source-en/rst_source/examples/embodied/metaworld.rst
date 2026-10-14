@@ -96,7 +96,7 @@ Installation
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-metaworld
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-metaworld
+      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-metaworld
 
    # Inside the container, switch to the model's virtual environment:
    source switch_env openpi        # or: source switch_env openvla-oft

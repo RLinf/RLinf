@@ -94,7 +94,7 @@ Installation
       rlinf/rlinf:agentic-rlinf0.4-roboverse
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-roboverse
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-roboverse
 
 Switch to the OpenPI virtual environment inside the image:
 

@@ -1,9 +1,9 @@
 真实机器人强化学习
 ========================================
 
-当你的出发点是真实机器人硬件时，请使用本节。如果你使用 Franka 机械臂或 Franka-based rig，请从 Franka 开始；GimArm、XSquare Turtle2 和 Dexmal DOS-W1 请进入对应机器人页面。
+按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper 和 SO101 请进入对应页面。
 
-每个章节都给出遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 所需的配置路径。
+根据硬件检查、遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 的需求，选择相应指南。
 
 .. raw:: html
 
@@ -14,9 +14,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/franka_index.html" style="text-decoration: underline; color: blue;">
-           <b>Single-Arm Franka</b>
+           <b>单臂 Franka</b>
          </a><br>
-         进入 Single-Arm Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、VR / PICO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
+         查看单臂 Franka 的真机强化学习、遥操作与数据采集、奖励模型、灵巧手、SFT 和部署指南
        </p>
      </div>
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
@@ -24,9 +24,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/dual_franka_index.html" style="text-decoration: underline; color: blue;">
-           <b>Dual-Arm Franka</b>
+           <b>双臂 Franka</b>
          </a><br>
-         进入 Dual-Arm Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、VR / PICO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
+         查看双臂 Franka 的数据采集、SFT、部署与 PICO 辅助 HG-DAgger 指南
        </p>
      </div>
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
@@ -62,12 +62,34 @@
 
    </div>
 
+Piper 与 SO101 配置
+--------------------------------
+
+通过以下指南连接机械臂并运行硬件测试脚本。Piper 和 SO101 目前尚未提供真机任务或训练流程。
+
+.. grid:: 1 2 2 2
+   :gutter: 2
+
+   .. grid-item-card:: AgileX Piper
+      :link: embodied/piper
+      :link-type: doc
+
+      配置 CAN，运行 Piper 关节与夹爪测试脚本。
+
+   .. grid-item-card:: SO101
+      :link: embodied/so101
+      :link-type: doc
+
+      配置电机、标定 SO-101，并运行关节与夹爪测试脚本。
+
 .. toctree::
    :hidden:
    :maxdepth: 3
 
-   Single-Arm Franka <embodied/franka_index>
-   Dual-Arm Franka <embodied/dual_franka_index>
+   单臂 Franka <embodied/franka_index>
+   双臂 Franka <embodied/dual_franka_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
+   Piper <embodied/piper>
+   SO101 <embodied/so101>

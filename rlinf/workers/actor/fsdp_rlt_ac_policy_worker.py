@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import queue
 
 import torch
@@ -523,15 +524,15 @@ class RLTACReplayMixin:
                 if curr_obs is None:
                     raise ValueError(
                         "RLT transition replay requires curr_obs. Ensure "
-                        "update_rlt_transitions() populated transition obs "
+                        "TrajectoryCollector populated transition observations "
                         f"before replay ingestion, got row index {idx}."
                     )
                 transition.curr_obs = curr_obs
 
                 # Dones have one extra initial slot, so transition t reads
                 # terminal flags from t+1. Rewards are already action-aligned
-                # by EmbodiedTrajectoryBuilder because the initial empty reward is
-                # skipped and the final reward is appended after rollout.
+                # by the trajectory accumulator because the initial empty reward
+                # is skipped and the final reward is appended after rollout.
                 done_idx = min(
                     t + 1,
                     int(trajectory.dones.shape[0]) - 1
@@ -564,7 +565,7 @@ class RLTACReplayMixin:
                 else:
                     raise ValueError(
                         "RLT transition replay requires next_obs for non-terminal "
-                        "transitions. Ensure update_rlt_transitions() populated "
+                        "transitions. Ensure TrajectoryCollector populated "
                         f"transition obs before replay ingestion, got row index {idx}."
                     )
 
@@ -862,7 +863,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
         actor_updates_run = 0
         for _ in range(updates_to_run):
             update_actor = int(self.update_step) % int(self.critic_actor_ratio) == 0
-            metrics_data = self.update_one_epoch(train_actor=True)
+            metrics_data = self.update_one_epoch(train_actor=update_actor)
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
             critic_updates_run += 1
@@ -895,6 +896,27 @@ class AsyncRLTACFSDPPolicy(
         super().__init__(cfg)
         self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
         self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
+        self.transitions_since_train = 0
+        self.episodes_since_train = 0
+        self.total_transitions_added = 0
+        self.total_episodes_added = 0
+        self._warmup_ready_total_transitions: int | None = None
+        self._warmup_ready_total_episodes: int | None = None
+        self.pending_update_budget = 0
+
+    def setup_sac_components(self):
+        """Initialize replay components and let RLT schedule own readiness."""
+        super().setup_sac_components()
+        if self.use_rlt_schedule:
+            self.buffer_dataset.min_replay_buffer_size = 1
+
+    def _global_rlt_counters(self) -> dict[str, float]:
+        """Reuse the shared sync/async RLT counter reduction contract."""
+        return RLTACFSDPPolicy._global_rlt_counters(self)
+
+    def _rlt_updates_to_run(self) -> tuple[int, dict[str, float]]:
+        """Reuse the shared sync/async RLT update-budget calculation."""
+        return RLTACFSDPPolicy._rlt_updates_to_run(self)
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
@@ -916,7 +938,70 @@ class AsyncRLTACFSDPPolicy(
         self._update_rollout_ingest_counters(added, completed)
 
     async def run_training(self):
-        mean_metric_dict = await super().run_training()
+        if not self.use_rlt_schedule:
+            mean_metric_dict = await super().run_training()
+            replay_metrics = getattr(self, "_last_replay_metrics", {})
+            if replay_metrics:
+                mean_metric_dict = {**mean_metric_dict, **replay_metrics}
+            return mean_metric_dict
+
+        if self.cfg.actor.get("enable_offload", False):
+            self.load_param_and_grad(self.device)
+            self.load_optimizer(self.device)
+
+        self._drain_received_trajectories(
+            max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
+        )
+        updates_to_run, schedule_metrics = self._rlt_updates_to_run()
+        if updates_to_run <= 0:
+            mean_metric_dict = self.process_train_metrics(schedule_metrics)
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
+            torch.cuda.empty_cache()
+            return mean_metric_dict
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
+        torch.distributed.barrier()
+        self.model.train()
+        metrics = {}
+        critic_updates_run = 0
+        actor_updates_run = 0
+        for _ in range(updates_to_run):
+            update_actor = int(self.update_step) % int(self.critic_actor_ratio) == 0
+            await asyncio.sleep(0)
+            metrics_data = self.update_one_epoch(train_actor=update_actor)
+            append_to_dict(metrics, metrics_data)
+            self.update_step += 1
+            critic_updates_run += 1
+            actor_updates_run += int(update_actor)
+
+        schedule_metrics["rlt/critic_updates_run"] = float(critic_updates_run)
+        schedule_metrics["rlt/actor_updates_run"] = float(actor_updates_run)
+        self.pending_update_budget = max(
+            int(self.pending_update_budget) - critic_updates_run,
+            0,
+        )
+        schedule_metrics["rlt/pending_update_budget"] = float(
+            self.pending_update_budget
+        )
+        append_to_dict(metrics, schedule_metrics)
+        mean_metric_dict = self.process_train_metrics(metrics)
+        self.transitions_since_train = 0
+        self.episodes_since_train = 0
+
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
+        torch.cuda.empty_cache()
         replay_metrics = getattr(self, "_last_replay_metrics", {})
         if replay_metrics:
             mean_metric_dict = {**mean_metric_dict, **replay_metrics}

@@ -534,7 +534,7 @@ Troubleshooting
     configuration.
   - The GPU node can ``ping`` the robot and TCP-connect on 50050–50053.
 
-**``RuntimeError: DOSW1SDKAdapter is not connected``**
+**``RuntimeError: DOSW1Connection is not connected``**
   Connect was never called successfully. Re-check the preceding logs for
   ``[DOSW1SDK] Connecting via AirbotRobot``.
 

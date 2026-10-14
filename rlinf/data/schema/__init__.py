@@ -14,18 +14,28 @@
 
 """Schema-layer entrypoints for data module."""
 
-from rlinf.data.schema.embodied_trajectory_builder import (
-    EmbodiedLerobotTrajectoryBuilder,
-    EmbodiedTrajectoryBuilder,
+from rlinf.data.schema.embodied_trajectory import (
+    TrajectoryCollector,
+    TrajectoryMode,
+    TrajectoryPlan,
 )
 from rlinf.data.schema.embodied_types import (
-    ChunkStepResult,
     EnvOutput,
+    EnvPart,
+    EnvTransition,
+    LeRobotChunk,
+    LeRobotFrame,
+    LeRobotStep,
+    PolicyInput,
     PolicyOutput,
+    PolicyPart,
     RTCActionResponse,
     RTCRequest,
     Trajectory,
-    convert_trajectories_to_batch,
+    TrajectoryKey,
+    TrajectoryPart,
+    TrajectorySource,
+    TrajectoryStep,
     get_model_weights_id,
 )
 from rlinf.data.schema.reasoning_requests import (
@@ -41,21 +51,31 @@ from rlinf.data.schema.reasoning_results import (
 )
 
 __all__ = [
-    "ChunkStepResult",
-    "convert_trajectories_to_batch",
     "DynamicRolloutResult",
-    "EmbodiedLerobotTrajectoryBuilder",
-    "PolicyOutput",
-    "EmbodiedTrajectoryBuilder",
-    "EnvOutput",
     "FinishReasonEnum",
+    "RolloutRequest",
+    "RolloutResult",
+    "SeqGroupInfo",
+    "get_batch_size",
+    "get_seq_length",
+    "EnvOutput",
+    "EnvPart",
+    "EnvTransition",
+    "LeRobotChunk",
+    "LeRobotFrame",
+    "LeRobotStep",
+    "PolicyInput",
+    "PolicyOutput",
+    "PolicyPart",
     "RTCActionResponse",
     "RTCRequest",
-    "RolloutResult",
-    "RolloutRequest",
-    "SeqGroupInfo",
     "Trajectory",
-    "get_batch_size",
+    "TrajectoryCollector",
+    "TrajectoryKey",
+    "TrajectoryMode",
+    "TrajectoryPart",
+    "TrajectoryPlan",
+    "TrajectorySource",
+    "TrajectoryStep",
     "get_model_weights_id",
-    "get_seq_length",
 ]

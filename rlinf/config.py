@@ -17,19 +17,25 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+# Register built-in physical robots before parsing cluster hardware configs.
+import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
+)
+from rlinf.utils.precision import (
+    torch_dtype_from_precision as torch_dtype_from_precision,
 )
 
 if TYPE_CHECKING:
@@ -87,7 +93,7 @@ SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
-SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -98,6 +104,7 @@ SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
+SupportedModel.FASTWAM = SupportedModel.register("fastwam", force=True)
 SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
@@ -120,6 +127,9 @@ SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
+# GLM-4.7-Flash: MLA (DeepSeek-V3-style) + GLM MoE + MTP, via Megatron-Bridge
+# GLM47FlashBridge (megatron-bridge >=0.5.0). Needs mcore 0.18.
+SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
@@ -130,7 +140,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
-        SupportedModel.OPENPI_RLINF,
+        SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -139,6 +149,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
+        SupportedModel.FASTWAM,
         SupportedModel.COSMOS3,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
@@ -168,23 +179,6 @@ SUPPORTED_TASK_TYPE = [
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
-
-
-def torch_dtype_from_precision(
-    precision: Union[int, str, None],
-) -> Optional[torch.dtype]:
-    if precision in ["bf16", "bf16-mixed"]:
-        return torch.bfloat16
-    elif precision in [16, "16", "fp16", "16-mixed"]:
-        return torch.float16
-    elif precision in [32, "32", "fp32", "32-true"]:
-        return torch.float32
-    elif precision in [None, "null"]:
-        return None
-    else:
-        raise ValueError(
-            f"Could not parse the precision of `{precision}` to a valid torch.dtype"
-        )
 
 
 @torch.jit.script
@@ -434,8 +428,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         )
         cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
 
-        # DeepSeek-V3 text backbone: MLA + MoE with shared expert.
-        if model_type in ("deepseek_v3",):
+        # DeepSeek-V3 and glm4_moe_lite text backbone: MLA + MoE with shared expert.
+        if model_type in ("deepseek_v3", "glm4_moe_lite"):
             cfg.model.num_moe_experts = getattr(
                 hf_config, "n_routed_experts", cfg.model.num_moe_experts
             )
@@ -464,6 +458,21 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             )
 
     return cfg
+
+
+def validate_fp32_master_adamw_config(
+    *,
+    strategy: str,
+    sharding_strategy: str,
+) -> None:
+    """Validate the FSDP backend supported by FP32 master AdamW."""
+    strategy = str(strategy).lower()
+    sharding_strategy = str(sharding_strategy).lower()
+    if strategy != "fsdp" or sharding_strategy != "no_shard":
+        raise ValueError(
+            "use_fp32_master_params requires FSDP1 "
+            "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
+        )
 
 
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
@@ -516,6 +525,16 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         cfg.fsdp_config.sharding_strategy = cfg.fsdp_config.get(
             "sharding_strategy", "full_shard"
         )
+        model_type = OmegaConf.select(cfg, "model.model_type", default=None)
+        if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
+            sharding = (
+                str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
+            )
+            assert sharding == "no_shard", (
+                "openpi only supports actor.fsdp_config.sharding_strategy="
+                f"'no_shard' (got {cfg.fsdp_config.sharding_strategy!r}). "
+                "Nested FSDP flattening (full_shard / shard_grad_op) is not supported."
+            )
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
             "forward_prefetch", False
@@ -527,6 +546,23 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "backward_prefetch", None
         )
         cfg.fsdp_config.use_orig_params = cfg.fsdp_config.get("use_orig_params", False)
+        if (
+            model_type is not None
+            and str(model_type) == SupportedModel.OPENPI.value
+            and not cfg.fsdp_config.use_orig_params
+        ):
+            # Dual-expert Gemma packs frozen VLM (expert-0) and trainable
+            # action expert (expert-1) in the same Block. FSDP FlatParameter
+            # then mixes requires_grad and rejects wrap unless
+            # use_orig_params=True. The shared hybrid_engines/fsdp default is
+            # False, so inherited CI/example YAMLs would otherwise fail at
+            # FSDP wrap time.
+            logging.info(
+                "openpi requires actor.fsdp_config.use_orig_params=True "
+                "because dual-expert Gemma Block mixes frozen and trainable "
+                "parameters. Overriding use_orig_params=False to True."
+            )
+            cfg.fsdp_config.use_orig_params = True
         cfg.fsdp_config.use_liger_kernel = cfg.fsdp_config.get(
             "use_liger_kernel", False
         )
@@ -563,6 +599,25 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "buffer_dtype", None
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
+        validate_fsdp_wrapper_config(cfg.fsdp_config)
+
+        if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
+            low_precision = any(
+                torch_dtype_from_precision(mixed_precision_config[field])
+                not in (None, torch.float32)
+                for field in ("param_dtype", "reduce_dtype", "buffer_dtype")
+            )
+            if low_precision and not cfg.fsdp_config.get("mixed_precision_rules"):
+                raise ValueError(
+                    "OpenPI low-precision FSDP policies require mixed_precision_rules "
+                    "for its FP32 modules."
+                )
+
+        if cfg.get("optim", {}).get("use_fp32_master_params", False):
+            validate_fp32_master_adamw_config(
+                strategy=cfg.fsdp_config.strategy,
+                sharding_strategy=cfg.fsdp_config.sharding_strategy,
+            )
 
     return cfg
 
@@ -904,6 +959,37 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_only_eval_rollout_model(model_cfg) -> None:
+    """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
+
+    Eval YAMLs must put a full policy spec under ``rollout.model``.
+    """
+    missing: list[str] = []
+    if OmegaConf.select(model_cfg, "model_type", default=None) in (None, ""):
+        missing.append("rollout.model.model_type")
+    if OmegaConf.select(model_cfg, "num_action_chunks", default=None) is None:
+        missing.append("rollout.model.num_action_chunks")
+
+    model_type = str(OmegaConf.select(model_cfg, "model_type", default="") or "")
+    if model_type == SupportedModel.OPENPI.value:
+        if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
+            missing.append("rollout.model.openpi.config_name")
+        if OmegaConf.select(model_cfg, "openpi.task", default=None) in (None, ""):
+            missing.append("rollout.model.openpi.task")
+        has_num_steps = (
+            OmegaConf.select(model_cfg, "num_steps", default=None) is not None
+            or OmegaConf.select(model_cfg, "openpi.num_steps", default=None) is not None
+        )
+        if not has_num_steps:
+            missing.append("rollout.model.num_steps")
+
+    if missing:
+        raise ValueError(
+            "runner.only_eval=True requires a complete rollout.model "
+            "(path/precision alone is not enough). Missing: " + ", ".join(missing)
+        )
+
+
 def validate_weight_sync_overlap_cfg(cfg):
     """Reject overlapping weight sync with a syncer that applies in pieces.
 
@@ -919,11 +1005,56 @@ def validate_weight_sync_overlap_cfg(cfg):
     )
 
 
+def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
+    """Require per-step observations when online LeRobot collection is enabled.
+
+    The collector stores one observation/action pair per environment step.
+    RoboTwin, LIBERO, and Behavior share ``env.train.skip_intermediate_renders``;
+    online LeRobot requires it to be false. Eval does not write the dataset.
+    """
+    enabled = bool(
+        OmegaConf.select(cfg, "algorithm.dagger.online_lerobot.enabled", default=False)
+    )
+    if not enabled:
+        return
+    only_eval = (
+        cfg.runner.get("only_eval", False)
+        or cfg.runner.get("task_type") == "embodied_eval"
+    )
+    train_env = cfg.env.get("train", None)
+    if only_eval or train_env is None:
+        return
+
+    # RoboTwin skips intermediate renders unless the config turns them back on.
+    # LIBERO and Behavior render every step unless the config skips them.
+    skip_intermediate_renders_default = {
+        SupportedEnvType.ROBOTWIN: True,
+        SupportedEnvType.LIBERO: False,
+        SupportedEnvType.BEHAVIOR: False,
+    }
+    env_type = SupportedEnvType(train_env.env_type)
+    if env_type not in skip_intermediate_renders_default:
+        return
+    skip_intermediate_renders = bool(
+        train_env.get(
+            "skip_intermediate_renders",
+            skip_intermediate_renders_default[env_type],
+        )
+    )
+    assert not skip_intermediate_renders, (
+        "algorithm.dagger.online_lerobot.enabled requires "
+        f"env.train.skip_intermediate_renders=False for env_type {env_type.value!r}. "
+        "Skipped intermediate renders drop the observation for each action."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
+    if only_eval:
+        validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
@@ -932,6 +1063,18 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
+        # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
+        # gap per action, which assumes the OpenVLA family's tokenized action layout.
+        # GR00T needs no recompute: it already rescores inside its training forward.
+        assert model_type in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT], (
+            f"algorithm.recompute_logprobs supports "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value]}, "
+            f"got '{model_cfg.model_type}'."
+        )
+        assert algorithm_cfg.get("adv_type", None) != "opd", (
+            "algorithm.recompute_logprobs is not supported with adv_type=opd."
+        )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
@@ -1196,6 +1339,7 @@ def validate_embodied_cfg(cfg):
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
 
+    validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
 
@@ -1504,6 +1648,32 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def adv_requires_group_baseline(
+    adv_type: Optional[str], use_reinpp_baseline: bool = False
+) -> bool:
+    """Whether an advantage estimator draws its baseline from within-group
+    statistics and therefore requires ``algorithm.group_size > 1``.
+
+    GRPO and GRPO-dynamic always normalize each reward against its group, so a
+    group of one leaves nothing to compare against. ReinForce++ only subtracts a
+    per-group mean when its baseline mode is enabled (``use_reinpp_baseline``);
+    plain ReinForce++ normalizes over the whole batch and is exempt.
+
+    ``adv_type`` is lower-cased to match how :func:`get_adv_and_returns`
+    dispatches, so a differently-cased name cannot slip past the guard and still
+    reach the group-based estimator. Offline configs leave it unset, which
+    selects no estimator and therefore needs no group.
+    """
+    if not adv_type:
+        return False
+    adv_type = adv_type.lower()
+    if adv_type in ("grpo", "grpo_dynamic"):
+        return True
+    if adv_type == "reinpp":
+        return bool(use_reinpp_baseline)
+    return False
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -1569,8 +1739,15 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_offline_cfg(cfg)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
-        if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
-            assert cfg.algorithm.group_size > 1
+        if adv_requires_group_baseline(
+            cfg.algorithm.adv_type,
+            cfg.algorithm.get("use_reinpp_baseline", False),
+        ):
+            assert cfg.algorithm.group_size > 1, (
+                f"algorithm.adv_type={cfg.algorithm.adv_type!r} uses a "
+                f"within-group baseline and requires algorithm.group_size > 1, "
+                f"got {cfg.algorithm.group_size}."
+            )
 
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
         f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."

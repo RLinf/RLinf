@@ -109,18 +109,19 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
         self.actor.set_global_step(self.global_step).wait()
         self.rollout.set_global_step(self.global_step).wait()
+        self.env.set_global_step(self.global_step).wait()
         self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
             reward_channel=self.reward_channel,
-            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
+            actor_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
 
@@ -272,11 +273,7 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         # Let any in-flight non-blocking sync land before the workers go away.
         self.drain_pending_rollout_weight_sync()
 
-        self.metric_logger.finish()
-
-        self.stop_logging = True
-        self.log_queue.join()
-        self.log_thread.join(timeout=1.0)
+        self._finish_run()
 
         self.env.stop().wait()
         self.rollout.stop().wait()

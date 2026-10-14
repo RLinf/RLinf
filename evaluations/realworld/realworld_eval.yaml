@@ -58,6 +58,7 @@ rollout:
     action_dim: 7
     add_value_head: True
     openpi:
+      task: eval
       train_expert_only: False
       detach_critic_input: True
       action_chunk: ${rollout.model.num_action_chunks}

@@ -283,7 +283,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 1. 初始化 ``RealWorldEnv`` 和 ``TrajectoryReplayBuffer``。
 2. 循环执行 step，从 ``info["intervene_action"]`` 读取 SpaceMouse 干预动作。
-3. 构造 ``ChunkStepResult``，追加到 ``EmbodiedTrajectoryBuilder``。
+3. 构造 ``TrajectoryStep``，追加到脚本内部的 trajectory accumulator。
 4. episode 结束（``done=True``）且奖励 ``>= 0.5`` 时，记为一次成功，将轨迹写入 buffer。
 5. 成功次数达到 ``num_data_episodes`` 后自动停止并 finalize buffer。
 
@@ -303,18 +303,15 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
    * - ``cluster.node_groups.hardware.configs.robot_ip``
      - —
      - Franka 机器人 IP 地址
-   * - ``env.eval.use_spacemouse``
-     - ``True``
-     - 是否启用 SpaceMouse 干预
+   * - ``env.eval.teleop``
+     - ``spacemouse``
+     - 由谁从策略手中接管：``spacemouse``、``gello``、``pico`` 或 ``none``
    * - ``env.eval.no_gripper``
      - ``False``
      - 是否使用不带夹爪维度的 6 维真机动作
-   * - ``env.eval.use_gello``
-     - ``False``
-     - 是否启用 GELLO 遥操作（与 SpaceMouse 互斥）
    * - ``env.eval.gello_port``
      - —
-     - GELLO 设备串口路径（``use_gello`` 为 ``True`` 时必填）
+     - GELLO 设备串口路径（``teleop`` 为 ``gello`` 时必填）
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - 任务目标末端位姿 ``[x, y, z, rx, ry, rz]``
@@ -408,7 +405,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
       env:
         eval:
-          use_spacemouse: True
+          teleop: spacemouse
           override_cfg:
             target_ee_pose: [0.5, 0.0, 0.3, 0.0, 3.14, 0.0]
             success_hold_steps: 3

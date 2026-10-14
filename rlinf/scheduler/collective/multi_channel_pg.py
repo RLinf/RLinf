@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import logging
+import os
+import threading
 from datetime import timedelta
 from typing import Optional
 
 import torch
 import torch.distributed as dist
+from torch.torch_version import TorchVersion
 
 from ..hardware import AcceleratorType, AcceleratorUtil
 from .async_work import AsyncCollWork, AsyncWork
@@ -65,6 +68,16 @@ class MultiChannelProcessGroup:
         logger (Optional[logging.Logger]): Optional logger for debugging.
 
     """
+
+    # Before torch 2.7, several c10d constructors are pybind factories bound with
+    # call_guard<gil_scoped_release>. pybind registers the new Python object inside
+    # that guard, so registration runs without the GIL and races with any other
+    # thread creating or freeing a pybind object (pybind/pybind11#5473). Plain
+    # py::init<...> constructors register after the GIL is reacquired.
+    _C10D_FACTORY_INIT_RELEASES_GIL = TorchVersion(torch.__version__) < (2, 7)
+
+    _base_pg_options: dict[tuple[str, timedelta], "dist.ProcessGroup.Options"] = {}
+    _base_pg_options_lock = threading.Lock()
 
     def __init__(
         self,
@@ -154,20 +167,11 @@ class MultiChannelProcessGroup:
             options (Optional[CollectiveGroupOptions]): The options for the collective group.
 
         """
-        from ..cluster import Cluster, ClusterEnvVar
+        from ..cluster import Cluster
 
         self._group_name = group_name
-        try:
-            # Set default timeout to 180 minutes
-            timeout = int(Cluster.get_sys_env_var(ClusterEnvVar.TIMEOUT, "180"))
-            self._logger.debug(
-                f"Setting timeout to {timeout} minutes for group {group_name}"
-            )
-            timeout = timedelta(minutes=timeout)
-        except ValueError:
-            raise ValueError(
-                "Invalid TIMEOUT value. It should be an integer representing minutes."
-            )
+        timeout = Cluster.get_collective_timeout()
+        self._logger.debug(f"Setting timeout to {timeout} for group {group_name}")
 
         if not self._no_accel_ccl:
             pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)
@@ -806,15 +810,9 @@ class MultiChannelProcessGroup:
                 return GroupMember.NON_GROUP_MEMBER, None
 
         prefix_store = PrefixStore(f"{group_name}/", store)
-        if hasattr(ProcessGroup, "Options"):
-            # Torch 2.7 removed Options
-            base_pg_options = ProcessGroup.Options(backend=str(backend))
-            base_pg_options._timeout = timeout
-            pg: ProcessGroup = ProcessGroup(
-                prefix_store, group_rank, group_size, base_pg_options
-            )
-        else:
-            pg: ProcessGroup = ProcessGroup(prefix_store, group_rank, group_size)
+        pg = MultiChannelProcessGroup._create_process_group_base(
+            prefix_store, group_rank, group_size, str(backend), timeout
+        )
         if device_id:
             pg.bound_device_id = device_id
         backend_config = BackendConfig(backend)
@@ -837,25 +835,19 @@ class MultiChannelProcessGroup:
                     return GroupMember.NON_GROUP_MEMBER, None
                 # create new process group with accurate rank and size
                 if pg.rank() == -1 and pg.size() == -1:
-                    if hasattr(ProcessGroup, "Options"):
-                        pg = ProcessGroup(
-                            backend_prefix_store,
-                            backend_class.rank(),
-                            backend_class.size(),
-                            base_pg_options,
-                        )
-                    else:
-                        pg = ProcessGroup(
-                            backend_prefix_store,
-                            backend_class.rank(),
-                            backend_class.size(),
-                        )
+                    pg = MultiChannelProcessGroup._create_process_group_base(
+                        backend_prefix_store,
+                        backend_class.rank(),
+                        backend_class.size(),
+                        str(backend),
+                        timeout,
+                    )
             elif backend_str == Backend.GLOO:
                 # TODO: remove this check after lazy initialization is supported
                 # if pg_options is not None:
                 #     raise RuntimeError("GLOO options not supported")
-                backend_class = ProcessGroupGloo(
-                    backend_prefix_store, group_rank, group_size, timeout=timeout
+                backend_class = MultiChannelProcessGroup._create_gloo_backend(
+                    backend_prefix_store, group_rank, group_size, timeout
                 )
                 backend_type = ProcessGroup.BackendType.GLOO
             elif backend_str == Backend.NCCL:
@@ -997,3 +989,58 @@ class MultiChannelProcessGroup:
         _world.tags_to_pg.setdefault(pg_tag, []).append(pg)
         _world.pg_to_tag[pg] = pg_tag
         return pg, prefix_store
+
+    @staticmethod
+    def _create_process_group_base(
+        store: dist.Store,
+        rank: int,
+        size: int,
+        backend: str,
+        timeout: timedelta,
+    ) -> dist.ProcessGroup:
+        """Construct the backend-less ProcessGroup wrapper.
+
+        ``ProcessGroup.Options`` (torch < 2.6) has only a factory constructor, so
+        one instance per ``(backend, timeout)`` is built and shared; the wrapper
+        only reads it. The wrapper constructor itself is a plain constructor.
+        """
+        if not hasattr(dist.ProcessGroup, "Options"):
+            return dist.ProcessGroup(store, rank, size)
+        with MultiChannelProcessGroup._base_pg_options_lock:
+            options = MultiChannelProcessGroup._base_pg_options.get((backend, timeout))
+            if options is None:
+                options = dist.ProcessGroup.Options(backend=backend)
+                options._timeout = timeout
+                MultiChannelProcessGroup._base_pg_options[(backend, timeout)] = options
+        return dist.ProcessGroup(store, rank, size, options)
+
+    @staticmethod
+    def _create_gloo_backend(
+        store: dist.Store, rank: int, size: int, timeout: timedelta
+    ) -> "dist.ProcessGroupGloo":
+        """Construct a Gloo backend through a constructor that registers under the GIL.
+
+        On torch < 2.7 this replaces the ``timeout=`` factory overload with the
+        plain ``(store, rank, size, options)`` overload and builds the same options
+        the factory would: devices from ``GLOO_SOCKET_IFNAME`` or the default
+        device, two threads per device. The constructor still connects to peers
+        without the GIL, so no lock is held while waiting for another rank.
+        """
+        from torch.distributed.distributed_c10d import ProcessGroupGloo
+
+        if not MultiChannelProcessGroup._C10D_FACTORY_INIT_RELEASES_GIL:
+            return ProcessGroupGloo(store, rank, size, timeout=timeout)
+
+        options = ProcessGroupGloo._Options()
+        options._timeout = timeout
+        ifname = os.environ.get("GLOO_SOCKET_IFNAME", "")
+        if len(ifname) > 1:
+            # c10d::split drops the empty field after a trailing comma.
+            options._devices = [
+                ProcessGroupGloo.create_device(interface=name)
+                for name in ifname.removesuffix(",").split(",")
+            ]
+        else:
+            options._devices = [ProcessGroupGloo.create_default_device()]
+        options._threads = len(options._devices) * 2
+        return ProcessGroupGloo(store, rank, size, options)

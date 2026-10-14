@@ -95,9 +95,9 @@ RLT 将表示学习和在线 RL 控制拆开。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 为提高国内下载速度，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 进入容器后，切换到 OpenPI 虚拟环境：
 
@@ -114,11 +114,9 @@ RLT 将表示学习和在线 RL 控制拆开。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-下面的 RLT 配置使用 ``model_type: openpi_rlinf``。安装命令仍使用
+下面的 RLT 配置使用 ``model_type: openpi``。安装命令仍使用
 ``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT
 Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
-这里的 ``openpi_rlinf`` 是 RLinf vendored、已对齐 JAX OpenPI 参考实现精度的
-PyTorch Pi0.5 路径，不是旧的官方 OpenPI PyTorch 路径。
 
 RLT 如何工作
 ------------
@@ -151,10 +149,9 @@ Stage 1 中比较关键的字段：
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi_rlinf"
-       precision: fp32
+       model_type: "openpi"
        is_lora: False
-       model_path: "/path/to/model"
+       model_path: "/path/to/pi05_base_openpi"
        num_action_chunks: 20
        action_dim: 7
        num_steps: 4
@@ -163,7 +160,10 @@ Stage 1 中比较关键的字段：
          task: sft
          config_name: "pi05_franka_state"
          num_images_in_input: 1
-         action_horizon: ${actor.model.num_action_chunks}
+         # Network prediction horizon (Pi0Config.action_horizon). Matches official
+         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+         # / num_action_chunks, which is the env-executed (RLT) window.
+         action_horizon: 20
          action_chunk: ${actor.model.num_action_chunks}
          action_env_dim: ${actor.model.action_dim}
          num_steps: ${actor.model.num_steps}
@@ -257,7 +257,7 @@ Stage 2 中比较关键的字段：
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi_rlinf"
+       model_type: "openpi"
        precision: bf16
        is_lora: False
        num_action_chunks: 20
@@ -272,8 +272,11 @@ Stage 2 中比较关键的字段：
          task: eval
          config_name: "pi05_franka_state"
          num_images_in_input: 1
+         # Network prediction horizon (Pi0Config.action_horizon). Matches official
+         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+         # / num_action_chunks, which is the env-executed (RLT) window.
+         action_horizon: 20
          action_chunk: ${actor.model.ref_num_action_chunks}
-         action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
          action_env_dim: ${rollout.rlt_feature_model.action_dim}
          num_steps: ${rollout.rlt_feature_model.num_steps}
          model_action_dim: 32
@@ -367,7 +370,7 @@ Stage 1：训练 RLT 特征模型
      openpi_data:
        repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
-       model_path: /path/to/model
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -434,7 +437,7 @@ Stage 2：运行 RLT Actor-Critic
 
 当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
 控制阶段。其他功能可根据具体任务需求进行定制
-（``rlinf/envs/realworld/common/wrappers/keyboard_rlt_policy_switch_wrapper.py``）。
+（``rlinf/envs/real/wrappers/episode/policy_switch.py``）。
 
 运行 ManiSkill Joint 示例
 -------------------------
@@ -527,7 +530,7 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
    actor:
      model:
-       model_path: /path/to/pi05_base
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: pi05_rlt_maniskill_joint
        openpi_data:

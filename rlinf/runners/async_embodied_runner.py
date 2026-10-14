@@ -102,11 +102,18 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         return time_metrics, ranked_time_metrics_list
 
     def evaluate(self):
+        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        if env_decoupled_mode:
+            # The rollout-side loop is unbounded by design. Ensure one service
+            # exists and reuse it across every validation cycle.
+            self.rollout.ensure_evaluate_service(
+                input_channel=self.rollout_channel,
+                output_channel=self.env_channel,
+            ).wait()
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
         )
-        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
         if not env_decoupled_mode:
             rollout_handle: Handle = self.rollout.evaluate(
                 input_channel=self.rollout_channel,
@@ -122,6 +129,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
     def run(self):
         start_step = self.global_step
         start_time = time.time()
+        self.env.set_global_step(self.global_step).wait()
         # Rollout must start from the actor's exact initial/resumed weights, so
         # this first sync always blocks even when overlap is enabled.
         self.update_rollout_weights()
@@ -130,12 +138,12 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
             reward_channel=self.reward_channel,
-            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
+            actor_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
         if self.reward is not None:
@@ -204,6 +212,8 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
             if self.actor_channel is not None:
+                # Total outstanding across consumers, matching the pre-dispatcher
+                # meaning of this series.
                 training_metrics["train/replay_channel_qsize"] = (
                     self.actor_channel.qsize()
                 )

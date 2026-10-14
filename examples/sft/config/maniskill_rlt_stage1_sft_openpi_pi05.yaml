@@ -1,6 +1,6 @@
 defaults:
-  - model/pi0_5_rlinf@actor.model
-  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/pi0_5@actor.model
+  - hybrid_engines/openpi_fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -42,13 +42,18 @@ actor:
 
   model:
     precision: fp32
-    model_path: "/path/to/pi05_base"
-    model_type: "openpi_rlinf"
+    # Download JAX base: gs://openpi-assets/checkpoints/pi05_base
+    # Convert with jax_to_openpi; model_path must point to the local output
+    # directory containing RLinf OpenPI model.safetensors.
+    # Download/conversion steps: docs/source-en/rst_source/examples/embodied/sft_openpi.rst
+    model_path: "/path/to/pi05_base_openpi"
+    model_type: "openpi"
     num_action_chunks: 10
     action_dim: 8
     add_value_head: False
     num_steps: 5
     openpi:
+      embed_dtype: bf16
       task: sft
       config_name: "pi05_rlt_maniskill_joint"
       num_images_in_input: 2
@@ -98,8 +103,14 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
+    use_orig_params: True
     gradient_checkpointing: False
+    wrappers:
+      rlt_features:
+        module_names: [rlt_module]
+        wrap_mode: subtree
+    mixed_precision_rules:
+      rlt_features: fp32
     mixed_precision:
       param_dtype: bf16
       reduce_dtype: fp32

@@ -27,7 +27,7 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build this dataset with examples/reward/preprocess_vlm_trend_reward_dataset.py
+# Build this dataset with examples/reward/vlm_trend/preprocess_reward_dataset.py
 # and point VLM_TREND_REWARD_DATA_ROOT to the output root.
 data:
   type: vlm

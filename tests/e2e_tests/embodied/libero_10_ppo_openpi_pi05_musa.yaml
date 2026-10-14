@@ -114,6 +114,9 @@ actor:
     add_value_head: True
     # openpi specific parameters
     openpi:
+      # MUSA and Ascend have no Triton, so inductor cannot compile RoPE / GELU.
+      torch_compile: False
+      task: rl
       detach_critic_input: True
       value_after_vlm: True
 

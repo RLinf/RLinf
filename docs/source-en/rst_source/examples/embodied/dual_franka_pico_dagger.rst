@@ -100,22 +100,29 @@ Robot Nodes
 ^^^^^^^^^^^
 
 Run the robot-node installation on every node that directly communicates with
-a Franka. Choose ``LIBFRANKA_VERSION`` from the official `Franka compatibility
-matrix <https://frankarobotics.github.io/docs/compatibility.html>`_; avoid
-libfranka ``0.18.0``.
+a Franka. Dual-arm Franka always drives the arms through Franky, the backend that
+the default ``franka`` environment installs. The installer downloads a prebuilt
+Franky wheel with libfranka bundled; these wheels exist only for libfranka
+``0.15.0`` and ``0.19.0`` (the default) on x86_64. Set ``LIBFRANKA_VERSION`` to
+the one that the official `Franka compatibility
+matrix <https://frankarobotics.github.io/docs/compatibility.html>`_ lists for
+your firmware. For other firmware, build a Franky wheel against the matching
+libfranka and pass its path or URL in ``FRANKY_WHEEL``; the legacy ROS backend
+covers other libfranka versions only for single-arm Franka.
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   export LIBFRANKA_VERSION=0.15.0       # replace with your compatible version
-   bash requirements/install.sh embodied --env franka-franky --use-mirror
+   export LIBFRANKA_VERSION=0.19.0       # or 0.15.0, matching the firmware
+   bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-The ``franka-franky`` environment installs the ``franka`` extra, including
-``pyzmq`` for the PICO consumer side. See :doc:`franka_vr` for the PICO headset,
-XRoboToolkit PC Service, and ``vr_data_publisher`` setup and validation.
+The ``franka`` environment installs Franky with the camera and input
+dependencies, including ``pyzmq`` for the PICO consumer side. See
+:doc:`franka_vr` for the PICO headset, XRoboToolkit PC Service, and
+``vr_data_publisher`` setup and validation.
 
 Inference Node
 ^^^^^^^^^^^^^^
@@ -173,7 +180,7 @@ The online DAgger config uses three nodes:
    Ray captures the Python interpreter and environment variables at
    ``ray start`` time. Before starting Ray, finish setting
    ``source .venv/bin/activate``, ``PYTHONPATH``, ``RLINF_NODE_RANK``,
-   ``RLINF_KEYBOARD_DEVICE``, and the ROS / Franka environment variables.
+   ``RLINF_KEYBOARD_DEVICE``, and any Franka-specific environment variables.
 
 Cluster Setup
 ~~~~~~~~~~~~~
@@ -297,8 +304,7 @@ and right PICO controllers bind to the left and right robot arms.
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
          hand: "dual"
@@ -344,6 +350,35 @@ when neither arm is being intervened on. The online LeRobot collector still
 stores the complete successful episode. With ``only_save_expert: True``, the
 sampler uses ``intervene_flag`` to expose only action chunks whose non-padded
 frames are all human corrections.
+
+
+Arm Compliance
+~~~~~~~~~~~~~~
+
+Both arms use Franky's default Cartesian settings during PICO collection,
+DAgger policy execution, and evaluation. No extra ``compliance`` mapping is
+needed. The defaults and the effect of task reset requests are described in
+:ref:`Configure Arm Motion <franka-motion-settings>`. The dual-arm TCP task
+makes no reset request by default, so its initial gains and clips remain active.
+
+To tune both arms together, add a ``compliance`` mapping beside the arm IPs in
+the ``DualFranka`` hardware entry. A side-specific mapping replaces the shared
+mapping for that arm; keys omitted from it use Franky's defaults. For example:
+
+.. code-block:: yaml
+
+   compliance:
+     translational_stiffness: 900.0
+   left_compliance:
+     max_step: 0.02
+
+Here the right arm uses 900 N/m and the default 3 cm target-change limit. The
+left arm uses the default 1000 N/m and a 2 cm limit. Omitting
+``left_compliance`` makes the left arm use the shared mapping as well;
+``left_compliance: {}`` selects all backend defaults for that arm.
+``right_compliance`` follows the same rules. These settings also govern policy
+targets during DAgger. GELLO joint teleoperation uses joint control and is
+unaffected by these Cartesian settings.
 
 
 Start the PICO Data Stream
@@ -478,22 +513,20 @@ Before launch, confirm these fields:
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        keyboard_reward_wrapper: eval_control
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
          hand: "dual"
          hold_current_when_inactive: False
      eval:
-       use_spacemouse: False
-       use_pico: False
+       teleop: none
 
 ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
 
-``smooth_intervene: True`` removes action-chunk boundary stalls while PICO is active. If the final frame of a chunk is human-controlled, the env worker skips the next policy inference and executes a shape-compatible dummy chunk instead. PICO actions still override active arms, while inactive frames hold the measured TCP pose. Normal model inference resumes after the final chunk frame is no longer intervened or the episode ends. This mode is PICO-only (``use_pico: True``, ``use_spacemouse: False``) and currently requires one environment per env-worker pipeline stage.
+``smooth_intervene: True`` removes action-chunk boundary stalls while PICO is active. If the final frame of a chunk is human-controlled, the env worker skips the next policy inference and executes a shape-compatible dummy chunk instead. PICO actions still override active arms, while inactive frames hold the measured TCP pose. Normal model inference resumes after the final chunk frame is no longer intervened or the episode ends. This mode is PICO-only (``teleop: pico``) and currently requires one environment per env-worker pipeline stage.
 
-``only_success: True`` discards failed rollouts and keeps only successful episodes. ``only_save_expert: True`` still archives each complete successful episode, but training only samples chunk starts where every non-padded frame in the action chunk has ``intervene_flag=True``. Because a dual-arm frame is marked as an intervention when either arm is replaced, such a chunk may combine one arm's PICO action with the other arm's rollout action. Every successful episode is archived immediately under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``. ``env.eval.use_pico: False`` means evaluation uses the policy alone, without human intervention.
+``only_success: True`` discards failed rollouts and keeps only successful episodes. ``only_save_expert: True`` still archives each complete successful episode, but training only samples chunk starts where every non-padded frame in the action chunk has ``intervene_flag=True``. Because a dual-arm frame is marked as an intervention when either arm is replaced, such a chunk may combine one arm's PICO action with the other arm's rollout action. Every successful episode is archived immediately under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``. ``env.eval.teleop: none`` means evaluation uses the policy alone, without human intervention.
 
 The real-world DAgger config intentionally omits beta-related fields because it does not configure ``rollout.expert_model``. Beta only controls action mixing between a model expert and the student; human intervention here is determined by the PICO intervention wrapper.
 

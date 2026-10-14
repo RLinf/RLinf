@@ -33,7 +33,7 @@ import hydra
 import numpy as np
 from omegaconf import OmegaConf
 
-from rlinf.envs.realworld.realworld_env import RealWorldEnv
+from rlinf.envs.real import RealWorldEnv
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
@@ -86,7 +86,7 @@ class TeleopWorker(Worker):
     """Worker that continuously teleoperates the robot arm via SpaceMouse.
 
     The RealWorldEnv is initialized with use_spacemouse=True, which wraps
-    the gym env with SpacemouseIntervention. When SpaceMouse input is
+    the gym env with a SpaceMouse teleop intervention. When SpaceMouse input is
     non-zero (or a button is pressed), the wrapper replaces the policy
     action with the SpaceMouse action for 0.5 seconds.
 

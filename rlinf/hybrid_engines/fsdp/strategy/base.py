@@ -27,11 +27,10 @@ from torch.distributed.checkpoint.state_dict import (
     set_model_state_dict,
 )
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
+from rlinf.hybrid_engines.fsdp import FSDP, DTensor, FSDPModule
 from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
@@ -345,9 +344,16 @@ class FSDPStrategyBase(ABC):
                         f"[Checkpoint] loading DCP checkpoint from {dcp_load_path}"
                     )
 
+                storage_reader = dcp.FileSystemReader(dcp_load_path)
+                metadata = storage_reader.read_metadata()
+                # DCP loads into the state_dict's structure. Old checkpoints
+                # flattened one RNG dictionary instead of saving all ranks.
+                training_state.legacy_rng_state = (
+                    "fsdp_checkpoint.rng" not in metadata.state_dict_metadata
+                )
                 dcp.load(
                     {"fsdp_checkpoint": training_state},
-                    checkpoint_id=dcp_load_path,
+                    storage_reader=storage_reader,
                 )
         except BaseException as e:
             import traceback

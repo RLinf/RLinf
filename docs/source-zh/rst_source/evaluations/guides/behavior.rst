@@ -54,9 +54,9 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
      - 模型
    * - ``behavior_openpi_pi05_eval.yaml``
      - ``behavior_r1pro``
-     - π₀.₅
+     - π₀.₅（``openpi``）
 
-若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（例如 ``behavior_ppo_openpi_pi05_eval``）。回退配置包含 ``actor`` / ``algorithm`` 等训练段，但设置 ``runner.only_eval: True`` 后仍可正常评测。
+若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（例如 ``behavior_ppo_openpi_pi05``）。回退配置包含 ``actor`` / ``algorithm`` 等训练段，但设置 ``runner.only_eval: True`` 后仍可正常评测。
 
 完整评测流程
 ------------
@@ -80,7 +80,7 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
 
 复制或编辑目标 YAML，至少修改 ``rollout.model.model_path``。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`；BEHAVIOR 特有字段与评测协议见下文 :ref:`behavior-eval-config`。
 
-示例 ``behavior_openpi_pi05_eval.yaml`` 中还需保持与训练一致的 OpenPI 参数（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior`` 等）。
+示例 ``behavior_openpi_pi05_eval.yaml`` 中还需保持与训练一致的 OpenPI 参数（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior`` 等）。``num_action_chunks`` 是环境实际执行的 chunk；网络 horizon 来自 ``pi05_behavior`` 官方 ``TrainConfig.model.action_horizon``（**32**），除非另外设置 ``openpi.action_horizon``。
 
 **Step 4：启动评测**
 
@@ -103,7 +103,7 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
 评测协议概述
 ~~~~~~~~~~~~
 
-BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
+BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
 
 每条评测轨迹由以下配置唯一确定：
 
@@ -140,7 +140,7 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/behavi
      - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。无 ``auto_reset`` 时通常等于 ``max_episode_steps``。
    * - ``num_env_subprocess``
      - 单个 env worker 内划分的 Isaac 仿真子进程数（默认 ``1``）。适当增大可缓解步进瓶颈，但会成倍增加显存与进程开销；``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - 设为 ``True`` 时跳过 chunk 内中间 observation，显著加速环境步进；保存的视频仅含 chunk 边界帧。
 
 ``omni_config`` 关键字段
@@ -216,7 +216,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh behavior behavior_ppo_openpi_pi05_eval \
+   bash evaluations/run_eval.sh behavior behavior_ppo_openpi_pi05 \
      rollout.model.model_path=/path/to/model
 
 常见问题
@@ -228,6 +228,6 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 - **显存不足：** 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
 - **启动极慢：** 首次加载大场景耗时较长；保持 ``partial_scene_load: true`` 可只加载任务相关房间。
-- **视频帧数少于预期：** ``skip_intermediate_obs_in_chunk: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
-- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/behavior/instance_loader.py``。
+- **视频帧数少于预期：** ``skip_intermediate_renders: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。
+- **instance 加载失败：** ``activity_instance_dir`` 中的 JSON 文件名须与 ``activity_name``、``activity_definition_id``、``scene_model`` 匹配；详见 ``rlinf/envs/sim/behavior/instance_loader.py``。
 - **步数校验失败：** ``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除。

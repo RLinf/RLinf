@@ -100,7 +100,7 @@
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-behavior
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-behavior
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
 
    # OpenPI 模型（独立镜像）：
    docker run -it --rm --gpus all \
@@ -109,7 +109,7 @@
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
 
    # 两个镜像都会默认激活各自对应的虚拟环境。
 
@@ -223,7 +223,7 @@
 
    - BEHAVIOR 吞吐调优 → 先增加 env GPU 数量，再调 ``env.num_env_subprocess`` 和 ``env.train.total_num_envs``。
    - 每个 BEHAVIOR 进程可能占用约 10 GiB 显存；请按 GPU 显存调节 subprocess 数量。
-   - 缓存任务实例 → 使用 ``rlinf/envs/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
+   - 缓存任务实例 → 使用 ``rlinf/envs/sim/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
    - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
    - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
 
@@ -249,15 +249,12 @@ OpenPI-Comet 作为示例来源：
 
 转换完成后，按如下方式更新 ``behavior_openpi_pi05_eval.yaml``：
 
-1. 将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设置为转换后的模型目录。
-2. 在 ``env.train`` 和 ``env.eval`` 中提高 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
+1. 将 ``rollout.model.model_path`` 设置为转换后的模型目录。
+2. 如需更长轨迹，提高 ``env.eval`` 的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
 
 .. code-block:: yaml
 
    env:
-     train:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
      eval:
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
@@ -268,21 +265,19 @@ OpenPI-Comet 作为示例来源：
 
 --------------
 
-**5. 使用 OpenPI_RLinf (Pi0.5) 代码进行评估**
+**5. 评估 JAX 对齐的 Pi0.5 checkpoint**
 
-BEHAVIOR 评估同样支持自包含的 **OpenPI_RLinf** 代码（模型
-``model_type: openpi_rlinf``；对应的 SFT 流程参见 :doc:`sft_openpi_rlinf`）。
-评估配置为：
+BEHAVIOR 评估使用 ``model_type: openpi``。若权重来自 :doc:`sft_openpi` 或 OpenPI checkpoint 转换器，评估配置为：
 
-- ``evaluations/behavior/behavior_openpi_pi05_rlinf_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``
 
-该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **OpenPI_RLinf**
+该配置以纯评估模式运行（``runner.only_eval: True``），并消费转换后的
 checkpoint，即由 OpenPI checkpoint 转换器
-（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi_rlinf`` /
-``sft_to_openpi_rlinf``）产出的 checkpoint。
+（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi`` /
+``sft_to_openpi``）产出的权重。
 将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
 
-- ``rollout.model.model_path``：OpenPI_RLinf 评估 checkpoint。
+- ``rollout.model.model_path``：评估 checkpoint。
 
 归一化统计从转换后 checkpoint 中打包的
 ``physical-intelligence/behavior/norm_stats.json`` 读取。
@@ -291,7 +286,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
 
@@ -304,7 +299,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 
 BEHAVIOR 环境由 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 驱动。RLinf 先加载
 OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config`` 覆盖项（见
-``rlinf/envs/behavior/utils.py`` 中的 ``setup_omni_cfg``）。下表中的字段控制 reset 行为、场景
+``rlinf/envs/sim/behavior/utils.py`` 中的 ``setup_omni_cfg``）。下表中的字段控制 reset 行为、场景
 加载、仿真器频率与吞吐，大多有合理默认值，仅在自定义任务或调优性能时需要修改。
 
 .. list-table::
@@ -353,7 +348,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - ``True`` 启用基于转移规则的状态变化（如切割、烹饪）。
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` 使用 numpy 控制器后端，在单进程 / 中等并行下通常更快。
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示策略在
        chunk 边界观测到的帧。
    * - ``num_env_subprocess``
@@ -364,7 +359,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
 生成缓存任务实例
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rlinf/envs/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
+``rlinf/envs/sim/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
 ``*_template.json`` 与 ``*_template-tro_state.json`` 文件（它读取 ``scene_model``、
 ``activity_name``、``activity_definition_id``、机器人配置与房间加载设置，并临时切换为在线物体采样）。
 若设置了 ``activity_instance_dir`` 则写入该目录，否则写入 ``OMNIGIBSON_DATA_PATH`` 默认的
@@ -374,12 +369,12 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
 
    cd /path/to/RLinf
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format template \
      --start-idx 1 --end-idx 50
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format tro_state \
      --start-idx 1 --end-idx 50

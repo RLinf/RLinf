@@ -17,6 +17,9 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``，安装时替换 ``--model`` 参数即可。
 
+在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，
+详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
+
 **RoboTwin 仓库与 Assets**
 
 评测前需克隆 RLinf 适配分支并下载仿真资产（详见训练文档）：
@@ -70,15 +73,12 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    * - ``robotwin_place_empty_cup_openpi_eval.yaml``
      - place_empty_cup
      - π₀
-   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
-     - adjust_bottle
-     - π₀
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
-   * - ``robotwin_adjust_bottle_openpi_rlinf_eval.yaml``
+   * - ``robotwin_adjust_bottle_openpi_eval.yaml``
      - adjust_bottle
-     - OpenPI_RLinf π₀
+     - π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA
@@ -86,7 +86,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
      - click_bell
      - LingBotVLA
 
-若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
+若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
 完整评测流程
 ------------
@@ -135,7 +135,7 @@ RoboTwin 评测对 ``eval_seeds.json`` 中每个任务的 **success seed** 各�
 评测协议概述
 ~~~~~~~~~~~~
 
-RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。种子列表位于 ``rlinf/envs/robotwin/seeds/eval_seeds.json``，按 ``task_name`` 索引；当前文件覆盖 **22 个任务** （150–320 条种子不等）。
+RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。种子列表位于 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``，按 ``task_name`` 索引；当前文件覆盖 **22 个任务** （150–320 条种子不等）。
 
 在 ``RoboTwinEnv`` 中：
 
@@ -286,4 +286,4 @@ LingBotVLA
 - **机器人平台：** 通过 ``ROBOT_PLATFORM=ALOHA`` 选择平台变体。
 - **GPU 显存不足：** 在 YAML 中设置 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``；或减小 ``env.eval.total_num_envs``。
 - **评测覆盖范围：** 见上文 :ref:`robotwin-eval-config`；默认 128 并行 + ``use_fixed_reset_state_ids: True`` 只覆盖部分 seeds。
-- **渲染问题：** 若 headless 环境报错，可尝试 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa`` （``run_eval.sh`` 默认已设置）。
+- **渲染问题：** ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，可 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。

@@ -53,7 +53,7 @@ What's Next
       :link: ../concepts/index
       :link-type: doc
 
-      Understand the execution model.
+      Understand how RLinf executes and schedules work.
 
    .. grid-item-card:: Guides
       :link: ../guides/index

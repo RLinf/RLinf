@@ -9,7 +9,7 @@ for the VR teleoperation pipeline.
 .. note::
 
    If you have not read the base Franka guide yet, please start with
-   :doc:`franka` first. This page assumes that Franka control, ROS, Ray, and
+   :doc:`franka` first. This page assumes that Franka control, Ray, and
    camera setup have already been configured according to the base guide.
 
 
@@ -33,8 +33,8 @@ end-effector delta actions for the Franka environment.
      - Actor, rollout, optional camera capture
      - NVIDIA GPU, RLinf
    * - **Franka controller node** (node 1 or single-node setup)
-     - FrankaController, env worker, VR data subscriber
-     - Franka, ROS Noetic, serl_franka_controllers, pyzmq
+     - Franka arm part, env worker, VR data subscriber
+     - Franky, pyzmq
    * - **VR / PICO PC**
      - Runs XRoboToolkit and the VR data publisher
      - PICO headset, controller, VR publisher
@@ -160,16 +160,16 @@ running ``ray start``.
 .. warning::
 
    Ray captures the Python interpreter and environment variables at
-   ``ray start`` time. If ``pyzmq``, ROS environment variables, or
+   ``ray start`` time. If ``pyzmq``, the Franka environment, or
    ``PYTHONPATH`` are configured after ``ray start``, worker processes may
-   fail to import ``PicoIntervention`` or connect to ZeroMQ.
+   fail to reach the controller or connect to ZeroMQ.
 
 
 3. Verify the PICO data stream
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 After starting the VR data publisher, run the built-in RLinf check script on
-the node that will run ``PicoIntervention`` to confirm that PICO / ZeroMQ data
+the node that will read the controller to confirm that PICO / ZeroMQ data
 is being received:
 
 .. code-block:: bash
@@ -214,8 +214,7 @@ The key configuration is:
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
 
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
@@ -223,6 +222,22 @@ The key configuration is:
          rotation_scale: 1.0
          calibration:
            button: "trigger"
+
+
+Franka Motion Settings
+----------------------
+
+The collection example uses Franky's default motion settings, including
+target-change limits of 3 cm and 0.10 rad per call. You do not need to add a
+``compliance`` mapping for PICO. Collection and policy execution share these
+defaults; see :ref:`Configure Arm Motion <franka-motion-settings>` for the
+values, task reset behavior, and hardware overrides.
+
+``pico.position_scale`` and ``pico.rotation_scale`` control how controller
+motion becomes a requested robot motion. They affect PICO input, including
+human interventions during training. The environment applies its action scale
+and workspace bounds before Franky receives the request; Franky's controller
+settings apply to both PICO and policy targets.
 
 
 Gripper Configuration
@@ -261,7 +276,7 @@ Cluster Setup Notes
 The cluster setup procedure is the same as described in :doc:`franka`. The
 main additional requirements are:
 
-- The node running ``PicoIntervention`` must be able to reach the VR publisher
+- The node reading the controller must be able to reach the VR publisher
   ZeroMQ address.
 - If the VR publisher uses TCP, make sure the firewall and network route allow
   access to the configured port.
@@ -278,8 +293,8 @@ Safety Notes
   value such as ``0.3`` to ``0.5``.
 - Check the workspace safety box, per-step action scale, and Franka Desk state
   before placing task objects in the workspace.
-- After changing Ray environments, Python dependencies, ROS environment
-  variables, or ZeroMQ addresses, stop Ray first and then restart it.
+- After changing Ray environments, Python dependencies, robot settings,
+  or ZeroMQ addresses, stop Ray first and then restart it.
 - If the control direction is clearly wrong, release ``grip``, reposition
   yourself, and press ``trigger`` again for calibration. Do not try to correct
   the frame while actively controlling the robot.
@@ -288,19 +303,17 @@ Safety Notes
 Startup Order
 -------------
 
-1. On the Franka controller node, configure ROS, the catkin workspace, the
-   RLinf virtual environment, and ``PYTHONPATH``.
-2. Confirm that the ``franka`` environment is installed and sourced before
-   starting Ray.
-3. Start the Ray cluster. Single-node and multi-node startup follow the same
+1. On the Franka controller node, activate the ``franka`` environment and set
+   ``PYTHONPATH``.
+2. Start the Ray cluster. Single-node and multi-node startup follow the same
    steps as :doc:`franka`.
-4. Start the PICO / XRoboToolkit PC Service and confirm that the headset and
+3. Start the PICO / XRoboToolkit PC Service and confirm that the headset and
    controller are connected.
-5. Start the VR data publisher.
-6. On the first run, or after changing the ZeroMQ address, run
+4. Start the VR data publisher.
+5. On the first run, or after changing the ZeroMQ address, run
    ``test_pico_data.py`` to confirm that PICO data is reachable.
-7. On the Ray head node, start data collection, and confirm that the data
-   collection script has integrated ``PicoIntervention``.
+6. On the Ray head node, start data collection, and confirm that the data
+   collection script sets ``teleop: pico``.
 
 .. code-block:: bash
 
@@ -362,8 +375,8 @@ Troubleshooting
 
 **The robot does not move when holding grip**
 
-- Confirm that ``use_spacemouse: False`` and ``use_pico: True``.
-- Confirm that the current code creates ``PicoIntervention`` in ``apply.py``.
+- Confirm that ``teleop: pico``.
+- Confirm that the env config sets ``teleop: pico``.
 - Confirm that the ``grip`` value exceeds ``control_threshold``.
 - Confirm that calibration has completed. If ``calibration.required=True`` and
   calibration has not completed, PICO will not take over.

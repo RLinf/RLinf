@@ -33,12 +33,6 @@
 
       调整 placement、调度、并行、profiling 与 adapter 训练。
 
-   .. grid-item-card:: 硬件后端
-      :link: hardware/index
-      :link-type: doc
-
-      在 AMD ROCm 或 Ascend CANN 上运行 RLinf。
-
    .. grid-item-card:: 智能体工作流
       :link: agent-workflows/index
       :link-type: doc
@@ -58,6 +52,5 @@
    启动与扩展 <launch-scale/index>
    数据与 Checkpoint <data-checkpoints/index>
    性能 <performance/index>
-   硬件后端 <hardware/index>
    智能体工作流 <agent-workflows/index>
    Rollout 引擎 <rollout-engines/index>

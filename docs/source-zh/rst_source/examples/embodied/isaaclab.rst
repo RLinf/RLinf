@@ -93,7 +93,7 @@
       rlinf/rlinf:agentic-rlinf0.4-isaaclab
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-isaaclab
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-isaaclab
 
 在镜像中切换到对应的虚拟环境：
 
@@ -224,8 +224,8 @@
 
 .. note::
 
-   如需添加自定义 IsaacLab 任务，请在 ``rlinf/envs/isaaclab/tasks/`` 下实现任务，
-   在 ``rlinf/envs/isaaclab/__init__.py`` 中注册任务，然后在
+   如需添加自定义 IsaacLab 任务，请在 ``rlinf/envs/sim/isaaclab/tasks/`` 下实现任务，
+   在 ``rlinf/envs/sim/isaaclab/__init__.py`` 中注册任务，然后在
    ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` 等环境配置中，将
    ``init_params.id`` 指向新的 task id。
 

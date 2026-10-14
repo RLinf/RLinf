@@ -77,7 +77,7 @@ env:
     max_steps_per_rollout_epoch: 200
     group_size: ${algorithm.group_size}
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/train_seeds.json
 
     enable_offload: True
 
@@ -93,7 +93,7 @@ env:
     use_fixed_reset_state_ids: True
     is_eval: True
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval

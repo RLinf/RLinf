@@ -53,7 +53,7 @@ Tasks
      - ``realworld_collect_data_pico``
      - Collect real-world demonstrations with PICO.
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - Train the student initialization.
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
@@ -88,38 +88,11 @@ The real-world pipeline uses **different environments on different nodes**:
 Robot / Env Node
 ~~~~~~~~~~~~~~~~
 
-Follow the controller-node setup in :doc:`franka` for firmware checks, RT
-kernel, ROS, and Franka controller dependencies.
-
-**Option 1: Docker Image**
-
-.. code:: bash
-
-   docker run -it --rm \
-      --privileged \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-franka
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
-
-Then switch to the libfranka-compatible environment:
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-   bash requirements/install.sh embodied --env franka
-   source .venv/bin/activate
-
-Before ``ray start`` on the robot node, source the same ROS / Franka controller
-environment described in :doc:`franka`.
+Set up the robot node as described in the Installation section of
+:doc:`franka`: install the Franky-based ``franka`` environment directly, or use
+the ``franky`` venv in the Franka Docker image, with ``LIBFRANKA_VERSION``
+matching the firmware. Activate that environment before starting Ray. This
+recipe runs the OpenPI actor and rollout on a separate GPU node.
 
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -137,7 +110,7 @@ Use the same environment as simulator Pi0 DAgger.
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Inside the container:
 
@@ -206,8 +179,7 @@ export format to LeRobot:
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -272,7 +244,7 @@ OpenPI-specific dataset notes are documented in :doc:`sft_openpi`.
 3. Run OpenPI SFT
 ~~~~~~~~~~~~~~~~~
 
-Edit ``examples/sft/config/realworld_sft_openpi.yaml`` before launch:
+Edit ``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml`` before launch:
 
 .. code-block:: yaml
 
@@ -289,7 +261,7 @@ Then run:
 
 .. code-block:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 The SFT checkpoint is the student initialization for the online stage. For more
 OpenPI SFT details, see :doc:`sft_openpi`.
@@ -335,8 +307,7 @@ your cluster, cameras, target pose, and checkpoints:
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -356,8 +327,7 @@ your cluster, cameras, target pose, and checkpoints:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
      eval:
-       use_spacemouse: False
-       use_pico: False
+       teleop: none
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -374,7 +344,7 @@ your cluster, cameras, target pose, and checkpoints:
 
 ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
 
-``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.use_pico`` must be ``True`` and ``env.train.use_spacemouse`` must be ``False``. It also requires one environment per env-worker pipeline stage. ``env.eval.use_pico: False`` keeps evaluation policy-only.
+``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.teleop`` must be ``pico``. It also requires one environment per env-worker pipeline stage. ``env.eval.teleop: none`` keeps evaluation policy-only.
 
 ``only_success: True`` discards failed episodes. ``only_save_expert: True`` keeps
 the complete successful episode in the LeRobot archive, but restricts the online

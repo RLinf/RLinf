@@ -105,7 +105,7 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # 在容器内切换到 Dexbotic 虚拟环境：
    source switch_env dexbotic

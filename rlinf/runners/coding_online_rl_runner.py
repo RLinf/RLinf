@@ -304,7 +304,7 @@ class CodingOnlineRLRunner:
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
-        self.server_rollout.shutdown()
+        self.server_rollout.stop()
         self.online_router.server_stop()
         self.server_rollout.server_stop()
         # No need to wait for rollout_handle since rollout service runs continuously
