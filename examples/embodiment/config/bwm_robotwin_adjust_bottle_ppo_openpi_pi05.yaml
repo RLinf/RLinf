@@ -141,6 +141,8 @@ actor:
       num_images_in_input: 1
       noise_level: 0.5
       value_after_vlm: True
+      # The width this recipe was tuned with; the value_after_vlm default is 1024/512/256.
+      value_head_hidden_sizes: [512, 256, 128]
       detach_critic_input: True
     openpi_data:
       # The checkpoint is trained in RoboTwin's joint convention.
