@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -3123,7 +3123,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
+        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
@@ -3166,6 +3166,9 @@ install_env_only() {
             ;;
         dosw1)
             install_dosw1_env
+            ;;
+        yam)
+            install_yam_env
             ;;
         polaris)
             install_polaris_env
@@ -3521,9 +3524,18 @@ install_robocasa365_env() {
         git -C "$robocasa_dir" pull --ff-only origin main >&2
     fi
 
+    # RoboCasa365 pins lerobot==0.3.3. Do not replace it with the older
+    # LeRobot 0.1.0 used by other environments after installing RoboCasa.
+    # OpenPI's optional offline data loader still imports lerobot.common;
+    # PPO/eval do not use that loader, but SFT co-training needs an API update.
     uv pip install -e "$robocasa_dir"
-    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
+    # robosuite is installed without dependencies to preserve RoboCasa's
+    # MuJoCo pin, so install its QP solver requirement explicitly.
+    uv pip install "qpsolvers[quadprog]>=4.3.1"
+    # New dm-control releases require MuJoCo >=3.8, while RoboCasa pins 3.3.1.
+    # 1.0.28 requires MuJoCo >=3.2.7 and also satisfies gym-aloha's lower bound.
+    uv pip install --no-deps "dm-control==1.0.28"
     uv pip install --no-deps mujoco==3.3.1
     uv pip install "${RAY_COMPAT_DEPS[@]}"
 
@@ -3781,6 +3793,14 @@ install_dosw1_env() {
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"
     uv pip install -e "$repo_root" --no-deps
+}
+
+install_yam_env() {
+    uv pip install \
+        --build-constraint "$SCRIPT_DIR/embodied/envs/yam-build-constraints.txt" \
+        -r "$SCRIPT_DIR/embodied/envs/yam.txt"
+    install_lerobot
+    use_opencv_gui_wheel
 }
 
 install_habitat_env() {
