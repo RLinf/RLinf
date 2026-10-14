@@ -31,9 +31,11 @@ class OrbbecCamera(BaseCamera):
     """Capture BGR images and optional aligned depth from one USB camera.
 
     The serial number is required. Native stream profiles must match the
-    requested frame rate; the closest native resolution is resized to
-    ``camera_info.resolution``. Depth is aligned before resizing and returned
-    in metres by :meth:`get_observation`.
+    requested frame rate. Color uses the native resolution closest to
+    ``camera_info.resolution``; depth uses the device's default depth
+    resolution, so the depth mode does not follow the output size. Depth is
+    aligned to color, both are resized to ``camera_info.resolution``, and
+    :meth:`get_observation` returns depth in metres.
 
     Color-only capture does not enable the depth sensor. Models that require
     external power for depth must have that supply connected when
@@ -54,16 +56,22 @@ class OrbbecCamera(BaseCamera):
         self._align = None
         self._first_frame: Optional[np.ndarray] = None
 
+    @classmethod
+    def require_sdk(cls, where: str = "this machine") -> None:
+        """Raise unless the Orbbec SDK, which ``install.sh`` omits, is installed."""
+        try:
+            super().require_sdk(where)
+        except ModuleNotFoundError as missing:
+            raise ModuleNotFoundError(
+                f"{cls.__name__} needs the {cls.SDK!r} module, which is not "
+                f"installed on {where}. Install it with "
+                "'pip install --no-deps pyorbbecsdk2==2.1.2'."
+            ) from missing
+
     def _open(self) -> Any:
         import pyorbbecsdk as ob
 
-        context = ob.Context()
-        context.enable_net_device_enumeration(False)
-        devices = context.query_devices()
-        serials = {
-            devices.get_device_serial_number_by_index(index)
-            for index in range(devices.get_count())
-        }
+        context, devices, serials = self._query_usb_devices(ob)
         serial = self._camera_info.serial_number
         if serial not in serials:
             raise ValueError(
@@ -88,16 +96,25 @@ class OrbbecCamera(BaseCamera):
                     ob.OBFormat.YUY2,
                 ),
                 "color",
+                self._camera_info.resolution,
             )
             config.enable_stream(color_profile)
+            selected = [color_profile]
             if self._camera_info.enable_depth:
-                config.enable_stream(
-                    self._select_profile(
-                        pipeline.get_stream_profile_list(ob.OBSensorType.DEPTH_SENSOR),
-                        (ob.OBFormat.Y16, ob.OBFormat.Z16),
-                        "depth",
-                    )
+                depth_profiles = pipeline.get_stream_profile_list(
+                    ob.OBSensorType.DEPTH_SENSOR
                 )
+                # Aligned depth takes the color resolution anyway, so the
+                # native size only picks the depth mode; keep the default.
+                default = depth_profiles.get_default_video_stream_profile()
+                depth_profile = self._select_profile(
+                    depth_profiles,
+                    (ob.OBFormat.Y16, ob.OBFormat.Z16),
+                    "depth",
+                    (default.get_width(), default.get_height()),
+                )
+                config.enable_stream(depth_profile)
+                selected.append(depth_profile)
                 config.set_frame_aggregate_output_mode(
                     ob.OBFrameAggregateOutputMode.FULL_FRAME_REQUIRE
                 )
@@ -125,6 +142,23 @@ class OrbbecCamera(BaseCamera):
                     float(distortion != ob.OBCameraDistortionModel.NONE),
                 )
 
+            _logger.info(
+                "Orbbec camera %s streams %s.",
+                serial,
+                " and ".join(self._describe(profile) for profile in selected),
+            )
+            width, height = self._camera_info.resolution
+            native = (color_profile.get_width(), color_profile.get_height())
+            if native[0] * height != native[1] * width:
+                _logger.warning(
+                    "Orbbec camera %s stretches its %dx%d color stream to the "
+                    "configured %dx%d resolution.",
+                    serial,
+                    *native,
+                    width,
+                    height,
+                )
+
             self._start_attempted = True
             pipeline.start(config)
             # Validate the requested streams before connect() reports success.
@@ -148,19 +182,23 @@ class OrbbecCamera(BaseCamera):
         return pipeline
 
     def _select_profile(
-        self, profiles: Any, formats: tuple[Any, ...], stream: str
+        self,
+        profiles: Any,
+        formats: tuple[Any, ...],
+        stream: str,
+        size: tuple[int, int],
     ) -> Any:
-        """Choose a supported format and nearest resolution at the exact fps."""
-        width, height = self._camera_info.resolution
+        """Choose a supported format at the exact fps, nearest to ``size``."""
+        width, height = size
         candidates = []
         available = []
         for index in range(profiles.get_count()):
             profile = profiles.get_stream_profile_by_index(
                 index
             ).as_video_stream_profile()
+            available.append(self._describe(profile))
             w, h = profile.get_width(), profile.get_height()
             fps, pixel_format = profile.get_fps(), profile.get_format()
-            available.append(f"{w}x{h}@{fps} {pixel_format}")
             if fps == self._camera_info.fps and pixel_format in formats:
                 score = (
                     (w - width) ** 2 + (h - height) ** 2,
@@ -178,74 +216,89 @@ class OrbbecCamera(BaseCamera):
             )
         return min(candidates, key=lambda item: item[0])[1]
 
+    @staticmethod
+    def _describe(profile: Any) -> str:
+        return (
+            f"{profile.get_width()}x{profile.get_height()}"
+            f"@{profile.get_fps()} {profile.get_format()}"
+        )
+
     def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
         if self._first_frame is not None:
             frame, self._first_frame = self._first_frame, None
             return True, frame
-        # Leave room for BaseCamera's inter-frame sleep within its two-second
-        # close join, including cameras that expose a one-fps profile.
-        return True, self._wait_for_frame(timeout=0.75)
+        # Short polls let disconnect() stop this thread within its join
+        # timeout. A longer stall is get_frame()'s to detect and reopen.
+        while True:
+            frame = self._poll_frame(timeout_ms=100)
+            if frame is not None:
+                return True, frame
+            if not self._frame_capturing_start:
+                return False, None
 
     def _wait_for_frame(self, timeout: float) -> np.ndarray:
-        import cv2
-
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
-            frames = self._pipeline.wait_for_frames(min(100, remaining_ms))
-            if frames is None or frames.get_color_frame() is None:
-                continue
-            if self._align is not None:
-                if frames.get_depth_frame() is None:
-                    continue
-                aligned = self._align.process(frames)
-                if aligned is None:
-                    continue
-                frames = aligned.as_frame_set()
-                if frames is None or frames.get_color_frame() is None:
-                    continue
-                if frames.get_depth_frame() is None:
-                    continue
-
-            color = self._color_to_bgr(frames.get_color_frame())
-            depth = None
-            if self._align is not None:
-                depth_frame = frames.get_depth_frame()
-                shape = (depth_frame.get_height(), depth_frame.get_width())
-                if shape != color.shape[:2]:
-                    raise RuntimeError(
-                        "Orbbec aligned depth does not match the color resolution."
-                    )
-                scale = depth_frame.get_depth_scale()
-                if not np.isfinite(scale) or scale <= 0:
-                    raise RuntimeError(
-                        f"Orbbec camera reported an invalid depth scale: {scale}."
-                    )
-                # Scale belongs to this frame, not to later queued frames.
-                depth = (
-                    np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-                    .reshape(shape)
-                    .astype(np.float32)
-                )
-                depth *= scale * 1e-3
-
-            resolution = self._camera_info.resolution
-            if color.shape[:2] != resolution[::-1]:
-                color = cv2.resize(color, resolution, interpolation=cv2.INTER_AREA)
-                if depth is not None:
-                    depth = cv2.resize(
-                        depth, resolution, interpolation=cv2.INTER_NEAREST
-                    )
-            if depth is not None:
-                return np.concatenate((color, depth[..., None]), axis=-1)
-            # A numpy view must not outlive the SDK frame that owns its buffer.
-            return color.copy()
-
+            frame = self._poll_frame(timeout_ms=min(100, remaining_ms))
+            if frame is not None:
+                return frame
         raise TimeoutError(
             f"Orbbec camera {self._camera_info.serial_number!r} produced no complete "
             f"{'color/depth' if self._camera_info.enable_depth else 'color'} frame "
             f"within {timeout:g} seconds. {self._connection_hint()}"
         )
+
+    def _poll_frame(self, timeout_ms: int) -> Optional[np.ndarray]:
+        """Return one complete frame, or ``None`` if none arrives in time."""
+        import cv2
+
+        frames = self._pipeline.wait_for_frames(timeout_ms)
+        if frames is None or frames.get_color_frame() is None:
+            return None
+        if self._align is not None:
+            if frames.get_depth_frame() is None:
+                return None
+            aligned = self._align.process(frames)
+            if aligned is None:
+                return None
+            frames = aligned.as_frame_set()
+            if frames is None or frames.get_color_frame() is None:
+                return None
+            if frames.get_depth_frame() is None:
+                return None
+
+        color = self._color_to_bgr(frames.get_color_frame())
+        depth = None
+        if self._align is not None:
+            depth_frame = frames.get_depth_frame()
+            shape = (depth_frame.get_height(), depth_frame.get_width())
+            if shape != color.shape[:2]:
+                raise RuntimeError(
+                    "Orbbec aligned depth does not match the color resolution."
+                )
+            scale = depth_frame.get_depth_scale()
+            if not np.isfinite(scale) or scale <= 0:
+                raise RuntimeError(
+                    f"Orbbec camera reported an invalid depth scale: {scale}."
+                )
+            # Scale belongs to this frame, not to later queued frames.
+            depth = (
+                np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+                .reshape(shape)
+                .astype(np.float32)
+            )
+            depth *= scale * 1e-3
+
+        resolution = self._camera_info.resolution
+        if color.shape[:2] != resolution[::-1]:
+            color = cv2.resize(color, resolution, interpolation=cv2.INTER_AREA)
+            if depth is not None:
+                depth = cv2.resize(depth, resolution, interpolation=cv2.INTER_NEAREST)
+        if depth is not None:
+            return np.concatenate((color, depth[..., None]), axis=-1)
+        # A numpy view must not outlive the SDK frame that owns its buffer.
+        return color.copy()
 
     @staticmethod
     def _color_to_bgr(frame: Any) -> np.ndarray:
@@ -289,6 +342,18 @@ class OrbbecCamera(BaseCamera):
             self._pipeline = None
             self._context = None
 
+    @staticmethod
+    def _query_usb_devices(ob: Any) -> tuple[Any, Any, set[str]]:
+        """Return the SDK context, its USB device list, and their serials."""
+        context = ob.Context()
+        context.enable_net_device_enumeration(False)
+        devices = context.query_devices()
+        serials = {
+            devices.get_device_serial_number_by_index(index)
+            for index in range(devices.get_count())
+        }
+        return context, devices, serials
+
     @classmethod
     def discover(cls) -> set[str]:
         """Return USB serial numbers without constructing or streaming devices."""
@@ -296,10 +361,4 @@ class OrbbecCamera(BaseCamera):
             import pyorbbecsdk as ob
         except ImportError:
             return set()
-        context = ob.Context()
-        context.enable_net_device_enumeration(False)
-        devices = context.query_devices()
-        return {
-            devices.get_device_serial_number_by_index(index)
-            for index in range(devices.get_count())
-        }
+        return cls._query_usb_devices(ob)[2]

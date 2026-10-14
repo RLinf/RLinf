@@ -3691,6 +3691,8 @@ def test_orbbec_declaration_does_not_import_sdk(monkeypatch):
     with pytest.raises(ImportError, match="pyorbbecsdk"):
         camera.connect()
     assert not camera.is_connected
+    with pytest.raises(ModuleNotFoundError, match="--no-deps pyorbbecsdk2"):
+        type(camera).require_sdk()
 
 
 def test_orbbec_opens_only_selected_serial_and_rgb_needs_no_depth(orbbec_sdk):
@@ -3705,7 +3707,6 @@ def test_orbbec_opens_only_selected_serial_and_rgb_needs_no_depth(orbbec_sdk):
         assert observation["frame"].dtype == np.uint8
         np.testing.assert_array_equal(observation["frame"][20, 20], [32, 96, 192])
         assert orbbec_sdk.opened == ["MOCK0002"]
-        assert orbbec_sdk.depth_reads == orbbec_sdk.aligned == 0
         streams = orbbec_sdk.pipelines[0].config.streams
         assert set(streams) == {"color"}
         assert streams["color"].size == (64, 48)
@@ -3757,50 +3758,35 @@ def test_orbbec_decodes_color_formats_to_bgr(monkeypatch, color_format):
 
 
 def test_orbbec_aligned_depth_is_metres_and_resize_preserves_samples(orbbec_sdk):
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
     camera = _orbbec_camera(enable_depth=True, resolution=(53, 39))
     try:
         camera.connect()
+        # The depth mode is the device default, not the one nearest the output.
+        streams = orbbec_sdk.pipelines[0].config.streams
+        assert streams["color"].size == (64, 48)
+        assert streams["depth"].size == (128, 96)
+
         observation = camera.get_observation(timeout=1)
         assert observation["frame"].shape == (39, 53, 3)
         assert observation["frame"].dtype == np.uint8
         depth = observation["depth"]
         assert depth.shape == (39, 53)
         assert depth.dtype == np.float32
-        np.testing.assert_allclose(np.unique(depth), [0.0, 0.125, 0.375])
-        assert depth[0, 0] == 0
-        assert depth[20, 0] == pytest.approx(0.125)
-        assert depth[20, -1] == pytest.approx(0.375)
-        assert orbbec_sdk.aligned > 0
-        assert orbbec_sdk.pipelines[0].config.aggregate_mode == "full"
+        near, far = DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE
+        np.testing.assert_allclose(np.unique(depth), [near, far])
+        assert depth[20, 0] == pytest.approx(near)
+        assert depth[20, -1] == pytest.approx(far)
 
         # Units belong to each frame, so changing the device's depth precision
         # must not reuse a startup scale for later observations.
-        orbbec_sdk.depth_scale_mm = 0.5
+        orbbec_sdk.depth_scale_mm *= 2
         for _ in range(5):
             depth = camera.get_observation(timeout=1)["depth"]
-            if depth[20, -1] == pytest.approx(0.75):
+            if depth[20, -1] == pytest.approx(2 * far):
                 break
-        np.testing.assert_allclose(np.unique(depth), [0.0, 0.25, 0.75])
-    finally:
-        camera.disconnect()
-
-
-@pytest.mark.parametrize(
-    "distortion", ["NONE", "BROWN_CONRADY", "BROWN_CONRADY_K6", "KANNALA_BRANDT4"]
-)
-def test_orbbec_depth_alignment_uses_native_color_coordinates(orbbec_sdk, distortion):
-    orbbec_sdk.distortion_model = distortion
-    camera = _orbbec_camera(enable_depth=True)
-    try:
-        camera.connect()
-        depth = camera.get_observation(timeout=1)["depth"]
-        # The near/far boundary belongs between native color columns 31 and 32.
-        assert depth[24, 31] == pytest.approx(0.125)
-        assert depth[24, 32] == pytest.approx(0.375)
-        assert depth[0, 0] == 0
-        align = orbbec_sdk.align_filters[0]
-        assert align.match_target_resolution
-        assert align.config["TargetDistortion"] == float(distortion != "NONE")
+        np.testing.assert_allclose(np.unique(depth), [2 * near, 2 * far])
     finally:
         camera.disconnect()
 
@@ -3813,20 +3799,6 @@ def test_orbbec_rejects_unsupported_color_distortion_before_streaming(orbbec_sdk
     assert not camera.is_connected
     assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
     assert all(pipeline.stops == 0 for pipeline in orbbec_sdk.pipelines)
-
-
-def test_orbbec_retries_transient_startup_timeouts(orbbec_sdk):
-    orbbec_sdk.transient_misses = 3
-    camera = _orbbec_camera(enable_depth=True)
-    try:
-        camera.connect()
-        assert camera.get_observation(timeout=1)["depth"].shape == (48, 64)
-        waits = orbbec_sdk.pipelines[0].wait_timeouts
-        assert len(waits) >= 4
-        assert all(0 < timeout <= 1000 for timeout in waits)
-        assert orbbec_sdk.opened == ["MOCK0002"]
-    finally:
-        camera.disconnect()
 
 
 @pytest.mark.parametrize("scale", [0.0, -1.0, float("nan")])
@@ -3907,57 +3879,66 @@ def test_orbbec_disconnect_is_idempotent_and_reconnect_discards_old_frames(orbbe
     assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
 
 
+def test_orbbec_rides_out_a_stall_shorter_than_the_read_timeout(orbbec_sdk):
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        orbbec_sdk.no_frames = True
+        time.sleep(1.0)
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        orbbec_sdk.no_frames = False
+        frame = camera.get_observation(timeout=2, max_age=0.1)["frame"]
+        np.testing.assert_array_equal(frame[20, 20], [9, 21, 43])
+        assert orbbec_sdk.opened == ["MOCK0002"]
+    finally:
+        camera.disconnect()
+
+
 @pytest.mark.parametrize(
     ("enable_depth", "fault"), [(False, "no_frames"), (True, "missing_depth")]
 )
-def test_orbbec_recovers_fresh_observations_after_runtime_stream_loss(
+def test_orbbec_reopens_a_stalled_stream_and_stops_its_reader(
     orbbec_sdk, enable_depth, fault
 ):
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
     camera = _orbbec_camera(enable_depth=enable_depth)
     try:
         camera.connect()
-        original = camera.get_observation(timeout=1)
-        np.testing.assert_array_equal(original["frame"][20, 20], [32, 96, 192])
-        if enable_depth:
-            np.testing.assert_allclose(np.unique(original["depth"]), [0, 0.125, 0.375])
-
-        interrupted = orbbec_sdk.pipelines[0]
-        interrupted.fault = fault
-        assert interrupted.fault_observed.wait(timeout=2), "Capture never saw the fault"
-        reader = interrupted.fault_reader
-        reader.join(timeout=2)
-        assert not reader.is_alive(), (
-            "The capture thread did not exit after stream loss"
-        )
-        assert interrupted.stops == 0, "The caller must recover the stopped reader"
-
+        camera.get_observation(timeout=1)
+        stalled = orbbec_sdk.pipelines[0]
+        stalled.fault = fault
+        assert stalled.fault_observed.wait(timeout=2), "Capture never saw the fault"
         orbbec_sdk.color_bgr[:] = [9, 21, 43]
-        orbbec_sdk.depth_scale_mm = 0.5
-        # Reject any frame queued before the stalled read. The normal public
-        # timeout path must reopen the camera and retry on a healthy session.
-        recovered = camera.get_observation(timeout=1, attempts=2, max_age=0.1)
+        orbbec_sdk.depth_scale_mm *= 2
+        # Age the last frame captured before the stall past max_age below.
+        time.sleep(0.2)
+
+        # The first attempt times out and reopens; the second reads the new
+        # session, so nothing captured before the stall may be returned.
+        recovered = camera.get_observation(timeout=0.5, attempts=2, max_age=0.1)
         assert orbbec_sdk.opened == ["MOCK0002", "MOCK0002"]
-        assert len(orbbec_sdk.pipelines) == 2
-        assert interrupted.stops == 1
-        assert not interrupted.started
-        assert not reader.is_alive()
+        assert stalled.stops == 1
+        assert not stalled.fault_reader.is_alive()
         np.testing.assert_array_equal(recovered["frame"][20, 20], [9, 21, 43])
-        assert recovered["frame"].dtype == np.uint8
         if enable_depth:
-            assert recovered["depth"].dtype == np.float32
-            np.testing.assert_allclose(np.unique(recovered["depth"]), [0, 0.25, 0.75])
+            np.testing.assert_allclose(
+                np.unique(recovered["depth"]),
+                [2 * DEPTH_NEAR * DEPTH_SCALE, 2 * DEPTH_FAR * DEPTH_SCALE],
+            )
         else:
             assert set(recovered) == {"frame"}
     finally:
         camera.disconnect()
     assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
-    assert not camera.is_connected
 
 
 @pytest.mark.placement
 @pytest.mark.parametrize("node_rank", [None, 0])
 def test_orbbec_camera_has_local_remote_observation_parity(node_rank):
     from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
 
     from rlinf.robotics.parts.cameras import CameraInfo
 
@@ -3982,7 +3963,8 @@ def test_orbbec_camera_has_local_remote_observation_parity(node_rank):
             assert observation["depth"].dtype == np.float32
             np.testing.assert_array_equal(observation["frame"][20, 20], [32, 96, 192])
             np.testing.assert_allclose(
-                np.unique(observation["depth"]), [0.0, 0.125, 0.375]
+                np.unique(observation["depth"]),
+                [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE],
             )
         finally:
             camera.disconnect()

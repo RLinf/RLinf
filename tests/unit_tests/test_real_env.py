@@ -223,10 +223,6 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for(camera_type):
                 override_cfg={
                     "enable_camera_depth": enable_camera_depth,
                     "enable_camera_player": False,
-                    # Keep the Orbbec fake's invalid corner sample in view.
-                    "camera_crop_regions": {SERIAL: [0.0, 0.0, 1.0, 1.0]}
-                    if camera_type == "orbbec"
-                    else None,
                 },
                 worker_info=None,
                 env_idx=0,
@@ -262,12 +258,10 @@ def test_franka_depth_reaches_the_observation_only_when_asked_for(camera_type):
             # was actually measured at; averaging would invent readings between
             # the near and far halves, where nothing is.
             distances = np.unique(depth)
-            expected = (
-                [0.0, 0.125, 0.375]
-                if camera_type == "orbbec"
-                else [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE]
+            assert len(distances) == 2
+            assert np.allclose(
+                distances, [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE]
             )
-            np.testing.assert_allclose(distances, expected)
         finally:
             env.close()
 

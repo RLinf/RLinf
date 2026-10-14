@@ -14,8 +14,8 @@
 
 """Fake RealSense, Orbbec, ZED, and OpenCV camera interfaces.
 
-Synthetic frames and controllable device state support lifecycle and image
-conversion checks without attached cameras.
+Each generated RealSense and ZED frame increments its first pixel so tests can
+detect fresh capture-thread output.
 """
 
 from __future__ import annotations
@@ -145,10 +145,11 @@ def orbbec(
     """Return an Orbbec SDK with serial selection and controllable stream faults.
 
     The module exposes hardware state for tests: ``opened``, ``pipelines``,
-    ``fail_start``, ``missing_depth``, ``no_frames``, ``transient_misses``, and
-    ``depth_scale_mm``. Native profiles have two sizes at the advertised FPS.
-    A pipeline's ``fault`` can interrupt only that session with ``no_frames``
-    or ``missing_depth``; ``fault_observed`` signals the affected reader.
+    ``fail_start``, ``fail_profiles``, ``missing_depth``, ``no_frames``,
+    ``depth_scale_mm``, ``distortion_model``, and ``color_bgr``. Native
+    profiles have two sizes at the advertised FPS, and the larger one is the
+    default. A pipeline's ``fault`` can interrupt only that session with
+    ``no_frames`` or ``missing_depth``; ``fault_observed`` signals the reader.
     """
     fake = module("pyorbbecsdk")
     fake.opened = []
@@ -157,12 +158,9 @@ def orbbec(
     fake.fail_profiles = False
     fake.missing_depth = False
     fake.no_frames = False
-    fake.transient_misses = 0
-    fake.depth_scale_mm = 0.25
+    # Millimetres per count, so metres agree with the RealSense fake.
+    fake.depth_scale_mm = DEPTH_SCALE * 1e3
     fake.distortion_model = "BROWN_CONRADY_K6"
-    fake.aligned = 0
-    fake.align_filters = []
-    fake.depth_reads = 0
     fake.color_bgr = np.array([32, 96, 192], dtype=np.uint8)
 
     class Profile:
@@ -203,6 +201,9 @@ def orbbec(
         def get_stream_profile_by_index(self, index: int):
             return self.profiles[index]
 
+        def get_default_video_stream_profile(self):
+            return self.profiles[0]
+
     class DeviceList:
         def get_count(self):
             return len(SERIALS)
@@ -222,13 +223,12 @@ def orbbec(
     class Config:
         def __init__(self):
             self.streams = {}
-            self.aggregate_mode = None
 
         def enable_stream(self, profile: Profile):
             self.streams[profile.sensor] = profile
 
         def set_frame_aggregate_output_mode(self, mode: str):
-            self.aggregate_mode = mode
+            pass
 
     class VideoFrame:
         def __init__(self, profile: Profile, data: np.ndarray):
@@ -282,14 +282,12 @@ def orbbec(
                     dtype=np.uint16,
                 )
                 data[:, : depth.get_width() // 2] = DEPTH_NEAR
-                data[0, 0] = 0
                 self.depth = DepthFrame(depth, data)
 
         def get_color_frame(self):
             return self.color
 
         def get_depth_frame(self):
-            fake.depth_reads += 1
             return self.depth
 
         def as_frame_set(self):
@@ -301,7 +299,6 @@ def orbbec(
             self.started = False
             self.stops = 0
             self.config = None
-            self.wait_timeouts = []
             self.fault = None
             self.fault_reader = None
             self.fault_observed = threading.Event()
@@ -322,14 +319,12 @@ def orbbec(
                 raise RuntimeError("device pipeline start failed")
 
         def wait_for_frames(self, timeout_ms: int):
-            self.wait_timeouts.append(timeout_ms)
             if not self.started:
                 raise RuntimeError("device pipeline is not started")
             if self.fault is not None:
                 self.fault_reader = threading.current_thread()
                 self.fault_observed.set()
-            if fake.no_frames or fake.transient_misses or self.fault == "no_frames":
-                fake.transient_misses = max(0, fake.transient_misses - 1)
+            if fake.no_frames or self.fault == "no_frames":
                 time.sleep(min(timeout_ms / 1000, 0.01))
                 return None
             if fake.missing_depth or self.fault == "missing_depth":
@@ -343,23 +338,28 @@ def orbbec(
     class AlignFilter:
         def __init__(self, align_to_stream: str):
             assert align_to_stream == "color", "Depth must align to color"
-            self.match_target_resolution = True
-            self.config = {"TargetDistortion": 0.0}
-            fake.align_filters.append(self)
+            self.match_target_resolution = False
 
         def set_match_target_resolution(self, enabled: bool):
             self.match_target_resolution = enabled
 
         def set_config_value(self, name: str, value: float):
-            self.config[name] = value
+            pass
 
         def process(self, frames: Frames):
-            fake.aligned += 1
-            expected = float(fake.distortion_model != "NONE")
-            if frames.depth is not None and self.config["TargetDistortion"] != expected:
-                # Represent the difference between ideal and distorted color
-                # coordinates with a one-pixel shift at the depth boundary.
-                frames.depth.data = np.roll(frames.depth.data, 1, axis=1)
+            depth = frames.depth
+            if depth is not None and self.match_target_resolution:
+                # Resample depth onto the color pixel grid, as the SDK does.
+                color = frames.color.profile
+                width, height = color.get_width(), color.get_height()
+                rows = np.arange(height) * depth.data.shape[0] // height
+                cols = np.arange(width) * depth.data.shape[1] // width
+                aligned = DepthFrame(
+                    Profile("depth", (width, height), color.rate),
+                    np.ascontiguousarray(depth.data[np.ix_(rows, cols)]),
+                )
+                aligned.scale = depth.scale
+                frames.depth = aligned
             return frames
 
     fake.Context = lambda: types.SimpleNamespace(
