@@ -348,7 +348,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - ``True`` 启用基于转移规则的状态变化（如切割、烹饪）。
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` 使用 numpy 控制器后端，在单进程 / 中等并行下通常更快。
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示策略在
        chunk 边界观测到的帧。
    * - ``num_env_subprocess``
