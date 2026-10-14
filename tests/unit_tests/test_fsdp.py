@@ -14,10 +14,13 @@
 
 """Tests for FSDP meshes, wrapping, precision policies, and optimizer dtypes."""
 
+import json
 import logging
 import os
 import socket
 from datetime import timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -34,11 +37,20 @@ from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
 from rlinf.config import validate_fsdp_cfg
 from rlinf.hybrid_engines.fsdp.compat import apply_buffer_dtype_compatibility
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.fsdp.mixed_precision import (
     build_mixed_precision,
     get_mixed_precision_wrap_policy,
 )
+from rlinf.hybrid_engines.fsdp.strategy.checkpoint import (
+    checkpoint_communication_group,
+    should_save_training_state,
+    validate_checkpoint_communication_backend,
+    validate_checkpoint_format,
+)
 from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
+from rlinf.models.embodiment.openpi.checkpoint import resolve_full_weights
+from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
 
@@ -128,6 +140,343 @@ def test_mesh_group_uses_the_configured_timeout(single_rank_env, monkeypatch):
     mesh = create_device_mesh(1)
 
     assert group_timeout(mesh["fsdp"].get_group()) == CONFIGURED_TIMEOUT
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("dcp", "dcp"),
+        (" DCP ", "dcp"),
+        ("local_shard", "local_shard"),
+        ("LOCAL_SHARD", "local_shard"),
+    ],
+)
+def test_checkpoint_format_accepts_supported_values(value, expected):
+    """Checkpoint format aliases normalize to the two supported layouts."""
+    assert validate_checkpoint_format(value) == expected
+
+
+def test_checkpoint_format_rejects_unknown_values():
+    """A typo must not silently select the DCP save path."""
+    with pytest.raises(ValueError, match="Unsupported FSDP checkpoint format"):
+        validate_checkpoint_format("local-shards")
+
+
+@pytest.mark.parametrize(
+    ("interval", "step", "force", "expected"),
+    [
+        (None, 100, False, True),
+        (1000, 100, False, False),
+        (1000, 1000, False, True),
+        (1000, 750, True, True),
+        (1000, 0, False, True),
+    ],
+)
+def test_training_state_save_interval(interval, step, force, expected):
+    """Exports can be more frequent than resumable training states."""
+    assert should_save_training_state(step, interval, force=force) is expected
+
+
+@pytest.mark.parametrize("interval", [0, -1, True, 1.5, "1000"])
+def test_training_state_save_interval_rejects_invalid_values(interval):
+    with pytest.raises(ValueError, match="null or a positive integer"):
+        should_save_training_state(100, interval)
+
+
+@pytest.fixture
+def cpu_checkpoint_platform(single_rank_env, monkeypatch):
+    """Model the accelerator API edge while checkpoint tensors stay on CPU."""
+    platform = SimpleNamespace(
+        set_device=lambda _: None,
+        current_device=lambda: torch.device("cpu"),
+        synchronize=lambda: None,
+        ipc_collect=lambda: None,
+        empty_cache=lambda: None,
+        is_available=lambda: False,
+    )
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+
+
+def _checkpoint_manager(
+    interval=1000,
+    checkpoint_format="dcp",
+    full_weights=True,
+    communication_backend=None,
+):
+    cfg = OmegaConf.create(
+        {
+            "model": {"precision": "fp32"},
+            "fsdp_config": {
+                "strategy": "fsdp",
+                "amp_autocast": {"enabled": False},
+                "training_state_save_interval": interval,
+                "checkpoint_format": checkpoint_format,
+                "save_full_model_weights": full_weights,
+                "checkpoint_communication_backend": communication_backend,
+            },
+        }
+    )
+    manager = FSDPModelManager(cfg, world_size=1, rank=0)
+    manager.model = torch.nn.Linear(4, 3)
+    manager.optimizer = torch.optim.AdamW(manager.model.parameters(), lr=0.01)
+    manager.lr_scheduler = torch.optim.lr_scheduler.StepLR(
+        manager.optimizer, step_size=2, gamma=0.5
+    )
+    _checkpoint_update(manager)
+    return manager
+
+
+def _checkpoint_update(manager):
+    manager.optimizer.zero_grad()
+    manager.model(
+        torch.arange(8, dtype=torch.float32).reshape(2, 4)
+    ).square().mean().backward()
+    manager.optimizer.step()
+    manager.lr_scheduler.step()
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_format", "communication_backend"),
+    [("dcp", None), ("dcp", "gloo"), ("local_shard", None)],
+)
+def test_model_only_export_and_full_training_resume(
+    cpu_checkpoint_platform, tmp_path, checkpoint_format, communication_backend
+):
+    """Inference exports reload; sparse full saves retain the next update."""
+    manager = _checkpoint_manager(
+        checkpoint_format=checkpoint_format, communication_backend=communication_backend
+    )
+    export = tmp_path / "global_step_100" / "actor"
+    manager.save_checkpoint(str(export), step=100)
+    weights = resolve_full_weights(export)
+    assert weights is not None
+    reloaded = torch.nn.Linear(4, 3)
+    reloaded.load_state_dict(torch.load(weights, weights_only=True))
+    inputs = torch.ones((2, 4))
+    torch.testing.assert_close(reloaded(inputs), manager.model(inputs), rtol=0, atol=0)
+    assert not (export / "dcp_checkpoint").exists()
+    assert not (export / "local_shard_checkpoint").exists()
+    with pytest.raises(
+        FileNotFoundError, match="Inference weights alone cannot resume"
+    ):
+        manager.load_checkpoint(str(export))
+
+    full = tmp_path / "global_step_1000" / "actor"
+    manager.save_checkpoint(str(full), step=1000)
+    _checkpoint_update(manager)
+    expected = {key: value.clone() for key, value in manager.model.state_dict().items()}
+    expected_lr = manager.lr_scheduler.get_last_lr()
+    manager.load_checkpoint(str(full))
+    _checkpoint_update(manager)
+    for key, value in manager.model.state_dict().items():
+        torch.testing.assert_close(value, expected[key], rtol=0, atol=0)
+    assert manager.lr_scheduler.get_last_lr() == expected_lr
+
+
+@pytest.mark.parametrize("backend", ["nccl", "mpi", False, 1])
+def test_checkpoint_communication_backend_rejects_unsupported_values(backend):
+    with pytest.raises(ValueError, match="null or 'gloo'"):
+        validate_checkpoint_communication_backend(backend)
+
+
+def test_checkpoint_communication_backend_requires_dcp(cpu_checkpoint_platform):
+    with pytest.raises(ValueError, match="requires DCP"):
+        _checkpoint_manager(
+            checkpoint_format="local_shard", communication_backend="gloo"
+        )
+
+
+def test_checkpoint_group_is_scoped_and_keeps_default_group(cpu_checkpoint_platform):
+    _checkpoint_manager()
+    default = dist.group.WORLD
+    with checkpoint_communication_group(None) as group:
+        assert group is None and dist.group.WORLD is default
+    with pytest.raises(RuntimeError, match="serialization failed"):
+        with checkpoint_communication_group("gloo") as group:
+            assert group is not default and dist.get_backend(group) == "gloo"
+            assert dist.group.WORLD is default
+            raise RuntimeError("serialization failed")
+    assert dist.group.WORLD is default
+    with pytest.raises((ValueError, TypeError)):
+        dist.get_backend(group)
+
+
+def test_failed_dcp_save_releases_checkpoint_group(
+    cpu_checkpoint_platform, tmp_path, monkeypatch
+):
+    import torch.distributed.checkpoint as dcp
+
+    manager = _checkpoint_manager(communication_backend="gloo")
+    groups = []
+
+    def fail_save(*args, process_group, **kwargs):
+        groups.append(process_group)
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(dcp, "save", fail_save)
+    with pytest.raises(OSError, match="storage unavailable"):
+        manager.save_checkpoint(str(tmp_path / "actor"), step=1000)
+    with pytest.raises((ValueError, TypeError)):
+        dist.get_backend(groups[0])
+
+
+@pytest.mark.parametrize("interval", [None, 1000])
+def test_checkpoint_final_override_and_disabled_export(
+    cpu_checkpoint_platform, tmp_path, interval
+):
+    manager = _checkpoint_manager(interval=interval, full_weights=False)
+    path = tmp_path / "actor"
+    if interval is not None:
+        with pytest.raises(ValueError, match="save_full_model_weights=True"):
+            manager.save_checkpoint(str(path), step=100)
+    manager.save_checkpoint(str(path), step=750, force_training_state=True)
+    assert (path / "dcp_checkpoint" / ".metadata").is_file()
+    assert not (path / "model_state_dict").exists()
+    assert not (path / "checkpoint_metadata.json").exists()
+    manager.load_checkpoint(str(path))
+
+
+class _CheckpointCall:
+    def __init__(self, call):
+        self.call = call
+
+    def wait(self):
+        return self.call()
+
+    def consume_duration(self):
+        return 0.0
+
+
+class _CheckpointActor:
+    """A synchronous fake at the worker-group RPC edge with real serialization."""
+
+    def __init__(self, manager, fail=False):
+        self.manager, self.fail = manager, fail
+
+    def get_max_steps_per_epoch(self):
+        return _CheckpointCall(lambda: [2])
+
+    def set_global_step(self, step):
+        pass
+
+    def run_training(self):
+        _checkpoint_update(self.manager)
+        return _CheckpointCall(lambda: [{"loss": 0.0}])
+
+    def run_eval(self):
+        return _CheckpointCall(lambda: [{"val_loss": 1.0}])
+
+    def save_checkpoint(self, path, step, **kwargs):
+        def save():
+            metadata_path = Path(path) / "checkpoint_metadata.json"
+            if metadata_path.exists():
+                metadata = json.loads(metadata_path.read_text())
+                assert metadata["complete"] is False
+                assert metadata["step"] == step
+            self.manager.save_checkpoint(path, step, **kwargs)
+            if self.fail:
+                raise RuntimeError("worker data save failed after model export")
+
+        return _CheckpointCall(save)
+
+
+@pytest.mark.parametrize("interval", [None, 1000])
+def test_sft_checkpoint_completion_and_final_state(
+    cpu_checkpoint_platform, tmp_path, interval
+):
+    manager = _checkpoint_manager(interval=interval)
+    cfg = OmegaConf.create(
+        {
+            "actor": {"fsdp_config": {"training_state_save_interval": interval}},
+            "runner": {
+                "max_steps": 2,
+                "max_epochs": -1,
+                "save_interval": 1,
+                "val_check_interval": -1,
+                "logger": {
+                    "log_path": str(tmp_path),
+                    "experiment_name": "test",
+                    "project_name": "test",
+                    "logger_backends": [],
+                },
+            },
+        }
+    )
+    SFTRunner(cfg, _CheckpointActor(manager)).run()
+    for step in (1, 2):
+        path = tmp_path / "test" / "checkpoints" / f"global_step_{step}" / "actor"
+        metadata = path / "checkpoint_metadata.json"
+        if interval is None:
+            assert not metadata.exists()
+        else:
+            assert json.loads(metadata.read_text()) == {
+                "step": step,
+                "save_training_state": step == 2,
+                "checkpoint_format": "dcp",
+                "complete": True,
+            }
+            if step == 1:
+                with pytest.raises(ValueError, match="inference weights only"):
+                    manager.load_checkpoint(str(path))
+        if interval is None or step == 2:
+            manager.load_checkpoint(str(path))
+
+
+def test_failed_sft_save_keeps_incomplete_marker(cpu_checkpoint_platform, tmp_path):
+    manager = _checkpoint_manager()
+    cfg = OmegaConf.create(
+        {
+            "actor": {"fsdp_config": {"training_state_save_interval": 1000}},
+            "runner": {
+                "max_steps": 1,
+                "max_epochs": -1,
+                "save_interval": 1,
+                "val_check_interval": -1,
+                "logger": {
+                    "log_path": str(tmp_path),
+                    "experiment_name": "test",
+                    "project_name": "test",
+                    "logger_backends": [],
+                },
+            },
+        }
+    )
+    with pytest.raises(RuntimeError, match="worker data save failed"):
+        SFTRunner(cfg, _CheckpointActor(manager, fail=True)).run()
+    path = tmp_path / "test" / "checkpoints" / "global_step_1" / "actor"
+    assert (
+        json.loads((path / "checkpoint_metadata.json").read_text())["complete"] is False
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        manager.load_checkpoint(str(path))
+
+
+def test_early_stop_forces_training_state(cpu_checkpoint_platform, tmp_path):
+    manager = _checkpoint_manager()
+    cfg = OmegaConf.create(
+        {
+            "actor": {"fsdp_config": {"training_state_save_interval": 1000}},
+            "runner": {
+                "max_steps": 10,
+                "max_epochs": -1,
+                "save_interval": 1,
+                "val_check_interval": 1,
+                "early_stop": {"enabled": True, "patience": 1},
+                "logger": {
+                    "log_path": str(tmp_path),
+                    "experiment_name": "test",
+                    "project_name": "test",
+                    "logger_backends": [],
+                },
+            },
+        }
+    )
+    SFTRunner(cfg, _CheckpointActor(manager)).run()
+    path = tmp_path / "test" / "checkpoints" / "global_step_2" / "actor"
+    metadata = json.loads((path / "checkpoint_metadata.json").read_text())
+    assert metadata["complete"] and metadata["save_training_state"]
+    manager.load_checkpoint(str(path))
+    assert not (tmp_path / "test" / "checkpoints" / "global_step_3").exists()
 
 
 def test_mesh_group_defaults_above_the_torch_watchdog(single_rank_env, monkeypatch):

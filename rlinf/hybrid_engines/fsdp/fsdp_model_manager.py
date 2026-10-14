@@ -44,6 +44,11 @@ from rlinf.hybrid_engines.fsdp.optim import (
     validate_adam_mixed_precision,
 )
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+from rlinf.hybrid_engines.fsdp.strategy.checkpoint import (
+    should_save_training_state,
+    validate_checkpoint_communication_backend,
+    validate_checkpoint_for_resume,
+)
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
@@ -79,6 +84,11 @@ class FSDPModelManager:
             world_size: total number of FSDP actor processes.
         """
         self._cfg = cfg
+        self._should_save_training_state(0)
+        validate_checkpoint_communication_backend(
+            self._cfg.fsdp_config.get("checkpoint_communication_backend"),
+            self._cfg.fsdp_config.get("checkpoint_format", "dcp"),
+        )
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
         if self._cfg.get("optim", {}).get("use_fp32_master_params", False):
@@ -376,6 +386,7 @@ class FSDPModelManager:
         Args:
             load_path: the directory to load checkpoint.
         """
+        validate_checkpoint_for_resume(load_path)
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
             self.is_weight_offloaded = False
@@ -384,23 +395,54 @@ class FSDPModelManager:
             self.is_optimizer_offloaded = False
 
         self._strategy.load_checkpoint(
-            self.model, self.optimizer, self.lr_scheduler, load_path
+            self.model,
+            self.optimizer,
+            self.lr_scheduler,
+            load_path,
+            checkpoint_format=self._cfg.fsdp_config.get("checkpoint_format", "dcp"),
+            checkpoint_communication_backend=self._cfg.fsdp_config.get(
+                "checkpoint_communication_backend"
+            ),
         )
 
-    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
+    def _should_save_training_state(self, step: int, force: bool = False) -> bool:
+        return should_save_training_state(
+            step,
+            self._cfg.fsdp_config.get("training_state_save_interval"),
+            force=force,
+        )
+
+    def save_checkpoint(
+        self,
+        save_path: str,
+        step: int = 0,
+        *,
+        force_training_state: bool = False,
+    ) -> None:
         """
         Save checkpoint to local path.
-        Every rank will save its own model and optim shard.
+        Full exports remain available between resumable saves when configured.
 
         Args:
             save_path: the directory to save checkpoint.
+            step: Completed optimizer steps.
+            force_training_state: Save resumable state regardless of its interval.
         """
+        save_training_state = self._should_save_training_state(
+            step, force_training_state
+        )
+        if not save_training_state and not self._cfg.fsdp_config.get(
+            "save_full_model_weights", True
+        ):
+            raise ValueError(
+                "Inference-only checkpoints require save_full_model_weights=True."
+            )
         restore_weight_offload = self.is_weight_offloaded
         restore_optimizer_offload = self.is_optimizer_offloaded
 
         if restore_weight_offload:
             self.load_param_and_grad(self.device)
-        if restore_optimizer_offload:
+        if restore_optimizer_offload and save_training_state:
             self.load_optimizer(self.device)
 
         self._strategy.save_checkpoint(
@@ -411,11 +453,16 @@ class FSDPModelManager:
             save_full_model_weights=self._cfg.fsdp_config.get(
                 "save_full_model_weights", True
             ),
+            checkpoint_format=self._cfg.fsdp_config.get("checkpoint_format", "dcp"),
+            save_training_state=save_training_state,
+            checkpoint_communication_backend=self._cfg.fsdp_config.get(
+                "checkpoint_communication_backend"
+            ),
         )
 
         if restore_weight_offload:
             self.offload_param_and_grad()
-        if restore_optimizer_offload:
+        if restore_optimizer_offload and save_training_state:
             self.offload_optimizer()
 
     def offload_param_and_grad(self, offload_grad: bool = False) -> None:

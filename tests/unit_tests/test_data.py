@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
 
+import gymnasium as gym
 import numpy as np
 import pytest
 import torch
@@ -88,6 +89,124 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+def test_openpi_sft_rejects_tokenizer_state_mode_mismatch():
+    """A YAML state override must agree with the selected SFT tokenizer."""
+    import dataclasses
+
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        _validate_openpi_model_shape,
+    )
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config("pi05_isaaclab_stack_cube")
+    model_cfg = OmegaConf.create(
+        {
+            "openpi": {
+                "config_name": "pi05_isaaclab_stack_cube",
+                "model_action_dim": 32,
+                "action_horizon": 10,
+                "discrete_state_input": True,
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="SFT tokenizer"):
+        _validate_openpi_model_shape(model_cfg, config)
+    state_config = dataclasses.replace(
+        config, model=dataclasses.replace(config.model, discrete_state_input=True)
+    )
+    _validate_openpi_model_shape(model_cfg, state_config)
+
+
+def test_openpi_sft_loader_requires_concrete_local_lerobot_root(tmp_path):
+    """A split parent is rejected before OpenPI tries to build its loader."""
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        _validate_local_lerobot_root,
+    )
+
+    dataset_root = tmp_path / "dataset"
+    (dataset_root / "meta").mkdir(parents=True)
+    (dataset_root / "meta" / "info.json").write_text("{}")
+    split_root = tmp_path / "train"
+    split_root.mkdir()
+    (split_root / dataset_root.name).symlink_to(dataset_root)
+
+    _validate_local_lerobot_root(str(dataset_root))
+    with pytest.raises(ValueError, match="meta/info.json directly"):
+        _validate_local_lerobot_root(str(split_root))
+
+
+@pytest.fixture
+def openpi_sft_cfg(tmp_path):
+    """Provide one local dataset and explicit identity normalization."""
+    root = tmp_path / "train"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta/info.json").write_text("{}")
+    stats = tmp_path / "norm_stats.json"
+    stats.write_text(
+        json.dumps(
+            {
+                "norm_stats": {
+                    key: {
+                        "mean": [0.0] * width,
+                        "std": [1.0] * width,
+                        "q01": [-1.0] * width,
+                        "q99": [1.0] * width,
+                    }
+                    for key, width in (("state", 8), ("actions", 7))
+                }
+            }
+        )
+    )
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 17,
+                "micro_batch_size": 2,
+                "model": {
+                    "model_path": str(tmp_path),
+                    "openpi": {
+                        "config_name": "pi05_isaaclab_stack_cube",
+                        "model_action_dim": 32,
+                        "action_horizon": 10,
+                        "discrete_state_input": False,
+                    },
+                    "openpi_data": {
+                        "norm_stats_path": str(stats),
+                    },
+                },
+            },
+            "data": {"num_workers": 0},
+        }
+    )
+    return cfg, root
+
+
+@pytest.mark.parametrize("eval_dataset", [False, True])
+def test_openpi_sft_default_and_eval_keep_official_factory(
+    monkeypatch, openpi_sft_cfg, eval_dataset
+):
+    """Uniform default and validation use the original official factory."""
+    import openpi.training.data_loader as official
+
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        build_official_openpi_sft_dataloader,
+    )
+
+    cfg, root = openpi_sft_cfg
+    calls = []
+
+    def factory(config, **kwargs):
+        calls.append((config.seed, config.batch_size, kwargs))
+        return SimpleNamespace(data_config=lambda: "official-config")
+
+    monkeypatch.setattr(official, "create_data_loader", factory)
+    _, data_config = build_official_openpi_sft_dataloader(
+        cfg, 2, 1, str(root), eval_dataset=eval_dataset
+    )
+    assert calls == [(17, 4, {"framework": "pytorch", "shuffle": not eval_dataset})]
+    assert data_config == "official-config"
 
 
 def _scalar_trajectory(value: float) -> Trajectory:
@@ -2352,8 +2471,6 @@ class _OperatorTakes:
     """
 
     def __init__(self, edges):
-        import gymnasium as gym
-
         self.edges = list(edges)
         self.tick = 0
         self.observation_space = gym.spaces.Box(0, 1, (1,))
@@ -3299,3 +3416,168 @@ def test_vlm_collate_still_rejects_unknown_mm_keys():
 
     with pytest.raises(ValueError, match="Unsupported multi_modal_input key"):
         collate_fn([sample])
+
+
+class _OpenPIResumeRows(torch.utils.data.Dataset):
+    """Small transformed observations with random augmentation and frame IDs."""
+
+    def __len__(self):
+        return 24
+
+    def __getitem__(self, index):
+        noise = np.array(
+            [random.random(), np.random.random(), float(torch.rand(()))],
+            dtype=np.float32,
+        )
+        return {
+            "image": {"base_0_rgb": np.full((2, 2, 3), index, dtype=np.uint8)},
+            "image_mask": {"base_0_rgb": np.bool_(True)},
+            "state": np.concatenate([np.array([index], dtype=np.float32), noise]),
+            "actions": np.full((10, 7), index, dtype=np.float32),
+        }
+
+
+def _resume_openpi_loader(*, workers=0, rank=0, world_size=2, batch_size=2):
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        StatefulOpenPIDataLoader,
+    )
+
+    return StatefulOpenPIDataLoader(
+        _OpenPIResumeRows(),
+        "config",
+        batch_size=batch_size,
+        world_size=world_size,
+        rank=rank,
+        num_workers=workers,
+        seed=17,
+    )
+
+
+def _take_openpi_batches(iterator, count):
+    result = []
+    for _ in range(count):
+        observation, actions = next(iterator)
+        result.append(
+            (
+                observation.state.clone(),
+                observation.images["base_0_rgb"].clone(),
+                actions.clone(),
+            )
+        )
+    return result
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.parametrize("consumed", [5, 6, 8])
+def test_openpi_stateful_resume_preserves_prefetch_and_epoch_tensors(workers, consumed):
+    """The next batches match across mid-epoch and exact-end checkpoints."""
+    original = _resume_openpi_loader(workers=workers)
+    iterator = iter(original)
+    _take_openpi_batches(iterator, consumed)
+    snapshot = original.state_dict()
+    expected = _take_openpi_batches(iterator, 14)
+    resumed = _resume_openpi_loader(workers=workers)
+    resumed.load_state_dict(snapshot)
+    actual = _take_openpi_batches(iter(resumed), 14)
+    for expected_batch, actual_batch in zip(expected, actual, strict=True):
+        for left, right in zip(expected_batch, actual_batch, strict=True):
+            torch.testing.assert_close(left, right, rtol=0, atol=0)
+
+
+def test_openpi_stateful_rank_partitions_preserve_upstream_order():
+    """Opt-in retains upstream seed-zero permutation on each rank and epoch."""
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        get_official_openpi_sft_num_batches,
+    )
+
+    seen = []
+    for rank in (0, 1):
+        loader = _resume_openpi_loader(rank=rank)
+        assert get_official_openpi_sft_num_batches(loader) == 6
+        batches = _take_openpi_batches(iter(loader), 12)
+        indices = torch.cat([b[0][:, 0] for b in batches]).to(torch.int64).tolist()
+        expected = list(
+            torch.utils.data.DistributedSampler(
+                _OpenPIResumeRows(),
+                num_replicas=2,
+                rank=rank,
+                shuffle=True,
+                drop_last=True,
+            )
+        )
+        assert indices == expected + expected
+        seen.append(set(indices))
+    assert seen[0].isdisjoint(seen[1])
+    assert seen[0] | seen[1] == set(range(24))
+
+
+@pytest.mark.parametrize(
+    "change", [{"world_size": 1}, {"rank": 1}, {"batch_size": 1}, {"workers": 2}]
+)
+def test_openpi_stateful_restore_rejects_incompatible_layout(change):
+    original = _resume_openpi_loader()
+    next(iter(original))
+    with pytest.raises(ValueError, match="unchanged rank topology|world size >= 2"):
+        _resume_openpi_loader(**change).load_state_dict(original.state_dict())
+
+
+def test_openpi_stateful_checkpoint_requires_final_data_manifest(tmp_path):
+    """Weights-ready alone, missing files and corrupted files cannot resume."""
+    loader = _resume_openpi_loader()
+    next(iter(loader))
+    with pytest.raises(ValueError, match="no completed"):
+        loader.validate_checkpoint(str(tmp_path))
+    states = [loader.state_dict(), _resume_openpi_loader(rank=1).state_dict()]
+    torch.save(states, tmp_path / "data.pt")
+    torch.save([torch.get_rng_state()] * 2, tmp_path / "rng.pt")
+    loader.mark_checkpoint_complete(str(tmp_path), states)
+    loader.validate_checkpoint(str(tmp_path))
+    with pytest.raises(ValueError, match="topology/configuration"):
+        _resume_openpi_loader(world_size=3).validate_checkpoint(str(tmp_path))
+    (tmp_path / "data.pt").write_bytes(b"partial")
+    with pytest.raises(ValueError, match="corrupted"):
+        loader.validate_checkpoint(str(tmp_path))
+
+
+def test_openpi_stateful_resume_nonzero_rank_with_workers():
+    original = _resume_openpi_loader(workers=2, rank=1)
+    iterator = iter(original)
+    _take_openpi_batches(iterator, 8)
+    snapshot = original.state_dict()
+    expected = _take_openpi_batches(iterator, 8)
+    resumed = _resume_openpi_loader(workers=2, rank=1)
+    resumed.load_state_dict(snapshot)
+    actual = _take_openpi_batches(iter(resumed), 8)
+    for expected_batch, actual_batch in zip(expected, actual, strict=True):
+        for left, right in zip(expected_batch, actual_batch, strict=True):
+            torch.testing.assert_close(left, right, rtol=0, atol=0)
+
+
+def test_openpi_stateful_factory_preserves_transforms(monkeypatch, openpi_sft_cfg):
+    import openpi.training.data_loader as official
+
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        build_official_openpi_sft_dataloader,
+    )
+
+    class VendorRows:
+        def __len__(self):
+            return 16
+
+        def __getitem__(self, index):
+            return {
+                "observation.state": np.full(8, index / 100, dtype=np.float32),
+                "observation.images.front": np.zeros((8, 10, 3), dtype=np.uint8),
+                "observation.images.wrist": np.zeros((8, 10, 3), dtype=np.uint8),
+                "action": np.full((10, 7), index / 100, dtype=np.float32),
+            }
+
+    monkeypatch.setattr(official, "create_torch_dataset", lambda *args: VendorRows())
+    cfg, root = openpi_sft_cfg
+    cfg.data.stateful_loader = True
+    loader, _ = build_official_openpi_sft_dataloader(cfg, 2, 1, str(root))
+    assert len(loader) == 4
+    observation, actions = next(iter(loader))
+    assert observation.state.shape == (2, 32)
+    assert actions.shape == (2, 10, 32)
+    assert torch.count_nonzero(actions[:, :, 7:]) == 0
