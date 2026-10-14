@@ -307,6 +307,12 @@ own thread; the default returns nothing, which is what every device but
 The builder creates every entry before it creates any streamer, so a streamer
 may take over devices it did not construct itself.
 
+Override ``interlock()`` when the arms a device drives must stop together. The
+builder calls it once every entry exists. The check it returns runs after every
+entry has mapped its reading and before the action is sent, so it can hold an
+arm whose partner faulted later in the same tick. ``pico`` returns one when it
+drives two or more arms through joint positions.
+
 Then list the registered name in the env's ``TELEOP`` tuple. This declaration
 states that the env can represent the device's action; it does not register the
 device again.

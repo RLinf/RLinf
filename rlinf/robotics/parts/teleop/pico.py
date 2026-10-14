@@ -184,6 +184,14 @@ class Pico(TeleopDevice):
             device = PicoDelta(gripper=gripper, side=side, **device_cfg)
         return TeleopEntry(device, drives=drives)
 
+    @classmethod
+    def interlock(
+        cls, cfg: Mapping[str, Any], facts: Any, entries: Sequence[Any]
+    ) -> Optional["HoldTogether"]:
+        """Hold every joint-driven arm while any one of them is held."""
+        arms = [entry for entry in entries if isinstance(entry.device, PicoJoint)]
+        return HoldTogether(arms) if len(arms) > 1 else None
+
     def _measured_pose(self, context: Mapping[str, Any]) -> np.ndarray:
         pose = np.asarray(context["tcp_pose"], dtype=np.float32).reshape(-1)
         if pose.size == 7:
@@ -433,7 +441,6 @@ class PicoTcp(Pico):
 #: What every PicoJoint tick reports, so a recording keeps one schema whether
 #: or not the solver ran.
 _IK_REPORT = {
-    "ik_started_s": None,
     "joint_step_fraction": 1.0,
     "limiting_joint": 0,
     "ik_max_joint_delta": 0.0,
@@ -526,9 +533,11 @@ class PicoJoint(Pico):
         self.APPLIES_WHILE_IDLE = self.hold_current_when_inactive
         self._hand = str(pico_config.get("hand", "right"))
         self._fault: Optional[str] = "release_grip"
-        # Episode control re-latches an arm every tick its partner is held, so
-        # a reason is logged once until the arm drives again.
+        # An arm is re-latched every tick its partner is held, so a reason is
+        # logged once until the arm drives again.
         self._logged_fault: Optional[str] = self._fault
+        # When the solution about to be sent began, for HoldTogether to age.
+        self._solved_at: Optional[float] = None
         self._preserve = False
         self._grip: Optional[float] = None
         self._idle_joints: Optional[np.ndarray] = None
@@ -644,7 +653,6 @@ class PicoJoint(Pico):
             target, current, joints, grip
         )
         info.update(
-            ik_started_s=started if result.success else None,
             ik_attempts=attempts,
             ik_target_fraction=fraction,
             ik_initial_fault=first_fault,
@@ -676,9 +684,16 @@ class PicoJoint(Pico):
         ):
             self.hold_until_released(f"{self._hand}:stale_after_ik")
             return self._holding(joints, grip, info)
+        self._solved_at = started if result.success else None
         return TeleopAction(
             parts=self._parts(command, self._grip), driving=True, info=info
         )
+
+    def _expire(self, now: float) -> None:
+        """Latch this arm if its solution is too old to send at ``now``."""
+        solved, self._solved_at = self._solved_at, None
+        if solved is not None and now - solved > self.max_tick_s:
+            self.hold_until_released(f"{self._hand}:stale_after_ik")
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
         """Return the measured joints, leaving the gripper to the policy."""
@@ -767,3 +782,40 @@ class PicoJoint(Pico):
             result = self._kinematics.solve(step, joints.copy(), grip)
             attempts += 1
         return replace(result, elapsed_s=elapsed), attempts, fraction, first_fault
+
+
+class HoldTogether:
+    """Hold every PICO-driven arm of a robot while any one of them is held.
+
+    Each arm maps its own reading, so an arm solved first cannot see its
+    partner fault later in the same tick. This runs once every arm has been
+    mapped and before the action is sent: it drops a solution that aged past
+    ``max_tick_s`` while the other arms solved, and if any arm is held, holds
+    them all at the joints measured this tick.
+
+    Args:
+        entries: The entries whose devices are :class:`PicoJoint` arms.
+    """
+
+    def __init__(self, entries: Sequence[Any]) -> None:
+        self._entries = list(entries)
+
+    def __call__(self, sample: Any, context: Mapping[str, Any]) -> Any:
+        """Return ``sample``, or a hold of every arm if any one is held."""
+        now = time.monotonic()
+        arms = [entry.device for entry in self._entries]
+        for arm in arms:
+            arm._expire(now)
+        fault = next((arm.fault for arm in arms if arm.fault is not None), None)
+        if fault is None:
+            return sample
+        for arm in arms:
+            if arm.fault is None:
+                arm.hold_until_released(fault)
+        sample.action = np.asarray(context["joint_positions"], dtype=np.float64).copy()
+        sample.active = False
+        sample.apply_when_inactive = True
+        for entry in self._entries:
+            prefix = "" if entry.drives is None else f"{entry.drives}_"
+            sample.info[f"{prefix}pico_active"] = False
+        return sample

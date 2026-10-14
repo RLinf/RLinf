@@ -36,7 +36,6 @@ import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.real.wrappers.episode.keyboard import KeyboardListener
-from rlinf.envs.real.wrappers.teleop.intervention import TeleopSample
 from rlinf.robotics.parts.teleop.pico import PicoJoint
 from rlinf.utils.logging import get_logger
 
@@ -143,29 +142,6 @@ class YamPicoEpisode(gym.Wrapper):
         self._timing_count = 0
         self._timing_faults = 0
         self._last_tick_return_s: Optional[float] = None
-        self._device().sample_filter = self._filter_sample
-
-    def _filter_sample(self, env: gym.Env, sample: TeleopSample) -> TeleopSample:
-        """Hold both arms before dispatch if either controller has faulted."""
-        now = time.monotonic()
-        for entry in self._device().group.entries:
-            if not isinstance(entry.device, PicoJoint):
-                continue
-            prefix = "" if entry.drives is None else f"{entry.drives}_"
-            started = sample.info.get(f"{prefix}ik_started_s")
-            if started is not None and now - started > entry.device.max_tick_s:
-                entry.device.hold_until_released(f"{entry.drives}:stale_after_ik")
-        fault = self._fault()
-        if fault is not None:
-            self._hold_until_released(fault)
-            sample.action = np.asarray(
-                env.get_wrapper_attr("get_joint_positions")(), dtype=np.float64
-            ).copy()
-            sample.active = False
-            sample.apply_when_inactive = True
-            for side in ("left", "right"):
-                sample.info[f"{side}_pico_active"] = False
-        return sample
 
     # Episode boundaries.
 
