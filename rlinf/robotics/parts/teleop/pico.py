@@ -690,9 +690,16 @@ class PicoJoint(Pico):
         )
 
     def _expire(self, now: float) -> None:
-        """Latch this arm if its solution is too old to send at ``now``."""
+        """Latch this arm if what it is about to send is no longer current.
+
+        Its solution may have aged past ``max_tick_s``, or its controller may
+        have stopped streaming, while the other arms were mapped.
+        """
         solved, self._solved_at = self._solved_at, None
-        if solved is not None and now - solved > self.max_tick_s:
+        if self._fault is None and (
+            not self._device.ready
+            or (solved is not None and now - solved > self.max_tick_s)
+        ):
             self.hold_until_released(f"{self._hand}:stale_after_ik")
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
@@ -790,8 +797,9 @@ class HoldTogether:
     Each arm maps its own reading, so an arm solved first cannot see its
     partner fault later in the same tick. This runs once every arm has been
     mapped and before the action is sent: it drops a solution that aged past
-    ``max_tick_s`` while the other arms solved, and if any arm is held, holds
-    them all at the joints measured this tick.
+    ``max_tick_s`` or whose controller stopped streaming while the other arms
+    solved, and if any arm is held, holds them all at the joints measured this
+    tick.
 
     Args:
         entries: The entries whose devices are :class:`PicoJoint` arms.
