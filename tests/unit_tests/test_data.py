@@ -2172,10 +2172,262 @@ def test_offline_lerobot_export_reuses_canonical_frame_conversion():
     assert frame["done"].item()
 
 
+def _load_real_data_collector(monkeypatch):
+    """Load ``collect_real_data.DataCollector`` by its repository path.
+
+    The installed i2rt SDK also ships an ``examples`` package. Loading this
+    entrypoint by path avoids that namespace shadowing.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    import psutil
+
+    monkeypatch.setattr(psutil, "process_iter", lambda: ())
+    path = (
+        Path(__file__).resolve().parents[2] / "examples/embodiment/collect_real_data.py"
+    )
+    spec = importlib.util.spec_from_file_location("_real_data_collection_test", path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_replay_collector_skips_start_preview_and_aborted_transitions(
+    monkeypatch, tmp_path
+):
+    module = _load_real_data_collector(monkeypatch)
+
+    class Accumulator:
+        def __init__(self, **kwargs):
+            self.samples = []
+
+        def append(self, step):
+            self.samples.append(
+                (step.curr_obs["states"].item(), step.next_obs["states"].item())
+            )
+
+        def to_trajectory(self):
+            return SimpleNamespace(
+                intervene_flags=torch.zeros(1), samples=self.samples.copy()
+            )
+
+    class Env:
+        index = 0
+
+        def reset(self, **kwargs):
+            return {"states": torch.tensor([[float(self.index)]])}, {}
+
+        def step(self, action):
+            self.index += 1
+            start = self.index in (2, 6)
+            abort = self.index == 4
+            invalid_done = self.index == 8
+            success = self.index == 10
+            done = invalid_done or success
+            pre = self.index in (1, 4, 5)
+            info = {
+                "keyboard_event": ["start" if start else "abort" if abort else None],
+                "keyboard_phase": ["pre" if pre else "rec"],
+                "record_reset": [start or abort],
+                "pre_record": [pre],
+                "manual_done": [done],
+                "recording_invalid": [invalid_done],
+            }
+            return (
+                {"states": torch.tensor([[float(self.index)]])},
+                torch.tensor([float(done)]),
+                torch.tensor([done]),
+                torch.tensor([False]),
+                info,
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module, "TrajectoryAccumulator", Accumulator)
+    collector = object.__new__(module.DataCollector)
+    collector.cfg = SimpleNamespace(
+        runner=SimpleNamespace(
+            record_task_description=True, logger=SimpleNamespace(log_path=str(tmp_path))
+        ),
+        env=SimpleNamespace(eval=SimpleNamespace(max_episode_steps=100)),
+    )
+    saved = []
+    collector.replay_buffer = SimpleNamespace(
+        add_trajectories=saved.extend,
+        close=lambda: None,
+        auto_save_path=str(tmp_path / "demo_buffer"),
+    )
+    env = Env()
+    collector.env = env
+    collector.num_data_episodes = 1
+    collector._preexisting_success = 0
+    collector._target_step_period = None
+    collector.action_dim = 14
+    collector.total_cnt = 0
+    collector.manual_episode_control_only = True
+    logs = []
+    collector.log_info = logs.append
+    collector.run()
+    assert env.index == 10
+    assert collector.total_cnt == 2
+    assert len(saved) == 1
+    assert saved[0].samples == [(8.0, 9.0), (9.0, 10.0)]
+    assert any("Recording overflow" in message for message in logs)
+    assert sum("Total: 1/1" in message for message in logs) == 1
+
+
+def test_lerobot_only_collector_does_not_build_replay_trajectories(monkeypatch):
+    module = _load_real_data_collector(monkeypatch)
+
+    class Accumulator:
+        def __init__(self, **kwargs):
+            raise AssertionError("replay accumulator should stay unused")
+
+    class Env:
+        resets = 0
+
+        def reset(self, **kwargs):
+            self.resets += 1
+            return {"states": torch.tensor([[0.0]])}, {}
+
+        def step(self, action):
+            return (
+                {"states": torch.tensor([[1.0]])},
+                torch.tensor([1.0]),
+                torch.tensor([True]),
+                torch.tensor([False]),
+                {"manual_done": [True]},
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module, "TrajectoryAccumulator", Accumulator)
+    collector = object.__new__(module.DataCollector)
+    collector.replay_buffer = None
+    collector.env = Env()
+    collector.num_data_episodes = 1
+    collector._preexisting_success = 0
+    collector._target_step_period = None
+    collector.action_dim = 14
+    collector.total_cnt = 0
+    collector.manual_episode_control_only = True
+    logs = []
+    collector.log_info = logs.append
+    collector.run()
+    assert collector.total_cnt == 1
+    assert all("Replay buffer saved" not in message for message in logs)
+
+
 def _policy_input() -> PolicyInput:
     return PolicyInput(
         obs={"states": torch.zeros(16, 4)},
     )
+
+
+def test_export_format_keeps_older_names_and_refuses_two_episode_stores():
+    from rlinf.envs.wrappers.collect_episode import resolve_export_formats
+
+    assert resolve_export_formats("pickle") == ("pickle_episode",)
+    assert resolve_export_formats(["replay_buffer", "lerobot"]) == (
+        "replay_buffer",
+        "lerobot_dataset",
+    )
+    with pytest.raises(ValueError, match="one of"):
+        resolve_export_formats(["pickle_episode", "lerobot_dataset"])
+    with pytest.raises(ValueError, match="Unsupported"):
+        resolve_export_formats("parquet")
+
+
+class _OperatorTakes:
+    """An env publishing the episode edges an operator's buttons produce.
+
+    Each step pops one edge: ``pre`` waits to record, ``start`` begins a take,
+    ``rec`` records a frame, ``discard`` drops the take, ``abort`` ends it
+    without success, and ``end`` ends it successfully.
+    """
+
+    def __init__(self, edges):
+        import gymnasium as gym
+
+        self.edges = list(edges)
+        self.tick = 0
+        self.observation_space = gym.spaces.Box(0, 1, (1,))
+        self.action_space = gym.spaces.Box(-1, 1, (1, 2))
+
+    def _observation(self):
+        return {
+            "states": np.full((1, 3), float(self.tick), dtype=np.float32),
+            "main_images": np.full((1, 8, 8, 3), self.tick % 255, dtype=np.uint8),
+            "task_descriptions": ["take"],
+        }
+
+    def reset(self, *, seed=None, options=None):
+        return self._observation(), {}
+
+    def step(self, action):
+        self.tick += 1
+        edge = self.edges.pop(0)
+        recording = edge in ("rec", "end")
+        info = {
+            "pre_record": np.array([not recording and edge != "start"]),
+            "record_reset": np.array([edge in ("start", "discard", "abort")]),
+            "episode_discarded": np.array([edge == "discard"]),
+            "success": np.array([edge == "end"]),
+        }
+        return (
+            self._observation(),
+            np.zeros(1),
+            np.array([edge == "end"]),
+            np.array([False]),
+            info,
+        )
+
+    def close(self):
+        return None
+
+
+def test_streaming_keeps_aborted_and_unfinished_takes_but_not_discards(tmp_path):
+    """Only an operator's discard drops recorded frames.
+
+    A take ended by a fault, or left open when collection stops, is still
+    saved, flagged unsuccessful, so the merge step can leave it out.
+    """
+    pytest.importorskip("lerobot")
+    pytest.importorskip("cv2")
+    parquet = pytest.importorskip("pyarrow.parquet")
+
+    edges = ["pre", "start", "rec", "rec", "discard", "pre"]
+    edges += ["start", "rec", "rec", "abort"]
+    edges += ["start", "rec", "end"]
+    edges += ["start", "rec", "rec"]
+    collector = CollectEpisode(
+        _OperatorTakes(edges),
+        str(tmp_path),
+        export_format="lerobot_dataset",
+        streaming=True,
+        fps=30,
+    )
+    try:
+        collector.reset()
+        for edge in edges:
+            collector.step(np.zeros((1, 2)))
+            if edge == "end":
+                collector.reset()
+    finally:
+        collector.close()
+
+    takes = []
+    for shard in sorted((tmp_path / "lerobot_dataset" / "rank_0").iterdir()):
+        for data in sorted(shard.glob("data/**/*.parquet")):
+            table = parquet.read_table(data)
+            success = np.asarray(table["is_success"][0].as_py()).reshape(-1)[0]
+            takes.append((table.num_rows, bool(success)))
+    assert takes == [(2, False), (2, True), (2, False)]
 
 
 def test_policy_input_compression_preserves_attached_env_parts(monkeypatch):

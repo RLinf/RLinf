@@ -48,8 +48,8 @@ env:
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "lerobot"      # or "pickle"
+      save_dir: ${runner.logger.log_path}
+      export_format: [replay_buffer, lerobot_dataset]
       only_success: True
       robot_type: "panda"
       fps: 10

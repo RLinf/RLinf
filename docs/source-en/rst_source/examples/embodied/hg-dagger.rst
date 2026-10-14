@@ -201,8 +201,8 @@ export format to LeRobot:
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
        data_collection:
          enabled: True
-         save_dir: ${runner.logger.log_path}/collected_data
-         export_format: "lerobot"
+         save_dir: ${runner.logger.log_path}
+         export_format: [replay_buffer, lerobot_dataset]
          only_success: True
          robot_type: "panda"
          fps: 10
@@ -220,8 +220,8 @@ Launch collection with your copied config:
 
 During teleoperation, the same run writes:
 
-- replay-buffer trajectories under ``logs/{timestamp}/demos/``
-- LeRobot data under ``logs/{timestamp}/collected_data/``
+- replay-buffer trajectories under ``logs/{timestamp}/demo_buffer/``
+- LeRobot data under ``logs/{timestamp}/lerobot_dataset/``
 
 For the collection format, see :doc:`../../guides/data_collection`.
 
