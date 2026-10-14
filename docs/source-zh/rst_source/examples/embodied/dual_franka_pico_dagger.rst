@@ -157,7 +157,7 @@ Ray 节点布局
 
 .. warning::
 
-   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成 ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK`` 以及 Franka 专用环境变量的配置。采集 YAML 里的 ``keyboard_device`` 会在 env worker 内写入 ``RLINF_KEYBOARD_DEVICE``。DAgger 配置没有这一项，env 所在节点仍要在 ``ray start`` 前导出键盘或脚踏设备。
+   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成 ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK`` 以及 Franka 专用环境变量的配置。设置了 ``keyboard_device`` 时，路径直接传给监听器。该字段未设置时，监听器读取 ``RLINF_KEYBOARD_DEVICE``，并且不会改写进程环境变量。DAgger 配置没有这一项，env 所在节点仍要在 ``ray start`` 前导出键盘或脚踏设备。
 
 集群设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -249,8 +249,8 @@ DAgger 拆到多台机器上时，按下面的方式在各节点启动 Ray。单
 * ``left_gripper_type`` / ``right_gripper_type``：左右夹爪类型。
 * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定
   ``/dev/serial/by-id`` 路径。
-* ``keyboard_device``：采集配置里的 evdev 节点。按键来自这台 USB 键盘或脚踏，
-  不来自采集终端。
+* ``keyboard_device``：采集配置里的 evdev 节点；留空则使用
+  ``RLINF_KEYBOARD_DEVICE``。按键来自这台 USB 键盘或脚踏，不来自采集终端。
 * ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``：
   采集示例三者都是 ``0``。DAgger 必须改成实际拥有机械臂和 env 的集群 rank。
 * ``TASK_DESCRIPTION``：采集和 DAgger 使用的任务文本，应与 checkpoint 训练时一致。
@@ -278,7 +278,7 @@ PICO 配置
        teleop:
          - {pico: {drives: left}}
          - {pico: {drives: right}}
-       keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd
+       keyboard_device: null  # 或 /dev/input/by-id/usb-...-event-kbd
        keyboard_reward_wrapper: start_end
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"

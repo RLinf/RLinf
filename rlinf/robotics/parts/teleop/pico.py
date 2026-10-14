@@ -303,9 +303,6 @@ class PicoTcp(Pico):
     #: Absolute pose commands are clipped into the environment action space.
     CLIPS_TO_ACTION_SPACE = True
 
-    #: Collection sends zeros while idle; those must not reach an absolute TCP env.
-    APPLIES_WHILE_IDLE = True
-
     def __init__(
         self,
         gripper: bool = True,
@@ -315,9 +312,6 @@ class PicoTcp(Pico):
     ) -> None:
         super().__init__(gripper=gripper, side=side, **pico_config)
         self.hold_current_when_inactive = bool(hold_current_when_inactive)
-        # Absolute TCP collection sends zeros when idle. Those zeros must not
-        # reach the env, or the arm walks toward the origin after grip release.
-        self.APPLIES_WHILE_IDLE = self.hold_current_when_inactive
         self._holding_after_release = False
         self._last_command: Optional[np.ndarray] = None
 

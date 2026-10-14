@@ -185,8 +185,9 @@ The online DAgger config uses three nodes:
    Ray captures the Python interpreter and environment variables at
    ``ray start`` time. Before starting Ray, finish setting
    ``source .venv/bin/activate``, ``PYTHONPATH``, ``RLINF_NODE_RANK``,
-   and any Franka-specific environment variables. The collection YAML writes
-   ``keyboard_device`` into ``RLINF_KEYBOARD_DEVICE`` inside the env worker.
+   and any Franka-specific environment variables. A set ``keyboard_device``
+   is passed to the listener. When that field is unset, the listener reads
+   ``RLINF_KEYBOARD_DEVICE`` and does not change the process environment.
    The DAgger config has no such field, so export the keyboard or pedal on the
    env node before ``ray start``.
 
@@ -295,8 +296,9 @@ Replace the following fields in the collection and DAgger configs:
 * ``left_gripper_type`` / ``right_gripper_type``: left and right gripper types.
 * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``: stable
   ``/dev/serial/by-id`` paths for the left and right gripper adapters.
-* ``keyboard_device``: the evdev node in the collection config. Episode keys
-  come from this USB keyboard or pedal, not from the collection terminal.
+* ``keyboard_device``: the evdev node in the collection config, or null to use
+  ``RLINF_KEYBOARD_DEVICE``. Episode keys come from this USB keyboard or pedal,
+  not from the collection terminal.
 * ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``:
   all three are ``0`` in the collection example. DAgger must use the cluster
   ranks that own the arms and the env.
@@ -329,7 +331,7 @@ binds the left and right controllers to the left and right arms.
        teleop:
          - {pico: {drives: left}}
          - {pico: {drives: right}}
-       keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd
+       keyboard_device: null  # or /dev/input/by-id/usb-...-event-kbd
        keyboard_reward_wrapper: start_end
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"

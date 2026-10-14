@@ -8,12 +8,12 @@
 
    双 Franka 数据采集、微调与部署流程。
 
-运行受支持的双 Franka 流程：用 GELLO 采集关节空间示教，将数据转换为 tcp_rot6d，微调 OpenPI π₀.₅，并把 checkpoint 部署回驱动双臂的那台主机。
+运行受支持的双 Franka 流程：用 GELLO 采集关节空间示教，将数据转换为 tcp_rot6d，微调 OpenPI π₀.₅，并把 checkpoint 部署回机器人节点。
 
 概览
 ----------------------------------------
 
-构建双臂数据集，训练 π₀.₅，并部署到驱动双臂的那台主机。
+构建双臂数据集，训练 π₀.₅，并部署到双节点 Franka rig。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -36,7 +36,7 @@
    .. grid-item-card:: 硬件
       :text-align: center
 
-      2× Franka · 1 台主机 · GELLO
+      2× Franka · 2 robot nodes · GELLO
 
 | **你将完成:** 安装 franky 依赖 → 采集 GELLO 示教 → 转换 rot6d 数据 → 运行 SFT → 部署 eval 配置.
 | **前置条件:** :doc:`franka` · :doc:`franka_gello` · 两台 Franka · OpenPI assets.
@@ -59,7 +59,7 @@
      - 在 tcp_rot6d 动作上微调 π₀.₅。
    * - Deployment
      - ``realworld_eval_dual_franka``
-     - 在主机上运行 eval-only 部署。
+     - 在机器人节点上运行 eval-only 部署。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -85,7 +85,7 @@
 机器人节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在驱动双臂的那台主机上执行一次机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
+在 ``node 0`` 和 ``node 1`` 上分别执行机器人节点安装。双臂 Franka 始终通过 Franky 控制机械臂，默认的 ``franka`` 环境安装的正是这一 backend。安装脚本会下载内置 libfranka 的 Franky 预编译 wheel，目前只提供 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）两个版本，且仅支持 x86_64。请按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件对应的 ``LIBFRANKA_VERSION``。如果固件需要其他版本，需要针对对应的 libfranka 自行构建 Franky wheel，并通过 ``FRANKY_WHEEL`` 传入其路径或 URL；旧版 ROS backend 支持其他 libfranka 版本，但仅适用于单臂 Franka。
 
 .. code-block:: bash
 
@@ -96,7 +96,7 @@
    bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-按照 :doc:`franka_gello` 在这台主机上安装 GELLO 依赖。两台 GELLO 主手应留在这台主机上，不应通过 LAN 转发 1 kHz 数据流。
+按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应保留在 ``node 0`` 本机，不应通过 LAN 转发 1 kHz 数据流。
 
 实时性前提
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -105,7 +105,9 @@
 
 ``DualFranka`` 硬件配置默认使用 ``realtime_config: ignore``，因此两台机械臂在未启用 PREEMPT_RT 的内核上也能启动，RLinf 会输出一条警告。在这类内核上，负载较高时 1 kHz 控制循环可能错过时限并触发机器人 reflex。如需拒绝在未启用 PREEMPT_RT 的内核上运行，请设置 ``realtime_config: enforce``。
 
-两台机械臂使用不同的 FCI IP，接到同一台主机上。可以直连（每台机械臂一根网线接到主机的一块网卡），也可以经过交换机（两台机械臂和主机接在同一台交换机上）。在这台主机上、启动 RLinf 之前执行下面的示例。不要先启动 Ray。将 ``<FRANKA_NIC>`` 替换为面向机械臂的网卡；两台机械臂经交换机共用一块网卡时，使用这块网卡。分别 ping ``LEFT_ROBOT_IP`` 和 ``RIGHT_ROBOT_IP``。
+启动 Ray 前，在每台直接与 Franka 通信的工作站上执行以下示例。将
+``<FRANKA_NIC>`` 替换为机器人专用网卡；``<ROBOT_IP>`` 在 ``node 0`` 上使用
+``LEFT_ROBOT_IP``，在 ``node 1`` 上使用 ``RIGHT_ROBOT_IP``。
 
 .. code-block:: bash
 
@@ -124,8 +126,7 @@
    ulimit -r
    ulimit -l
    sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
-   ping -c 1000 -i 0.001 <LEFT_ROBOT_IP> | tail -3
-   ping -c 1000 -i 0.001 <RIGHT_ROBOT_IP> | tail -3
+   ping -c 1000 -i 0.001 <ROBOT_IP> | tail -3
 
 ``ulimit -r`` 应为 ``99`` 或 ``unlimited``；``ulimit -l`` 应为
 ``unlimited``。每次重启机器人工作站后，都需要重新执行每次开机后的调优命令。
@@ -167,7 +168,7 @@
 
 替换以下带 ``# Replace:`` 标记的占位符：
 
-* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``：两台机械臂各自的 FCI IP，主机都要能访问。
+* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``：各控制节点可见的 FCI IP。
 * ``BASE_CAMERA_SERIAL``、``LEFT_CAMERA_SERIAL``、``RIGHT_CAMERA_SERIAL``：
   相机 serial 或稳定的 ``/dev/v4l/by-id`` 路径。
 * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：Robotiq 转接器
@@ -177,7 +178,7 @@
 * ``TASK_DESCRIPTION``：采集、SFT 和部署使用的自然语言任务描述。
 * ``SFT_DATASET_REPO_ID``：转换后的数据集 ID，通常是
   ``<repo_id>/tcp_rot6d_v1``。
-* ``MODEL_PATH``：主机上的部署 checkpoint 目录。
+* ``MODEL_PATH``：``node 0`` 上的部署 checkpoint 目录。
 * 共享环境 ``realworld_dual_franka_tcp_rot6d`` 的 TCP xyz 限位是
   x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，z ∈ [0.02, 0.7]。``target_ee_pose`` 必须落在这个盒子里。
 
@@ -185,12 +186,13 @@
 硬件检查
 ----------------------------------------
 
-在主机上、启动前完成以下检查。不要先启动 Ray。
+启动 Ray 前完成以下检查。
 
 脚踏
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-使用厂商工具将 PCsensor FootSwitch 的按键配置为 ``a`` / ``b`` / ``c``。然后在主机上执行：
+使用厂商工具将 PCsensor FootSwitch 的按键配置为 ``a`` / ``b`` / ``c``。然后在
+``node 0`` 执行：
 
 .. code-block:: bash
 
@@ -201,7 +203,7 @@
 .. note::
 
    将所有 ``eventXX`` 替换为第一条命令显示的实际 ``eventNN``，例如
-   ``event7``。在启动采集或部署的 shell 里导出 ``RLINF_KEYBOARD_DEVICE``。不要执行 ``ray start``。
+   ``event7``。必须在 ``ray start`` 前导出 ``RLINF_KEYBOARD_DEVICE``。
 
 相机
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -246,7 +248,8 @@ GELLO 标定
 
 .. _dual-franka-gello-calibration-zh:
 
-每台 GELLO 需完成一次标定，并使用 ``align-sequential`` 验证。两台主手均可在主机上对左臂完成标定。
+每台 GELLO 需完成一次标定，并使用 ``align-sequential`` 验证。两台主手均可在
+``node 0`` 上对左臂完成标定。
 
 .. code-block:: bash
 
@@ -272,32 +275,50 @@ GELLO 标定
 运行
 ----------------------------------------
 
-不要启动 Ray
+启动 Ray
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``collect_data.sh`` 和评测启动脚本会自己拉起本地 Ray，并继承当前 shell 的环境。不要先执行 ``ray start``。如果 ``ray status`` 还能看到上次留下的集群，先停掉，避免启动脚本连上那个集群：
+Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank 和脚踏设备。
 
 .. code-block:: bash
 
-   ray stop --force
-
-采集演示数据
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-确认 :ref:`align-sequential <dual-franka-gello-calibration-zh>` 报告
-``ALL JOINTS ALIGNED`` 后，在主机上执行采集：
-
-.. code-block:: bash
-
+   # node 0
    cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=0
    export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
+
+   ray stop --force
+   ray start --head --port=6379 --node-ip-address=<HEAD_IP>
+
+.. code-block:: bash
+
+   # node 1
+   cd /path/to/RLinf
+   source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export RLINF_NODE_RANK=1
+
+   ray stop --force
+   ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
+
+在 ``node 0`` 运行 ``ray status``，确认两个节点均为 ALIVE。
+
+采集演示数据
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+确认 :ref:`align-sequential <dual-franka-gello-calibration-zh>` 报告
+``ALL JOINTS ALIGNED`` 后，在 ``node 0`` 执行采集：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
    bash examples/embodiment/collect_data.sh \
        realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
-在主机的另一个终端监控进度：
+在另一个 ``node 0`` 终端监控进度：
 
 .. code-block:: bash
 
@@ -379,7 +400,7 @@ Checkpoint 保存到
 准备 checkpoint 文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-主机上的部署 checkpoint 目录必须包含：
+``node 0`` 上的部署 checkpoint 目录必须包含：
 
 .. code-block:: text
 
@@ -387,7 +408,7 @@ Checkpoint 保存到
    ├── actor/model_state_dict/full_weights.pt
    └── <repo_id>/tcp_rot6d_v1/norm_stats.json
 
-将 SFT checkpoint 和匹配的 normalization stats 同步回主机：
+将 SFT checkpoint 和匹配的 normalization stats 同步回 ``node 0``：
 
 .. code-block:: bash
 
@@ -411,11 +432,9 @@ Checkpoint 保存到
 启动策略部署
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-部署前不要启动 Ray。评测启动脚本会自己拉起本地 Ray。跳过
-:doc:`真机评测指南 <../../evaluations/guides/realworld>` 里的「启动 Ray 集群」：
-那一步是给 GPU 节点和机器人节点分开的情况用的。这里两台机械臂在同一台主机上。
-部署配置是 ``realworld_eval_dual_franka``。需要把动作执行和推理重叠时，使用
-``realworld_dual_franka_pi05_RTC``。复位后按键盘或脚踏的 ``a`` 才开始策略。
+可复用采集阶段的 Ray 集群，也可使用相同环境变量重新启动。策略启动由
+:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用
+``realworld_eval_dual_franka``。
 
 部署阶段脚踏按键：
 
@@ -431,9 +450,9 @@ Checkpoint 保存到
 ----------------------------------------
 
 **Ray worker 导入失败**
-   在启动脚本的那个 shell 里检查 ``which python`` 和
+   在运行 ``ray start`` 的同一个 shell 中检查 ``which python`` 和
    ``python -c "import franky, gello, gello_teleop"``。worker 日志位于
-   ``/tmp/ray/session_latest/logs/worker-*.err``。不要自己启动 Ray。
+   ``/tmp/ray/session_latest/logs/worker-*.err``。
 
 **脚踏设备权限不足**
    重新执行 ``sudo chmod 666 /dev/input/eventXX``，并确认
@@ -448,7 +467,8 @@ Checkpoint 保存到
    验证输出。
 
 **某一机械臂 reset 过程无响应**
-   在主机上对该臂执行 ``ping -c 100 <robot_ip>``。如果出现丢包，先检查直连网线或交换机链路，或重启机器人。
+   在对应 controller 节点运行 ``ping -c 100 <robot_ip>``。如果出现丢包，先修复
+   NIC/FCI 连接或重启机器人。
 
 **部署时无法找到 ``norm_stats.json``**
    确认文件路径为

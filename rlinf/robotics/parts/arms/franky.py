@@ -61,10 +61,13 @@ class FrankyArm(BaseArm):
         5.134,
     ]
     JOINT_DAMPING: ClassVar[list[float]] = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
-    #: Speed scale for position-controlled motions such as reset_joint.
+    #: Robot-level speed scale for Franky motions. ``reset_joint`` does not
+    #: use this value directly: Franky multiplies it into every JointMotion.
     DYNAMICS_FACTOR: ClassVar[float] = 0.2
-    #: JointMotion vel/acc/jerk scales. Impedance stop leaves residual dq;
-    #: a 0.2-scaled Ruckig start then trips acceleration_discontinuity.
+    #: Effective JointMotion velocity, acceleration, and jerk. Franky
+    #: multiplies the per-motion factor by ``DYNAMICS_FACTOR``, so the motion
+    #: is given these values divided by it. They stay below the robot-level
+    #: 0.2 scale, which trips acceleration_discontinuity after an impedance stop.
     RESET_VELOCITY_FACTOR: ClassVar[float] = 0.1
     RESET_ACCELERATION_FACTOR: ClassVar[float] = 0.05
     RESET_JERK_FACTOR: ClassVar[float] = 0.03
@@ -604,10 +607,12 @@ class FrankyArm(BaseArm):
         )
 
     def _reset_dynamics(self, scale: float = 1.0) -> Any:
+        """Return JointMotion scales that stay at ``RESET_*`` after Franky multiplies."""
+        compensate = scale / self.DYNAMICS_FACTOR
         return self._franky.RelativeDynamicsFactor(
-            self.RESET_VELOCITY_FACTOR * scale,
-            self.RESET_ACCELERATION_FACTOR * scale,
-            self.RESET_JERK_FACTOR * scale,
+            self.RESET_VELOCITY_FACTOR * compensate,
+            self.RESET_ACCELERATION_FACTOR * compensate,
+            self.RESET_JERK_FACTOR * compensate,
         )
 
     def _move_reset_joints(self, target: np.ndarray) -> None:

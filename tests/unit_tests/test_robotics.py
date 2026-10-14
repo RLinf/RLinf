@@ -2402,7 +2402,6 @@ class _ScriptedController:
             "grip_open": grip > 0,
         }
 
-    get_reading = get_observation
 
     def connect(self):
         pass
@@ -2469,7 +2468,6 @@ def test_holding_the_current_pose_leaves_the_gripper_to_the_policy():
     parts = binding.action(device.get_observation(), _pico_context()).parts
 
     assert set(parts) == {"arm"}
-    assert binding.APPLIES_WHILE_IDLE
 
 
 def test_releasing_grip_holds_the_measured_pose():
@@ -2499,10 +2497,61 @@ def test_releasing_grip_holds_the_measured_pose():
 
 
 def test_dagger_pico_does_not_apply_arm_commands_while_idle():
-    from rlinf.robotics.parts.teleop import PicoTcp
+    import gymnasium as gym
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-np.inf, np.inf, shape=(10,))
+            self.observation_space = spaces.Box(-1, 1, shape=(1,))
+            self.stepped: list[np.ndarray] = []
+
+        def get_tcp_pose(self):
+            return np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        def get_action_scale(self):
+            return np.array([0.05, 0.3, 1.0])
+
+        def step(self, action):
+            self.stepped.append(np.asarray(action, dtype=np.float64))
+            return {}, 0.0, False, False, {}
+
+        def reset(self, *, seed=None, options=None):
+            return {}, {}
+
+    class Reader:
+        def get_reading(self):
+            return {
+                "held": False,
+                "position_delta": np.zeros(3),
+                "rotation_delta": np.zeros(3),
+                "grip_close": False,
+                "grip_open": False,
+            }
 
     binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=False)
-    assert not binding.APPLIES_WHILE_IDLE
+    binding._device = Reader()
+    group = TeleopGroup(
+        [TeleopEntry(binding)],
+        available={
+            "arm": ActionKind.CARTESIAN_POSE,
+            "end_effector": ActionKind.GRIPPER,
+        },
+    )
+    device = ComposedTeleop(
+        group, {"arm": slice(0, 9), "end_effector": slice(9, 10)}
+    )
+    env = Env()
+    policy = np.full(10, 0.7)
+    _, _, _, _, info = TeleopIntervention(env, device).step(policy)
+
+    assert np.allclose(env.stepped[0], policy)
+    assert "intervene_action" not in info
 
 
 def _pico_frame(position, grip=0.0, buttons=None, headset=None):

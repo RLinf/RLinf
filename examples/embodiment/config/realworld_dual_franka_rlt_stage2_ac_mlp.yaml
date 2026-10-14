@@ -128,33 +128,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  # Shared by train and eval. Left grip drives the left arm, right grip the right.
-  pico: &pico
-    zmq_addr: "ipc:///tmp/vr_data.ipc"
-    hand: "dual"
-    # False so a released grip returns control to the policy. True holds the
-    # measured pose on every step and the model action never reaches the arms.
-    hold_current_when_inactive: False
-    control_trigger: "grip"
-    control_threshold: 0.85
-    gripper_close_threshold: 0.5
-    position_scale: 1.2
-    rotation_scale: 1.0
-    max_stale_s: 0.2
-    calibration:
-      enabled: True
-      required: True
-      auto_calibrate_on_start: True
-      button: "trigger"
-      threshold: 0.5
-      head_forward_axis: "-z"
-      base_position: [0.0, 0.0, 0.0]
-    left:
-      gripper_close_button: "X"
-      gripper_open_button: "Y"
-    right:
-      gripper_close_button: "A"
-      gripper_open_button: "B"
 
   train:
     rollout_epoch: 1
@@ -164,14 +137,41 @@ env:
     main_image_key: left_wrist_0_rgb
     # USB keyboard b switches the rollout from the Stage1 policy to the Stage2 actor.
     # Pico A/B/X/Y stay gripper buttons.
-    keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
+    # Leave null to use RLINF_KEYBOARD_DEVICE.
+    keyboard_device: null  # Replace: /dev/input/by-id/usb-...-event-kbd
     keyboard_reward_wrapper: rlt_policy_switch
     max_episode_steps: 10000
     max_steps_per_rollout_epoch: 10000
     teleop:
       - {pico: {drives: left}}
       - {pico: {drives: right}}
-    pico: *pico
+    # Left grip drives the left arm, right grip the right.
+    pico:
+      zmq_addr: "ipc:///tmp/vr_data.ipc"
+      hand: "dual"
+      # False so a released grip returns control to the policy. True holds the
+      # measured pose on every step and the model action never reaches the arms.
+      hold_current_when_inactive: False
+      control_trigger: "grip"
+      control_threshold: 0.85
+      gripper_close_threshold: 0.5
+      position_scale: 1.2
+      rotation_scale: 1.0
+      max_stale_s: 0.2
+      calibration:
+        enabled: True
+        required: True
+        auto_calibrate_on_start: True
+        button: "trigger"
+        threshold: 0.5
+        head_forward_axis: "-z"
+        base_position: [0.0, 0.0, 0.0]
+      left:
+        gripper_close_button: "X"
+        gripper_open_button: "Y"
+      right:
+        gripper_close_button: "A"
+        gripper_open_button: "B"
     no_gripper: False
     override_cfg:
       is_dummy: False
@@ -190,7 +190,8 @@ env:
     auto_reset: True
     ignore_terminations: False
     main_image_key: left_wrist_0_rgb
-    keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
+    # Leave null to use RLINF_KEYBOARD_DEVICE.
+    keyboard_device: null  # Replace: /dev/input/by-id/usb-...-event-kbd
     keyboard_reward_wrapper: rlt_policy_switch
     max_episode_steps: 1000
     max_steps_per_rollout_epoch: 1000
@@ -199,7 +200,33 @@ env:
     teleop:
       - {pico: {drives: left}}
       - {pico: {drives: right}}
-    pico: *pico
+    # Left grip drives the left arm, right grip the right.
+    pico:
+      zmq_addr: "ipc:///tmp/vr_data.ipc"
+      hand: "dual"
+      # False so a released grip returns control to the policy. True holds the
+      # measured pose on every step and the model action never reaches the arms.
+      hold_current_when_inactive: False
+      control_trigger: "grip"
+      control_threshold: 0.85
+      gripper_close_threshold: 0.5
+      position_scale: 1.2
+      rotation_scale: 1.0
+      max_stale_s: 0.2
+      calibration:
+        enabled: True
+        required: True
+        auto_calibrate_on_start: True
+        button: "trigger"
+        threshold: 0.5
+        head_forward_axis: "-z"
+        base_position: [0.0, 0.0, 0.0]
+      left:
+        gripper_close_button: "X"
+        gripper_open_button: "Y"
+      right:
+        gripper_close_button: "A"
+        gripper_open_button: "B"
     no_gripper: False
     override_cfg:
       is_dummy: False

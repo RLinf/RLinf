@@ -33,8 +33,8 @@ class KeyboardEvalControlWrapper(KeyboardSession):
     IDLE_POLL_S = 0.05
     WAIT_HEARTBEAT_S = 10.0
 
-    def __init__(self, env: Env) -> None:
-        super().__init__(env)
+    def __init__(self, env: Env, *, device: str | None = None) -> None:
+        super().__init__(env, device=device)
         self._running = False
         self._last_obs: Any = None
 
@@ -94,7 +94,7 @@ class KeyboardEvalControlWrapper(KeyboardSession):
                 # CollectEpisode(only_success=True) keys off info["success"].
                 info["success"] = True
                 self._running = False
-                self.log("Key 'c': success, writing episode.")
+                self.log("Key 'c': success.")
                 break
             if key == "b":
                 terminated = True
@@ -102,7 +102,7 @@ class KeyboardEvalControlWrapper(KeyboardSession):
                 result = "failure"
                 info["success"] = False
                 self._running = False
-                self.log("Key 'b': failure, dropping episode.")
+                self.log("Key 'b': failure.")
                 break
 
         info["eval_phase"] = "rec" if self._running else "pre"
@@ -114,16 +114,22 @@ class KeyboardEvalControlWrapper(KeyboardSession):
     ) -> tuple[Any, dict[str, Any]]:
         """Step a hold pose when the inner env can produce one.
 
-        Absolute TCP treats a zero action as the origin. Without
-        ``get_hold_action``, sleep so a policy-only eval stays at the reset pose.
+        Absolute TCP treats a zero action as the origin. A missing
+        ``get_hold_action``, or one that raises ``AttributeError`` because the
+        device commands deltas, sleeps so the robot stays at the reset pose.
         """
         env = self.env
         hold = getattr(env, "get_hold_action", None)
         if not callable(hold):
             time.sleep(self.IDLE_POLL_S)
             return obs, info
+        try:
+            hold_action = hold()
+        except AttributeError:
+            time.sleep(self.IDLE_POLL_S)
+            return obs, info
         started = time.monotonic()
-        obs, _, _, _, stepped_info = env.step(hold())
+        obs, _, _, _, stepped_info = env.step(hold_action)
         self._last_obs = obs
         elapsed = time.monotonic() - started
         if elapsed < self.IDLE_POLL_S:

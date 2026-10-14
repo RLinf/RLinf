@@ -8,12 +8,12 @@ Using Dual Franka
 
    Dual-Franka data collection, fine-tuning, and deployment workflow.
 
-Run the supported dual-Franka workflow: collect joint-space demonstrations with GELLO, convert them to tcp_rot6d data, fine-tune OpenPI π₀.₅, and deploy the checkpoint back to the host that drives both arms.
+Run the supported dual-Franka workflow: collect joint-space demonstrations with GELLO, convert them to tcp_rot6d data, fine-tune OpenPI π₀.₅, and deploy the checkpoint back to the robot nodes.
 
 Overview
 --------
 
-Build a dual-arm dataset, train π₀.₅, and deploy on one host that drives both arms.
+Build a dual-arm dataset, train π₀.₅, and deploy on a two-node Franka rig.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -36,7 +36,7 @@ Build a dual-arm dataset, train π₀.₅, and deploy on one host that drives bo
    .. grid-item-card:: Hardware
       :text-align: center
 
-      2× Franka · 1 host · GELLO
+      2× Franka · 2 robot nodes · GELLO
 
 | **You'll do:** install franky deps → collect GELLO demos → convert rot6d data → run SFT → deploy eval config.
 | **Prerequisites:** :doc:`franka` · :doc:`franka_gello` · two Franka arms · OpenPI assets.
@@ -59,7 +59,7 @@ Tasks
      - Fine-tune π₀.₅ on tcp_rot6d actions.
    * - Deployment
      - ``realworld_eval_dual_franka``
-     - Run eval-only deployment on the host.
+     - Run eval-only deployment on the robot nodes.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -85,7 +85,7 @@ Installation
 Robot Nodes
 ~~~~~~~~~~~
 
-Run the robot-node installation once, on the host that drives both arms. Dual-arm
+Run the robot-node installation on both ``node 0`` and ``node 1``. Dual-arm
 Franka always drives the arms through Franky, the backend that the default
 ``franka`` environment installs. The installer downloads a prebuilt Franky wheel
 with libfranka bundled; these wheels exist only for libfranka ``0.15.0`` and
@@ -105,8 +105,8 @@ libfranka versions only for single-arm Franka.
    bash requirements/install.sh embodied --env franka --use-mirror
    source .venv/bin/activate
 
-Install GELLO dependencies on this host by following :doc:`franka_gello`.
-The two GELLO leaders must stay on this host; do not route their
+Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
+The two GELLO leaders must stay local to ``node 0``; do not route their
 1 kHz stream over the LAN.
 
 Real-time prerequisites
@@ -124,12 +124,10 @@ On such a kernel the 1 kHz control loop can miss deadlines under load and
 trigger a robot reflex. Set ``realtime_config: enforce`` to refuse a kernel
 without PREEMPT_RT.
 
-The two arms use different FCI IPs and connect to this one host, either
-directly (one cable from each arm into a NIC on the host) or through a switch
-(both arms and the host on the same switch). Run the example below on that
-host before launching RLinf. Do not start Ray. Replace ``<FRANKA_NIC>`` with
-each NIC that faces an arm; when both arms share one NIC through a switch, use
-that NIC. Ping ``LEFT_ROBOT_IP`` and ``RIGHT_ROBOT_IP``.
+Run this example on each workstation that directly communicates with a Franka
+before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and
+``<ROBOT_IP>`` with ``LEFT_ROBOT_IP`` on ``node 0`` or ``RIGHT_ROBOT_IP`` on
+``node 1``.
 
 .. code-block:: bash
 
@@ -148,8 +146,7 @@ that NIC. Ping ``LEFT_ROBOT_IP`` and ``RIGHT_ROBOT_IP``.
    ulimit -r
    ulimit -l
    sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
-   ping -c 1000 -i 0.001 <LEFT_ROBOT_IP> | tail -3
-   ping -c 1000 -i 0.001 <RIGHT_ROBOT_IP> | tail -3
+   ping -c 1000 -i 0.001 <ROBOT_IP> | tail -3
 
 ``ulimit -r`` should report ``99`` or ``unlimited``; ``ulimit -l`` should report
 ``unlimited``. Re-apply the per-boot tuning after every workstation reboot.
@@ -192,8 +189,8 @@ Use the repository-provided configs and replace the required parameters:
 
 Replace the placeholders marked with ``# Replace:``:
 
-* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``: the two different FCI IPs, both
-  reachable from this host.
+* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``: FCI IP visible from each
+  controller node.
 * ``BASE_CAMERA_SERIAL``, ``LEFT_CAMERA_SERIAL``, ``RIGHT_CAMERA_SERIAL``:
   camera serials or stable ``/dev/v4l/by-id`` paths.
 * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``: stable
@@ -204,7 +201,7 @@ Replace the placeholders marked with ``# Replace:``:
   collection, SFT, and deployment.
 * ``SFT_DATASET_REPO_ID``: the converted dataset ID, usually
   ``<repo_id>/tcp_rot6d_v1``.
-* ``MODEL_PATH``: deployment checkpoint directory on the host.
+* ``MODEL_PATH``: deployment checkpoint directory on ``node 0``.
 * The shared ``realworld_dual_franka_tcp_rot6d`` TCP xyz limits are
   x in [0.3, 0.9], y in [-0.4, 0.4], and z in [0.02, 0.7].
   ``target_ee_pose`` must sit inside that box.
@@ -213,13 +210,13 @@ Replace the placeholders marked with ``# Replace:``:
 Hardware Checks
 ---------------
 
-Run these checks on the host before launching. Do not start Ray.
+Run these checks before starting Ray.
 
 Foot pedal
 ~~~~~~~~~~
 
 Use the vendor tool once to configure the PCsensor FootSwitch keys as
-``a`` / ``b`` / ``c``. Then on the host:
+``a`` / ``b`` / ``c``. Then on ``node 0``:
 
 .. code-block:: bash
 
@@ -231,8 +228,7 @@ Use the vendor tool once to configure the PCsensor FootSwitch keys as
 
    Replace every ``eventXX`` with the actual ``eventNN`` resolved by the
    first command, for example ``event7``. Export
-   ``RLINF_KEYBOARD_DEVICE`` in the shell that launches collection or
-   deployment. Do not run ``ray start``.
+   ``RLINF_KEYBOARD_DEVICE`` before ``ray start``.
 
 Cameras
 ~~~~~~~
@@ -279,7 +275,7 @@ GELLO calibration
 .. _dual-franka-gello-calibration:
 
 Calibrate each GELLO once, then verify it with ``align-sequential``.
-Both leaders can be calibrated against the left arm on the host.
+Both leaders can be calibrated against the left arm on ``node 0``.
 
 .. code-block:: bash
 
@@ -306,36 +302,52 @@ Run the same two commands for the second leader by changing
 Run It
 ------
 
-Do not start Ray
-~~~~~~~~~~~~~~~~
+Start Ray
+~~~~~~~~~
 
-``collect_data.sh`` and the evaluation launcher start a local Ray instance
-and inherit the shell you launch from. Do not run ``ray start`` first. If
-``ray status`` still shows a cluster from an earlier run, stop it so the
-launcher does not attach to that cluster:
+Ray captures environment variables at ``ray start`` time. Export the rank
+and keyboard device before starting the cluster.
 
 .. code-block:: bash
 
+   # node 0
+   cd /path/to/RLinf
+   source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export RLINF_NODE_RANK=0
+   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
+
    ray stop --force
+   ray start --head --port=6379 --node-ip-address=<HEAD_IP>
+
+.. code-block:: bash
+
+   # node 1
+   cd /path/to/RLinf
+   source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export RLINF_NODE_RANK=1
+
+   ray stop --force
+   ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
+
+On ``node 0``, run ``ray status`` and confirm that both nodes are ALIVE.
 
 Collect demonstrations
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Start collection on the host after
+Start collection on ``node 0`` after
 :ref:`align-sequential <dual-franka-gello-calibration>` reports
 ``ALL JOINTS ALIGNED``:
 
 .. code-block:: bash
 
    cd /path/to/RLinf
-   source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export RLINF_NODE_RANK=0
-   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
    bash examples/embodiment/collect_data.sh \
        realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
-In another terminal on the host, monitor progress:
+In another ``node 0`` terminal, monitor progress:
 
 .. code-block:: bash
 
@@ -420,7 +432,7 @@ Evaluation and Deployment
 Prepare checkpoint files
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-The deployment checkpoint directory on the host must contain:
+The deployment checkpoint directory on ``node 0`` must contain:
 
 .. code-block:: text
 
@@ -428,7 +440,7 @@ The deployment checkpoint directory on the host must contain:
    ├── actor/model_state_dict/full_weights.pt
    └── <repo_id>/tcp_rot6d_v1/norm_stats.json
 
-Synchronize the SFT checkpoint and matching normalization stats back to the host:
+Synchronize the SFT checkpoint and matching normalization stats back to ``node 0``:
 
 .. code-block:: bash
 
@@ -452,13 +464,9 @@ Set ``rollout.model.model_path`` to ``$DEPLOY_CKPT`` and
 Launch deployment
 ~~~~~~~~~~~~~~~~~
 
-Do not start Ray before deployment. The evaluation launcher starts a local Ray
-instance. Skip the "Starting the Ray Cluster" step in the
-:doc:`real-world evaluation guide <../../evaluations/guides/realworld>`; that
-step is for a split GPU node and robot node. On this host both arms share one
-machine. ``realworld_eval_dual_franka`` is the deployment config. When
-execution should overlap inference, use ``realworld_dual_franka_pi05_RTC``.
-After homing, press ``a`` on the keyboard or pedal to start the policy.
+Reuse the Ray cluster from collection, or restart it with the same environment
+variables. Launch the policy through the :doc:`real-world evaluation guide
+<../../evaluations/guides/realworld>` with ``realworld_eval_dual_franka``.
 
 Deployment pedal controls:
 
@@ -474,10 +482,10 @@ Troubleshooting
 ---------------
 
 **Ray worker import failure**
-   In the shell that launched the script, check
+   In the same shell that ran ``ray start``, check
    ``which python`` and
    ``python -c "import franky, gello, gello_teleop"``. Worker logs are under
-   ``/tmp/ray/session_latest/logs/worker-*.err``. Do not start Ray yourself.
+   ``/tmp/ray/session_latest/logs/worker-*.err``.
 
 **Foot pedal permission denied**
    Re-run ``sudo chmod 666 /dev/input/eventXX`` and confirm
@@ -492,8 +500,8 @@ Troubleshooting
    ``python -m rlinf.robotics.parts.teleop.gello_joint --port ...``.
 
 **One arm does not respond during reset**
-   On the host, run ``ping -c 100 <robot_ip>`` for that arm. If packets drop,
-   fix the direct cable or the switch path, or power-cycle the robot.
+   On that controller node, run ``ping -c 100 <robot_ip>``. If packets drop,
+   fix the NIC/FCI connection or power-cycle the robot.
 
 **Deployment cannot locate ``norm_stats.json``**
    Check that the file is exactly at

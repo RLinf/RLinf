@@ -29,7 +29,7 @@ class KeyboardListener:
 
     REQUIRED_KEY_NAMES = ("KEY_A", "KEY_B", "KEY_C", "KEY_Q")
 
-    def __init__(self) -> None:
+    def __init__(self, device: str | None = None) -> None:
         try:
             from evdev import InputDevice, ecodes, list_devices
         except ImportError as exc:
@@ -41,6 +41,9 @@ class KeyboardListener:
         self._input_device_cls = InputDevice
         self._ecodes = ecodes
         self._list_devices = list_devices
+        self._device_path = device.strip() if isinstance(device, str) else None
+        if not self._device_path:
+            self._device_path = None
 
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}
@@ -61,16 +64,26 @@ class KeyboardListener:
             getattr(self.device, "name", ""),
         )
 
+    def _configured_path(self) -> tuple[str | None, str]:
+        """Return the evdev path and the name of the setting that supplied it.
+
+        ``keyboard_device`` wins when it is set. ``RLINF_KEYBOARD_DEVICE`` is
+        read only for an unset config path, and this process never writes it.
+        """
+        if self._device_path:
+            return self._device_path, "keyboard_device"
+        return os.environ.get("RLINF_KEYBOARD_DEVICE"), "RLINF_KEYBOARD_DEVICE"
+
     def _open_keyboard_device(self) -> Any:
-        override_path = os.environ.get("RLINF_KEYBOARD_DEVICE")
+        override_path, source = self._configured_path()
         if override_path:
-            device = self._open_device(override_path, is_override=True)
+            device = self._open_device(override_path, source=source)
             if not self._is_keyboard_device(device):
                 device.close()
                 raise RuntimeError(
-                    "KeyboardListener device set by "
-                    f"RLINF_KEYBOARD_DEVICE='{override_path}' does not look like a "
-                    "keyboard device. Point it to the correct /dev/input/eventX path."
+                    f"KeyboardListener device set by {source}='{override_path}' does "
+                    "not look like a keyboard device. Point it to the correct "
+                    "/dev/input/eventX path."
                 )
             return device
 
@@ -119,28 +132,29 @@ class KeyboardListener:
             "correct /dev/input/eventX path."
         )
 
-    def _open_device(self, device_path: str, is_override: bool = False) -> Any:
+    def _open_device(self, device_path: str, source: str | None = None) -> Any:
         try:
             return self._input_device_cls(device_path)
         except FileNotFoundError as exc:
-            if is_override:
+            if source:
                 raise RuntimeError(
-                    f"KeyboardListener override path '{device_path}' does not exist."
+                    f"KeyboardListener path set by {source}='{device_path}' does not "
+                    "exist."
                 ) from exc
             raise
         except PermissionError as exc:
-            if is_override:
+            if source:
                 raise RuntimeError(
-                    "KeyboardListener cannot read the device set by "
-                    f"RLINF_KEYBOARD_DEVICE='{device_path}'. Grant the runtime user "
-                    "read access via the input group or udev rules."
+                    f"KeyboardListener cannot read the device set by {source}="
+                    f"'{device_path}'. Grant the runtime user read access via the "
+                    "input group or udev rules."
                 ) from exc
             raise
         except OSError as exc:
-            if is_override:
+            if source:
                 raise RuntimeError(
-                    "KeyboardListener failed to open the device set by "
-                    f"RLINF_KEYBOARD_DEVICE='{device_path}': {exc}"
+                    f"KeyboardListener failed to open the device set by {source}="
+                    f"'{device_path}': {exc}"
                 ) from exc
             raise RuntimeError(
                 f"KeyboardListener failed to open input device '{device_path}': {exc}"

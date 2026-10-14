@@ -70,7 +70,8 @@ env:
   group_name: "EnvGroup"
   eval:
     # a starts the policy, c marks success, b marks failure.
-    keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
+    # Leave null to use RLINF_KEYBOARD_DEVICE.
+    keyboard_device: null  # Replace: /dev/input/by-id/usb-...-event-kbd
     keyboard_reward_wrapper: eval_control
     rollout_epoch: 1
     max_steps_per_rollout_epoch: 1000

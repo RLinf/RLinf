@@ -84,8 +84,8 @@ env:
 
     # Episode keys come from this evdev node, not the collect terminal and not
     # Pico A/B/X/Y (those drive the grippers). A USB keyboard or a pedal that
-    # emits a/b/c both work. Replace the by-id path on this machine.
-    keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd  # Replace
+    # emits a/b/c both work. Leave null to use RLINF_KEYBOARD_DEVICE.
+    keyboard_device: null  # Replace: /dev/input/by-id/usb-...-event-kbd
     #   a (pre)  → start recording at the current pose
     #   a (rec)  → abort, drop buffer, stay at current pose
     #   b (rec)  → bump segment_id (1 s debounce)
@@ -124,7 +124,7 @@ env:
 
       # Motion gain from controller movement/rotation to TCP delta command.
       # Keep these at or below 1.0. compliance.max_step is the hard per-step cap.
-      position_scale: 1.0
+      position_scale: 1.2
       rotation_scale: 1.0
 
       # If no fresh VR packet arrives within this time, the wrapper stops

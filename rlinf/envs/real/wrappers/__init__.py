@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any, Mapping
 
 import gymnasium as gym
@@ -115,17 +114,22 @@ class WrapperStack:
             mark_flag=bool(getattr(self.inner, "TELEOP_MARK_FLAG", False)),
         )
 
+    def _keyboard_device(self) -> str | None:
+        """Return the configured evdev path, or ``None`` when it is unset.
+
+        An unset field leaves device selection to ``RLINF_KEYBOARD_DEVICE``.
+        The process environment is not modified.
+        """
+        device = self.cfg.get("keyboard_device")
+        if not isinstance(device, str):
+            return None
+        return device.strip() or None
+
     def _apply_keyboard_reward(self) -> None:
         """Let an operator score the episode from the keyboard."""
         mode = self.cfg.get("keyboard_reward_wrapper", None)
         if mode and not getattr(self.inner.config, "is_dummy", False):
-            # Ray workers do not inherit a later-shell export of
-            # RLINF_KEYBOARD_DEVICE. Honor the yaml path so the env actor
-            # opens the same evdev node the operator is pressing.
-            device = self.cfg.get("keyboard_device")
-            if device:
-                os.environ["RLINF_KEYBOARD_DEVICE"] = str(device)
-            self.env = KEYBOARD_MODES[mode](self.env)
+            self.env = KEYBOARD_MODES[mode](self.env, device=self._keyboard_device())
 
     def _apply_episode(self) -> None:
         """Apply environment-specific episode-control wrappers."""

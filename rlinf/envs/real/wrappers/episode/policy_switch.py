@@ -22,8 +22,8 @@ from .session import KeyboardSession
 class KeyboardRLTPolicySwitchWrapper(KeyboardSession):
     """Press ``b`` to enter the RLT critical phase."""
 
-    def __init__(self, env: Env) -> None:
-        super().__init__(env)
+    def __init__(self, env: Env, *, device: str | None = None) -> None:
+        super().__init__(env, device=device)
         self._rlt_switch_flags = False
 
     @property

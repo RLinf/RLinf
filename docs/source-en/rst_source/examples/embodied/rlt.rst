@@ -68,6 +68,9 @@ Provided Configuration Files
    * - Franka Stage 2
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
      - Run real-world RLT actor-critic training with the frozen Stage 1 feature model.
+   * - Dual Franka Stage 2
+     - ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``
+     - Train the Stage 2 MLP on one host that drives both arms, from a ``pi05_dualfranka_tcp_rot6d`` Stage 1 checkpoint.
    * - ManiSkill Stage 1
      - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
      - Jointly train the ManiSkill OpenPI base policy and RLT token transformer.
@@ -464,6 +467,28 @@ The default keyboard module implements the key phase switch used by RLT: press
 ``b`` to enter the Stage 2 actor-controlled phase. Other behavior can be
 customized for the task in
 ``rlinf/envs/real/wrappers/episode/policy_switch.py``.
+
+Dual Franka Stage 2
+~~~~~~~~~~~~~~~~~~~
+
+Use ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``
+when both arms and the GPU are on one host and the frozen Stage 1 checkpoint
+is ``pi05_dualfranka_tcp_rot6d``. The single-arm file above is the peg-insertion
+recipe: 7-dimensional actions and one camera. This file is 20-dimensional
+tcp_rot6d. The arms execute 10 steps; the Stage 1 reference horizon is 20.
+
+Replace the arm IPs, camera serials, gripper paths, ``TASK_DESCRIPTION``, and
+target poses. Point ``rollout.rlt_feature_model.model_path`` at the dual-arm
+Stage 1 checkpoint and set ``openpi_data.repo_id`` to that checkpoint's dataset
+id. Leave ``keyboard_device`` null and export ``RLINF_KEYBOARD_DEVICE``, or set
+the evdev path under both ``env.train`` and ``env.eval``. Keep
+``hold_current_when_inactive: False`` so a released Pico grip returns that arm
+to the policy. USB-keyboard ``b`` switches the rollout from the Stage 1 policy
+to the Stage 2 actor. Pico A/B/X/Y stay gripper buttons.
+
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_async.sh realworld_dual_franka_rlt_stage2_ac_mlp
 
 Run the ManiSkill Joint Example
 -------------------------------

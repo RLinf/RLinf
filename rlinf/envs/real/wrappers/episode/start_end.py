@@ -35,8 +35,8 @@ class KeyboardStartEndWrapper(KeyboardSession):
     #: A second ``a`` this soon after start is a double tap, not an abort.
     ABORT_LOCKOUT_S = 1.5
 
-    def __init__(self, env: Env) -> None:
-        super().__init__(env)
+    def __init__(self, env: Env, *, device: str | None = None) -> None:
+        super().__init__(env, device=device)
         self._recording = False
         self._recording_since = -math.inf
         self._last_segment_ts = -math.inf
