@@ -34,6 +34,9 @@ from .base import _DOF, SO101Env, SO101EnvConfig
 class SO101ReachConfig(SO101EnvConfig):
     """Configuration for :class:`SO101ReachEnv`."""
 
+    task_description: str = "reach a joint configuration"
+    """Natural-language task description passed to the policy."""
+
     enable_random_reset: bool = False
     """Perturb the rest configuration at the start of each episode."""
 
@@ -67,7 +70,7 @@ class SO101ReachEnv(SO101Env):
     @property
     def task_description(self) -> str:
         """Natural-language task name, for policies that condition on one."""
-        return "reach a joint configuration"
+        return self.config.task_description
 
     def reset(
         self,

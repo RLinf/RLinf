@@ -225,6 +225,9 @@ class DualFrankaEnv(gym.Env):
     def task_description(self) -> str:
         return self._task_description
 
+    def park(self) -> None:
+        """Keep the compliant arms in place during process cleanup."""
+
     def close(self) -> None:
         if hasattr(self, "_cameras"):
             self._close_cameras()

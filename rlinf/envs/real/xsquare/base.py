@@ -164,6 +164,9 @@ class Turtle2Env(gym.Env):
         )
         self.robot.connect()
 
+    def park(self) -> None:
+        """Leave the arms in their current state during process cleanup."""
+
     def close(self) -> None:
         """Disconnect the composed Turtle2 runtime."""
         if self.robot is not None:

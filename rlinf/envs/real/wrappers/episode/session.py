@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 import math
+import sys
 import time
 from typing import Any, Iterator, Optional
 
 import gymnasium as gym
 
 from .keyboard import KeyboardListener
+
+
+class KeyboardAbort(RuntimeError):
+    """Signal a controlled operator abort to the owning runner."""
 
 
 class KeyboardSession(gym.Wrapper):
@@ -34,10 +39,17 @@ class KeyboardSession(gym.Wrapper):
 
     #: Minimum interval between accepted presses of the same key.
     DEBOUNCE_S: float = 0.2
+    #: Optional prefix for direct operator messages.
+    LOG_PREFIX = ""
 
-    def __init__(self, env: gym.Env) -> None:
+    def __init__(
+        self,
+        env: gym.Env,
+        *,
+        required_key_names: tuple[str, ...] | None = None,
+    ) -> None:
         super().__init__(env)
-        self.listener = KeyboardListener()
+        self.listener = KeyboardListener(required_key_names)
         self._last_press: dict[str, float] = {}
 
     def presses(self) -> Iterator[str]:
@@ -69,8 +81,23 @@ class KeyboardSession(gym.Wrapper):
         """Return the unwrapped environment."""
         return getattr(self.env, "unwrapped", self.env)
 
+    def close(self) -> None:
+        """Release the owned keyboard listener and wrapped environment."""
+        try:
+            self.listener.close()
+        finally:
+            super().close()
+
     def log(self, message: str, *args: Any) -> None:
         """Write an informational message through the environment logger."""
         logger = getattr(self.base_env(), "_logger", None)
         if logger is not None:
             logger.info(message, *args)
+
+    def operator_log(self, message: str, *args: Any) -> None:
+        """Write an operator-facing message without Ray logger buffering."""
+        self.log(message, *args)
+        text = message % args if args else message
+        prefix = f"{self.LOG_PREFIX} " if self.LOG_PREFIX else ""
+        sys.stderr.write(f"{prefix}{text}\n")
+        sys.stderr.flush()

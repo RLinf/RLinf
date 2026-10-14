@@ -462,6 +462,10 @@ class EmbodiedRunner:
         )
 
     def _finish_run(self) -> None:
+        # Periodic real-environment evaluation keeps its resources alive
+        # between validation cycles.  Release them only after the runner has
+        # completed all training work.
+        self.env.cleanup_eval_envs().wait()
         self.metric_logger.finish()
 
         self.log_queue.put(None)

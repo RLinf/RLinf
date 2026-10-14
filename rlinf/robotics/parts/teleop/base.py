@@ -66,7 +66,12 @@ CONTEXT_KEYS = (
     "action_scale",
     "joint_positions",
     "gripper_open",
+    "gripper_position",
     "hand_reset_pose",
+    "reset_joint_positions",
+    "reset_gripper_position",
+    "reset_duration",
+    "reset_joint_speed",
 )
 
 
@@ -127,6 +132,17 @@ class TeleopDevice(TeleopPart):
 
     #: Robot state this device's :meth:`action` reads out of the context.
     NEEDS: tuple[str, ...] = ()
+
+    #: Context fields needed by :meth:`prepare_reset` for a synchronized reset.
+    #:
+    #: A device that moves concurrently with the robot reset declares this
+    #: explicitly.  The composed wrapper uses the declaration as a lifecycle
+    #: capability; it must not infer one device's reset protocol from field
+    #: names that happen to belong to another device.
+    RESET_CONTEXT_KEYS: tuple[str, ...] = ()
+
+    #: Context fields needed when this device participates in environment park.
+    PARK_CONTEXT_KEYS: tuple[str, ...] = ()
 
     #: Whether the parts this fills should be clipped into the action space.
     CLIPS_TO_ACTION_SPACE: bool = False
@@ -298,6 +314,31 @@ class TeleopDevice(TeleopPart):
 
     def on_action_chunk_begin(self) -> None:
         """Let go of anything held only until the next chunk of actions."""
+
+    def prepare_reset(self, context: Mapping[str, Any]) -> None:
+        """Prepare this device while the robot moves to its reset state."""
+
+    def abort_reset(self, context: Mapping[str, Any]) -> None:
+        """Release state held by an incomplete reset."""
+
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Seconds to hold a reset pose before manual control is released."""
+        return 0.0
+
+    def release_for_manual(self, context: Mapping[str, Any]) -> None:
+        """Release device state after the operator handover buffer."""
+
+    def hold_for_reset(self, context: Mapping[str, Any]) -> None:
+        """Hold the device safely before the robot is reset or parked."""
+
+    def park(self, context: Mapping[str, Any]) -> None:
+        """Park the device, or do nothing when it has no park state.
+
+        Parking is a lifecycle operation separate from episode reset. Devices
+        that have a physical park target may override this hook; ordinary
+        input devices deliberately inherit the safe no-op implementation.
+        """
 
     def on_reset(self, context: Mapping[str, Any] = MappingProxyType({})) -> None:
         """Re-align to the robot after it resets.

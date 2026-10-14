@@ -70,6 +70,19 @@ class TeleopStreamer:
         self._gate.clear()
         return kwargs
 
+    def before_park(self, env: gym.Env) -> None:
+        """Stop direct commands before the environment is parked.
+
+        Parking is terminal for the current teleoperation lifecycle, so the
+        stream is stopped rather than paused and resumed afterward.  Keeping
+        this hook separate from :meth:`close` lets a composed teleop wrapper
+        stop command emission before it starts a park trajectory while still
+        making the eventual close call idempotent.
+        """
+        del env
+        self.close()
+        self._aligned = False
+
     def reset(self, env: gym.Env) -> None:
         """Align to the device while the robot is still at its reset pose."""
         self._aligned = False
@@ -116,5 +129,5 @@ class TeleopStreamer:
         self._gate.set()
         thread = self._thread
         if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
+            thread.join()
         self._thread = None

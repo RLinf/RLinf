@@ -118,7 +118,20 @@ class WrapperStack:
         """Let an operator score the episode from the keyboard."""
         mode = self.cfg.get("keyboard_reward_wrapper", None)
         if mode and not getattr(self.inner.config, "is_dummy", False):
-            self.env = KEYBOARD_MODES[mode](self.env)
+            wrapper = self._keyboard_wrapper_for_mode(self.inner, mode, self.cfg)
+            self.env = (wrapper or KEYBOARD_MODES[mode])(self.env)
+
+    @staticmethod
+    def _keyboard_wrapper_for_mode(
+        env: gym.Env, mode: str, cfg: Mapping[str, Any] | None = None
+    ) -> type | None:
+        """Return an environment-owned keyboard wrapper when one exists."""
+        selector = getattr(env, "episode_wrapper_for_mode", None)
+        if not callable(selector):
+            return None
+        selector_cfg = dict(cfg or {})
+        selector_cfg["keyboard_reward_wrapper"] = mode
+        return selector(selector_cfg)
 
     def _apply_episode(self) -> None:
         """Apply environment-specific episode-control wrappers."""

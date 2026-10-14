@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import torch
@@ -102,7 +103,31 @@ class ApxInfRolloutWorker(Worker):
         actions, _ = self.apxinf_adapter.predict_action_batch(env_obs, mode="eval")
         return actions.detach().cpu().contiguous()
 
-    async def evaluate(self, input_channel, output_channel):
+    @staticmethod
+    def _poll_eval_control(control_channel):
+        if control_channel is None:
+            return False
+        try:
+            message = control_channel.get_nowait()
+        except asyncio.QueueEmpty:
+            return False
+        if not isinstance(message, dict) or message.get("kind") != "stop":
+            raise TypeError("Evaluation control messages must be {'kind': 'stop'}.")
+        return True
+
+    async def _wait_eval_input(self, input_channel, control_channel, **kwargs):
+        work = self.recv_from(channel=input_channel, async_op=True, **kwargs)
+        task = asyncio.create_task(work.async_wait())
+        while True:
+            if self._poll_eval_control(control_channel):
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                return None
+            if task.done():
+                return task.result()
+            await asyncio.sleep(0.01)
+
+    async def evaluate(self, input_channel, output_channel, control_channel=None):
         for _ in tqdm(
             range(self.eval_rollout_epoch),
             desc="Evaluating Rollout Epochs",
@@ -110,16 +135,18 @@ class ApxInfRolloutWorker(Worker):
         ):
             for _ in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.num_pipeline_stages):
-                    env_output = await self.recv_from(
+                    env_output = await self._wait_eval_input(
+                        input_channel=input_channel,
                         group_name=self.cfg.env.group_name,
-                        channel=input_channel,
                         tag="eval_rollout_results",
                         route_key=stage_id,
-                        async_op=True,
                         batch_size=self.eval_batch_size,
                         merge_fn=self._merge_obs_batches,
                         infer_batch_size_fn=self._infer_env_batch_size,
-                    ).async_wait()
+                        control_channel=control_channel,
+                    )
+                    if env_output is None:
+                        return None
                     actions = self.predict(env_output["obs"])
                     self.send_to(
                         group_name=self.cfg.env.group_name,

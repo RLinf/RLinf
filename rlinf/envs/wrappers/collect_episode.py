@@ -566,10 +566,16 @@ class CollectEpisode(gym.Wrapper):
             first = ep_data[0]
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
+            # A previous interrupted export may have created the shard
+            # directory before failing.  LeRobot refuses to reuse that path
+            # (its metadata creator uses ``exist_ok=False``), so advance to
+            # the next free shard instead of failing during ``q`` cleanup or
+            # on the next collection run.
+            rank_dir = os.path.join(self.save_dir, f"rank_{self.rank}")
+            while os.path.exists(os.path.join(rank_dir, f"id_{shard_id}")):
+                shard_id += 1
             self._lerobot_writer.create(
-                repo_id=os.path.join(
-                    self.save_dir, f"rank_{self.rank}", f"id_{shard_id}"
-                ),
+                repo_id=os.path.join(rank_dir, f"id_{shard_id}"),
                 robot_type=self.robot_type,
                 fps=self.fps,
                 image_shape=first["image"].shape if "image" in first else None,
@@ -612,6 +618,7 @@ class CollectEpisode(gym.Wrapper):
             count = self._episodes_written
             if self.finalize_interval > 0 and count % self.finalize_interval == 0:
                 writer.finalize()
+                self._lerobot_writer = None
 
     def _finalize_lerobot(self) -> None:
         """Drain pending futures then write the LeRobot dataset metadata."""

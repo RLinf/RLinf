@@ -797,6 +797,9 @@ class FrankaEnv(gym.Env):
             for path, camera in self.robot.parts_of_type(Camera).items()
         }
 
+    def park(self) -> None:
+        """Keep the compliant arm in place during process cleanup."""
+
     def close(self) -> None:
         """Release all hardware resources including cameras and video player."""
         if hasattr(self, "camera_player"):

@@ -24,6 +24,8 @@ from typing import Any, Optional
 import gymnasium as gym
 import numpy as np
 
+from rlinf.envs.utils import get_env_attr
+
 
 @dataclass
 class TeleopSample:
@@ -134,6 +136,9 @@ class TeleopIntervention(gym.Wrapper):
         sample = self.device.read(self, action)
 
         if sample.action is None:
+            # Missing input carries no command. Devices that need to hold an
+            # absolute pose must return that pose explicitly from ``read``;
+            # the wrapper must not replay an older action with unknown units.
             applied, overridden = action, False
         elif sample.active:
             self._last_active = time.monotonic()
@@ -166,6 +171,35 @@ class TeleopIntervention(gym.Wrapper):
     ) -> np.ndarray:
         """Return an action that holds the robot during a skipped chunk."""
         return self.device.get_hold_action(self, fallback_action)
+
+    @property
+    def manual_start_hold_seconds(self) -> float:
+        """Return the handover delay required by the teleoperation device."""
+        return float(getattr(self.device, "manual_start_hold_seconds", 0.0))
+
+    def release_for_manual(self) -> None:
+        """Release teleoperation hardware after the operator handover delay."""
+        release = getattr(self.device, "release_for_manual", None)
+        if release is not None:
+            release(self)
+
+    def hold_for_reset(self) -> None:
+        """Hold teleoperation hardware before reset or episode abort."""
+        hold = getattr(self.device, "hold_for_reset", None)
+        if hold is not None:
+            hold(self)
+
+    def park(self) -> None:
+        """Park teleoperation hardware together with the physical robot."""
+        park = getattr(self.device, "park", None)
+        if park is None:
+            return
+        park_env = get_env_attr(self.env, "park")
+        if not callable(park_env):
+            # Every real environment exposes the lifecycle hook, but retain a
+            # no-op fallback for wrappers around generic Gym environments.
+            return
+        park(self, park_env)
 
     def close(self) -> None:
         """Release the device, then the wrapped env."""

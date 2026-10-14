@@ -431,6 +431,9 @@ class GimArmEnv(gym.Env):
         """Drop the camera references; the robot closes what it opened."""
         self._cameras = []
 
+    def park(self) -> None:
+        """Leave the arm in its current state during process cleanup."""
+
     def close(self) -> None:
         """Release cameras and detach the composed robot runtime."""
         if hasattr(self, "_cameras"):
