@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping
 
 import gymnasium as gym
@@ -118,6 +119,12 @@ class WrapperStack:
         """Let an operator score the episode from the keyboard."""
         mode = self.cfg.get("keyboard_reward_wrapper", None)
         if mode and not getattr(self.inner.config, "is_dummy", False):
+            # Ray workers do not inherit a later-shell export of
+            # RLINF_KEYBOARD_DEVICE. Honor the yaml path so the env actor
+            # opens the same evdev node the operator is pressing.
+            device = self.cfg.get("keyboard_device")
+            if device:
+                os.environ["RLINF_KEYBOARD_DEVICE"] = str(device)
             self.env = KEYBOARD_MODES[mode](self.env)
 
     def _apply_episode(self) -> None:

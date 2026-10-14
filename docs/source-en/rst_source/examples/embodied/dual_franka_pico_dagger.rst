@@ -81,11 +81,11 @@ Observation and Action
    * - Field
      - Description
    * - Observation
-     - Left wrist, right wrist, and global camera views plus dual-arm TCP / gripper state.
+     - LeRobot ``image`` is the base camera ``base_0_rgb``. The wrists land in ``extra_view_image-0`` / ``extra_view_image-1`` after the leftover names are sorted. State is dual-arm TCP / gripper.
    * - Action
      - Dual-arm tcp_rot6d: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
    * - Reward
-     - Success / failure labels from the foot pedal.
+     - a/b/c from ``keyboard_device``. PICO A/B/X/Y only drive the grippers.
    * - Prompt
      - ``task_description`` stored in the data and used as the OpenPI language condition.
 
@@ -140,7 +140,15 @@ actor / rollout components:
 Ray Node Layout
 ~~~~~~~~~~~~~~~
 
-The collection config uses two Franka nodes:
+The collection config uses one host. The two arms have different FCI IPs and
+connect to that host either directly (one cable from each arm into a NIC on
+the host) or through a switch (both arms and the host on the same switch).
+Both grippers and the three cameras are on rank ``0``.
+``left_controller_node_rank``, ``right_controller_node_rank``, and
+``node_rank`` are all ``0``. Do not run ``ray start`` before collection; the
+launch script starts a local Ray instance. Raise ``num_nodes`` and the
+controller ranks only when you split the arms across machines. That split
+still uses the Ray cluster below.
 
 .. list-table::
    :header-rows: 1
@@ -150,11 +158,8 @@ The collection config uses two Franka nodes:
      - Role
      - Notes
    * - ``0``
-     - Left-arm control, env worker, three cameras, PICO consumer
-     - Requires the foot pedal and access to the PICO ZeroMQ address.
-   * - ``1``
-     - Right-arm control
-     - Only needs the right-arm Franka / Robotiq control path.
+     - Both arm controllers, env worker, three cameras, PICO consumer
+     - Needs the keyboard or pedal, and a PICO ZeroMQ address reachable on this machine.
 
 The online DAgger config uses three nodes:
 
@@ -180,12 +185,19 @@ The online DAgger config uses three nodes:
    Ray captures the Python interpreter and environment variables at
    ``ray start`` time. Before starting Ray, finish setting
    ``source .venv/bin/activate``, ``PYTHONPATH``, ``RLINF_NODE_RANK``,
-   ``RLINF_KEYBOARD_DEVICE``, and any Franka-specific environment variables.
+   and any Franka-specific environment variables. The collection YAML writes
+   ``keyboard_device`` into ``RLINF_KEYBOARD_DEVICE`` inside the env worker.
+   The DAgger config has no such field, so export the keyboard or pedal on the
+   env node before ``ray start``.
 
 Cluster Setup
 ~~~~~~~~~~~~~
 
-Before running the experiment, set up the Ray cluster correctly.
+Skip this section for single-host collection. The launch script starts a local
+Ray instance, and you do not run ``ray start``. Use the steps below only when
+DAgger is split across machines.
+
+Before that split run, set up the Ray cluster correctly.
 
 .. warning::
    This step is critical. Small configuration mistakes can lead to missing
@@ -215,19 +227,25 @@ The script usually handles:
    export RLINF_COMM_NET_DEVICES=<network_device_for_communication> # optional if there is only one NIC
 
 ``RLINF_NODE_RANK`` should be set to ``0 ~ N-1`` across the ``N`` nodes in the
-cluster. It uniquely identifies each node in the config. The PICO consumer /
-env worker node also needs the foot-pedal device exported before ``ray start``:
+cluster. It uniquely identifies each node in the config. The DAgger env node
+has no ``keyboard_device``, so export the keyboard or pedal before
+``ray start``:
 
 .. code-block:: bash
 
-   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
+   export RLINF_KEYBOARD_DEVICE=/dev/input/by-id/usb-KEYBOARD-event-kbd
 
-For collection, ``N=2``: rank ``0`` is left arm / env / PICO consumer, and
-rank ``1`` is right arm. For DAgger, ``N=3``: rank ``0`` is OpenPI inference /
-actor, rank ``1`` is left arm / env / PICO consumer, and rank ``2`` is right
-arm.
+Collection uses ``N=1`` on this one host: rank ``0`` runs both arm controllers,
+the env, the three cameras, and the PICO consumer. Do not run ``ray start``.
+If ``ray status`` still shows a cluster from an earlier run, stop it with
+``ray stop --force`` so the launcher does not attach to it.
+DAgger uses ``N=3``: rank ``0`` is OpenPI inference / actor, rank ``1`` is the
+left arm / env / PICO consumer, and rank ``2`` is the right arm. Set the DAgger
+hardware ``node_rank`` and both ``*_controller_node_rank`` fields to the cluster
+ranks that actually own the arms.
 
-After the environment is ready, start Ray on each node:
+When DAgger is split across machines, start Ray on each node. Skip this step
+for the single-host collection:
 
 ``<head_node_ip_address>`` must be reachable by all other cluster nodes.
 
@@ -268,53 +286,63 @@ Replace the following fields in the collection and DAgger configs:
 
 * ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``: FCI IPs for the left and right arms.
 * ``BASE_CAMERA_SERIAL``, ``LEFT_CAMERA_SERIAL``, ``RIGHT_CAMERA_SERIAL``:
-  RealSense / Lumos camera serials or stable ``/dev/v4l/by-id`` paths.
-* ``base_camera_type``, ``left_camera_type``, ``right_camera_type``: camera
-  types, usually ``realsense``, ``lumos``, ``lumos``.
+  RealSense values are librealsense ASIC serials, not V4L USB serials. A Lumos
+  wrist uses that camera's ``/dev/v4l/by-id`` path.
+* ``base_camera_type``, ``left_camera_type``, ``right_camera_type``: the
+  collection example uses ``realsense`` for all three. The DAgger example uses
+  ``realsense`` for the base and ``lumos`` for both wrists. Swap serials if an
+  image lands on the wrong arm.
 * ``left_gripper_type`` / ``right_gripper_type``: left and right gripper types.
 * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``: stable
   ``/dev/serial/by-id`` paths for the left and right gripper adapters.
-* ``left_controller_node_rank`` / ``right_controller_node_rank``: ranks of the
-  left and right arm controller nodes. The collection config usually uses
-  ``0`` / ``1``; the three-node DAgger config usually uses ``1`` / ``2``.
-* ``node_rank``: rank of the env / PICO consumer node that owns the DualFranka
-  hardware config. The collection config usually uses ``0``; the three-node
-  DAgger config usually uses ``1``.
+* ``keyboard_device``: the evdev node in the collection config. Episode keys
+  come from this USB keyboard or pedal, not from the collection terminal.
+* ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``:
+  all three are ``0`` in the collection example. DAgger must use the cluster
+  ranks that own the arms and the env.
 * ``TASK_DESCRIPTION``: task text used by collection and DAgger. It should match
   the task text used to train the checkpoint.
-* ``joint_reset_qpos``: set from first-frame joint means in the collected data,
-  or from a safe home pose.
-* ``target_ee_pose`` and ``ee_pose_limit_min/max``: re-check for your workspace.
+* ``joint_reset_qpos``: the collection config omits this, so reset uses the
+  environment default joint pose. Replace the all-zero placeholder in the
+  DAgger config with first-frame joint means or a safe home. It is seven joint
+  angles per arm, not ``target_ee_pose``.
+* ``target_ee_pose``: per arm, ``[x, y, z, roll, pitch, yaw]``. xyz must sit
+  inside the shared ``realworld_dual_franka_tcp_rot6d`` limits: x in
+  [0.3, 0.9], y in [-0.4, 0.4], z in [0.02, 0.7]. The example
+  ``[0.5, ±0.2, 0.5, -3.14, 0, 0]`` is inside that box.
 
 PICO Config
 ~~~~~~~~~~~
 
 The collection config uses ``env.eval.pico.zmq_addr``; the DAgger config uses
 ``env.train.pico.zmq_addr``. This address must match the publisher bind address.
+Both examples default to ``ipc:///tmp/vr_data.ipc``, which is the same machine
+as the env worker.
 
-The ZeroMQ stream is subscribed by the env worker / PICO intervention node. In
-this guide's config, that is the rank ``0`` left-arm controller node during
-collection, and the rank ``1`` left-arm controller node during DAgger.
-
-For dual-arm PICO teleoperation, set ``pico.hand`` to ``"dual"`` so the left
-and right PICO controllers bind to the left and right robot arms.
+``teleop`` is a per-arm list, not a single ``pico`` value. ``pico.hand: dual``
+binds the left and right controllers to the left and right arms.
 
 .. code-block:: yaml
 
    env:
-     train:
-       smooth_intervene: True
-       teleop: pico
+     eval:
+       teleop:
+         - {pico: {drives: left}}
+         - {pico: {drives: right}}
+       keyboard_device: /dev/input/by-id/usb-KEYBOARD-event-kbd
+       keyboard_reward_wrapper: start_end
        pico:
-         zmq_addr: "tcp://<vr_publisher_ip>:<port>"
+         zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "dual"
+         hold_current_when_inactive: True
          control_trigger: "grip"
          calibration:
            button: "trigger"
 
-If the publisher and env worker run on the same machine, use
-``ipc:///tmp/vr_data.ipc``. If they run on different machines, bind the
-publisher to ``tcp://0.0.0.0:<port>`` and set the RLinf consumer to
+DAgger puts the same ``teleop`` list and ``pico`` block under ``env.train``,
+with ``hold_current_when_inactive: False`` and
+``keyboard_reward_wrapper: eval_control``. Across machines, bind the publisher
+to ``tcp://0.0.0.0:<port>`` and set the consumer to
 ``tcp://<vr_publisher_ip>:<port>``. Do not use ``0.0.0.0`` as the consumer
 address.
 
@@ -355,15 +383,21 @@ frames are all human corrections.
 Arm Compliance
 ~~~~~~~~~~~~~~
 
-Both arms use Franky's default Cartesian settings during PICO collection,
-DAgger policy execution, and evaluation. No extra ``compliance`` mapping is
-needed. The defaults and the effect of task reset requests are described in
-:ref:`Configure Arm Motion <franka-motion-settings>`. The dual-arm TCP task
-makes no reset request by default, so its initial gains and clips remain active.
+The collection config sets one shared ``compliance`` mapping on the
+``DualFranka`` hardware entry: translational stiffness 1000 N/m, rotational
+stiffness 60 Nm/rad, translational clip 0.02 m, rotational clip 0.06 rad,
+per-step translation limit 0.02 m, per-step rotation limit 0.08 rad, and
+``max_delta_tau`` 0.2. Franky's defaults only act on about 8 mm / 0.04 rad of
+error, so teleoperation lags and the arm keeps creeping after grip release.
+Rotational stiffness 80 with a 0.12 rad clip shakes as soon as takeover starts.
+``max_step`` 0.03 m at 10 Hz can trip ``joint_velocity_violation`` with a
+Robotiq payload. The DAgger config omits this mapping and therefore uses
+Franky's defaults; copy the collection mapping onto the DAgger hardware entry
+when the two should feel the same. Defaults and reset requests are described in
+:ref:`Configure Arm Motion <franka-motion-settings>`.
 
-To tune both arms together, add a ``compliance`` mapping beside the arm IPs in
-the ``DualFranka`` hardware entry. A side-specific mapping replaces the shared
-mapping for that arm; keys omitted from it use Franky's defaults. For example:
+A side-specific mapping replaces the shared mapping for that arm; keys omitted
+from it use Franky's defaults. For example:
 
 .. code-block:: yaml
 
@@ -420,20 +454,24 @@ Collect PICO Demonstrations
 Run Collection
 ~~~~~~~~~~~~~~
 
-After the left and right Franka arms, Robotiq grippers, cameras, foot pedal,
-PICO data stream, and collection Ray cluster are ready, run this on the head
-node:
+After the Franka arms, Robotiq grippers, cameras, ``keyboard_device``, and PICO
+data stream are ready, run this on that machine. ``collect_data.sh`` calls
+whatever ``python`` is on ``PATH``, so activate the Python 3.11 virtualenv
+first. ``/usr/bin/python`` cannot run the script.
 
 .. code-block:: bash
 
    bash examples/embodiment/collect_data.sh realworld_dual_franka_collect_data_pico
 
-Foot-pedal keys:
+Keys come from ``keyboard_device``, not from the terminal and not from PICO
+A/B/X/Y:
 
-* ``a``: start recording; pressing it again while recording aborts the current
-  buffer and discards it.
-* ``b``: increment ``segment_id`` for subtask boundaries.
-* ``c``: mark success, write the LeRobot shard, and end the current episode.
+* ``a``: start recording. Another ``a`` within 1.5 s is ignored; after that it
+  aborts and drops the buffer.
+* ``b``: while recording, increment ``segment_id``. Presses outside recording
+  are ignored.
+* ``c``: mark success and write the LeRobot shard. Presses outside recording
+  are ignored.
 
 PICO operation:
 
@@ -448,6 +486,9 @@ The collection script writes under ``logs/<timestamp>/``:
 * replay-buffer trajectories: ``demos/``
 * LeRobot data: ``collected_data/rank_0/id_0/``; later shards are ``id_1``,
   ``id_2``
+
+Headless OpenCV cannot open a preview, so the collection example sets
+``enable_camera_player: False``.
 
 PICO dual-arm collection already uses the ``realworld_dual_franka_tcp_rot6d``
 environment, so the actions are already tcp_rot6d. You do not need to run the
@@ -513,10 +554,12 @@ Before launch, confirm these fields:
    env:
      train:
        smooth_intervene: True
-       teleop: pico
+       teleop:
+         - {pico: {drives: left}}
+         - {pico: {drives: right}}
        keyboard_reward_wrapper: eval_control
        pico:
-         zmq_addr: "tcp://<vr_publisher_ip>:<port>"
+         zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "dual"
          hold_current_when_inactive: False
      eval:
@@ -524,7 +567,7 @@ Before launch, confirm these fields:
 
 ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
 
-``smooth_intervene: True`` removes action-chunk boundary stalls while PICO is active. If the final frame of a chunk is human-controlled, the env worker skips the next policy inference and executes a shape-compatible dummy chunk instead. PICO actions still override active arms, while inactive frames hold the measured TCP pose. Normal model inference resumes after the final chunk frame is no longer intervened or the episode ends. This mode is PICO-only (``teleop: pico``) and currently requires one environment per env-worker pipeline stage.
+``smooth_intervene: True`` removes action-chunk boundary stalls while PICO is active. If the final frame of a chunk is human-controlled, the env worker skips the next policy inference and executes a shape-compatible dummy chunk instead. PICO actions still override active arms, while inactive frames hold the measured TCP pose. Normal model inference resumes after the final chunk frame is no longer intervened or the episode ends. This mode is PICO-only: every ``env.train.teleop`` entry must be pico, and it currently requires one environment per env-worker pipeline stage.
 
 ``only_success: True`` discards failed rollouts and keeps only successful episodes. ``only_save_expert: True`` still archives each complete successful episode, but training only samples chunk starts where every non-padded frame in the action chunk has ``intervene_flag=True``. Because a dual-arm frame is marked as an intervention when either arm is replaced, such a chunk may combine one arm's PICO action with the other arm's rollout action. Every successful episode is archived immediately under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``. ``env.eval.teleop: none`` means evaluation uses the policy alone, without human intervention.
 

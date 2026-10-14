@@ -21,7 +21,9 @@ no_gripper: False
 # Both ports must be plugged into the env-worker machine (cluster node 0).
 left_gello_port: LEFT_GELLO_PORT    # Replace: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_*-if00-port0
 right_gello_port: RIGHT_GELLO_PORT  # Replace: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_*-if00-port0
-main_image_key: left_wrist_0_rgb
+# LeRobot ``image`` is the base camera. ``base_camera_serials`` must be set;
+# without a base camera this key is missing when the env resets.
+main_image_key: base_0_rgb
 
 video_cfg:
   save_video: False

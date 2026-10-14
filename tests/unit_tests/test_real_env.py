@@ -1370,6 +1370,182 @@ def test_presses_queued_between_episodes_do_not_leak(monkeypatch):
     assert list(session.presses()) == ["a"]  # The queued key was drained.
 
 
+def test_lerobot_frame_keeps_last_substep_of_flattened_intervene_chunk(tmp_path):
+    from rlinf.envs.wrappers.collect_episode import CollectEpisode
+
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            return {}, 0.0, False, False, {}
+
+    action_dim = 20
+    chunk = 20
+    policy = np.arange(action_dim, dtype=np.float32)
+    expert = np.arange(chunk * action_dim, dtype=np.float32) + 100
+    collector = CollectEpisode(Env(), save_dir=str(tmp_path), export_format="pickle")
+    buf = {
+        "observations": [{"state": np.zeros(32, dtype=np.float32)}],
+        "actions": [policy],
+        "rewards": [0.0],
+        "terminated": [True],
+        "truncated": [False],
+        "infos": [
+            {},
+            {
+                "intervene_flag": np.ones(chunk, dtype=bool),
+                "intervene_action": expert,
+            },
+        ],
+        "segment_ids": [0],
+    }
+    frames = collector._buffer_to_lerobot_ep(buf, 0, True)
+    assert frames is not None and len(frames) == 1
+    assert frames[0]["actions"].shape == (action_dim,)
+    assert np.array_equal(frames[0]["actions"], expert[-action_dim:])
+    assert bool(frames[0]["intervene_flag"][0]) is True
+
+
+def test_start_end_c_sets_success_so_collect_episode_can_flush(monkeypatch):
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+
+    class FakeListener:
+        def __init__(self):
+            self.batches = [["a"], ["c"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            return {}, 0.0, False, False, {}
+
+    env = KeyboardStartEndWrapper(Env())
+    _, _, terminated, _, info = env.step(None)
+    assert info["keyboard_event"] == "start"
+    assert terminated is False
+    assert not info.get("success")
+
+    _, reward, terminated, _, info = env.step(None)
+    assert info["keyboard_event"] == "end_success"
+    assert info["success"] is True
+    assert reward == 1.0
+    assert terminated is True
+
+
+def test_eval_control_c_sets_success_so_collect_episode_can_flush(monkeypatch):
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    class FakeListener:
+        def __init__(self):
+            self.batches = [["c"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+
+    class Env(gym.Env):
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            return {}, 0.0, False, False, {}
+
+    env = KeyboardEvalControlWrapper(Env())
+    env._running = True
+    env._last_obs = {}
+    _, reward, terminated, _, info = env.step(None)
+    assert info["eval_result"] == "success"
+    assert info["success"] is True
+    assert reward == 1.0
+    assert terminated is True
+
+
+def test_eval_control_idle_wait_steps_so_pico_can_move(monkeypatch):
+    import numpy as np
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    class FakeListener:
+        def __init__(self):
+            # drain() consumes the first batch; the wait loop then sees 'a'.
+            self.batches = [[], ["a"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-1, 1, shape=(4,), dtype=np.float32)
+            self.steps = 0
+
+        def reset(self, seed=None, options=None):
+            return {"pose": 0}, {}
+
+        def get_hold_action(self):
+            return np.zeros(self.action_space.shape, dtype=np.float32)
+
+        def step(self, action):
+            self.steps += 1
+            return {"pose": self.steps}, 0.0, False, False, {}
+
+    env = KeyboardEvalControlWrapper(Env())
+    obs, _ = env.reset()
+    assert env.env.steps == 1
+    assert obs["pose"] == 1
+    assert env._running is True
+
+
+def test_eval_control_idle_wait_does_not_step_zeros_without_a_hold(
+    monkeypatch,
+):
+    import numpy as np
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    class FakeListener:
+        def __init__(self):
+            self.batches = [[], ["a"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-1, 1, shape=(4,), dtype=np.float32)
+            self.steps = 0
+
+        def reset(self, seed=None, options=None):
+            return {"pose": 0}, {}
+
+        def step(self, action):
+            self.steps += 1
+            return {"pose": self.steps}, 0.0, False, False, {}
+
+    env = KeyboardEvalControlWrapper(Env())
+    obs, _ = env.reset()
+    assert env.env.steps == 0
+    assert obs["pose"] == 0
+    assert env._running is True
+
+
 def test_every_keyboard_wrapper_shares_the_session(monkeypatch):
     from rlinf.envs.real.wrappers.episode import (
         KeyboardEvalControlWrapper,
