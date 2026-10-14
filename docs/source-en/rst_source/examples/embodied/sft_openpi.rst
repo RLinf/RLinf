@@ -499,3 +499,26 @@ Watch the **training loss**. Metric definitions:
 .. code:: bash
 
    tensorboard --logdir ./logs
+
+OpenPI Training and Inference Controls
+--------------------------------------
+
+Use the same preprocessing settings when evaluating an exported OpenPI policy
+and when recomputing its PPO logprobs. Set
+``actor.model.openpi.eval_sft_image_crop: true`` only for checkpoints trained
+with the deterministic 95% top-left front-image crop. The wrist image keeps
+its full field of view. This option defaults to ``false`` and does not consume
+augmentation RNG. Standalone sampling with this option requires ``model.eval()``;
+the PPO sampler and actor replay apply the same crop in their respective modes.
+
+For fresh OpenPI SFT and embodied FSDP actor runs, ``actor.seed`` initializes
+Python, NumPy and PyTorch before constructing the model, so actor ranks start
+with identical newly initialized parameters. After initialization each rank
+uses ``actor.seed + rank``. Rollout uses ``rollout.seed + rank``, falling back
+to ``actor.seed`` and then zero, and resets its stream after model construction.
+Loading a checkpoint restores its saved RNG after initialization. These seed
+rules change the fresh-run random streams of existing OpenPI recipes.
+
+When ``actor.model.openpi.train_expert_only: true`` freezes the vision encoder,
+putting the actor into training mode keeps that encoder in evaluation mode.
+This keeps its attention path consistent with rollout inference.

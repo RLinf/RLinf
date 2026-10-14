@@ -40,6 +40,8 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
+from rlinf.models.embodiment.openpi.pi0 import Pi0
+from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -72,6 +74,140 @@ class _DummyFSDPModel(torch.nn.Module):
         self.block = _DummyBlock()
         self.head = torch.nn.Linear(4, 2)
         self.head._fsdp_wrap_name = "custom_head"
+
+
+class _ImagePreprocessingPi0(Pi0):
+    """Small image-conditioned model exercising the public Euler sampler."""
+
+    def __init__(self, eval_sft_image_crop: bool = False):
+        torch.nn.Module.__init__(self)
+        self.action_dim = 32
+        self.action_horizon = 10
+        self.eval_sft_image_crop = eval_sft_image_crop
+        self.dropout = torch.nn.Dropout(0.5)
+
+    def build_prefix_cache(self, observation):
+        signal = self.dropout(observation.images["base_0_rgb"].mean(dim=(1, 2, 3)))
+        return None, None, signal
+
+    def run_suffix(self, _observation, state, _time, cache, _prefix_mask):
+        return cache[:, None, None].expand_as(state)
+
+    def velocity_from_suffix(self, suffix):
+        return suffix
+
+
+@pytest.mark.parametrize("eval_sft_image_crop", [False, True])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="CUDA device is unavailable"
+            ),
+        ),
+    ],
+)
+def test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state(
+    eval_sft_image_crop,
+    device,
+):
+    """The opt-in sampler uses exact deterministic SFT pixels without dropout."""
+    from rlinf.models.embodiment.openpi.modules import model as model_module
+
+    x = torch.linspace(-1.0, 1.0, 224, device=device)
+    yy, xx = torch.meshgrid(x, x, indexing="ij")
+    image = torch.stack((xx, yy, xx * yy), dim=-1).unsqueeze(0)
+    observation = model_module.Observation(
+        images={key: image.clone() for key in model_module.IMAGE_KEYS},
+        image_masks={
+            key: torch.tensor(["wrist" not in key], dtype=torch.bool, device=device)
+            for key in model_module.IMAGE_KEYS
+        },
+        state=torch.arange(32, dtype=torch.float32, device=device).reshape(1, 32),
+        tokenized_prompt=torch.arange(20, dtype=torch.int64, device=device).reshape(
+            1, 20
+        ),
+        tokenized_prompt_mask=torch.ones((1, 20), dtype=torch.bool, device=device),
+    )
+    expected = model_module.preprocess_observation(
+        observation, train=eval_sft_image_crop, rng=None
+    )
+    model = _ImagePreprocessingPi0(eval_sft_image_crop).to(device).eval()
+    before = torch.get_rng_state().clone()
+    cuda_before = torch.cuda.get_rng_state(device).clone() if device == "cuda" else None
+    prepared = model._preprocess_eval_observation(observation)
+    for key in observation.images:
+        assert torch.equal(prepared.images[key], expected.images[key])
+        assert torch.equal(prepared.image_masks[key], observation.image_masks[key])
+    assert torch.equal(prepared.state, observation.state)
+    assert torch.equal(prepared.tokenized_prompt, observation.tokenized_prompt)
+    assert torch.equal(
+        prepared.tokenized_prompt_mask, observation.tokenized_prompt_mask
+    )
+    assert torch.equal(torch.get_rng_state(), before)
+    noise = torch.zeros((1, 10, 32), device=device)
+    result = model.sample_actions(observation, noise=noise, num_steps=5)
+    expected_signal = expected.images["base_0_rgb"].mean(dim=(1, 2, 3))
+    torch.testing.assert_close(result, -expected_signal[:, None, None].expand_as(noise))
+    assert model.training is False
+    assert model.dropout.training is False
+    assert torch.equal(torch.get_rng_state(), before)
+    if cuda_before is not None:
+        assert torch.equal(torch.cuda.get_rng_state(device), cuda_before)
+    if not eval_sft_image_crop:
+        default = _ImagePreprocessingPi0().to(device).eval()
+        assert torch.equal(
+            default.sample_actions(observation, noise=noise, num_steps=5), result
+        )
+    else:
+        model.train()
+        with pytest.raises(ValueError, match="model.eval"):
+            model.sample_actions(observation, noise=noise, num_steps=5)
+
+
+@pytest.mark.parametrize("enabled", [None, False, True])
+def test_openpi_factory_forwards_eval_sft_image_crop(monkeypatch, tmp_path, enabled):
+    """Factory configuration reaches the inference model constructor."""
+    import rlinf.models.embodiment.openpi as factory
+    import rlinf.models.embodiment.openpi.tasks.eval as eval_task
+
+    class StubModel(torch.nn.Module):
+        def __init__(self, _config, **kwargs):
+            super().__init__()
+            self.eval_sft_image_crop = kwargs["eval_sft_image_crop"]
+
+    monkeypatch.setattr(eval_task, "Pi0Eval", StubModel)
+    monkeypatch.setattr(factory, "resolve_model_safetensors", lambda _path: None)
+    monkeypatch.setattr(
+        factory, "resolve_full_weights", lambda _path: tmp_path / "weights.pt"
+    )
+    monkeypatch.setattr(factory, "load_full_weights", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(factory, "_install_transforms", lambda *_args: None)
+    monkeypatch.setattr(factory, "_apply_openpi_param_dtypes", lambda *_args: None)
+    cfg = OmegaConf.create(
+        {
+            "model_path": str(tmp_path),
+            "precision": None,
+            "action_dim": 9,
+            "num_action_chunks": 5,
+            "num_steps": 5,
+            "openpi": {
+                "task": "eval",
+                "config_name": "pi05_isaaclab_stack_cube",
+                "action_horizon": 10,
+                "model_action_dim": 32,
+                "paligemma_variant": "gemma_2b",
+                "action_expert_variant": "gemma_300m",
+                "eval_sft_image_crop": enabled,
+            },
+        }
+    )
+    if enabled is None:
+        del cfg.openpi.eval_sft_image_crop
+    assert factory.get_model(cfg).eval_sft_image_crop is bool(enabled)
 
 
 def test_custom_model_registration_smoke():
@@ -1094,9 +1230,9 @@ _fake_gym = MagicMock()
 _fake_gym.Env = _FakeGymEnv
 _fake_gym.Wrapper = _FakeGymWrapper
 
-if "gymnasium" not in sys.modules:
+if "gymnasium" not in sys.modules and importlib.util.find_spec("gymnasium") is None:
     sys.modules["gymnasium"] = _fake_gym
-if "imageio" not in sys.modules:
+if "imageio" not in sys.modules and importlib.util.find_spec("imageio") is None:
     sys.modules["imageio"] = MagicMock()
 
 
@@ -1540,3 +1676,142 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+class _ImageConditionedRLPolicy(Pi0RL):
+    """Small image-conditioned velocity with the real RL sampler and replay."""
+
+    def __init__(self, crop, noise_method):
+        torch.nn.Module.__init__(self)
+        self.scale = torch.nn.Parameter(torch.tensor(1.0))
+        self.action_dim = self.model_action_dim = 32
+        self.action_horizon = 10
+        self.action_chunk = 5
+        self.action_env_dim = 7
+        self.num_steps = 5
+        self.config_name = "pi05_isaaclab_stack_cube"
+        self.state_indices = None
+        self.eval_sft_image_crop = crop
+        self.rl_cfg = Pi0RLConfig(noise_method=noise_method, noise_level=0.5)
+        self.setup_transforms([self.transform], [self.output])
+
+    @staticmethod
+    def transform(sample):
+        return {
+            "image": {
+                "base_0_rgb": sample["observation/image"],
+                "left_wrist_0_rgb": sample["observation/wrist_image"],
+                "right_wrist_0_rgb": np.zeros_like(sample["observation/image"]),
+            },
+            "image_mask": {
+                "base_0_rgb": True,
+                "left_wrist_0_rgb": True,
+                "right_wrist_0_rgb": False,
+            },
+            "state": sample["observation/state"],
+            "tokenized_prompt": np.zeros(4, dtype=np.int64),
+            "tokenized_prompt_mask": np.ones(4, dtype=bool),
+        }
+
+    @staticmethod
+    def output(sample):
+        return {"actions": sample["actions"][:, :7]}
+
+    def build_prefix_cache(self, observation):
+        front = observation.images["base_0_rgb"].mean(dim=(1, 2, 3))
+        wrist = observation.images["left_wrist_0_rgb"].mean(dim=(1, 2, 3))
+        return None, None, (front + 0.5 * wrist) * self.scale
+
+    def run_suffix(self, observation, state, time, cache, prefix_mask):
+        return cache[:, None, None].expand_as(state)
+
+    def velocity_from_suffix(self, suffix):
+        return suffix
+
+
+@pytest.mark.parametrize("crop", [False, True])
+def test_openpi_rl_training_preserves_sft_pixels_and_replay_logprobs(crop):
+    from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
+
+    x = torch.linspace(-1, 1, 224)
+    yy, xx = torch.meshgrid(x, x, indexing="ij")
+    image = torch.stack((xx, yy, xx * yy), dim=-1).unsqueeze(0)
+    env_obs = {
+        "main_images": image,
+        "wrist_images": image.flip(2),
+        "states": torch.zeros(1, 32),
+        "task_descriptions": ["stack"],
+    }
+    noise = torch.zeros(1, 10, 32)
+    ode = _ImageConditionedRLPolicy(crop, "flow_ode").eval()
+    expected_obs = preprocess_observation(
+        ode.env_obs_to_observation(env_obs), train=crop, rng=None
+    )
+    signal = (
+        expected_obs.images["base_0_rgb"].mean()
+        + 0.5 * expected_obs.images["left_wrist_0_rgb"].mean()
+    )
+    eval_actions, _ = ode.predict_action_batch(env_obs, mode="eval", noise=noise)
+    train_actions, _ = ode.predict_action_batch(env_obs, mode="train", noise=noise)
+    torch.testing.assert_close(eval_actions, torch.full((1, 5, 7), -signal))
+    torch.testing.assert_close(train_actions, eval_actions)
+
+    sde = _ImageConditionedRLPolicy(crop, "flow_sde").eval()
+    _, sampled = sde.predict_action_batch(
+        env_obs, mode="train", noise=noise, rng=torch.Generator().manual_seed(24)
+    )
+    sde.train()
+    replayed = sde(forward_inputs=sampled["forward_inputs"], compute_values=False)
+    ratio = (replayed["logprobs"] - sampled["prev_logprobs"]).exp()
+    torch.testing.assert_close(ratio, torch.ones_like(ratio), atol=1e-6, rtol=1e-6)
+    replayed["logprobs"].sum().backward()
+    assert sde.scale.grad is not None and torch.isfinite(sde.scale.grad)
+
+
+def test_openpi_sft_checkpoint_load_preserves_policy_and_new_critic(tmp_path):
+    from rlinf.models.embodiment.openpi.checkpoint import load_full_weights
+
+    policy = torch.nn.Module()
+    policy.action_out_proj = torch.nn.Linear(4, 7)
+    sft_weights = {
+        key: value.detach().clone() for key, value in policy.state_dict().items()
+    }
+    path = tmp_path / "full_weights.pt"
+    torch.save(sft_weights, path)
+    restored = torch.nn.Module()
+    restored.action_out_proj = torch.nn.Linear(4, 7)
+    restored.value_head = torch.nn.Linear(4, 1)
+    critic_before = {
+        key: value.detach().clone()
+        for key, value in restored.value_head.state_dict().items()
+    }
+    load_full_weights(restored, path, expect_rlt=False)
+    for key, expected in sft_weights.items():
+        assert torch.equal(restored.state_dict()[key], expected)
+    for key, expected in critic_before.items():
+        assert torch.equal(restored.value_head.state_dict()[key], expected)
+
+    torch.save({"action_out_proj.bias": sft_weights["action_out_proj.bias"]}, path)
+    with pytest.raises(RuntimeError, match="Pi0 tensors missing"):
+        load_full_weights(restored, path, expect_rlt=False)
+
+
+@pytest.mark.parametrize("train_expert_only", [False, True])
+def test_openpi_rl_parent_train_preserves_frozen_vision_mode(train_expert_only):
+    from dataclasses import replace
+
+    policy = _ImageConditionedRLPolicy(True, "flow_sde")
+    policy.img = torch.nn.Sequential(torch.nn.Linear(3, 3), torch.nn.Dropout(0.5))
+    policy.img.requires_grad_(not train_expert_only)
+    policy.rl_cfg = replace(policy.rl_cfg, train_expert_only=train_expert_only)
+    parent = torch.nn.Sequential(policy).eval()
+    parent.train()
+    assert policy.training
+    assert policy.img.training is (not train_expert_only)
+    assert policy.img[1].training is (not train_expert_only)
+    assert policy.scale.requires_grad
+    parent.eval()
+    assert not policy.training and not policy.img.training
+    # Full SFT uses Pi0, whose train semantics continue to enable vision training.
+    sft = _ImagePreprocessingPi0(True).eval().train()
+    assert sft.training and sft.dropout.training
