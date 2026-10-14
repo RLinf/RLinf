@@ -47,6 +47,8 @@ from rlinf.robotics import (
     EndEffector,
     FrankaRobot,
     GimArmConfig,
+    KuavoRobot,
+    KuavoRobotConfig,
     LegacyObservationAdapter,
     MethodArm,
     MethodEndEffector,
@@ -65,6 +67,7 @@ from rlinf.robotics.parts.arms import (
     FrankaROSArm,
     FrankyArm,
     GimArm,
+    KuavoConnection,
     Turtle2Connection,
 )
 from rlinf.robotics.parts.arms.franka import FrankaRobotState
@@ -483,6 +486,7 @@ def test_all_builtin_configs_construct_from_a_node_rank_alone():
     configs = [
         GimArmConfig(node_rank=0),
         DOSW1RobotConfig(node_rank=0),
+        KuavoRobotConfig(node_rank=0),
         Turtle2Config(node_rank=0),
     ]
 
@@ -527,9 +531,276 @@ def test_every_registered_robot_can_skip_the_enumeration_probe():
 def test_every_registered_robot_carries_a_builder():
     registry = RobotDiscovery.registry
 
-    assert set(registry) >= {"Franka", "DualFranka", "GimArm", "Turtle2", "DOSW1"}
+    assert set(registry) >= {
+        "DOSW1",
+        "DualFranka",
+        "Franka",
+        "GimArm",
+        "Kuavo",
+        "Turtle2",
+    }
     missing = sorted(name for name, reg in registry.items() if reg.build is None)
     assert missing == []
+
+
+def test_kuavo_config_validates_variants_and_reports_hardware_model():
+    config = KuavoRobotConfig(
+        node_rank=2,
+        platform_type="5w",
+        which_arm="right",
+        end_effector_type="qiangnao",
+    )
+
+    assert config.hardware_model("Kuavo") == "Kuavo_5w_right_qiangnao"
+    active_obs = config.active_obs_key_map()
+    assert set(active_obs) == {
+        "gripper",
+        "head_cam_h",
+        "joint_q",
+        "wrist_cam_r",
+    }
+    assert active_obs["head_cam_h"]["topic"] == "/cam_h/color/image_raw/compressed"
+    assert active_obs["head_cam_h"]["msg_type"] == "CompressedImage"
+    assert active_obs["head_cam_h"]["handle"]["params"]["resize_wh"] == [
+        848,
+        480,
+    ]
+    assert active_obs["gripper"]["topic"] == "/dexhand/state"
+    assert active_obs["joint_q"]["handle"]["params"]["slice"] == [[11, 18]]
+    assert active_obs["gripper"]["handle"]["params"]["slice"] == [[6, 7]]
+    assert config.arm_state_keys == ["joint_q", "gripper"]
+    assert (config.ros_rate, config.control_rate) == (10, 100)
+    assert len(config.joint_limits_min) == len(config.joint_limits_max) == 14
+    registration = RobotDiscovery.registry["Kuavo"]
+    assert registration.config_cls is KuavoRobotConfig
+    assert "Kuavo" in Hardware.hw_types
+    assert registration.discovery_cls in Hardware.policy_registry
+    assert NodeHardwareConfig._hardware_config_registry["Kuavo"] is KuavoRobotConfig
+    assert KuavoConnection.SDK == "kuavo_humanoid_sdk"
+
+    parsed = NodeHardwareConfig(
+        type="Kuavo",
+        configs=[
+            {
+                "node_rank": 2,
+                "platform_type": "5w",
+                "which_arm": "right",
+                "end_effector_type": "qiangnao",
+                "controller_node_rank": 4,
+            }
+        ],
+    ).configs[0]
+    assert isinstance(parsed, KuavoRobotConfig)
+    assert parsed.controller_node_rank == 4
+    assert pickle.loads(pickle.dumps(parsed)) == parsed
+
+    with pytest.raises(ValueError, match="platform_type"):
+        KuavoRobotConfig(node_rank=0, platform_type="unknown")
+    with pytest.raises(ValueError, match="which_arm"):
+        KuavoRobotConfig(node_rank=0, which_arm="middle")
+    with pytest.raises(ValueError, match="control_mode"):
+        KuavoRobotConfig(node_rank=0, control_mode="eef")
+    with pytest.raises(ValueError, match="only_arm"):
+        KuavoRobotConfig(node_rank=0, only_arm=False)
+    with pytest.raises(ValueError, match="direct_to_wbc"):
+        KuavoRobotConfig(node_rank=0, direct_to_wbc=True)
+    with pytest.raises(ValueError, match="qiangnao_dof_needed"):
+        KuavoRobotConfig(node_rank=0, qiangnao_dof_needed=6)
+    with pytest.raises(ValueError, match="binary"):
+        KuavoRobotConfig(node_rank=0, is_binary=True)
+    with pytest.raises(ValueError, match="14 min/max"):
+        KuavoRobotConfig(node_rank=0, joint_limits_min=[-1.0])
+    with pytest.raises(ValueError, match="finite numbers"):
+        KuavoRobotConfig(node_rank=0, end_effector_limits_max=[1.0, np.inf])
+    with pytest.raises(ValueError, match="within 0..1"):
+        KuavoRobotConfig(node_rank=0, end_effector_limits_max=[1.0, 1.1])
+    with pytest.raises(ValueError, match="image_size"):
+        KuavoRobotConfig(node_rank=0, image_size=[848.0, 480])
+    with pytest.raises(ValueError, match="control frequencies"):
+        KuavoRobotConfig(node_rank=0, ros_rate=np.nan)
+    routes = KuavoRobotConfig(node_rank=0).obs_key_map
+    routes["joint_q"]["frequency"] = "fast"
+    with pytest.raises(ValueError, match="frequency must be positive"):
+        KuavoRobotConfig(node_rank=0, obs_key_map=routes)
+    with pytest.raises(ValueError, match="missing required keys"):
+        KuavoRobotConfig(node_rank=0, obs_key_map={})
+    with pytest.raises(ValueError, match="arm_state_keys"):
+        KuavoRobotConfig(node_rank=0, arm_state_keys=["joint_q", "unknown"])
+
+
+def test_kuavo_robot_builds_only_the_configured_arm_groups():
+    both = KuavoRobot.build(node_rank=1, which_arm="both")
+    left = KuavoRobot.build(
+        node_rank=1, controller_node_rank=3, which_arm="left"
+    )
+
+    assert set(both.children) == {"left", "right"}
+    assert set(left.children) == {"left"}
+    assert isinstance(left.children["left"], PartGroup)
+    assert isinstance(left.children["left"].children["arm"]._host, KuavoConnection)
+    assert left.children["left"].children["arm"]._host.node_rank == 3
+    assert set(left.children["left"].children["arm"].action_features) == {
+        "arm_joint_position"
+    }
+    assert set(left.children["left"].children["arm"].observation_features) == {
+        "arm_joint_position"
+    }
+
+
+def test_kuavo_connection_shares_sdk_state_and_preserves_the_other_arm():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        robot = KuavoRobot.build(which_arm="both", head_position=[0.0, 0.0])
+        robot.connect()
+        observation = robot.get_observation()
+        robot.send_action(
+            {
+                "left": {
+                    "arm": {"arm_joint_position": np.full(7, 0.5)},
+                    "gripper": {"target": np.array([0.25])},
+                },
+                "right": {
+                    "arm": {"arm_joint_position": np.full(7, -0.5)},
+                },
+            }
+        )
+
+        sdk = made["kuavo_humanoid_sdk"]
+        commands = sdk._robots[0].commands
+        eef_commands = sdk._end_effectors[0].commands
+        assert observation["left"]["arm"]["arm_joint_position"].tolist() == list(
+            range(7)
+        )
+        assert observation["right"]["gripper"]["state"].tolist() == pytest.approx(
+            [0.2]
+        )
+        assert commands[0] == ("head", (0.0, 0.0))
+        assert commands[-2] == ("arms", [0.5] * 7 + list(range(7, 14)))
+        assert commands[-1] == ("arms", [0.5] * 7 + [-0.5] * 7)
+        assert eef_commands[-1] == ("left", [25.0])
+        robot.disconnect()
+        assert not robot.is_connected
+
+
+def test_kuavo_end_effector_variants_use_their_real_wire_contracts():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        hand_robot = KuavoRobot.build(
+            which_arm="left", end_effector_type="qiangnao"
+        )
+        hand_robot.connect()
+        hand = hand_robot.children["left"].children["gripper"]
+        assert hand.is_hand and not hand.is_gripper
+        hand_robot.send_action({"left": {"gripper": {"target": np.array([0.4])}}})
+        hand_command = made["kuavo_humanoid_sdk"]._end_effectors[0].commands[-1]
+        assert hand_command == ("left", [40.0, 100.0, 40.0, 40.0, 40.0, 40.0])
+        hand_robot.disconnect()
+
+    with mocked_sdks() as made:
+        gripper_robot = KuavoRobot.build(
+            which_arm="both", end_effector_type="rq2f85"
+        )
+        gripper_robot.connect()
+        subscriber = next(
+            item
+            for item in made["rospy"].subscribers
+            if item.name == "/gripper/state"
+        )
+        subscriber.publish(
+            made["sensor_msgs.msg"].JointState(position=[25.5, 51.0])
+        )
+        observation = gripper_robot.get_observation()
+        assert observation["left"]["gripper"]["state"] == pytest.approx([0.1])
+        assert observation["right"]["gripper"]["state"] == pytest.approx([0.2])
+        gripper_robot.send_action(
+            {
+                "left": {"gripper": {"target": np.array([0.25])}},
+                "right": {"gripper": {"target": np.array([0.75])}},
+            }
+        )
+        topic, message = made["rospy"].published[-1]
+        assert topic == "/gripper/command"
+        assert message.position == pytest.approx([63.75, 191.25])
+        gripper_robot.disconnect()
+        assert not subscriber.active
+
+
+def test_kuavo_rejects_bad_targets_and_clips_joints_before_the_sdk():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        connection = KuavoConnection(
+            which_arm="left",
+            joint_limits_min=[-0.25] * 14,
+            joint_limits_max=[0.25] * 14,
+            end_effector_limits_min=[0.1, 0.2],
+            end_effector_limits_max=[0.9, 0.8],
+        )
+        arm = connection.part("left")
+        gripper = connection.part("left_end_effector")
+        connection.connect()
+        arm.send_action({"arm_joint_position": np.ones(7)})
+        assert made["kuavo_humanoid_sdk"]._robots[0].commands[-1] == (
+            "arms",
+            [0.25] * 7 + list(range(7, 14)),
+        )
+        with pytest.raises(ValueError, match="finite"):
+            arm.send_action({"arm_joint_position": np.full(7, np.nan)})
+        with pytest.raises(ValueError, match="one finite value"):
+            gripper.send_action({"target": np.array([np.inf])})
+        gripper.send_action({"target": np.array([0.0])})
+        assert made["kuavo_humanoid_sdk"]._end_effectors[0].commands[-1] == (
+            "left",
+            [10.0],
+        )
+        connection.disconnect()
+
+
+def test_kuavo_connection_can_retry_after_sdk_open_failure(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        sdk = made["kuavo_humanoid_sdk"]
+        monkeypatch.setattr(
+            sdk.KuavoRobot,
+            "set_external_control_arm_mode",
+            lambda self: False,
+        )
+        connection = KuavoConnection(which_arm="left")
+        with pytest.raises(RuntimeError, match="external arm-control mode"):
+            connection.connect()
+        assert not connection.is_connected
+        assert connection._robot is None
+        assert connection._robot_state is None
+
+        monkeypatch.setattr(
+            sdk.KuavoRobot,
+            "set_external_control_arm_mode",
+            lambda self: True,
+        )
+        connection.connect()
+        assert connection.is_connected
+        connection.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("platform", "arm", "joint_slice"),
+    [
+        ("4pro", "left", [[12, 19]]),
+        ("4pro", "right", [[19, 26]]),
+        ("5", "both", [[13, 20], [20, 27]]),
+        ("5w", "both", [[4, 11], [11, 18]]),
+    ],
+)
+def test_kuavo_platform_and_arm_selection_choose_the_expected_state_slice(
+    platform, arm, joint_slice
+):
+    config = KuavoRobotConfig(
+        node_rank=0, platform_type=platform, which_arm=arm
+    )
+    assert config.joint_q_slices == joint_slice
 
 
 def test_dosw1_dummy_runtime_uses_composed_dual_arm_interface():

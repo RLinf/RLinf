@@ -1,0 +1,6 @@
+numpy
+gymnasium
+opencv-python
+pyyaml
+rospkg
+imageio[ffmpeg]

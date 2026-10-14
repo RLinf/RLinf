@@ -219,6 +219,88 @@ same machine:
    ``ray start``. Configure Robotiq serial permissions on the NUC. See
    :doc:`../examples/embodied/franka_zed_robotiq`.
 
+Kuavo hardware configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Install the Kuavo environment dependencies on the robot control node. If the
+SDK is not already available through the robot's ROS workspace, point the
+installer at its source checkout:
+
+.. code-block:: bash
+
+   KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
+     bash requirements/install.sh embodied --env kuavo
+
+Select the built-in Kuavo composition with ``hardware.type: Kuavo``. The
+configuration identifies the platform revision, selected arms, installed end
+effector, initial head pose, control frequencies, ROS observation topics, and
+safety limits. Joint-position control is currently supported.
+
+.. code-block:: yaml
+
+   - label: kuavo
+     node_ranks: 1
+     hardware:
+       type: Kuavo
+       configs:
+         - node_rank: 1
+           platform_type: 4pro       # 4pro, 5, or 5w
+           which_arm: both           # left, right, or both
+           end_effector_type: leju_claw  # leju_claw, qiangnao, or rq2f85
+           only_arm: true
+           control_mode: joint
+           direct_to_wbc: false
+           qiangnao_dof_needed: 1
+           is_binary: false
+           head_position: null       # omit to leave the current head pose unchanged
+           ros_rate: 10
+           control_rate: 100
+           controller_node_rank: 1
+           image_size: [848, 480]
+           depth_range: [0, 1500]
+           joint_limits_min: [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14]
+           joint_limits_max: [3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14]
+           end_effector_limits_min: [0.0, 0.0]
+           end_effector_limits_max: [1.0, 1.0]
+           arm_state_keys: [joint_q, gripper]
+           obs_key_map:
+             head_cam_h:
+               topic: /cam_h/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             wrist_cam_l:
+               topic: /cam_l/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             wrist_cam_r:
+               topic: /cam_r/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             joint_q:
+               topic: /sensors_data_raw
+               msg_type: sensorsData
+               frequency: 500
+             leju_claw:
+               topic: /leju_claw_state
+               msg_type: lejuClawState
+               frequency: 500
+
+The Kuavo SDK and ROS message packages must be installed on the robot control
+node. They are loaded only when the deferred robot connection is opened, so
+training and scheduler nodes do not need to import them.
+
+This integration intentionally rejects mobile-base control, direct WBC mode,
+multi-DOF Qiangnao policy actions, binary end-effector actions, and Cartesian
+arm control instead of accepting settings it cannot execute.
+
+The robot exports each selected arm under ``left.arm`` or ``right.arm``. Its
+canonical observation and action field is ``arm_joint_position`` in radians;
+the matching end effector is available as ``left.gripper`` or
+``right.gripper`` with a normalized ``0..1`` target. ``active_obs_key_map()``
+filters unused wrist and end-effector routes, renames the selected device route
+to ``gripper``, and adds ``handle.params.resize_wh`` and
+``handle.params.slice`` for the ROS observation bridge.
+
 Auto-configuration from environment variables
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
