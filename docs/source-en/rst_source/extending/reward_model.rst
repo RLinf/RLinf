@@ -29,19 +29,28 @@ them into processed training splits with the preprocessing script.
 1.1 Enable Data Collection
 """"""""""""""""""""""""""
 
-Enable ``data_collection`` under ``env`` in your YAML config:
+Enable ``data_collection`` under ``env.eval`` in your YAML config (use ``env.train`` for training episodes):
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-After training or evaluation starts, the environment will automatically save episodes into ``save_dir``.
-When ``export_format="pickle"``, each episode is written as an individual ``.pkl`` file for later offline preprocessing.
+After training or evaluation starts, each ``export_format: pickle_episode`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
+
+For ResNet rewards, ``maniskill_ppo_mlp_collect`` is a ready-to-run collection config. It
+trains a state-based MLP PPO policy on ManiSkill PickCube and, during the periodic evaluation
+(every ``runner.val_check_interval`` steps), collects RGB episodes in ``pickle`` format, keeping
+only successful ones (``only_success: True``):
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
 
 For VLM Trend rewards, RLinf also provides a ready-to-run collection config:
 
@@ -67,7 +76,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 By default, this produces:
@@ -109,7 +118,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -210,6 +219,15 @@ Once the dataset and model are configured, run:
    bash examples/reward/run_reward_training.sh
 
 Training logs are written to a newly created ``logs/<timestamp>-reward_training`` directory.
+
+Checkpoints are saved under ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/``:
+``global_step_<N>/`` every ``runner.save_interval`` steps, and ``best_model/`` whenever the
+validation accuracy improves (this requires ``runner.early_stop``). To use the trained model in
+RL, set ``reward.model.model_path`` to the weights file, for example:
+
+.. code-block:: text
+
+   logs/<timestamp>-reward_training/reward_training/checkpoints/best_model/actor/model_state_dict/full_weights.pt
 
 2.3 Fine-Tune the VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
@@ -370,6 +388,10 @@ Where:
   For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
   The top-level ``reward_threshold`` is not read by either VLM path today.
 - ``model_path`` points to the reward model checkpoint used for online inference.
+  For ``model_type: resnet``, it is the weights file itself, such as
+  ``checkpoints/best_model/actor/model_state_dict/full_weights.pt`` from section 2.2.3.
+  With ``model_path: null``, as shipped in ``maniskill_ppo_mlp_resnet_reward.yaml``,
+  no trained weights are loaded.
 
 3.2 Worker Interaction During Rollout
 """""""""""""""""""""""""""""""""""""
@@ -806,7 +828,7 @@ The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` usi
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 

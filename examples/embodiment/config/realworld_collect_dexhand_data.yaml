@@ -68,8 +68,8 @@ env:
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
+      save_dir: ${runner.logger.log_path}
+      export_format: [replay_buffer, pickle_episode]
       only_success: True
       robot_type: "panda"
       fps: 10
