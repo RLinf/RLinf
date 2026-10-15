@@ -1498,7 +1498,7 @@ def get_mock_config_reasoning():
     world_size = 16 * 8
     mock_component_placement.actor_dp_size = world_size // 2
     mock_component_placement.actor_world_size = world_size
-    mock_component_placement.rollout_dp_size = world_size
+    mock_component_placement.rollout_num_model_instances = world_size
     mock_component_placement.rollout_world_size = world_size
     mock_component_placement.inference_dp_size = world_size // 2
     mock_component_placement.inference_world_size = world_size
