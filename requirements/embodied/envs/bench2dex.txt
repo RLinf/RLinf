@@ -1,0 +1,5 @@
+# Bench2Dex scene runtime (Python 3.11, Isaac Sim 5.1.0, Isaac Lab v2.3.2).
+# Isaac Sim supplies pxr; do not install a second usd-core into this runtime.
+numpy==1.26.4
+Flask>=3.0,<4
+h5py>=3.10,<4
