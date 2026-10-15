@@ -12,17 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic tokenizer: the model-family-specific slice of tokenization that
-agent loops need on top of a plain HF tokenizer.
-
-An AgenticTokenizer wraps a caller-loaded HF tokenizer (it is NOT a second
-tokenizer): it only encapsulates the parts that vary across model families —
-reasoning markers resolved from sglang's registry, the bound reasoning /
-tool-call parser names, and tool-response token assembly including the
-text/native boundary handling. Generic encode / decode / chat-template use
-goes directly to the HF tokenizer. Agent loops that need model-specific
-handling construct their own (currently search-r1).
-"""
+"""Agentic tokenizer: model-family-specific tokenization for agent loops."""
 
 from __future__ import annotations
 
@@ -35,14 +25,13 @@ logger = get_logger()
 
 
 class AgenticTokenizer:
-    """Model-family-specific tokenization layered on an injected HF tokenizer.
+    """Model-family-specific tokenization on top of a caller-loaded HF tokenizer.
 
-    Wraps the HF tokenizer passed by the caller and exposes only what varies
-    across model families: reasoning markers (resolved from sglang's
-    reasoning-parser registry), the parser names bound to this family, and
-    tool-response token assembly (plain-text path here; native-mode boundary
-    handling in subclasses). For generic encode / decode / chat-template
-    rendering, use the wrapped tokenizer directly.
+    Wraps the given tokenizer rather than loading another one, and covers only
+    what varies across model families: reasoning markers, the bound parser
+    names, and tool-response ids (plain text here, native boundary handling in
+    subclasses). Generic encode / decode goes to the HF tokenizer directly.
+    Agent loops that need this build it themselves (currently search-r1).
     """
 
     reasoning_parser: str | None = None
