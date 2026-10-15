@@ -194,7 +194,7 @@ STEAM 使用 LeRobot 格式数据集，分为两类：
 
 .. note::
 
-   Step 1 与 Step 2 的 ``train_data_paths`` 和 ``data.k`` 必须保持一致：优势计算必须以评论器训练时相同的时间步幅对帧对打分。
+   Step 1 与 Step 2 的 ``train_data_paths``、``data.k`` 和 ``data.camera_keys`` 必须保持一致：优势计算必须使用评论器训练时相同的数据集、时间步幅和相机视角。
 
 流程 Tag 系统
 ~~~~~~~~~~~~~~~~~~~~~
@@ -225,6 +225,11 @@ Step 1：价值模型 SFT
 
 .. code:: yaml
 
+   runner:
+     max_epochs: -1
+     max_steps: 16000
+     save_interval: 1000
+
    data:
      train_data_paths:
        - dataset_path: /path/to/sft_dataset
@@ -238,6 +243,7 @@ Step 1：价值模型 SFT
      micro_batch_size: 32
      global_batch_size: 512
      model:
+       precision: fp32            # fp32 master 参数，FSDP forward 使用 bf16
        num_bins: 32              # 2 = 二分类进度；>2 = 多 bin（偶数）
        ensemble_size: 3          # 集成中评论器数量
        fusion_hidden_dim: 512
@@ -258,13 +264,13 @@ Step 1：价值模型 SFT
      - 默认值
      - 说明
    * - ``data.k``
-     - ``required``
+     - ``32``
      - 最大有符号步幅 :math:`K`。多 bin 模式下 ``2*K`` 必须是 ``num_bins`` 的整数倍。
    * - ``actor.model.num_bins``
-     - ``2``
+     - ``32``
      - bin 数量。``2`` 为二分类进度；``> 2``\ （偶数）为多 bin 有符号步幅分类。
    * - ``actor.model.ensemble_size``
-     - ``1``
+     - ``3``
      - 集成成员数。``> 1`` 启用 worst-of-N 聚合与不确定性统计。
 
 **启动命令**
@@ -283,9 +289,12 @@ Step 1：价值模型 SFT
 
 **关键指标**
 
-- ``train/actor/loss``：有符号步幅 bin 上的交叉熵
-- ``train/actor/accuracy``：最优 bin 分类准确率
-- ``train/actor/grad_norm``：梯度范数
+- ``train/loss``：有符号步幅 bin 上的交叉熵
+- ``train/accuracy``：精确 bin 分类准确率
+- ``train/accuracy_neighbor``：相邻 bin 容差准确率
+- ``train/grad_norm``：梯度范数
+
+如果需要比较不同 checkpoint 在留出 episode 上的表现，请配置 ``data.eval_data_paths``，并将 ``runner.val_check_interval`` 设为正数。对应指标写入 ``eval/loss``、``eval/accuracy`` 和 ``eval/accuracy_neighbor``；具名数据集还会生成 ``eval/rollout_holdout/loss`` 等路径。应根据留出集指标选择评论器 checkpoint，不要默认最后一个训练 step 的泛化效果最好。
 
 Step 2：计算集成优势
 ----------------------------------------
@@ -330,22 +339,22 @@ Step 2：计算集成优势
      - ``required``
      - Step 1 集成检查点路径（``actor`` 目录）。
    * - ``advantage.label_mode``
-     - ``required``
-     - ``threshold`` 或 ``quantile``\ （无默认值，必须显式设置）。
+     - ``quantile``
+     - ``threshold`` 或 ``quantile``。
    * - ``advantage.positive_threshold``
      - ``null``
      - :math:`[-1, 1]` 内的有符号分数阈值（仅 ``label_mode=threshold``\ ）。
    * - ``advantage.rollout_quantile``
-     - ``null``
-     - rollout 帧标为 True 的最高比例（``label_mode=quantile``\ ，必填）。
+     - ``0.3``
+     - rollout 帧标为 True 的最高比例（``label_mode=quantile``）。
    * - ``advantage.expert_quantile``
-     - ``null``
+     - ``0.8``
      - sft 帧标为 True 的最高比例（``label_mode=quantile``\ ，可选）。
    * - ``advantage.tag``
-     - ``required``
+     - ``steam_k32_ensemble3_q30``
      - 输出 tag；写入 ``meta/advantages_{tag}.parquet``。
    * - ``data.k``
-     - ``required``
+     - ``32``
      - 帧对步幅；必须与 Step 1 训练的 ``data.k`` 一致。
 
 **启动命令**
@@ -366,7 +375,34 @@ Step 2：计算集成优势
 Step 3：CFG 训练
 ----------------------------------------
 
-策略优化直接在 STEAM 优势 parquet 上运行共享的 CFG 阶段。将 CFG 配置的 ``data.advantage_tag`` 指向 Step 2 的 ``advantage.tag`` 并启动：
+策略优化直接在 STEAM 优势 parquet 上运行共享的 CFG 阶段。``cfg_rl_openpi.yaml`` 也供其他离线 RL 流程使用，因此除了将 ``data.advantage_tag`` 指向 Step 2 写出的 tag，还必须配置 STEAM 的两类数据集。runner 使用 30,000 step 上限，与 optimizer 的训练计划保持一致。
+
+.. code:: yaml
+
+   runner:
+     max_epochs: -1
+     max_steps: 30000
+
+   data:
+     advantage_tag: steam_k32_ensemble3_q30
+     train_data_paths:
+       - dataset_path: /path/to/sft_dataset
+         type: sft
+         weight: 1.0
+       - dataset_path: /path/to/rollout_dataset
+         type: rollout
+         weight: 1.0
+
+   actor:
+     model:
+       model_path: /path/to/pi05_base_pytorch
+       openpi:
+         config_name: pi05_libero
+         train_expert_only: false
+
+OpenPI 配置必须与数据集的观测和动作 contract 一致。对于 :doc:`RLT <rlt>` 中介绍的 ManiSkill joint-control 数据，应使用 ``config_name: pi05_rlt_maniskill_joint`` 和 ``action_dim: 8``。policy checkpoint 还必须在 ``<model_path>/<asset_id>/norm_stats.json`` 提供匹配的 OpenPI 归一化统计；该 ManiSkill 配置的 ``asset_id`` 为 ``physical-intelligence/maniskill``。
+
+完成路径与环境相关模型字段配置后启动：
 
 .. code:: bash
 
@@ -374,6 +410,8 @@ Step 3：CFG 训练
        data.advantage_tag=steam_k32_ensemble3_q30
 
 完整的 CFG 配置与参数见 :doc:`CFG 训练阶段 <recap>`。
+
+训练过程中应监控 ``train/loss``、``train/conditional_loss``、``train/unconditional_loss``、``train/grad_norm`` 和 ``train/learning_rate``。有限且稳定的 loss 只能证明优化过程正常，不能作为任务级验收指标；还需要在目标环境中评测最终 checkpoint 和候选中间 checkpoint，并报告成功率与 episode 数。评测入口见 :doc:`评测 </rst_source/evaluations/index>`。
 
 STEAM 实验结果
 ----------------------------------------

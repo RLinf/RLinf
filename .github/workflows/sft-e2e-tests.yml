@@ -35,6 +35,39 @@ jobs:
                -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
+  sft-dreamzero-droid-wan22-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend dreamzero sft environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export DREAMZERO_PATH=/workspace/dataset/DreamZero/dreamzero
+          export DECORD_PATH=/workspace/dataset/decord
+          bash requirements/install.sh --platform ascend embodied --model dreamzero
+
+      - name: DreamZero DROID WAN22 SFT test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export DREAMZERO_PATH=/workspace/dataset/DreamZero/dreamzero
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh droid_sft_wan22_ascend
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+
   sft-maniskill-openpi-test:
     runs-on: embodied
     steps:

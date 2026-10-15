@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fake arm SDKs: franky, ROS, the GimArm CAN stack, and the DOSW1 SDK."""
+"""Fake arm SDKs: franky, ROS, lerobot, pyAgxArm, and i2rt."""
 
 from __future__ import annotations
 
+import importlib.machinery
 import threading
 import time
 import types
@@ -549,6 +550,11 @@ def lerobot() -> dict[str, types.ModuleType]:
         made[f"lerobot.teleoperators.{leaf}"] = leader
         setattr(made["lerobot.teleoperators"], leaf, leader)
     made["lerobot"].teleoperators = made["lerobot.teleoperators"]
+    # Only the robot and teleoperator modules are faked. Where lerobot is
+    # installed, the rest of it, such as the dataset writer, stays importable.
+    installed = importlib.machinery.PathFinder.find_spec("lerobot")
+    if installed is not None and installed.submodule_search_locations:
+        made["lerobot"].__path__ = list(installed.submodule_search_locations)
     # The driver gates on the Feetech SDK, which lerobot's feetech extra brings.
     made["scservo_sdk"] = module("scservo_sdk")
     return made
@@ -760,10 +766,264 @@ def pyagxarm() -> dict[str, types.ModuleType]:
     }
 
 
+#: YAM joint travel from its MuJoCo model, before i2rt widens it.
+YAM_XML_LIMITS = (
+    (-2.61799, 3.14159),
+    (0.0, 3.66519),
+    (0.0, 3.14159),
+    (-1.69297, 1.5708),
+    (-1.5708, 1.5708),
+    (-2.0944, 2.0944),
+)
+
+#: A YAM arm with two finger slides and the grasp site the IK solves for.
+_YAM_MJCF = """
+<mujoco model="fake_yam">
+  <worldbody>
+    <body name="link1" pos="0 0 0.1">
+      <joint name="joint1" type="hinge" axis="0 0 1" range="{0}"/>
+      <geom type="sphere" size="0.02" mass="0.1"/>
+      <body name="link2" pos="0 0 0.1">
+        <joint name="joint2" type="hinge" axis="0 1 0" range="{1}"/>
+        <geom type="sphere" size="0.02" mass="0.1"/>
+        <body name="link3" pos="0.25 0 0">
+          <joint name="joint3" type="hinge" axis="0 1 0" range="{2}"/>
+          <geom type="sphere" size="0.02" mass="0.1"/>
+          <body name="link4" pos="0.2 0 0">
+            <joint name="joint4" type="hinge" axis="0 1 0" range="{3}"/>
+            <geom type="sphere" size="0.02" mass="0.1"/>
+            <body name="link5" pos="0.05 0 0">
+              <joint name="joint5" type="hinge" axis="0 0 1" range="{4}"/>
+              <geom type="sphere" size="0.02" mass="0.1"/>
+              <body name="gripper" pos="0.05 0 0">
+                <joint name="joint6" type="hinge" axis="1 0 0" range="{5}"/>
+                <geom type="sphere" size="0.02" mass="0.1"/>
+                <site name="grasp_site" pos="0.1 0 0"/>
+                <body name="finger_left" pos="0.08 0.02 0">
+                  <joint name="joint7" type="slide" axis="0 1 0" range="0 0.04"/>
+                  <geom type="box" size="0.01 0.005 0.02" mass="0.02"/>
+                </body>
+                <body name="finger_right" pos="0.08 -0.02 0">
+                  <joint name="joint8" type="slide" axis="0 -1 0" range="0 0.04"/>
+                  <geom type="box" size="0.01 0.005 0.02" mass="0.02"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def i2rt() -> dict[str, types.ModuleType]:
+    """Fake ``i2rt`` exposing YAM followers and the YAM kinematics model.
+
+    A follower reports the target it was last commanded, so a test reads back
+    exactly what RLinf sent. A server thread stamps the joint feedback, as the
+    real SDK's does, which gives a stale-feedback check something to measure.
+    ``FakeYam.rest`` is the pose a follower reports when it connects.
+
+    Where i2rt is installed only the followers are faked, so its YAM model
+    and IK solve for real; elsewhere a toy model stands in for both.
+    """
+    import tempfile
+
+    # i2rt widens the model's travel by this much before clipping commands.
+    limits = np.asarray(YAM_XML_LIMITS) + np.array([-0.15, 0.15])
+
+    class ArmType(Enum):
+        YAM = "yam"
+
+        @classmethod
+        def from_string_name(cls, name):
+            return cls(name)
+
+    class GripperType(Enum):
+        FLEXIBLE_4310 = "flexible_4310"
+        LINEAR_4310 = "linear_4310"
+
+        @classmethod
+        def from_string_name(cls, name):
+            return cls(name)
+
+    class FakeYam:
+        rest = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+        def __init__(self, **settings):
+            self.settings = settings
+            self._position = np.array(type(self).rest, dtype=np.float64)
+            self.commands: list[np.ndarray] = []
+            self.closed = False
+            self._stop_event = threading.Event()
+            self._joint_state = types.SimpleNamespace(timestamp=time.time())
+            self.motor_chain = types.SimpleNamespace(running=True)
+            self._server_thread = threading.Thread(target=self._serve, daemon=True)
+            self._server_thread.start()
+            control = threading.Thread(target=self._control, daemon=True)
+            self.motor_chain._control_thread = control
+            control.start()
+
+        def _serve(self):
+            while not self._stop_event.is_set():
+                self._joint_state.timestamp = time.time()
+                self._stop_event.wait(0.002)
+
+        def _control(self):
+            while self.motor_chain.running:
+                time.sleep(0.002)
+
+        def get_joint_pos(self):
+            return self._position.copy()
+
+        def command_joint_pos(self, target):
+            # The real SDK clips the arm joints of the caller's array in place.
+            target[:6] = np.clip(target[:6], limits[:, 0], limits[:, 1])
+            self.commands.append(np.array(target, dtype=np.float64))
+            self._position = np.array(target, dtype=np.float64)
+
+        def get_robot_info(self):
+            return {"joint_limits": limits.copy()}
+
+        def close(self):
+            self._stop_event.set()
+            self.motor_chain.running = False
+            self.closed = True
+
+    robots: list[FakeYam] = []
+
+    def get_yam_robot(
+        channel="can0",
+        arm_type=ArmType.YAM,
+        gripper_type=GripperType.LINEAR_4310,
+        zero_gravity_mode=True,
+        ee_mass=None,
+        ee_inertia=None,
+        gravity_comp_factor=None,
+        gripper_limits_override=None,
+        gripper_kp=None,
+        gripper_kd=None,
+        sim=False,
+        joint_state_saver_factory=None,
+        set_realtime_and_pin_callback=None,
+        enable_auto_recovery=False,
+        use_coulomb_friction=False,
+    ):
+        robot = FakeYam(
+            channel=channel,
+            arm_type=arm_type,
+            gripper_type=gripper_type,
+            zero_gravity_mode=zero_gravity_mode,
+            ee_mass=ee_mass,
+            gravity_comp_factor=gravity_comp_factor,
+            gripper_limits_override=gripper_limits_override,
+            enable_auto_recovery=enable_auto_recovery,
+            use_coulomb_friction=use_coulomb_friction,
+        )
+        robots.append(robot)
+        return robot
+
+    def combine_arm_and_gripper_xml(
+        arm_type, gripper_type, ee_mass=None, ee_inertia=None
+    ):
+        ranges = [f"{low} {high}" for low, high in YAM_XML_LIMITS]
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".xml", prefix="fake_yam_", delete=False
+        ) as handle:
+            handle.write(_YAM_MJCF.format(*ranges))
+        return handle.name
+
+    class Kinematics:
+        """Forward kinematics from the model; IK reports the seed unchanged."""
+
+        def __init__(self, xml_path, site_name):
+            import mujoco
+
+            model = mujoco.MjModel.from_xml_path(str(xml_path))
+            self._configuration = types.SimpleNamespace(model=model)
+            self._data = mujoco.MjData(model)
+            self._site = site_name
+
+        def fk(self, qpos):
+            import mujoco
+
+            model = self._configuration.model
+            self._data.qpos[:] = qpos
+            mujoco.mj_kinematics(model, self._data)
+            site = self._data.site(self._site)
+            pose = np.eye(4)
+            pose[:3, 3] = site.xpos
+            pose[:3, :3] = site.xmat.reshape(3, 3)
+            return pose
+
+        def ik(self, target, site_name, init_q=None, **_solver):
+            return True, np.asarray(init_q, dtype=np.float64).copy()
+
+    made = {name: module(name) for name in ("i2rt", "i2rt.robots")}
+    made["i2rt.robots.get_robot"] = module(
+        "i2rt.robots.get_robot",
+        get_yam_robot=get_yam_robot,
+        robots=robots,
+        FakeYam=FakeYam,
+    )
+    made["i2rt.robots.utils"] = module(
+        "i2rt.robots.utils",
+        ArmType=ArmType,
+        GripperType=GripperType,
+        combine_arm_and_gripper_xml=combine_arm_and_gripper_xml,
+    )
+    made["i2rt.robots.kinematics"] = module(
+        "i2rt.robots.kinematics", Kinematics=Kinematics
+    )
+    if importlib.machinery.PathFinder.find_spec("i2rt") is not None:
+        return {"i2rt.robots.get_robot": made["i2rt.robots.get_robot"]}
+    made["i2rt"].robots = made["i2rt.robots"]
+    for name in ("get_robot", "utils", "kinematics"):
+        setattr(made["i2rt.robots"], name, made[f"i2rt.robots.{name}"])
+    return made
+
+
+class FreeToolKinematics:
+    """IK of a tool floating free, standing in for the YAM model in tests.
+
+    The YAM solver needs MuJoCo and mink, which the unit-test environment does
+    not install. Here joints 1-3 are the tool position and 4-6 its rotation
+    vector, so every pose solves exactly unless ``unreachable`` is set.
+    """
+
+    max_solve_s = 1.0
+
+    def __init__(self) -> None:
+        self.unreachable = False
+
+    def fk(self, joints: Any, gripper: float) -> np.ndarray:
+        from scipy.spatial.transform import Rotation
+
+        joints = np.asarray(joints, dtype=np.float64)
+        pose = np.eye(4)
+        pose[:3, 3] = joints[:3]
+        pose[:3, :3] = Rotation.from_rotvec(joints[3:6]).as_matrix()
+        return pose
+
+    def solve(self, target: np.ndarray, seed: Any, gripper: float) -> Any:
+        from scipy.spatial.transform import Rotation
+
+        from rlinf.robotics.parts.arms.yam import YamIKResult
+
+        joints = np.concatenate(
+            [target[:3, 3], Rotation.from_matrix(target[:3, :3]).as_rotvec()]
+        )
+        reason = "residual" if self.unreachable else None
+        return YamIKResult(reason is None, joints, 0.0, 0.0, 0.0, reason)
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return fake arm SDKs keyed by import name."""
     made = {"franky": franky()}
     made.update(ros())
     made.update(lerobot())
     made.update(pyagxarm())
+    made.update(i2rt())
     return made
