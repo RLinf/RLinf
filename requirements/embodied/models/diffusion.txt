@@ -2,6 +2,7 @@ accelerate==1.13.0
 diffusers==0.38.0
 peft==0.17.1
 transformers==4.49.0
+sentencepiece
 protobuf==3.20.3
 numpy==1.26.4
 opencv-python==4.11.0.86
