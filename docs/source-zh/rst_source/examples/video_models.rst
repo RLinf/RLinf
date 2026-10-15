@@ -208,8 +208,15 @@ reference model。
    bash requirements/install.sh embodied --model diffusion --venv /path/to/venv
    source /path/to/venv/bin/activate
 
-该命令会创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的
-Diffusers、PEFT、Transformers、PaddleOCR、PaddlePaddle 等依赖。
+该命令会创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU 版 PaddlePaddle。它适用于 OCR reward 设置为 ``use_gpu: False`` 的配置，包括 ``sd3_nft_ocr.yaml``。
+
+仓库中的 Wan2.2 OCR 配置使用 ``use_gpu: True``。运行以下命令安装支持 CUDA 的 PaddlePaddle wheel：
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model diffusion --paddle-gpu
+
+根据 CUDA 版本，GPU wheel 大约为 760--800 MB。安装脚本会选择 CUDA 11 或 CUDA 12 对应的版本；如果环境中已经安装正确版本，则会跳过下载。
 
 .. warning::
 
