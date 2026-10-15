@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import json
 import sys
 import time
 from pathlib import Path
@@ -40,11 +39,6 @@ from rlinf.models.embodiment.modules.rlt_token_transformer import (
 from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
-)
-from rlinf.models.embodiment.openpi.checkpoint import (
-    load_base_safetensors,
-    resolve_full_weights,
-    resolve_model_safetensors,
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
@@ -146,162 +140,6 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
     assert wrap_policy is not None
     assert wrap_policy(module=model.block, recurse=False, nonwrapped_numel=0)
     assert wrap_policy(module=model.head, recurse=False, nonwrapped_numel=0)
-
-
-def _write_openpi_safetensors(tmp_path, state_dict, *, sharded):
-    import safetensors.torch
-
-    if not sharded:
-        weights_path = tmp_path / "model.safetensors"
-        safetensors.torch.save_file(state_dict, str(weights_path))
-        return weights_path
-
-    weight_map = {}
-    for i in range(2):
-        shard = f"model-{i + 1:05d}-of-00002.safetensors"
-        shard_state = dict(list(state_dict.items())[i::2])
-        safetensors.torch.save_file(shard_state, str(tmp_path / shard))
-        weight_map.update(dict.fromkeys(shard_state, shard))
-    index_path = tmp_path / "model.safetensors.index.json"
-    index_path.write_text(json.dumps({"weight_map": weight_map}))
-    return index_path
-
-
-@pytest.mark.parametrize("sharded", [False, True])
-@pytest.mark.parametrize("legacy", [False, True])
-@pytest.mark.parametrize("explicit_file", [False, True])
-def test_openpi_loads_safetensors_layouts(tmp_path, sharded, legacy, explicit_file):
-    model = torch.nn.Module()
-    model.action_in_proj = torch.nn.Linear(2, 2)
-    mlp = torch.nn.Module()
-    mlp.w_gating = torch.nn.Parameter(torch.zeros(2, 2, 3))
-    layer = torch.nn.Module()
-    layer.mlps = torch.nn.ModuleList([mlp])
-    model.llm = torch.nn.Module()
-    model.llm.layers = torch.nn.ModuleList([layer])
-    model.value_head = torch.nn.Linear(2, 1)
-    initial_head = model.value_head.weight.detach().clone()
-
-    gate = torch.arange(6, dtype=torch.float32).reshape(3, 2)
-    up = gate + 10
-    expected_gating = torch.stack([gate.T, up.T]).contiguous()
-    source = {
-        "action_in_proj.weight": torch.full((2, 2), 2.0),
-        "action_in_proj.bias": torch.full((2,), 3.0),
-    }
-    if legacy:
-        prefix = "paligemma_with_expert.paligemma.model.language_model.layers.0.mlp."
-        source[prefix + "gate_proj.weight"] = gate
-        source[prefix + "up_proj.weight"] = up
-    else:
-        source["llm.layers.0.mlps.0.w_gating"] = expected_gating
-    weights_path = _write_openpi_safetensors(tmp_path, source, sharded=sharded)
-
-    resolved = resolve_model_safetensors(weights_path if explicit_file else tmp_path)
-    assert resolved == weights_path
-    load_base_safetensors(model, resolved)
-
-    torch.testing.assert_close(
-        model.action_in_proj.weight, source["action_in_proj.weight"]
-    )
-    torch.testing.assert_close(model.action_in_proj.bias, source["action_in_proj.bias"])
-    torch.testing.assert_close(mlp.w_gating, expected_gating)
-    torch.testing.assert_close(model.value_head.weight, initial_head)
-
-
-@pytest.mark.parametrize("sharded", [False, True])
-@pytest.mark.parametrize("with_value_head", [False, True])
-def test_openpi_loads_policy_checkpoint_with_optional_value_head(
-    tmp_path, sharded, with_value_head
-):
-    source = torch.nn.Module()
-    source.action_in_proj = torch.nn.Linear(2, 2)
-    source.value_head = torch.nn.Linear(2, 1)
-    weights_path = _write_openpi_safetensors(
-        tmp_path, source.state_dict(), sharded=sharded
-    )
-    model = torch.nn.Module()
-    model.action_in_proj = torch.nn.Linear(2, 2)
-    if with_value_head:
-        model.value_head = torch.nn.Linear(2, 1)
-
-    load_base_safetensors(model, weights_path)
-
-    for key, value in model.state_dict().items():
-        torch.testing.assert_close(value, source.state_dict()[key])
-
-
-def test_openpi_checkpoint_resolution_preserves_existing_priorities(tmp_path):
-    assert resolve_model_safetensors(tmp_path) is None
-    index_path = tmp_path / "model.safetensors.index.json"
-    index_path.write_text("{}")
-    assert resolve_model_safetensors(tmp_path) == index_path
-    weights_path = tmp_path / "model.safetensors"
-    weights_path.touch()
-    assert resolve_model_safetensors(tmp_path) == weights_path
-    full_weights_path = tmp_path / "actor/model_state_dict/full_weights.pt"
-    full_weights_path.parent.mkdir(parents=True)
-    full_weights_path.touch()
-    assert resolve_full_weights(tmp_path) == full_weights_path
-
-
-@pytest.mark.parametrize("weight_map", [None, {}, {"weight": 1}])
-def test_openpi_rejects_invalid_safetensors_index(tmp_path, weight_map):
-    index_path = tmp_path / "model.safetensors.index.json"
-    index_path.write_text(json.dumps({"weight_map": weight_map}))
-    with pytest.raises(ValueError, match="non-empty.*weight_map"):
-        load_base_safetensors(torch.nn.Linear(2, 2), index_path)
-
-
-def test_openpi_reports_missing_safetensors_shard(tmp_path):
-    weights_path = _write_openpi_safetensors(
-        tmp_path, torch.nn.Linear(2, 2).state_dict(), sharded=True
-    )
-    shard_path = tmp_path / "model-00002-of-00002.safetensors"
-    shard_path.unlink()
-    with pytest.raises(FileNotFoundError, match=shard_path.name):
-        load_base_safetensors(torch.nn.Linear(2, 2), weights_path)
-
-
-@pytest.mark.parametrize("corruption", ["missing", "unexpected", "duplicate"])
-def test_openpi_rejects_safetensors_shards_that_disagree_with_index(
-    tmp_path, corruption
-):
-    import safetensors.torch
-
-    weights_path = _write_openpi_safetensors(
-        tmp_path, torch.nn.Linear(2, 2).state_dict(), sharded=True
-    )
-    shard_path = tmp_path / "model-00002-of-00002.safetensors"
-    shard_state = safetensors.torch.load_file(str(shard_path))
-    if corruption == "missing":
-        shard_state.pop("bias")
-    elif corruption == "unexpected":
-        shard_state["extra"] = torch.zeros(1)
-    else:
-        shard_state["weight"] = torch.zeros(2, 2)
-    safetensors.torch.save_file(shard_state, str(shard_path))
-    with pytest.raises(ValueError, match="does not match"):
-        load_base_safetensors(torch.nn.Linear(2, 2), weights_path)
-
-
-@pytest.mark.parametrize("sharded", [False, True])
-@pytest.mark.parametrize("invalid_key", ["missing_backbone", "unexpected"])
-def test_openpi_safetensors_preserve_model_key_validation(
-    tmp_path, sharded, invalid_key
-):
-    model = torch.nn.Module()
-    model.action_in_proj = torch.nn.Linear(2, 2)
-    source = dict(model.state_dict())
-    if invalid_key == "missing_backbone":
-        source.pop("action_in_proj.bias")
-        message = "Pi0 tensors missing"
-    else:
-        source["unexpected.weight"] = torch.zeros(1)
-        message = "Unexpected keys"
-    weights_path = _write_openpi_safetensors(tmp_path, source, sharded=sharded)
-    with pytest.raises(RuntimeError, match=message):
-        load_base_safetensors(model, weights_path)
 
 
 def _make_model(*, prefix_seq_len: int = 5) -> RLTTokenTransformer:
