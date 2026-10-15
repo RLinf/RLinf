@@ -2938,8 +2938,8 @@ install_paddle_gpu() {
     local paddle_ver="2.6.2"
     local paddle_gpu_ver=""
     local paddle_gpu_index=""
-    local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/whl/linux/cuda12.0/paddlepaddle_gpu.html"
-    local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/mkl/avx_x86_64_gpu_cudnn_cudnn8_avx_mkl_paddlepaddle_gpu.html"
+    local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/packages/stable/cu120/paddlepaddle-gpu/"
+    local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/"
 
     local cuda_mm cuda_major
     if cuda_mm=$(detect_cuda_major_minor) 2>/dev/null; then
@@ -2961,7 +2961,7 @@ install_paddle_gpu() {
     if [ -n "$paddle_gpu_ver" ]; then
         echo "[install.sh] Installing paddlepaddle-gpu==${paddle_gpu_ver} for CUDA ${cuda_major}.x"
         # Keep PyPI's CUDA 11 wheel out of the CUDA 12 candidate set.
-        if python -m pip install --no-index \
+        if uv pip install --no-index \
                --find-links "$paddle_gpu_index" \
                "paddlepaddle-gpu==${paddle_gpu_ver}" 2>&1; then
             if python -c 'import paddle; raise SystemExit(not paddle.device.is_compiled_with_cuda())'; then

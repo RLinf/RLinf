@@ -21,7 +21,6 @@ from typing import Any
 
 import torch
 
-
 _patch_lock = Lock()
 _active_contexts = 0
 _original_tensor_to = torch.Tensor.to
