@@ -100,6 +100,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     max_token_len = OmegaConf.select(model_cfg, "max_token_len", default=None)
     if max_token_len is not None:
         pi0_kwargs["max_token_len"] = int(max_token_len)
+    image_keys = OmegaConf.select(model_cfg, "image_keys", default=None)
+    if image_keys is not None:
+        pi0_kwargs["image_keys"] = tuple(image_keys)
 
     pi0_config = Pi0Config(**pi0_kwargs)
     rlt_cfg = build_rlt_config(model_cfg)
@@ -138,7 +141,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
                 OmegaConf.select(model_cfg, "rtc_guidance_clip", default=5.0)
             ),
         )
-        _install_transforms(model, cfg, config_name)
+        _install_transforms(model, cfg, config_name, pi0_config)
     elif task == "rl":
         from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
 
@@ -182,7 +185,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             config_name=config_name,
             state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
         )
-        _install_transforms(model, cfg, config_name)
+        _install_transforms(model, cfg, config_name, pi0_config)
     elif task == "dagger":
         from rlinf.models.embodiment.openpi.tasks.dagger import Pi0DAgger
 
@@ -193,7 +196,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             config_name=config_name,
             state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
         )
-        _install_transforms(model, cfg, config_name)
+        _install_transforms(model, cfg, config_name, pi0_config)
     elif task == "dsrl":
         from rlinf.models.embodiment.openpi.tasks.dsrl import (
             Pi0DSRL,
@@ -235,7 +238,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
             dsrl_cfg=dsrl_cfg,
         )
-        _install_transforms(model, cfg, config_name)
+        _install_transforms(model, cfg, config_name, pi0_config)
     else:
         raise ValueError(
             f"actor.model.openpi.task={task!r} is not supported; "
@@ -395,13 +398,17 @@ def _resolve_data_kwargs(cfg):
     return data_kwargs
 
 
-def _install_transforms(model, cfg, config_name: str):
+def _install_transforms(model, cfg, config_name: str, model_config):
     from rlinf.models.embodiment.openpi.transforms.pipeline import (
         build_openpi_transforms,
     )
 
     input_transforms, output_transforms = build_openpi_transforms(
-        cfg.model_path, config_name, data_kwargs=_resolve_data_kwargs(cfg)
+        cfg.model_path,
+        config_name,
+        data_kwargs=_resolve_data_kwargs(cfg),
+        runtime_model_config=model_config,
+        action_env_dim=model.action_env_dim,
     )
     model.setup_transforms(input_transforms, output_transforms)
     return model

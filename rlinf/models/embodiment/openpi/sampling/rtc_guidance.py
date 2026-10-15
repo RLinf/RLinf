@@ -96,7 +96,9 @@ def sample_actions_with_rtc_guidance(
     guidance_clip: float = 5.0,
 ) -> torch.Tensor:
     """Euler ODE sampling with overlap guidance against the previous chunk."""
-    observation = preprocess_observation(observation, train=False)
+    observation = preprocess_observation(
+        observation, train=False, image_keys=pi0_model.image_keys
+    )
     B = observation.state.shape[0]
     device = observation.state.device
     if noise is None:
