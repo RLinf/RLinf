@@ -113,12 +113,12 @@ class Scheduler(_Scheduler):
         self.patch_return_output_ids = sglang_version < parse("0.5.0")
 
     def cuda_info(self, text: str = ""):
-        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
+        free_gpu_memory, total_gpu_memory = Worker.torch_platform.mem_get_info()
         free_gpu_memory /= 2**30
         total_gpu_memory /= 2**30
 
-        memory_allocated = torch.cuda.memory_allocated() / 2**30
-        memory_reserved = torch.cuda.memory_reserved() / 2**30
+        memory_allocated = Worker.torch_platform.memory_allocated() / 2**30
+        memory_reserved = Worker.torch_platform.memory_reserved() / 2**30
 
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-"
@@ -224,7 +224,7 @@ class Scheduler(_Scheduler):
                 list_args = list(args)
                 # NOTE: the key is to change device id to the current device id
                 # in case two processes have different CUDA_VISIBLE_DEVICES
-                list_args[6] = torch.cuda.current_device()
+                list_args[6] = Worker.torch_platform.current_device()
                 new_weight = func(*list_args)
                 batch_weight.append((rename(name), new_weight))
         else:
@@ -403,7 +403,7 @@ class Scheduler(_Scheduler):
             for key, value in model.state_dict().items():
                 cpu_state_dict[key] = value.to("cpu", non_blocking=True)
             self.cpu_state_dict = cpu_state_dict
-            torch.cuda.synchronize()
+            Worker.torch_platform.synchronize()
 
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "
@@ -690,7 +690,7 @@ def validate_weight_init(model):
         weight_norm_dict[key] = posi_norm(value)
 
     # avoid release memory before norm kernel launch (gpu is async from cpu)
-    torch.cuda.synchronize()
+    Worker.torch_platform.synchronize()
     return weight_norm_dict
 
 
