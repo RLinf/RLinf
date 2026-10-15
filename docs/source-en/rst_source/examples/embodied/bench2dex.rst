@@ -120,7 +120,9 @@ Convert its JAX step directory, including ``params/`` and the matching
 
 The recipe loads the converted ``model.safetensors`` and normalization
 file. Task64 uses four policy views, 32 active-joint coordinates, a 20-action
-chunk and 280 prompt tokens.
+chunk and 280 prompt tokens. The aligned evaluator creates the official
+five-camera rig, including the overhead view, and captures a preflight frame
+before the first policy observation.
 
 Run It
 ------
@@ -129,7 +131,7 @@ Run 50 episodes per channel, with a process restart every 10 episodes:
 
 .. code-block:: bash
 
-   python -m evaluations.bench2dex.run_all_channels \
+   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task64_openpi_pi05_eval --episodes-per-process 10
 
 The launcher runs ``none``, ``cov``, ``inv`` and ``inv_cov`` in
@@ -137,6 +139,12 @@ sequence, sharing GPU 0 between simulation and inference. Select another card
 with ``--gpu-id``, an output directory with ``--output-root``, or a subset
 with ``--channels``. Setting ``--episodes-per-process 0`` runs a channel
 in one process; ``--num-episodes`` controls its total episode count.
+
+The recipe selects ``rollout.model.openpi.noise_rng: jax`` to generate
+CPU noise from each episode seed and policy query index. Model inference
+continues to use PyTorch on the GPU. Simulator initialization applies the task
+seed before creating the simulation context and uses the native physics time
+step ``0.0166666``.
 
 .. list-table:: Official Channel Protocol
    :header-rows: 1

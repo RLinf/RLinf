@@ -95,6 +95,11 @@ class Bench2DexRuntime:
         import isaaclab.sim as sim_utils
         from build.generalization import resolve_sample_paths
         from robots import ROBOT_SPAWNERS
+        from utils.seed_policy import (
+            resolve_task_seed_id,
+            seed_everything,
+            task_base_seed,
+        )
 
         self.config, self.spec, self.app = config, spec, app
         self.episodes = episodes
@@ -125,6 +130,12 @@ class Bench2DexRuntime:
         spawner.ROBOT_USD_PATH = Path(
             resolve_sample_paths(str(spawner.ROBOT_USD_PATH), str(spec.assets_path))
         )
+        seed_everything(
+            task_base_seed(
+                self.namespace_base_seed,
+                resolve_task_seed_id(str(spec.task_path), config.get("task_seed_id")),
+            )
+        )
         self.sim = sim_utils.SimulationContext(
             sim_utils.SimulationCfg(
                 dt=spec.physics_dt,
@@ -138,6 +149,7 @@ class Bench2DexRuntime:
                 ),
             )
         )
+        self.sim.set_camera_view([0.0, 0.0, 2.20], [0.0, 0.0, 0.82])
 
     def _load_generalization_config(self) -> None:
         from build import (
@@ -299,9 +311,19 @@ class Bench2DexRuntime:
             str(self.spec.collect_config), robot_key=self.spec.robot_key
         )
         cameras = {camera.camera_id: camera for camera in collect.cameras}
+        render_names = tuple(
+            self.config["cameras"].get("render", self.spec.camera_names)
+        )
+        missing = set(self.spec.camera_names) - set(render_names)
+        unknown = set(render_names) - set(cameras)
+        if missing or unknown or len(set(render_names)) != len(render_names):
+            raise ValueError(
+                "Expected unique render cameras covering all policy views; "
+                f"missing={sorted(missing)}, unknown={sorted(unknown)}, got={render_names}"
+            )
         self.camera_rig = CameraRig(
             self.sim,
-            [cameras[name] for name in self.spec.camera_names],
+            [cameras[name] for name in render_names],
             enable_rgb=True,
             enable_depth=False,
             robot_articulation=classify_interactive_objects(
@@ -394,6 +416,8 @@ class Bench2DexRuntime:
         self.success_once = self.terminated = self.truncated = False
         self.episode_return = 0.0
         self._last_transition = None
+        # Native evaluation captures preflight before rendering policy frame zero.
+        self._capture_camera_frames()
         observation = self._observe()
         return observation, self._info()
 
@@ -408,9 +432,8 @@ class Bench2DexRuntime:
         self.sim.step(render=False)
         update_sim_objects(self.objects.values(), self.spec.physics_dt)
 
-    def _observe(self) -> dict:
-        from robots.active_dof_utils import select_active
-
+    def _capture_camera_frames(self) -> dict:
+        """Render and validate the complete rig independently of policy views."""
         self.camera_rig.sync_mounted_camera_poses()
         self.sim.render()
         for _ in range(5):
@@ -419,7 +442,7 @@ class Bench2DexRuntime:
                 name in frames
                 and frames[name] is not None
                 and frames[name].rgb is not None
-                for name in self.spec.camera_names
+                for name in self.camera_rig.camera_ids
             ):
                 break
             self.sim.render()
@@ -427,6 +450,12 @@ class Bench2DexRuntime:
             raise RuntimeError(
                 f"Incomplete Bench2Dex cameras: {self.camera_rig.last_capture_errors}"
             )
+        return frames
+
+    def _observe(self) -> dict:
+        from robots.active_dof_utils import select_active
+
+        frames = self._capture_camera_frames()
         images = {
             name: np.asarray(frames[name].rgb, dtype=np.uint8).copy()
             for name in self.spec.camera_names
@@ -497,6 +526,7 @@ class Bench2DexRuntime:
             "dwell_time_s": self.metrics.dwell_time_s,
             "robot_key": self.spec.robot_key,
             "anchor_hdf5": self.anchor,
+            "render_camera_names": tuple(self.camera_rig.camera_ids),
             "seed": self.episode_seed,
             "active_joint_names": tuple(self.dof.active_joint_names),
             "control_steps": self.control_steps,

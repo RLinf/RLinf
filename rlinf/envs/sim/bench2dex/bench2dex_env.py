@@ -117,6 +117,10 @@ class Bench2DexEnv(gym.Env):
         }
         tactile = raw["tactile"]
         obs["extra_obs"] = {
+            "policy_sampling": {
+                "episode_seed": torch.tensor([self.episode_seed], dtype=torch.int64),
+                "query_index": torch.tensor([self.policy_queries], dtype=torch.int64),
+            },
             "bench2dex": {
                 "full_joint_positions": torch.from_numpy(
                     raw["full_joint_positions"]
@@ -132,7 +136,7 @@ class Bench2DexEnv(gym.Env):
                         if key != "site_names"
                     },
                 },
-            }
+            },
         }
         for field, cameras in (
             ("extra_view_images", self.spec["extra_cameras"]),
@@ -169,6 +173,7 @@ class Bench2DexEnv(gym.Env):
             if ids.tolist() != [0]:
                 raise ValueError(f"Expected env_ids=[0], got {ids.tolist()}")
         raw_obs, raw_info = self.env.reset(seed=seed)
+        self.episode_seed = int(raw_info["seed"])
         self.is_start = False
         self.policy_queries = 0
         self.query_at_success = None

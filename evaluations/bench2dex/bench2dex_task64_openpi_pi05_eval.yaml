@@ -62,6 +62,7 @@ rollout:
     add_value_head: false
     openpi:
       task: eval
+      noise_rng: jax
       config_name: pi05_bench2dex
       action_horizon: 20
       model_action_dim: 32

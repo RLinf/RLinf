@@ -140,6 +140,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             rtc_guidance_clip=float(
                 OmegaConf.select(model_cfg, "rtc_guidance_clip", default=5.0)
             ),
+            noise_rng=str(OmegaConf.select(model_cfg, "noise_rng", default="torch")),
         )
         _install_transforms(model, cfg, config_name, pi0_config)
     elif task == "rl":

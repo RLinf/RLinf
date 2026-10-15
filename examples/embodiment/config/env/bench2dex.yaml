@@ -36,12 +36,13 @@ init_params:
   policy_name: null
   early_stop: true
   device: cuda:0
-  physics_dt: 0.016666666666666666
+  physics_dt: 0.0166666
   control_decimation: 3
   # Null derives ceil(1.5 * expert_time_step / control_decimation).
   max_control_steps: null
   warmup_steps: 60
   cameras:
+    render: [cam_overhead, cam_wrist_right, cam_wrist_left, cam_stereo_left, cam_stereo_right]
     main: cam_stereo_left
     extra: [cam_stereo_right]
     wrist: [cam_wrist_left, cam_wrist_right]

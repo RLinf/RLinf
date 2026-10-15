@@ -102,7 +102,7 @@ Task64 配置采用每个环境 worker 一个场景，仿真环境注册为 ``en
      --output-norm-stats "$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json" \
      --action-dim 32 --action-horizon 20 --max-token-len 280
 
-评测配置读取转换后的 ``model.safetensors`` 和归一化文件。Task64 使用四个 policy 视角、32 维主动关节动作、20 步 action chunk 和 280 个 prompt tokens。
+评测配置读取转换后的 ``model.safetensors`` 和归一化文件。Task64 使用四个 policy 视角、32 维主动关节动作、20 步 action chunk 和 280 个 prompt tokens。对齐版评测创建包含顶视角的官方五相机配置，并在首次 policy 观测前采集预热帧。
 
 启动评测
 --------
@@ -111,10 +111,12 @@ Task64 配置采用每个环境 worker 一个场景，仿真环境注册为 ``en
 
 .. code-block:: bash
 
-   python -m evaluations.bench2dex.run_all_channels \
+   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task64_openpi_pi05_eval --episodes-per-process 10
 
 启动器按顺序运行 ``none``、``cov``、``inv``、``inv_cov``，仿真和推理共用 GPU 0。用 ``--gpu-id`` 选择其他卡，``--output-root`` 设置输出目录，``--channels`` 选择通道。``--episodes-per-process 0`` 表示单个通道在同一进程中连续运行，``--num-episodes`` 设置该通道总回合数。
+
+配置通过 ``rollout.model.openpi.noise_rng: jax``，按每个回合的 seed 和 policy 查询编号在 CPU 生成噪声；模型继续在 GPU 上用 PyTorch 推理。仿真初始化在创建 simulation context 前设置任务 seed，物理时间步采用原生的 ``0.0166666``。
 
 .. list-table:: 官方通道协议
    :header-rows: 1
