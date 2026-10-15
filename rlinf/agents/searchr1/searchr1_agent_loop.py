@@ -18,6 +18,7 @@ from typing import Any
 
 from omegaconf import DictConfig
 
+from rlinf.agents.tokenization import get_agentic_tokenizer
 from rlinf.agents.tool_call.schema import ToolResponse
 from rlinf.algorithms.rewards.searchr1 import compute_score
 from rlinf.utils.placement import ModelParallelComponentPlacement
@@ -39,6 +40,12 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         placement: ModelParallelComponentPlacement,
     ):
         super().__init__(cfg, placement)
+        # Search-r1 needs model-family-specific tokenization (reasoning
+        # markers, tool-response assembly), so it builds its own wrapper
+        # around the HF tokenizer loaded by the base worker.
+        self.agentic_tokenizer = get_agentic_tokenizer(
+            self.tokenizer, self.cfg.agentloop.get("agentic_tokenizer", "default")
+        )
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         max_total_len = int(self.cfg.runner.seq_length)
         self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
@@ -67,7 +74,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         self, generate_context: dict[str, Any], output: MultiAgentLoopOutput
     ) -> MultiAgentLoopOutput:
         # Compute reward from all LLM-generated tokens (excluding tool responses)
-        final_response_text = self.agentic_tokenizer.decode(
+        final_response_text = self.tokenizer.decode(
             generate_context["all_llm_response_ids"]
         )
         reward_score = compute_score(
@@ -80,7 +87,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         # Store trajectory-level info for eval
         output.extra_fields["llm_reward"] = reward_score
         output.extra_fields["response_text"] = final_response_text
-        output.extra_fields["prompt_text"] = self.agentic_tokenizer.decode(
+        output.extra_fields["prompt_text"] = self.tokenizer.decode(
             generate_context.get("problem_prompt_ids", [])
         )
         # Per-turn details: each turn's input and output text
@@ -88,12 +95,8 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         for single_turn_output in output.single_turn_outputs:
             turns.append(
                 {
-                    "input": self.agentic_tokenizer.decode(
-                        single_turn_output.prompt_ids
-                    ),
-                    "output": self.agentic_tokenizer.decode(
-                        single_turn_output.response_ids
-                    ),
+                    "input": self.tokenizer.decode(single_turn_output.prompt_ids),
+                    "output": self.tokenizer.decode(single_turn_output.response_ids),
                 }
             )
         output.extra_fields["turns"] = turns
@@ -144,7 +147,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             llm_response_logprobs = llm_response_logprobs[: len(llm_response_ids)]
         # Used by generate_tool_response to parse only the content region.
         generate_context["content_start"] = content_start
-        llm_response_text = self.agentic_tokenizer.decode(llm_response_ids)
+        llm_response_text = self.tokenizer.decode(llm_response_ids)
 
         llm_output = AgentLoopOutput(
             prompt_ids=copy.deepcopy(turn_prompt_ids),
@@ -169,7 +172,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
     ):
         # Parse only the content region: a <search> inside the reasoning block
         # was only thought about and must not be dispatched.
-        content_text = self.agentic_tokenizer.decode(
+        content_text = self.tokenizer.decode(
             llm_response_ids[generate_context["content_start"] :]
         )
         _, tool_requests = await self.toolcall_parser(content_text)
@@ -206,7 +209,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             # add anything you want to print
             trace_prints.append(
                 {
-                    "prompt": self.agentic_tokenizer.decode(turn_prompt_ids),
+                    "prompt": self.tokenizer.decode(turn_prompt_ids),
                     "generate": llm_response_text,
                     "tool_resp": tool_messages,
                 }

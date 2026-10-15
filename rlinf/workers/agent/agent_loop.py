@@ -21,7 +21,6 @@ from uuid import uuid4
 
 from omegaconf import DictConfig
 
-from rlinf.agents.tokenization import get_agentic_tokenizer
 from rlinf.agents.tool_call.schema import (
     ToolChannelRequest,
     ToolChannelResponse,
@@ -31,6 +30,7 @@ from rlinf.agents.tool_call.schema import (
 from rlinf.algorithms.registry import get_toolcall_parser
 from rlinf.data.schema.reasoning_requests import RolloutRequest
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
@@ -106,12 +106,10 @@ class AgentLoopWorker(Worker):
                 "agent loop worker must be MultiAgentLoopWorker if is_dynamic_rollout_batch is True"
             )
 
-        self.agentic_tokenizer = get_agentic_tokenizer(
+        self.tokenizer = hf_tokenizer(
             cfg.rollout.model.model_path,
-            cfg.agentloop.get("agentic_tokenizer", "default"),
             trust_remote_code=cfg.rollout.model.trust_remote_code,
         )
-        self.tokenizer = self.agentic_tokenizer.tokenizer  # back-compat alias
         self.toolcall_parser = None
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)

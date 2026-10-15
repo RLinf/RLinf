@@ -12,25 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic tokenizer: model-level tokenization for agent loops."""
+"""Agentic tokenizer: the model-family-specific slice of tokenization that
+agent loops need on top of a plain HF tokenizer.
+
+An AgenticTokenizer wraps a caller-loaded HF tokenizer (it is NOT a second
+tokenizer): it only encapsulates the parts that vary across model families —
+reasoning markers resolved from sglang's registry, the bound reasoning /
+tool-call parser names, and tool-response token assembly including the
+text/native boundary handling. Generic encode / decode / chat-template use
+goes directly to the HF tokenizer. Agent loops that need model-specific
+handling construct their own (currently search-r1).
+"""
 
 from __future__ import annotations
 
 from enum import Enum
 from typing import Any
 
-from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
 
 class AgenticTokenizer:
-    """Base class: model-level tokenization for agent loops.
+    """Model-family-specific tokenization layered on an injected HF tokenizer.
 
-    Subclasses bind model-specific facts (reasoning and tool-call parser
-    names, native tool-response boundary handling). The base provides the
-    plain-text tool-response path used by search-r1.
+    Wraps the HF tokenizer passed by the caller and exposes only what varies
+    across model families: reasoning markers (resolved from sglang's
+    reasoning-parser registry), the parser names bound to this family, and
+    tool-response token assembly (plain-text path here; native-mode boundary
+    handling in subclasses). For generic encode / decode / chat-template
+    rendering, use the wrapped tokenizer directly.
     """
 
     reasoning_parser: str | None = None
@@ -38,11 +50,10 @@ class AgenticTokenizer:
 
     def __init__(
         self,
-        model_path: str,
+        tokenizer,
         chat_template_kwargs: dict[str, Any] | None = None,
-        trust_remote_code: bool = False,
     ):
-        self.tokenizer = hf_tokenizer(model_path, trust_remote_code=trust_remote_code)
+        self.tokenizer = tokenizer
         self.chat_template_kwargs: dict[str, Any] = chat_template_kwargs or {}
         # None when the model has no single-token reasoning markers.
         self.reasoning_start_token_id, self.reasoning_end_token_id = (
@@ -115,14 +126,6 @@ class AgenticTokenizer:
             )
         return think_start_id, think_end_id
 
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        return self.tokenizer.encode(text, add_special_tokens=add_special_tokens)
-
-    def decode(self, ids: list[int], skip_special_tokens: bool = False) -> str:
-        """Decode ids. Defaults to keeping special tokens, matching
-        PreTrainedTokenizer.decode and the pre-refactor behavior."""
-        return self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
-
     def apply_chat_template(self, messages: list[dict], **kwargs: Any):
         merged = {**self.chat_template_kwargs, **kwargs}
         return self.tokenizer.apply_chat_template(messages, **merged)
@@ -134,7 +137,7 @@ class AgenticTokenizer:
         AgentLoopWorker.get_tool_response_ids.
         """
         content = "".join(m["content"] for m in tool_messages)
-        return self.encode(content, add_special_tokens=False)
+        return self.tokenizer.encode(content, add_special_tokens=False)
 
     def render_incremental(self, tool_messages: list[dict]) -> list[int]:
         """Chat-template render of tool_messages plus the next assistant
@@ -200,7 +203,7 @@ class AgenticTokenizer:
                 return 0
             # Only an opener at the very start of the response is this turn's
             # reasoning block; one further in is content, not a block start.
-            if self.decode(response_ids[:open_idx]).strip():
+            if self.tokenizer.decode(response_ids[:open_idx]).strip():
                 return 0
             search_from = open_idx + 1
         try:
@@ -230,12 +233,12 @@ class AgenticTokenizer:
         rollout logprobs stay aligned by slicing; it ends on a token boundary,
         so its last token may carry characters after stop_str (e.g. "><").
         """
-        if stop_str not in self.decode(response_ids[start:]):
+        if stop_str not in self.tokenizer.decode(response_ids[start:]):
             return list(response_ids), False
         lo, hi = start + 1, len(response_ids)
         while lo < hi:
             mid = (lo + hi) // 2
-            if stop_str in self.decode(response_ids[start:mid]):
+            if stop_str in self.tokenizer.decode(response_ids[start:mid]):
                 hi = mid
             else:
                 lo = mid + 1
@@ -262,14 +265,12 @@ class GLMAgenticTokenizer(AgenticTokenizer):
 
     def __init__(
         self,
-        model_path: str,
+        tokenizer,
         chat_template_kwargs: dict[str, Any] | None = None,
-        *,
-        trust_remote_code: bool,
     ):
         # clear_thinking=False keeps reasoning blocks in the token stream.
         merged = {"clear_thinking": False, **(chat_template_kwargs or {})}
-        super().__init__(model_path, merged, trust_remote_code=trust_remote_code)
+        super().__init__(tokenizer, merged)
         # Resolve special-token ids at load time; fail loudly if missing.
         self.observation_token_id = self.require_token_id("<|observation|>")
         self.user_token_id = self.require_token_id("<|user|>")
@@ -312,18 +313,13 @@ def _agentic_tokenizer_type(tokenizer_type: str) -> AgenticTokenizerType:
 
 
 def get_agentic_tokenizer(
-    model_path: str,
+    tokenizer,
     tokenizer_type: str = "default",
     chat_template_kwargs: dict[str, Any] | None = None,
-    trust_remote_code: bool = False,
 ) -> AgenticTokenizer:
-    """Build an AgenticTokenizer for the given model."""
+    """Build an AgenticTokenizer wrapping the given HF tokenizer."""
     cls = AGENTIC_TOKENIZER_REGISTRY[_agentic_tokenizer_type(tokenizer_type)]
-    return cls(
-        model_path,
-        chat_template_kwargs,
-        trust_remote_code=trust_remote_code,
-    )
+    return cls(tokenizer, chat_template_kwargs)
 
 
 def agentic_tokenizer_tool_call_parser(tokenizer_type: str = "default") -> str | None:
