@@ -24,7 +24,7 @@ runner:
     logger_backends: ["wandb"]
 
   max_epochs: -1
-  max_steps: 2000
+  max_steps: 3000
   val_check_interval: -1
   save_interval: 250
 
