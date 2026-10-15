@@ -18,8 +18,8 @@ Builds cosmos's *training* config directly, then disables only its internal
 FSDP/CP/CFGP (via ``enable_inference_mode`` so AC + EMA stay on) -- RLinf's
 FSDPModelManager owns the single ``fully_shard``. The model is materialized on
 CPU (net bf16 ~27GB + net_ema fp32 ~54GB ~= 81GB > a single 80GB GPU) and
-sharded to GPU later by FSDP2. Model defaults live in the Hydra config group
-``examples/sft/config/model/cosmos3.yaml``.
+sharded to GPU later by FSDP2. Shared model defaults live in the Hydra config
+group ``examples/embodiment/config/model/cosmos3.yaml``.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionModel
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
 
@@ -146,12 +147,12 @@ def _load_base_weights(
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
-    """Build and warm-start a ``Cosmos3Policy`` for RLinf SFT.
+    """Build and warm-start a ``Cosmos3ActionModel`` for RLinf SFT and RL.
 
     ``torch_dtype`` is accepted only for model-builder registry signature parity;
     cosmos sets precision from its own config, so it is unused here.
 
-    Returns a ``Cosmos3Policy`` wrapping a cosmos-FSDP-disabled ``OmniMoTModel``
+    Returns a ``Cosmos3ActionModel`` wrapping a cosmos-FSDP-disabled ``OmniMoTModel``
     with AC + EMA on, ready for RLinf ``FSDPModelManager`` to ``fully_shard``.
     """
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
@@ -240,11 +241,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     # FSDP2 cannot shard 0-d params.
     _promote_scalar_params_to_1d(cosmos3_model)
 
-    return Cosmos3Policy(
+    return Cosmos3ActionModel(
         cosmos3_model,
+        model_cfg=cfg,
         lr_multipliers=dict(cfg.get("lr_multipliers", {})),
         ema_enabled=bool(cfg.get("ema_enabled", True)),
     )
 
 
-__all__ = ["Cosmos3Policy", "get_model"]
+__all__ = ["Cosmos3ActionModel", "Cosmos3Policy", "get_model"]

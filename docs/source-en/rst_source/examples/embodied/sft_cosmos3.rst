@@ -79,7 +79,11 @@ Cosmos3 SFT **warm-starts from the Cosmos3-Nano base model, training only the ac
 .. code-block:: yaml
 
    defaults:
-     - model/cosmos3@actor.model      # pulls in examples/sft/config/model/cosmos3.yaml
+     - model/cosmos3@actor.model      # pulls in examples/embodiment/config/model/cosmos3.yaml
+
+   hydra:
+     searchpath:
+       - file://${oc.env:REPO_PATH}/examples/embodiment/config/
 
    actor:
      model:

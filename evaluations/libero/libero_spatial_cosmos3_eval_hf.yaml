@@ -1,0 +1,59 @@
+defaults:
+  - env/libero_spatial@env.eval
+  - model/cosmos3@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_spatial_eval_cosmos3_hf"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  # Full RLinf SFT checkpoint; HF uses its non-EMA net like SGLang's default export.
+  ckpt_path: path/to/cosmos3_sft/full_weights.pt
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 128
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 1920
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+  return_logprobs: false
+  model:
+    model_path: path/to/Cosmos3-Nano-DCP
+    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json

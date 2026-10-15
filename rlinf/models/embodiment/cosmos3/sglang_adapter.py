@@ -72,6 +72,8 @@ class Cosmos3SGLangAdapter:
         self._fps = int(c.get("fps", 20))
         # num_inference_steps=35 -> OOD prompt caption + different denoise.
         self._num_inference_steps = int(c.get("num_inference_steps", 30))
+        self._guidance = float(c.get("guidance", 1.5))
+        self._shift = float(c.get("shift", 10.0))
 
         # Cosmos3 LIBERO recipe: rot6d 10-D, frame_wise_relative, quantile_rot.
         # raw_action_dim is the MODEL width 10, distinct from the env's 7.
@@ -203,6 +205,8 @@ class Cosmos3SGLangAdapter:
             "action_view_point": self._action_view_point,
             "fps": self._fps,
             "num_inference_steps": self._num_inference_steps,
+            "guidance_scale": self._guidance,
+            "flow_shift": self._shift,
             "seed": seed,
             "height": self._target_h,
             "width": self._target_w,
@@ -286,12 +290,30 @@ class Cosmos3SGLangAdapter:
         env_obs: dict, n: int, target_w: int = 832, target_h: int = 480
     ) -> list[str | None]:
         """Encode each env's camera views as a PNG base64 data URI."""
+        images = Cosmos3SGLangAdapter.prepare_images(env_obs, n, target_w, target_h)
+        if images is None:
+            return [None] * n
+        from PIL import Image
+
+        uris: list[str | None] = [None] * n
+        for i, img in enumerate(images):
+            buf = io.BytesIO()
+            Image.fromarray(img).save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            uris[i] = f"data:image/png;base64,{b64}"
+        return uris
+
+    @staticmethod
+    def prepare_images(
+        env_obs: dict, n: int, target_w: int, target_h: int
+    ) -> np.ndarray | None:
+        """Prepare camera pixels shared by local and SGLang inference."""
         main = env_obs.get("main_images")
         if main is None:
             main = env_obs.get("images")
         wrist = env_obs.get("wrist_images")
         if main is None:
-            return [None] * n
+            return None
 
         def _to_uint8_hwc(x: Any) -> np.ndarray:
             arr = torch.as_tensor(
@@ -314,18 +336,14 @@ class Cosmos3SGLangAdapter:
         else:
             concat = main_arr  # single-view fallback
 
-        uris: list[str | None] = [None] * n
-        from PIL import Image  # lazy: keep import cost off non-eval paths
-
-        for i in range(min(n, concat.shape[0])):
-            img = Cosmos3SGLangAdapter._resize_reflect_pad(
-                concat[i], target_w, target_h
-            )
-            buf = io.BytesIO()
-            Image.fromarray(img).save(buf, format="PNG")
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            uris[i] = f"data:image/png;base64,{b64}"
-        return uris
+        if concat.shape[0] != n:
+            raise ValueError(f"Expected {n} Cosmos3 images, got {concat.shape[0]}")
+        return np.stack(
+            [
+                Cosmos3SGLangAdapter._resize_reflect_pad(concat[i], target_w, target_h)
+                for i in range(n)
+            ]
+        )
 
     @staticmethod
     def _resize_reflect_pad(
@@ -389,7 +407,7 @@ class Cosmos3SGLangAdapter:
         if not rows:
             raise ValueError("Cosmos3 returned an empty action array")
         arr = np.asarray(rows, dtype=np.float32)  # [T, D] (D may be padded > raw)
-        raw_norm = arr[..., : self._raw_action_dim]  # server output (normalized?)
+        raw_norm = arr[..., : self._raw_action_dim]
 
         arr = self._denormalize(raw_norm)  # [T, 10]
         trans = arr[:, :3]
@@ -397,38 +415,6 @@ class Cosmos3SGLangAdapter:
         gripper = arr[:, 9:10]
         axisangle = self._rot6d_to_axisangle(rot6d)  # [T, 3]
         env = np.concatenate([trans, axisangle, gripper], axis=-1)  # [T, 7]
-
-        if not getattr(self, "_dbg_printed", False):
-            self._dbg_printed = True
-            import sys
-
-            print(
-                f"[C3DBG] raw_norm shape={raw_norm.shape} "
-                f"min={raw_norm.min():.4f} max={raw_norm.max():.4f} "
-                f"mean={raw_norm.mean():.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
-            print(
-                f"[C3DBG] denorm shape={arr.shape} min={arr.min():.4f} "
-                f"max={arr.max():.4f} | trans[min/max]={trans.min():.4f}/"
-                f"{trans.max():.4f} rot6d[min/max]={rot6d.min():.4f}/"
-                f"{rot6d.max():.4f} gripper[min/max]={gripper.min():.4f}/"
-                f"{gripper.max():.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
-            print(
-                f"[C3DBG] axisangle min/max={axisangle.min():.4f}/"
-                f"{axisangle.max():.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
-            print(
-                f"[C3DBG] env chunk0={env[0].tolist()}",
-                file=sys.stderr,
-                flush=True,
-            )
 
         if env.shape[0] < self._num_action_chunks:
             pad = np.repeat(env[-1:], self._num_action_chunks - env.shape[0], axis=0)

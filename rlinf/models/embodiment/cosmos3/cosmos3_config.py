@@ -20,10 +20,10 @@ The Cosmos3 model is built from cosmos-framework's own experiment recipe
 Model defaults (model_type, precision, load_to_device, ema_enabled,
 disable_cosmos_parallelism, keys_to_skip_loading, keys_to_select,
 lr_multipliers, action_normalization, ...) live in the Hydra config group
-``examples/sft/config/model/cosmos3.yaml`` -- pull them in via
-``defaults: - model/cosmos3@actor.model``. Recipe yamls override only
-deployment-specific fields (``model_path``, ``wan_vae_path``,
-``max_samples_per_batch``).
+``examples/embodiment/config/model/cosmos3.yaml`` -- pull them in via
+``defaults: - model/cosmos3@actor.model`` and the embodiment Hydra searchpath.
+Recipe yamls own deployment-specific fields (``model_path``,
+``wan_vae_path``, ``action_stats_path``, ``max_samples_per_batch``).
 
 Dataset-recipe knobs (``image_size``, ``chunk_length``, ``action_space``,
 ``fps``, ...) are owned by the cosmos experiment recipe (resolved by cosmos);

@@ -7,6 +7,8 @@ hydra:
   run:
     dir: .
   output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config/
 
 cluster:
   num_nodes: 1
@@ -54,6 +56,7 @@ actor:
     ema_enabled: true
     model_path: path/to/Cosmos3-Nano-DCP
     wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
     max_samples_per_batch: 32
 
   optim:

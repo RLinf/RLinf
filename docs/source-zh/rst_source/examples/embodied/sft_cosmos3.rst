@@ -79,7 +79,11 @@ Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头** 。`
 .. code-block:: yaml
 
    defaults:
-     - model/cosmos3@actor.model      # 引入 examples/sft/config/model/cosmos3.yaml
+     - model/cosmos3@actor.model      # 引入 examples/embodiment/config/model/cosmos3.yaml
+
+   hydra:
+     searchpath:
+       - file://${oc.env:REPO_PATH}/examples/embodiment/config/
 
    actor:
      model:

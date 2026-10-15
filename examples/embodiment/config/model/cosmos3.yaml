@@ -1,0 +1,32 @@
+# Shared Cosmos3 model and LIBERO action defaults for SFT, RL, and HF eval.
+# Set checkpoints, VAE, and normalization statistics in each task YAML.
+model_type: cosmos3
+precision: bf16
+load_to_device: false
+ema_enabled: false
+disable_cosmos_parallelism: true
+compile_enabled: false
+
+# A full RLinf SFT full_weights.pt is loaded through runner.ckpt_path.
+keys_to_skip_loading: ["net_ema.", "action2llm", "llm2action", "action_modality_embed", "action_pos_embed"]
+keys_to_select: ["moe_gen", "time_embedder", "vae2llm", "llm2vae", "action2llm", "llm2action", "action_modality_embed"]
+lr_multipliers: {action2llm: 5.0, llm2action: 5.0, action_modality_embed: 5.0}
+
+num_action_chunks: 16
+action_dim: 7
+raw_action_dim: 10
+domain_name: libero
+action_mode: policy
+action_view_point: ego_view
+action_normalization: quantile_rot
+size: 320x192
+resolution: "256"
+num_frames: 17
+fps: 20
+action_fps: 20.0
+num_inference_steps: 30
+shift: 10.0
+guidance: 1.5
+seed: 1140
+prompt_bytes: 512
+noise_level: 0.5

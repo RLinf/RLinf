@@ -1,5 +1,6 @@
 defaults:
   - env/libero_spatial@env.eval
+  - model/cosmos3@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -64,7 +65,7 @@ rollout:
     http_timeout_s: 600
     http_max_retries: 5
     http_retry_backoff_s: 1.0
-    seed: 1140
+    seed: ${rollout.model.seed}
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     launch_server: true
@@ -85,21 +86,6 @@ rollout:
       batching_max_size: 8
 
   model:
-    model_type: "cosmos3"
-    precision: bf16
-    raw_action_dim: 10  # model action representation: 3 trans + 6 rot6d + 1 gripper
-    action_dim: 7  # env action dim (libero: 3 trans + 3 axis-angle + 1 gripper)
-    model_path: path/to/Cosmos3-Nano
-    # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+    # Export the non-EMA SFT net from the same full_weights.pt used by HF eval.
+    model_path: path/to/Cosmos3-SFT-SGLang
     action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
-    action_normalization: "quantile_rot"
-    embodiment_tag: "libero_sim"
-    is_lora: False
-    num_action_chunks: 16
-    action_mode: "policy"
-    action_fps: 20.0
-    fps: 20
-    num_inference_steps: 30
-    action_view_point: "ego_view"
-    num_frames: 17
-    size: "320x192"
