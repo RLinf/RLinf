@@ -1,18 +1,19 @@
 # GRPO training with Megatron-Bridge on a 2-node cluster, using the sglang
 # server rollout backend with one model instance spanning both nodes.
 #
-# Layout in this example (2 nodes, 12 GPUs total: node 0 has 8 GPUs, node 1
-# has 4 GPUs):
+# Layout in this example (2 nodes, 4 GPUs each, homogeneous):
 #   - actor (megatron) + rollout (sglang server) + reward are collocated on
-#     hardware ranks 4-11, i.e. all 8 GPUs of node 0.
+#     hardware ranks 0-7: global hardware ranks 0-3 are node 0, 4-7 are
+#     node 1. If a node has more GPUs, shift the range so that it still
+#     covers 4 GPUs on each node (e.g. 4-11 when node 0 has 8 GPUs).
 #   - the rollout model instance spans both nodes: tp=8 ranks are split as
 #     4 on node 0 + 4 on node 1. Requires rollout.sglang.backend_type: server.
+#     Every node must carry the same rollout GPU share, and tp*pp (8) must
+#     be divisible by it (4).
 #
 # Cluster prerequisites (on every node, BEFORE `ray start`):
-#   - export RLINF_NODE_RANK=<0/1>   # unique per node; 0 on the head.
-#     Without it, nodes are ordered by accelerator type then IP, and the
-#     component_placement hardware-rank ranges below will silently map to
-#     the wrong nodes.
+#   - RLinf multi-node setup requires a unique RLINF_NODE_RANK per node,
+#     0 on the head.
 #   - Head node: ray start --head --port=6379 --node-ip-address=<head_ip>
 #     Worker node: ray start --address=<head_ip>:6379
 #   - Launch the training entry script on the head node only.
@@ -23,8 +24,7 @@
 # The model is GLM-4.7-Flash (47-layer MoE). If you do not have enough memory
 # to hold it, trim layers yourself (e.g. keep the first N layers and adjust
 # recompute_num_layers accordingly) - the cross-node layout does not depend
-# on the layer count. tp*pp must stay divisible by the per-node GPU share of
-# the instance (8 % 4 == 0 here).
+# on the layer count.
 defaults:
   - override hydra/job_logging: stdout
 
@@ -36,7 +36,9 @@ hydra:
 cluster:
   num_nodes: 2
   component_placement:
-    actor,rollout,reward: 4-11 # all GPUs of node 0; node 1 contributes ranks 8-11 to the rollout instance only
+    # 2 nodes x 4 GPUs: global hardware ranks 0-3 are node 0, 4-7 are node 1.
+    # If node 0 has 8 GPUs, shift the range to 4-11 (4 GPUs per node).
+    actor,rollout,reward: 0-7
 
 runner:
   task_type: reasoning
