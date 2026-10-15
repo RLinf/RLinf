@@ -1,19 +1,19 @@
 .. _maintainer-group-policy:
 
-RLinf Maintainer Development and Group Policy
-=============================================
+RLinf Contributor Development and Governance Policy
+=====================================================
 
 This policy enables contributors from companies, universities, and independent backgrounds to earn
 meaningful project responsibility while preserving maintenance quality and preventing institutional
 control.
 
-| **Last updated:** 7 October 2026.
+| **Last updated:** 15 October 2026.
 | **Effective date:** Upon publication.
 
 .. _maintainer-policy-section-1:
 
-1. An Open Path from Contributor to Maintainer
-----------------------------------------------
+1. An Open Path from Contributor to Area Owner
+------------------------------------------------
 
 RLinf welcomes external contributors from companies, universities, and independent backgrounds to
 help develop and maintain the project. Every contributor has an open path to greater responsibility
@@ -25,17 +25,20 @@ development through mentoring, peer review, and supervised maintenance. Contribu
 through the following stages as they demonstrate the expertise, judgment, and reliability required
 for each role:
 
-**Contributor → Recognized Contributor → Reviewer → Maintainer Candidate → Area Maintainer.**
+**Contributor → Recognized Contributor → Reviewer → Area Owner Candidate → Area Owner.**
 
 Each stage brings recognition for demonstrated contributions and responsibilities matched to proven
 capability. Advancement depends on the quality and consistency of contributions, collaboration with
 others, and follow-through on maintenance. Time spent in the project alone does not establish
 readiness for promotion.
 
-Area Maintainers together form the **Maintainer Group**. Current qualified maintainers administer
-the admission and review process under this policy. Authority is granted only after the contributor
-demonstrates the work it requires; Area Maintainer status does not automatically confer repository
-administration, release credentials, or approval authority over unfamiliar code.
+Area Owners maintain their assigned areas, review contributions, and mentor contributors. Their
+authority covers routine technical work within an approved scope. **Lead Maintainers** are
+responsible for the project's overall direction and project-wide decisions, as defined in Section 9.
+
+Authority is granted only after the contributor demonstrates the work it requires. Area Owner
+status does not confer project-wide governance authority, repository administration, release
+credentials, or approval authority over unfamiliar code.
 
 This policy establishes RLinf's participation periods, contribution thresholds, evaluation
 standards, and approval rules. Exceptions apply only where this policy expressly permits them. These
@@ -54,7 +57,7 @@ This policy supplements RLinf's contribution and review requirements:
   contributors, including maintainers. R1_
 
 - The ``CODEOWNERS`` file divides review responsibilities across algorithms, training and rollout
-  engines, environments, robotics, scheduling, documentation, tests, and other areas. Maintainer
+  engines, environments, robotics, scheduling, documentation, tests, and other areas. Area Owner
   appointments define an explicit ownership scope and backup coverage. R2_
 
 - The CI workflow uses a ``run-ci`` label to authorize the test workflow to proceed, with path-based
@@ -64,8 +67,8 @@ This policy supplements RLinf's contribution and review requirements:
 - Contributor recognition in the README is complemented by the role registry, contribution records,
   and certificates defined in this policy. R4_
 
-This policy applies to maintenance responsibilities across the RLinf repository. Admission to the
-Maintainer Group, approval authority, and operational access are governed by the requirements below.
+This policy applies to maintenance responsibilities across the RLinf repository. Area Owner
+appointments, approval authority, and operational access are governed by the requirements below.
 R5_
 
 .. _maintainer-policy-section-3:
@@ -74,8 +77,8 @@ R5_
 -------------
 
 1. **Membership belongs to a person.** A company, university, laboratory, donor, or project founder
-   cannot purchase or inherit maintainership. When a person changes employer, their earned role
-   stays with them, subject to disclosure and conflict rules.
+   cannot purchase or inherit an Area Owner appointment. When a person changes employer, their
+   earned role stays with them, subject to disclosure and conflict rules.
 
 2. **The same quality standard applies to everyone.** Existing insiders, external contributors,
    employees, students, and independent contributors face the same review expectations for
@@ -93,7 +96,7 @@ R5_
    participation, and access to appropriate project test resources. Personal access to a large GPU
    cluster or robot fleet is not a membership requirement.
 
-6. **Decisions are explainable and appealable.** Responsible maintainers publish evidence, criteria,
+6. **Decisions are explainable and appealable.** Decision-makers publish evidence, criteria,
    outcomes, and reasons. Security disclosures and sensitive personal reports remain confidential,
    with a public procedural summary where appropriate.
 
@@ -117,13 +120,13 @@ one outcome into many PRs does not create extra credit.
      - Authority granted
    * - **1. Contributor**
      - One accepted contribution: code, tested documentation, a confirmed reproducible report, a
-       useful review, or a support outcome acknowledged by an area maintainer.
+       useful review, or a support outcome acknowledged by an area owner.
      - Credit on the contribution and in the contributor registry; an optional downloadable
        contribution acknowledgement linking to the accepted work.
      - Normal public participation. No elevated repository access.
    * - **2. Recognized Contributor**
      - Normally at least **8 weeks** of participation and **3 substantive outcomes**, including
-       evidence of responding to feedback and following up after acceptance. An area maintainer
+       evidence of responding to feedback and following up after acceptance. An area owner
        validates the record.
      - Public contributor profile, a verifiable “RLinf Recognized Contributor” badge, and
        recognition in the next community update, with consent.
@@ -132,33 +135,31 @@ one outcome into many PRs does not create extra credit.
    * - **3. Reviewer — named area**
      - Normally at least **3 months** of total participation, **5 substantive outcomes**, and **8
        substantive reviews** of other people's contributions. Reviews must show technical reasoning,
-       verification, and useful feedback. An area maintainer sponsors; a second qualified reviewer
+       verification, and useful feedback. An area owner sponsors; a second qualified reviewer
        assesses at least 3 representative reviews.
      - Entry in the reviewer registry with an explicit scope; “RLinf Reviewer — [area]” badge and
        appointment record.
      - Official review requests and review recommendations within scope. Scoped triage through
        controlled tooling when safe. Reviewer status alone does not authorize acceptance or merge.
-   * - **4. Maintainer Candidate — named area**
+   * - **4. Area Owner Candidate — named area**
      - Reviewer-level evidence, a defined ownership boundary, an agreed maintenance plan, and two
        sponsors who have directly observed the work. At least one assessor must be independent of
        the candidate's institution and reporting relationships. Complete the supervised trial in
        Section 5.
      - Public candidacy announcement with consent; mentor assignment, written midpoint feedback, and
        a trial completion record stating the assessment outcome.
-     - Lead reviews and triage under supervision. An existing authorized maintainer remains
+     - Lead reviews and triage under supervision. An existing authorized Area Owner remains
        responsible for acceptance and merge. No new write or release credentials.
-   * - **5. Area Maintainer**
+   * - **5. Area Owner**
      - Successful trial; all baseline quality dimensions pass; at least one area of expertise
        reaches the expert standard; an independent assessment and public promotion process conclude
-       successfully. A **6–9 month** progression from first sustained involvement is planning
-       guidance, not a fixed waiting period or a promise of promotion. The required evidence and
-       observed service determine readiness.
-     - Appointment in ``MAINTAINERS.md``, defined scope and responsibilities, verifiable “RLinf
-       Maintainer — [area]” certificate, and a community announcement. Membership in the Maintainer
-       Group.
-     - Authority to accept contributions in the approved area through the protected merge process.
-       No self-approval, automatic release rights, organization ownership, or authority outside that
-       area.
+       with an approved appointment under Section 9. A **6–9 month** progression from first sustained
+       involvement is planning guidance, not a fixed waiting period or a promise of
+       promotion. The required evidence and observed service determine readiness.
+     - Appointment in ``MAINTAINERS.md`` as an Area Owner, defined scope and responsibilities,
+       verifiable “RLinf Area Owner — [area]” certificate, and a community announcement.
+     - Authority to accept routine contributions in the approved area through the protected merge
+       process. No self-approval, automatic release rights, or authority outside scope.
 
 An equivalent body of work may replace a numeric contribution threshold—for example, one substantial
 subsystem repair with extensive tests and support can outweigh five small changes. Two assessors
@@ -192,9 +193,9 @@ The candidate must demonstrate:
    health, and any resulting fixes. Handle one regression investigation or a realistic replay of a
    historical incident. A real production incident is not required.
 
-4. **Release and recovery judgment:** Demonstrate when to stop a merge, defer a release, roll back a
-   change, or ask another expert. Complete an appropriate rollback or recovery exercise; observation
-   of a real maintenance cycle can satisfy the exercise.
+4. **Release and recovery judgment:** Demonstrate when to stop a merge, recommend a release deferral
+   or rollback, or ask another expert. Complete an appropriate rollback or recovery exercise;
+   observation of a real maintenance cycle can satisfy the exercise.
 
 5. **Community stewardship:** Help a less experienced contributor complete a contribution and
    document at least one tradeoff discussion in which the candidate considered needs beyond their
@@ -208,7 +209,7 @@ remains unchanged.
 
 Trial outcomes are **ready**, **extend with a specific improvement plan**, or **return to Reviewer
 with recognition retained**. When a trial is extended, mentors must set a new review date within 60
-days. Trial completion does not itself grant maintainer status.
+days. Trial completion does not itself grant Area Owner status.
 
 .. _maintainer-policy-section-6:
 
@@ -288,7 +289,7 @@ expensive equipment.
 7. Nomination and Promotion Procedure
 -------------------------------------
 
-The following procedure applies to Reviewer, Maintainer Candidate, and Area Maintainer appointments,
+The following procedure applies to Reviewer, Area Owner Candidate, and Area Owner appointments,
 with the evidence and trial appropriate to each stage. Contributor acknowledgement and Recognized
 Contributor status use the validation in Section 4.
 
@@ -298,7 +299,7 @@ Contributor status use the validation in Section 4.
    ask for sponsors to be assigned.
 
 2. **Acknowledge and assign assessors.** Within 5 business days, the responsible area group names an
-   owner and explains any missing evidence. Current area maintainers appoint an assessor from
+   owner and explains any missing evidence. Current area owners appoint an assessor from
    another area or an external subject-matter expert if necessary. Sponsors support candidates in
    meeting the published criteria and must not impose additional informal admission requirements.
 
@@ -307,16 +308,17 @@ Contributor status use the validation in Section 4.
    work.
 
 4. **Publish the assessment and invite feedback.** Keep the discussion open for at least 14 calendar
-   days for Area Maintainer appointments, or 7 days for Reviewer and Candidate appointments.
+   days for Area Owner appointments, or 7 days for Reviewer and Candidate appointments.
    Feedback must relate to evidence and the published criteria. A competitor's objection is not an
    automatic veto.
 
-5. **Record a decision.** Reviewer and Candidate appointments require two qualified maintainer
-   approvals, including the independence requirement for Candidate assessment. Area Maintainer
-   appointments require three qualified maintainer approvals under Section 9. The decision target
-   for routine cases is 10 business days after feedback closes. If a case takes longer, the
-   responsible maintainers must publish the outstanding question and next review date. Silence is
-   not approval.
+5. **Record a decision.** Reviewer and Candidate appointments require two qualified Area Owner
+   approvals, including the independence requirement for Candidate assessment. Area Owner
+   appointments require the assessment and recommendations in Section 9. Assessors and sponsors
+   cannot grant Area Owner status.
+   The decision target for routine cases is 10 business days after feedback closes. If a case takes
+   longer, the decision-makers must publish the outstanding question and next review date. Silence
+   is not approval.
 
 6. **Onboard and grant only approved capabilities.** Record the decision, scope, mentors or backup
    owner, certificate, and next review date. Complete account and permission training. An
@@ -324,16 +326,14 @@ Contributor status use the validation in Section 4.
    available tooling cannot enforce safely.
 
 7. **Review the appointment after 90 days.** Sample actual reviews and follow-up work, address
-   support gaps, and confirm or adjust scope. Broader scope requires additional evidence and
-   approval.
+   support gaps, and recommend any scope adjustment. Broader scope requires additional evidence.
 
-For deferral or rejection, the responsible maintainers provide a concise, evidence-based explanation
-and an achievable next review date. The candidate may appeal within 30 days. Three uninvolved
-qualified maintainers, drawn by disclosed lot from eligible volunteers, review procedural fairness
-and disputed evidence and publish a reasoned response within 30 days. At least two must agree to
-uphold the decision or return it for reassessment by different reviewers under the same criteria.
-The appeal review must include an independent institutional perspective, using an external expert if
-necessary. Confidential material is handled privately with an appropriate public summary.
+For deferral or rejection, the decision-makers provide a concise, evidence-based explanation and an
+achievable next review date. The candidate may appeal within 30 days. Three uninvolved qualified
+assessors, drawn by disclosed lot from eligible volunteers, review procedural fairness and disputed
+evidence. At least two must agree on a recommendation to uphold the decision or return it for
+reassessment by different reviewers under the same criteria. The appeal review must include an
+independent institutional perspective, using an external expert if necessary.
 
 .. _maintainer-policy-section-8:
 
@@ -349,7 +349,7 @@ version-controlled registry containing:
 
 - Links to accepted contributions and the nomination or decision.
 
-- Validating maintainers and the issuing authority.
+- Validating assessors and the issuing authority.
 
 - A unique credential identifier and a verification URL.
 
@@ -374,53 +374,64 @@ appointment authority.
 
 .. _maintainer-policy-section-9:
 
-9. Maintainer Decisions, Conflicts, and Accountability
+9. Decision Authority, Conflicts, and Accountability
 ------------------------------------------------------
 
-Current qualified maintainers administer appointments, scope changes, access decisions, and
-continuing quality reviews through public, case-by-case review. Responsibilities follow demonstrated
-expertise and recorded ownership. Technical disputes use written input from the affected areas; an
-approval does not substitute for missing technical or safety evidence.
+Area Owners make routine technical decisions within their assigned areas and contribute evidence
+and recommendations on broader matters. Lead Maintainers make final decisions on Area Owner
+appointments, departures and reinstatements, ownership scope, releases, significant permissions,
+changes to this policy, high-risk operational changes and emergency exceptions, and unresolved
+disputes and appeals. The requirements below and the procedures in other sections operate within
+this allocation of authority. Final approval considers written input from the affected areas and
+does not replace the quality, independent assessment, or security requirements in this policy.
 
 The following decision rules apply:
 
-- **Reviewer and Maintainer Candidate appointments:** require two qualified maintainer approvals
+- **Reviewer and Area Owner Candidate appointments:** require two qualified Area Owner approvals
   under Section 7, including the independent assessment required for candidacy.
 
-- **Area Maintainer appointments, expanded ownership scope, disciplinary removal, and significant
-  access grants:** require three affirmative approvals from current qualified maintainers, with at
-  least 14 days of notice and comment. At least one approver must understand the affected area or
-  capability, at least one must be independent of the candidate's institution and reporting
-  relationships, and at least one must not have sponsored the candidate. One person may satisfy more
-  than one of these conditions. Release or administrative access additionally requires approval from
-  an existing custodian qualified for that capability; this approval may count toward the three
-  required approvals.
+- **Area Owner appointments, expanded ownership scope, disciplinary removal, and significant
+  access grants:** require at least 14 days of notice and comment and three affirmative
+  recommendations from qualified Area Owners before a final decision. At least one assessor must
+  understand the affected area or capability, at least one must be independent of the affected
+  person's institution and reporting relationships, and at
+  least one must not have sponsored the candidate where a nomination is involved. One person may
+  satisfy more than one condition. Release or administrative access additionally requires a
+  readiness assessment from an existing custodian qualified for that capability; this may count
+  toward the three recommendations. Recommendations establish readiness for a decision; they do
+  not confer appointment or access-granting authority.
 
-- **Changes to this policy:** require at least 14 days of public discussion and three qualified
-  maintainer approvals, with input sought from affected areas and external contributors. Publish the
-  reasons and how substantive objections were addressed. Silence is not approval.
+- **Departures, leave, and reinstatement:** record the approved status and handover before
+  custodians update access. A person may stop volunteering at any time. Routine leave and voluntary
+  departures do not require the 14-day comment period used for disciplinary removal. Reinstatement
+  follows Section 11.
+
+- **Changes to this policy:** require at least 14 days of public discussion before final approval,
+  with input sought from affected areas and external contributors. Publish the reasons and how
+  substantive objections were addressed. Silence is not approval.
 
 - **Conflicts:** disclose institutional affiliations and material conflicts before deciding. Nobody
   may approve their own appointment, increased authority, or disciplinary case. Direct supervisors,
   direct reports, family members, and others with a material personal conflict must recuse. Shared
-  institutional affiliation must be disclosed and does not replace the independent approval
+  institutional affiliation must be disclosed and does not replace the independent assessment
   requirement. A sponsor may approve only when otherwise unconflicted.
 
-- **Insufficient reviewers:** seek qualified maintainers from another area and external
-  subject-matter assessment where needed. External advice does not itself confer appointment or
-  access-granting authority. If the required approvals remain unavailable, defer the decision with
-  an explanation and a date to revisit it; do not waive the quality or independence requirements.
+- **Insufficient reviewers or decision-makers:** seek qualified assessors from another area and
+  external subject-matter assessment where needed. If the required assessments or unconflicted
+  decision-makers remain unavailable, defer the decision with an explanation and a date to revisit
+  it. External advice cannot waive quality or independence requirements.
 
-Responsible maintainers publish the decision-makers, approvals, recusals, and rationales. Before
-disciplinary removal, reviewers must hear the affected person's response; allegations alone are not
+Decision-makers publish recommendations, approvals, recusals, and rationales. Before disciplinary
+removal, reviewers must hear the affected person's response; allegations alone are not
 findings. Appeals follow Section 7. Institutional sponsorship, founder status, or a commercial
 relationship provides no entitlement to appointment or an unexplained veto.
 
 For an active credential or infrastructure incident, an authorized custodian may immediately suspend
-affected access. A second custodian must review the suspension within 24 hours, and uninvolved
-qualified maintainers must conduct a reasoned review within 7 days. Continued restrictions must be
-justified against the affected capability and reviewed under the decision rules above. Suspension
-for containment is distinct from a final misconduct finding.
+affected access and promptly report the incident. A second custodian must review the suspension
+within 24 hours, followed by a reasoned review within 7 days with qualified technical input.
+Continued restrictions must be justified against the affected capability and decided under the
+rules above. Suspension for containment is distinct from a final misconduct finding or removal of
+an Area Owner.
 
 .. _maintainer-policy-section-10:
 
@@ -449,41 +460,43 @@ Operational capabilities require the following authorization:
      - Read access plus narrowly authorized bot operations initially. Grant native Triage only after
        its CI-trigger and other workflow effects are checked and controlled.
    * - Acceptance and merge
-     - Approved Area Maintainers through a trusted merge service that enforces the area's authority
-       and independent review requirements. Until that service exists, the existing authorized
-       custodians execute merges after recorded area approval.
+     - Area Owners accept routine contributions within their approved scope through a trusted merge
+       service that enforces area authority and independent review. Until
+       that service exists, authorized custodians execute merges after recorded area approval.
    * - Expensive or privileged CI
-     - A separately authorized set of trained CI operators, with isolated untrusted workloads,
-       bounded compute, and no implicit access to secrets. Qualification as a Reviewer does not
-       automatically authorize ``run-ci``.
+     - Separately authorized, trained CI operators, with isolated untrusted workloads, bounded
+       compute, and no implicit access to secrets. Qualification as a Reviewer
+       does not automatically authorize ``run-ci``.
    * - Release publication
-     - Separately appointed release custodians with a successful shadow release, recovery exercise,
-       limited credentials, and a second-person release authorization.
+     - Appointed release custodians execute approved releases. They must complete a successful
+       shadow release and recovery exercise, use limited credentials, and obtain a second-person
+       release authorization.
    * - Repository admin, organization ownership, and credential management
      - A minimal, named custody team, normally 2–3 people spanning at least 2 institutions when
-       qualified people are available. Separate evidence, explicit approval under Section 9, account
-       security, backup coverage, and periodic access review are required.
+       qualified people are available. Separate evidence, explicit approval under Section 9,
+       account security, backup coverage, and periodic access review are required.
 
 The trusted merge process must enforce:
 
-1. A PR for every change, including maintainers' changes; no routine direct pushes or bypass of
+1. A PR for every change, regardless of the author's role; no routine direct pushes or bypass of
    required checks.
 
-2. Two independent non-author reviews, including an authorized Area Maintainer's acceptance. During
-   the candidate trial, a mentor must make the acceptance decision. An assessor or reviewer must
-   decline approval when they lack the relevant expertise.
+2. Two independent non-author reviews, including an authorized Area Owner's acceptance. During
+   the candidate trial, an authorized mentor must make the acceptance decision. An assessor or
+   reviewer must decline approval when they lack the relevant expertise.
 
 3. Appropriate tests and reviewer-validated documentation. Cross-area changes require acceptance
    from each affected area. High-risk workflow, credential, dependency-execution, release, or
-   protection-rule changes require two specifically qualified custodians.
+   protection-rule changes require two specifically qualified custodians. Changes that implement
+   decisions reserved under Section 9 must link to the recorded approval before merging.
 
 4. Checks and approvals tied to the current revision; material changes invalidate prior approval.
    Protect the ownership registry, workflow rules, merge authorization policy, and ``CODEOWNERS``
    against self-authorized edits.
 
-5. A recorded exception process for emergency fixes, with scope, reason, approvers, recovery plan,
-   and prompt retrospective. Emergency status does not justify silently publishing unvalidated
-   training claims.
+5. An approved, recorded exception process for emergency fixes, with scope, reason, approvers,
+   recovery plan, and prompt retrospective. Emergency status does not justify
+   silently publishing unvalidated training claims.
 
 A label alone must not be sufficient authority for privileged or costly execution once triage is
 expanded. Implement actor authorization in a trusted control path outside contributor-modifiable
@@ -492,14 +505,14 @@ that failed checks, uncovered paths, altered policy files, and unauthorized acto
 enforcement is unavailable, keep execution with existing custodians rather than treating path
 ownership as a permission restriction.
 
-Maintainer appointments and certificates do not automatically grant GitHub's built-in **Maintain**,
+Area Owner appointments and certificates do not automatically grant GitHub's built-in **Maintain**,
 **Admin**, or organization **Owner** roles. Those are platform capabilities, not equivalents of the
-community title “Maintainer,” and require separate authorization under Section 9.
+community title “Area Owner,” and require separate authorization under Section 9.
 
 Before granting any non-public operational capability, custodians must verify two-factor
 authentication, an individual account, permission-specific onboarding, and a recorded recovery
 contact. Credentials must be narrowly scoped and short-lived where supported. Custodians verify the
-exact grant and its removal path; a contributor acknowledgement or maintainer approval does not
+exact grant and its removal path; a contributor acknowledgement or role approval does not
 replace account-security checks.
 
 .. _maintainer-policy-section-11:
@@ -507,33 +520,35 @@ replace account-security checks.
 11. Continuing Quality, Leave, and Emeritus Status
 --------------------------------------------------
 
-Area Maintainers acknowledge or hand off review requests within **3 business days** during their
+Area Owners acknowledge or hand off review requests within **3 business days** during their
 declared availability. Acknowledgement is not a promise to finish a complex review immediately. Area
 groups maintain backup coverage for leave and time-zone differences. Changes to response-time
 expectations must be reflected consistently in the contribution guide and this policy.
 
 Every quarter, area groups examine a small sample of review decisions and follow-up work, test
 health, unresolved regressions, and backup coverage. These reviews identify improvements to quality
-and maintainer support. They must not rank people by commit count or penalize them for undertaking
+and Area Owner support. They must not rank people by commit count or penalize them for undertaking
 difficult work. A discovered bug or an appropriate rollback is not by itself evidence of poor
-maintainership.
+maintenance.
 
-At least every six months, area groups confirm each maintainer's scope, activity, backup owner, and
-permissions. After 90 days without meaningful activity or communication, an area maintainer contacts
-the person privately. If absence reaches 180 days and no active handover or return plan is agreed,
-the person's status changes to **Emeritus Maintainer** and custodians revoke unneeded operational
-access. Planned leave may suspend permissions earlier while preserving role recognition.
+At least every six months, area groups review each Area Owner's scope, activity, backup owner, and
+permissions, and submit any recommended changes for approval. After 90 days without
+meaningful activity or communication, an area owner contacts the person privately. If absence
+reaches 180 days and no active handover or return plan is agreed, the area group recommends
+**Emeritus Area Owner** status. Once the status change is approved and recorded, custodians revoke
+unneeded operational access. Approved leave arrangements may suspend permissions earlier while
+preserving role recognition.
 
 Emeritus status is honorable and retains historical contribution credit, but has no active
 appointment authority or technical permission. Return requires current account-security checks, a
-review of changes in the area, and two qualified maintainers' endorsement. After more than a year
-away or substantial architectural change, add a scoped supervised refresher before restoring
-acceptance authority.
+review of changes in the area, two qualified Area Owners' recommendations, and an approved
+reinstatement. After more than a year away or substantial architectural change, add a scoped
+supervised refresher before restoring acceptance authority.
 
-For repeated quality problems, responsible maintainers document examples, provide mentoring and a
-30–60 day improvement plan, and narrow authority while necessary. Removal uses the fair process and
-approval rule in Section 9. Decisions to revoke authority must address demonstrated risk and
-preserve credit for legitimate past work.
+For repeated quality problems, responsible Area Owners document examples and provide mentoring and
+a 30–60 day improvement plan. Any necessary reduction in authority or removal follows the fair
+process in Section 9. Decisions to revoke authority must address demonstrated risk and preserve
+credit for legitimate past work.
 
 .. _maintainer-policy-section-12:
 
@@ -542,12 +557,12 @@ preserve credit for legitimate past work.
 
 The implementation schedule begins on publication of this policy.
 
-**First 30 days:** Current maintainers publish the maintainer roster, affiliations, area
-responsibilities, nomination contacts, and access roles. They establish contributor and reviewer
-registries, nomination templates, credential verification, mentoring contacts, and a permission
-inventory. During the first 14 days, maintainers collect public feedback on implementation; any
-policy amendments follow Section 9. Current qualified maintainers administer decisions under
-Sections 7 and 9 and publish which safeguards are enforced and which require further implementation.
+**First 30 days:** RLinf publishes the project role roster, affiliations, area responsibilities,
+nomination contacts, and access roles, and establishes contributor and reviewer registries,
+nomination templates, credential verification, mentoring contacts, and a permission inventory.
+During the first 14 days, the project collects public feedback on implementation; any policy
+amendments follow Section 9. The implementation report identifies which safeguards are enforced and
+which require further implementation.
 
 Authorized custodians publish who holds the GitHub organization, package and container publication
 accounts, domains, trademarks, and other essential assets, together with the custodians'
@@ -556,31 +571,31 @@ relevant holders where qualified people are available. This policy does not itse
 ownership or control of those assets. The implementation report identifies any remaining
 institutional dependency.
 
-**Days 31–90:** Current maintainers audit existing appointments against the same role and permission
+**Days 31–90:** RLinf audits existing Area Owner appointments against the same role and permission
 criteria, crediting documented past service. Essential operational custody continues during the
-transition; any transitional exception must record its reason, compensating review, and expiry.
-Current maintainers start the first external candidate cohort, provide independent assessors, and
-assign backup owners to areas with one owner. Custodians verify CI authorization and protected merge
-controls before expanding those capabilities.
+transition; any approved transitional exception must record its reason, compensating review, and
+expiry. Area Owners start the first external candidate cohort, arrange independent assessors, and
+identify backup owners for areas with one owner. Custodians verify CI authorization and protected
+merge controls before those capabilities are expanded.
 
 **Days 91–180:** Assessors complete trials and promotion reviews for candidates whose evidence is
-ready. Responsible maintainers update the maintainer registry, certificates, ownership scopes, and
-approved permissions. The Maintainer Group publishes a report on time to first review, progression
-outcomes, assessor diversity, post-merge follow-up, regressions, and access exceptions, with
-appropriate privacy protection.
+ready. After appointment approval, the responsible Area Owners and custodians update the role
+registry, certificates, ownership scopes, and approved permissions. RLinf publishes a report on time
+to first review, progression outcomes, assessor diversity, post-merge follow-up, regressions, and
+access exceptions, with appropriate privacy protection.
 
-At the six-month checkpoint, the Maintainer Group reviews mentoring capacity, assessment quality,
+At the six-month checkpoint, RLinf reviews mentoring capacity, assessment quality,
 practical permission enforcement, and candidate progress, and publishes improvements and the next
 review dates. Candidates who need more experience continue with a clear development plan and retain
 recognition already earned. The six-month schedule does not require promotion before a candidate
 meets the admission standards.
 
-The Maintainer Group evaluates the effectiveness of the participation periods, contribution
+RLinf evaluates the effectiveness of the participation periods, contribution
 thresholds, assessment standards, and approval rules after two promotion cohorts or six months from
 publication, whichever comes later. This policy review schedule does not set a promotion deadline
 for individual contributors.
 
-The initial maintainer audit may recognize already-demonstrated service as satisfying the trial's
+The initial Area Owner audit may recognize already-demonstrated service as satisfying the trial's
 evidence requirements. That is recognition of observed work, not an exemption for employment or
 founder status. New candidates must demonstrate the same service before receiving comparable
 authority.
@@ -606,7 +621,7 @@ authority.
      - Module-level ownership, evidence-based maintainer nominations, public reasoning, individual
        rather than company membership, and separation of technical governance from business
        sponsorship.
-     - Area Maintainers with explicit evidence and personal membership. RLinf's admission process
+     - Area Owners with explicit evidence and personal membership. RLinf's admission process
        and separate administrative custody apply these principles at its current scale.
    * - **Apache governance** R8_
      - Committer access is earned through demonstrated contributions; sponsors do not acquire
@@ -620,10 +635,15 @@ authority.
      - Review routing is distinct from enforced authority. RLinf requires a trusted merge control
        and separately authorized permissions.
 
-References were consulted on 3 October 2026. Repository references for ownership and CI use commit
+vLLM's governance process separates area ownership from project leadership and assigns governance,
+unresolved disputes, and final confirmation of committer onboarding to project leadership. This
+distinction informs the allocation of authority in Section 9. R10_
+
+References R1–R9 were consulted on 3 October 2026; vLLM's governance process (R10) was consulted on
+15 October 2026. Repository references for ownership and CI use commit
 ``c70606f08cdca259b8dec03d4430926b5b8fac9d``; the contribution guide and README were consulted on
 ``main``. These sources inform the policy. The requirements stated in this document govern RLinf
-maintainer admission and responsibilities; changes to upstream references do not automatically
+Area Owner admission and responsibilities; changes to upstream references do not automatically
 change this policy.
 
 .. _R1: https://github.com/RLinf/RLinf/blob/main/CONTRIBUTING.md
@@ -635,3 +655,4 @@ change this policy.
 .. _R7: https://docs.pytorch.org/docs/2.14/community/governance.html
 .. _R8: https://www.apache.org/foundation/governance/
 .. _R9: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+.. _R10: https://github.com/vllm-project/vllm/blob/91ed2859c7345dc160956781b4662dbf99870005/docs/governance/process.md

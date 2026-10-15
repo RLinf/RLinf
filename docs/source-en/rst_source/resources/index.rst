@@ -1,7 +1,7 @@
 Resources
 =========
 
-Use Resources for the project rationale, maintainer policy, updates, publications,
+Use Resources for the project rationale, contributor policy, updates, publications,
 release notes, and troubleshooting.
 
 .. grid:: 1 2 2 3
@@ -12,12 +12,6 @@ release notes, and troubleshooting.
       :link-type: doc
 
       The design, performance numbers, and SOTA results behind RLinf.
-
-   .. grid-item-card:: Maintainer Policy
-      :link: maintainer_policy
-      :link-type: doc
-
-      Grow from contributor to maintainer through sustained contributions and peer review.
 
    .. grid-item-card:: Blog
       :link: blog/index
@@ -49,13 +43,19 @@ release notes, and troubleshooting.
 
       Debugging, rendering, network, NCCL/CUDA, and timeout fixes.
 
+   .. grid-item-card:: Contributor Policy
+      :link: maintainer_policy
+      :link-type: doc
+
+      Grow from contributor to Area Owner through sustained contributions and peer review.
+
 .. toctree::
    :hidden:
 
    Why RLinf <why_rlinf>
-   Maintainer Policy <maintainer_policy>
    Blog <blog/index>
    Publications <publications/index>
    v0.1 & v0.2 Release Notes <release_v0.1_v0.2>
    v0.3 Release Notes <release_v0.3>
    FAQ <faq>
+   Contributor Policy <maintainer_policy>
