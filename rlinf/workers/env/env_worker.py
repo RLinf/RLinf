@@ -192,15 +192,38 @@ class EnvWorker(Worker):
         if self.smooth_intervene.enabled and self.env_decoupled_mode:
             raise ValueError("smooth_intervene does not support decoupled env mode")
 
+        # Group binding limits each rollout consumer to its assigned env ranks.
+        self.enable_group_route_binding = self.cfg.rollout.get(
+            "enable_group_route_binding", False
+        )
+        self._group_id: int | None = None
+
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
             self.batch_router = {}
-            assert self._component_placement.get_world_size(
-                "env"
-            ) >= self._component_placement.get_world_size("rollout"), (
+            env_world_size = self._component_placement.get_world_size("env")
+            rollout_world_size = self._component_placement.get_world_size("rollout")
+            assert env_world_size >= rollout_world_size, (
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
+            if self.enable_group_route_binding:
+                # Proportional groups remain non-empty for non-divisible sizes.
+                self._group_id = self._rank * rollout_world_size // env_world_size
+                self.log_info(
+                    f"env_decoupled_mode group-route binding enabled: env_rank={self._rank} "
+                    f"-> group_id={self._group_id}"
+                )
+
+    def _group_route_key(self) -> str | None:
+        """Return the group key, or None for the global decoupled pool."""
+        if not self.enable_group_route_binding:
+            return None
+        assert self._group_id is not None, (
+            "group route binding is enabled but group_id was not computed; "
+            "this requires env_decoupled_mode to be active."
+        )
+        return f"grp{self._group_id}"
 
     def set_global_step(self, global_step: int) -> None:
         """Set the trajectory step used to correlate distributed events."""
@@ -874,7 +897,9 @@ class EnvWorker(Worker):
             data=policy_input,
             mode="train",
             tag="policy_final" if policy_input.is_last else "policy",
-            route_key=stage_id if not self.env_decoupled_mode else None,
+            route_key=(
+                self._group_route_key() if self.env_decoupled_mode else stage_id
+            ),
             batch_size=self.train_batch_size,
             split_fn=self._policy_input_split_fn or PolicyInput.split,
             decoupled_mode=self.env_decoupled_mode,
@@ -1091,7 +1116,9 @@ class EnvWorker(Worker):
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,
             tag="train_policy" if self.env_decoupled_mode else "policy",
-            route_key=stage_id if not self.env_decoupled_mode else None,
+            route_key=(
+                self._group_route_key() if self.env_decoupled_mode else stage_id
+            ),
             batch_size=self.train_batch_size,
             infer_batch_size_fn=self._infer_action_batch_size,
             decoupled_mode=self.env_decoupled_mode,
@@ -1269,7 +1296,11 @@ class EnvWorker(Worker):
                         split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=(
+                            self._group_route_key()
+                            if self.env_decoupled_mode
+                            else stage_id
+                        ),
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
@@ -1279,7 +1310,11 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=(
+                            self._group_route_key()
+                            if self.env_decoupled_mode
+                            else stage_id
+                        ),
                         batch_size=self.eval_batch_size,
                         infer_batch_size_fn=self._infer_rollout_batch_size
                         if self.env_decoupled_mode
@@ -1319,7 +1354,11 @@ class EnvWorker(Worker):
                         split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=(
+                            self._group_route_key()
+                            if self.env_decoupled_mode
+                            else stage_id
+                        ),
                         decoupled_mode=self.env_decoupled_mode,
                     )
 

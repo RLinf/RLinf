@@ -5,8 +5,8 @@ Env Decoupled Mode
 decouple Env Workers from Rollout Workers. It is enabled by setting
 ``runner.enable_decoupled_mode: true``.
 
-After it is enabled, an Env Worker is no longer bound to a fixed Rollout Worker
-rank. Env Workers put observation data into a shared Channel, and idle Rollout
+By default, an Env Worker is not bound to a fixed Rollout Worker rank in this
+mode. Env Workers put observation data into a shared Channel, and idle Rollout
 Workers can dynamically fetch batches for inference. After inference finishes,
 the results are returned to the original Env Workers.
 
@@ -36,7 +36,7 @@ Where:
 - ``rollout_queue_size`` controls the maximum number of Env data groups that a
   Rollout Worker aggregates at once. When set to ``0``, the default strategy is
   used. In this case, the number of Env data groups aggregated by one Rollout
-  Worker is ``ceil(env_world_size // rollout_world_size)``.
+  Worker is ``env_world_size // rollout_world_size``.
 
 Example configuration:
 
@@ -82,6 +82,33 @@ A smaller ``rollout_queue_size`` usually reduces waiting time. A larger value ma
 improve inference batch utilization, but it may also increase the waiting time
 for each aggregation.
 
+Per-Group Route Binding
+-----------------------
+
+To keep each Rollout Worker serving a fixed set of Env Workers, enable
+``rollout.enable_group_route_binding`` alongside decoupled mode. This is useful
+when each Rollout Worker drives a fixed group of robots. The option defaults
+to ``false``, which keeps the shared pool described above.
+
+.. code-block:: yaml
+
+   runner:
+     enable_decoupled_mode: true
+
+   rollout:
+     enable_group_route_binding: true
+
+Each Env rank is assigned to group
+``env_rank * rollout_world_size // env_world_size``, and Rollout rank ``k``
+serves group ``k``. Each group uses its own ``route_key`` during training and
+evaluation. Requests stay within their assigned group, and results return to
+the Env Worker that sent them.
+
+The worker counts must satisfy ``env_world_size >= rollout_world_size`` but
+need not divide evenly. With four Env Workers and three Rollout Workers, the
+groups contain Env ranks ``[0, 1]``, ``[2]``, and ``[3]``. Every Rollout Worker
+has a nonempty group, and group sizes differ by at most one.
+
 Training Flow
 -------------
 
@@ -89,7 +116,8 @@ After decoupled mode is enabled, the training flow is roughly:
 
 1. An Env Worker performs an environment step and obtains an observation.
 2. The Env Worker sends the observation to the Rollout Channel.
-3. Any Rollout Worker dynamically fetches one or more Env batches from the Channel.
+3. A Rollout Worker fetches one or more Env batches from the shared pool, or from
+   its assigned group when group binding is enabled.
 4. The Rollout Worker runs model inference, generates an action or rollout result,
    and returns it to the Env Worker that sent the request.
 5. The Env Worker continues environment interaction with the returned result.

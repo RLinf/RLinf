@@ -21,6 +21,7 @@ import json
 import random
 import shutil
 import time
+from collections import defaultdict, deque
 from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
@@ -65,6 +66,7 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.scheduler import WorkerAddress
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -2540,68 +2542,139 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
     runner.rollout.evaluate.assert_not_called()
 
 
-def test_decoupled_policy_route_round_trip():
-    rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.env_decoupled_mode = True
-    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
-    rollout.train_batch_size = 32
-    rollout.rollout_queue_size = 0
-    rollout.batch_router = {"policy": ["stale"]}
-    rollout.recv_from_and_record_batch_routes_with_timeout = AsyncMock(
-        return_value=(_policy_input(), [8, 8])
+class _CompletedChannelWork:
+    def __init__(self, result):
+        self.result = result
+
+    def done(self):
+        return True
+
+    async def async_wait(self):
+        return self.result
+
+    def wait(self):
+        return self.result
+
+
+class _MemoryRouteChannel:
+    """Replace the process transport while retaining real worker routing."""
+
+    def __init__(self):
+        self.messages = defaultdict(deque)
+
+    def put(self, item, key, async_op=False):
+        self.messages[key].append(item)
+        return _CompletedChannelWork(None) if async_op else None
+
+    def get(self, key, async_op=False):
+        # Fail immediately on a wrong route rather than hanging the test.
+        assert self.messages[key], f"No message available for route {key}"
+        result = self.messages[key].popleft()
+        return _CompletedChannelWork(result) if async_op else result
+
+
+@pytest.mark.parametrize("binding_enabled", [False, True])
+@pytest.mark.parametrize("queue_size", [0, 1])
+@pytest.mark.parametrize(
+    "rollout_cls", [MultiStepRolloutWorker, AsyncMultiStepRolloutWorker]
+)
+@pytest.mark.parametrize(
+    ("env_count", "rollout_count", "bound_rollout_ranks"),
+    [
+        (4, 2, [0, 0, 1, 1]),
+        (5, 2, [0, 0, 0, 1, 1]),
+        (4, 3, [0, 0, 1, 2]),
+        (8, 3, [0, 0, 0, 1, 1, 1, 2, 2]),
+    ],
+)
+def test_decoupled_policy_route_round_trip(
+    binding_enabled,
+    queue_size,
+    rollout_cls,
+    env_count,
+    rollout_count,
+    bound_rollout_ranks,
+):
+    group_sizes = {"EnvGroup": env_count, "RolloutGroup": rollout_count}
+    manager = SimpleNamespace(
+        get_worker_info=lambda address: SimpleNamespace(
+            group_world_size=group_sizes[address.root_group_name]
+        )
     )
-    rollout.send_to_recorded_batch_routes = Mock()
+    env_workers = []
+    for rank in range(env_count):
+        env = object.__new__(EnvWorker)
+        env._rank = rank
+        env._world_size = env_count
+        env._worker_address = WorkerAddress("EnvGroup", rank)
+        env._manager_proxy = manager
+        env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
+        env.env_decoupled_mode = True
+        env.train_batch_size = env_count
+        env.train_num_envs_per_stage = 1
+        env.batch_router = {}
+        env.enable_group_route_binding = binding_enabled
+        env._group_id = bound_rollout_ranks[rank] if binding_enabled else None
+        env_workers.append(env)
 
-    policy_input, split_sizes = asyncio.run(
-        rollout._receive_policy_input(None, "policy", 0)
-    )
-    source = torch.zeros(16, 4, requires_grad=True)
-    output = source * 2
-    rollout._send_actions(None, output, 0, split_sizes)
+    rollout_workers = []
+    for rank in range(rollout_count):
+        rollout = object.__new__(rollout_cls)
+        rollout._rank = rank
+        rollout._world_size = rollout_count
+        rollout._worker_address = WorkerAddress("RolloutGroup", rank)
+        rollout._manager_proxy = manager
+        rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
+        rollout.env_decoupled_mode = True
+        rollout.train_batch_size = env_count
+        rollout.rollout_queue_size = queue_size
+        rollout.batch_router = {"policy": []}
+        rollout.enable_group_route_binding = binding_enabled
+        rollout._group_id = rank if binding_enabled else None
+        rollout_workers.append(rollout)
 
-    assert policy_input.obs["states"].shape == (16, 4)
-    rollout.recv_from_and_record_batch_routes_with_timeout.assert_awaited_once_with(
-        group_name="EnvGroup",
-        channel=None,
-        tag="policy",
-        batch_size=32,
-        merge_fn=rollout._merge_policy_inputs,
-        infer_batch_size_fn=rollout._infer_policy_input_batch_size,
-        timeout_time=0.02,
-        recv_queue_size=0,
-    )
-    sent_output = rollout.send_to_recorded_batch_routes.call_args.kwargs["data"]
-    assert torch.equal(sent_output, output)
-    assert not sent_output.requires_grad
-    assert sent_output.grad_fn is None
-    rollout.send_to_recorded_batch_routes.assert_called_once_with(
-        group_name="EnvGroup",
-        channel=None,
-        data=sent_output,
-        tag="policy",
-        split_fn=rollout._split_actions,
-        split_sizes=[8, 8],
-    )
+    requests, responses = _MemoryRouteChannel(), _MemoryRouteChannel()
+    expected_requests = defaultdict(list)
+    for step in range(2):
+        for rank, env in enumerate(env_workers):
+            policy_input = PolicyInput(obs={"states": torch.tensor([[rank, step]])})
+            env._send_policy_input(
+                requests,
+                policy_input,
+                stage_id=0,
+                key=TrajectoryKey(step, 0, rank, 0, 0),
+            )
+            group = bound_rollout_ranks[rank] if binding_enabled else None
+            expected_requests[group].append([rank, step])
 
+    batch_limit = queue_size or env_count // rollout_count
+    for group, inputs in expected_requests.items():
+        for batch_start in range(0, len(inputs), batch_limit):
+            # An unbound queue can be consumed by any rollout, across fixed groups.
+            rollout_rank = group if binding_enabled else batch_start % rollout_count
+            rollout = rollout_workers[rollout_rank]
+            policy_input, split_sizes = asyncio.run(
+                rollout._receive_policy_input(requests, "policy", 0)
+            )
+            expected = inputs[batch_start : batch_start + batch_limit]
+            assert policy_input.obs["states"].tolist() == expected
+            assert [source.key.env_rank for source in policy_input.sources] == [
+                rank for rank, _step in expected
+            ]
+            source = torch.tensor(
+                [[float(rank + step)] for rank, step in expected], requires_grad=True
+            )
+            rollout._send_actions(responses, source * 2, 0, split_sizes)
+            assert rollout.batch_router["policy"] == []
 
-def test_env_uses_mode_qualified_decoupled_response_tag():
-    env = object.__new__(EnvWorker)
-    env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
-    env.env_decoupled_mode = True
-    env.train_batch_size = 32
-    env.recv_from = Mock(return_value=torch.zeros(8, 4))
-
-    env._recv_actions(None, stage_id=0)
-
-    env.recv_from.assert_called_once_with(
-        group_name="RolloutGroup",
-        channel=None,
-        tag="train_policy",
-        route_key=None,
-        batch_size=32,
-        infer_batch_size_fn=env._infer_action_batch_size,
-        decoupled_mode=True,
-    )
+    for step in range(2):
+        for rank, env in enumerate(env_workers):
+            actions = env._recv_actions(responses, stage_id=0)
+            assert actions.item() == 2 * (rank + step)
+            assert not actions.requires_grad
+            assert actions.grad_fn is None
+    assert not any(requests.messages.values())
+    assert not any(responses.messages.values())
 
 
 def test_smooth_intervention_builds_external_input_without_policy_history():

@@ -139,6 +139,12 @@ class MultiStepRolloutWorker(Worker):
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
+        # Group binding limits each rollout consumer to its assigned env ranks.
+        self.enable_group_route_binding = self.cfg.rollout.get(
+            "enable_group_route_binding", False
+        )
+        self._group_id: int | None = None
+
         if self.env_decoupled_mode:
             # save the run-time imformation in communicate channel for decoupled mode
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
@@ -146,7 +152,23 @@ class MultiStepRolloutWorker(Worker):
                 "policy": [],
                 "rollout_results": [],
             }
+            if self.enable_group_route_binding:
+                self._group_id = self._rank
+                self.log_info(
+                    f"env_decoupled_mode group-route binding enabled: "
+                    f"rollout_rank={self._rank} -> group_id={self._group_id}"
+                )
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
+
+    def _group_route_key(self) -> Optional[str]:
+        """Return the group key, or None for the global decoupled pool."""
+        if not self.enable_group_route_binding:
+            return None
+        assert self._group_id is not None, (
+            "group route binding is enabled but group_id was not computed; "
+            "this requires env_decoupled_mode to be active."
+        )
+        return f"grp{self._group_id}"
 
     @property
     def collect_raw_transition_obs(self) -> bool:
@@ -702,6 +724,7 @@ class MultiStepRolloutWorker(Worker):
                 policy_input,
                 split_sizes,
             ) = await self.recv_from_and_record_batch_routes_with_timeout(
+                route_key=self._group_route_key(),
                 group_name=self.cfg.env.group_name,
                 channel=channel,
                 tag=tag,
@@ -820,6 +843,7 @@ class MultiStepRolloutWorker(Worker):
             if split_sizes is None:
                 raise ValueError("Decoupled policy output requires recorded routes.")
             self.send_to_recorded_batch_routes(
+                route_key=self._group_route_key(),
                 group_name=self.cfg.env.group_name,
                 channel=channel,
                 data=actions,
@@ -939,6 +963,7 @@ class MultiStepRolloutWorker(Worker):
                     env_output,
                     split_sizes,
                 ) = await self.recv_from_and_record_batch_routes_with_timeout(
+                    route_key=self._group_route_key(),
                     group_name=self.cfg.env.group_name,
                     channel=input_channel,
                     tag="rollout_results",
@@ -958,6 +983,7 @@ class MultiStepRolloutWorker(Worker):
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
                 self.send_to_recorded_batch_routes(
+                    route_key=self._group_route_key(),
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
                     data=actions,
