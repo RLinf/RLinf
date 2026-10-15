@@ -99,7 +99,7 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
+  train_data_paths: ["/mnt/public/xzxuan/data/searchr1/train.jsonl"]
 
 
 agentloop:
@@ -123,7 +123,7 @@ rollout:
   group_name: "RolloutGroup"
   gpu_memory_utilization: 0.75
   model:
-    model_path: /path/to/model/Qwen2.5-3B-Instruct  # https://huggingface.co/Qwen/Qwen2.5-3B-Instruct
+    model_path: /mnt/public/xzxuan/model/Qwen2.5-3B-Instruct  # https://huggingface.co/Qwen/Qwen2.5-3B-Instruct
     model_type: qwen2.5
     precision: ${actor.model.precision}
   enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.
