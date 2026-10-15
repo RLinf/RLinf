@@ -1,0 +1,47 @@
+env_type: bench2dex
+total_num_envs: 1
+auto_reset: false
+ignore_terminations: false
+use_rel_reward: false
+seed: 100000000
+group_size: 1
+reward_coef: 1.0
+use_fixed_reset_state_ids: false
+max_episode_steps: ???
+max_steps_per_rollout_epoch: ???
+
+video_cfg:
+  save_video: false
+  info_on_video: true
+  fps: 20
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  source_path: ${oc.env:BENCH2DEX_PATH}
+  # Parent directory containing dex2bench_dataset/ and, if used, Dex2Assets/.
+  assets_path: ${oc.env:BENCH2DEX_ASSETS_PATH}
+  task: ???
+  embodiment: ???
+  anchor_dir: ${oc.env:BENCH2DEX_ANCHOR_DIR,null}
+  anchor_hdf5: ${oc.env:BENCH2DEX_ANCHOR,null}
+  episode_manifest: null
+  collect_config: configs/collect/default.yaml
+  generalization_profile: none
+  generalization_split: unseen
+  generalization_config: configs/scene/generalization.yaml
+  inv_cov_seed: 200000000
+  start_episode: 1
+  task_seed_id: null
+  output_dir: null
+  policy_name: null
+  early_stop: true
+  device: cuda:0
+  physics_dt: 0.016666666666666666
+  control_decimation: 3
+  # Null derives ceil(1.5 * expert_time_step / control_decimation).
+  max_control_steps: null
+  warmup_steps: 60
+  cameras:
+    main: cam_stereo_left
+    extra: [cam_stereo_right]
+    wrist: [cam_wrist_left, cam_wrist_right]

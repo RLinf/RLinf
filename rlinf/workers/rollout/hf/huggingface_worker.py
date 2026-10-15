@@ -32,9 +32,11 @@ from rlinf.algorithms.rlt.transition import extract_rlt_obs_from_forward_inputs
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import (
     EnvPart,
+    JointPositionTargets,
     PolicyInput,
     PolicyOutput,
     PolicyPart,
+    merge_batch_values,
     split_batch_value,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -484,7 +486,7 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("predict")
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
-    ) -> tuple[torch.Tensor, dict[str, Any]]:
+    ) -> tuple[torch.Tensor | JointPositionTargets, dict[str, Any]]:
         kwargs = (
             self._train_sampling_params
             if mode == "train"
@@ -579,7 +581,7 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
         rlt_switch_flags: torch.Tensor | None = None,
         intervene_requested: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, dict[str, Any]]:
+    ) -> tuple[torch.Tensor | JointPositionTargets, dict[str, Any]]:
         if self.rlt_feature_model is not None:
             return predict_rlt_actions(
                 policy_model=self.hf_model,
@@ -596,7 +598,7 @@ class MultiStepRolloutWorker(Worker):
         return self.predict(env_obs, mode=mode)
 
     def _build_policy_output(
-        self, actions: torch.Tensor, result: dict[str, Any]
+        self, actions: torch.Tensor | JointPositionTargets, result: dict[str, Any]
     ) -> PolicyOutput:
         """Keep inference metadata locally until its environment result arrives."""
         intervene_flags = result.get("intervene_flags")
@@ -605,10 +607,15 @@ class MultiStepRolloutWorker(Worker):
             and self.enable_dagger
             and result.get("expert_label_flag", False)
         ):
+            targets = (
+                actions.joint_positions
+                if isinstance(actions, JointPositionTargets)
+                else actions
+            )
             intervene_flags = torch.ones(
-                (actions.shape[0], self.model_cfg.num_action_chunks),
+                (targets.shape[0], self.model_cfg.num_action_chunks),
                 dtype=torch.bool,
-                device=actions.device,
+                device=targets.device,
             )
         return PolicyOutput(
             prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
@@ -809,13 +816,13 @@ class MultiStepRolloutWorker(Worker):
     def _send_actions(
         self,
         channel: Channel,
-        actions: torch.Tensor,
+        actions: torch.Tensor | JointPositionTargets,
         stage_id: int,
         split_sizes: list[int] | None,
     ) -> None:
         # Send by value on CPU: a device-resident tensor reaches a same-device env
         # as a CUDA IPC handle aliasing the buffer the next forward pass reuses.
-        actions = actions.detach().cpu().contiguous()
+        actions = self._actions_to_cpu(actions)
         if self.env_decoupled_mode:
             if split_sizes is None:
                 raise ValueError("Decoupled policy output requires recorded routes.")
@@ -868,7 +875,7 @@ class MultiStepRolloutWorker(Worker):
                     policy_output = self._build_policy_output(actions, result)
                 self._send_actions(
                     output_channel,
-                    actions.contiguous(),
+                    actions,
                     stage_id,
                     split_sizes,
                 )
@@ -955,14 +962,16 @@ class MultiStepRolloutWorker(Worker):
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                     intervene_requested=env_output.get("intervene_flags", None),
                 )
-                if isinstance(actions, torch.Tensor):
-                    actions = actions.detach().cpu().contiguous()
+                actions = self._actions_to_cpu(actions)
                 self.send_to_recorded_batch_routes(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
                     data=actions,
                     tag="rollout_results",
                     split_sizes=split_sizes,
+                    split_fn=self._split_actions
+                    if isinstance(actions, JointPositionTargets)
+                    else None,
                 )
         else:
             for _ in tqdm(
@@ -989,8 +998,7 @@ class MultiStepRolloutWorker(Worker):
                             rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                             intervene_requested=env_output.get("intervene_flags", None),
                         )
-                        if isinstance(actions, torch.Tensor):
-                            actions = actions.detach().cpu().contiguous()
+                        actions = self._actions_to_cpu(actions)
                         self.send_to(
                             group_name=self.cfg.env.group_name,
                             channel=output_channel,
@@ -999,6 +1007,9 @@ class MultiStepRolloutWorker(Worker):
                             route_key=stage_id,
                             async_op=True,
                             batch_size=self.eval_batch_size,
+                            split_fn=self._split_actions
+                            if isinstance(actions, JointPositionTargets)
+                            else None,
                         )
 
             if self.enable_offload:
@@ -1077,6 +1088,8 @@ class MultiStepRolloutWorker(Worker):
                 )
                 if first_non_none is None:
                     merged[key] = None
+                elif key == "extra_obs":
+                    merged[key] = merge_batch_values(values)
                 elif isinstance(first_non_none, torch.Tensor):
                     merged[key] = torch.cat(values, dim=0)
                 elif isinstance(first_non_none, list):
@@ -1106,8 +1119,22 @@ class MultiStepRolloutWorker(Worker):
         }
 
     @staticmethod
-    def _split_actions(actions: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
-        """Split policy actions for the environment workers that requested them."""
+    def _actions_to_cpu(actions: torch.Tensor | JointPositionTargets):
+        if isinstance(actions, JointPositionTargets):
+            return actions.to_cpu()
+        return (
+            actions.detach().cpu().contiguous()
+            if isinstance(actions, torch.Tensor)
+            else actions
+        )
+
+    @staticmethod
+    def _split_actions(
+        actions: torch.Tensor | JointPositionTargets, sizes: list[int]
+    ) -> list:
+        """Split existing tensor or named-joint actions by environment batch."""
+        if isinstance(actions, JointPositionTargets):
+            return actions.split(sizes)
         return [shard.contiguous() for shard in torch.split(actions, sizes, dim=0)]
 
     def set_global_step(self, global_step: int):
