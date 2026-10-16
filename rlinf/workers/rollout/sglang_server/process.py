@@ -19,12 +19,17 @@ import inspect
 import multiprocessing as mp
 import os
 import signal
+import threading
 import time
 from typing import Callable, Optional
 
 import requests
 
 from rlinf.utils.http_client import no_proxy_env
+
+# How often the parent-death watchdog in the spawned server child checks
+# whether the spawning actor is still alive (seconds).
+_PARENT_WATCH_INTERVAL = 1.0
 
 
 def _ensure_no_proxy_for_localhost() -> None:
@@ -35,6 +40,40 @@ def _ensure_no_proxy_for_localhost() -> None:
         os.environ["NO_PROXY"] = f"{current},{local}".strip(",") if current else local
 
 
+def _kill_own_group() -> None:
+    """SIGKILL the whole process group of the calling process.
+
+    If ``os.setpgrp()`` failed during startup the caller never got its own
+    group and ``killpg`` would hit the Ray actor's group — only kill the
+    group when it is truly ours (we are its leader).
+    """
+    try:
+        if os.getpgrp() == os.getpid():
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+        else:
+            os.kill(os.getpid(), signal.SIGKILL)
+    except OSError:
+        os.kill(os.getpid(), signal.SIGKILL)
+
+
+def _watch_parent(parent_pid: int) -> None:
+    """Daemon thread body: die with the whole group once the parent is gone.
+
+    The spawned server child outlives its parent (a Ray actor) by default:
+    it called ``os.setpgrp()``, so group signals to the actor reach nothing,
+    and sglang's own ``PR_SET_PDEATHSIG`` chain only covers the children of
+    *this* process. Polling ``os.getppid()`` covers every parent-death mode
+    (Ray kill, driver crash, Ctrl-C) and killing the group takes the whole
+    sglang tree along in one shot.
+    """
+    if os.getppid() != parent_pid:
+        _kill_own_group()
+    while True:
+        time.sleep(_PARENT_WATCH_INTERVAL)
+        if os.getppid() != parent_pid:
+            _kill_own_group()
+
+
 def _run_sglang_server(
     server_type: str,
     server_args_kwargs: dict,
@@ -42,6 +81,7 @@ def _run_sglang_server(
     ready_pipe,
     apply_rlinf_patch: bool = False,
     dist_init_addr: Optional[str] = None,
+    parent_pid: Optional[int] = None,
 ) -> None:
     """Child-process entrypoint: launches a single sglang HTTP server.
 
@@ -50,6 +90,12 @@ def _run_sglang_server(
     ``multiprocessing.Pipe`` end the child writes to once initialization
     either completes or throws (mirrors sglang's ``pipe_finish_writer``
     contract).
+
+    ``parent_pid`` is the pid of the spawning process (the Ray actor). The
+    child watches it from a daemon thread (see ``_watch_parent``) so the
+    whole server tree dies even when the actor is SIGKILLed and no cleanup
+    callback ever runs. When ``None`` (the legacy
+    ``SGLangServerWorker.init_server`` call site) no watchdog is started.
 
     With ``apply_rlinf_patch`` the child first imports the RLinf sglang
     patch module (so the Patcher rewrites the module-level bindings loaded
@@ -65,6 +111,15 @@ def _run_sglang_server(
         os.setpgrp()
     except OSError:
         pass
+
+    if parent_pid is not None:
+        watchdog = threading.Thread(
+            target=_watch_parent,
+            args=(parent_pid,),
+            name="sglang-server-parent-watchdog",
+            daemon=True,
+        )
+        watchdog.start()
 
     _ensure_no_proxy_for_localhost()
     os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
@@ -278,9 +333,12 @@ class SGLangServerProcess:
                 server_kwargs,
                 dist_port,
                 child_pipe,
-                self._apply_rlinf_patch,
-                self._dist_init_addr,
             ),
+            kwargs={
+                "apply_rlinf_patch": self._apply_rlinf_patch,
+                "dist_init_addr": self._dist_init_addr,
+                "parent_pid": os.getpid(),
+            },
             daemon=False,
         )
         proc.start()
