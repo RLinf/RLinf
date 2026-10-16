@@ -3757,7 +3757,9 @@ install_frankasim_env() {
 
 install_embodichain_env() {
     # Only dexsim-engine needs wheels from the vendor package server.
-    uv pip install "embodichain==0.3.0" \
+    # TensorDict 0.15 rejects get_proprioception()[:, active_joint_ids]: the
+    # joint axis is a feature dim, and CartPole init fails with IndexError.
+    uv pip install "embodichain==0.3.0" "tensordict>=0.6,<0.15" \
         --find-links http://pyp.open3dv.site:2345/simple/dexsim-engine/ \
         --trusted-host pyp.open3dv.site
 }
