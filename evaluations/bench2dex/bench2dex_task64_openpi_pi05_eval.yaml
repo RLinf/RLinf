@@ -1,6 +1,6 @@
 defaults:
   - env/bench2dex@env.eval
-  - model/pi0_5@rollout.model
+  - model/pi05_bench2dex@rollout.model
   - _self_
   - override hydra/job_logging: stdout
 
@@ -54,20 +54,6 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model:
-    model_path: ${oc.env:BENCH2DEX_PI05_PATH}
-    precision: bf16
-    action_dim: 32
-    num_action_chunks: 20
-    num_steps: 10
-    add_value_head: false
     openpi:
       task: eval
       noise_rng: jax
-      config_name: pi05_bench2dex
-      action_horizon: 20
-      model_action_dim: 32
-      max_token_len: 280
-      discrete_state_input: true
-      num_images_in_input: 4
-      image_keys: [base_0_rgb, base_1_rgb, left_wrist_0_rgb, right_wrist_0_rgb]
-      torch_compile: false
