@@ -203,7 +203,7 @@ argument. Both recipes use independent checkpoint evaluation below. Watch
 :doc:`Training metrics <../../reference/metrics>` for the metric definitions.
 
 Evaluate a Checkpoint
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 Run 50 episodes per channel, with a process restart every 10 episodes:
 

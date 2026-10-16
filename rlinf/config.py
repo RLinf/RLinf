@@ -17,7 +17,7 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
 import torch.nn.functional as F
@@ -28,10 +28,14 @@ from omegaconf.dictconfig import DictConfig
 import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
+)
+from rlinf.utils.precision import (
+    torch_dtype_from_precision as torch_dtype_from_precision,
 )
 
 if TYPE_CHECKING:
@@ -175,23 +179,6 @@ SUPPORTED_TASK_TYPE = [
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
-
-
-def torch_dtype_from_precision(
-    precision: Union[int, str, None],
-) -> Optional[torch.dtype]:
-    if precision in ["bf16", "bf16-mixed"]:
-        return torch.bfloat16
-    elif precision in [16, "16", "fp16", "16-mixed"]:
-        return torch.float16
-    elif precision in [32, "32", "fp32", "32-true"]:
-        return torch.float32
-    elif precision in [None, "null"]:
-        return None
-    else:
-        raise ValueError(
-            f"Could not parse the precision of `{precision}` to a valid torch.dtype"
-        )
 
 
 @torch.jit.script
@@ -477,14 +464,13 @@ def validate_fp32_master_adamw_config(
     *,
     strategy: str,
     sharding_strategy: str,
-    is_lora: bool,
 ) -> None:
-    """Validate the FSDP configurations exercised by FP32 master AdamW."""
+    """Validate the FSDP backend supported by FP32 master AdamW."""
     strategy = str(strategy).lower()
     sharding_strategy = str(sharding_strategy).lower()
-    if strategy != "fsdp" or sharding_strategy != "no_shard" or not is_lora:
+    if strategy != "fsdp" or sharding_strategy != "no_shard":
         raise ValueError(
-            "use_fp32_master_params currently supports only FSDP1 LoRA training "
+            "use_fp32_master_params requires FSDP1 "
             "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
         )
 
@@ -613,34 +599,24 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "buffer_dtype", None
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
+        validate_fsdp_wrapper_config(cfg.fsdp_config)
 
         if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
-            mp = cfg.fsdp_config.mixed_precision
-            all_none = (
-                mp.param_dtype is None
-                and mp.reduce_dtype is None
-                and mp.buffer_dtype is None
+            low_precision = any(
+                torch_dtype_from_precision(mixed_precision_config[field])
+                not in (None, torch.float32)
+                for field in ("param_dtype", "reduce_dtype", "buffer_dtype")
             )
-            all_fp32 = (
-                mp.param_dtype == "fp32"
-                and mp.reduce_dtype == "fp32"
-                and mp.buffer_dtype == "fp32"
-            )
-            assert all_none or all_fp32, (
-                "openpi does not support FSDP mixed precision "
-                f"(got param_dtype={mp.param_dtype!r}, "
-                f"reduce_dtype={mp.reduce_dtype!r}, "
-                f"buffer_dtype={mp.buffer_dtype!r}). "
-                "Set mixed_precision param/reduce/buffer dtype to null "
-                "(OpenPI default) or fp32."
-            )
+            if low_precision and not cfg.fsdp_config.get("mixed_precision_rules"):
+                raise ValueError(
+                    "OpenPI low-precision FSDP policies require mixed_precision_rules "
+                    "for its FP32 modules."
+                )
 
         if cfg.get("optim", {}).get("use_fp32_master_params", False):
-            model_cfg = cfg.get("model", {}) or {}
             validate_fp32_master_adamw_config(
                 strategy=cfg.fsdp_config.strategy,
                 sharding_strategy=cfg.fsdp_config.sharding_strategy,
-                is_lora=bool(model_cfg.get("is_lora", False)),
             )
 
     return cfg

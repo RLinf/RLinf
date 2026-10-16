@@ -148,7 +148,7 @@ runner 按 ``runner.save_interval`` 保存 checkpoint。恢复同步训练时，
 恢复异步训练时，使用 ``train_async.py`` 和 ``bench2dex_task64_async_ppo_openpi_pi05``，传入相同的 ``runner.resume_dir`` 参数。两份配方均通过下面的独立入口评测 checkpoint。训练时关注 ``env/success_once``，其余指标定义见 :doc:`训练指标 <../../reference/metrics>`。
 
 Checkpoint 评测
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 
 每通道运行 50 回合，每 10 回合重启一次进程：
 
