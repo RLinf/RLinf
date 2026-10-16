@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build a Cosmos3 action-policy for RLinf SFT.
+"""Build the native Cosmos3 action model for RLinf training and HF evaluation.
 
 Builds cosmos's *training* config directly, then disables only its internal
 FSDP/CP/CFGP (via ``enable_inference_mode`` so AC + EMA stay on) -- RLinf's
@@ -26,13 +26,13 @@ from __future__ import annotations
 
 import contextlib
 import os
-import re
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.cosmos3.checkpoint_loader import load_pretrained_checkpoint
 from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionModel
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
@@ -92,69 +92,23 @@ def _apply_freeze(cosmos3_model: nn.Module, keys_to_select: list[str]) -> None:
     )
 
 
-def _load_base_weights(
-    cosmos3_model: nn.Module, model_path: str, keys_to_skip: list[str]
-) -> None:
-    """Warm-start ``cosmos3_model`` from a base checkpoint, skipping action heads + net_ema.
-
-    Reuses cosmos's loaders so the AC prefix and DTensor resharding are handled:
-    ``load_vfm_model`` (HF safetensors dir, regex skip on ``cosmos3_model.net``) or
-    ``_load_model`` (DCP dir, substring skip via ``CustomLoadPlanner``).
-    """
-    from cosmos_framework.utils.generator.model_loader import (
-        _is_safetensors_checkpoint,
-        _load_model,
-    )
-
-    if _is_safetensors_checkpoint(model_path, None):
-        from cosmos_framework.model.generator.utils.safetensors_loader import (
-            load_vfm_model,
-        )
-
-        skip_patterns = [f".*{re.escape(s)}.*" for s in keys_to_skip]
-        vfm = getattr(cosmos3_model, "net", cosmos3_model)
-        logger.info(
-            "Cosmos3: loading safetensors base into cosmos3_model.net from %s (skip=%s)",
-            model_path,
-            skip_patterns,
-        )
-        load_vfm_model(
-            vfm,
-            model_path,
-            credential_path=None,
-            parallel_dims=getattr(cosmos3_model, "parallel_dims", None),
-            skip_patterns=skip_patterns or None,
-        )
-        return
-
-    # DCP dir; accept either model_path or model_path/model layouts.
-    dcp_dir = (
-        os.path.join(model_path, "model")
-        if os.path.isdir(os.path.join(model_path, "model"))
-        else model_path
-    )
-    logger.info(
-        "Cosmos3: loading DCP base into cosmos3_model from %s (skip=%s)",
-        dcp_dir,
-        keys_to_skip,
-    )
-    _load_model(
-        cosmos3_model,
-        dcp_dir,
-        credential_path=None,
-        keys_to_skip_loading=keys_to_skip or None,
-    )
-
-
 def get_model(cfg: DictConfig, torch_dtype=None):
-    """Build and warm-start a ``Cosmos3ActionModel`` for RLinf SFT and RL.
+    """Build a trainable Cosmos3 model for SFT, actor and HF rollout.
 
     ``torch_dtype`` is accepted only for model-builder registry signature parity;
     cosmos sets precision from its own config, so it is unused here.
 
-    Returns a ``Cosmos3ActionModel`` wrapping a cosmos-FSDP-disabled ``OmniMoTModel``
-    with AC + EMA on, ready for RLinf ``FSDPModelManager`` to ``fully_shard``.
+    ``checkpoint_format`` only selects how weights are read into the native
+    implementation; it never changes the inference or training code.
     """
+    if str(cfg.get("model_backend", "native")).lower() != "native":
+        raise ValueError(
+            "Cosmos3 uses one native model for actor, HF rollout and eval; "
+            "remove model_backend=diffusers and keep checkpoint_format=diffusers "
+            "when loading a Diffusers checkpoint."
+        )
+    checkpoint_format = str(cfg.get("checkpoint_format", "native")).lower()
+
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
     from cosmos_framework.configs.base.config import make_config
     from cosmos_framework.utils import distributed as cosmos_distributed
@@ -166,10 +120,25 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
     # Build + instantiate under cosmos-framework root (its configs use paths
     # relative to that root).
-    with contextlib.chdir(_cosmos_framework_root()):
+    cosmos_root = _cosmos_framework_root()
+    with contextlib.chdir(cosmos_root):
         cosmos3_cfg = make_config()
         experiment_name = "action_policy_libero_nano"
-        cosmos3_cfg = override(cosmos3_cfg, ["--", f"experiment={experiment_name}"])
+        # ``override`` resolves the complete cosmos training recipe, including its
+        # unused dataloader subtree.  HF rollout only instantiates the model, but
+        # resolving that subtree would still require callers to export
+        # ``LIBERO_ROOT``.  Replace the unused dataset root with an existing local
+        # path so eval/model construction is self-contained.  RLinf's SFT loader
+        # owns the real training dataset and does not consume this value either.
+        cosmos3_cfg = override(
+            cosmos3_cfg,
+            [
+                "--",
+                f"experiment={experiment_name}",
+                "dataloader_train.dataloader.datasets.libero.dataset.root="
+                f"{cosmos_root}",
+            ],
+        )
 
         # Disable cosmos internal FSDP/CP/CFGP at any world size; RLinf FSDP owns
         # fully_shard. enable_inference_mode avoids degrees=1 re-enabling cosmos
@@ -197,14 +166,33 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                     "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
                 )
 
+        if checkpoint_format == "diffusers":
+            # The packaged policy ships its matching tokenizer. The recipe's
+            # default Qwen identifier may resolve to a different local cache
+            # (or be unavailable on an offline actor node).
+            tokenizer_path = Path(str(model_path)).expanduser() / "text_tokenizer"
+            if not (tokenizer_path / "vocab.json").is_file():
+                raise FileNotFoundError(
+                    f"Cosmos3 Diffusers tokenizer not found: {tokenizer_path}"
+                )
+            cosmos3_cfg.model.config.vlm_config.tokenizer.pretrained_model_name = str(
+                tokenizer_path
+            )
+
         # cosmos probes on CPU unless get_backend() == "nccl", which RLinf's lazily
         # bound group never reports; the probe is diagnostic only, so skip it.
-        _ensure_world_communicator = cosmos_distributed.ensure_world_communicator
-        cosmos_distributed.ensure_world_communicator = lambda *args, **kwargs: None
+        _ensure_world_communicator = getattr(
+            cosmos_distributed, "ensure_world_communicator", None
+        )
+        if _ensure_world_communicator is not None:
+            cosmos_distributed.ensure_world_communicator = lambda *args, **kwargs: None
         try:
             cosmos3_cfg.validate()
         finally:
-            cosmos_distributed.ensure_world_communicator = _ensure_world_communicator
+            if _ensure_world_communicator is not None:
+                cosmos_distributed.ensure_world_communicator = (
+                    _ensure_world_communicator
+                )
         cosmos3_cfg.freeze()
 
         # Materialize on CPU: net(bf16 ~27GB) + net_ema(fp32 ~54GB) ~= 81GB would
@@ -232,9 +220,14 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                 _mod.inv_freq = _mod.inv_freq.float()
         cosmos3_model.net.init_weights(buffer_device=_CosmosDevice.CPU)
 
-    # Warm-start from the non-action base, skipping the fresh action heads + EMA.
-    _load_base_weights(
-        cosmos3_model, model_path, list(cfg.get("keys_to_skip_loading", []))
+    # Native checkpoints warm-start from a base model; Diffusers packages load
+    # the complete trained policy, including action heads, into the same native
+    # model used by the actor and HF rollout worker.
+    load_pretrained_checkpoint(
+        cosmos3_model,
+        model_path,
+        checkpoint_format,
+        list(cfg.get("keys_to_skip_loading", [])),
     )
     # Freeze the understanding tower (only keys_to_select train).
     _apply_freeze(cosmos3_model, list(cfg.get("keys_to_select", [])))

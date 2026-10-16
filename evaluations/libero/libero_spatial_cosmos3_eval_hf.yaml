@@ -27,8 +27,8 @@ runner:
   val_check_interval: -1
   save_interval: -1
   resume_dir: null
-  # Full RLinf SFT checkpoint; HF uses its non-EMA net like SGLang's default export.
-  ckpt_path: path/to/cosmos3_sft/full_weights.pt
+  # The selected policy artifact already contains its fine-tuned weights.
+  ckpt_path: null
 
 env:
   group_name: "EnvGroup"
@@ -55,5 +55,6 @@ rollout:
   return_logprobs: false
   model:
     model_path: path/to/Cosmos3-Nano-DCP
+    checkpoint_format: diffusers
     wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
     action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json

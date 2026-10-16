@@ -1,8 +1,11 @@
 # Shared Cosmos3 model and LIBERO action defaults for SFT, RL, and HF eval.
 # Set checkpoints, VAE, and normalization statistics in each task YAML.
 model_type: cosmos3
+# HF eval, HF training rollout and actor all use Cosmos3ActionModel.
+checkpoint_format: native
 precision: bf16
 load_to_device: false
+is_lora: false
 ema_enabled: false
 disable_cosmos_parallelism: true
 compile_enabled: false
