@@ -25,7 +25,9 @@ import dataclasses
 import importlib
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -48,8 +50,10 @@ from .spec import (
 )
 
 
-def make_bench2dex_runtime(config: dict, seed: int, shard: int, shards: int):
-    """Launch Isaac only in the simulator child and return its owned app."""
+def make_bench2dex_runtime(
+    config: dict, seed: int, shard: int, shards: int
+) -> Bench2DexRuntime:
+    """Launch Isaac in the simulator child and return its scene/app owner."""
     spec = Bench2DexSpec.from_config(config)
     # Resolve caller-relative paths before entering the upstream working directory.
     episodes = load_episodes(config)
@@ -63,16 +67,30 @@ def make_bench2dex_runtime(config: dict, seed: int, shard: int, shards: int):
     from isaaclab.app import AppLauncher
     from utils.isaac_rendering import configure_headless_camera_parity_experience
 
+    if config.get("output_dir"):
+        kit_root = (
+            Path(config["output_dir"]).expanduser().resolve() / "kit" / str(shard)
+        )
+        kit_root.mkdir(parents=True, exist_ok=True)
+    else:
+        kit_root = Path(tempfile.mkdtemp(prefix="bench2dex-kit-"))
+    sdk = importlib.util.find_spec("isaacsim")
+    sdk_root = Path(next(iter(sdk.submodule_search_locations))) / "kit"
+    for user_config in sdk_root.glob("data/Kit/*/*/user.config.json"):
+        target = kit_root / user_config.relative_to(sdk_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(user_config, target)
+
     launcher_args = Namespace(
-        headless=True, enable_cameras=True, device=config.get("device", "cuda:0")
+        headless=True,
+        enable_cameras=True,
+        device=config.get("device", "cuda:0"),
+        kit_args=f"--portable-root {kit_root}",
     )
     configure_headless_camera_parity_experience(launcher_args, log_prefix="bench2dex")
     app = AppLauncher(launcher_args).app
     try:
-        runtime = Bench2DexRuntime(config, spec, app, episodes, seed, shard, shards)
-        # The original worker closes both returned objects. Use the same
-        # idempotent owner so normal and exceptional exits close the app once.
-        return runtime, runtime
+        return Bench2DexRuntime(config, spec, app, episodes, seed, shard, shards)
     except BaseException:
         get_logger().exception("Failed to initialize Bench2Dex simulator")
         app.close()

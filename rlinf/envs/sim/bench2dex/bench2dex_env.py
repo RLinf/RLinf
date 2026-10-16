@@ -26,15 +26,17 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.data.schema.embodied_types import JointPositionTargets
-from rlinf.envs.sim.isaaclab.venv import SubProcIsaacLabEnv
+from rlinf.envs.venv import BaseVectorEnv
+from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 
 from .evaluation import Bench2DexResults, normalize_profile
 from .runtime import make_bench2dex_runtime
 from .spec import Bench2DexSpec
+from .venv import Bench2DexSubprocEnvWorker
 
 
 class Bench2DexEnv(gym.Env):
-    """Own one simulator process; actions are absolute active-joint targets."""
+    """Batch independent scene processes using RLinf's vector environment."""
 
     def __init__(
         self,
@@ -44,9 +46,10 @@ class Bench2DexEnv(gym.Env):
         total_num_processes: int,
         worker_info,
     ):
-        if num_envs != 1:
+        if num_envs < 1 or not 0 <= seed_offset < total_num_processes:
             raise ValueError(
-                f"Bench2Dex needs one scene per process, got num_envs={num_envs}"
+                f"Expected positive num_envs and 0<=seed_offset<total_num_processes; "
+                f"got {num_envs}, {seed_offset}, {total_num_processes}"
             )
         if cfg.get("ignore_terminations", False):
             raise ValueError(
@@ -56,84 +59,101 @@ class Bench2DexEnv(gym.Env):
         self.auto_reset = bool(cfg.auto_reset)
         self.reward_coef = float(cfg.get("reward_coef", 1.0))
         self.is_start = True
-        self.policy_queries = 0
-        self.query_at_success = None
-        self._episode_recorded = False
-        self.results = None
         self.device = torch.device("cpu")
-        self._elapsed_steps = torch.zeros(1, dtype=torch.int32)
+        self.policy_queries = np.zeros(num_envs, dtype=np.int64)
+        self.episode_seed = np.zeros(num_envs, dtype=np.int64)
+        self.query_at_success = [None] * num_envs
+        self._episode_recorded = np.zeros(num_envs, dtype=bool)
+        self._initialized = np.zeros(num_envs, dtype=bool)
+        self._elapsed_steps = torch.zeros(num_envs, dtype=torch.int32)
+        self._terminated = torch.zeros(num_envs, dtype=torch.bool)
+        self._truncated = torch.zeros_like(self._terminated)
+        self._observations = [None] * num_envs
+        self._infos = [None] * num_envs
+        self.results = None
         params = OmegaConf.to_container(cfg.init_params, resolve=True)
-        self.env = SubProcIsaacLabEnv(
+        spec = Bench2DexSpec.from_config(params)
+        self.spec = {
+            name: getattr(spec, name)
+            for name in (
+                "action_dim",
+                "full_dof",
+                "main_camera",
+                "extra_cameras",
+                "wrist_cameras",
+            )
+        }
+        self.action_space = gym.spaces.Box(
+            -np.inf, np.inf, shape=(spec.action_dim,), dtype=np.float32
+        )
+        env_fns = [
             partial(
                 make_bench2dex_runtime,
                 params,
                 int(cfg.seed),
-                seed_offset,
-                total_num_processes,
+                seed_offset * num_envs + env_id,
+                total_num_processes * num_envs,
             )
-        )
+            for env_id in range(num_envs)
+        ]
+        workers = []
+
+        def worker_fn(env_fn):
+            worker = Bench2DexSubprocEnvWorker(env_fn)
+            workers.append(worker)
+            return worker
+
         try:
-            spec = Bench2DexSpec.from_config(params)
-            self.spec = {
-                name: getattr(spec, name)
-                for name in (
-                    "action_dim",
-                    "full_dof",
-                    "main_camera",
-                    "extra_cameras",
-                    "wrist_cameras",
-                )
-            }
+            self.env = BaseVectorEnv(env_fns, worker_fn)
             if cfg.get("is_eval", False) and params.get("output_dir"):
                 profile = normalize_profile(
                     params.get("generalization_profile", "none")
                 )
                 channel = {"cov_only": "cov", "inv_only": "inv"}.get(profile, profile)
+                output = Path(params["output_dir"]).expanduser().resolve()
+                if total_num_processes > 1:
+                    output = output / "shards" / f"{seed_offset:06d}"
                 self.results = Bench2DexResults(
-                    spec.source_path,
-                    Path(params["output_dir"]).expanduser().resolve(),
-                    f"{params['policy_name']}:{channel}",
+                    spec.source_path, output, f"{params['policy_name']}:{channel}"
                 )
-            self.action_space = gym.spaces.Box(
-                -np.inf, np.inf, shape=(self.spec["action_dim"],), dtype=np.float32
-            )
         except BaseException:
-            self.env.close()
+            for worker in workers:
+                worker.close()
             raise
 
     @property
     def elapsed_steps(self) -> torch.Tensor:
         return self._elapsed_steps
 
-    def _wrap_obs(self, raw: dict) -> dict:
-        """Return RLinf fields; OpenPI's repack_env_obs maps them to policy keys."""
+    def _wrap_obs(self, raw: dict, env_id: int) -> dict:
+        """Wrap one scene's observation with its own policy sampling context."""
         images = raw["images"]
+        tactile = raw["tactile"]
         obs = {
             "main_images": torch.from_numpy(images[self.spec["main_camera"]]).unsqueeze(
                 0
             ),
             "states": torch.from_numpy(raw["state"]).unsqueeze(0),
             "task_descriptions": [raw["instruction"]],
-        }
-        tactile = raw["tactile"]
-        obs["extra_obs"] = {
-            "policy_sampling": {
-                "episode_seed": torch.tensor([self.episode_seed], dtype=torch.int64),
-                "query_index": torch.tensor([self.policy_queries], dtype=torch.int64),
-            },
-            "bench2dex": {
-                "full_joint_positions": torch.from_numpy(
-                    raw["full_joint_positions"]
-                ).unsqueeze(0),
-                "active_joint_names": [list(raw["active_joint_names"])],
-                "full_joint_names": [list(raw["full_joint_names"])],
-                "robot_keys": [raw["robot_key"]],
-                "tactile": {
-                    "site_names": [list(tactile["site_names"])],
-                    **{
-                        key: torch.as_tensor(value).unsqueeze(0).clone()
-                        for key, value in tactile.items()
-                        if key != "site_names"
+            "extra_obs": {
+                "policy_sampling": {
+                    "episode_seed": torch.tensor([self.episode_seed[env_id]]),
+                    "query_index": torch.tensor([self.policy_queries[env_id]]),
+                },
+                "bench2dex": {
+                    "full_joint_positions": torch.from_numpy(
+                        raw["full_joint_positions"]
+                    ).unsqueeze(0),
+                    "active_joint_names": [list(raw["active_joint_names"])],
+                    "full_joint_names": [list(raw["full_joint_names"])],
+                    "robot_keys": [raw["robot_key"]],
+                    "tactile": {
+                        "site_names": [list(tactile["site_names"])],
+                        **{
+                            key: torch.as_tensor(value).unsqueeze(0).clone()
+                            for key, value in tactile.items()
+                            if key != "site_names"
+                        },
                     },
                 },
             },
@@ -148,111 +168,131 @@ class Bench2DexEnv(gym.Env):
                 ).unsqueeze(0)
         return obs
 
-    def _wrap_info(self, raw: dict) -> dict:
-        info = dict(raw)
-        count = int(raw["control_steps"])
-        self._elapsed_steps.fill_(count)
+    def _batch_obs(self, env_ids) -> dict:
+        return cat_list_of_dict_tensor(
+            [self._wrap_obs(self._observations[i], i) for i in env_ids]
+        )
+
+    def _wrap_info(self, env_ids) -> dict:
+        raw = [self._infos[i] for i in env_ids]
+        info = {key: [item.get(key) for item in raw] for key in set().union(*raw)}
+        counts = torch.tensor(
+            [item["control_steps"] for item in raw], dtype=torch.int32
+        )
+        self._elapsed_steps[env_ids] = counts
         # Episode metrics use the same reward scale as the emitted transitions.
-        total = float(raw["episode_return"]) * self.reward_coef
+        totals = (
+            torch.tensor([item["episode_return"] for item in raw], dtype=torch.float32)
+            * self.reward_coef
+        )
         episode = {
-            "success_once": torch.tensor([raw["success_once"]], dtype=torch.bool),
-            "return": torch.tensor([total], dtype=torch.float32),
-            "episode_len": self.elapsed_steps.clone(),
-            "reward": torch.tensor([total / max(count, 1)], dtype=torch.float32),
+            "success_once": torch.tensor([item["success_once"] for item in raw]),
+            "return": totals,
+            "episode_len": counts,
+            "reward": totals / counts.clamp_min(1),
         }
-        for key, value in raw.get("metrics", {}).items():
-            if isinstance(value, (bool, int, float)):
-                episode[key] = torch.tensor([value])
+        metrics = [item.get("metrics", {}) for item in raw]
+        for key in set().union(*metrics):
+            values = [item.get(key, 0) for item in metrics]
+            if all(isinstance(value, (bool, int, float)) for value in values):
+                episode[key] = torch.tensor(values)
         info["episode"] = episode
         return info
 
     def reset(self, seed: int | None = None, env_ids=None) -> tuple[dict, dict]:
-        """Reset selected environment 0 using the next manifest episode."""
-        if env_ids is not None:
-            ids = torch.as_tensor(env_ids).cpu().reshape(-1)
-            if ids.tolist() != [0]:
-                raise ValueError(f"Expected env_ids=[0], got {ids.tolist()}")
-        raw_obs, raw_info = self.env.reset(seed=seed)
-        self.episode_seed = int(raw_info["seed"])
-        self.is_start = False
-        self.policy_queries = 0
-        self.query_at_success = None
-        self._episode_recorded = False
-        return self._wrap_obs(raw_obs), self._wrap_info(raw_info)
-
-    def _step_once(self, command, *, new_query: bool):
-        obs, reward, terminated, truncated, info = self.env.step(command)
-        if new_query and info["action_steps"] > 0:
-            self.policy_queries += 1
-        if self.query_at_success is None and info["success_once"]:
-            self.query_at_success = self.policy_queries
-        if "metrics" in info:
-            info = dict(info, metrics=dict(info["metrics"]))
-            info["metrics"]["policy_query_count"] = self.policy_queries
-            info["metrics"]["policy_queries_to_stable_success"] = self.query_at_success
+        """Reset selected scenes and return their batch in the requested order."""
+        ids = (
+            list(range(self.num_envs))
+            if env_ids is None
+            else torch.as_tensor(env_ids).cpu().reshape(-1).tolist()
+        )
         if (
-            self.results is not None
-            and not self._episode_recorded
-            and (terminated or truncated)
+            not ids
+            or len(set(ids)) != len(ids)
+            or any(not isinstance(i, int) or not 0 <= i < self.num_envs for i in ids)
         ):
-            self.results.append(info, self.policy_queries, self.query_at_success)
-            self._episode_recorded = True
+            raise ValueError(
+                f"Expected unique env_ids in [0,{self.num_envs}), got {ids}"
+            )
+        observations, infos = self.env.reset(id=ids, seed=seed)
+        for i, obs, info in zip(ids, observations, infos, strict=True):
+            self._observations[i], self._infos[i] = obs, info
+            self.episode_seed[i] = int(info["seed"])
+            self.policy_queries[i] = 0
+            self.query_at_success[i] = None
+            self._episode_recorded[i] = False
+            self._terminated[i] = self._truncated[i] = False
+            self._initialized[i] = True
+        self.is_start = not self._initialized.all()
+        return self._batch_obs(ids), self._wrap_info(ids)
+
+    def _step_batch(self, commands, env_ids, *, new_query: bool):
+        rewards = torch.zeros(self.num_envs, dtype=torch.float32)
+        valid = torch.zeros(self.num_envs, dtype=torch.bool)
+        if len(env_ids):
+            observations, raw_rewards, terminated, truncated, infos = self.env.step(
+                commands, id=env_ids
+            )
+            for row, i in enumerate(env_ids):
+                info = infos[row]
+                self._observations[i], self._infos[i] = observations[row], info
+                self._terminated[i], self._truncated[i] = (
+                    bool(terminated[row]),
+                    bool(truncated[row]),
+                )
+                rewards[i] = float(raw_rewards[row]) * self.reward_coef
+                valid[i] = info["action_steps"] > 0
+                if new_query and valid[i]:
+                    self.policy_queries[i] += 1
+                if self.query_at_success[i] is None and info["success_once"]:
+                    self.query_at_success[i] = int(self.policy_queries[i])
+                if "metrics" in info:
+                    info["metrics"] = dict(
+                        info["metrics"],
+                        policy_query_count=int(self.policy_queries[i]),
+                        policy_queries_to_stable_success=self.query_at_success[i],
+                    )
+                if (
+                    self.results is not None
+                    and not self._episode_recorded[i]
+                    and (terminated[row] or truncated[row])
+                ):
+                    self.results.append(
+                        info, int(self.policy_queries[i]), self.query_at_success[i]
+                    )
+                    self._episode_recorded[i] = True
+        ids = list(range(self.num_envs))
+        info = self._wrap_info(ids)
+        info["action_steps"] = valid.to(torch.int64)
         return (
-            self._wrap_obs(obs),
-            torch.tensor([reward * self.reward_coef], dtype=torch.float32),
-            torch.tensor([terminated], dtype=torch.bool),
-            torch.tensor([truncated], dtype=torch.bool),
-            self._wrap_info(info),
+            self._batch_obs(ids),
+            rewards,
+            self._terminated.clone(),
+            self._truncated.clone(),
+            info,
+            valid,
         )
 
     def step(self, actions, auto_reset: bool = True) -> tuple:
-        """Execute one control action through SubProcIsaacLabEnv.step."""
-        packet = actions if isinstance(actions, JointPositionTargets) else None
-        positions = (
-            torch.as_tensor(packet.joint_positions if packet is not None else actions)
-            .detach()
-            .cpu()
-            .numpy()
-        )
-        layout = packet.joint_layout if packet is not None else "active"
-        if layout not in ("active", "full"):
-            raise ValueError(f"Expected active or full layout, got {layout!r}")
-        width = self.spec["action_dim"] if layout == "active" else self.spec["full_dof"]
-        if positions.shape != (1, width):
-            raise ValueError(f"Expected actions [1,{width}], got {positions.shape}")
-        if self.is_start:
-            self.reset()
-        command = (
-            positions[0]
-            if packet is None
-            else JointPositionTargets(positions, packet.joint_names, layout)
-        )
-        obs, reward, terminated, truncated, info = self._step_once(
-            command, new_query=True
-        )
-        valid = info["action_steps"] > 0
-        done = bool(terminated.any() or truncated.any())
-        step_info = {
-            "valid_action_mask": torch.tensor([[valid]], dtype=torch.bool),
-            "executed_action_count": torch.tensor([int(valid)]),
-            "terminal_index": 0 if done and valid else None,
-        }
-        info = dict(info, **step_info)
-        if done and auto_reset and self.auto_reset:
-            final_obs, final_info = obs, copy.deepcopy(info)
-            obs, reset_info = self.reset()
-            info = dict(
-                reset_info,
-                final_observation=final_obs,
-                final_info=final_info,
-                _final_observation=torch.ones(1, dtype=torch.bool),
-                _final_info=torch.ones(1, dtype=torch.bool),
-                **step_info,
+        """Execute absolute targets [N,J], then optionally reset completed scenes."""
+        if isinstance(actions, JointPositionTargets):
+            actions = JointPositionTargets(
+                actions.joint_positions[:, None],
+                actions.joint_names,
+                actions.joint_layout,
             )
-        return obs, reward, terminated, truncated, info
+        else:
+            actions = torch.as_tensor(actions).unsqueeze(1)
+        obs, reward, terminated, truncated, info = self._execute_chunk(
+            actions, auto_reset=auto_reset and self.auto_reset
+        )
+        return obs[-1], reward[:, 0], terminated[:, 0], truncated[:, 0], info[-1]
 
     def chunk_step(self, actions) -> tuple:
-        """Assemble the RLinf chunk protocol using only existing step calls."""
+        """Return C post-action observation batches and outcome tensors [N,C]."""
+        return self._execute_chunk(actions, auto_reset=self.auto_reset)
+
+    def _execute_chunk(self, actions, *, auto_reset: bool) -> tuple:
         packet = actions if isinstance(actions, JointPositionTargets) else None
         positions = (
             torch.as_tensor(packet.joint_positions if packet is not None else actions)
@@ -266,61 +306,70 @@ class Bench2DexEnv(gym.Env):
         width = self.spec["action_dim"] if layout == "active" else self.spec["full_dof"]
         if (
             positions.ndim != 3
-            or positions.shape[0] != 1
+            or positions.shape[0] != self.num_envs
             or positions.shape[2] != width
             or positions.shape[1] < 1
         ):
             raise ValueError(
-                f"Expected actions [1,C,{width}] with C>0, got {positions.shape}"
+                f"Expected actions [{self.num_envs},C,{width}] with C>0, got {positions.shape}"
             )
+        if not np.isfinite(positions).all():
+            raise ValueError("Expected finite Bench2Dex joint targets")
         if self.is_start:
-            self.reset()
+            ids = np.flatnonzero(~self._initialized)
+            self.reset(env_ids=ids if len(ids) else None)
         count = positions.shape[1]
         observations, infos = [], []
-        rewards = torch.zeros((1, count), dtype=torch.float32)
-        terminated = torch.zeros((1, count), dtype=torch.bool)
+        rewards = torch.zeros((self.num_envs, count), dtype=torch.float32)
+        terminated = torch.zeros((self.num_envs, count), dtype=torch.bool)
         truncated = torch.zeros_like(terminated)
         valid = torch.zeros_like(terminated)
-        for i in range(count):
-            command = (
-                positions[0, i]
+        for t in range(count):
+            ids = torch.where(~(self._terminated | self._truncated))[0].tolist()
+            commands = [
+                positions[i, t]
                 if packet is None
-                else JointPositionTargets(positions[:, i], packet.joint_names, layout)
+                else JointPositionTargets(
+                    positions[i : i + 1, t], packet.joint_names[i : i + 1], layout
+                )
+                for i in ids
+            ]
+            obs, reward, term, trunc, info, executed = self._step_batch(
+                commands, ids, new_query=t == 0
             )
-            obs, reward, term, trunc, info = self._step_once(command, new_query=i == 0)
             observations.append(obs)
             infos.append(info)
-            rewards[:, i], terminated[:, i], truncated[:, i] = reward, term, trunc
-            valid[0, i] = info["action_steps"] > 0
-            if term.any() or trunc.any():
-                break
-        executed = len(observations)
-        auto_reset = self.auto_reset
-        done = bool(terminated.any() or truncated.any())
-        while len(observations) < count:
-            observations.append(observations[-1])
-            infos.append(infos[-1])
-            terminated[0, len(observations) - 1] = terminated[0, executed - 1]
-            truncated[0, len(observations) - 1] = truncated[0, executed - 1]
+            rewards[:, t], terminated[:, t], truncated[:, t], valid[:, t] = (
+                reward,
+                term,
+                trunc,
+                executed,
+            )
+        done = terminated.any(dim=1) | truncated.any(dim=1)
+        lengths = valid.sum(dim=1)
         chunk_info = {
             "valid_action_mask": valid,
-            "executed_action_count": valid.sum(dim=1),
-            "terminal_index": executed - 1 if done and valid.any() else None,
+            "executed_action_count": lengths,
+            "terminal_index": torch.where(done & (lengths > 0), lengths - 1, -1),
         }
         infos[-1] = dict(infos[-1], **chunk_info)
-        if done and auto_reset and self.auto_reset:
+        if auto_reset and done.any():
             final_obs, final_info = observations[-1], copy.deepcopy(infos[-1])
-            observations[-1], reset_info = self.reset()
+            self.reset(env_ids=torch.where(done)[0])
+            ids = list(range(self.num_envs))
+            observations[-1] = self._batch_obs(ids)
             infos[-1] = dict(
-                reset_info,
+                self._wrap_info(ids),
                 final_observation=final_obs,
                 final_info=final_info,
-                _final_observation=torch.ones(1, dtype=torch.bool),
-                _final_info=torch.ones(1, dtype=torch.bool),
+                _final_observation=done.clone(),
+                _final_info=done.clone(),
                 **chunk_info,
             )
-            terminated[:, -1] = terminated.any(dim=1)
-            truncated[:, -1] = truncated.any(dim=1)
+            terminated[:, -1], truncated[:, -1] = (
+                terminated.any(dim=1),
+                truncated.any(dim=1),
+            )
             terminated[:, :-1] = False
             truncated[:, :-1] = False
         return observations, rewards, terminated, truncated, infos
@@ -329,4 +378,5 @@ class Bench2DexEnv(gym.Env):
         """Episode selection advances only when reset consumes a manifest entry."""
 
     def close(self) -> None:
-        self.env.close()
+        if not self.env.is_closed:
+            self.env.close()

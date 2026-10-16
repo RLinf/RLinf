@@ -1088,12 +1088,16 @@ def validate_bench2dex_cfg(
         spec = Bench2DexSpec.from_config(
             OmegaConf.to_container(env_cfg.init_params, resolve=True)
         )
+        if cfg.rollout.pipeline_stage_num != 1:
+            raise ValueError("Bench2Dex requires pipeline_stage_num=1")
         if (
-            cfg.rollout.pipeline_stage_num != 1
-            or env_cfg.total_num_envs != env_world_size
+            env_world_size < 1
+            or env_cfg.total_num_envs < 1
+            or env_cfg.total_num_envs % env_world_size
         ):
             raise ValueError(
-                "Bench2Dex requires pipeline_stage_num=1 and one scene per env worker"
+                "Bench2Dex total_num_envs must be positive and divisible by "
+                f"env worker count {env_world_size}, got {env_cfg.total_num_envs}"
             )
         if cfg.env.get("enable_offload", False):
             raise ValueError(
