@@ -1,14 +1,14 @@
 Bench2Dex
 =========
 
-使用 RLinf 评测 Bench2Dex Task64 的 π₀.₅ policy，机器人为双 Panda＋Allegro。先准备场景资产、replay 锚点和转换后的 checkpoint，再运行官方四个泛化通道。
+使用 RLinf 同步或异步 PPO 训练 Bench2Dex Task64 的 π₀.₅ policy，机器人为双 Panda＋Allegro。先准备场景资产和转换后的 checkpoint，再启动训练，并通过官方四个泛化通道评测 checkpoint。
 
 概览
 ----
 
-Task64 配置支持每个环境 worker 管理一个或多个独立场景进程。RLinf 的 ``BaseVectorEnv`` 调度这些进程，rollout worker 接收批量观测。仿真环境注册为 ``env_type: bench2dex``。
+Task64 配置支持每个环境 worker 管理一个或多个独立场景进程。``Bench2DexVectorEnv`` 继承 RLinf 的 ``BaseVectorEnv``，调度完整 action chunk；rollout worker 接收批量观测。仿真环境注册为 ``env_type: bench2dex``。
 
-每个 ``Bench2DexSubprocEnvWorker`` 通过局部 ``spawn`` context 启动一个场景，子进程中的 ``Bench2DexRuntime`` 创建并关闭该场景的 ``SimulationApp``。每个动作时间步，``BaseVectorEnv`` 先向所有活跃场景发送命令，再收集结果；policy 对合并后的观测批量推理。
+每个 ``Bench2DexSubprocEnvWorker`` 通过局部 ``spawn`` context 启动一个场景，子进程中的 ``Bench2DexRuntime`` 创建并关闭该场景的 ``SimulationApp``。vector env 先向所有活动场景发送完整 chunk，再收集结果。各场景按顺序执行动作，每个实际执行的动作后采集观测；外层环境合并批量观测，并补齐提前结束的场景。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -21,7 +21,7 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
    .. grid-item-card:: 算法
       :text-align: center
 
-      Policy 评测
+      同步 PPO · 异步 PPO · policy 评测
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -106,8 +106,49 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
 
 评测配置读取转换后的 ``model.safetensors`` 和归一化文件。Task64 使用四个 policy 视角、32 维主动关节动作、20 步 action chunk 和 280 个 prompt tokens。对齐版评测创建包含顶视角的官方五相机配置，并在首次 policy 观测前采集预热帧。
 
-启动评测
---------
+启动
+----
+
+PPO 训练
+~~~~~~~~
+
+两份训练配方使用相同的 Task64 checkpoint 和归一化文件。训练在 ``seen`` 资产池中重采样全部场景轴，使用独立的种子序列；官方评测锚点和 ``unseen`` split 单独配置。
+
+启动同步 PPO：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh bench2dex_task64_ppo_openpi_pi05
+
+该命令使用 ``EmbodiedRunner``，依次完成 rollout 收集、actor 与 value head 更新、权重同步，再进入下一轮采样。模型采用 Flow-SDE 探索，在 GPU 上通过 PyTorch 生成噪声，训练 action expert 和 value head。
+
+需要让采样与参数更新重叠时，启动异步配方：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh bench2dex_task64_async_ppo_openpi_pi05
+
+该命令使用 ``AsyncPPOEmbodiedRunner`` 和已有的 ``decoupled_actor_critic`` loss。异步 YAML 继承同步配方，模型、场景分布、采样预算和优化器参数保持一致。``algorithm.staleness_threshold: 1`` 允许采样权重落后一个版本，``algorithm.behave_weight_threshold`` 设为 ``2.0``。
+
+两份配方初始配置均为 16 个环境，每个训练 epoch 收集一次 rollout。每回合预算为 665 个控制步，调度为 34 个、每个 20 步的 action chunk。在 YAML 中通过 ``env.train.total_num_envs`` 和 ``cluster.component_placement`` 调整场景及 worker 数量。actor 初始 microbatch 为 1，global batch 为 136，将 544 个 chunk 样本分成四个 minibatch。
+
+训练环境使用 ``auto_reset=false``。回合在 chunk 内结束时，保留实际执行动作的奖励；后续 chunk 保持终态观测、奖励为零，由 RLinf 已有的 done-based loss mask 排除。同步和异步 PPO 均使用 chunk-level reward 与 log-probability。
+
+runner 按 ``runner.save_interval`` 保存 checkpoint。恢复同步训练时，通过 Python 入口设置 ``runner.resume_dir``：
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$PWD/examples/embodiment"
+   PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
+   python "$EMBODIED_PATH/train_embodied_agent.py" \
+     --config-path "$EMBODIED_PATH/config" \
+     --config-name bench2dex_task64_ppo_openpi_pi05 \
+     runner.resume_dir=/path/to/checkpoints/global_step_40
+
+恢复异步训练时，使用 ``train_async.py`` 和 ``bench2dex_task64_async_ppo_openpi_pi05``，传入相同的 ``runner.resume_dir`` 参数。两份配方均通过下面的独立入口评测 checkpoint。训练时关注 ``env/success_once``，其余指标定义见 :doc:`训练指标 <../../reference/metrics>`。
+
+Checkpoint 评测
+~~~~~~~~~~~~~~
 
 每通道运行 50 回合，每 10 回合重启一次进程：
 
@@ -115,6 +156,17 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
 
    JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task64_openpi_pi05_eval --episodes-per-process 10
+
+评测训练产物时，通过模型配置选择训练权重，并指定原来的 SFT 归一化文件：
+
+.. code-block:: bash
+
+   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
+     bench2dex_task64_openpi_pi05_eval --episodes-per-process 10 \
+     rollout.model.model_path=/path/to/checkpoints/global_step_40/actor/model_state_dict/full_weights.pt \
+     +rollout.model.openpi_data.norm_stats_path="$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
+
+该命令通过 OpenPI 模型加载器恢复动作网络，用指定的 SFT 归一化文件处理观测和动作。``BENCH2DEX_PI05_PATH`` 保持指向转换后的 SFT 目录。
 
 启动器按顺序运行 ``none``、``cov``、``inv``、``inv_cov``，仿真和推理共用 GPU 0。用 ``--gpu-id`` 选择其他卡，``--output-root`` 设置输出目录，``--channels`` 选择通道。``--num-episodes`` 设置每通道总回合数，``--episodes-per-process`` 限制每次启动的总回合数；设为零且环境数能整除总回合数时，整个通道在一次启动中完成。
 
