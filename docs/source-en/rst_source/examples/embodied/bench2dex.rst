@@ -8,8 +8,16 @@ the four official generalization channels through RLinf.
 Overview
 --------
 
-Use the provided Task64 recipe with one scene per environment worker.
-The simulator is registered as ``env_type: bench2dex``.
+Use the Task64 recipe with one or more independent scene processes per
+environment worker. RLinf's ``BaseVectorEnv`` schedules those processes and
+the rollout worker receives their observations as a batch. The simulator is
+registered as ``env_type: bench2dex``.
+
+Each ``Bench2DexSubprocEnvWorker`` starts one scene with a local ``spawn``
+context. Its ``Bench2DexRuntime`` owns and closes that scene's
+``SimulationApp``. For each action time step, ``BaseVectorEnv`` sends commands
+to all active scenes before receiving their results; the policy processes the
+combined observation batch.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -137,8 +145,30 @@ Run 50 episodes per channel, with a process restart every 10 episodes:
 The launcher runs ``none``, ``cov``, ``inv`` and ``inv_cov`` in
 sequence, sharing GPU 0 between simulation and inference. Select another card
 with ``--gpu-id``, an output directory with ``--output-root``, or a subset
-with ``--channels``. Setting ``--episodes-per-process 0`` runs a channel
-in one process; ``--num-episodes`` controls its total episode count.
+with ``--channels``. ``--num-episodes`` controls the total episode count per
+channel. ``--episodes-per-process`` caps that count per launcher run; zero
+keeps the channel in a single run when the environment count divides it.
+
+To run two scenes concurrently in the same environment worker, use:
+
+.. code-block:: bash
+
+   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
+     bench2dex_task64_openpi_pi05_eval \
+     --num-envs 2 --num-episodes 50 --episodes-per-process 20
+
+This command runs 20, 20 and 10 episodes in three launcher runs. Each scene
+executes 10, 10 and 5 episodes respectively. The launcher maps ``--num-envs``
+to ``env.eval.total_num_envs`` and computes ``env.eval.rollout_epoch`` from
+the episode budget. It reduces the last batch's environment count as needed
+to execute exactly the requested episodes. Scene 0 takes episodes 1, 3, 5,
+and scene 1 takes 2, 4, 6; the official episode seeds and anchor order are
+preserved.
+
+The environment returns observations with a leading environment dimension
+and chunk outcomes shaped ``[N,C]``. With ``auto_reset=true``, only completed
+scenes reset after the chunk; ``final_observation`` and ``final_info`` retain
+their terminal data. The evaluation recipe uses ``auto_reset=false``.
 
 The recipe selects ``rollout.model.openpi.noise_rng: jax`` to generate
 CPU noise from each episode seed and policy query index. Model inference
@@ -182,5 +212,9 @@ Read ``success_rates.tsv`` in the output root for the four channel rates.
 Each channel writes native ``per_episode.jsonl``, ``per_task.json`` and
 ``summary.json``, plus RLinf logs and TensorBoard events. Successful
 reach-and-stop episodes use the upstream stable-success criterion.
+Each environment worker writes its scene results through one writer. Runs
+with multiple environment workers keep separate ``shards/<id>/`` directories;
+the four-channel launcher merges them by episode index and checks for missing
+or duplicate episodes.
 For the shared evaluation commands and output layout, see
 :doc:`Evaluation <../../evaluations/index>`.

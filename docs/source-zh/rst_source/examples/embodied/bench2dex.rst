@@ -6,7 +6,9 @@ Bench2Dex
 概览
 ----
 
-Task64 配置采用每个环境 worker 一个场景，仿真环境注册为 ``env_type: bench2dex``。
+Task64 配置支持每个环境 worker 管理一个或多个独立场景进程。RLinf 的 ``BaseVectorEnv`` 调度这些进程，rollout worker 接收批量观测。仿真环境注册为 ``env_type: bench2dex``。
+
+每个 ``Bench2DexSubprocEnvWorker`` 通过局部 ``spawn`` context 启动一个场景，子进程中的 ``Bench2DexRuntime`` 创建并关闭该场景的 ``SimulationApp``。每个动作时间步，``BaseVectorEnv`` 先向所有活跃场景发送命令，再收集结果；policy 对合并后的观测批量推理。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -114,7 +116,19 @@ Task64 配置采用每个环境 worker 一个场景，仿真环境注册为 ``en
    JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task64_openpi_pi05_eval --episodes-per-process 10
 
-启动器按顺序运行 ``none``、``cov``、``inv``、``inv_cov``，仿真和推理共用 GPU 0。用 ``--gpu-id`` 选择其他卡，``--output-root`` 设置输出目录，``--channels`` 选择通道。``--episodes-per-process 0`` 表示单个通道在同一进程中连续运行，``--num-episodes`` 设置该通道总回合数。
+启动器按顺序运行 ``none``、``cov``、``inv``、``inv_cov``，仿真和推理共用 GPU 0。用 ``--gpu-id`` 选择其他卡，``--output-root`` 设置输出目录，``--channels`` 选择通道。``--num-episodes`` 设置每通道总回合数，``--episodes-per-process`` 限制每次启动的总回合数；设为零且环境数能整除总回合数时，整个通道在一次启动中完成。
+
+在同一个环境 worker 内并发运行两个场景：
+
+.. code-block:: bash
+
+   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
+     bench2dex_task64_openpi_pi05_eval \
+     --num-envs 2 --num-episodes 50 --episodes-per-process 20
+
+该命令分三次启动，分别完成 20、20、10 回合，每个场景对应运行 10、10、5 回合。启动器将 ``--num-envs`` 写入 ``env.eval.total_num_envs``，再根据回合预算计算 ``env.eval.rollout_epoch``。末批按需减少环境数，保证恰好完成指定回合。场景 0 取第 1、3、5 回合，场景 1 取第 2、4、6 回合，保持官方 episode seed 和锚点顺序。
+
+观测以环境数为首维，chunk 结果形状为 ``[N,C]``。``auto_reset=true`` 时，只在 chunk 结束后重置已经结束的场景，终态保存在 ``final_observation`` 和 ``final_info`` 中。评测配置使用 ``auto_reset=false``。
 
 配置通过 ``rollout.model.openpi.noise_rng: jax``，按每个回合的 seed 和 policy 查询编号在 CPU 生成噪声；模型继续在 GPU 上用 PyTorch 推理。仿真初始化在创建 simulation context 前设置任务 seed，物理时间步采用原生的 ``0.0166666``。
 
@@ -145,3 +159,5 @@ Task64 配置采用每个环境 worker 一个场景，仿真环境注册为 ``en
 ----------
 
 输出根目录的 ``success_rates.tsv`` 汇总四通道成功率。每个通道写入原生 ``per_episode.jsonl``、``per_task.json``、``summary.json``，以及 RLinf 日志和 TensorBoard events。reach-and-stop 回合按上游 stable-success 判据计成功；公共评测命令和输出目录说明见 :doc:`评测 <../../evaluations/index>`。
+
+每个环境 worker 通过一个 writer 写入所管理场景的结果。多个环境 worker 使用独立的 ``shards/<id>/`` 目录，四通道启动器按 episode 编号合并，并检查缺失和重复回合。
