@@ -39,7 +39,7 @@ for _module in _MODULES:
 from .gello import Gello  # noqa: E402
 from .gello_joint import GelloJoint  # noqa: E402
 from .glove import Glove  # noqa: E402
-from .pico import Pico, PicoDelta, PicoTcp  # noqa: E402
+from .pico import Pico, PicoDelta, PicoJoint, PicoTcp  # noqa: E402
 from .so101_leader import SO101Leader  # noqa: E402
 from .spacemouse import SpaceMouse  # noqa: E402
 
@@ -50,6 +50,7 @@ __all__ = [
     "Glove",
     "Pico",
     "PicoDelta",
+    "PicoJoint",
     "PicoTcp",
     "SO101Leader",
     "SpaceMouse",
