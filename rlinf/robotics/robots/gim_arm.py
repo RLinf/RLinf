@@ -113,7 +113,7 @@ class GimArmConfig(RobotConfig):
     Camera auto-detection is not currently implemented for GimArm."""
 
     camera_type: str = "realsense"
-    """Registered camera backend, such as ``"realsense"`` or ``"orbbec"``."""
+    """Camera backend: ``"realsense"``, ``"zed"``, or ``"orbbec"``."""
 
     enable_gripper: bool = True
     """Whether the gripper is attached and should be controlled."""

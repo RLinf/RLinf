@@ -32,15 +32,40 @@ discovering or connecting a camera.
 
 Connect Femto Bolt with a USB 3 data cable and its 12 V adapter for depth testing.
 On Linux, ``lsusb -t`` reports the negotiated link speed: ``5000M`` indicates a
-5 Gbit/s connection, while ``480M`` indicates USB 2.0. Use the serial printed on
-the camera to select the device; USB enumeration order and ``/dev/videoN`` names
-can change after reconnecting.
+5 Gbit/s connection, while ``480M`` indicates USB 2.0. Select the camera by the
+device serial number reported by the Orbbec SDK; USB enumeration order and
+``/dev/videoN`` names can change after reconnecting.
 
 .. warning::
 
    Give each physical camera one owner. Opening an Orbbec device can initialize
    its sensors, so close other applications using that camera before connecting.
    RLinf opens only the configured serial and never substitutes another camera.
+
+Find the Camera Serial Number
+-----------------------------
+
+Run this command on the computer physically connected to the camera, using the
+Python environment where you installed the SDK:
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import pyorbbecsdk as ob
+
+   context = ob.Context()
+   context.enable_net_device_enumeration(False)
+   devices = context.query_devices()
+   for index in range(devices.get_count()):
+       print(devices.get_device_serial_number_by_index(index))
+   PY
+
+The command prints the SDK-reported device serial number for each connected USB
+camera without starting image capture. Replace ``YOUR_CAMERA_SERIAL`` in the
+Python and YAML examples below with that exact value. To identify a camera among
+several devices, connect only that camera, run the command and record its serial,
+then reconnect the others. If no serial is printed, check the USB connection and
+device permissions on this computer.
 
 Read Color, Then Enable Depth
 -----------------------------

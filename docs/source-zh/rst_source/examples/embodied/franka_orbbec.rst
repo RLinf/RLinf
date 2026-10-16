@@ -17,11 +17,30 @@
 
 ``requirements/install.sh`` 不会安装该 SDK。``--no-deps`` 可避免装入其示例程序所用的包（Open3D、pygame、PyAV、pynput）及其 NumPy 版本约束，这些可能与 RLinf 安装的版本冲突。相机 backend 只需要 NumPy 和 OpenCV，RLinf 的机器人环境均已包含。安装包名为 ``pyorbbecsdk2``，Python import 名为 ``pyorbbecsdk``。设备权限和平台要求见 `官方 Linux 安装指南 <https://orbbec.github.io/pyorbbecsdk/source/2_installation/install_the_package.html>`_。发现或连接相机时才会导入 SDK。
 
-验证 Femto Bolt 深度时，连接 USB 3 数据线及 12 V 电源适配器。Linux 下可用 ``lsusb -t`` 查看实际连接速率：``5000M`` 表示 5 Gbit/s，``480M`` 表示 USB 2.0。使用相机机身上的序列号选择设备；重新插接后，USB 枚举顺序及 ``/dev/videoN`` 名称可能变化。
+验证 Femto Bolt 深度时，连接 USB 3 数据线及 12 V 电源适配器。Linux 下可用 ``lsusb -t`` 查看实际连接速率：``5000M`` 表示 5 Gbit/s，``480M`` 表示 USB 2.0。使用 Orbbec SDK 查询到的设备序列号选择相机；重新插接后，USB 枚举顺序及 ``/dev/videoN`` 名称可能变化。
 
 .. warning::
 
    同一台物理相机应由一个进程管理。打开 Orbbec 设备可能会初始化传感器，因此连接前应关闭占用该相机的其他应用。RLinf 只打开指定序列号的设备，不会改用另一台相机。
+
+获取相机序列号
+--------------
+
+在通过 USB 连接相机的电脑上，使用已安装 SDK 的 Python 环境运行：
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import pyorbbecsdk as ob
+
+   context = ob.Context()
+   context.enable_net_device_enumeration(False)
+   devices = context.query_devices()
+   for index in range(devices.get_count()):
+       print(devices.get_device_serial_number_by_index(index))
+   PY
+
+命令每行输出一台已连接 USB 相机在 SDK 中的设备序列号，不启动图像采集。将下方 Python 和 YAML 示例中的 ``YOUR_CAMERA_SERIAL`` 替换为该查询结果。需要区分多台相机时，可先只连接目标相机，运行命令记录其序列号，再接回其他相机。若没有输出序列号，检查这台电脑上的 USB 连接和设备权限。
 
 先读取彩色图像，再启用深度
 --------------------------
