@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import ctypes
 from collections import defaultdict
 from typing import Any
 
@@ -69,7 +68,6 @@ class EnvWorker(Worker):
         self.last_intervened_info_list = []
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
         self._trajectory_step = 0
-        self._train_reset_count = 0
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
@@ -758,10 +756,6 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 self.env_list[stage_id].is_start = True
                 extracted_obs, infos = self.env_list[stage_id].reset()
-                self._train_reset_count += 1
-                trim_interval = self.cfg.env.train.get("malloc_trim_reset_interval", 0)
-                if trim_interval > 0 and self._train_reset_count % trim_interval == 0:
-                    ctypes.CDLL("libc.so.6").malloc_trim(0)
                 dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()
