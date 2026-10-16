@@ -241,6 +241,16 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
         action_env_dim: 14
 
 
+.. note::
+
+   RoboTwin 长时间训练中，glibc 可能保留 reset 后已释放的主机内存。在 Linux/glibc 上可配置 ``env.train.malloc_trim_reset_interval``，默认 ``0`` 表示关闭。以下 ``8`` 表示每个 worker 每 8 次显式训练 reset 尝试回收空闲堆内存，不计自动 reset 和评估 reset。此选项针对主机 RSS，不回收显存。
+
+   .. code-block:: yaml
+
+      env:
+        train:
+          malloc_trim_reset_interval: 8
+
 启动命令
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
