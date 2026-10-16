@@ -241,6 +241,16 @@ The top-level file dynamically assembles the environment and model via Hydra, an
         noise_level: 0.5
         action_env_dim: 14
 
+.. note::
+
+   During long RoboTwin runs, glibc may retain freed host memory after resets. On Linux/glibc, set ``env.train.malloc_trim_reset_interval`` as below to attempt heap reclamation every 8 explicit training resets per worker (default: ``0``, disabled). Automatic and evaluation resets are excluded; this targets host RSS, not GPU memory.
+
+   .. code-block:: yaml
+
+      env:
+        train:
+          malloc_trim_reset_interval: 8
+
 Launch Commands
 ~~~~~~~~~~~~~~~
 
