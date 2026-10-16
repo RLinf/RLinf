@@ -31,8 +31,9 @@ runner:
   max_steps: 14
 
   only_eval: False
-  # Training runs in the world model; score checkpoints in the simulator with
-  # runner.only_eval=True runner.ckpt_path=<checkpoint>.
+  # Training runs in the world model; score checkpoints in the RoboTwin simulator
+  # with evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml
+  # (overrides in docs/source-en/rst_source/examples/embodied/bwm.rst).
   val_check_interval: -1
   save_interval: 14
 
@@ -71,7 +72,6 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
-  enable_offload: True
   train:
     rollout_epoch: 2
     total_num_envs: 48
