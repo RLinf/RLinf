@@ -116,6 +116,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "num_steps": num_steps,
         "action_env_dim": action_env_dim,
         "action_chunk": action_chunk,
+        "eval_sft_image_crop": bool(
+            OmegaConf.select(model_cfg, "eval_sft_image_crop", default=False)
+        ),
     }
 
     task = OmegaConf.select(model_cfg, "task", default="sft")
@@ -124,9 +127,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     if task == "sft":
         model = Pi0(
             pi0_config,
-            num_steps=num_steps,
-            action_env_dim=action_env_dim,
-            action_chunk=action_chunk,
+            **runtime,
             rlt_cfg=rlt_cfg,
         )
     elif task == "eval":

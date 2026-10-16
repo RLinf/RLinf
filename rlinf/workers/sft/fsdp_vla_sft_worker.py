@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -19,14 +20,26 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.openpi.official_sft_data_loader import StatefulOpenPIDataLoader
+from rlinf.hybrid_engines.fsdp.strategy.checkpoint import checkpoint_communication_group
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.utils.utils import get_rng_state, set_rng_state
+from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+
+    def init_worker(self) -> None:
+        """Seed OpenPI model initialization, then each rank's training stream."""
+        if SupportedModel(self.cfg.actor.model.model_type) != SupportedModel.OPENPI:
+            super().init_worker()
+            return
+        seed = int(self.cfg.actor.seed)
+        seed_everything(seed)
+        super().init_worker()
+        seed_everything(seed + self._rank)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
@@ -104,35 +117,50 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                     step_metrics[key] = value
         return loss, step_metrics
 
-    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
-        super().save_checkpoint(save_path, step)
+    def save_checkpoint(
+        self, save_path: str, step: int = 0, *, force_training_state: bool = False
+    ) -> None:
+        if isinstance(self.data_loader, StatefulOpenPIDataLoader) and self._rank == 0:
+            (Path(save_path) / "openpi_loader_state.json").unlink(missing_ok=True)
+        super().save_checkpoint(
+            save_path, step, force_training_state=force_training_state
+        )
+        if not self._should_save_training_state(step, force_training_state):
+            return
 
-        if isinstance(self.data_loader, StatefulDataLoader):
-            state = self.data_loader.state_dict()
-
-            all_states = [None] * self._world_size
-            torch.distributed.all_gather_object(all_states, state)
-
-            if self._rank == 0:
-                torch.save(all_states, os.path.join(save_path, "data.pt"))
-
-            torch.distributed.barrier()
-
-            rng_state = get_rng_state()
-            all_rng_states = [None] * self._world_size
-            torch.distributed.all_gather_object(all_rng_states, rng_state)
-            if self._rank == 0:
-                torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
-
-            torch.distributed.barrier()
+        if isinstance(self.data_loader, (StatefulDataLoader, StatefulOpenPIDataLoader)):
+            with checkpoint_communication_group(
+                self._cfg.fsdp_config.get("checkpoint_communication_backend"),
+                self._cfg.fsdp_config.get("checkpoint_format", "dcp"),
+            ) as checkpoint_group:
+                snapshots = [None] * self._world_size
+                torch.distributed.all_gather_object(
+                    snapshots,
+                    (self.data_loader.state_dict(), get_rng_state()),
+                    group=checkpoint_group,
+                )
+                if self._rank == 0:
+                    all_states, all_rng_states = map(list, zip(*snapshots))
+                    torch.save(all_states, os.path.join(save_path, "data.pt"))
+                    torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
+                    if isinstance(self.data_loader, StatefulOpenPIDataLoader):
+                        self.data_loader.mark_checkpoint_complete(save_path, all_states)
+                torch.distributed.barrier()
 
     def load_checkpoint(self, load_path: str) -> None:
+        if isinstance(self.data_loader, StatefulOpenPIDataLoader):
+            self.data_loader.validate_checkpoint(load_path)
         super().load_checkpoint(load_path)
 
-        if isinstance(self.data_loader, StatefulDataLoader):
+        if isinstance(self.data_loader, (StatefulDataLoader, StatefulOpenPIDataLoader)):
             all_states = torch.load(
                 os.path.join(load_path, "data.pt"), weights_only=False
             )
+            if (
+                isinstance(self.data_loader, StatefulOpenPIDataLoader)
+                and len(all_states) != self._world_size
+            ):
+                raise ValueError("OpenPI loader restore requires unchanged world size.")
             state = all_states[self._rank]
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)

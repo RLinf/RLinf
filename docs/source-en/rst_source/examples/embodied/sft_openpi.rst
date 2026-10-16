@@ -499,3 +499,53 @@ Watch the **training loss**. Metric definitions:
 .. code:: bash
 
    tensorboard --logdir ./logs
+
+OpenPI Training and Inference Controls
+--------------------------------------
+
+Use the same preprocessing settings when evaluating an exported OpenPI policy
+and when recomputing its PPO logprobs. Set
+``actor.model.openpi.eval_sft_image_crop: true`` only for checkpoints trained
+with the deterministic 95% top-left front-image crop. The wrist image keeps
+its full field of view. This option defaults to ``false`` and does not consume
+augmentation RNG. Standalone sampling with this option requires ``model.eval()``;
+the PPO sampler and actor replay apply the same crop in their respective modes.
+
+For fresh OpenPI SFT and embodied FSDP actor runs, ``actor.seed`` initializes
+Python, NumPy and PyTorch before constructing the model, so actor ranks start
+with identical newly initialized parameters. After initialization each rank
+uses ``actor.seed + rank``. Rollout uses ``rollout.seed + rank``, falling back
+to ``actor.seed`` and then zero, and resets its stream after model construction.
+Loading a checkpoint restores its saved RNG after initialization. These seed
+rules change the fresh-run random streams of existing OpenPI recipes.
+
+When ``actor.model.openpi.train_expert_only: true`` freezes the vision encoder,
+putting the actor into training mode keeps that encoder in evaluation mode.
+This keeps its attention path consistent with rollout inference.
+
+Resume the OpenPI Data Stream
+----------------------------------------------------------------
+
+To continue from the next consumed batch after a restart, enable
+``data.stateful_loader: true`` before starting the run. This loader saves
+sampler progress and prefetched worker state for map-style OpenPI datasets;
+RLDS is unsupported. It requires at least two actor ranks and at least one
+full batch per rank.
+Keep rank assignments, batch size, ``data.num_workers``, ``actor.seed``,
+shuffle setting and dataset length unchanged when restoring. Preserve dataset
+contents, normalization and preprocessing separately; their identities are
+not inferred from dataset length.
+
+A resumable actor checkpoint contains ``data.pt``, ``rng.pt`` and
+``openpi_loader_state.json`` in addition to model/optimizer state. The loader
+manifest is published after data and RNG saves complete, and validates their
+hashes and loader settings on restore. Set ``runner.resume_dir`` to the enclosing
+``global_step_N`` directory. An inference export alone cannot resume training.
+For export frequency and CPU checkpoint communication, see
+:doc:`Checkpoint Resume <../../guides/resume>`.
+
+Local ``data.train_data_paths`` must point directly to a LeRobot dataset root
+containing ``meta/info.json``. The loader also checks that action horizon,
+model action dimension and discrete-state conditioning match the selected
+OpenPI training configuration. An explicit ``openpi_data.norm_stats_path`` must
+resolve to loaded statistics.

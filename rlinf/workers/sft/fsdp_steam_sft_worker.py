@@ -201,9 +201,13 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 self.cfg.actor.model.ensemble_head_seed_base = int(self.cfg.actor.seed)
         return get_model(self.cfg.actor.model)
 
-    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
+    def save_checkpoint(
+        self, save_path: str, step: int = 0, *, force_training_state: bool = False
+    ) -> None:
         """Save weights plus lightweight checkpoint-side model assets."""
-        super().save_checkpoint(save_path, step)
+        super().save_checkpoint(
+            save_path, step, force_training_state=force_training_state
+        )
 
         if self._rank == 0:
             from rlinf.models.embodiment.value_model.steam import (
