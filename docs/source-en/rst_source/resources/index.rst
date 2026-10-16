@@ -1,8 +1,8 @@
 Resources
 =========
 
-Use Resources for the project rationale, updates, publications, release notes,
-and troubleshooting.
+Use Resources for the project rationale, contributor policy, updates, publications,
+release notes, and troubleshooting.
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -43,6 +43,12 @@ and troubleshooting.
 
       Debugging, rendering, network, NCCL/CUDA, and timeout fixes.
 
+   .. grid-item-card:: Contributor Policy
+      :link: maintainer_policy
+      :link-type: doc
+
+      Grow from contributor to Area Owner through sustained contributions and peer review.
+
 .. toctree::
    :hidden:
 
@@ -52,3 +58,4 @@ and troubleshooting.
    v0.1 & v0.2 Release Notes <release_v0.1_v0.2>
    v0.3 Release Notes <release_v0.3>
    FAQ <faq>
+   Contributor Policy <maintainer_policy>
