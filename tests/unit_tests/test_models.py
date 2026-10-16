@@ -783,7 +783,7 @@ class _ConstantRewardModel(torch.nn.Module):
         self.reward = reward
 
     def predict_rew(self, frames):
-        return torch.full((frames.shape[0],), self.reward)
+        return torch.full((frames.shape[0],), self.reward, device=frames.device)
 
 
 class _BlankFrameBackend:
@@ -1018,6 +1018,16 @@ def test_bwm_backend_rolls_its_condition_window(monkeypatch):
     assert second["action"][0, 0].eq(0.0).all()
     assert second["action"][0, 1:9].eq(0.5).all()
     assert second["action"][0, 9:].eq(1.0).all()
+
+
+def test_world_model_env_limit_termination_requires_auto_reset(tmp_path):
+    with pytest.raises(ValueError, match="auto_reset"):
+        _blank_world_model_env(
+            tmp_path,
+            reward=0.0,
+            terminate_at_max_episode_steps=True,
+            auto_reset=False,
+        )
 
 
 def _history_cfg():

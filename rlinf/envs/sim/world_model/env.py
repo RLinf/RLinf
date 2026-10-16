@@ -84,6 +84,11 @@ class WorldModelEnv:
         self.terminate_at_max_episode_steps = cfg.get(
             "terminate_at_max_episode_steps", False
         )
+        if self.terminate_at_max_episode_steps and not self.auto_reset:
+            raise ValueError(
+                "terminate_at_max_episode_steps requires auto_reset: True; without "
+                "auto_reset nothing is bootstrapped at the limit."
+            )
         self.use_rel_reward = getattr(cfg, "use_rel_reward", False)
         # "chunk" pays the reward model's per-frame score. "episode_window_max" pays one
         # reward on the episode's last step, 1 if the peak score over frames from
