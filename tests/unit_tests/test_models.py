@@ -904,7 +904,7 @@ class _ScriptedRewardModel(torch.nn.Module):
         self.scores = list(scores)
 
     def predict_rew(self, frames):
-        return torch.full((frames.shape[0],), self.scores.pop(0))
+        return torch.full((frames.shape[0],), self.scores.pop(0), device=frames.device)
 
 
 class _ScriptedRewardBackend(_BlankFrameBackend):
@@ -946,15 +946,17 @@ def test_world_model_env_echoes_the_last_command_as_state(tmp_path):
     actions = torch.arange(2 * 2 * 14, dtype=torch.float32).reshape(2, 2, 14)
 
     obs, _ = env.reset()
-    assert torch.equal(obs["states"], rest_states)
+    assert torch.equal(obs["states"].cpu(), rest_states)
 
     obs_list, *_ = env.chunk_step(actions)
-    assert torch.equal(obs_list[0]["states"], actions[:, -1])
+    assert torch.equal(obs_list[0]["states"].cpu(), actions[:, -1])
 
     # The episode limit restarts both slots at the rest pose.
     obs_list, _, _, _, infos = env.chunk_step(actions + 1)
-    assert torch.equal(obs_list[0]["states"], rest_states)
-    assert torch.equal(infos[0]["final_observation"]["states"], actions[:, -1] + 1)
+    assert torch.equal(obs_list[0]["states"].cpu(), rest_states)
+    assert torch.equal(
+        infos[0]["final_observation"]["states"].cpu(), actions[:, -1] + 1
+    )
 
 
 class _RecordingBwmPipeline:
