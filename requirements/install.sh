@@ -937,20 +937,18 @@ configure_kunlun() {
         echo "[install.sh] kunlun: environment clone script not found at '$clone_script'." >&2
         exit 1
     fi
-    if [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ] || [ ! -x "/opt/venvs/$VENV_DIR/bin/python" ]; then
+    if [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -x "$VENV_DIR/bin/python" ]; then
         echo "[install.sh] kunlun: cloning the base environment into '$VENV_DIR'."
         bash "$clone_script" "$VENV_DIR"
     else
         echo "[install.sh] kunlun: reusing existing environment at '$VENV_DIR'."
     fi
 
-    local base_python="/opt/venvs/$VENV_DIR/bin/python"
-    if [ ! -x "$base_python" ] || [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ]; then
+    local base_python="$VENV_DIR/bin/python"
+    if [ ! -x "$base_python" ] || [ ! -f "$VENV_DIR/bin/activate" ]; then
         echo "[install.sh] kunlun: cloned environment at '$VENV_DIR' is missing python/activate." >&2
         exit 1
     fi
-    VENV_DIR="/opt/venvs/$VENV_DIR"
-
 
     local image_python_mm image_torch image_torch_public
     image_python_mm=$("$base_python" - <<'EOF'
