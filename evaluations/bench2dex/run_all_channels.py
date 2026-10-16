@@ -41,8 +41,14 @@ def channel_command(
     inv_cov_seed: int,
     split: str,
     overrides: list[str],
+    *,
+    num_envs: int = 1,
 ) -> list[str]:
     """Build one single-channel run with explicit official episode semantics."""
+    if num_envs < 1 or episodes < 1 or episodes % num_envs:
+        raise ValueError(
+            f"Expected positive episodes divisible by num_envs, got {episodes}, {num_envs}"
+        )
     profile = {"cov": "cov_only", "inv": "inv_only"}.get(channel, channel)
     return [
         "bash",
@@ -51,8 +57,8 @@ def channel_command(
         config,
         *overrides,
         f"runner.logger.log_path={output}",
-        f"env.eval.rollout_epoch={episodes}",
-        "env.eval.total_num_envs=1",
+        f"env.eval.rollout_epoch={episodes // num_envs}",
+        f"env.eval.total_num_envs={num_envs}",
         "env.eval.auto_reset=false",
         f"env.eval.seed={seed}",
         f"env.eval.init_params.generalization_profile={profile}",
@@ -66,18 +72,34 @@ def channel_command(
     ]
 
 
-def summarize_channel(source: Path, directories: list[Path], output: Path) -> dict:
+def summarize_channel(
+    source: Path,
+    directories: list[Path],
+    output: Path,
+    *,
+    expected_episodes: int | None = None,
+) -> dict:
     """Merge optional process chunks with Bench2Dex's native result writer."""
     if str(source) not in sys.path:
         sys.path.append(str(source))
     from benchmark.results import load_episode_results, write_results
 
     results = [result for path in directories for result in load_episode_results(path)]
+    results.sort(key=lambda result: (result.scene, result.episode_index))
+    keys = [(result.scene, result.episode_index) for result in results]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Expected unique scene/episode indices in Bench2Dex results")
+    if expected_episodes is not None and sorted(
+        result.episode_index for result in results
+    ) != list(range(1, expected_episodes + 1)):
+        raise ValueError(
+            f"Expected episodes 1..{expected_episodes}, got "
+            f"{[result.episode_index for result in results]}"
+        )
     policy_name = json.loads((directories[0] / "summary.json").read_text())["metadata"][
         "policy_name"
     ]
-    if directories != [output]:
-        write_results(output, policy_name, results)
+    write_results(output, policy_name, results)
     return json.loads((output / "summary.json").read_text())
 
 
@@ -95,11 +117,14 @@ def evaluate_channel(
     channel_dir = output / channel
     directories = []
     status = "ok"
-    for start in range(1, args.num_episodes + 1, chunk_size):
-        count = min(chunk_size, args.num_episodes - start + 1)
+    start = 1
+    while start <= args.num_episodes:
+        budget = min(chunk_size, args.num_episodes - start + 1)
+        num_envs = min(args.num_envs, budget)
+        count = budget - budget % num_envs
         directory = (
             channel_dir
-            if chunk_size >= args.num_episodes
+            if start == 1 and count == args.num_episodes
             else channel_dir / "chunks" / f"{start:06d}"
         )
         command = channel_command(
@@ -114,18 +139,33 @@ def evaluate_channel(
             args.inv_cov_seed,
             args.generalization_split,
             overrides,
+            num_envs=num_envs,
         )
         result = subprocess.run(command, env=env, check=False)
         if (directory / "summary.json").is_file():
             directories.append(directory)
+        else:
+            directories.extend(
+                sorted(path.parent for path in directory.glob("shards/*/summary.json"))
+            )
         if result.returncode:
             status = "failed"
             break
-    summary = (
-        summarize_channel(Path(source).resolve(), directories, channel_dir)
-        if directories
-        else None
-    )
+        start += count
+    try:
+        summary = (
+            summarize_channel(
+                Path(source).resolve(),
+                directories,
+                channel_dir,
+                expected_episodes=args.num_episodes if status == "ok" else None,
+            )
+            if directories
+            else None
+        )
+    except ValueError as exc:
+        logger.error(f"Invalid Bench2Dex results: {exc}")
+        status, summary = "failed", None
     if summary is None or summary["metadata"]["n_episodes"] != args.num_episodes:
         status = "failed"
     return status, summary
@@ -138,6 +178,7 @@ def main() -> None:
         "--anchor-dir", default=os.environ.get("BENCH2DEX_ANCHOR_DIR"), type=Path
     )
     parser.add_argument("--num-episodes", default=50, type=int)
+    parser.add_argument("--num-envs", default=1, type=int)
     parser.add_argument("--gpu-id", default=0, type=int)
     parser.add_argument("--seed", default=100_000_000, type=int)
     parser.add_argument("--inv-cov-seed", default=200_000_000, type=int)
@@ -152,11 +193,13 @@ def main() -> None:
     channels = args.channels.split(",")
     if any(channel not in CHANNELS for channel in channels):
         parser.error(f"Expected channels from {CHANNELS}, got {channels}")
-    if args.num_episodes <= 0 or (
-        args.episodes_per_process is not None and args.episodes_per_process < 0
+    if (
+        args.num_episodes <= 0
+        or args.num_envs <= 0
+        or (args.episodes_per_process is not None and args.episodes_per_process < 0)
     ):
         parser.error(
-            "num-episodes must be positive and episodes-per-process nonnegative"
+            "num-episodes and num-envs must be positive; episodes-per-process nonnegative"
         )
     if args.anchor_dir is None or not args.anchor_dir.is_dir():
         parser.error(
