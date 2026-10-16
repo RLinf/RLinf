@@ -83,7 +83,6 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-yam
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
@@ -503,12 +502,6 @@ FROM embodied-common-image AS embodied-polaris-image
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env polaris
 
 # Set default env
-RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
-
-FROM embodied-common-image AS embodied-yam-image
-
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env yam
-
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################

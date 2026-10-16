@@ -44,10 +44,7 @@ actor:
     action_dim: 14
     openpi:
       embed_dtype: bf16
-      task: sft
       config_name: pi05_yam_joint
-      action_horizon: 30
-      discrete_state_input: true
     openpi_data:
       norm_stats_path: /path/to/yam_dataset/norm_stats.json
   optim:

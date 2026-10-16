@@ -19,24 +19,17 @@ ModelTransformFactory pads the 14-D state/actions after normalization.
 
 import dataclasses
 
+import einops
 import numpy as np
 from openpi import transforms
 
 
 def _parse_image(image: np.ndarray) -> np.ndarray:
     image = np.asarray(image)
-    if image.ndim != 3:
-        raise ValueError(f"Expected an RGB image with three axes, got {image.shape}.")
-    if image.shape[-1] != 3 and image.shape[0] == 3:
-        image = image.transpose(1, 2, 0)
-    if image.shape[-1] != 3:
-        raise ValueError(f"Expected three RGB channels, got {image.shape}.")
     if np.issubdtype(image.dtype, np.floating):
-        if not np.isfinite(image).all() or image.min() < 0 or image.max() > 1:
-            raise ValueError("Floating-point RGB images must be finite and in [0, 1].")
-        image = (image * 255).astype(np.uint8)
-    elif image.dtype != np.uint8:
-        raise ValueError(f"Expected uint8 or floating-point RGB, got {image.dtype}.")
+        image = (255 * image).astype(np.uint8)
+    if image.shape[0] == 3:
+        image = einops.rearrange(image, "c h w -> h w c")
     return image
 
 
@@ -56,6 +49,11 @@ class YamInputs(transforms.DataTransformFn):
                 data["observation/extra_view_image-0"],
                 data["observation/extra_view_image-1"],
             )
+        elif isinstance(side_views, np.ndarray) and side_views.ndim != 4:
+            raise ValueError(
+                "Expected stacked extra_view_image with shape (2, H, W, C), "
+                f"got {side_views.shape}."
+            )
         if len(side_views) != 2:
             raise ValueError("YAM requires two extra views ordered left/right.")
         images = {
@@ -69,7 +67,7 @@ class YamInputs(transforms.DataTransformFn):
             "image_mask": dict.fromkeys(images, np.True_),
         }
         if "actions" in data:
-            actions = np.asarray(data["actions"], dtype=np.float32)
+            actions = np.array(data["actions"], dtype=np.float32, copy=True)
             if (
                 actions.ndim != 2
                 or actions.shape[-1] != 14

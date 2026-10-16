@@ -21,9 +21,8 @@ GPU 训练节点和 YAM 控制节点使用相同的 RLinf 版本，在同一环�
    cd RLinf
    bash requirements/install.sh embodied --model openpi --env yam
    source .venv/bin/activate
-   uv pip check
 
-按照 :doc:`yam` 配置 CAN 接口并获取三路相机序列号。GPU 训练镜像使用 ``embodied-yam`` Docker 构建目标；需要访问机器人硬件的机器可以使用原生安装。
+按照 :doc:`yam` 配置 CAN 接口并获取三路相机序列号。
 
 数据集与归一化
 --------------
@@ -42,7 +41,7 @@ GPU 训练节点和 YAM 控制节点使用相同的 RLinf 版本，在同一环�
        --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
        --only-success
    head -n 5 "$YAM_DATASET/meta/tasks.jsonl"
-   python toolkits/lerobot/calculate_norm_stats.py \
+   PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_yam_joint --repo-id "$YAM_DATASET"
    test -s "$YAM_DATASET/norm_stats.json"
 
@@ -100,8 +99,6 @@ GPU 训练节点和 YAM 控制节点使用相同的 RLinf 版本，在同一环�
 此配置使用 FP32 参数、BF16 计算和 ``no_shard``，详见 :doc:`sft_openpi`。每张 actor GPU 都保存完整的模型、梯度和优化器状态；增加 GPU 提高吞吐量，而不是减少这部分单卡显存占用。
 
 ``cluster.component_placement.actor: all`` 使用已分配的 GPU。运行 ``nvidia-smi`` 查看显存和活跃进程。单张 48 GB GPU 可先在 YAML 中设置 ``actor.micro_batch_size: 1``、``actor.global_batch_size: 1`` 和 ``actor.model.precision: bf16``；这会改变默认的 FP32 参数及优化器精度，应按任务验证训练质量。确认完整的优化器更新步骤能运行后，再增加批量。全局批量必须能被单卡微批量与 actor 工作进程数的乘积整除。
-
-CI 测试配置 ``tests/e2e_tests/sft/yam_sft_openpi_pi05.yaml`` 使用单张 GPU、BF16 参数和批量 1，并评估两次优化器更新后保存的 checkpoint；它检查训练到评估的流程，不用于验证任务质量。
 
 .. code-block:: bash
 
@@ -177,9 +174,6 @@ RPent 的 YAM OpenPI 接口采用相同的 ``pi05_yam_joint`` 约定：14 维动
    source .venv/bin/activate
    export RPENT_RLINF_ROOT="$(pwd)"
    git clone --branch main https://github.com/RLinf/RPent.git "$HOME/RPent-yam"
-   uv pip install -e "$HOME/RPent-yam[yam]" \
-       "numpy<2" "transformers==4.53.2" "gym-aloha==0.1.3" \
-       "mujoco==3.12.0" "dm-control==1.0.40"
-   uv pip check
+   uv pip install -e "$HOME/RPent-yam[yam]" "numpy<2"
 
 这会在现有的模型及机器人环境中安装 RPent 的 YAM 可选依赖，并保留已有依赖约束。按照 `RPent YAM 部署说明 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/real_world_robots/yam.rst>`_ 的 RPC 和控制服务启动章节，使用微调检查点及其数据集统计量；其中的 RLinf 路径设置采用前面导出的 ``RPENT_RLINF_ROOT``。启动 RPent 控制服务前，先结束原生评估，确保只有一个进程控制双臂。

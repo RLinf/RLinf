@@ -926,36 +926,6 @@ jobs:
           outputs: type=cacheonly
           tags: rlinf:embodied-roboverse
 
-  build-embodied-yam:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Maximize storage space
-        run: |
-          sudo rm -rf /usr/lib/jvm /usr/share/dotnet /usr/share/swift /usr/local/.ghcup
-          sudo rm -rf /usr/local/julia* /usr/local/lib/android /usr/local/share/chromium
-          sudo rm -rf /opt/microsoft /opt/google /opt/az /usr/local/share/powershell
-          sudo rm -rf /opt/hostedtoolcache
-          docker system prune -af || true
-          docker builder prune -af || true
-          df -h
-
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build embodied-yam
-        uses: docker/build-push-action@v6
-        with:
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            BUILD_TARGET=embodied-yam
-            NO_MIRROR=1
-          outputs: type=cacheonly
-          tags: rlinf:embodied-yam
-
   build-embodied-polaris:
     runs-on: ubuntu-latest
     steps:

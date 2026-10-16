@@ -32,10 +32,10 @@ cluster:
 runner:
   task_type: embodied_eval
   logger:
-    log_path: ${oc.env:YAM_CI_LOG_PATH}
+    log_path: /workspace/results/realworld_dual_yam_openpi_pi05_mock_eval
     project_name: rlinf
-    experiment_name: ci_yam_openpi_eval
-    logger_backends: null
+    experiment_name: ci-test
+    logger_backends: [tensorboard]
   max_epochs: 1
   max_steps: 1
   only_eval: true
@@ -65,7 +65,7 @@ rollout:
   collect_transitions: false
   collect_prev_infos: false
   model:
-    model_path: ${oc.env:YAM_CI_CHECKPOINT}
+    model_path: /workspace/dataset/pi05_base
     precision: bf16
     num_action_chunks: 5
     action_dim: 14
@@ -73,8 +73,3 @@ rollout:
     openpi:
       task: eval
       config_name: pi05_yam_joint
-      action_horizon: 30
-      action_chunk: 5
-      discrete_state_input: true
-    openpi_data:
-      norm_stats_path: ${oc.env:YAM_CI_DATASET}/norm_stats.json

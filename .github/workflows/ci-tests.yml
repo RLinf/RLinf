@@ -61,7 +61,6 @@ jobs:
               - '.github/workflows/install.yml'
             docker_filter: &docker
               - *install
-              - 'requirements/embodied/envs/yam*.txt'
               - 'docker/**'
               - '.github/workflows/docker-build.yml'
             shared_filter: &shared
@@ -155,12 +154,6 @@ jobs:
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
-              - 'requirements/embodied/envs/yam*.txt'
-              - 'rlinf/models/embodiment/openpi/dataconfig/yam_dataconfig.py'
-              - 'rlinf/models/embodiment/openpi/dataconfig/__init__.py'
-              - 'rlinf/models/embodiment/openpi/policies/yam_policy.py'
-              - 'tests/e2e_tests/evaluations/realworld_dual_yam_openpi_pi05_mock_eval.yaml'
-              - 'evaluations/realworld/realworld_dual_yam_openpi_pi05_eval.yaml'
               - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'

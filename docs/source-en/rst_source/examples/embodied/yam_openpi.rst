@@ -30,11 +30,9 @@ install the model and robot dependencies in one environment:
    cd RLinf
    bash requirements/install.sh embodied --model openpi --env yam
    source .venv/bin/activate
-   uv pip check
 
 Configure the CAN interfaces and identify the three camera serials using
-:doc:`yam`. Use the ``embodied-yam`` Docker build target for a GPU training
-image, or install natively on machines that access the robot hardware.
+:doc:`yam`.
 
 Dataset and Normalization
 -------------------------
@@ -55,7 +53,7 @@ that directory. The following commands merge its shards into a new local dataset
        --source-dir "$YAM_COLLECTION/lerobot_dataset" --output-dir "$YAM_DATASET" \
        --only-success
    head -n 5 "$YAM_DATASET/meta/tasks.jsonl"
-   python toolkits/lerobot/calculate_norm_stats.py \
+   PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_yam_joint --repo-id "$YAM_DATASET"
    test -s "$YAM_DATASET/norm_stats.json"
 
@@ -134,11 +132,6 @@ and ``actor.model.precision: bf16`` in the YAML. This changes parameter and
 optimizer precision from the FP32 default; check training quality for your
 task. Increase the batch only after a complete optimizer step fits. The global
 batch must be divisible by the micro batch times the number of actor workers.
-
-The CI test configuration ``tests/e2e_tests/sft/yam_sft_openpi_pi05.yaml``
-uses one GPU with BF16 parameters and a batch size of 1, and evaluates the
-checkpoint saved after two optimizer steps. It checks the training-to-evaluation
-pipeline rather than task quality.
 
 .. code-block:: bash
 
@@ -248,10 +241,7 @@ nodes, run the following from the RLinf repository directory used above:
    source .venv/bin/activate
    export RPENT_RLINF_ROOT="$(pwd)"
    git clone --branch main https://github.com/RLinf/RPent.git "$HOME/RPent-yam"
-   uv pip install -e "$HOME/RPent-yam[yam]" \
-       "numpy<2" "transformers==4.53.2" "gym-aloha==0.1.3" \
-       "mujoco==3.12.0" "dm-control==1.0.40"
-   uv pip check
+   uv pip install -e "$HOME/RPent-yam[yam]" "numpy<2"
 
 This installs RPent's optional YAM dependencies in the existing model/robot environment while
 preserving its dependency constraints. Use the fine-tuned checkpoint and its

@@ -78,8 +78,5 @@ rollout:
     openpi:
       task: eval
       config_name: pi05_yam_joint
-      action_horizon: 30
-      action_chunk: 5
-      discrete_state_input: true
     openpi_data:
       norm_stats_path: /path/to/yam_dataset/norm_stats.json
