@@ -2469,6 +2469,88 @@ def test_holding_the_current_pose_leaves_the_gripper_to_the_policy():
     assert set(parts) == {"arm"}
 
 
+def test_releasing_grip_holds_the_measured_pose():
+    import numpy as np
+
+    from rlinf.robotics.parts.teleop import PicoTcp
+
+    binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=True)
+    device = _ScriptedController(
+        [
+            ((0.025, 0.0, 0.0), (0.0, 0.0, 0.0), True, 0),
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), False, 0),
+        ]
+    )
+    context = _pico_context()
+
+    driven = binding.action(device.get_observation(), context).parts["arm"].copy()
+    held = binding.action(device.get_observation(), context)
+    measured = PicoTcp._pose_to_command(context["tcp_pose"])[:-1]
+
+    assert held.driving
+    assert held.info.get("pico_holding") is True
+    # The lead target is still ahead; release must not keep chasing it.
+    assert not np.allclose(held.parts["arm"][:3], driven[:3])
+    assert np.allclose(held.parts["arm"], measured)
+    assert "end_effector" not in held.parts
+
+
+def test_dagger_pico_does_not_apply_arm_commands_while_idle():
+    import gymnasium as gym
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-np.inf, np.inf, shape=(10,))
+            self.observation_space = spaces.Box(-1, 1, shape=(1,))
+            self.stepped: list[np.ndarray] = []
+
+        def get_tcp_pose(self):
+            return np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        def get_action_scale(self):
+            return np.array([0.05, 0.3, 1.0])
+
+        def step(self, action):
+            self.stepped.append(np.asarray(action, dtype=np.float64))
+            return {}, 0.0, False, False, {}
+
+        def reset(self, *, seed=None, options=None):
+            return {}, {}
+
+    class Reader:
+        def get_reading(self):
+            return {
+                "held": False,
+                "position_delta": np.zeros(3),
+                "rotation_delta": np.zeros(3),
+                "grip_close": False,
+                "grip_open": False,
+            }
+
+    binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=False)
+    binding._device = Reader()
+    group = TeleopGroup(
+        [TeleopEntry(binding)],
+        available={
+            "arm": ActionKind.CARTESIAN_POSE,
+            "end_effector": ActionKind.GRIPPER,
+        },
+    )
+    device = ComposedTeleop(group, {"arm": slice(0, 9), "end_effector": slice(9, 10)})
+    env = Env()
+    policy = np.full(10, 0.7)
+    _, _, _, _, info = TeleopIntervention(env, device).step(policy)
+
+    assert np.allclose(env.stepped[0], policy)
+    assert "intervene_action" not in info
+
+
 def _pico_frame(position, grip=0.0, buttons=None, headset=None):
     """One publisher frame, in the schema the shipped PICO configs describe."""
     import json
@@ -3930,6 +4012,57 @@ def test_franky_healthy_tracking_can_switch_reset_and_rebuild_compliance(
     arm.send_action(_franky_target("Cartesian"))
     assert arm.is_robot_up()
     assert arm.get_observation()["tcp_pose"].shape == (7,)
+
+
+def test_franky_reset_skips_joint_motion_when_already_there(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    from robot_mocks.arms import HOME_JOINTS
+
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+    arm.reset_joint(list(HOME_JOINTS))
+    assert robot.moved == []
+
+
+def test_franky_reset_retries_after_acceleration_discontinuity(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+    original_move = robot.move
+    attempts = {"n": 0}
+
+    def move(motion):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError(
+                "libfranka: Move command aborted: motion aborted by reflex! "
+                '["joint_motion_generator_acceleration_discontinuity"]'
+            )
+        original_move(motion)
+
+    robot.move = move
+    recovery_count = robot.recovery_count
+    arm.reset_joint(_FRANKY_TEST_JOINTS)
+    assert attempts["n"] == 2
+    assert len(robot.moved) == 1
+    assert robot.recovery_count > recovery_count
+
+
+def test_franky_reset_does_not_retry_unrelated_motion_errors(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+
+    def move(_motion):
+        raise RuntimeError("libfranka: Move command aborted: cartesian_reflex")
+
+    robot.move = move
+    with pytest.raises(RuntimeError, match="cartesian_reflex"):
+        arm.reset_joint(_FRANKY_TEST_JOINTS)
+    assert robot.moved == []
 
 
 @pytest.mark.placement

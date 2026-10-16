@@ -23,8 +23,14 @@ from .session import KeyboardSession
 class BaseKeyboardRewardDoneWrapper(KeyboardSession):
     """Replace environment rewards with operator keyboard ratings."""
 
-    def __init__(self, env: gym.Env, reward_mode: str = "always_replace") -> None:
-        super().__init__(env)
+    def __init__(
+        self,
+        env: gym.Env,
+        reward_mode: str = "always_replace",
+        *,
+        device: str | None = None,
+    ) -> None:
+        super().__init__(env, device=device)
         self.reward_modifier = 0
         self.reward_mode = reward_mode
         assert self.reward_mode in ["always_replace"]
@@ -78,8 +84,8 @@ class KeyboardRewardDoneWrapper(BaseKeyboardRewardDoneWrapper):
 class KeyboardRewardDoneMultiStageWrapper(BaseKeyboardRewardDoneWrapper):
     """Score an episode in stages: ``a``/``b``/``c`` select how far it got."""
 
-    def __init__(self, env: gym.Env) -> None:
-        super().__init__(env)
+    def __init__(self, env: gym.Env, *, device: str | None = None) -> None:
+        super().__init__(env, device=device)
         self.stage_rewards = [0, 0.1, 1]
         # Initialize eagerly so step() remains valid before the first reset.
         self.reward_stage = 0

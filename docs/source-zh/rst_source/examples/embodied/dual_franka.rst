@@ -179,6 +179,8 @@
 * ``SFT_DATASET_REPO_ID``：转换后的数据集 ID，通常是
   ``<repo_id>/tcp_rot6d_v1``。
 * ``MODEL_PATH``：``node 0`` 上的部署 checkpoint 目录。
+* 共享环境 ``realworld_dual_franka_tcp_rot6d`` 的 TCP xyz 限位是
+  x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，z ∈ [0.02, 0.7]。``target_ee_pose`` 必须落在这个盒子里。
 
 
 硬件检查
