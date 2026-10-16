@@ -1,7 +1,7 @@
 ARG BUILD_TARGET=embodied
 ARG TARGETARCH
 # Hardware platform for the install: nvidia (default), amd (ROCm), ascend (CANN),
-# musa (Moore Threads) or kunlun (Kunlunxin).
+# musa (Moore Threads), kunlun (Kunlunxin), or metax (MetaX MACA).
 ARG PLATFORM=nvidia
 # Per-platform runtime versions. Override these for common CUDA/ROCm/CANN bumps, or
 # override the full base-image args below for a different image family/Ubuntu.
@@ -12,9 +12,12 @@ ARG CANN_VER=9.1.1-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
 ARG KUNLUN_VER=v1.7.2
 ARG UBUNTU_VER=22.04
-# Reason-image only. FA4 backward is sm90+; Docker builds cannot probe the GPU.
-# Pass --build-arg UNINSTALL_FA4=1 when the image will run on Ampere (e.g. A100).
-ARG UNINSTALL_FA4=0
+# Reason-image only. A venv carries one flash-attention variant: FA2 and FA4
+# share the flash_attn package. FA4 backward is sm90+ and Docker builds cannot
+# probe the GPU, so the default drops flash-attn-4 and installs FA2, which also
+# runs on Ampere (e.g. A100). Pass --build-arg UNINSTALL_FA4=0 to build the FA4
+# image for Hopper or newer; it ships FA4 and no FA2.
+ARG UNINSTALL_FA4=1
 # Registry prefix for the Docker Hub base images, with a trailing slash.
 # Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=m.daocloud.io/docker.io/ when it is unreachable.
 ARG REGISTRY_MIRROR=
@@ -26,7 +29,11 @@ ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
 # KUNLUN lives on the Kunlunxin registry, not Docker Hub.
 ARG KUNLUN_BASE_IMAGE=hub.kunlunxin.com/public/kunlita/xav-rlinf:${KUNLUN_VER}
-
+# MetaX lives on the MetaX registry (e.g. mxcr.io), not Docker Hub. The base
+# image must carry the MACA stack with a CUDA-compatible MACA build of torch
+# preinstalled, mirroring the MUSA flow. Replace the default namespace with
+# your registry's image when building.
+ARG METAX_BASE_IMAGE=cr.metax-tech.com/opensource/public-library/maca-pytorch:3.8.3.3-torch2.10-py312-ubuntu24.04-amd64
 
 ##################################################################################################
 # Platform base resolution (NVIDIA, AMD/ROCm, Ascend/CANN, Moore Threads/MUSA)
@@ -42,9 +49,18 @@ ENV AMD_VISIBLE_DEVICES=all
 FROM ${ASCEND_BASE_IMAGE} AS base-image-platform-ascend
 ENV ASCEND_VISIBLE_DEVICES=all
 FROM ${MUSA_BASE_IMAGE} AS base-image-platform-musa
-FROM ${KUNLUN_BASE_IMAGE} AS base-image-platform-kunlun
 ENV MTHREADS_VISIBLE_DEVICES=all
 ENV MTHREADS_DRIVER_CAPABILITIES=all
+FROM ${KUNLUN_BASE_IMAGE} AS base-image-platform-kunlun
+FROM ${METAX_BASE_IMAGE} AS base-image-platform-metax
+# MACA environment variables follow the MetaX MACA container conventions
+# (see e.g. the modelscope Metax Dockerfiles for reference). MACA_VISIBLE_DEVICES
+# is deliberately left to the runtime: this MACA stack does not honour "all"
+# and only accepts explicit device indices, so the launcher sets it per run.
+ENV MACA_MPS_MODE=1
+# mcPyTorch otherwise materialises 4D tensors in NHWC layout, which
+# breaks the P2P contiguity assumption in the collective layer.
+ENV PYTORCH_DEFAULT_NCHW=1
 
 ##################################################################################################
 # Base images for different build targets — all derive from the platform base
@@ -109,10 +125,17 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
                 /etc/apt/sources.list; \
         fi; \
     fi
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git vim libibverbs-dev liblz4-dev libzstd-dev openssh-server sudo runit runit-systemd tmux \
-    build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
-    wget unzip curl
+# The runit integration package depends on the base distribution's repositories.
+RUN apt-get update && \
+    if apt-cache show runit-systemd >/dev/null 2>&1; then \
+        RUNIT_PKG=runit-systemd; \
+    else \
+        RUNIT_PKG=runit-run; \
+    fi && \
+    apt-get install -y --no-install-recommends \
+            git vim libibverbs-dev liblz4-dev libzstd-dev openssh-server sudo runit tmux \
+            build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
+            wget unzip curl "${RUNIT_PKG}"
 
 
 ##################################################################################################

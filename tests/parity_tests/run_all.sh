@@ -95,7 +95,6 @@ TASKS=(
     # "isaaclab gr00t gr00t isaaclab_ppo_gr00t 1 120 -1"
     # "maniskill_libero openpi openpi maniskill_ppo_openpi05 1 120 -1"
     # "maniskill_libero openpi openpi libero_spatial_ppo_openpi 1 120 -1"
-    # "maniskill_libero openpi openpi libero_spatial_ppo_openpi_rlinf 1 120 -1"
     # "maniskill_libero openpi openpi libero_spatial_ppo_openpi_pi05 1 120 -1"
     # "maniskill_libero openpi openpi libero_spatial_dsrl_openpi 1 120 -1"
     # "maniskill_libero openpi openpi maniskill_ppo_co_training_openpi_pi05 1 120 -1"

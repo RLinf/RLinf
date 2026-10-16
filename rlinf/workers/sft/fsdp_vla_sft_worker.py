@@ -30,20 +30,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.OPENPI_RLINF:
-            from rlinf.data.datasets.openpi_rlinf import (
-                build_openpi_rlinf_sft_dataloader,
+        if model_type == SupportedModel.OPENPI:
+            from rlinf.data.datasets.openpi import (
+                build_openpi_sft_dataloader,
             )
 
-            return build_openpi_rlinf_sft_dataloader(
-                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
-            )
-        elif model_type == SupportedModel.OPENPI:
-            from rlinf.data.datasets.openpi_rlinf import (
-                build_official_openpi_sft_dataloader,
-            )
-
-            return build_official_openpi_sft_dataloader(
+            return build_openpi_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
         elif model_type == SupportedModel.LINGBOTVLA:
@@ -156,24 +148,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if self.data_loader is None:
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type in (SupportedModel.OPENPI_RLINF, SupportedModel.OPENPI):
-            if model_type == SupportedModel.OPENPI_RLINF:
-                from rlinf.data.datasets.openpi_rlinf import (
-                    get_official_openpi_sft_num_batches,
-                    is_official_openpi_sft_dataloader,
-                )
+        if model_type == SupportedModel.OPENPI:
+            from rlinf.data.datasets.openpi import (
+                get_official_openpi_sft_num_batches,
+                is_official_openpi_sft_dataloader,
+            )
 
-                num_batches = (
-                    get_official_openpi_sft_num_batches(self.data_loader)
-                    if is_official_openpi_sft_dataloader(self.data_loader)
-                    else len(self.data_loader)
-                )
-            else:
-                from rlinf.data.datasets.openpi_rlinf import (
-                    get_official_openpi_sft_num_batches,
-                )
-
-                num_batches = get_official_openpi_sft_num_batches(self.data_loader)
+            num_batches = (
+                get_official_openpi_sft_num_batches(self.data_loader)
+                if is_official_openpi_sft_dataloader(self.data_loader)
+                else len(self.data_loader)
+            )
         else:
             return super().get_max_steps_per_epoch()
         return max(1, num_batches // self.gradient_accumulation)

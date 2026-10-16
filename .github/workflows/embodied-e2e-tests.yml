@@ -388,6 +388,65 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-realworld-dual-yam-collect-data-mock-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env yam
+
+      - name: Dual-YAM data collection mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export YAM_MOCK_LOG_PATH=$(mktemp -d "${RUNNER_TEMP}/yam-collection.XXXXXX")
+          bash tests/e2e_tests/embodied/run.sh realworld_dual_yam_collect_data_mock runner.logger.log_path="${YAM_MOCK_LOG_PATH}"
+          python - <<'PY'
+          import json
+          import os
+          from io import BytesIO
+          from pathlib import Path
+
+          import numpy as np
+          import pyarrow.parquet as pq
+          from PIL import Image
+
+          root = Path(os.environ["YAM_MOCK_LOG_PATH"]) / "lerobot_dataset/rank_0/id_0"
+          info = json.loads((root / "meta/info.json").read_text())
+          assert info["total_episodes"] == 1 and info["total_frames"] > 0
+          table = pq.read_table(next(root.glob("data/**/*.parquet")))
+          for name in ("state", "actions"):
+              values = np.asarray(table[name].to_pylist())
+              assert values.shape == (info["total_frames"], 14)
+              assert np.isfinite(values).all()
+              for start in (0, 7):
+                  assert np.ptp(values[:, start:start + 6], axis=0).max() > 0
+                  assert np.ptp(values[:, start + 6]) > 0
+          views = [name for name, feature in info["features"].items() if feature["dtype"] == "image"]
+          assert len(views) == 3
+          for name in views:
+              for frame in table[name].to_pylist():
+                  with Image.open(BytesIO(frame["bytes"])) as image:
+                      assert image.size == (64, 48) and image.mode == "RGB"
+          assert table["done"].to_pylist()[-1]
+          assert all(table["is_success"].to_pylist())
+          PY
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-realworld-collect-dataset-mock-test:
     runs-on: embodied
     steps:
@@ -1010,7 +1069,7 @@ jobs:
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: BEHAVIOR-OpenPI test
+      - name: BEHAVIOR OpenPI PPO test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH
@@ -1026,7 +1085,7 @@ jobs:
           uv cache prune
           rm -rf /tmp/tmp*
 
-  embodied-openpi-pytorch-behavior-eval-test:
+  embodied-openpi-behavior-eval-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -1043,7 +1102,7 @@ jobs:
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
           bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: BEHAVIOR-OpenPI-PyTorch eval test
+      - name: BEHAVIOR OpenPI eval test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH
@@ -1051,7 +1110,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_rlinf_eval
+          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_eval
 
       - name: Clean up
         run: |
@@ -1258,7 +1317,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
-      - name: Maniskill PPO Pi05 training pipeline test
+      - name: ManiSkill PPO OpenPI Pi05 training pipeline test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
@@ -1266,15 +1325,15 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
-      - name: Libero-Spatial PPO OpenPI_RLinf test
+      - name: Libero-Spatial PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_rlinf
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
 
-      - name: Libero-Object NFT test
+      - name: Libero-Object NFT OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1282,7 +1341,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_object_nft_openpi
 
-      - name: Libero-Spatial DAgger test
+      - name: Libero-Spatial DAgger OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1290,15 +1349,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_dagger_openpi
 
-      - name: Libero-Spatial PPO Pi05 torch compile test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
-
-      - name: ManiSkill Async PPO test
+      - name: ManiSkill Async PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1307,7 +1358,7 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openpi
 
-      - name: Libero-Spatial DSRL PPO test
+      - name: Libero-Spatial DSRL OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1315,7 +1366,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_dsrl_openpi
 
-      - name: Maniskill PPO Co-Training Pi05 test
+      - name: ManiSkill PPO Co-Training OpenPI Pi05 test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1363,7 +1414,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           uv pip install "protobuf>=6.33.5,<7"
 
-      - name: ManiSkill-GS PPO Pi05 test
+      - name: ManiSkill-GS PPO OpenPI Pi05 test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1391,7 +1442,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env metaworld
 
-      - name: Metaworld PPO test
+      - name: Metaworld PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1448,7 +1499,7 @@ jobs:
           export CALVIN_PATH=/workspace/dataset/calvin
           bash requirements/install.sh embodied --model openpi --env calvin
 
-      - name: Calvin PPO test
+      - name: Calvin PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1506,7 +1557,7 @@ jobs:
           export ROBOCASA_PATH=/workspace/dataset/robocasa
           bash requirements/install.sh embodied --model openpi --env robocasa
 
-      - name: Robocasa PPO test
+      - name: RoboCasa PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1534,7 +1585,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env roboverse
 
-      - name: RoboVerse PPO test
+      - name: RoboVerse PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -1566,7 +1617,7 @@ jobs:
           export ROBOCASA_ASSETS_PATH=/workspace/dataset/robocasa365_assets
           bash requirements/install.sh embodied --model openpi --env robocasa365
 
-      - name: RoboCasa365 PPO test
+      - name: RoboCasa365 PPO OpenPI test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -2074,6 +2125,40 @@ jobs:
           bash tests/e2e_tests/embodied/run_eval.sh libero_10_molmoact2_eval
 
       - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-pi0-fast-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PI0-Fast environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export UV_TORCH_BACKEND=cu128
+          bash requirements/install.sh embodied --model pi0_fast --env libero \
+            --python 3.12.12 --torch 2.11.0 --no-flash-attn
+
+      - name: PI0-Fast LIBERO GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export PI0FAST_MODEL_PATH=/workspace/dataset/pi0_fast/pi0fast-libero
+          export PI0FAST_TEXT_TOKENIZER=/workspace/dataset/pi0_fast/paligemma-3b-pt-224
+          export PI0FAST_ACTION_TOKENIZER=/workspace/dataset/pi0_fast/tokenizer-lib-mean
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_pi0_fast egl
+
+      - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           uv cache prune

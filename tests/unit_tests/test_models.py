@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Model registration, embeddings, and the reward-model helpers."""
+"""Model registration, embeddings, inference adapters, and reward helpers."""
 
 from __future__ import annotations
 
@@ -35,6 +35,10 @@ from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
+)
+from rlinf.models.embodiment.openpi.apxinf_adapter import (
+    OpenPIApxInfAdapter,
+    _active_token_ids,
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
@@ -591,6 +595,188 @@ def test_wan_npu_patches_rebind_the_dit_operators_on_every_build(wan_dit, monkey
         assert _wan_operators(wan_dit) == kernels
 
 
+_DREAMZERO_NPU_PATCHES = "rlinf.models.embodiment.dreamzero.patch.npu_patches"
+
+
+@pytest.fixture
+def dreamzero_npu_patches(monkeypatch) -> ModuleType:
+    """DreamZero's NPU operators, loaded without the DreamZero (groot) package.
+
+    The dreamzero package ``__init__`` builds the model and imports groot; the
+    replacement operators only need torch.
+    """
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "rlinf/models/embodiment/dreamzero/patch/npu_patches.py"
+    )
+    spec = importlib.util.spec_from_file_location(_DREAMZERO_NPU_PATCHES, path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, _DREAMZERO_NPU_PATCHES, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _complex_rope_params(max_seq_len: int, dim: int) -> torch.Tensor:
+    """DreamZero's CUDA RoPE table: complex128 rotations per channel pair."""
+    angles = torch.outer(
+        torch.arange(max_seq_len),
+        1.0 / torch.pow(10000, torch.arange(0, dim, 2).to(torch.float64).div(dim)),
+    )
+    return torch.polar(torch.ones_like(angles), angles)
+
+
+def _complex_rope_apply(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
+    batch, seq_len, heads, _ = x.shape
+    pairs = torch.view_as_complex(x.double().reshape(batch, seq_len, heads, -1, 2))
+    return torch.view_as_real(pairs * freqs.unsqueeze(0)).flatten(3).float()
+
+
+def _video_rope_freqs(tables: list[torch.Tensor], f: int, h: int, w: int):
+    """Concatenate the frame/height/width tables per token, as the DiT does."""
+    return torch.cat(
+        [
+            tables[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+            tables[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+            tables[2][:w].view(1, 1, w, -1).expand(f, h, w, -1),
+        ],
+        dim=-1,
+    ).reshape(f * h * w, 1, -1)
+
+
+def test_dreamzero_npu_rope_matches_the_complex_cuda_rope(dreamzero_npu_patches):
+    ops = dreamzero_npu_patches
+    head_dim, f, h, w = 128, 3, 4, 5
+    num_action, num_state, blocks = 16, 1, 2
+    splits = [head_dim - 4 * (head_dim // 6), 2 * (head_dim // 6), 2 * (head_dim // 6)]
+    video = _video_rope_freqs([ops.rope_params(1024, d) for d in splits], f, h, w)
+    video_ref = _video_rope_freqs(
+        [_complex_rope_params(1024, d) for d in splits], f, h, w
+    )
+    action, action_ref = (
+        ops.rope_params(10240, head_dim),
+        _complex_rope_params(10240, head_dim),
+    )
+    state, state_ref = (
+        ops.rope_params(1024, head_dim),
+        _complex_rope_params(1024, head_dim),
+    )
+    torch.manual_seed(0)
+
+    x = torch.randn(2, f * h * w, 4, head_dim)
+    torch.testing.assert_close(
+        ops.rope_apply(x, None, video), _complex_rope_apply(x, video_ref)
+    )
+
+    # Training appends every action block, then every state block.
+    register = blocks * (num_action + num_state)
+    x = torch.randn(2, f * h * w + register, 4, head_dim)
+    expected = torch.cat(
+        [
+            video_ref,
+            action_ref[: blocks * num_action].unsqueeze(1),
+            state_ref[: blocks * num_state].unsqueeze(1),
+        ]
+    )
+    torch.testing.assert_close(
+        ops.rope_action_apply(x, video, action, state, register, num_action, num_state),
+        _complex_rope_apply(x, expected),
+    )
+
+    # A cached rollout block uses the offsets of its own action/state index.
+    x = torch.randn(2, f * h * w + num_action + num_state, 4, head_dim)
+    expected = torch.cat(
+        [
+            video_ref,
+            action_ref[num_action : 2 * num_action].unsqueeze(1),
+            state_ref[num_state : 2 * num_state].unsqueeze(1),
+        ]
+    )
+    torch.testing.assert_close(
+        ops.causal_rope_action_apply(
+            x, video, action, state, num_action + num_state, num_action, num_state, 1
+        ),
+        _complex_rope_apply(x, expected),
+    )
+
+    # FP32 angles drift ~3e-5 from FP64 at t=999; the DiT casts the embedding
+    # to bf16 right after, whose rounding is ~100x coarser.
+    timesteps = torch.tensor([0.0, 17.0, 999.0])
+    angles = torch.outer(
+        timesteps.double(),
+        torch.pow(10000, -torch.arange(128, dtype=torch.float64).div(128)),
+    )
+    torch.testing.assert_close(
+        ops.sinusoidal_embedding_1d(256, timesteps),
+        torch.cat([angles.cos(), angles.sin()], dim=1).float(),
+        atol=1e-4,
+        rtol=0,
+    )
+
+
+def _masked_attention(q, k, v, mask):
+    """Attention over [B, L, H, D] tensors with an explicit [B, Lq, Lk] mask."""
+    q, k, v = q.float(), k.float(), v.float()
+    scores = torch.einsum("bqhd,bkhd->bhqk", q, k) / q.shape[-1] ** 0.5
+    scores = scores.masked_fill(~mask[:, None], float("-inf"))
+    return torch.einsum("bhqk,bkhd->bqhd", scores.softmax(-1), v).nan_to_num(0.0)
+
+
+def test_dreamzero_npu_attention_aligns_masks_like_flash_attention(
+    dreamzero_npu_patches,
+):
+    attention = dreamzero_npu_patches.flash_attention
+    torch.manual_seed(0)
+    q = torch.randn(2, 6, 2, 8, dtype=torch.bfloat16)
+    k = torch.randn(2, 10, 2, 8, dtype=torch.bfloat16)
+    v = torch.randn(2, 10, 2, 8, dtype=torch.bfloat16)
+    rows, cols = torch.arange(6)[:, None], torch.arange(10)[None]
+    # FlashAttention aligns causal and window masks to the bottom-right corner,
+    # so query i of 6 sees key i + 4 of 10, not key i as in SDPA's is_causal.
+    diagonal = rows + 4
+    lengths = torch.tensor([10, 7])
+    cases = {
+        "causal": ({"causal": True}, cols <= diagonal),
+        "window": (
+            {"window_size": (3, 0)},
+            (cols >= diagonal - 3) & (cols <= diagonal),
+        ),
+        "k_lens": ({"k_lens": lengths}, cols < lengths[:, None, None]),
+    }
+    for name, (kwargs, mask) in cases.items():
+        expected = _masked_attention(q, k, v, mask.expand(2, 6, 10))
+        actual = attention(q, k, v, **kwargs)
+        assert actual.dtype == torch.bfloat16, name
+        torch.testing.assert_close(actual.float(), expected, atol=2e-2, rtol=2e-2)
+
+    # Padded query rows have no keys to attend to and come back as zeros.
+    q_lens = torch.tensor([6, 4])
+    actual = attention(q, k, v, q_lens=q_lens, k_lens=lengths)
+    assert actual[1, 4:].abs().max() == 0
+    torch.testing.assert_close(
+        actual[1, :4].float(),
+        _masked_attention(q, k, v, (cols < 7).expand(2, 6, 10))[1, :4],
+        atol=2e-2,
+        rtol=2e-2,
+    )
+
+
+def test_dreamzero_npu_patches_leave_torch_alone_off_npu(
+    dreamzero_npu_patches, monkeypatch
+):
+    from rlinf.scheduler import AcceleratorType
+    from rlinf.utils.patcher import Patcher
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    Patcher.clear()
+    dreamzero_npu_patches.apply_npu_patches(Patcher)
+    # Nothing is registered, so applying never imports DreamZero.
+    Patcher.apply()
+    Patcher.clear()
+
+    assert not torch._dynamo.config.disable
+    assert "torch_npu.contrib.transfer_to_npu" not in sys.modules
+
+
 def _history_cfg():
     return OmegaConf.create(
         {
@@ -982,3 +1168,375 @@ def test_delay_metrics_report_every_sample():
 
     assert metrics.tolist() == pytest.approx([0.03, 0.03])
     assert env.insert_delay_metrics().numel() == 0
+
+
+class _FakeApxInfModel:
+    action_horizon = 10
+    action_dim = 32
+    num_views = 2
+    image_size = 224
+
+    def __init__(self, output_shape=(10, 32)):
+        self.output_shape = output_shape
+        self.calls = []
+        self.closed = False
+
+    def infer_rgb(self, rgb_u8, layout, token_ids, *, noise=None):
+        self.calls.append((rgb_u8, layout, token_ids, noise))
+        offset = len(self.calls) * 1000
+        return (
+            np.arange(np.prod(self.output_shape), dtype=np.float32).reshape(
+                self.output_shape
+            )
+            + offset
+        )
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeApxInfProcessor:
+    def __init__(self):
+        self.preprocess_calls = []
+        self.postprocess_calls = []
+
+    def preprocess_batch(self, env_obs, *, num_views, image_size):
+        self.preprocess_calls.append((env_obs, num_views, image_size))
+        prepared = []
+        for index in range(len(env_obs["task_descriptions"])):
+            prepared.append(
+                {
+                    "rgb_u8": np.full(
+                        (num_views, image_size, image_size, 3),
+                        index,
+                        dtype=np.uint8,
+                    ),
+                    "token_ids": np.array([index, index + 1], dtype=np.uint32),
+                    "state": np.full(32, index, dtype=np.float32),
+                }
+            )
+        return prepared
+
+    def postprocess_batch(self, normalized_actions, prepared):
+        self.postprocess_calls.append((normalized_actions.copy(), prepared))
+        return torch.from_numpy(normalized_actions[:, :5, :7].copy())
+
+
+def _apxinf_model_cfg(**apxinf_overrides):
+    apxinf = {
+        "action_horizon": 10,
+        "num_flow_steps": 5,
+        "noise_source": "apxinf",
+        "seed": 0,
+        **apxinf_overrides,
+    }
+    return OmegaConf.create(
+        {
+            "model_type": "openpi",
+            "model_path": "/not/loaded/in/unit/test",
+            "num_action_chunks": 5,
+            "action_dim": 7,
+            "openpi": {
+                "config_name": "pi05_libero",
+                "num_steps": 5,
+                "noise_method": "flow_sde",
+                "noise_level": 0.3,
+            },
+            "apxinf": apxinf,
+        }
+    )
+
+
+def _apxinf_env_obs(batch_size=2):
+    return {
+        "main_images": torch.zeros(batch_size, 8, 8, 3, dtype=torch.uint8),
+        "wrist_images": torch.ones(batch_size, 8, 8, 3, dtype=torch.uint8),
+        "extra_view_images": None,
+        "states": torch.zeros(batch_size, 8),
+        "task_descriptions": [f"task {index}" for index in range(batch_size)],
+    }
+
+
+def _apxinf_adapter(*, model=None, processor=None, **apxinf_overrides):
+    return OpenPIApxInfAdapter(
+        _apxinf_model_cfg(**apxinf_overrides),
+        "cpu",
+        model=model or _FakeApxInfModel(),
+        processor=processor or _FakeApxInfProcessor(),
+    )
+
+
+def test_apxinf_strips_openpi_prompt_padding_before_l1_inference():
+    transformed = {
+        "tokenized_prompt": np.array([2, 42, 108, 0, 0], dtype=np.int32),
+        "tokenized_prompt_mask": np.array([True, True, True, False, False]),
+    }
+
+    tokens = _active_token_ids(transformed)
+
+    np.testing.assert_array_equal(tokens, np.array([2, 42, 108], dtype=np.uint32))
+    assert tokens.flags.c_contiguous
+
+
+def test_apxinf_calls_l1_infer_rgb_and_delegates_pre_and_postprocessing():
+    model = _FakeApxInfModel()
+    processor = _FakeApxInfProcessor()
+    adapter = _apxinf_adapter(model=model, processor=processor)
+    env_obs = _apxinf_env_obs()
+
+    actions, result = adapter.predict_action_batch(env_obs, mode="eval")
+
+    assert actions.shape == (2, 5, 7)
+    assert actions.dtype == torch.float32
+    assert processor.preprocess_calls == [(env_obs, 2, 224)]
+    assert len(model.calls) == 2
+    assert model.calls[0][0].shape == (2, 224, 224, 3)
+    assert model.calls[0][0].dtype == np.uint8
+    assert model.calls[0][1] == "nhwc"
+    assert model.calls[0][2].dtype == np.uint32
+    assert model.calls[0][3] is None
+    normalized = processor.postprocess_calls[0][0]
+    assert normalized.shape == (2, 10, 32)
+    assert len(result["apxinf_timing"]) == 2
+
+
+def test_apxinf_explicit_noise_is_split_and_forwarded_exactly():
+    model = _FakeApxInfModel()
+    adapter = _apxinf_adapter(model=model, noise_source="observation")
+    env_obs = _apxinf_env_obs()
+    env_obs["noise"] = torch.arange(2 * 10 * 32, dtype=torch.float32).reshape(2, 10, 32)
+
+    adapter.predict_action_batch(env_obs)
+
+    np.testing.assert_array_equal(model.calls[0][3], env_obs["noise"][0].numpy())
+    np.testing.assert_array_equal(model.calls[1][3], env_obs["noise"][1].numpy())
+
+
+def test_apxinf_observation_noise_is_required():
+    adapter = _apxinf_adapter(noise_source="observation")
+    with pytest.raises(ValueError, match="requires env_obs"):
+        adapter.predict_action_batch(_apxinf_env_obs())
+
+
+def test_apxinf_observation_noise_does_not_override_other_noise_sources():
+    env_obs = _apxinf_env_obs()
+    explicit_noise = torch.full((2, 10, 32), 123.0)
+    env_obs["noise"] = explicit_noise
+
+    apxinf_model = _FakeApxInfModel()
+    _apxinf_adapter(model=apxinf_model, noise_source="apxinf").predict_action_batch(
+        env_obs
+    )
+    assert all(call[3] is None for call in apxinf_model.calls)
+
+    torch_model = _FakeApxInfModel()
+    torch_adapter = _apxinf_adapter(model=torch_model, noise_source="torch")
+    torch_adapter.predict_action_batch(env_obs)
+    assert all(call[3] is not None for call in torch_model.calls)
+    for index, call in enumerate(torch_model.calls):
+        assert not np.array_equal(call[3], explicit_noise[index].numpy())
+
+
+def test_apxinf_torch_noise_is_reproducible_and_has_model_shape():
+    model_a = _FakeApxInfModel()
+    model_b = _FakeApxInfModel()
+    adapter_a = _apxinf_adapter(model=model_a, noise_source="torch", seed=7)
+    adapter_b = _apxinf_adapter(model=model_b, noise_source="torch", seed=7)
+
+    adapter_a.predict_action_batch(_apxinf_env_obs())
+    adapter_b.predict_action_batch(_apxinf_env_obs())
+
+    assert model_a.calls[0][3].shape == (10, 32)
+    np.testing.assert_array_equal(model_a.calls[0][3], model_b.calls[0][3])
+    np.testing.assert_array_equal(model_a.calls[1][3], model_b.calls[1][3])
+
+
+def test_apxinf_rejects_bad_normalized_action_shape():
+    adapter = _apxinf_adapter(model=_FakeApxInfModel(output_shape=(10, 7)))
+    with pytest.raises(ValueError, match="normalized actions have shape"):
+        adapter.predict_action_batch(_apxinf_env_obs(batch_size=1))
+
+
+def test_apxinf_rejects_mismatched_openpi_and_apxinf_flow_steps():
+    with pytest.raises(ValueError, match="must match OpenPI num_steps"):
+        _apxinf_adapter(num_flow_steps=10)
+
+
+def test_apxinf_rejects_training_mode():
+    adapter = _apxinf_adapter()
+    with pytest.raises(ValueError, match="eval-only"):
+        adapter.predict_action_batch(_apxinf_env_obs(), mode="train")
+
+
+def test_apxinf_close_delegates_to_model():
+    model = _FakeApxInfModel()
+    adapter = _apxinf_adapter(model=model)
+    adapter.close()
+    assert model.closed
+
+
+def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
+    """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
+    seen = {}
+
+    def load_bare_model(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return _FakeApxInfModel()
+
+    def resolve_tactics(device, precision, **kwargs):
+        seen["resolve"] = {"device": device, "precision": precision, **kwargs}
+        return resolved_tactics
+
+    module = ModuleType("apxinf_robo")
+    module.load_bare_model = load_bare_model
+    engine = ModuleType("apxinf_robo.engine")
+    engine.resolve_tactics = resolve_tactics
+    module.engine = engine
+    monkeypatch.setitem(sys.modules, "apxinf_robo", module)
+    monkeypatch.setitem(sys.modules, "apxinf_robo.engine", engine)
+    return seen
+
+
+def test_apxinf_loads_through_the_apxinf_robo_l1_entry_point(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(_apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor())
+
+    assert seen["path"] == Path("/not/loaded/in/unit/test")
+    kwargs = seen["kwargs"]
+    assert kwargs["model"] == "pi05"
+    assert kwargs["device"] == "cpu"
+    assert kwargs["precision"] == "bf16"
+    assert kwargs["action_horizon"] == 10
+    assert kwargs["num_flow_steps"] == 5
+    assert kwargs["sampling_seed"] == 0
+    # Left out so load_bare_model selects the tuned tactics.
+    assert "tactics" not in kwargs
+    assert "resolve" not in seen
+
+
+def test_apxinf_a_configured_tactics_file_wins_over_the_default_selection(monkeypatch):
+    seen = _stub_apxinf_robo(monkeypatch)
+
+    OpenPIApxInfAdapter(
+        _apxinf_model_cfg(tactics="/mine.json"), "cpu", processor=_FakeApxInfProcessor()
+    )
+
+    assert seen["kwargs"]["tactics"] == "/mine.json"
+    assert "resolve" not in seen
+
+
+def test_apxinf_an_explicit_weights_file_resolves_tactics_from_the_checkpoint_dir(
+    monkeypatch,
+):
+    seen = _stub_apxinf_robo(monkeypatch, resolved_tactics="/ckpt/tactics.json")
+
+    OpenPIApxInfAdapter(
+        _apxinf_model_cfg(checkpoint="/ckpt/model-00001-of-00002.safetensors"),
+        "cpu",
+        processor=_FakeApxInfProcessor(),
+    )
+
+    # The weights file goes to the loader, the directory to the tactics lookup:
+    # keying the lookup on the file would miss a checkpoint-local tactics.json.
+    assert seen["path"] == Path("/ckpt/model-00001-of-00002.safetensors")
+    assert seen["resolve"]["model_dir"] == Path("/not/loaded/in/unit/test")
+    assert seen["resolve"]["precision"] == "bf16"
+    assert seen["kwargs"]["tactics"] == "/ckpt/tactics.json"
+
+
+def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
+    # ``None`` in sys.modules is how CPython marks an import as unavailable.
+    monkeypatch.setitem(sys.modules, "apxinf_robo", None)
+
+    with pytest.raises(ImportError, match="apxinf_robo"):
+        OpenPIApxInfAdapter(
+            _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
+        )
+
+
+def _cosmos3_sglang_cfg(batching_max_size=None):
+    server = (
+        {} if batching_max_size is None else {"batching_max_size": batching_max_size}
+    )
+    return OmegaConf.create(
+        {
+            "rollout": {
+                "model": {"num_action_chunks": 16},
+                "sglang": {"server": server},
+            },
+            "env": {"eval": {"env_type": "libero"}},
+        }
+    )
+
+
+def test_cosmos3_sglang_requests_group_envs_by_prompt_up_to_the_server_batch():
+    # The Cosmos3 server rejects a batch whose prompts tokenize to different
+    # lengths, and one larger than its --batching-max-size.
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    adapter = Cosmos3SGLangAdapter(_cosmos3_sglang_cfg(batching_max_size=2), rank=0)
+    tasks = ["pick the bowl", "open the drawer", "pick the bowl", "pick the bowl"]
+
+    groups = adapter.request_groups({"task_descriptions": tasks})
+
+    assert groups == [[0, 2], [3], [1]]
+
+
+def test_cosmos3_sglang_requests_default_to_one_env_like_sglang():
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    adapter = Cosmos3SGLangAdapter(_cosmos3_sglang_cfg(), rank=0)
+
+    groups = adapter.request_groups({"task_descriptions": ["a", "a", "a"]})
+
+    assert groups == [[0], [1], [2]]
+
+
+def test_sglang_request_groups_round_trip_to_env_order():
+    from rlinf.models.embodiment.sglang_adapter import (
+        gather_env_rows,
+        select_env_rows,
+    )
+
+    env_obs = {
+        "main_images": torch.arange(5).view(5, 1),
+        "task_descriptions": ["a", "b", "a", "a", "b"],
+        "wrist_images": None,
+        "_rlinf_stage_id": 1,
+    }
+    groups = [[0, 2], [3], [1, 4]]
+
+    parts = [select_env_rows(env_obs, group) for group in groups]
+    assert parts[2]["task_descriptions"] == ["b", "b"]
+    assert parts[0]["_rlinf_stage_id"] == 1 and parts[0]["wrist_images"] is None
+
+    # Each "request" answers with its envs' rows; gathering restores env order.
+    order = [index for group in groups for index in group]
+    actions = gather_env_rows([p["main_images"] * 10 for p in parts], order)
+    info = gather_env_rows([{"x": {"y": p["main_images"]}} for p in parts], order)
+    assert torch.equal(actions, torch.arange(5).view(5, 1) * 10)
+    assert torch.equal(info["x"]["y"], torch.arange(5).view(5, 1))
+
+
+def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
+    # The action envelope carries one ``data`` entry per env of the request.
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    adapter = Cosmos3SGLangAdapter(_cosmos3_sglang_cfg(), rank=0)
+
+    def entry(input_index, gripper):
+        values = np.zeros((16, 12), dtype=np.float32)
+        values[:, 3] = 1.0  # rot6d columns (1, 0, 0) and (0, 1, 0): no rotation
+        values[:, 7] = 1.0
+        values[:, 9] = gripper
+        return {"input_index": input_index, "action": {"values": values}}
+
+    actions, _ = adapter.parse_response(
+        {"data": [entry(1, 0.5), entry(0, -0.5)]}, state={}
+    )
+
+    assert actions.shape == (2, 16, 7)
+    assert torch.all(actions[0, :, 6] == -0.5)
+    assert torch.all(actions[1, :, 6] == 0.5)

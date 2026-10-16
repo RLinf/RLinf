@@ -23,7 +23,7 @@ from openpi.training.config import DataConfig, DataConfigFactory, ModelTransform
 from typing_extensions import override
 
 from rlinf.models.embodiment.openpi.policies import dual_franka_tcp_rot6d_policy
-from rlinf.models.embodiment.openpi.transforms import (
+from rlinf.models.embodiment.openpi.transforms.rigid_body_delta import (
     DUAL_ARM_ROT6D_LAYOUT,
     RigidBodyAbsoluteActions,
     RigidBodyDeltaActions,

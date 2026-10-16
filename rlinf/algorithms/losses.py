@@ -21,7 +21,7 @@ from rlinf.algorithms.utils import huber_loss
 from rlinf.utils.metric_utils import (
     compute_critic_explained_variance_stats,
 )
-from rlinf.utils.utils import masked_mean, masked_mean_ratio
+from rlinf.utils.utils import masked_mean, masked_mean_ratio, masked_reduce
 
 
 def compute_decoupled_ppo_actor_loss(
@@ -191,6 +191,7 @@ def compute_ppo_actor_loss(
     clip_log_ratio_min: Optional[float] = None,
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
+    log_logprob_diagnostics: bool = False,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -249,7 +250,8 @@ def compute_ppo_actor_loss(
     )
 
     # For numerical stability.
-    log_ratio = logprobs - old_logprobs
+    raw_log_ratio = logprobs - old_logprobs
+    log_ratio = torch.where(loss_mask, raw_log_ratio, 0.0)
     if clip_log_ratio_min is not None:
         log_ratio = torch.clamp(log_ratio, min=clip_log_ratio_min)
     if clip_log_ratio_max is not None:
@@ -319,6 +321,53 @@ def compute_ppo_actor_loss(
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
+    if log_logprob_diagnostics:
+        with torch.no_grad():
+            valid = loss_mask_for_metrics
+            stat_mask = valid & torch.isfinite(raw_log_ratio)
+            valid_count = valid.sum()
+            finite_count = stat_mask.sum()
+            use_nan = (finite_count == 0) & (valid_count > 0)
+            zero = raw_log_ratio.new_zeros(())
+            nan = raw_log_ratio.new_full((), float("nan"))
+
+            def _masked_reduce_or_nan(
+                values: torch.Tensor, reducer: str
+            ) -> torch.Tensor:
+                return torch.where(
+                    use_nan,
+                    nan,
+                    masked_reduce(values, stat_mask, reducer, empty_value=zero),
+                )
+
+            metrics_data.update(
+                {
+                    "actor/logprob_delta_mean": _masked_reduce_or_nan(
+                        raw_log_ratio, "mean"
+                    ),
+                    "actor/logprob_delta_std": _masked_reduce_or_nan(
+                        raw_log_ratio, "std"
+                    ),
+                    "actor/logprob_delta_min": _masked_reduce_or_nan(
+                        raw_log_ratio, "min"
+                    ),
+                    "actor/logprob_delta_max": _masked_reduce_or_nan(
+                        raw_log_ratio, "max"
+                    ),
+                    "actor/logprob_delta_abs": _masked_reduce_or_nan(
+                        raw_log_ratio.abs(), "mean"
+                    ),
+                    "actor/logprob_finite_fraction": torch.where(
+                        valid_count > 0,
+                        finite_count.float() / valid_count.clamp_min(1),
+                        raw_log_ratio.new_ones(()),
+                    ),
+                    "actor/logprob_new_mean": _masked_reduce_or_nan(logprobs, "mean"),
+                    "actor/logprob_old_mean": _masked_reduce_or_nan(
+                        old_logprobs, "mean"
+                    ),
+                }
+            )
     return policy_loss, metrics_data
 
 

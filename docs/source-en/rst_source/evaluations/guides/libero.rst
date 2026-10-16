@@ -15,7 +15,7 @@ Environment Setup
 
 With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
+Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, ``molmoact2``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
 
 Example Configs
 ---------------
@@ -86,6 +86,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2
+   * - ``libero_10_pi0_fast_eval.yaml``
+     - Long (libero_10)
+     - π₀-FAST
 
 For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`. For the Cosmos3 SGLang backend, see :doc:`cosmos3_sglang`.
 
@@ -115,14 +118,17 @@ Copy or edit the target YAML and set at least ``rollout.model.model_path``. See 
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
 
+.. _apxinf-backend:
+
 ApxInf Backend
 --------------
 
-The ApxInf path is evaluation-only. Install the official
-`ApxInf <https://github.com/infinigence/ApxInf>`_ Python frontend and CUDA
-binding in the RLinf runtime, then point ``APXINF_PI05_MODEL_DIR`` at a
-checkpoint directory containing ``config.json``, ``model.safetensors``,
-``tokenizer.model``, and ``norm_stats.json``:
+The ApxInf path is evaluation-only. RLinf reaches the engine through
+`APXinf-robo <https://github.com/RLinf/APXinf-robo>`_, which wraps the L1
+interface of `ApxInf <https://github.com/infinigence/ApxInf>`_. Install it and
+the ``apxinf_py`` CUDA binding it wraps in the RLinf runtime, then point
+``APXINF_PI05_MODEL_DIR`` at a checkpoint directory containing ``config.json``,
+``model.safetensors``, ``tokenizer.model``, and ``norm_stats.json``:
 
 .. code-block:: bash
 
@@ -134,7 +140,9 @@ images, an 8-D state, a state-free PI0.5 prompt, 5 flow steps, a 10-action
 prediction horizon, and execution of only the first 5 actions. RLinf's OpenPI
 transforms own resize, tokenization, checkpoint normalization and action
 unnormalization. ApxInf's low-level ``Model.infer_rgb`` API owns only model
-inference and, by default, initial Gaussian noise sampling. Set
+inference and, by default, initial Gaussian noise sampling. Loading goes through
+``apxinf_robo.load_bare_model``, which selects the tuned GEMM tactics that keep
+that bare handle numerically equal to ApxInf's own policy path. Set
 ``rollout.model.apxinf.noise_source=observation`` and pass an explicit
 ``[B,10,32]`` noise tensor when doing paired numerical parity tests.
 The default 10 environments x 10 rollout epochs evaluate 10 reset states for
@@ -217,7 +225,13 @@ Option 1: High parallelism (``auto_reset`` optional)
        auto_reset: True           # optional when E >= S
        rollout_epoch: 1
 
-**Option 2: Auto-reset (recommended when memory is limited)**
+Each LIBERO env runs in its own process and holds about 2 GiB of host RAM after reset (measured on ``libero_spatial``), and this memory is not shared between envs. With ``total_num_envs: 500``, the env workers need about 1 TiB of host RAM in total.
+
+.. warning::
+
+   The env processes are subprocesses of the env worker, not Ray workers. In a run that exhausted host memory, Ray's memory monitor (Ray 2.58.0) logged that it selected no worker to kill, and the node became unresponsive instead of the job failing with an out-of-memory error.
+
+**Option 2: Auto-reset (recommended unless the env nodes have more than about 2 GiB of host RAM per env, plus headroom for the rollout model)**
 
 .. code-block:: yaml
 
@@ -271,16 +285,20 @@ Advanced Usage
 
 **Adjust parallel scale**
 
+Lowering ``total_num_envs`` alone also lowers coverage: with 64 envs and the config's 240-step budget, one rollout epoch evaluates 64 of the 500 init states. Raise ``max_steps_per_rollout_epoch`` with it so each env runs several trajectories. ``total_num_envs`` must also be divisible by the number of env worker processes; 128 works on 1, 2, 4, or 8 GPUs:
+
 .. code-block:: bash
 
+   # max_steps_per_rollout_epoch = ceil(S / E) * max_episode_steps = ceil(500 / 128) * 240
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     env.eval.total_num_envs=64 \
+     env.eval.total_num_envs=128 \
+     env.eval.max_steps_per_rollout_epoch=960 \
      rollout.model.model_path=/path/to/model
 
 FAQ
 ---
 
-- **Rendering issues:** On headless systems, try ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa`` (``run_eval.sh`` sets these by default).
+- **Rendering issues:** ``run_eval.sh`` renders with EGL by default; on hosts without EGL, ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa``.
 - **Test coverage:** See :ref:`libero-eval-config` above; the key is coordinating ``total_num_envs``, ``auto_reset``, and ``max_steps_per_rollout_epoch``.
 
 .. toctree::

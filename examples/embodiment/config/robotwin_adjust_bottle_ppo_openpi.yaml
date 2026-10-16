@@ -146,6 +146,7 @@ actor:
     add_value_head: True
     action_dim: 14
     openpi:
+      task: rl
       config_name: "pi0_aloha_robotwin"
       num_images_in_input: 3
       detach_critic_input: True

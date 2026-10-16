@@ -114,11 +114,9 @@ RLT 将表示学习和在线 RL 控制拆开。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-下面的 RLT 配置使用 ``model_type: openpi_rlinf``。安装命令仍使用
+下面的 RLT 配置使用 ``model_type: openpi``。安装命令仍使用
 ``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT
 Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
-这里的 ``openpi_rlinf`` 是 RLinf vendored、已对齐 JAX OpenPI 参考实现精度的
-PyTorch Pi0.5 路径，不是旧的官方 OpenPI PyTorch 路径。
 
 RLT 如何工作
 ------------
@@ -151,9 +149,9 @@ Stage 1 中比较关键的字段：
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi_rlinf"
+       model_type: "openpi"
        is_lora: False
-       model_path: "/path/to/model"
+       model_path: "/path/to/pi05_base_openpi"
        num_action_chunks: 20
        action_dim: 7
        num_steps: 4
@@ -259,7 +257,7 @@ Stage 2 中比较关键的字段：
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi_rlinf"
+       model_type: "openpi"
        precision: bf16
        is_lora: False
        num_action_chunks: 20
@@ -337,7 +335,7 @@ LeRobot 格式数据：
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 然后启动采集：
 
@@ -345,7 +343,8 @@ LeRobot 格式数据：
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-采集完成后，将 LeRobot 数据集放到训练节点，并为当前 RLT OpenPI dataconfig
+LeRobot shard 位于 ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``，
+其中直接包含 ``data/`` 和 ``meta/``。采集完成后，将这个 shard 放到训练节点，并为当前 RLT OpenPI dataconfig
 计算归一化统计。``repo_id`` 需要与 Stage 1 / Stage 2 配置中的
 ``actor.openpi_data.repo_id`` 和 ``rollout.rlt_feature_model.openpi_data.repo_id`` 保持一致：
 
@@ -372,7 +371,7 @@ Stage 1：训练 RLT 特征模型
      openpi_data:
        repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
-       model_path: /path/to/model
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -532,7 +531,7 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
    actor:
      model:
-       model_path: /path/to/pi05_base
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: pi05_rlt_maniskill_joint
        openpi_data:

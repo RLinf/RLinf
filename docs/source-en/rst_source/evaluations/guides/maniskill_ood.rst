@@ -283,7 +283,7 @@ FAQ
 ---
 
 - **Asset path:** Ensure ManiSkill assets are downloaded to ``rlinf/envs/sim/maniskill/assets``.
-- **GPU simulation:** ``sim_backend: gpu`` requires an NVIDIA GPU; ``run_eval.sh`` sets ``MUJOCO_GL=osmesa`` etc. for headless environments.
+- **GPU simulation:** ``sim_backend: gpu`` requires an NVIDIA GPU.
 - **LoRA path:** OpenVLA-OFT eval requires ``lora_path``; without it the ManiSkill policy cannot load correctly.
 - **Checkpoint:** Batch mode passes ``.pt`` weights via ``CKPT_PATH``; single runs use ``runner.ckpt_path``.
 - **Scene selection:** The default YAML points to the training scene ``PutOnPlateInScene25Main-v3``; for OOD scenes, explicitly override ``env.eval.init_params.id`` and ``obj_set``, or use ``mani-ood`` mode.

@@ -17,7 +17,7 @@ import importlib.util
 import logging
 import os
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
 import torch.nn.functional as F
@@ -28,10 +28,14 @@ from omegaconf.dictconfig import DictConfig
 import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
+)
+from rlinf.utils.precision import (
+    torch_dtype_from_precision as torch_dtype_from_precision,
 )
 
 if TYPE_CHECKING:
@@ -89,7 +93,7 @@ SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
-SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -136,7 +140,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
-        SupportedModel.OPENPI_RLINF,
+        SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -175,23 +179,6 @@ SUPPORTED_TASK_TYPE = [
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
-
-
-def torch_dtype_from_precision(
-    precision: Union[int, str, None],
-) -> Optional[torch.dtype]:
-    if precision in ["bf16", "bf16-mixed"]:
-        return torch.bfloat16
-    elif precision in [16, "16", "fp16", "16-mixed"]:
-        return torch.float16
-    elif precision in [32, "32", "fp32", "32-true"]:
-        return torch.float32
-    elif precision in [None, "null"]:
-        return None
-    else:
-        raise ValueError(
-            f"Could not parse the precision of `{precision}` to a valid torch.dtype"
-        )
 
 
 @torch.jit.script
@@ -473,6 +460,21 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     return cfg
 
 
+def validate_fp32_master_adamw_config(
+    *,
+    strategy: str,
+    sharding_strategy: str,
+) -> None:
+    """Validate the FSDP backend supported by FP32 master AdamW."""
+    strategy = str(strategy).lower()
+    sharding_strategy = str(sharding_strategy).lower()
+    if strategy != "fsdp" or sharding_strategy != "no_shard":
+        raise ValueError(
+            "use_fp32_master_params requires FSDP1 "
+            "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
+        )
+
+
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     def validate_amp_cfg(config: DictConfig) -> DictConfig:
         """Validate AMP configuration and ensure mutual exclusivity with FSDP mixed_precision."""
@@ -524,15 +526,12 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "sharding_strategy", "full_shard"
         )
         model_type = OmegaConf.select(cfg, "model.model_type", default=None)
-        if (
-            model_type is not None
-            and str(model_type) == SupportedModel.OPENPI_RLINF.value
-        ):
+        if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
             sharding = (
                 str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
             )
             assert sharding == "no_shard", (
-                "openpi_rlinf only supports actor.fsdp_config.sharding_strategy="
+                "openpi only supports actor.fsdp_config.sharding_strategy="
                 f"'no_shard' (got {cfg.fsdp_config.sharding_strategy!r}). "
                 "Nested FSDP flattening (full_shard / shard_grad_op) is not supported."
             )
@@ -547,6 +546,23 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "backward_prefetch", None
         )
         cfg.fsdp_config.use_orig_params = cfg.fsdp_config.get("use_orig_params", False)
+        if (
+            model_type is not None
+            and str(model_type) == SupportedModel.OPENPI.value
+            and not cfg.fsdp_config.use_orig_params
+        ):
+            # Dual-expert Gemma packs frozen VLM (expert-0) and trainable
+            # action expert (expert-1) in the same Block. FSDP FlatParameter
+            # then mixes requires_grad and rejects wrap unless
+            # use_orig_params=True. The shared hybrid_engines/fsdp default is
+            # False, so inherited CI/example YAMLs would otherwise fail at
+            # FSDP wrap time.
+            logging.info(
+                "openpi requires actor.fsdp_config.use_orig_params=True "
+                "because dual-expert Gemma Block mixes frozen and trainable "
+                "parameters. Overriding use_orig_params=False to True."
+            )
+            cfg.fsdp_config.use_orig_params = True
         cfg.fsdp_config.use_liger_kernel = cfg.fsdp_config.get(
             "use_liger_kernel", False
         )
@@ -583,29 +599,24 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "buffer_dtype", None
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
+        validate_fsdp_wrapper_config(cfg.fsdp_config)
 
-        if (
-            model_type is not None
-            and str(model_type) == SupportedModel.OPENPI_RLINF.value
-        ):
-            mp = cfg.fsdp_config.mixed_precision
-            all_none = (
-                mp.param_dtype is None
-                and mp.reduce_dtype is None
-                and mp.buffer_dtype is None
+        if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
+            low_precision = any(
+                torch_dtype_from_precision(mixed_precision_config[field])
+                not in (None, torch.float32)
+                for field in ("param_dtype", "reduce_dtype", "buffer_dtype")
             )
-            all_fp32 = (
-                mp.param_dtype == "fp32"
-                and mp.reduce_dtype == "fp32"
-                and mp.buffer_dtype == "fp32"
-            )
-            assert all_none or all_fp32, (
-                "openpi_rlinf does not support FSDP mixed precision "
-                f"(got param_dtype={mp.param_dtype!r}, "
-                f"reduce_dtype={mp.reduce_dtype!r}, "
-                f"buffer_dtype={mp.buffer_dtype!r}). "
-                "Set mixed_precision param/reduce/buffer dtype to null "
-                "(OpenPI default) or fp32."
+            if low_precision and not cfg.fsdp_config.get("mixed_precision_rules"):
+                raise ValueError(
+                    "OpenPI low-precision FSDP policies require mixed_precision_rules "
+                    "for its FP32 modules."
+                )
+
+        if cfg.get("optim", {}).get("use_fp32_master_params", False):
+            validate_fp32_master_adamw_config(
+                strategy=cfg.fsdp_config.strategy,
+                sharding_strategy=cfg.fsdp_config.sharding_strategy,
             )
 
     return cfg
@@ -960,17 +971,10 @@ def validate_only_eval_rollout_model(model_cfg) -> None:
         missing.append("rollout.model.num_action_chunks")
 
     model_type = str(OmegaConf.select(model_cfg, "model_type", default="") or "")
-    if model_type in (
-        SupportedModel.OPENPI.value,
-        SupportedModel.OPENPI_RLINF.value,
-    ):
+    if model_type == SupportedModel.OPENPI.value:
         if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
             missing.append("rollout.model.openpi.config_name")
-        # ``task`` selects Pi0Eval / Pi0RL / … only in openpi_rlinf.
-        # Official OpenPI get_model ignores it and must not require it.
-        if model_type == SupportedModel.OPENPI_RLINF.value and OmegaConf.select(
-            model_cfg, "openpi.task", default=None
-        ) in (None, ""):
+        if OmegaConf.select(model_cfg, "openpi.task", default=None) in (None, ""):
             missing.append("rollout.model.openpi.task")
         has_num_steps = (
             OmegaConf.select(model_cfg, "num_steps", default=None) is not None
@@ -998,6 +1002,49 @@ def validate_weight_sync_overlap_cfg(cfg):
     assert cfg.get("weight_syncer", {}).get("type", None) == "patch", (
         "actor.sync_weight_no_wait=true requires weight_syncer.type=patch so a "
         "rollout cannot observe a partially applied bucket sync."
+    )
+
+
+def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
+    """Require per-step observations when online LeRobot collection is enabled.
+
+    The collector stores one observation/action pair per environment step.
+    RoboTwin, LIBERO, and Behavior share ``env.train.skip_intermediate_renders``;
+    online LeRobot requires it to be false. Eval does not write the dataset.
+    """
+    enabled = bool(
+        OmegaConf.select(cfg, "algorithm.dagger.online_lerobot.enabled", default=False)
+    )
+    if not enabled:
+        return
+    only_eval = (
+        cfg.runner.get("only_eval", False)
+        or cfg.runner.get("task_type") == "embodied_eval"
+    )
+    train_env = cfg.env.get("train", None)
+    if only_eval or train_env is None:
+        return
+
+    # RoboTwin skips intermediate renders unless the config turns them back on.
+    # LIBERO and Behavior render every step unless the config skips them.
+    skip_intermediate_renders_default = {
+        SupportedEnvType.ROBOTWIN: True,
+        SupportedEnvType.LIBERO: False,
+        SupportedEnvType.BEHAVIOR: False,
+    }
+    env_type = SupportedEnvType(train_env.env_type)
+    if env_type not in skip_intermediate_renders_default:
+        return
+    skip_intermediate_renders = bool(
+        train_env.get(
+            "skip_intermediate_renders",
+            skip_intermediate_renders_default[env_type],
+        )
+    )
+    assert not skip_intermediate_renders, (
+        "algorithm.dagger.online_lerobot.enabled requires "
+        f"env.train.skip_intermediate_renders=False for env_type {env_type.value!r}. "
+        "Skipped intermediate renders drop the observation for each action."
     )
 
 
@@ -1292,6 +1339,7 @@ def validate_embodied_cfg(cfg):
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
 
+    validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
 

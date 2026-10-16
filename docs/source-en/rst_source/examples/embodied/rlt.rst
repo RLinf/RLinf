@@ -122,12 +122,10 @@ Please switch to the OpenPI virtual environment via the built-in ``switch_env`` 
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-RLT uses ``model_type: openpi_rlinf`` in the configs below. The install target
+RLT uses ``model_type: openpi`` in the configs below. The install target
 is still ``openpi`` because the vendored PyTorch model shares the OpenPI runtime
 and the RLT Stage 1 dataloader keeps using the OpenPI data pipeline for
-ManiSkill and real-world compatibility. This ``openpi_rlinf`` path is RLinf's
-vendored PyTorch Pi0.5 implementation aligned with the JAX OpenPI reference, not
-the older official OpenPI PyTorch path.
+ManiSkill and real-world compatibility.
 
 How RLT Works
 -------------
@@ -164,9 +162,9 @@ Important Stage 1 fields:
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi_rlinf"
+       model_type: "openpi"
        is_lora: False
-       model_path: "/path/to/model"
+       model_path: "/path/to/pi05_base_openpi"
        num_action_chunks: 20
        action_dim: 7
        num_steps: 4
@@ -280,7 +278,7 @@ Important Stage 2 fields:
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi_rlinf"
+       model_type: "openpi"
        precision: bf16
        is_lora: False
        num_action_chunks: 20
@@ -360,7 +358,7 @@ data from the collection config:
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 Then launch collection:
 
@@ -368,7 +366,9 @@ Then launch collection:
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-After collection, place the LeRobot dataset on the training node and compute
+The LeRobot shard is ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``,
+which directly contains ``data/`` and ``meta/``. After collection, place that
+shard on the training node and compute
 normalization statistics for the RLT OpenPI dataconfig. ``repo_id`` should
 match ``actor.openpi_data.repo_id`` and
 ``rollout.rlt_feature_model.openpi_data.repo_id`` in the Stage 1 / Stage 2
@@ -397,7 +397,7 @@ Edit the Stage 1 config paths before launch:
      openpi_data:
        repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
-       model_path: /path/to/model
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -567,7 +567,7 @@ Edit the data path in
 
    actor:
      model:
-       model_path: /path/to/pi05_base
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: pi05_rlt_maniskill_joint
        openpi_data:

@@ -47,7 +47,7 @@ Tasks
      - ``pi0_realworld``
      - Represent Franka data in the OpenPI data format.
    * - SFT
-     - ``realworld_sft_openpi``
+     - ``realworld_bin_relocation_sft_openpi``
      - Fine-tune π₀ on real-world Franka data.
    * - Deployment
      - ``realworld_pnp_eval`` / ``realworld_eval``
@@ -195,7 +195,7 @@ the Bin-relocation pick-and-place task:
   env:
     data_collection:
       enabled: True
-      export_format: "lerobot"
+      export_format: lerobot_dataset
 
 During collection, use the SpaceMouse to teleoperate the robot and perform
 the task. After each episode, press ``c`` to mark it as successful and reset
@@ -203,7 +203,7 @@ the robot pose. Remember to return the target object to the starting position.
 
 The script stops after collecting 20 episodes by default (configurable via
 ``num_data_episodes``). Collected LeRobot-format data is saved under
-``logs/<running-timestamp>/collected_data``.
+``logs/<running-timestamp>/lerobot_dataset/rank_*/id_*/``.
 
 Step 3: SFT Training Pi0
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -215,7 +215,7 @@ This step follows the **Supported datasets** section in :doc:`sft_openpi`.
 For real-world Franka environments, you can create the ``pi0_realworld``
 dataset format, defined in:
 
-1. ``rlinf/models/embodiment/openpi/__init__.py``
+1. ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``
 2. ``rlinf/models/embodiment/openpi/dataconfig/realworld_dataconfig.py``
 
 To unify the policy call interface between real-world and simulated
@@ -245,7 +245,7 @@ the same machine. The file structure should be:
     |-- ...
 
 Here ``realworld_franka_bin_relocation`` corresponds to the ``repo_id`` field in the
-``TrainConfig`` defined in ``rlinf/models/embodiment/openpi/__init__.py``.
+``TrainConfig`` defined in ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``.
 
 Then run on the training node:
 
@@ -272,7 +272,7 @@ Run OpenPI SFT
 ~~~~~~~~~~~~~~~
 
 With the ``pi0_realworld`` dataset format, modify the SFT training config
-``examples/sft/config/realworld_sft_openpi.yaml``:
+``examples/sft/config/realworld_bin_relocation_sft_openpi.yaml``:
 
 .. code:: yaml
 
@@ -303,7 +303,7 @@ Run the SFT training script:
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi
+   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
 The checkpoint exported by SFT will be used in the deployment step.
 See :doc:`sft_openpi` for more details on OpenPI datasets and SFT training.
