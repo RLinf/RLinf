@@ -228,7 +228,7 @@ class Bench2DexRuntime:
                 self.generalization_cfg,
                 enabled=True,
                 task_asset_codes=collect_task_asset_codes(self.task),
-                asset_split="unseen",
+                asset_split=self.generalization_cfg.asset_split,
                 available_robot_keys=get_robot_keys(),
             )
             if self.profile in RESAMPLE_GROUPS:
@@ -555,90 +555,112 @@ class Bench2DexRuntime:
         }
 
     def step(self, action) -> tuple:
-        """Execute one active/full joint target through the existing step RPC."""
+        """Execute one active/full joint target using the chunk execution path."""
+        if not isinstance(action, JointPositionTargets):
+            action = np.asarray(action).reshape(1, -1)
+        elif action.joint_positions.ndim == 3 and action.joint_positions.shape[1] != 1:
+            raise ValueError(
+                "Expected one action for Bench2DexRuntime.step, "
+                f"got {action.joint_positions.shape}"
+            )
+        transitions = self.chunk_step(action)
+        if transitions:
+            return transitions[0]
+        obs, _, terminated, truncated, info = self._last_transition
+        return obs, 0.0, terminated, truncated, dict(info, action_steps=0)
+
+    def chunk_step(self, actions) -> list[tuple]:
+        """Execute a scene's chunk and return only consumed transitions.
+
+        Accept unnamed targets ``[C,J]`` or ``JointPositionTargets`` for one
+        scene. Stop at success or the control-step budget; resetting and
+        padding are owned by ``Bench2DexEnv``.
+        """
         import torch
         from collector.state_reader import read_joint_state, read_object_states
         from robots.active_dof_utils import expand_to_full, select_active
 
-        if not isinstance(action, JointPositionTargets):
-            action = np.asarray(action).reshape(1, -1)
         actions, layout = joint_targets_in_runtime_order(
-            action,
+            actions,
             active_joint_names=tuple(self.dof.active_joint_names),
             full_joint_names=tuple(self.dof.full_joint_names),
         )
         if self.terminated or self.truncated:
-            obs, _, terminated, truncated, info = self._last_transition
-            return obs, 0.0, terminated, truncated, dict(info, action_steps=0)
-        action = actions[0]
-        target = expand_to_full(action, self.dof) if layout == "active" else action
-        self.targets[id(self.robot)][0, :] = torch.as_tensor(
-            target, device=self.robot.device
-        )
-        command = {
-            "raw_active_action": select_active(target, self.dof),
-            "expanded_full_target": target,
-            "shielded_full_target": target,
-            "shield_applied": False,
-            "active_joint_names": self.dof.active_joint_names,
-            "full_joint_names": self.dof.full_joint_names,
-            "mimic_source_by_joint": {
-                self.dof.full_joint_names[i]: self.dof.full_joint_names[j]
-                for i, j, _, _ in self.dof.mimic_rules
-            },
-        }
-        for _ in range(self.spec.control_decimation):
-            self._advance_physics()
-            states = read_object_states(self.objects, self.object_ids)
-            if self.contact_reader is not None and self.contact_reader.available:
-                self.contact_reader.update(self.spec.physics_dt)
-                for name, forces in self.contact_reader.read().items():
-                    if name in states:
-                        states[name]["contact_forces"] = forces
-            self.metrics.update(
-                states,
-                sim_step=self.physics_steps,
-                dt=self.spec.physics_dt,
-                robot_state=read_joint_state(self.robot),
-                joint_limits=self.joint_limits,
-                joint_command=command,
+            return []
+        transitions = []
+        for action in actions:
+            target = expand_to_full(action, self.dof) if layout == "active" else action
+            self.targets[id(self.robot)][0, :] = torch.as_tensor(
+                target, device=self.robot.device
             )
-            self.physics_steps += 1
-            if self.metrics.success and self.early_stop:
-                break
-        self.control_steps += 1
-        success = bool(self.metrics.success)
-        reward = float(success and not self.success_once)
-        self.success_once |= success
-        self.episode_return += reward
-        self.terminated = self.early_stop and success
-        self.truncated = (
-            self.control_steps >= self.spec.max_control_steps and not self.terminated
-        )
-        info = dict(self._info(), action_steps=1)
-        if self.terminated or self.truncated:
-            info["metrics"] = dataclasses.asdict(
-                self.metrics.finalize(
-                    steps=self.physics_steps,
-                    terminated_reason="stable_success"
-                    if self.terminated
-                    else "max_steps",
-                    max_steps=self.spec.max_control_steps
-                    * self.spec.control_decimation,
-                    policy_stride=self.spec.control_decimation,
-                    evaluation_protocol="reach_and_stop"
-                    if self.early_stop
-                    else "fixed_horizon",
+            command = {
+                "raw_active_action": select_active(target, self.dof),
+                "expanded_full_target": target,
+                "shielded_full_target": target,
+                "shield_applied": False,
+                "active_joint_names": self.dof.active_joint_names,
+                "full_joint_names": self.dof.full_joint_names,
+                "mimic_source_by_joint": {
+                    self.dof.full_joint_names[i]: self.dof.full_joint_names[j]
+                    for i, j, _, _ in self.dof.mimic_rules
+                },
+            }
+            for _ in range(self.spec.control_decimation):
+                self._advance_physics()
+                states = read_object_states(self.objects, self.object_ids)
+                if self.contact_reader is not None and self.contact_reader.available:
+                    self.contact_reader.update(self.spec.physics_dt)
+                    for name, forces in self.contact_reader.read().items():
+                        if name in states:
+                            states[name]["contact_forces"] = forces
+                self.metrics.update(
+                    states,
+                    sim_step=self.physics_steps,
+                    dt=self.spec.physics_dt,
+                    robot_state=read_joint_state(self.robot),
+                    joint_limits=self.joint_limits,
+                    joint_command=command,
                 )
+                self.physics_steps += 1
+                if self.metrics.success and self.early_stop:
+                    break
+            self.control_steps += 1
+            success = bool(self.metrics.success)
+            reward = float(success and not self.success_once)
+            self.success_once |= success
+            self.episode_return += reward
+            self.terminated = self.early_stop and success
+            self.truncated = (
+                self.control_steps >= self.spec.max_control_steps
+                and not self.terminated
             )
-        self._last_transition = (
-            self._observe(),
-            reward,
-            self.terminated,
-            self.truncated,
-            info,
-        )
-        return self._last_transition
+            info = dict(self._info(), action_steps=1)
+            if self.terminated or self.truncated:
+                info["metrics"] = dataclasses.asdict(
+                    self.metrics.finalize(
+                        steps=self.physics_steps,
+                        terminated_reason="stable_success"
+                        if self.terminated
+                        else "max_steps",
+                        max_steps=self.spec.max_control_steps
+                        * self.spec.control_decimation,
+                        policy_stride=self.spec.control_decimation,
+                        evaluation_protocol="reach_and_stop"
+                        if self.early_stop
+                        else "fixed_horizon",
+                    )
+                )
+            self._last_transition = (
+                self._observe(),
+                reward,
+                self.terminated,
+                self.truncated,
+                info,
+            )
+            transitions.append(self._last_transition)
+            if self.terminated or self.truncated:
+                break
+        return transitions
 
     def _clear_scene(self) -> None:
         from utils.episode_runtime import clear_scene_prims_preserve_robot

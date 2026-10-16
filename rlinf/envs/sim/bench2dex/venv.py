@@ -22,7 +22,12 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Any, Callable
 
-from rlinf.envs.venv import CloudpickleWrapper, EnvWorker, SubprocEnvWorker
+from rlinf.envs.venv import (
+    BaseVectorEnv,
+    CloudpickleWrapper,
+    EnvWorker,
+    SubprocEnvWorker,
+)
 from rlinf.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -46,6 +51,8 @@ def _worker(parent: Connection, remote: Connection, env_fn: CloudpickleWrapper) 
             command, data = remote.recv()
             if command == "step":
                 remote.send(runtime.step(data))
+            elif command == "chunk_step":
+                remote.send(runtime.chunk_step(data))
             elif command == "reset":
                 remote.send(runtime.reset(**data))
             elif command == "getattr":
@@ -129,6 +136,11 @@ class Bench2DexSubprocEnvWorker(SubprocEnvWorker):
         self.parent_remote.send([command, data])
         return self.recv()
 
+    def send_chunk(self, actions: Any) -> None:
+        """Send a scene's complete action chunk without waiting for its result."""
+        self.is_reset = False
+        self.parent_remote.send(["chunk_step", actions])
+
     def reset(self, **kwargs: Any) -> tuple[dict, dict]:
         """Reset this scene through the same protocol as batched resets."""
         self.send(None, **kwargs)
@@ -167,3 +179,25 @@ class Bench2DexSubprocEnvWorker(SubprocEnvWorker):
             self.process.join()
         finally:
             self.parent_remote.close()
+
+
+class Bench2DexVectorEnv(BaseVectorEnv):
+    """Schedule scene chunks using the existing subprocess pool and lifecycle."""
+
+    def chunk_step(self, commands: list, env_ids=None) -> list[list[tuple]]:
+        """Send to all selected scenes, then collect their executed transitions.
+
+        Each command contains one scene's complete chunk. Results follow
+        ``env_ids`` order and omit actions after that scene terminates.
+        """
+        self._assert_is_not_closed()
+        ids = list(self._wrap_id(env_ids))
+        if len(commands) != len(ids) or len(set(ids)) != len(ids):
+            raise ValueError(
+                "Expected one chunk per unique environment ID, "
+                f"got {len(commands)} chunks and env_ids={ids}"
+            )
+        self._assert_id(ids)
+        for command, env_id in zip(commands, ids, strict=True):
+            self.workers[env_id].send_chunk(command)
+        return [self.workers[env_id].recv() for env_id in ids]

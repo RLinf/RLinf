@@ -136,6 +136,8 @@ def joint_targets_in_runtime_order(
         layout = actions.joint_layout
         names = tuple(actions.joint_names[0])
         values = actions.joint_positions
+        if values.ndim == 3:
+            values = values[0]
     else:
         values = actions
     expected = active_joint_names if layout == "active" else full_joint_names

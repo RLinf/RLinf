@@ -26,13 +26,12 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.data.schema.embodied_types import JointPositionTargets
-from rlinf.envs.venv import BaseVectorEnv
 from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 
 from .evaluation import Bench2DexResults, normalize_profile
 from .runtime import make_bench2dex_runtime
 from .spec import Bench2DexSpec
-from .venv import Bench2DexSubprocEnvWorker
+from .venv import Bench2DexSubprocEnvWorker, Bench2DexVectorEnv
 
 
 class Bench2DexEnv(gym.Env):
@@ -104,7 +103,7 @@ class Bench2DexEnv(gym.Env):
             return worker
 
         try:
-            self.env = BaseVectorEnv(env_fns, worker_fn)
+            self.env = Bench2DexVectorEnv(env_fns, worker_fn)
             if cfg.get("is_eval", False) and params.get("output_dir"):
                 profile = normalize_profile(
                     params.get("generalization_profile", "none")
@@ -226,53 +225,6 @@ class Bench2DexEnv(gym.Env):
         self.is_start = not self._initialized.all()
         return self._batch_obs(ids), self._wrap_info(ids)
 
-    def _step_batch(self, commands, env_ids, *, new_query: bool):
-        rewards = torch.zeros(self.num_envs, dtype=torch.float32)
-        valid = torch.zeros(self.num_envs, dtype=torch.bool)
-        if len(env_ids):
-            observations, raw_rewards, terminated, truncated, infos = self.env.step(
-                commands, id=env_ids
-            )
-            for row, i in enumerate(env_ids):
-                info = infos[row]
-                self._observations[i], self._infos[i] = observations[row], info
-                self._terminated[i], self._truncated[i] = (
-                    bool(terminated[row]),
-                    bool(truncated[row]),
-                )
-                rewards[i] = float(raw_rewards[row]) * self.reward_coef
-                valid[i] = info["action_steps"] > 0
-                if new_query and valid[i]:
-                    self.policy_queries[i] += 1
-                if self.query_at_success[i] is None and info["success_once"]:
-                    self.query_at_success[i] = int(self.policy_queries[i])
-                if "metrics" in info:
-                    info["metrics"] = dict(
-                        info["metrics"],
-                        policy_query_count=int(self.policy_queries[i]),
-                        policy_queries_to_stable_success=self.query_at_success[i],
-                    )
-                if (
-                    self.results is not None
-                    and not self._episode_recorded[i]
-                    and (terminated[row] or truncated[row])
-                ):
-                    self.results.append(
-                        info, int(self.policy_queries[i]), self.query_at_success[i]
-                    )
-                    self._episode_recorded[i] = True
-        ids = list(range(self.num_envs))
-        info = self._wrap_info(ids)
-        info["action_steps"] = valid.to(torch.int64)
-        return (
-            self._batch_obs(ids),
-            rewards,
-            self._terminated.clone(),
-            self._truncated.clone(),
-            info,
-            valid,
-        )
-
     def step(self, actions, auto_reset: bool = True) -> tuple:
         """Execute absolute targets [N,J], then optionally reset completed scenes."""
         if isinstance(actions, JointPositionTargets):
@@ -324,27 +276,51 @@ class Bench2DexEnv(gym.Env):
         terminated = torch.zeros((self.num_envs, count), dtype=torch.bool)
         truncated = torch.zeros_like(terminated)
         valid = torch.zeros_like(terminated)
+        ids = torch.where(~(self._terminated | self._truncated))[0].tolist()
+        commands = [
+            positions[i]
+            if packet is None
+            else JointPositionTargets(
+                positions[i : i + 1], packet.joint_names[i : i + 1], layout
+            )
+            for i in ids
+        ]
+        transitions = self.env.chunk_step(commands, env_ids=ids)
+        all_ids = list(range(self.num_envs))
         for t in range(count):
-            ids = torch.where(~(self._terminated | self._truncated))[0].tolist()
-            commands = [
-                positions[i, t]
-                if packet is None
-                else JointPositionTargets(
-                    positions[i : i + 1, t], packet.joint_names[i : i + 1], layout
-                )
-                for i in ids
-            ]
-            obs, reward, term, trunc, info, executed = self._step_batch(
-                commands, ids, new_query=t == 0
-            )
-            observations.append(obs)
+            for i, scene_transitions in zip(ids, transitions, strict=True):
+                if t >= len(scene_transitions):
+                    continue
+                obs, reward, term, trunc, info = scene_transitions[t]
+                self._observations[i], self._infos[i] = obs, info
+                self._terminated[i], self._truncated[i] = bool(term), bool(trunc)
+                rewards[i, t] = float(reward) * self.reward_coef
+                valid[i, t] = info["action_steps"] > 0
+                if t == 0 and valid[i, t]:
+                    self.policy_queries[i] += 1
+                if self.query_at_success[i] is None and info["success_once"]:
+                    self.query_at_success[i] = int(self.policy_queries[i])
+                if "metrics" in info:
+                    info["metrics"] = dict(
+                        info["metrics"],
+                        policy_query_count=int(self.policy_queries[i]),
+                        policy_queries_to_stable_success=self.query_at_success[i],
+                    )
+                if (
+                    self.results is not None
+                    and not self._episode_recorded[i]
+                    and (term or trunc)
+                ):
+                    self.results.append(
+                        info, int(self.policy_queries[i]), self.query_at_success[i]
+                    )
+                    self._episode_recorded[i] = True
+            observations.append(self._batch_obs(all_ids))
+            info = self._wrap_info(all_ids)
+            info["action_steps"] = valid[:, t].to(torch.int64)
             infos.append(info)
-            rewards[:, t], terminated[:, t], truncated[:, t], valid[:, t] = (
-                reward,
-                term,
-                trunc,
-                executed,
-            )
+            terminated[:, t] = self._terminated
+            truncated[:, t] = self._truncated
         done = terminated.any(dim=1) | truncated.any(dim=1)
         lengths = valid.sum(dim=1)
         chunk_info = {

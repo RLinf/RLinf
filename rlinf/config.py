@@ -1122,11 +1122,32 @@ def validate_bench2dex_cfg(
             raise ValueError(
                 "Bench2Dex evaluation rollout must cover the task control-step budget"
             )
-        if split == "train" and model_cfg.num_action_chunks != 1:
+        chunk_length = int(model_cfg.num_action_chunks)
+        if chunk_length < 1:
             raise ValueError(
-                "Bench2Dex training uses num_action_chunks=1 so terminal padding does not enter the loss"
+                f"Expected positive Bench2Dex action chunk length, got {chunk_length}"
             )
+        if split == "train" and chunk_length > 1:
+            if env_cfg.auto_reset:
+                raise ValueError(
+                    "Bench2Dex chunk training requires auto_reset=false so "
+                    "the actor masks transitions after episode termination"
+                )
+            if (
+                cfg.algorithm.reward_type != "chunk_level"
+                or cfg.algorithm.logprob_type != "chunk_level"
+            ):
+                raise ValueError(
+                    "Bench2Dex chunk training requires chunk_level reward_type "
+                    "and logprob_type"
+                )
         if model_cfg.model_type == "openpi":
+            horizon = model_cfg.openpi.get("action_horizon")
+            if horizon is not None and chunk_length > int(horizon):
+                raise ValueError(
+                    f"Expected Bench2Dex execution chunk <= action_horizon "
+                    f"{horizon}, got {chunk_length}"
+                )
             if model_cfg.openpi.config_name != "pi05_bench2dex":
                 raise ValueError("Bench2Dex OpenPI requires config_name=pi05_bench2dex")
             if int(model_cfg.openpi.model_action_dim) < spec.action_dim:
