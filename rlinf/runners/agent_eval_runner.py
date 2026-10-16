@@ -206,6 +206,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
                 self.global_steps += 1
 
+            self._stop_rollouts()
         finally:
             for tool_worker in self.tool_workers:
                 tool_worker.stop_server()
