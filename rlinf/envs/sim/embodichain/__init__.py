@@ -12,6 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+from typing import Any
 
-__all__ = ["EmbodiChainEnv"]
+from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+from rlinf.envs.sim.embodichain.stack_cube_env import StackCubeEnv
+
+REGISTER_EMBODICHAIN_ENVS = {"RLinf-StackCube-Expert-v1": StackCubeEnv}
+
+
+def get_embodichain_env_cls(env_cfg: Any = None) -> type[EmbodiChainEnv]:
+    """Select an RLinf wrapper from the native Gym task ID."""
+    if env_cfg is None:
+        return EmbodiChainEnv
+    from embodichain.utils.utility import load_config
+
+    from rlinf.envs.sim.embodichain.embodichain_env import (
+        _cfg_get,
+        _resolve_gym_config_path,
+    )
+
+    configured = _cfg_get(env_cfg, "gym_config_path")
+    if not configured:
+        return EmbodiChainEnv
+    path = str(configured)
+    if not path.startswith("embodichain_tasks/"):
+        path = str(_resolve_gym_config_path(path))
+    config = load_config(path)
+    return REGISTER_EMBODICHAIN_ENVS.get(config["id"], EmbodiChainEnv)
+
+
+__all__ = ["EmbodiChainEnv", "StackCubeEnv", "get_embodichain_env_cls"]

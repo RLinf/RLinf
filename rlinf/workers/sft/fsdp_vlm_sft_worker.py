@@ -38,9 +38,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         with open(os.path.join(save_path, "data_state.json"), "w") as f:
             json.dump(state, f)
 
-    def save_checkpoint(self, save_path: str, step: int = 0):
-        super().save_checkpoint(save_path, step)
-        if self._rank == 0:
+    def save_checkpoint(
+        self, save_path: str, step: int = 0, *, force_training_state: bool = False
+    ):
+        super().save_checkpoint(
+            save_path, step, force_training_state=force_training_state
+        )
+        if self._rank == 0 and self._should_save_training_state(
+            step, force_training_state
+        ):
             self._save_data_state(save_path)
 
     def _load_data_state(self, load_path: str):

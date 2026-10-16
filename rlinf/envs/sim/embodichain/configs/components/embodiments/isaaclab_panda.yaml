@@ -1,0 +1,122 @@
+embodiment_id: isaaclab_panda
+simulation:
+  uid: Panda
+  fpath: /path/to/prepared/panda.urdf
+  init_pos:
+  - 0
+  - 0
+  - 0
+  init_rot:
+  - 0
+  - 0
+  - 0
+  init_qpos:
+  - 0.0444
+  - -0.1894
+  - -0.1107
+  - -2.5148
+  - 0.0044
+  - 2.3775
+  - 0.6952
+  - 0.04
+  - 0.04
+  control_parts:
+    arm:
+    - panda_joint1
+    - panda_joint2
+    - panda_joint3
+    - panda_joint4
+    - panda_joint5
+    - panda_joint6
+    - panda_joint7
+    hand:
+    - panda_finger_joint1
+    - panda_finger_joint2
+  solver_cfg:
+    arm:
+      class_type: FEPSolver
+      end_link_name: panda_tcp
+      root_link_name: panda_link0
+      redundancy_search: true
+  joint_drive_props:
+    drive_type: force
+    stiffness:
+      panda_joint[1-7]: 400.0
+      panda_finger_joint[1-2]: 2000.0
+    damping:
+      panda_joint[1-7]: 80.0
+      panda_finger_joint[1-2]: 100.0
+    max_effort:
+      panda_joint[1-4]: 87.0
+      panda_joint[5-7]: 12.0
+      panda_finger_joint[1-2]: 200.0
+  attrs:
+    rigid_props:
+      has_gravity: false
+sensor:
+- sensor_type: Camera
+  uid: front
+  width: 256
+  height: 256
+  intrinsics:
+  - 293.2
+  - 293.2
+  - 128.0
+  - 128.0
+  extrinsics:
+    eye:
+    - 1
+    - 0
+    - 0.4
+    target:
+    - 0.3072
+    - 0
+    - 0
+    up:
+    - 0
+    - 0
+    - 1
+- sensor_type: Camera
+  uid: wrist
+  width: 256
+  height: 256
+  near: 0.1
+  far: 2.0
+  intrinsics:
+  - 293.19971367215464
+  - 293.19971367215464
+  - 128.0
+  - 128.0
+  extrinsics:
+    parent: Panda/panda_hand
+    pos: [0.13, 0.0, -0.15]
+    # RLinf/IsaacLab Rewarded-v0 uses ROS WXYZ (-.70614, .03701, .03701, -.70614).
+    # Attached EmbodiChain cameras require OpenGL XYZW: R_gl = R_ros @ Rx(pi).
+    quat: [0.706137571102774, 0.706137571102774, 0.03700987269735983, 0.03700987269735983]
+skill_profile:
+  contract_id: single_arm_parallel_gripper
+  profile_id: isaaclab_panda
+  resources:
+  - resource_id: primary_manipulator
+    endpoints:
+    - endpoint_id: motion
+      control_part: arm
+      capabilities:
+      - kinematics.batch_inverse
+      - motion.cartesian_pose
+      - kinematics.forward
+    - endpoint_id: grasp
+      control_part: hand
+      capabilities:
+      - interaction.grasp
+      command_preset: parallel_jaw_commands
+  command_presets:
+  - preset_id: parallel_jaw_commands
+    control_part: hand
+    commands:
+      open:
+      - 0.04
+      - 0.04
+      grasp:
+      - 0.0
+      - 0.0

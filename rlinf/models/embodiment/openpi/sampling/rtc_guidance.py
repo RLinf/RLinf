@@ -26,7 +26,6 @@ from dataclasses import dataclass
 
 import torch
 
-from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
 from rlinf.models.embodiment.openpi.sampling import rl_sampler
 
 
@@ -96,7 +95,7 @@ def sample_actions_with_rtc_guidance(
     guidance_clip: float = 5.0,
 ) -> torch.Tensor:
     """Euler ODE sampling with overlap guidance against the previous chunk."""
-    observation = preprocess_observation(observation, train=False)
+    observation = pi0_model._preprocess_eval_observation(observation)
     B = observation.state.shape[0]
     device = observation.state.device
     if noise is None:

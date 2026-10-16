@@ -1,0 +1,33 @@
+program_id: rlinf_stack_cube
+program:
+  kind: sequence
+  items:
+  - kind: segment
+    name: red_on_blue
+    steps:
+      kind: sequence
+      items:
+      - kind: invoke
+        call:
+          kind: pick
+          object: red
+      - kind: invoke
+        call:
+          kind: place
+          object: red
+          'on': blue_top
+  - kind: segment
+    name: green_on_red
+    steps:
+      kind: sequence
+      items:
+      - kind: invoke
+        call:
+          kind: pick
+          object: green
+      - kind: invoke
+        call:
+          kind: place
+          object: green
+          'on': red_top
+targets: {}

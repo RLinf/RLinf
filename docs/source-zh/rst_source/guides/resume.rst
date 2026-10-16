@@ -118,3 +118,25 @@ DCP 将训练状态保存到一组分布式检查点文件（``.distcp``）中�
 
    想验证恢复是否成功，可以查看日志行。  
    如果下一次训练从 step 30 开始，就说明恢复正常！  
+
+控制 FSDP SFT 保存成本
+----------------------
+
+若需要频繁导出 policy，但不希望每次都保存 optimizer 状态，将 ``actor.fsdp_config.training_state_save_interval`` 设为正整数。``runner.save_interval`` 仍控制导出时机；仅当导出步数能被新 interval 整除时保存训练状态。不设置新字段时，每个 checkpoint 都保存完整训练状态。两个 interval 应对齐，例如：
+
+.. code-block:: yaml
+
+   runner:
+     save_interval: 100
+   actor:
+     fsdp_config:
+       save_full_model_weights: true
+       training_state_save_interval: 1000
+       checkpoint_format: dcp
+       checkpoint_communication_backend: gloo
+
+上述配置每 100 步导出权重，每到 1,000 的整数倍步数导出时保存可恢复的训练状态。启用 checkpoint 保存后，SFT runner 会在最后一次保存或 early-stop 保存时强制写入训练状态。其余保存只写推理权重，因此必须启用 ``save_full_model_weights: true``。在该 opt-in SFT 路径下，保存前写入 ``actor/checkpoint_metadata.json``，其中 ``complete: false``；worker 完成后改为 ``complete: true``。``save_training_state: false`` 的 checkpoint 不能恢复训练，应选择此前包含训练状态的完整 checkpoint。
+
+可选设置 ``checkpoint_communication_backend: gloo`` 为 DCP 和 RNG/data object collectives 创建临时 CPU group，要求 ``checkpoint_format: dcp``；不设置时使用已有 process group。它不替换训练通信 backend，模型状态提取和外围训练 barrier 仍可能使用训练 group。
+
+OpenPI 训练若要同时恢复数据进度，应从首次启动起启用 ``data.stateful_loader``。除模型、optimizer 和 RNG 状态外，还需完整的 loader manifest，详见 :doc:`OpenPI SFT <../examples/embodied/sft_openpi>`。

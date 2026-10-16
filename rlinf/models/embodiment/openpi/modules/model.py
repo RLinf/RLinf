@@ -208,11 +208,14 @@ def preprocess_observation(
     image_keys: Sequence[str] = IMAGE_KEYS,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
     rng: torch.Generator | None = None,
+    deterministic_crop: bool = False,
 ) -> Observation:
     """Preprocess observations with optional image augmentations.
 
     For training, applies random crop, rotate, and color jitter augmentations.
-    Resizes images to the target resolution with padding.
+    Resizes images to the target resolution with padding. ``deterministic_crop``
+    applies the SFT top-left crop during inference without drawing augmentation
+    randomness.
     """
     if not set(image_keys).issubset(observation.images):
         raise ValueError(
@@ -234,7 +237,7 @@ def preprocess_observation(
         if image.shape[1:3] != image_resolution:
             image = resize_with_pad_torch(image, *image_resolution)
 
-        if train:
+        if train or deterministic_crop:
             # Convert from [-1, 1] to [0, 1] for augmentations
             image = image / 2.0 + 0.5
             # image is in (B, H, W, C) format
@@ -253,12 +256,12 @@ def preprocess_observation(
                     crop_h, crop_w = int(h * 0.95), int(w * 0.95)
                     top = (
                         torch.randint(0, h - crop_h + 1, (1,), generator=rng).item()
-                        if rng is not None
+                        if train and rng is not None
                         else 0
                     )
                     left = (
                         torch.randint(0, w - crop_w + 1, (1,), generator=rng).item()
-                        if rng is not None
+                        if train and rng is not None
                         else 0
                     )
                     aug_image = TF.crop(aug_image, top, left, crop_h, crop_w)
@@ -267,14 +270,14 @@ def preprocess_observation(
                     # Random rotation (-5 to 5 degrees)
                     angle = (
                         (torch.rand(1, generator=rng).item() * 10 - 5)
-                        if rng is not None
+                        if train and rng is not None
                         else 0.0
                     )
                     aug_image = TF.rotate(aug_image, angle, fill=0)
 
                 # Color jitter
                 # Simulate augmax ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5)
-                if rng is not None:
+                if train and rng is not None:
                     b = torch.rand(1, generator=rng).item() * 0.3
                     c = torch.rand(1, generator=rng).item() * 0.4
                     s = torch.rand(1, generator=rng).item() * 0.5

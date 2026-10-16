@@ -1,0 +1,9 @@
+stage,runtime,checkpoint,stable_successes,episodes,scope
+historical_narrow_SFT,custom_native,600,14,16,Independent narrow test; original seed initialization and vision-stem synchronization limitations; not formal sampler evidence
+formal_v1_SFT,custom_native,4000,0,27,Production validation failed; standalone9/27 kept separately
+SFT_v2,old_combined_SDK0.3_native0.5.0,3000,1,27,Production gate failed;8dependency conflicts in combined installation
+SFT_v2,custom_native,3000,11,27,Standalone8/27; production32+27 passed
+PPO_smoke,custom_native,10epochs_1350updates,9,27,Cold baseline11/27;5to10checkpoint recovery passed
+PPO50,custom_native,50epochs_6750updates,16,27,Cold baseline11/27; one-seed development
+SFT_v2,public_pinned,3000,11,27,Standalone7/27; production32+27 passed
+PPO50,public_pinned,50epochs_6750updates,12,27,Cold baseline11/27; one-seed development

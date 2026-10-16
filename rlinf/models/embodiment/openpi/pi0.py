@@ -97,6 +97,7 @@ class Pi0(model.BaseModel):
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
         rlt_cfg: OpenPiPytorchRLTConfig | None = None,
+        eval_sft_image_crop: bool = False,
     ):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
@@ -163,6 +164,7 @@ class Pi0(model.BaseModel):
             config_name=config_name,
             state_indices=state_indices,
             rlt_cfg=rlt_cfg,
+            eval_sft_image_crop=eval_sft_image_crop,
         )
         # PI0Pytorch.__init__ sets this globally so fp32 action/value heads
         # use TF32. OpenPI RL keeps this even though it un-compiles sample_actions.
@@ -538,7 +540,7 @@ class Pi0(model.BaseModel):
         Returns:
             actions: (B, action_horizon, action_dim)
         """
-        observation = model.preprocess_observation(observation, train=False)
+        observation = self._preprocess_eval_observation(observation)
 
         dt = -1.0 / num_steps
         B = observation.state.shape[0]
@@ -566,6 +568,16 @@ class Pi0(model.BaseModel):
 
         return x_t
 
+    def _preprocess_eval_observation(
+        self, observation: model.Observation
+    ) -> model.Observation:
+        """Apply the selected deterministic inference image preprocessing."""
+        if self.eval_sft_image_crop and self.training:
+            raise ValueError("eval_sft_image_crop requires model.eval().")
+        return model.preprocess_observation(
+            observation, train=False, deterministic_crop=self.eval_sft_image_crop
+        )
+
     def _init_rlinf_runtime(
         self,
         *,
@@ -575,6 +587,7 @@ class Pi0(model.BaseModel):
         config_name: str,
         state_indices: Sequence[int] | None,
         rlt_cfg: OpenPiPytorchRLTConfig | None,
+        eval_sft_image_crop: bool = False,
     ) -> None:
         """Attach RLinf SFT knobs (num_steps, optional RLT) without a wrapper."""
         self.num_steps = num_steps
@@ -584,6 +597,7 @@ class Pi0(model.BaseModel):
         self.action_chunk = action_chunk
         self.config_name = config_name
         self.state_indices = list(state_indices) if state_indices else None
+        self.eval_sft_image_crop = eval_sft_image_crop
         # Workers (NFT, FSDP wrap) read ``model.config.num_steps``.
         self.config = SimpleNamespace(
             num_steps=num_steps,
@@ -592,6 +606,7 @@ class Pi0(model.BaseModel):
             action_dim=self.action_dim,
             action_env_dim=self.action_env_dim,
             config_name=config_name,
+            eval_sft_image_crop=eval_sft_image_crop,
         )
         self.rlt_cfg = rlt_cfg or OpenPiPytorchRLTConfig()
         if self.rlt_cfg.use_rlt:

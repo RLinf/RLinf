@@ -1,0 +1,9 @@
+id: RLinf-StackCube-Expert-v1
+environment:
+  component: env.yaml
+task_program:
+  program: task_program/program.yaml
+  integration: task_program/integration.yaml
+  execution_policy: ../../../components/execution_policies/stack_cube.yaml
+embodiment:
+  component: ../../../components/embodiments/isaaclab_panda.yaml

@@ -868,3 +868,555 @@ def test_clear_stub_import_preserves_real_flash_attn_module():
     Patcher.clear_stub_import("flash_attn")
 
     assert sys.modules["flash_attn"] is real_flash_attn
+
+
+@pytest.fixture
+def cpu_openpi_ppo_workers(monkeypatch):
+    """Use real worker initialization with a small model/backend boundary."""
+    import random
+
+    import numpy as np
+    import torch
+
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.rollout.hf import huggingface_worker
+
+    # This CPU backend has no remote tracing manager.
+    monkeypatch.setattr(Tracer, "_unavailable", True)
+
+    class TinyPolicy(torch.nn.Linear):
+        def __init__(self):
+            super().__init__(7, 32)
+            random.random()
+            np.random.rand()
+
+        def predict_action_batch(self, env_obs, **kwargs):
+            return torch.randn(2, 5, 7), {
+                "python_draw": random.randint(0, 100000),
+                "numpy_draw": float(np.random.rand()),
+            }
+
+    class CPUActor(EmbodiedFSDPActor):
+        def __init__(self, cfg, rank):
+            self.cfg, self._rank = cfg, rank
+            self.enable_offload = False
+
+        def setup_model_and_optimizer(self):
+            self.model = TinyPolicy()
+            self.optimizer = torch.optim.AdamW(self.model.parameters())
+
+    class CPURollout(huggingface_worker.MultiStepRolloutWorker):
+        def __init__(self, cfg, rank):
+            self.cfg, self._rank = cfg, rank
+            self.model_cfg = cfg.actor.model
+            self.expert_model = self.rlt_feature_model = None
+            self.enable_cuda_graph = self.enable_offload = False
+            self.enable_opd = self.enable_dagger = False
+            self.algorithm_cfg = {}
+            self._accelerator_type = None
+            self._timer_metrics = {}
+
+    monkeypatch.setattr(huggingface_worker, "get_model", lambda cfg: TinyPolicy())
+
+    def build(role, seed=0, rank=0, model_type="openpi", rollout_seed=None):
+        cfg = OmegaConf.create(
+            {
+                "actor": {"seed": seed, "model": {"model_type": model_type}},
+                "rollout": {"model": {}},
+                "runner": {},
+            }
+        )
+        if rollout_seed is not None:
+            cfg.rollout.seed = rollout_seed
+        return (CPUActor if role == "actor" else CPURollout)(cfg, rank)
+
+    return build
+
+
+def _ppo_seed_draws():
+    import random
+
+    import numpy as np
+    import torch
+
+    return random.randint(0, 100000), float(np.random.rand()), torch.randn(2, 10, 32)
+
+
+def _assert_ppo_seed_draws_equal(left, right):
+    import torch
+
+    assert left[:2] == right[:2]
+    torch.testing.assert_close(left[2], right[2], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("role", ["actor", "rollout"])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_openpi_ppo_worker_seed_reproduces_model_and_stream(
+    cpu_openpi_ppo_workers, role, seed
+):
+    import torch
+
+    from rlinf.utils.utils import seed_everything
+
+    expected_model = expected_draws = None
+    for unrelated_seed in [123, 456]:
+        seed_everything(unrelated_seed)
+        worker = cpu_openpi_ppo_workers(role, seed=seed, rank=1)
+        worker.init_worker()
+        model = worker.model if role == "actor" else worker.hf_model
+        if expected_model is None:
+            expected_model = {k: v.clone() for k, v in model.state_dict().items()}
+            expected_draws = _ppo_seed_draws()
+        else:
+            for key, value in model.state_dict().items():
+                torch.testing.assert_close(value, expected_model[key], rtol=0, atol=0)
+            _assert_ppo_seed_draws_equal(_ppo_seed_draws(), expected_draws)
+        assert torch.initial_seed() == seed + 1
+
+
+def test_openpi_ppo_actor_ranks_share_critic_initialization(cpu_openpi_ppo_workers):
+    import torch
+
+    first = cpu_openpi_ppo_workers("actor", seed=1, rank=0)
+    first.init_worker()
+    weights = {k: v.clone() for k, v in first.model.state_dict().items()}
+    noise = _ppo_seed_draws()[2]
+    second = cpu_openpi_ppo_workers("actor", seed=1, rank=1)
+    second.init_worker()
+    for key, value in second.model.state_dict().items():
+        torch.testing.assert_close(value, weights[key], rtol=0, atol=0)
+    assert not torch.equal(noise, _ppo_seed_draws()[2])
+
+
+@pytest.mark.parametrize("rollout_seed", [None, 0, 73])
+def test_openpi_rollout_explicit_seed_and_rank_control_sampling(
+    cpu_openpi_ppo_workers, rollout_seed
+):
+    import torch
+
+    from rlinf.utils.utils import seed_everything
+
+    worker = cpu_openpi_ppo_workers(
+        "rollout", seed=11, rank=2, rollout_seed=rollout_seed
+    )
+    worker.init_worker()
+    actions, result = worker.predict({}, mode="train")
+    expected_seed = (11 if rollout_seed is None else rollout_seed) + 2
+    seed_everything(expected_seed)
+    expected_actions, expected_result = worker.hf_model.predict_action_batch({})
+    torch.testing.assert_close(actions, expected_actions, rtol=0, atol=0)
+    assert result == expected_result | {"expert_label_flag": False}
+
+
+def test_openpi_rollout_restored_rng_is_not_reseeded_by_prediction(
+    cpu_openpi_ppo_workers,
+):
+    import torch
+
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+
+    worker = cpu_openpi_ppo_workers("rollout", seed=2, rank=1)
+    worker.init_worker()
+    worker.predict({}, mode="train")
+    saved = get_rng_state()
+    expected_actions, expected_result = worker.predict({}, mode="eval")
+    restored = cpu_openpi_ppo_workers("rollout", seed=2, rank=1)
+    restored.init_worker()
+    set_rng_state(saved)
+    actions, result = restored.predict({}, mode="eval")
+    torch.testing.assert_close(actions, expected_actions, rtol=0, atol=0)
+    assert result == expected_result
+
+
+@pytest.mark.parametrize("role", ["actor", "rollout"])
+def test_non_openpi_ppo_worker_preserves_previous_rng_behavior(
+    cpu_openpi_ppo_workers, role
+):
+    import torch
+
+    from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
+
+    seed_everything(999)
+    initial = get_rng_state()
+    worker = cpu_openpi_ppo_workers(role, seed=0, model_type="openvla")
+    worker.init_worker()
+    actual = _ppo_seed_draws()
+    set_rng_state(initial)
+    model = worker.model if role == "actor" else worker.hf_model
+    type(model)()
+    _assert_ppo_seed_draws_equal(_ppo_seed_draws(), actual)
+    assert torch.initial_seed() == 999
+
+
+@pytest.fixture
+def cpu_openpi_sft_worker():
+    """Exercise the SFT initialization lifecycle with a small CPU model."""
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    class CPUWorker(FSDPVlaSftWorker):
+        def __init__(self, seed=0, rank=0, model_type="openpi"):
+            self.cfg = OmegaConf.create(
+                {
+                    "actor": {
+                        "seed": seed,
+                        "model": {"model_type": model_type},
+                        "optim": {"total_training_steps": 30000},
+                    }
+                }
+            )
+            self._rank = rank
+
+        def setup_model_and_optimizer(self):
+            import torch
+
+            self.model = torch.nn.Linear(7, 32)
+            self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=2.5e-5)
+
+    return CPUWorker
+
+
+def _sft_cpu_random_draws():
+    import random
+
+    import numpy as np
+    import torch
+
+    return (
+        random.random(),
+        np.random.rand(),
+        torch.randn(2, 10, 32),
+        torch.distributions.Beta(torch.tensor(1.5), torch.tensor(1.0)).sample((2,)),
+    )
+
+
+def _assert_sft_random_draws_equal(left, right):
+    import torch
+
+    assert left[:2] == right[:2]
+    for a, b in zip(left[2:], right[2:], strict=True):
+        torch.testing.assert_close(a, b, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_openpi_sft_seed_controls_initialization_and_training(
+    cpu_openpi_sft_worker, seed
+):
+    import torch
+
+    from rlinf.utils.utils import seed_everything
+
+    seed_everything(987)
+    first = cpu_openpi_sft_worker(seed=seed, rank=1)
+    first.init_worker()
+    expected_weights = {k: v.clone() for k, v in first.model.state_dict().items()}
+    expected_draws = _sft_cpu_random_draws()
+    seed_everything(654)
+    second = cpu_openpi_sft_worker(seed=seed, rank=1)
+    second.init_worker()
+    for k, value in second.model.state_dict().items():
+        torch.testing.assert_close(value, expected_weights[k], rtol=0, atol=0)
+    _assert_sft_random_draws_equal(_sft_cpu_random_draws(), expected_draws)
+    assert torch.initial_seed() == seed + 1
+
+
+def test_openpi_sft_ranks_share_initial_weights_and_have_distinct_noise(
+    cpu_openpi_sft_worker,
+):
+    import torch
+
+    first = cpu_openpi_sft_worker(seed=0, rank=0)
+    first.init_worker()
+    initial = {k: v.clone() for k, v in first.model.state_dict().items()}
+    noise0 = _sft_cpu_random_draws()
+    second = cpu_openpi_sft_worker(seed=0, rank=1)
+    second.init_worker()
+    for k, value in second.model.state_dict().items():
+        torch.testing.assert_close(value, initial[k], rtol=0, atol=0)
+    assert not torch.equal(noise0[2], _sft_cpu_random_draws()[2])
+
+
+def test_openpi_sft_checkpoint_rng_supersedes_fresh_initialization(
+    cpu_openpi_sft_worker,
+):
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+
+    worker = cpu_openpi_sft_worker(seed=1, rank=1)
+    worker.init_worker()
+    _sft_cpu_random_draws()
+    saved = get_rng_state()
+    expected = _sft_cpu_random_draws()
+    restored = cpu_openpi_sft_worker(seed=1, rank=1)
+    restored.init_worker()
+    set_rng_state(saved)
+    _assert_sft_random_draws_equal(_sft_cpu_random_draws(), expected)
+
+
+def test_other_vla_sft_initialization_preserves_existing_rng_behavior(
+    cpu_openpi_sft_worker,
+):
+    import torch
+
+    from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
+
+    seed_everything(999)
+    initial = get_rng_state()
+    worker = cpu_openpi_sft_worker(seed=0, model_type="openvla")
+    worker.init_worker()
+    actual = _sft_cpu_random_draws()
+    set_rng_state(initial)
+    torch.nn.Linear(7, 32)
+    _assert_sft_random_draws_equal(_sft_cpu_random_draws(), actual)
+    assert torch.initial_seed() == 999
+
+
+def test_stack_cube_worker_preflight_accepts_complete_formal_sft_export(tmp_path):
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor = tmp_path / "global_step_2000/actor"
+    weights = actor / "model_state_dict/full_weights.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"export")
+    marker = actor / "checkpoint_metadata.json"
+    marker.write_text(json.dumps({"step": 2000, "complete": True}))
+    assert checkpoint_actor(actor)[0] == actor
+    assert checkpoint_actor(actor.parent)[1]["step"] == 2000
+    marker.write_text(json.dumps({"step": 2000, "complete": False}))
+    with pytest.raises(ValueError, match="complete SFT"):
+        checkpoint_actor(actor)
+    marker.write_text(json.dumps({"step": 2000, "complete": True}))
+    weights.unlink()
+    with pytest.raises(ValueError, match="full_weights.pt"):
+        checkpoint_actor(actor)
+
+
+@pytest.fixture
+def cpu_ppo_checkpoint(tmp_path):
+    import random
+
+    import numpy as np
+    import torch
+    from torch.distributed.checkpoint import save
+
+    actor = tmp_path / "global_step_5/actor"
+    actor.mkdir(parents=True)
+    model = torch.nn.Linear(2, 2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1.0)
+    model(torch.ones(1, 2)).sum().backward()
+    optimizer.step()
+    scheduler.step()
+    state = {
+        "model": model.state_dict(),
+        "optimizers": optimizer.state_dict(),
+        "lr_schedulers": [scheduler.state_dict()],
+        "rng": (
+            {
+                "cpu": torch.get_rng_state(),
+                "numpy": np.random.get_state(),
+                "random": random.getstate(),
+            },
+        ),
+        "fsdp_version": 1,
+    }
+    save({"fsdp_checkpoint": state}, checkpoint_id=actor / "dcp_checkpoint")
+    weights = actor / "model_state_dict/full_weights.pt"
+    weights.parent.mkdir()
+    torch.save(model.state_dict(), weights)
+    return actor
+
+
+def test_stack_cube_worker_preflight_accepts_native_ppo_export(cpu_ppo_checkpoint):
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor, metadata = checkpoint_actor(cpu_ppo_checkpoint.parent, checkpoint_kind="ppo")
+    assert actor == cpu_ppo_checkpoint
+    assert metadata["step"] == 5
+    assert metadata["complete"] is None
+    assert metadata["completion_marker_present"] is False
+    assert metadata["dcp_storage_ranges_complete"] is True
+    assert metadata["dcp_backing_files_bytes"]
+    with pytest.raises(FileNotFoundError):
+        checkpoint_actor(cpu_ppo_checkpoint)
+
+
+def test_stack_cube_worker_preflight_accepts_marked_ppo_inference_export(tmp_path):
+    import torch
+
+    from rlinf.hybrid_engines.fsdp.strategy.checkpoint import (
+        validate_checkpoint_for_resume,
+    )
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor = tmp_path / "published_ppo_model"
+    weights = actor / "model_state_dict/full_weights.pt"
+    weights.parent.mkdir(parents=True)
+    torch.save({"weight": torch.ones(2)}, weights)
+    (actor / "checkpoint_metadata.json").write_text(
+        json.dumps(
+            {
+                "step": 10,
+                "complete": True,
+                "checkpoint_kind": "ppo",
+                "save_training_state": False,
+            }
+        )
+    )
+    _, metadata = checkpoint_actor(actor, checkpoint_kind="ppo")
+    assert metadata["inference_only_export"] is True
+    with pytest.raises(ValueError, match="kind differs"):
+        checkpoint_actor(actor)
+    with pytest.raises(ValueError, match="inference weights only"):
+        validate_checkpoint_for_resume(str(actor))
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "truncated",
+        "missing_file",
+        "missing_rng",
+        "sft_marker",
+        "incomplete_marker",
+        "missing_export",
+    ],
+)
+def test_stack_cube_worker_preflight_rejects_incomplete_ppo_export(
+    cpu_ppo_checkpoint, fault
+):
+    from torch.distributed.checkpoint import FileSystemReader
+
+    from toolkits.lerobot.verify_stack_cube_workers import checkpoint_actor
+
+    actor = cpu_ppo_checkpoint
+    directory = actor / "dcp_checkpoint"
+    if fault in {"truncated", "missing_file"}:
+        shard = next(directory.glob("*.distcp"))
+        if fault == "truncated":
+            shard.write_bytes(b"")
+        else:
+            shard.unlink()
+    elif fault == "missing_rng":
+        metadata = FileSystemReader(directory).read_metadata()
+        del metadata.state_dict_metadata["fsdp_checkpoint.rng"]
+        with (directory / ".metadata").open("wb") as stream:
+            pickle.dump(metadata, stream)
+    elif fault == "sft_marker":
+        (actor / "openpi_loader_state.json").write_text("{}")
+    elif fault == "incomplete_marker":
+        (actor / "checkpoint_metadata.json").write_text(
+            json.dumps({"step": 5, "complete": False})
+        )
+    else:
+        (actor / "model_state_dict/full_weights.pt").unlink()
+    with pytest.raises((ValueError, FileNotFoundError)):
+        checkpoint_actor(actor, checkpoint_kind="ppo")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "test",
+        "ood",
+        "duplicate",
+        "duplicate_id",
+        "missing_id",
+        "overlap",
+        "short_train",
+    ],
+)
+def test_stack_cube_worker_preflight_keeps_formal_validation_independent(
+    tmp_path, fault
+):
+    from toolkits.lerobot.verify_stack_cube_workers import request_cohorts
+
+    train = [
+        {
+            "request_id": f"request-{seed}",
+            "seed": seed,
+            "split": "train",
+            "profile": "formal",
+        }
+        for seed in range(32)
+    ]
+    val = [
+        {
+            "request_id": f"request-{seed}",
+            "seed": seed,
+            "split": "val",
+            "profile": "formal",
+        }
+        for seed in range(100, 127)
+    ]
+    if fault == "test":
+        val[0]["split"] = "test"
+    elif fault == "ood":
+        val[0]["profile"] = "ood_position"
+    elif fault == "duplicate":
+        val[1]["seed"] = val[0]["seed"]
+    elif fault == "duplicate_id":
+        val[1]["request_id"] = val[0]["request_id"]
+    elif fault == "missing_id":
+        val[0].pop("request_id")
+    elif fault == "overlap":
+        train[0]["seed"] = val[0]["seed"]
+    elif fault == "short_train":
+        train.pop()
+    train_path, val_path = tmp_path / "train.json", tmp_path / "val.json"
+    train_path.write_text(json.dumps({"requests": train}))
+    val_path.write_text(json.dumps({"requests": val}))
+    if fault is None:
+        assert request_cohorts(train_path, val_path) == (train, val)
+    else:
+        with pytest.raises(ValueError):
+            request_cohorts(train_path, val_path)
+
+
+def test_stack_cube_worker_separate_interpreter_preserves_policy_protocol(tmp_path):
+    from omegaconf import OmegaConf
+
+    from toolkits.lerobot.verify_stack_cube_workers import configuration
+
+    paths = {}
+    for name in [
+        "checkpoint",
+        "norm_stats",
+        "train_requests",
+        "val_requests",
+        "panda_urdf",
+    ]:
+        path = tmp_path / name
+        path.mkdir() if name == "checkpoint" else path.write_text("{}")
+        paths[name] = path
+    arguments = SimpleNamespace(
+        **paths,
+        dependency_path=tmp_path / "model-reader",
+        output=tmp_path / "output",
+        gpu=3,
+        seed=0,
+        dry_run=True,
+        env_python=None,
+    )
+    shared = OmegaConf.to_container(configuration(arguments), resolve=True)
+    arguments.env_python = tmp_path / "simulator-python"
+    separate = OmegaConf.to_container(configuration(arguments), resolve=True)
+    assert len(separate["cluster"]["node_groups"]) == 2
+    model_group, sim_group = separate["cluster"]["node_groups"]
+    assert sim_group["env_configs"][0]["python_interpreter_path"] == str(
+        arguments.env_python
+    )
+    assert {"PYTHONPATH": str(Path(__file__).resolve().parents[2])} in sim_group[
+        "env_configs"
+    ][0]["env_vars"]
+    assert (
+        separate["cluster"]["component_placement"]["actor,rollout"]["node_group"]
+        == model_group["label"]
+    )
+    assert (
+        separate["cluster"]["component_placement"]["env"]["node_group"]
+        == sim_group["label"]
+    )
+    for cfg in (shared, separate):
+        cfg["cluster"].pop("node_groups")
+        cfg["cluster"].pop("component_placement")
+    assert shared == separate

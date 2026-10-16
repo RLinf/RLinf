@@ -1,0 +1,26 @@
+# Paths identify the verified asset and frozen reset cohort used by this run.
+env_type: embodichain
+gym_config_path: rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml
+panda_urdf: ${oc.env:STACK_CUBE_PANDA_URDF}
+request_manifest: ${oc.env:STACK_CUBE_PPO_TRAIN_REQUESTS}
+stack_cube_protocol: isaaclab
+
+headless: true
+sim_device: cuda
+clip_actions: false
+
+total_num_envs: null
+auto_reset: false
+ignore_terminations: false
+use_fixed_reset_state_ids: false
+seed: 0
+group_size: 1
+max_episode_steps: 450
+max_steps_per_rollout_epoch: 450
+is_eval: false
+
+video_cfg:
+  save_video: false
+  info_on_video: false
+  fps: 20
+  video_base_dir: ${runner.logger.log_path}/video/train

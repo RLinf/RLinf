@@ -4,6 +4,44 @@ on:
   workflow_call:
 
 jobs:
+  sft-embodichain-stack-cube-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create OpenPI and simulator environments
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export UV_TORCH_BACKEND=cu128
+          bash requirements/install.sh --torch 2.7.1 --no-root embodied --model openpi --env embodichain
+
+      - name: SFT, checkpoint resume and PPO handoff
+        timeout-minutes: 45
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export STACK_CUBE_ENV_PYTHON="$REPO_PATH/.venv-embodichain/bin/python"
+          export STACK_CUBE_MODEL_PYTHON="$REPO_PATH/.venv/bin/python"
+          export STACK_CI_RUN=$(mktemp -d "${RUNNER_TEMP:-/tmp}/embodichain-stack-cube-sft.XXXXXX")
+          echo "STACK_CI_RUN=$STACK_CI_RUN" >> "$GITHUB_ENV"
+          export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 JAX_PLATFORMS=cpu
+          export LD_LIBRARY_PATH="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))'):${LD_LIBRARY_PATH:-}"
+          source tests/e2e_tests/embodied/prepare_stack_cube.sh
+          export STACK_CUBE_TRAIN_DATA="$STACK_CI_RUN/split/train"
+          bash tests/e2e_tests/sft/run_stack_cube_resume.sh
+          export STACK_CUBE_SFT_MODEL="$STACK_CI_RUN/sft/ci-test/checkpoints/global_step_2"
+          bash tests/e2e_tests/embodied/run.sh embodichain_stack_cube_ppo_openpi_pi05
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv .venv-embodichain
+          if [ -n "${STACK_CI_RUN:-}" ]; then rm -rf "$STACK_CI_RUN"; fi
+
   sft-dreamzero-droid-wan22-test:
     runs-on: embodied
     steps:

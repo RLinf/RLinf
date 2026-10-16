@@ -25,7 +25,10 @@ from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
 
+import gymnasium as gym
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as parquet
 import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -88,6 +91,409 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+def test_openpi_sft_rejects_tokenizer_state_mode_mismatch():
+    """A YAML state override must agree with the selected SFT tokenizer."""
+    import dataclasses
+
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        _validate_openpi_model_shape,
+    )
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config("pi05_isaaclab_stack_cube")
+    model_cfg = OmegaConf.create(
+        {
+            "openpi": {
+                "config_name": "pi05_isaaclab_stack_cube",
+                "model_action_dim": 32,
+                "action_horizon": 10,
+                "discrete_state_input": True,
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="SFT tokenizer"):
+        _validate_openpi_model_shape(model_cfg, config)
+    state_config = dataclasses.replace(
+        config, model=dataclasses.replace(config.model, discrete_state_input=True)
+    )
+    _validate_openpi_model_shape(model_cfg, state_config)
+
+
+def test_openpi_sft_loader_requires_concrete_local_lerobot_root(tmp_path):
+    """A split parent is rejected before OpenPI tries to build its loader."""
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        _validate_local_lerobot_root,
+    )
+
+    dataset_root = tmp_path / "dataset"
+    (dataset_root / "meta").mkdir(parents=True)
+    (dataset_root / "meta" / "info.json").write_text("{}")
+    split_root = tmp_path / "train"
+    split_root.mkdir()
+    (split_root / dataset_root.name).symlink_to(dataset_root)
+
+    _validate_local_lerobot_root(str(dataset_root))
+    with pytest.raises(ValueError, match="meta/info.json directly"):
+        _validate_local_lerobot_root(str(split_root))
+
+
+@pytest.fixture
+def openpi_sft_cfg(tmp_path):
+    """Provide one local dataset and explicit identity normalization."""
+    root = tmp_path / "train"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta/info.json").write_text("{}")
+    stats = tmp_path / "norm_stats.json"
+    stats.write_text(
+        json.dumps(
+            {
+                "norm_stats": {
+                    key: {
+                        "mean": [0.0] * width,
+                        "std": [1.0] * width,
+                        "q01": [-1.0] * width,
+                        "q99": [1.0] * width,
+                    }
+                    for key, width in (("state", 8), ("actions", 7))
+                }
+            }
+        )
+    )
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 17,
+                "micro_batch_size": 2,
+                "model": {
+                    "model_path": str(tmp_path),
+                    "openpi": {
+                        "config_name": "pi05_isaaclab_stack_cube",
+                        "model_action_dim": 32,
+                        "action_horizon": 10,
+                        "discrete_state_input": False,
+                    },
+                    "openpi_data": {
+                        "norm_stats_path": str(stats),
+                    },
+                },
+            },
+            "data": {"num_workers": 0},
+        }
+    )
+    return cfg, root
+
+
+@pytest.mark.parametrize("eval_dataset", [False, True])
+def test_openpi_sft_default_and_eval_keep_official_factory(
+    monkeypatch, openpi_sft_cfg, eval_dataset
+):
+    """Uniform default and validation use the original official factory."""
+    import openpi.training.data_loader as official
+
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        build_official_openpi_sft_dataloader,
+    )
+
+    cfg, root = openpi_sft_cfg
+    calls = []
+
+    def factory(config, **kwargs):
+        calls.append((config.seed, config.batch_size, kwargs))
+        return SimpleNamespace(data_config=lambda: "official-config")
+
+    monkeypatch.setattr(official, "create_data_loader", factory)
+    _, data_config = build_official_openpi_sft_dataloader(
+        cfg, 2, 1, str(root), eval_dataset=eval_dataset
+    )
+    assert calls == [(17, 4, {"framework": "pytorch", "shuffle": not eval_dataset})]
+    assert data_config == "official-config"
+
+
+def test_embodichain_env_wraps_rgba_camera_observations(monkeypatch):
+    """The public reset API exposes RGB images without constructing DexSim."""
+    from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+
+    class _FakeEnv:
+        action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+        metadata = {"dataset": {"instruction": {"lang": "test task"}}}
+
+        def reset(self, **kwargs):
+            del kwargs
+            return (
+                {
+                    "robot": {"qpos": torch.zeros(1, 2)},
+                    "sensor": {
+                        "cam_high": {
+                            "color": torch.zeros(1, 4, 5, 4, dtype=torch.uint8)
+                        }
+                    },
+                },
+                {},
+            )
+
+        def close(self, *, exit_process=False):
+            return None
+
+    monkeypatch.setattr(EmbodiChainEnv, "_build_env", lambda self: _FakeEnv())
+    env = EmbodiChainEnv(
+        SimpleNamespace(
+            seed=0,
+            group_size=1,
+            auto_reset=True,
+            ignore_terminations=False,
+            max_episode_steps=5,
+            state_keys=["qpos"],
+            main_camera_uid="cam_high",
+            wrist_camera_uids=[],
+            sim_device="cpu",
+            headless=True,
+            is_eval=True,
+        ),
+        num_envs=1,
+        seed_offset=0,
+        total_num_processes=1,
+        worker_info=SimpleNamespace(),
+    )
+    wrapped, _ = env.reset()
+    assert wrapped["states"].shape == (1, 2)
+    assert wrapped["episode_steps"].tolist() == [0]
+    assert wrapped["main_images"].shape == (1, 4, 5, 3)
+    assert wrapped["main_images"].dtype == torch.uint8
+    assert wrapped["task_descriptions"] == ["test task"]
+    env.close()
+
+
+def test_embodichain_env_disables_underlying_auto_reset_for_eval(monkeypatch):
+    """No-auto-reset evaluation keeps the terminal simulator state."""
+    from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+
+    class _FakeEnv:
+        action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+
+        def reset(self, **kwargs):
+            del kwargs
+            return {"robot": {"qpos": torch.zeros(1, 2)}}, {}
+
+        def close(self, *, exit_process=False):
+            return None
+
+    fake = _FakeEnv()
+    monkeypatch.setattr(EmbodiChainEnv, "_build_env", lambda self: fake)
+    env = EmbodiChainEnv(
+        SimpleNamespace(
+            seed=0,
+            group_size=1,
+            auto_reset=False,
+            ignore_terminations=False,
+            max_episode_steps=5,
+            state_keys=["qpos"],
+            main_camera_uid=None,
+            wrist_camera_uids=[],
+            sim_device="cpu",
+            headless=True,
+        ),
+        num_envs=1,
+        seed_offset=0,
+        total_num_processes=1,
+        worker_info=SimpleNamespace(),
+    )
+    assert fake._replay_no_auto_reset is True
+    env.close()
+
+
+def test_embodichain_env_exposes_vectorized_task_descriptions(monkeypatch):
+    """OpenPI inference receives one fixed instruction for each env row."""
+    from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+
+    class _FakeEnv:
+        action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+
+        def reset(self, **kwargs):
+            del kwargs
+            return {"robot": {"qpos": torch.zeros(2, 2)}}, {}
+
+        def close(self, *, exit_process=False):
+            return None
+
+    monkeypatch.setattr(EmbodiChainEnv, "_build_env", lambda self: _FakeEnv())
+    prompt = "Pick up the cube and place it on the marked target."
+    env = EmbodiChainEnv(
+        SimpleNamespace(
+            seed=0,
+            task_prompt=prompt,
+            group_size=1,
+            auto_reset=True,
+            ignore_terminations=False,
+            max_episode_steps=5,
+            state_keys=["qpos"],
+            main_camera_uid=None,
+            wrist_camera_uids=[],
+            sim_device="cpu",
+            headless=True,
+        ),
+        num_envs=2,
+        seed_offset=0,
+        total_num_processes=1,
+        worker_info=SimpleNamespace(),
+    )
+    wrapped, _ = env.reset()
+    assert wrapped["task_descriptions"] == [prompt, prompt]
+    env.close()
+
+
+def test_embodichain_env_scales_float_rgb_camera_observations(monkeypatch):
+    """Normalized float camera output is converted to uint8 RGB."""
+    from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+
+    class _FakeEnv:
+        action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+
+        def reset(self, **kwargs):
+            del kwargs
+            return (
+                {
+                    "robot": {"qpos": torch.zeros(1, 2)},
+                    "sensor": {"cam_high": {"color": torch.full((1, 2, 3, 3), 0.5)}},
+                },
+                {},
+            )
+
+        def close(self, *, exit_process=False):
+            return None
+
+    monkeypatch.setattr(EmbodiChainEnv, "_build_env", lambda self: _FakeEnv())
+    env = EmbodiChainEnv(
+        SimpleNamespace(
+            seed=0,
+            group_size=1,
+            auto_reset=True,
+            ignore_terminations=False,
+            max_episode_steps=5,
+            state_keys=["qpos"],
+            main_camera_uid="cam_high",
+            wrist_camera_uids=[],
+            sim_device="cpu",
+            headless=True,
+        ),
+        num_envs=1,
+        seed_offset=0,
+        total_num_processes=1,
+        worker_info=SimpleNamespace(),
+    )
+    wrapped, _ = env.reset()
+
+    assert wrapped["main_images"].dtype == torch.uint8
+    assert torch.all(wrapped["main_images"] == 127)
+    env.close()
+
+
+@pytest.fixture
+def embodichain_action_bounds_env(monkeypatch):
+    """Build the public wrapper around a vectorized external joint env."""
+    from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
+
+    def make(*, clip_actions=None):
+        class NativeEnv:
+            action_space = gym.spaces.Box(
+                low=np.array([-1.0, -2.0, 0.0, 0.0], dtype=np.float32),
+                high=np.array([1.0, 2.0, 0.04, 0.04], dtype=np.float32),
+            )
+
+            def __init__(self):
+                self.actions = []
+
+            def reset(self, **kwargs):
+                return {"robot": {"qpos": torch.zeros(2, 4)}}, {}
+
+            def step(self, action):
+                self.actions.append(action.clone())
+                return (
+                    {"robot": {"qpos": action.clone()}},
+                    torch.zeros(2),
+                    torch.zeros(2, dtype=torch.bool),
+                    torch.zeros(2, dtype=torch.bool),
+                    {},
+                )
+
+            def close(self, *, exit_process=False):
+                return None
+
+        native = NativeEnv()
+        monkeypatch.setattr(EmbodiChainEnv, "_build_env", lambda self: native)
+        cfg = SimpleNamespace(
+            sim_device="cpu",
+            group_size=1,
+            auto_reset=False,
+            state_keys=["qpos"],
+            main_camera_uid=None,
+        )
+        if clip_actions is not None:
+            cfg.clip_actions = clip_actions
+        env = EmbodiChainEnv(
+            cfg,
+            num_envs=2,
+            seed_offset=0,
+            total_num_processes=1,
+            worker_info=SimpleNamespace(),
+        )
+        env.reset()
+        return env, native
+
+    return make
+
+
+def test_embodichain_action_bounds_in_range_pass_through(
+    embodichain_action_bounds_env,
+):
+    env, native = embodichain_action_bounds_env(clip_actions=True)
+    action = torch.tensor([[0.2, -0.3, 0.02, 0.03], [-0.5, 0.4, 0.01, 0.04]])
+    _, _, _, _, info = env.step(action)
+    assert torch.equal(native.actions[0], action)
+    assert torch.equal(info["applied_action"], action)
+    assert not info["action_clipped"].any()
+    env.close()
+
+
+def test_embodichain_action_bounds_vectorized_clamping_and_metadata(
+    embodichain_action_bounds_env,
+):
+    env, native = embodichain_action_bounds_env(clip_actions=True)
+    action = torch.tensor([[2.0, -3.0, -0.141, 0.111], [-2.0, 0.5, 0.02, -0.01]])
+    expected = torch.tensor([[1.0, -2.0, 0.0, 0.04], [-1.0, 0.5, 0.02, 0.0]])
+    _, _, _, _, info = env.step(action)
+    assert torch.equal(native.actions[0], expected)
+    assert torch.equal(info["applied_action"], expected)
+    assert torch.equal(info["action_clipped"], expected != action)
+    env.close()
+
+
+@pytest.mark.parametrize("clip_actions", [None, False])
+def test_embodichain_action_bounds_disabled_preserves_finite_commands(
+    embodichain_action_bounds_env, clip_actions
+):
+    env, native = embodichain_action_bounds_env(clip_actions=clip_actions)
+    action = torch.tensor([[2.0, -3.0, -0.141, 0.111], [-2.0, 0.5, 0.02, -0.01]])
+    _, _, _, _, info = env.step(action)
+    assert torch.equal(native.actions[0], action)
+    assert torch.equal(info["applied_action"], action)
+    assert not info["action_clipped"].any()
+    env.close()
+
+
+@pytest.mark.parametrize("clip_actions", [False, True])
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
+def test_embodichain_action_bounds_rejects_nonfinite_before_native_writes(
+    embodichain_action_bounds_env, clip_actions, bad_value
+):
+    env, native = embodichain_action_bounds_env(clip_actions=clip_actions)
+    action = torch.zeros(2, 4)
+    action[1, 2] = bad_value
+    with pytest.raises(ValueError, match="finite"):
+        env.step(action)
+    assert not native.actions
+    env.close()
 
 
 def _scalar_trajectory(value: float) -> Trajectory:
@@ -3299,3 +3705,430 @@ def test_vlm_collate_still_rejects_unknown_mm_keys():
 
     with pytest.raises(ValueError, match="Unsupported multi_modal_input key"):
         collate_fn([sample])
+
+
+def test_stack_cube_panda_preparation_preserves_meshes_and_control_contract(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    from toolkits.lerobot.prepare_stack_cube_data import prepare_panda
+
+    package = tmp_path / "franka_description"
+    (package / "robots").mkdir(parents=True)
+    (package / "meshes/visual").mkdir(parents=True)
+    (package / "meshes/visual/hand.dae").write_text("mesh-data")
+    (package / "meshes/visual/texture.png").write_bytes(b"texture-data")
+    source = package / "robots/panda_arm_hand.urdf"
+    source.write_text("""<robot name="panda">
+      <link name="panda_hand"><visual><geometry>
+        <mesh filename="package://franka_description/meshes/visual/hand.dae"/>
+      </geometry></visual></link>
+      <joint name="panda_finger_joint1" type="prismatic"/>
+      <joint name="panda_finger_joint2" type="prismatic">
+        <mimic joint="panda_finger_joint1"/>
+      </joint>
+    </robot>""")
+    output = tmp_path / "private_asset"
+    path = prepare_panda(source, output)
+    robot = ET.parse(path).getroot()
+    assert robot.find(".//mesh").get("filename") == "meshes/visual/hand.dae"
+    assert (output / "meshes/visual/hand.dae").read_text() == "mesh-data"
+    assert (output / "meshes/visual/texture.png").read_bytes() == b"texture-data"
+    assert not robot.findall(".//mimic")
+    tcp = robot.find("joint[@name='panda_tcp_joint']")
+    assert tcp.get("type") == "fixed"
+    assert tcp.find("parent").get("link") == "panda_hand"
+    assert tcp.find("child").get("link") == "panda_tcp"
+    assert tcp.find("origin").get("xyz") == "0 0 0.107"
+    assert ET.parse(source).getroot().findall(".//mimic")
+
+
+def test_stack_cube_normalization_keeps_episode_boundaries_and_all_frames(tmp_path):
+    pytest.importorskip("openpi.shared.normalize")
+    from toolkits.lerobot.calculate_stack_cube_norm_stats import calculate_statistics
+
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    (meta / "collection_audit.json").write_text(
+        json.dumps({"split": "train", "normalization_source_allowed": True})
+    )
+    (meta / "info.json").write_text(
+        json.dumps({"fps": 20, "total_frames": 5, "total_episodes": 2})
+    )
+    data = tmp_path / "data/chunk-000"
+    data.mkdir(parents=True)
+    for episode, values in enumerate(([0.0, 1.0], [100.0, 101.0, 102.0])):
+        table = pa.table(
+            {
+                "frame_index": list(range(len(values))),
+                "observation.state": [[value] * 8 for value in values],
+                "action": [[value] * 7 for value in values],
+            }
+        )
+        parquet.write_table(table, data / f"episode_{episode:06d}.parquet")
+    report = calculate_statistics(tmp_path)
+    stats = json.loads((tmp_path / "norm_stats.json").read_text())["norm_stats"]
+    # H10 windows repeat each episode's last action; they never read the next.
+    expected = [0] + [1] * 19 + [100] + [101] * 2 + [102] * 27
+    assert np.allclose(stats["actions"]["mean"], np.mean(expected))
+    assert np.allclose(stats["state"]["mean"], np.mean([0, 1, 100, 101, 102]))
+    assert report["frames"] == 5
+    assert len(report["sources"]) == 2
+
+
+@pytest.mark.parametrize("split", ["val", "test", "preview"])
+def test_stack_cube_normalization_rejects_nontraining_split(tmp_path, split):
+    pytest.importorskip("openpi.shared.normalize")
+    from toolkits.lerobot.calculate_stack_cube_norm_stats import calculate_statistics
+
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    (meta / "collection_audit.json").write_text(
+        json.dumps({"split": split, "normalization_source_allowed": False})
+    )
+    with pytest.raises(ValueError, match="train split"):
+        calculate_statistics(tmp_path)
+    assert not (tmp_path / "norm_stats.json").exists()
+
+
+@pytest.mark.parametrize(
+    "profile", ["position", "position_yaw", "formal", "ood_position", "ood_yaw"]
+)
+def test_stack_cube_requests_obey_spatial_contract(profile):
+    from toolkits.lerobot.prepare_stack_cube_data import sample_request
+
+    for seed in range(10000, 10050):
+        request = sample_request(seed, "test", profile)
+        assert request == sample_request(seed, "test", profile)
+        positions = np.array([obj["position"] for obj in request["objects"].values()])
+        assert all(
+            np.linalg.norm(positions[i] - positions[j]) > 0.1
+            for i in range(3)
+            for j in range(i)
+        )
+        if profile == "ood_position":
+            assert np.any(
+                (positions[:, :2] < [0.4, -0.1]) | (positions[:, :2] > [0.6, 0.1])
+            )
+        else:
+            assert np.all(positions[:, :2] >= [0.4, -0.1])
+            assert np.all(positions[:, :2] <= [0.6, 0.1])
+        if profile == "ood_yaw":
+            assert any(
+                1 <= abs(obj["yaw_rad"]) <= 1.4 for obj in request["objects"].values()
+            )
+
+
+def test_stack_cube_smoke_requests_preserve_local_distribution(tmp_path):
+    from toolkits.lerobot.prepare_stack_cube_data import (
+        BASE_POSITIONS,
+        create_manifest,
+        sample_request,
+    )
+
+    saw_outside_reference_range = False
+    for seed in range(10000, 10050):
+        request = sample_request(seed, "train", "smoke")
+        positions = np.array([obj["position"] for obj in request["objects"].values()])
+        assert np.all(np.abs(positions[:, :2] - BASE_POSITIONS[:, :2]) <= 0.005)
+        assert request["arm_joint_offsets"] == [0.0] * 7
+        saw_outside_reference_range |= bool(np.any(positions[:, 0] < 0.4))
+    assert saw_outside_reference_range  # A boundary clamp would bias the smoke split.
+    with pytest.raises(ValueError, match="preview"):
+        sample_request(42, "train", "smoke")
+    path = tmp_path / "requests.json"
+    create_manifest(path, "smoke", "train", 10000, 16)
+    with pytest.raises(FileExistsError):
+        create_manifest(path, "smoke", "train", 10000, 16)
+
+
+def test_stack_cube_assembly_preserves_videos_and_rejected_attempts(tmp_path):
+    import shutil
+    import subprocess
+
+    import pandas as pd
+
+    from toolkits.lerobot.prepare_stack_cube_data import (
+        assemble_dataset,
+        create_manifest,
+    )
+
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg and ffprobe required for real video audit")
+    manifest = tmp_path / "requests.json"
+    create_manifest(manifest, "smoke", "train", 10000, 3)
+    requests = json.loads(manifest.read_text())["requests"]
+    video = tmp_path / "video.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:size=256x256:rate=20",
+            "-frames:v",
+            "2",
+            "-c:v",
+            "libx264",
+            str(video),
+        ],
+        check=True,
+    )
+    for index, request in enumerate(requests):
+        root = tmp_path / "collection" / f"episode_{index:03d}"
+        (root / "meta").mkdir(parents=True)
+        (root / "data/chunk-000").mkdir(parents=True)
+        pd.DataFrame(
+            {
+                "observation.state": [np.zeros(8)] * 2,
+                "action": [np.array([0.0] * 6 + [1.0])] * 2,
+                "frame_index": [0, 1],
+                "timestamp": [0.0, 0.05],
+                "episode_index": [0, 0],
+                "index": [0, 1],
+            }
+        ).to_parquet(root / "data/chunk-000/episode_000000.parquet")
+        (root / "report.json").write_text(
+            json.dumps(
+                {"request": request, "seed": request["seed"], "passed_450": index != 1}
+            )
+        )
+        (root / "meta/info.json").write_text(json.dumps({"total_frames": 2}))
+        (root / "meta/episodes.jsonl").write_text(
+            json.dumps({"episode_index": 0, "length": 2}) + "\n"
+        )
+        (root / "meta/tasks.jsonl").write_text(
+            json.dumps({"task_index": 0, "task": "stack"}) + "\n"
+        )
+        (root / "meta/stats.json").write_text(
+            json.dumps(
+                {
+                    "action": {
+                        "mean": [index],
+                        "std": [0],
+                        "min": [index],
+                        "max": [index],
+                        "count": [2],
+                    }
+                }
+            )
+        )
+        for camera in ("front", "wrist"):
+            target = (
+                root
+                / f"videos/chunk-000/observation.images.{camera}/episode_000000.mp4"
+            )
+            target.parent.mkdir(parents=True)
+            shutil.copy2(video, target)
+    result = assemble_dataset(
+        manifest, tmp_path / "collection", tmp_path / "train", "train"
+    )
+    assert result["requested"] == 3 and result["accepted"] == 2
+    assert [item["accepted"] for item in result["attempts"]] == [True, False, True]
+    assert len(list((tmp_path / "train/videos").rglob("*.mp4"))) == 4
+    second = pd.read_parquet(tmp_path / "train/data/chunk-000/episode_000001.parquet")
+    assert second["episode_index"].tolist() == [1, 1]
+    assert second["index"].tolist() == [2, 3]
+    stats = json.loads((tmp_path / "train/meta/stats.json").read_text())
+    assert stats["action"]["mean"] == [1.0] and stats["action"]["count"] == [4]
+    shutil.rmtree(tmp_path / "collection/episode_002")
+    with pytest.raises(ValueError, match="Unexecuted requests"):
+        assemble_dataset(
+            manifest, tmp_path / "collection", tmp_path / "incomplete", "train"
+        )
+    (tmp_path / "collection/run_manifest.json").write_text(
+        json.dumps({"camera_superseded": True, "training_ready": False})
+    )
+    with pytest.raises(ValueError, match="not training-ready"):
+        assemble_dataset(
+            manifest, tmp_path / "collection", tmp_path / "superseded", "train"
+        )
+
+
+def test_stack_cube_offline_selection_covers_gripper_transitions_and_boundaries():
+    pytest.importorskip("openpi.shared.normalize")
+    from toolkits.lerobot.evaluate_stack_cube_action_error import select_frames
+
+    actions = np.zeros((10, 7), dtype=np.float32)
+    actions[:, -1] = [-1, 1, 1, 1, 1, 1, 1, 1, -1, -1]
+    assert select_frames(actions, 2).tolist() == [0, 1, 2, 3, 6, 7, 8, 9]
+    actions[:, -1] = 1
+    assert select_frames(actions, 4).tolist() == [0, 3, 6, 9]
+
+
+def test_stack_cube_offline_noise_is_independent_of_selection_order():
+    pytest.importorskip("openpi.shared.normalize")
+    from toolkits.lerobot.evaluate_stack_cube_action_error import sample_noise_seed
+
+    samples = [(0, 0), (0, 100), (1, 0)]
+    forward = {key: sample_noise_seed(42, *key) for key in samples}
+    reordered = {key: sample_noise_seed(42, *key) for key in reversed(samples)}
+    assert forward == reordered
+    assert len(set(forward.values())) == len(samples)
+    assert sample_noise_seed(43, 0, 0) != forward[(0, 0)]
+
+
+class _OpenPIResumeRows(torch.utils.data.Dataset):
+    """Small transformed observations with random augmentation and frame IDs."""
+
+    def __len__(self):
+        return 24
+
+    def __getitem__(self, index):
+        noise = np.array(
+            [random.random(), np.random.random(), float(torch.rand(()))],
+            dtype=np.float32,
+        )
+        return {
+            "image": {"base_0_rgb": np.full((2, 2, 3), index, dtype=np.uint8)},
+            "image_mask": {"base_0_rgb": np.bool_(True)},
+            "state": np.concatenate([np.array([index], dtype=np.float32), noise]),
+            "actions": np.full((10, 7), index, dtype=np.float32),
+        }
+
+
+def _resume_openpi_loader(*, workers=0, rank=0, world_size=2, batch_size=2):
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        StatefulOpenPIDataLoader,
+    )
+
+    return StatefulOpenPIDataLoader(
+        _OpenPIResumeRows(),
+        "config",
+        batch_size=batch_size,
+        world_size=world_size,
+        rank=rank,
+        num_workers=workers,
+        seed=17,
+    )
+
+
+def _take_openpi_batches(iterator, count):
+    result = []
+    for _ in range(count):
+        observation, actions = next(iterator)
+        result.append(
+            (
+                observation.state.clone(),
+                observation.images["base_0_rgb"].clone(),
+                actions.clone(),
+            )
+        )
+    return result
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.parametrize("consumed", [5, 6, 8])
+def test_openpi_stateful_resume_preserves_prefetch_and_epoch_tensors(workers, consumed):
+    """The next batches match across mid-epoch and exact-end checkpoints."""
+    original = _resume_openpi_loader(workers=workers)
+    iterator = iter(original)
+    _take_openpi_batches(iterator, consumed)
+    snapshot = original.state_dict()
+    expected = _take_openpi_batches(iterator, 14)
+    resumed = _resume_openpi_loader(workers=workers)
+    resumed.load_state_dict(snapshot)
+    actual = _take_openpi_batches(iter(resumed), 14)
+    for expected_batch, actual_batch in zip(expected, actual, strict=True):
+        for left, right in zip(expected_batch, actual_batch, strict=True):
+            torch.testing.assert_close(left, right, rtol=0, atol=0)
+
+
+def test_openpi_stateful_rank_partitions_preserve_upstream_order():
+    """Opt-in retains upstream seed-zero permutation on each rank and epoch."""
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        get_official_openpi_sft_num_batches,
+    )
+
+    seen = []
+    for rank in (0, 1):
+        loader = _resume_openpi_loader(rank=rank)
+        assert get_official_openpi_sft_num_batches(loader) == 6
+        batches = _take_openpi_batches(iter(loader), 12)
+        indices = torch.cat([b[0][:, 0] for b in batches]).to(torch.int64).tolist()
+        expected = list(
+            torch.utils.data.DistributedSampler(
+                _OpenPIResumeRows(),
+                num_replicas=2,
+                rank=rank,
+                shuffle=True,
+                drop_last=True,
+            )
+        )
+        assert indices == expected + expected
+        seen.append(set(indices))
+    assert seen[0].isdisjoint(seen[1])
+    assert seen[0] | seen[1] == set(range(24))
+
+
+@pytest.mark.parametrize(
+    "change", [{"world_size": 1}, {"rank": 1}, {"batch_size": 1}, {"workers": 2}]
+)
+def test_openpi_stateful_restore_rejects_incompatible_layout(change):
+    original = _resume_openpi_loader()
+    next(iter(original))
+    with pytest.raises(ValueError, match="unchanged rank topology|world size >= 2"):
+        _resume_openpi_loader(**change).load_state_dict(original.state_dict())
+
+
+def test_openpi_stateful_checkpoint_requires_final_data_manifest(tmp_path):
+    """Weights-ready alone, missing files and corrupted files cannot resume."""
+    loader = _resume_openpi_loader()
+    next(iter(loader))
+    with pytest.raises(ValueError, match="no completed"):
+        loader.validate_checkpoint(str(tmp_path))
+    states = [loader.state_dict(), _resume_openpi_loader(rank=1).state_dict()]
+    torch.save(states, tmp_path / "data.pt")
+    torch.save([torch.get_rng_state()] * 2, tmp_path / "rng.pt")
+    loader.mark_checkpoint_complete(str(tmp_path), states)
+    loader.validate_checkpoint(str(tmp_path))
+    with pytest.raises(ValueError, match="topology/configuration"):
+        _resume_openpi_loader(world_size=3).validate_checkpoint(str(tmp_path))
+    (tmp_path / "data.pt").write_bytes(b"partial")
+    with pytest.raises(ValueError, match="corrupted"):
+        loader.validate_checkpoint(str(tmp_path))
+
+
+def test_openpi_stateful_resume_nonzero_rank_with_workers():
+    original = _resume_openpi_loader(workers=2, rank=1)
+    iterator = iter(original)
+    _take_openpi_batches(iterator, 8)
+    snapshot = original.state_dict()
+    expected = _take_openpi_batches(iterator, 8)
+    resumed = _resume_openpi_loader(workers=2, rank=1)
+    resumed.load_state_dict(snapshot)
+    actual = _take_openpi_batches(iter(resumed), 8)
+    for expected_batch, actual_batch in zip(expected, actual, strict=True):
+        for left, right in zip(expected_batch, actual_batch, strict=True):
+            torch.testing.assert_close(left, right, rtol=0, atol=0)
+
+
+def test_openpi_stateful_factory_preserves_transforms(monkeypatch, openpi_sft_cfg):
+    import openpi.training.data_loader as official
+
+    from rlinf.data.datasets.openpi.official_sft_data_loader import (
+        build_official_openpi_sft_dataloader,
+    )
+
+    class VendorRows:
+        def __len__(self):
+            return 16
+
+        def __getitem__(self, index):
+            return {
+                "observation.state": np.full(8, index / 100, dtype=np.float32),
+                "observation.images.front": np.zeros((8, 10, 3), dtype=np.uint8),
+                "observation.images.wrist": np.zeros((8, 10, 3), dtype=np.uint8),
+                "action": np.full((10, 7), index / 100, dtype=np.float32),
+            }
+
+    monkeypatch.setattr(official, "create_torch_dataset", lambda *args: VendorRows())
+    cfg, root = openpi_sft_cfg
+    cfg.data.stateful_loader = True
+    loader, _ = build_official_openpi_sft_dataloader(cfg, 2, 1, str(root))
+    assert len(loader) == 4
+    observation, actions = next(iter(loader))
+    assert observation.state.shape == (2, 32)
+    assert actions.shape == (2, 10, 32)
+    assert torch.count_nonzero(actions[:, :, 7:]) == 0
