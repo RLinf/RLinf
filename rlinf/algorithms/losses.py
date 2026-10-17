@@ -394,7 +394,20 @@ def compute_ppo_critic_loss(
 
     Returns:
         Tuple[torch.Tensor, Dict]: (critic_loss, metrics_dict)
+
+    Raises:
+        ValueError: If ``values``, ``returns`` and ``prev_values`` do not all
+            have the same shape.
     """
+    if not (values.shape == returns.shape == prev_values.shape):
+        raise ValueError(
+            "compute_ppo_critic_loss requires values, returns and prev_values to "
+            "have identical shapes; broadcasting them would train every value "
+            f"prediction against every return. Got values={tuple(values.shape)}, "
+            f"returns={tuple(returns.shape)}, "
+            f"prev_values={tuple(prev_values.shape)}."
+        )
+
     loss_mask_ratio = None
     loss_agg_func = masked_mean
 
