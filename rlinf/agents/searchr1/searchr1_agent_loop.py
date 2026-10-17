@@ -120,6 +120,9 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             len(turn_prompt_ids) - len(problem_prompt_ids)
         )
 
+        if max_resp_len <= 0:
+            return False, None, None, llm_output
+
         generate_result = await self.generate(
             turn_prompt_ids, sampling_params={"max_new_tokens": max_resp_len}
         )

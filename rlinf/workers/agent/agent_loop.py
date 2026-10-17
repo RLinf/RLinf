@@ -450,7 +450,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         input_dict: dict,
         answer: str,
         group_size: int,
-        output_channel: Channel,
+        output_channel: Channel | list[Channel],
     ):
         """
         Run the agent loop for a group of queries.
@@ -459,7 +459,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             input_dict: Input dictionary containing 'input_ids' and 'answer'
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
-            output_channel: Channel to output results
+            output_channel: Channels receiving a copy of each result
         """
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
@@ -476,20 +476,24 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_result = self.get_rollout_result(task_results, *extra_fields)
         agent_metrics = self.get_rollout_metrics(rollout_result)
 
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+        channels = (
+            output_channel if isinstance(output_channel, list) else [output_channel]
+        )
+        for channel in channels:
+            await channel.put(rollout_result, async_op=True).async_wait()
         return agent_metrics
 
     async def run_agentloop_rollout(
         self,
         input_channel: Channel,
-        output_channel: Channel,
+        output_channel: Channel | list[Channel],
     ):
         """
         Run the agent loop for multiple queries.
 
         Args:
             input_channel: Channel to receive rollout requests
-            output_channel: Channel to output results
+            output_channel: Channels receiving a copy of each result
         """
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()

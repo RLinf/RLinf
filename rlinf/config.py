@@ -319,8 +319,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
-        cfg.sglang = validate_sglang_cfg(cfg.sglang)
-        cfg.vllm = validate_vllm_cfg(cfg.vllm)
+        if cfg.rollout_backend == "sglang":
+            cfg.sglang = validate_sglang_cfg(cfg.sglang)
+        else:
+            cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
 
@@ -1610,6 +1612,54 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"tool_call_parser={expected_parser!r}, but "
             f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
+
+    if cfg.critic.get("use_critic_model", False):
+        if not cfg.runner.get("synchronous", False):
+            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
+        if (
+            cfg.actor.training_backend != "megatron"
+            or cfg.critic.training_backend != "megatron"
+            or cfg.rollout.rollout_backend != "sglang"
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
+            )
+        if (
+            cfg.algorithm.adv_type != "actor_gae"
+            or cfg.algorithm.kl_beta != 0
+            or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires actor_gae and zero KL reward/loss coefficients."
+            )
+        if not cfg.algorithm.recompute_logprobs:
+            raise ValueError("SearchR1 PPO requires algorithm.recompute_logprobs=True.")
+        if cfg.algorithm.group_size != 1:
+            raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
+        if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.loss_agg_func=token-mean."
+            )
+        if not cfg.algorithm.get("use_valid_token_scale", False):
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.use_valid_token_scale=True."
+            )
+        if cfg.algorithm.get("loss_scales", []):
+            raise ValueError("SearchR1 PPO requires uniform action-token loss weights.")
+        for role in ("actor", "critic"):
+            if (
+                cfg[role].model.tensor_model_parallel_size != 1
+                or cfg[role].model.pipeline_model_parallel_size != 1
+                or cfg[role].model.get("context_parallel_size", 1) != 1
+            ):
+                raise ValueError(
+                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
+                )
+        if cfg.algorithm.get("importance_sampling_fix", False):
+            raise ValueError(
+                "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
+            )
+        return cfg
 
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
     if not component_placement.is_collocated:

@@ -86,6 +86,54 @@ def compute_gae_advantages_and_returns(
     return advantages, returns
 
 
+@register_advantage("actor_gae")
+def compute_actor_gae_advantages_and_returns(
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    step_mask: torch.Tensor,
+    bootstrap_values: Optional[torch.Tensor] = None,
+    gamma: float = 1.0,
+    gae_lambda: float = 1.0,
+    normalize_advantages: bool = True,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute token GAE without advancing through observations or padding.
+
+    Args:
+        rewards: Token rewards, shaped [time, batch].
+        values: Fixed old values with the same shape as rewards.
+        step_mask: Action positions with the same shape as rewards.
+        bootstrap_values: Final state values [batch]; completed episodes use zero.
+        gamma: Discount per generated action.
+        gae_lambda: GAE decay per generated action.
+        normalize_advantages: Normalize over all valid actions in this batch.
+
+    Returns:
+        Fixed advantages and returns, with zero at masked positions.
+    """
+    if values.shape != rewards.shape or step_mask.shape != rewards.shape:
+        raise ValueError(
+            "Actor GAE requires matching rewards, values, and action masks."
+        )
+    next_value = (
+        torch.zeros_like(values[0])
+        if bootstrap_values is None
+        else bootstrap_values.float()
+    ) # shape = [batch]
+    advantages = torch.zeros_like(rewards) # shape = [time, batch]
+    gae = torch.zeros_like(next_value) # shape = [batch]
+    for step in reversed(range(rewards.shape[0])):
+        delta = rewards[step] + gamma * next_value - values[step]
+        candidate = delta + gamma * gae_lambda * gae
+        gae = torch.where(step_mask[step], candidate, gae)
+        next_value = torch.where(step_mask[step], values[step], next_value)
+        advantages[step] = torch.where(step_mask[step], gae, 0.0)
+    returns = torch.where(step_mask, advantages + values, 0.0)
+    if normalize_advantages:
+        advantages = safe_normalize(advantages, loss_mask=step_mask)
+    return advantages, returns
+
+
 @register_advantage("grpo")
 def compute_grpo_advantages(
     rewards: torch.Tensor,
