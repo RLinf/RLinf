@@ -220,7 +220,7 @@ Franka 真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会提�
 ``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。
 
 ManiSkill joint 配置中，``env.*.rlt_policy_switch`` 使用任务信息自动产生
-``rlt_switch_flags``（actor/ref 阶段）和 ``intervene_flag``（expert 接管请求）。
+``rlt_switch_flags``\ （actor/ref 阶段）和 ``intervene_flag``\ （expert 接管请求）。
 HF rollout route 根据这些标记在整 chunk 级别选择 actor action、VLA
 ``ref_chunk`` 或 expert action，并把 ``record_transition``、``actor_switch`` 和
 ``intervention_requested`` 写入 ``forward_inputs``，供 replay 和监控使用。
