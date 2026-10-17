@@ -54,7 +54,7 @@ runner:
   max_epochs: 1000
   max_steps: 1000
   only_eval: false
-  val_check_interval: -1
+  val_check_interval: 10
   save_interval: 100
   resume_dir: null
   # Load warmup actor and critic weights; start with a fresh optimizer.
