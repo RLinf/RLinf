@@ -1065,6 +1065,16 @@ def validate_embodied_cfg(cfg):
             "rollout_backend='phyai' currently requires model_type='openpi'."
         )
         if not only_eval:
+            loss_type = str(algorithm_cfg.get("loss_type", "")).lower()
+            unsupported_loss_types = {"embodied_dagger", "rlt_ac", "rlt_td3"}
+            assert loss_type not in unsupported_loss_types, (
+                "rollout_backend='phyai' does not support "
+                f"algorithm.loss_type={loss_type!r}."
+            )
+            adv_type = str(algorithm_cfg.get("adv_type", "")).lower()
+            assert adv_type != "opd", (
+                "rollout_backend='phyai' does not support algorithm.adv_type='opd'."
+            )
             assert cfg.weight_syncer.get("type") == "bucket", (
                 "rollout_backend='phyai' requires weight_syncer.type='bucket'."
             )

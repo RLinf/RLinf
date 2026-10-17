@@ -22,8 +22,6 @@ from omegaconf import OmegaConf
 
 from rlinf.config import validate_embodied_cfg
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
-from rlinf.workers.rollout import utils as rollout_utils
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch):
@@ -37,9 +35,11 @@ def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch):
     assert cfg.rollout.model.openpi.config_name == cfg.actor.model.openpi.config_name
     assert cfg.rollout.model.openpi.num_images_in_input == 2
     assert cfg.rollout.model.num_action_chunks == cfg.actor.model.num_action_chunks
+    assert cfg.rollout.model.model_path == cfg.actor.model.model_path
     assert cfg.rollout.phyai.kernel_config.endswith(
-        "examples/configs/kernel_policies/pi05/rlinf_bf16.yaml"
+        "examples/embodiment/phyai/kernel_policies/rlinf_bf16.yaml"
     )
+    assert Path(cfg.rollout.phyai.kernel_config).is_file()
 
 
 def test_phyai_training_requires_bucket_weight_sync(monkeypatch):
@@ -50,6 +50,46 @@ def test_phyai_training_requires_bucket_weight_sync(monkeypatch):
     cfg.weight_syncer.type = "patch"
 
     with pytest.raises(AssertionError, match="weight_syncer.type='bucket'"):
+        validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (
+            "algorithm.loss_type",
+            "embodied_dagger",
+            "does not support algorithm.loss_type='embodied_dagger'",
+        ),
+        (
+            "algorithm.loss_type",
+            "rlt_ac",
+            "does not support algorithm.loss_type='rlt_ac'",
+        ),
+        (
+            "algorithm.loss_type",
+            "rlt_td3",
+            "does not support algorithm.loss_type='rlt_td3'",
+        ),
+        (
+            "algorithm.adv_type",
+            "opd",
+            "does not support algorithm.adv_type='opd'",
+        ),
+    ],
+)
+def test_phyai_training_rejects_unsupported_algorithms(
+    monkeypatch, path, value, message
+):
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+    if path == "algorithm.adv_type":
+        cfg.algorithm.recompute_logprobs = False
+    OmegaConf.update(cfg, path, value)
+
+    with pytest.raises(AssertionError, match=message):
         validate_embodied_cfg(cfg)
 
 
@@ -122,9 +162,3 @@ async def test_actor_weight_sync_uses_selective_state():
         (selected, 7),
         (selected, 7),
     ]
-
-
-def test_hf_embodied_backend_selection_without_phyai():
-    cfg = OmegaConf.create({"rollout": {"rollout_backend": "hf"}})
-
-    assert rollout_utils.get_embodied_rollout_worker(cfg) is MultiStepRolloutWorker

@@ -101,7 +101,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
     model_type: ${actor.model.model_type}
     num_action_chunks: ${actor.model.num_action_chunks}
@@ -109,11 +109,11 @@ rollout:
     num_steps: ${actor.model.num_steps}
     add_value_head: ${actor.model.add_value_head}
     openpi: ${actor.model.openpi}
+    openpi_data: ${actor.model.openpi_data}
 
   phyai:
     plugin: pi05
-    # Override when the PhyAI source tree is mounted elsewhere.
-    kernel_config: ${oc.env:PHYAI_KERNEL_CONFIG,/opt/src/phyai/examples/configs/kernel_policies/pi05/rlinf_bf16.yaml}
+    kernel_config: ${oc.env:PHYAI_KERNEL_CONFIG,${oc.env:EMBODIED_PATH}/phyai/kernel_policies/rlinf_bf16.yaml}
     max_batch_size: null
     vision_params_dtype: null
     use_cuda_graph: True
@@ -155,6 +155,10 @@ actor:
       noise_level: 0.5
       noise_method: "flow_sde"
       train_expert_only: True
+    # Keep actor preprocessing and PhyAI rollout preprocessing on the same
+    # checkpoint statistics. The public LIBERO checkpoint includes this file.
+    openpi_data:
+      norm_stats_path: ${actor.model.model_path}/physical-intelligence/libero/norm_stats.json
 
   optim:
     lr: 5.0e-6
