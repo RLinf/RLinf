@@ -530,10 +530,14 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             sharding = (
                 str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
             )
-            assert sharding == "no_shard", (
-                "openpi only supports actor.fsdp_config.sharding_strategy="
-                f"'no_shard' (got {cfg.fsdp_config.sharding_strategy!r}). "
-                "Nested FSDP flattening (full_shard / shard_grad_op) is not supported."
+            assert sharding == "no_shard" or (
+                cfg.fsdp_config.strategy == "fsdp"
+                and sharding in ("shard_grad_op", "full_shard")
+            ), (
+                "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
+                "and sharding_strategy in ['shard_grad_op', 'full_shard']; "
+                f"got strategy={cfg.fsdp_config.strategy!r}, "
+                f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
             )
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
