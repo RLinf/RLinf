@@ -3829,12 +3829,12 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
-    # build_env into embodichain.lab.gym.utils.registration.
-    # <0.3 keeps CartPole at
-    # embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json.
-    # 0.3.0 moves that file and changes the gym/sim APIs this env uses.
-    uv pip install "embodichain>=0.2.4,<0.3" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # Only dexsim-engine needs wheels from the vendor package server.
+    # TensorDict 0.15 rejects get_proprioception()[:, active_joint_ids]: the
+    # joint axis is a feature dim, and CartPole init fails with IndexError.
+    uv pip install "embodichain==0.3.0" "tensordict>=0.6,<0.15" \
+        --find-links http://pyp.open3dv.site:2345/simple/dexsim-engine/ \
+        --trusted-host pyp.open3dv.site
 }
 
 install_dosw1_env() {
