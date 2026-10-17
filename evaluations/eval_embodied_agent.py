@@ -25,7 +25,6 @@ from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
-from rlinf.workers.rollout.utils import get_embodied_rollout_worker
 
 mp.set_start_method("spawn", force=True)
 
@@ -90,14 +89,12 @@ def main(cfg) -> None:
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "phyai":
-        rollout_group = (
-            get_embodied_rollout_worker(cfg)
-            .create_group(cfg)
-            .launch(
-                cluster,
-                name=cfg.rollout.group_name,
-                placement_strategy=rollout_placement,
-            )
+        from rlinf.workers.rollout.phyai import PhyAIWorker
+
+        rollout_group = PhyAIWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
         )
     else:
         raise ValueError(f"Unsupported rollout backend: {rollout_backend}")

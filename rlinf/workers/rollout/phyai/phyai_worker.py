@@ -18,7 +18,6 @@ import gc
 import math
 import os
 import random
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -34,9 +33,17 @@ from phyai.models.pi05.scheduler_pi05 import (
     PI05Request,
     PI05RolloutRequest,
 )
-from torch.utils._pytree import tree_map
+from tqdm import tqdm
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.data.schema.embodied_types import (
+    EnvPart,
+    PolicyInput,
+    PolicyOutput,
+    PolicyPart,
+    split_batch_value,
+)
+from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
 from rlinf.models.embodiment.openpi import _resolve_action_horizon_and_chunk
 from rlinf.models.embodiment.openpi.modules.model import (
@@ -44,14 +51,20 @@ from rlinf.models.embodiment.openpi.modules.model import (
     Observation,
     preprocess_observation,
 )
+from rlinf.models.embodiment.openpi.transforms.apply import (
+    apply_input_transform,
+    apply_output_transform,
+)
+from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
 from rlinf.models.embodiment.openpi.transforms.pipeline import (
     build_openpi_transforms,
 )
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
     new_to_old_state_dict,
 )
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.placement import HybridComponentPlacement
 
 _VISION_INPUT_DTYPE = torch.float32
 
@@ -95,13 +108,12 @@ class _PhyAIWeightTarget(torch.nn.Module):
         return None
 
 
-class PhyAIWorker(MultiStepRolloutWorker):
-    """Run the reusable multi-step rollout loop with a PhyAI engine.
+class PhyAIWorker(Worker):
+    """Run embodied rollout and evaluation with an in-process PhyAI engine.
 
     The RLinf worker remains the Ray actor and owns one in-process PhyAI
-    ``Engine``. Channel communication, batch routing, and the evaluation loop
-    are inherited from :class:`MultiStepRolloutWorker`; model construction and
-    action inference are replaced with the PhyAI engine path.
+    ``Engine``. This backend owns its channel loops and runtime state directly;
+    it does not inherit Hugging Face model configuration or lifecycle behavior.
 
     Evaluation keeps the original action-only ``Engine.step`` path. For
     training, RLinf constructs the sampling plan, asks ``Engine.rollout_step``
@@ -110,10 +122,85 @@ class PhyAIWorker(MultiStepRolloutWorker):
     """
 
     def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
+        Worker.__init__(self)
 
         self._phyai_cfg = cfg.rollout.get("phyai", {})
         self._phyai_plugin = str(self._phyai_cfg.get("plugin", "pi05")).lower()
+        if self._phyai_plugin != "pi05":
+            raise NotImplementedError(
+                "PhyAIWorker supports the 'pi05' engine plugin; "
+                f"got {self._phyai_plugin!r}."
+            )
+
+        self.cfg = cfg
+        self.only_eval = bool(cfg.runner.get("only_eval", False))
+        self.model_cfg = cfg.rollout.model if self.only_eval else cfg.actor.model
+        self.actor_group_name = (
+            cfg.actor.get("group_name", None)
+            if cfg.get("actor", None) is not None
+            else None
+        )
+        self.num_pipeline_stages = int(cfg.rollout.pipeline_stage_num)
+        self.enable_offload = bool(cfg.rollout.get("enable_offload", False))
+        self.placement = HybridComponentPlacement(cfg, Cluster())
+
+        rollout_world_size = self.placement.get_world_size("rollout")
+        self.actor_weight_src_rank = 0
+        self._weight_sync_rollout_ranks = list(range(rollout_world_size))
+        self._weight_sync_is_sender = self._rank == 0
+
+        train_env_cfg = cfg.env.get("train", None)
+        eval_env_cfg = cfg.env.get("eval", None)
+        self.enable_train = not self.only_eval and train_env_cfg is not None
+        self.enable_eval = (
+            cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
+        )
+        self.rollout_epoch = (
+            int(train_env_cfg.rollout_epoch) if train_env_cfg is not None else 1
+        )
+        self.eval_rollout_epoch = (
+            int(eval_env_cfg.rollout_epoch) if self.enable_eval else 1
+        )
+        self.total_num_train_envs = (
+            int(train_env_cfg.total_num_envs) if self.enable_train else 0
+        )
+        self.total_num_eval_envs = (
+            int(eval_env_cfg.total_num_envs) if self.enable_eval else 0
+        )
+        self.train_batch_size = self.total_num_train_envs // self.num_pipeline_stages
+        self.eval_batch_size = self.total_num_eval_envs // self.num_pipeline_stages
+        self.per_node_train_batch_size = (
+            self.train_batch_size // self._world_size if self.enable_train else 0
+        )
+        self.per_node_eval_batch_size = (
+            self.eval_batch_size // self._world_size if self.enable_eval else 0
+        )
+        self.n_train_chunk_steps = (
+            int(train_env_cfg.max_steps_per_rollout_epoch)
+            // int(self.model_cfg.num_action_chunks)
+            if self.enable_train
+            else 0
+        )
+        self.n_eval_chunk_steps = (
+            int(eval_env_cfg.max_steps_per_rollout_epoch)
+            // int(self.model_cfg.num_action_chunks)
+            if self.enable_eval
+            else 0
+        )
+        self.collect_transitions = bool(cfg.rollout.get("collect_transitions", False))
+        self.collect_prev_infos = bool(cfg.rollout.get("collect_prev_infos", True))
+        self.version = 0
+        self.finished_episodes = None
+
+        self.weight_syncer = None
+        self._sync_weight_comm_options = None
+        if not self.only_eval:
+            weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
+            if weight_syncer_cfg is None:
+                raise ValueError("rollout.weight_syncer config must be provided")
+            self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+            self._sync_weight_comm_options = self.weight_syncer.comm_options
+
         self._engine = None
         self._input_transform_fn = None
         self._output_transform_fn = None
@@ -121,20 +208,18 @@ class PhyAIWorker(MultiStepRolloutWorker):
         self._state_indices: list[int] | None = None
         self._weight_target = None
         self._engine_device: torch.device | None = None
-        self._engine_dtype: torch.dtype | None = None
         self._num_images = 0
         self._model_action_horizon = 0
         self._model_action_dim = 0
         self._num_steps = 0
 
-        if self._phyai_plugin != "pi05":
-            raise NotImplementedError(
-                "PhyAIWorker supports the 'pi05' engine plugin; "
-                f"got {self._phyai_plugin!r}."
-            )
         if self.enable_offload:
             raise NotImplementedError(
                 "PhyAIWorker does not support rollout.enable_offload yet."
+            )
+        if cfg.runner.get("enable_decoupled_mode", False):
+            raise NotImplementedError(
+                "PhyAIWorker does not support runner.enable_decoupled_mode yet."
             )
         if len(self.global_accelerator_ids) != 1:
             raise ValueError(
@@ -164,7 +249,6 @@ class PhyAIWorker(MultiStepRolloutWorker):
             raise ValueError(
                 f"Unsupported PhyAI model precision: {engine_precision!r}."
             )
-        self._engine_dtype = dtype
         self._engine_device = torch.device(self.torch_device_type)
 
         runtime_cfg = self._phyai_cfg.get("runtime", {})
@@ -267,7 +351,7 @@ class PhyAIWorker(MultiStepRolloutWorker):
                     config=EngineConfig(
                         device=DeviceConfig(
                             target=str(self._engine_device),
-                            params_dtype=self._engine_dtype,
+                            params_dtype=dtype,
                         ),
                         kernel=kernel_cfg,
                         runtime=RuntimeConfig(**runtime_values),
@@ -342,7 +426,7 @@ class PhyAIWorker(MultiStepRolloutWorker):
         """Map the native wrapper prefix to PhyAI HF parameter names."""
         return name[len("model.") :] if name.startswith("model.") else name
 
-    # RLinf/OpenPI preprocessing remains local to this backend adapter.
+    # Backend-local adapters around shared RLinf/OpenPI transforms.
 
     def _select_configured_state(self, states: Any) -> Any:
         indices = self._state_indices
@@ -359,64 +443,6 @@ class PhyAIWorker(MultiStepRolloutWorker):
             index = torch.as_tensor(indices, device=states.device)
             return states.index_select(-1, index)
         return np.asarray(states)[..., indices]
-
-    def _repack_env_obs(self, env_obs: dict[str, Any]) -> dict[str, Any]:
-        states = self._select_configured_state(env_obs["states"])
-        repacked = {
-            "observation/image": env_obs["main_images"],
-            "prompt": env_obs["task_descriptions"],
-        }
-        if "calvin" in self._openpi_config_name:
-            repacked["observation/state_ee_pos"] = states[:, :3]
-            repacked["observation/state_ee_rot"] = states[:, 3:6]
-            repacked["observation/state_gripper"] = states[:, 6:7]
-        else:
-            repacked["observation/state"] = states
-        if env_obs.get("wrist_images") is not None:
-            repacked["observation/wrist_image"] = env_obs["wrist_images"]
-        if env_obs.get("extra_view_images") is not None:
-            repacked["observation/extra_view_image"] = env_obs["extra_view_images"]
-        return repacked
-
-    def _apply_input_transforms(self, observation: dict[str, Any]) -> dict[str, Any]:
-        assert self._input_transform_fn is not None
-        prompts = observation["prompt"]
-        inputs = tree_map(
-            lambda value: (
-                np.asarray(value.detach().cpu()) if torch.is_tensor(value) else value
-            ),
-            {key: value for key, value in observation.items() if key != "prompt"},
-        )
-        batch_size = next(iter(inputs.values())).shape[0]
-        if isinstance(prompts, np.ndarray):
-            prompts = prompts.tolist()
-        samples = []
-        for index in range(batch_size):
-            sample = tree_map(lambda value: value[index], inputs)
-            sample["prompt"] = prompts[index]
-            samples.append(sample)
-        with ThreadPoolExecutor(max_workers=min(batch_size, 8)) as executor:
-            transformed = list(executor.map(self._input_transform_fn, samples))
-        return tree_map(
-            lambda *values: torch.from_numpy(np.asarray(values).copy()),
-            *transformed,
-        )
-
-    def _apply_output_transforms(
-        self, actions: torch.Tensor, state: torch.Tensor
-    ) -> torch.Tensor:
-        assert self._output_transform_fn is not None
-        transformed = []
-        for index in range(actions.shape[0]):
-            transformed.append(
-                self._output_transform_fn(
-                    {
-                        "actions": np.asarray(actions[index].detach().cpu()),
-                        "state": np.asarray(state[index].detach().cpu()),
-                    }
-                )["actions"]
-            )
-        return torch.from_numpy(np.asarray(transformed).copy())
 
     def _observation_to_device(self, transformed: dict[str, Any]) -> Observation:
         assert self._engine_device is not None
@@ -444,7 +470,13 @@ class PhyAIWorker(MultiStepRolloutWorker):
         self, env_obs: dict[str, Any]
     ) -> tuple[PI05Request, Observation]:
         assert self._engine_device is not None
-        transformed = self._apply_input_transforms(self._repack_env_obs(env_obs))
+        assert self._input_transform_fn is not None
+        repacked = repack_env_obs(
+            self._openpi_config_name,
+            env_obs,
+            select_state=self._select_configured_state,
+        )
+        transformed = apply_input_transform(self._input_transform_fn, repacked)
         image_keys = IMAGE_KEYS[: self._num_images]
         for key in image_keys:
             if not bool(transformed["image_mask"][key].all()):
@@ -719,7 +751,11 @@ class PhyAIWorker(MultiStepRolloutWorker):
             model_actions = rollout_result.actions
         else:
             model_actions = self._engine.step(request)
-        actions = self._apply_output_transforms(model_actions, processed.state)
+        assert self._output_transform_fn is not None
+        actions = apply_output_transform(
+            self._output_transform_fn,
+            {"actions": model_actions, "state": processed.state},
+        )["actions"]
         requested_chunks = int(self.model_cfg.num_action_chunks)
         if actions.shape[1] < requested_chunks:
             raise ValueError(
@@ -758,20 +794,248 @@ class PhyAIWorker(MultiStepRolloutWorker):
             }
         return actions, result
 
-    def get_bootstrap_values(
-        self, final_obs: dict[str, Any] | None
-    ) -> torch.Tensor | None:
-        """Compute the final-observation value for native GAE."""
-        if final_obs is None or self.only_eval:
-            return None
-        with torch.no_grad():
-            _, result = self.predict(final_obs, mode="train")
-        values = result["prev_values"]
-        if values is None:
-            raise RuntimeError(
-                "PhyAI training rollout did not return bootstrap values."
+    # Channel loops are backend-owned so PhyAI does not depend on HF worker state.
+
+    @staticmethod
+    def _infer_policy_input_batch_size(policy_input: PolicyInput) -> int:
+        return infer_obs_batch_size(policy_input.obs)
+
+    @staticmethod
+    def _decompress_policy_input(policy_input: PolicyInput) -> PolicyInput:
+        policy_input.obs = decompress_obs(policy_input.obs)
+        for env_part in policy_input.env_parts:
+            if env_part is not None and env_part.next_obs is not None:
+                env_part.next_obs = decompress_obs(env_part.next_obs)
+        return policy_input
+
+    @classmethod
+    def _merge_policy_inputs(cls, policy_inputs: list[PolicyInput]) -> PolicyInput:
+        return PolicyInput.merge(
+            [cls._decompress_policy_input(item) for item in policy_inputs]
+        )
+
+    async def _receive_policy_input(
+        self,
+        channel: Channel,
+        tag: str,
+        stage_id: int,
+    ) -> PolicyInput:
+        return await self.recv_from(
+            group_name=self.cfg.env.group_name,
+            channel=channel,
+            tag=f"train_{tag}",
+            route_key=stage_id,
+            async_op=True,
+            batch_size=self.train_batch_size,
+            merge_fn=self._merge_policy_inputs,
+            infer_batch_size_fn=self._infer_policy_input_batch_size,
+        ).async_wait()
+
+    def _build_policy_output(self, result: dict[str, Any]) -> PolicyOutput:
+        return PolicyOutput(
+            prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
+            prev_values=result["prev_values"] if self.collect_prev_infos else None,
+            intervene_flags=None,
+            forward_inputs=result["forward_inputs"],
+            versions=torch.full_like(
+                result["prev_logprobs"], float(self.version), dtype=torch.float32
             )
-        return values[:, :1].cpu().contiguous()
+            if self.collect_prev_infos
+            else None,
+        )
+
+    def _publish_env_part(
+        self,
+        env_part: EnvPart,
+        policy_obs: dict[str, Any] | None,
+        actor_channel: Channel,
+    ) -> None:
+        next_obs = env_part.next_obs if env_part.next_obs is not None else policy_obs
+        final_prev_values = None
+        if env_part.requires_inference:
+            if next_obs is None:
+                raise ValueError(
+                    "Terminal inference requires a post-action observation."
+                )
+            _, result = self.predict(next_obs, mode="train")
+            values = result.get("prev_values")
+            if values is not None:
+                final_prev_values = values.cpu().contiguous()
+        actor_channel.put(
+            env_part.complete(
+                next_obs=(next_obs if self.collect_transitions else None),
+                next_rlt_obs=None,
+                final_prev_values=final_prev_values,
+            ),
+            async_op=True,
+        )
+
+    def _publish_env_parts(
+        self,
+        policy_input: PolicyInput,
+        actor_channel: Channel,
+    ) -> None:
+        if not policy_input.env_parts:
+            return
+        if len(policy_input.env_parts) != len(policy_input.request_sizes):
+            raise ValueError("Environment parts and request sizes must align.")
+
+        needs_policy_obs = any(
+            part is not None
+            and (
+                self.collect_transitions
+                or (part.requires_inference and part.next_obs is None)
+            )
+            for part in policy_input.env_parts
+        )
+        policy_observations = (
+            split_batch_value(policy_input.obs, policy_input.request_sizes)
+            if needs_policy_obs
+            else [None] * len(policy_input.env_parts)
+        )
+        for env_part, policy_obs in zip(
+            policy_input.env_parts,
+            policy_observations,
+        ):
+            if env_part is not None:
+                self._publish_env_part(env_part, policy_obs, actor_channel)
+
+    @staticmethod
+    def _split_actions(actions: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
+        return [shard.contiguous() for shard in torch.split(actions, sizes, dim=0)]
+
+    def _send_actions(
+        self,
+        channel: Channel,
+        actions: torch.Tensor,
+        stage_id: int,
+    ) -> None:
+        self.send_to(
+            group_name=self.cfg.env.group_name,
+            channel=channel,
+            data=actions.detach().cpu().contiguous(),
+            tag="policy",
+            route_key=stage_id,
+            async_op=True,
+            batch_size=self.train_batch_size,
+            split_fn=self._split_actions,
+        )
+
+    @Worker.timer("generate_one_epoch")
+    async def generate_one_epoch(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        actor_channel: Channel,
+    ) -> None:
+        for _ in range(self.n_train_chunk_steps):
+            for stage_id in range(self.num_pipeline_stages):
+                policy_input = await self._receive_policy_input(
+                    input_channel, "policy", stage_id
+                )
+                if policy_input.is_last:
+                    raise ValueError("Received a final input in the policy stream.")
+                if not policy_input.requires_inference:
+                    actions = policy_input.external_actions
+                    policy_output = None
+                else:
+                    actions, result = self.predict(policy_input.obs, mode="train")
+                    policy_output = self._build_policy_output(result)
+                self._send_actions(output_channel, actions.contiguous(), stage_id)
+                transition_obs = policy_input.obs if self.collect_transitions else {}
+                if policy_input.requires_inference:
+                    trajectory_part = PolicyPart(
+                        sources=policy_input.sources,
+                        obs=transition_obs,
+                        output=policy_output,
+                    )
+                else:
+                    trajectory_part = PolicyPart(
+                        sources=policy_input.sources,
+                        obs=transition_obs,
+                        external_actions=actions,
+                    )
+                actor_channel.put(trajectory_part, async_op=True)
+                self._publish_env_parts(policy_input, actor_channel)
+
+        for stage_id in range(self.num_pipeline_stages):
+            policy_input = await self._receive_policy_input(
+                input_channel, "policy_final", stage_id
+            )
+            if not policy_input.is_last:
+                raise ValueError("Expected a final policy input at epoch end.")
+            self._publish_env_parts(policy_input, actor_channel)
+
+    @Worker.timer("rollout/generate")
+    async def generate(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        actor_channel: Channel,
+    ) -> None:
+        for _ in tqdm(
+            range(self.rollout_epoch),
+            desc="Generating Rollout Epochs",
+            disable=(self._rank != 0),
+        ):
+            await self.generate_one_epoch(
+                input_channel,
+                output_channel,
+                actor_channel,
+            )
+
+    @staticmethod
+    def _merge_obs_batches(obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
+        if not obs_batches:
+            return {}
+        obs_batches = [decompress_obs(obs_batch) for obs_batch in obs_batches]
+        obs_dicts = [
+            obs_batch["obs"] if "obs" in obs_batch else obs_batch
+            for obs_batch in obs_batches
+        ]
+        merged: dict[str, Any] = {}
+        for key in obs_dicts[0]:
+            values = [obs_dict[key] for obs_dict in obs_dicts]
+            first = next((value for value in values if value is not None), None)
+            if first is None:
+                merged[key] = None
+            elif isinstance(first, torch.Tensor):
+                merged[key] = torch.cat(values, dim=0)
+            elif isinstance(first, list):
+                merged[key] = [item for value in values for item in value]
+            else:
+                merged[key] = values
+        return {"obs": merged}
+
+    @Worker.timer("evaluate")
+    async def evaluate(self, input_channel: Channel, output_channel: Channel) -> None:
+        for _ in tqdm(
+            range(self.eval_rollout_epoch),
+            desc="Evaluating Rollout Epochs",
+            disable=(self._rank != 0),
+        ):
+            for _ in range(self.n_eval_chunk_steps):
+                for stage_id in range(self.num_pipeline_stages):
+                    env_output = await self.recv_from(
+                        group_name=self.cfg.env.group_name,
+                        channel=input_channel,
+                        tag="eval_rollout_results",
+                        route_key=stage_id,
+                        async_op=True,
+                        batch_size=self.eval_batch_size,
+                        merge_fn=self._merge_obs_batches,
+                        infer_batch_size_fn=infer_obs_batch_size,
+                    ).async_wait()
+                    actions, _ = self.predict(env_output["obs"], mode="eval")
+                    self.send_to(
+                        group_name=self.cfg.env.group_name,
+                        channel=output_channel,
+                        data=actions.detach().cpu().contiguous(),
+                        tag="eval_rollout_results",
+                        route_key=stage_id,
+                        async_op=True,
+                        batch_size=self.eval_batch_size,
+                    )
 
     # Actor weights are committed transactionally before their version advances.
 

@@ -28,11 +28,14 @@ from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
 from rlinf.models.embodiment.openpi.modules.model import (
     IMAGE_KEYS,
-    Observation,
     preprocess_observation,
 )
-from rlinf.workers.rollout import utils as rollout_utils
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.models.embodiment.openpi.transforms.apply import (
+    apply_input_transform,
+    apply_output_transform,
+)
+from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
+from rlinf.scheduler import Worker
 from rlinf.workers.rollout.phyai import phyai_worker
 from rlinf.workers.rollout.phyai.phyai_worker import PhyAIWorker, _PhyAIWeightTarget
 
@@ -100,6 +103,57 @@ def _make_rollout_worker(*, fail: bool = False):
     return worker, engine
 
 
+def _openpi_input_transform(sample):
+    base = np.asarray(sample["observation/image"], dtype=np.uint8)
+    wrist = np.asarray(sample["observation/wrist_image"], dtype=np.uint8)
+    state = np.asarray(sample["observation/state"], dtype=np.float64) / 10
+    prompt_length = min(len(sample["prompt"]), 8)
+    return {
+        "image": {
+            IMAGE_KEYS[0]: base,
+            IMAGE_KEYS[1]: wrist,
+            IMAGE_KEYS[2]: np.zeros_like(base),
+        },
+        "image_mask": {
+            IMAGE_KEYS[0]: np.bool_(True),
+            IMAGE_KEYS[1]: np.bool_(True),
+            IMAGE_KEYS[2]: np.bool_(False),
+        },
+        "state": state,
+        "tokenized_prompt": np.arange(8, dtype=np.int64),
+        "tokenized_prompt_mask": np.arange(8) < prompt_length,
+    }
+
+
+def _openpi_output_transform(sample):
+    return {"actions": sample["actions"][..., :7] + sample["state"][0]}
+
+
+def _make_env_obs(batch_size: int = 2):
+    image_size = batch_size * 224 * 224 * 3
+    main_images = torch.arange(image_size, dtype=torch.int64)
+    wrist_images = torch.arange(image_size, dtype=torch.int64).flip(0)
+    return {
+        "main_images": main_images.remainder(251)
+        .to(torch.uint8)
+        .view(batch_size, 224, 224, 3),
+        "wrist_images": wrist_images.remainder(251)
+        .to(torch.uint8)
+        .view(batch_size, 224, 224, 3),
+        "states": torch.arange(batch_size * 8, dtype=torch.float32).view(batch_size, 8),
+        "task_descriptions": ["pick", "place"][:batch_size],
+    }
+
+
+def _configure_preprocessing(worker):
+    worker._engine_device = torch.device("cpu")
+    worker._num_images = 2
+    worker._input_transform_fn = _openpi_input_transform
+    worker._output_transform_fn = _openpi_output_transform
+    worker._openpi_config_name = "pi05_libero"
+    worker._state_indices = None
+
+
 @pytest.mark.asyncio
 async def test_sync_model_from_actor_commits_only_complete_updates():
     worker, engine = _make_rollout_worker()
@@ -120,12 +174,85 @@ async def test_sync_model_from_actor_commits_only_complete_updates():
     assert worker.version == 0
 
 
-def test_embodied_rollout_backend_selection():
-    hf_cfg = OmegaConf.create({"rollout": {"rollout_backend": "hf"}})
-    phyai_cfg = OmegaConf.create({"rollout": {"rollout_backend": "phyai"}})
+def test_phyai_worker_owns_backend_lifecycle():
+    assert PhyAIWorker.__bases__ == (Worker,)
+    assert "generate" in PhyAIWorker.__dict__
+    assert "evaluate" in PhyAIWorker.__dict__
 
-    assert rollout_utils.get_embodied_rollout_worker(hf_cfg) is MultiStepRolloutWorker
-    assert rollout_utils.get_embodied_rollout_worker(phyai_cfg) is PhyAIWorker
+
+@pytest.mark.asyncio
+async def test_evaluate_preserves_channel_contract():
+    class _AsyncResult:
+        def __init__(self, value):
+            self.value = value
+
+        async def async_wait(self):
+            return self.value
+
+    worker = object.__new__(PhyAIWorker)
+    worker.cfg = OmegaConf.create({"env": {"group_name": "env"}})
+    worker.eval_rollout_epoch = 1
+    worker.n_eval_chunk_steps = 1
+    worker.num_pipeline_stages = 2
+    worker.eval_batch_size = 2
+    worker._rank = 0
+
+    recv_calls = []
+    send_calls = []
+    predict_calls = []
+
+    def recv_from(**kwargs):
+        recv_calls.append(kwargs)
+        stage_id = kwargs["route_key"]
+        chunks = [
+            {
+                "obs": {
+                    "states": torch.tensor([[stage_id * 2 + offset]]),
+                    "task_descriptions": [f"stage-{stage_id}-{offset}"],
+                },
+                "final_obs": {"states": torch.tensor([[99]])},
+                "rlt_switch_flags": torch.ones(1, dtype=torch.bool),
+                "intervene_flags": torch.ones(1, dtype=torch.bool),
+            }
+            for offset in range(2)
+        ]
+        assert all(kwargs["infer_batch_size_fn"](chunk) == 1 for chunk in chunks)
+        merged = kwargs["merge_fn"](chunks)
+        assert set(merged) == {"obs"}
+        return _AsyncResult(merged)
+
+    def predict(obs, mode):
+        predict_calls.append((obs, mode))
+        return torch.zeros(2, 1, 1), {}
+
+    worker.recv_from = recv_from
+    worker.predict = predict
+    worker.send_to = lambda **kwargs: send_calls.append(kwargs)
+
+    await inspect.unwrap(PhyAIWorker.evaluate)(worker, "input", "output")
+
+    assert [call["route_key"] for call in recv_calls] == [0, 1]
+    assert all(call["group_name"] == "env" for call in recv_calls)
+    assert all(call["channel"] == "input" for call in recv_calls)
+    assert all(call["tag"] == "eval_rollout_results" for call in recv_calls)
+    assert all(call["batch_size"] == 2 for call in recv_calls)
+    assert len(predict_calls) == 2
+    for stage_id, (obs, mode) in enumerate(predict_calls):
+        assert mode == "eval"
+        assert torch.equal(
+            obs["states"], torch.tensor([[stage_id * 2], [stage_id * 2 + 1]])
+        )
+        assert obs["task_descriptions"] == [
+            f"stage-{stage_id}-0",
+            f"stage-{stage_id}-1",
+        ]
+    assert [call["route_key"] for call in send_calls] == [0, 1]
+    assert all(call["group_name"] == "env" for call in send_calls)
+    assert all(call["channel"] == "output" for call in send_calls)
+    assert all(call["tag"] == "eval_rollout_results" for call in send_calls)
+    assert all(call["batch_size"] == 2 for call in send_calls)
+    assert all(call["data"].device.type == "cpu" for call in send_calls)
+    assert all(call["data"].is_contiguous() for call in send_calls)
 
 
 def test_phyai_weight_target_converts_actor_layout():
@@ -158,11 +285,7 @@ def test_phyai_weight_target_converts_actor_layout():
 
 
 def test_phyai_worker_rejects_unknown_plugin(monkeypatch):
-    def _init_base(worker, _cfg):
-        worker.enable_offload = False
-        worker.global_accelerator_ids = [0]
-
-    monkeypatch.setattr(MultiStepRolloutWorker, "__init__", _init_base)
+    monkeypatch.setattr(Worker, "__init__", lambda _worker: None)
     cfg = OmegaConf.create({"rollout": {"phyai": {"plugin": "unknown"}}})
 
     with pytest.raises(NotImplementedError, match="pi05"):
@@ -257,73 +380,60 @@ def test_init_worker_loads_checkpoint_and_uses_fp32_vision_boundary(
 
 
 def test_phyai_preprocessing_builds_canonical_request():
-    def input_transform(sample):
-        base = np.asarray(sample["observation/image"], dtype=np.uint8)
-        wrist = np.asarray(sample["observation/wrist_image"], dtype=np.uint8)
-        state = np.asarray(sample["observation/state"], dtype=np.float64) / 10
-        prompt_length = min(len(sample["prompt"]), 8)
-        return {
-            "image": {
-                IMAGE_KEYS[0]: base,
-                IMAGE_KEYS[1]: wrist,
-                IMAGE_KEYS[2]: np.zeros_like(base),
-            },
-            "image_mask": {
-                IMAGE_KEYS[0]: np.bool_(True),
-                IMAGE_KEYS[1]: np.bool_(True),
-                IMAGE_KEYS[2]: np.bool_(False),
-            },
-            "state": state,
-            "tokenized_prompt": np.arange(8, dtype=np.int64),
-            "tokenized_prompt_mask": np.arange(8) < prompt_length,
-        }
-
-    def output_transform(sample):
-        return {"actions": sample["actions"] + sample["state"][0]}
-
-    env_obs = {
-        "main_images": torch.randint(0, 256, (2, 224, 224, 3), dtype=torch.uint8),
-        "wrist_images": torch.randint(0, 256, (2, 224, 224, 3), dtype=torch.uint8),
-        "states": torch.randn(2, 8),
-        "task_descriptions": ["pick", "place"],
-    }
+    env_obs = _make_env_obs()
     worker = object.__new__(PhyAIWorker)
-    worker._engine_device = torch.device("cpu")
-    worker._num_images = 2
-    worker._input_transform_fn = input_transform
-    worker._output_transform_fn = output_transform
-    worker._openpi_config_name = "pi05_libero"
-    worker._state_indices = None
+    _configure_preprocessing(worker)
 
     request, replay = worker._build_request(env_obs)
-    transformed = worker._apply_input_transforms(worker._repack_env_obs(env_obs))
+    repacked = repack_env_obs(
+        worker._openpi_config_name,
+        env_obs,
+        select_state=worker._select_configured_state,
+    )
+    transformed = apply_input_transform(_openpi_input_transform, repacked)
     observation = worker._observation_to_device(transformed)
     prepared = preprocess_observation(observation, train=False)
 
-    assert torch.equal(request.input_ids, observation.tokenized_prompt)
-    assert torch.equal(request.lang_lens, observation.tokenized_prompt_mask.sum(dim=-1))
-    assert torch.equal(replay.state, observation.state)
-    for index, key in enumerate(IMAGE_KEYS[:2]):
+    assert torch.equal(request.input_ids, prepared.tokenized_prompt)
+    assert torch.equal(request.input_ids, torch.arange(8).expand(2, -1))
+    assert torch.equal(request.lang_lens, prepared.tokenized_prompt_mask.sum(dim=-1))
+    assert torch.equal(request.lang_lens, torch.tensor([4, 5]))
+    assert torch.equal(replay.state, prepared.state)
+    assert torch.equal(replay.state, env_obs["states"] / 10)
+    assert torch.equal(replay.tokenized_prompt, prepared.tokenized_prompt)
+    assert torch.equal(replay.tokenized_prompt_mask, prepared.tokenized_prompt_mask)
+    expected_token_mask = torch.arange(8)[None] < request.lang_lens[:, None]
+    assert torch.equal(replay.tokenized_prompt_mask, expected_token_mask)
+    for key in IMAGE_KEYS:
         assert torch.equal(replay.images[key], prepared.images[key])
+        assert torch.equal(replay.image_masks[key], prepared.image_masks[key])
+    assert torch.equal(
+        replay.images[IMAGE_KEYS[0]],
+        env_obs["main_images"].to(torch.float32) / 255 * 2 - 1,
+    )
+    assert torch.equal(
+        replay.images[IMAGE_KEYS[1]],
+        env_obs["wrist_images"].to(torch.float32) / 255 * 2 - 1,
+    )
+    assert replay.images[IMAGE_KEYS[2]].eq(-1).all()
+    assert request.pixel_values.shape[1] == 2
+    for index, key in enumerate(IMAGE_KEYS[:2]):
         assert torch.equal(
             request.pixel_values[:, index],
             prepared.images[key].permute(0, 3, 1, 2),
         )
     assert request.pixel_values.dtype is torch.float32
+    assert request.pixel_values.is_contiguous()
 
 
 def test_training_predict_returns_actor_replay_contract(monkeypatch):
     batch_size = 2
-    processed = Observation(
-        images={key: torch.zeros(batch_size, 224, 224, 3) for key in IMAGE_KEYS},
-        image_masks={
-            IMAGE_KEYS[0]: torch.ones(batch_size, dtype=torch.bool),
-            IMAGE_KEYS[1]: torch.ones(batch_size, dtype=torch.bool),
-            IMAGE_KEYS[2]: torch.zeros(batch_size, dtype=torch.bool),
-        },
-        state=torch.randn(batch_size, 8),
-        tokenized_prompt=torch.arange(400).view(batch_size, 200),
-        tokenized_prompt_mask=torch.arange(200)[None] < torch.tensor([[7], [8]]),
+    env_obs = _make_env_obs(batch_size)
+    model_actions = torch.arange(batch_size * 10 * 32, dtype=torch.float32).view(
+        batch_size, 10, 32
+    )
+    chains = torch.arange(batch_size * 4 * 10 * 32, dtype=torch.float32).view(
+        batch_size, 4, 10, 32
     )
 
     transition_logprobs = torch.arange(
@@ -334,8 +444,8 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
         def rollout_step(self, request):
             self.request = request
             return SimpleNamespace(
-                actions=torch.zeros(batch_size, 10, 32),
-                chains=torch.zeros(batch_size, 4, 10, 32),
+                actions=model_actions,
+                chains=chains,
                 transition_logprobs=transition_logprobs,
                 raw_values=torch.tensor([[1.0], [2.0]]),
             )
@@ -344,17 +454,7 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
     worker._accelerator_type = "cpu"
     worker._timer_metrics = {}
     worker._engine = _Engine()
-    worker._input_transform_fn = lambda sample: sample
-    worker._repack_env_obs = lambda env_obs: env_obs
-    worker._apply_input_transforms = lambda _env_obs: {
-        "image_mask": processed.image_masks,
-        "tokenized_prompt": processed.tokenized_prompt,
-        "tokenized_prompt_mask": processed.tokenized_prompt_mask,
-    }
-    worker._observation_to_device = lambda _transformed: processed
-    worker._apply_output_transforms = lambda actions, _state: actions[:, :5, :7]
-    worker._engine_device = torch.device("cpu")
-    worker._num_images = 2
+    _configure_preprocessing(worker)
     worker._model_action_horizon = 10
     worker._model_action_dim = 32
     worker._num_steps = 3
@@ -375,7 +475,21 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
     )
     monkeypatch.setattr(phyai_worker.random, "randint", lambda _low, _high: 1)
 
-    actions, result = inspect.unwrap(PhyAIWorker.predict)(worker, {}, mode="train")
+    actions, result = inspect.unwrap(PhyAIWorker.predict)(worker, env_obs, mode="train")
+
+    repacked = repack_env_obs(
+        worker._openpi_config_name,
+        env_obs,
+        select_state=worker._select_configured_state,
+    )
+    transformed = apply_input_transform(_openpi_input_transform, repacked)
+    processed = preprocess_observation(
+        worker._observation_to_device(transformed), train=False
+    )
+    expected_actions = apply_output_transform(
+        _openpi_output_transform,
+        {"actions": model_actions, "state": processed.state},
+    )["actions"][:, :5]
 
     request = worker._engine.request
     assert isinstance(request, PI05RolloutRequest)
@@ -384,10 +498,30 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
     assert request.step_noise is None
     assert request.sigmas[:, 1].gt(0).all()
     assert actions.shape == (batch_size, 5, 7)
+    assert torch.equal(actions, expected_actions)
     assert torch.equal(result["prev_logprobs"], transition_logprobs[:, 1, :5, :7])
     assert torch.equal(result["prev_values"], torch.tensor([[1.0], [2.0]]))
-    assert result["forward_inputs"]["chains"].shape == (batch_size, 4, 10, 32)
-    assert result["forward_inputs"]["denoise_inds"].eq(1).all()
+    forward_inputs = result["forward_inputs"]
+    assert torch.equal(forward_inputs["chains"], chains)
+    assert forward_inputs["denoise_inds"].eq(1).all()
+    assert torch.equal(
+        forward_inputs["obs_state"],
+        torch.nn.functional.pad(processed.state.to(torch.float32), (0, 24)),
+    )
+    assert torch.equal(forward_inputs["tokenized_prompt"], processed.tokenized_prompt)
+    assert torch.equal(
+        forward_inputs["tokenized_prompt_mask"],
+        processed.tokenized_prompt_mask,
+    )
+    assert torch.equal(forward_inputs["action"], actions.reshape(batch_size, -1))
+    assert torch.equal(
+        forward_inputs["model_action"], model_actions.reshape(batch_size, -1)
+    )
+    for key in IMAGE_KEYS:
+        assert torch.equal(forward_inputs[f"obs_image__{key}"], processed.images[key])
+        assert torch.equal(
+            forward_inputs[f"obs_image_mask__{key}"], processed.image_masks[key]
+        )
 
 
 def test_rollout_plan_uses_actor_sampling_defaults():
