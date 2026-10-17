@@ -49,13 +49,13 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_mlp_vlm_trend_reward_sglang_gt_env128"
+    experiment_name: "maniskill_ppo_mlp_vlm_trend_reward_sglang_gtsuccess_1000steps"
     logger_backends: ["tensorboard"]
   max_epochs: 1000
-  max_steps: 30
+  max_steps: 1000
   only_eval: false
-  val_check_interval: 3
-  save_interval: 3
+  val_check_interval: -1
+  save_interval: 100
   resume_dir: null
   # Load warmup actor and critic weights; start with a fresh optimizer.
   ckpt_path: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
@@ -84,6 +84,17 @@ algorithm:
   huber_delta: 10.0
   gamma: 0.99
   gae_lambda: 0.9
+  sampling_params:
+    do_sample: true
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+  length_params:
+    max_new_token: 7
+    max_length: 1024
+    min_length: 1
 
 data:
   rollout_batch_size: 128
@@ -120,18 +131,17 @@ env:
     use_3rd_view_as_extra: true
   eval:
     rollout_epoch: 1
-    total_num_envs: 1024
+    total_num_envs: 32
     auto_reset: true
     ignore_terminations: true
     use_fixed_reset_state_ids: true
     group_size: 1
     use_full_state: true
-    reward_mode: only_success
     max_episode_steps: 50
     max_steps_per_rollout_epoch: 50
     init_params:
       id: "PickCube3View-v1"
-      obs_mode: "state"
+      obs_mode: "rgb"
       control_mode: "pd_joint_delta_pos"
       sim_backend: "gpu"
       sim_config:
@@ -148,7 +158,7 @@ env:
       render_mode: all
     use_3rd_view_as_extra: true
     video_cfg:
-      save_video: false
+      save_video: true
       info_on_video: true
       video_base_dir: ${runner.logger.log_path}/video/eval
 
