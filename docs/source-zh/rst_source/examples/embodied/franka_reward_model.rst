@@ -362,7 +362,7 @@ Qwen VLM Reward Model（动作趋势判断）
 预处理为 VLM Trend 数据集
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-采集到的 ``.pkl`` episode 需要通过 ``preprocess_vlm_trend_reward_dataset.py``
+采集到的 ``.pkl`` episode 需要通过 ``examples/reward/vlm_trend/preprocess_reward_dataset.py``
 转换为 VLM trend SFT 格式。运行前需要激活虚拟环境并设置 ``PYTHONPATH``：
 
 .. code-block:: bash
@@ -375,7 +375,7 @@ Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
        --raw-data-path /path/to/run/pickle_episode \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -385,7 +385,7 @@ Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
        --raw-data-path /path/to/run/pickle_episode \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \

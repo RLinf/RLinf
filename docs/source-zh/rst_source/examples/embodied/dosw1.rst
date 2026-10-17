@@ -407,7 +407,7 @@ DOS-W1 的 episode 进度由机器人节点上的键盘监听器控制。只要�
 2. 按 ``s`` 开始一个 episode。
 3. 通过主动臂完成抓取与抬起。
 4. 成功后按 ``d`` 保存；如果这条不要了，按 ``r`` 放弃并重来。
-5. 达到 ``runner.num_data_episodes``（默认 ``20``）条后脚本自动退出。
+5. 达到 ``runner.num_data_episodes``\ （默认 ``20``）条后脚本自动退出。
 
 成功的轨迹会保存在 ``<log_path>/demo_buffer/``。同一配置还会把原始 episode 写到 ``<log_path>/pickle_episode/``。RLPD 读取 replay buffer 目录：
 
@@ -459,9 +459,9 @@ Dummy 自检（可选）
 ``DOSW1Env._execute_model_action`` 在把命令发到 SDK 之前，会做三层防护：
 
 1. **单步关节钳位**：目标关节会被 clip 到
-   ``current ± max_joint_delta``（默认 ``0.1`` 弧度，约 5.7°/步）。
+   ``current ± max_joint_delta``\ （默认 ``0.1`` 弧度，约 5.7°/步）。
 2. **绝对关节限幅**：再 clip 到
-   ``[joint_limit_min, joint_limit_max]``（默认 ``±π``，可根据实际工况收紧）。
+   ``[joint_limit_min, joint_limit_max]``\ （默认 ``±π``，可根据实际工况收紧）。
 3. **末端安全盒**：沿着"当前关节 → 目标关节"在关节空间做二分搜索，找到
    经正运动学换算后仍落在
    ``left_ee_pose_limit_min/max`` / ``right_ee_pose_limit_min/max``
@@ -538,7 +538,7 @@ Dummy 自检（可选）
 **训练不稳定 / 发散**
   几个常用的 SAC 调节旋钮：
 
-  - 降低 ``actor.optim.lr`` 与 ``actor.critic_optim.lr``（如 ``1e-4``）。
+  - 降低 ``actor.optim.lr`` 与 ``actor.critic_optim.lr``\ （如 ``1e-4``）。
   - 提高 ``algorithm.replay_buffer.min_buffer_size``，让 buffer
     积累更多数据再开始更新。
   - 若任务 horizon 较短，可适当调低 ``algorithm.gamma``
