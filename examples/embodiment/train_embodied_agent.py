@@ -25,7 +25,7 @@ from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.workers.rollout.utils import get_embodied_rollout_worker
 
 mp.set_start_method("spawn", force=True)
 
@@ -108,8 +108,11 @@ def main(cfg) -> None:
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+    rollout_worker_cls = get_embodied_rollout_worker(cfg)
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
+        cluster,
+        name=cfg.rollout.group_name,
+        placement_strategy=rollout_placement,
     )
 
     # Create env worker group
