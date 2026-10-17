@@ -122,34 +122,32 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         ) -> tuple[str, str]:
             user_content = cls._build_video_user_content(processor, prompt_text)
 
-            try:
-                if answer_text_i is None:
-                    rendered_prompt = processor.apply_chat_template(
-                        [{"role": "user", "content": user_content}],
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                    rendered_label = rendered_prompt
-                else:
-                    rendered_prompt = processor.apply_chat_template(
-                        [
-                            {"role": "user", "content": user_content},
-                            {"role": "assistant", "content": answer_text_i},
-                        ],
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                    rendered_label = processor.apply_chat_template(
-                        [{"role": "user", "content": user_content}],
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-            except Exception:
-                rendered_prompt = (
-                    f"<|im_start|>user\n{user_content}<|im_end|>\n"
-                    f"<|im_start|>assistant\n"
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_content})
+            if use_chat_template:
+                rendered_label = processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
                 )
-                rendered_label = rendered_prompt
+                rendered_prompt = rendered_label
+                if answer_text_i is not None:
+                    rendered_prompt = processor.apply_chat_template(
+                        messages + [{"role": "assistant", "content": answer_text_i}],
+                        tokenize=False,
+                        add_generation_prompt=False,
+                    )
+            else:
+                rendered_label = (
+                    "".join(
+                        f"<|im_start|>{message['role']}\n{message['content']}<|im_end|>\n"
+                        for message in messages
+                    )
+                    + "<|im_start|>assistant\n"
+                )
+                rendered_prompt = rendered_label
+                if answer_text_i is not None:
+                    rendered_prompt += f"{answer_text_i}<|im_end|>\n"
 
             return rendered_prompt, rendered_label
 
