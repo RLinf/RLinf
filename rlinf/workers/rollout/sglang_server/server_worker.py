@@ -79,7 +79,14 @@ def _run_sglang_server(
             set_global_server_args(server_args)
             dispatch_launch(server_args)
         else:
+            from sglang.srt.entrypoints import http_server
             from sglang.srt.entrypoints.http_server import launch_server
+
+            from rlinf.workers.rollout.sglang_server.video_processor import (
+                install_reward_video_support,
+            )
+
+            install_reward_video_support(http_server)
             from sglang.srt.server_args import ServerArgs
 
             server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"

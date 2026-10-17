@@ -437,6 +437,33 @@ Both local VLM Trend paths use history-window reward inputs. The standard path u
    reward worker **every step**. When ``min_history_size`` is not met,
    the reward worker returns ``interval_reward`` instead of skipping the RPC.
 
+When ``gt_success_bonus`` is enabled, ongoing environments use their current
+success flag; environments that just ended use valid ``final_info`` from before
+automatic reset. The bonus remains a per-successful-step reward, including when
+success does not terminate the task.
+
+With ``env.eval.use_fixed_reset_state_ids: true``, evaluation keeps the selected
+reset IDs between rounds. Fixed ManiSkill evaluation rebuilds the scene at each
+round's start to clear prior physics and controller state. Validation preserves
+training RNG streams. Rollout RNG swaps cover synchronous predictions only, so
+asynchronous training is not rewound when validation finishes. Fresh-process
+evaluation remains useful for checking repeatability. Report
+``eval/success_at_end`` for complete episodes and distinguish it from
+``eval/success_once``.
+
+Set ``rollout.seed`` to control Hugging Face policy action sampling after model
+initialization; each rollout worker adds its rank to this seed.
+
+SFT and reward inference share video processing and prompt construction. Keep
+the checkpoint's ``subprocessor_kwargs.video_processor.do_sample_frames``, frame
+order, ``video_fps``, system prompt, and chat-template settings consistent. Set
+SFT prompt options under ``data`` and inference prompt options under
+``reward.model.input_builder_params`` (``success_input_builder_params`` for the
+separate success head). A
+five-frame window does not necessarily produce five processed frames when
+sampling is enabled. SFT appends the supervised answer to the inference prefix,
+without another assistant generation prompt after the answer.
+
 3.4.1 Local Hugging Face Inference
 .....................................
 
@@ -544,10 +571,18 @@ Both state machines reset on ``done``.
 3.4.2 SGLang API Inference
 ............................
 
-Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``). Point
-``reward.api.api_base`` at an external OpenAI-compatible endpoint, or leave it empty
-and let RLinf launch a Ray-managed SGLang server/router via
+Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``) and leave
+``reward.api.api_base`` empty to launch a Ray-managed SGLang server/router via
 :doc:`../guides/sglang_server`.
+
+For Qwen3-VL video rewards, the worker sends the shared processor's unpadded token
+IDs and video tensors losslessly to ``/generate``. The managed server
+preserves video grouping, sampled frames, pixels, grids, and temporal positions
+instead of converting videos to JPEG image lists or resampling them. An external
+video endpoint must use the same RLinf SGLang integration; a generic
+OpenAI-compatible chat endpoint is not sufficient. Image builders continue to
+use the chat API. Equal inputs do not guarantee identical floating-point
+inference outputs across backends.
 
 This configuration needs a Qwen3-VL + SGLang environment with ``sglang_router``.
 The embodied E2E workflow creates ``.venv`` with the install command below and
@@ -571,8 +606,8 @@ shell that lacks it; run the configuration in the new ``.venv``. Running
 If the container has the required system dependencies but no sudo access,
 append ``--no-root`` to the install command.
 In ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``, set
-``reward.model.model_path`` to the actual Qwen3-VL model path. The default
-``router_server_args.tensor_parallel_size: 2`` needs two available GPUs.
+``reward.model.model_path`` to the actual Qwen3-VL model path and choose
+``router_server_args.tensor_parallel_size`` for the GPUs assigned to the reward server.
 
 .. code-block:: yaml
 

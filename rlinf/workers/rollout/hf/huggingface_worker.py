@@ -43,6 +43,12 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import (
+    get_rng_state,
+    isolated_rng,
+    seed_everything,
+    set_rng_state,
+)
 
 
 class MultiStepRolloutWorker(Worker):
@@ -205,6 +211,9 @@ class MultiStepRolloutWorker(Worker):
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
+
+        if self.cfg.rollout.get("seed") is not None:
+            seed_everything(int(self.cfg.rollout.seed) + self._rank)
 
     def setup_sample_params(self):
         # sampling parameters for rollout
@@ -484,6 +493,19 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("predict")
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        if mode == "train":
+            return self._predict(env_obs, mode)
+        with isolated_rng():
+            if getattr(self, "_eval_rng_state", None) is not None:
+                set_rng_state(self._eval_rng_state)
+            try:
+                return self._predict(env_obs, mode)
+            finally:
+                self._eval_rng_state = get_rng_state()
+
+    def _predict(
+        self, env_obs: dict[str, Any], mode: Literal["train", "eval"]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         kwargs = (
             self._train_sampling_params
@@ -931,6 +953,8 @@ class MultiStepRolloutWorker(Worker):
 
     @Worker.timer("evaluate")
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
+        with isolated_rng(int(self.cfg.env.eval.seed)):
+            self._eval_rng_state = get_rng_state()
         if self.enable_offload:
             self.reload_model()
         if self.env_decoupled_mode:
