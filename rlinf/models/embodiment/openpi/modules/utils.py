@@ -14,12 +14,30 @@
 
 from __future__ import annotations
 
+import functools
+import importlib.util
+
 import torch
 import torch.nn.functional as F
 
-# Kernels stay compiled unless a caller turns this off before the first forward.
-# Isaac Sim jobs do that: their bundled torch cannot import the venv's triton.
-_torch_compile_enabled = True
+
+@functools.cache
+def inductor_available() -> bool:
+    """Whether Inductor can compile these kernels in this interpreter.
+
+    Inductor generates its device code through Triton, which ships only for
+    CUDA and ROCm: Ascend and MUSA venvs have no ``triton``, and Isaac Sim's
+    bundled torch cannot import the one in the venv. Compiling there fails at
+    the first forward pass, so this decides the default for
+    :func:`set_torch_compile`. A configuration that names ``torch_compile``
+    explicitly still wins.
+    """
+    return importlib.util.find_spec("triton") is not None
+
+
+# Kernels stay compiled wherever Inductor works, unless a caller turns this off
+# before the first forward.
+_torch_compile_enabled = inductor_available()
 
 
 def set_torch_compile(enabled: bool) -> None:

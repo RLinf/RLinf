@@ -2547,6 +2547,8 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -2740,6 +2742,8 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -2845,6 +2849,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3054,9 +3060,15 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
-def test_rollout_runs_requested_terminal_inference_without_a_value_head():
+@pytest.mark.parametrize("value_only", [False, True])
+def test_rollout_runs_requested_terminal_inference_without_a_value_head(value_only):
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = value_only
     rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.hf_model = SimpleNamespace()
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3087,6 +3099,8 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
 def test_rollout_reuses_policy_obs_for_transition_next_obs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = False
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3110,6 +3124,8 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = True
+    rollout.value_only_bootstrap = True
     rollout.enable_rlt = True
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
@@ -3142,6 +3158,8 @@ def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
 
 def test_rollout_keeps_next_forward_inputs_only_for_rlt():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = True
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3172,6 +3190,77 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
         forward_inputs["rlt_transition_z_rl"],
     )
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
+
+
+@pytest.mark.parametrize("batch_bootstrap", [False, True])
+def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstrap):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = batch_bootstrap
+    rollout.value_only_bootstrap = True
+    rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.collect_transitions = True
+    rollout.n_train_chunk_steps = 0
+    rollout.num_pipeline_stages = 1
+    rollout.env_decoupled_mode = False
+    rollout.update_dagger_beta = lambda: None
+
+    class ValuePolicy:
+        value_head = object()
+
+        def predict_value_batch(self, env_obs):
+            return env_obs["states"][:, :1].float() * 2
+
+    rollout.hf_model = ValuePolicy()
+    sizes = [1, 1, 2]
+    keys = [TrajectoryKey(0, rank, 0, 0, 1) for rank in range(3)]
+    sources = [TrajectorySource(key, size) for key, size in zip(keys, sizes)]
+    parts = [
+        EnvPart(
+            sources=[sources[0]],
+            transition=EnvTransition(truncations=torch.ones(1, 1, dtype=torch.bool)),
+            next_obs={"states": torch.tensor([[9]])},
+            requires_inference=True,
+        ),
+        EnvPart(sources=[sources[1]], transition=EnvTransition()),
+        EnvPart(
+            sources=[sources[2]],
+            transition=EnvTransition(),
+            requires_inference=True,
+        ),
+    ]
+    request = PolicyInput(
+        obs={"states": torch.tensor([[0], [1], [2], [3]])},
+        env_parts=parts,
+        request_sizes=sizes,
+        is_last=True,
+    )
+    rollout._receive_policy_input = AsyncMock(return_value=(request, None))
+
+    class ActorChannel:
+        def __init__(self):
+            self.parts = []
+
+        def put(self, item, *, async_op):
+            self.parts.append(item)
+
+    actor_channel = ActorChannel()
+    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
+    while hasattr(generate_one_epoch, "__wrapped__"):
+        generate_one_epoch = generate_one_epoch.__wrapped__
+    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
+
+    completed = actor_channel.parts
+    assert [part.sources for part in completed] == [[source] for source in sources]
+    assert all(not part.requires_inference for part in completed)
+    assert completed[0].transition is parts[0].transition
+    assert completed[0].next_obs["states"].tolist() == [[9]]
+    assert completed[0].bootstrap_values.tolist() == [[18.0]]
+    assert completed[1].bootstrap_values is None
+    assert completed[1].next_obs["states"].tolist() == [[1]]
+    assert completed[2].next_obs["states"].tolist() == [[2], [3]]
+    assert completed[2].final_prev_values.tolist() == [[4.0], [6.0]]
 
 
 def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():

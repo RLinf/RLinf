@@ -23,7 +23,6 @@ import torch
 from gr00t.configs.model.gr00t_n1d6 import Gr00tN1d6Config
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.model.gr00t_n1d6.gr00t_n1d6 import Gr00tN1d6
-from gr00t.model.gr00t_n1d6.processing_gr00t_n1d6 import Gr00tN1d6Processor
 from torch import nn
 from torch.distributions import Normal
 from transformers.feature_extraction_utils import BatchFeature
@@ -39,6 +38,11 @@ from rlinf.models.embodiment.gr00t.utils import (
 )
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.utils.cuda_graph import (
+    clone_tensor_tree,
+    copy_tensor_tree,
+    graph_signature,
+)
 
 
 class SimulationContent:
@@ -530,6 +534,12 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         self.model_path = Path(local_model_path)
         self.compute_dtype = compute_dtype
         self.output_action_chunks = output_action_chunks
+        self.cuda_graph_manager = None
+        # Per-signature eager call counts for lazy graph capture; -1 marks a
+        # signature whose capture failed and stays eager forever.
+        self._rl_graph_state: dict[Any, int] = {}
+        # Captured rollout graphs keyed by input signature.
+        self._rl_graph_specs: dict[Any, dict] = {}
         self.action_dim = getattr(
             config, "action_dim", getattr(config, "max_action_dim", 7)
         )
@@ -546,7 +556,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                     processor_cfg["statistics"] = json.load(f)
                 with open(processor_path / "embodiment_id.json", "r") as f:
                     processor_cfg["embodiment_id_mapping"] = json.load(f)
-                modality_transform = Gr00tN1d6Processor(**processor_cfg)
+                from rlinf.models.embodiment.gr00t.gr00t_n1d6.device_transform import (
+                    BatchedEagleProcessor,
+                )
+
+                modality_transform = BatchedEagleProcessor(**processor_cfg)
                 modality_config = getattr(modality_transform, "modality_configs", None)
             else:
                 processor = AutoProcessor.from_pretrained(
@@ -771,6 +785,8 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         if not decode_state:
             decode_state = None
 
+        if hasattr(self._modality_transform, "set_device"):
+            self._modality_transform.set_device(next(self.parameters()).device)
         normalized_input = self.apply_transforms(obs_copy)
 
         for key in normalized_input:
@@ -1061,6 +1077,83 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         )
         return decoded
 
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int) -> None:
+        """Enable lazy graph capture of the rollout backbone forward.
+
+        Graphs are captured per input signature on the third occurrence: the
+        first two calls run eagerly as warmup, later calls copy inputs into
+        the static buffers and replay. Only the backbone is captured: the
+        action head samples (``torch.randn``), and NPU graph capture rejects
+        generator ops. Weight updates through ``load_state_dict`` copy in
+        place, so replays observe new weights.
+        """
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager(
+                device=next(self.parameters()).device
+            )
+
+    def release_cuda_graph(self) -> None:
+        super().release_cuda_graph()
+        self._rl_graph_state.clear()
+        self._rl_graph_specs.clear()
+
+    def _backbone_graph_call(self, backbone_inputs):
+        """Graph-routed backbone forward with eager warmup and fallback."""
+        key = graph_signature(backbone_inputs, "b")
+        if key is None:
+            return self.backbone(backbone_inputs)
+        state = self._rl_graph_state.get(key, 0)
+        if state < 2 or state < 0:
+            if state >= 0:
+                self._rl_graph_state[key] = state + 1
+            return self.backbone(backbone_inputs)
+        if key not in self._rl_graph_specs:
+            self._capture_backbone_graph(key, backbone_inputs)
+            if key not in self._rl_graph_specs:
+                return self.backbone(backbone_inputs)
+        spec = self._rl_graph_specs[key]
+        try:
+            copy_tensor_tree(spec["inputs"], backbone_inputs)
+            spec["graph"].replay()
+            # Outputs are static buffers; async channel sends may outlive the
+            # next replay, so hand out clones.
+            return clone_tensor_tree(spec["outputs"])
+        except Exception as error:  # noqa: BLE001
+            self._rl_graph_state[key] = -1
+            logging.warning(
+                "rollout graph replay failed (%s); falling back to eager", error
+            )
+            return self.backbone(backbone_inputs)
+
+    def _capture_backbone_graph(self, key, backbone_inputs):
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        name = f"backbone_{len(self._rl_graph_specs)}"
+        inputs = clone_tensor_tree(backbone_inputs)
+
+        def _fn(spec_inputs):
+            return self.backbone(spec_inputs)
+
+        try:
+            graph_spec = self.cuda_graph_manager.capture(
+                GraphCaptureSpec(
+                    name=name,
+                    func=_fn,
+                    inputs=inputs,
+                    warmup_iters=0,
+                )
+            )
+            self._rl_graph_specs[key] = {
+                "graph": graph_spec.graph,
+                "inputs": graph_spec.inputs,
+                "outputs": graph_spec.outputs,
+            }
+        except Exception as error:  # noqa: BLE001
+            self._rl_graph_state[key] = -1
+            logging.warning("rollout graph capture failed (%s); staying eager", error)
+
     def _get_rl_action(
         self,
         normalized_input: dict[str, Any],
@@ -1084,7 +1177,10 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         normalized_input = {k: v for k, v in normalized_input.items() if v is not None}
 
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
-        backbone_outputs = self.backbone(backbone_inputs)
+        if self.is_cuda_graph_enabled():
+            backbone_outputs = self._backbone_graph_call(backbone_inputs)
+        else:
+            backbone_outputs = self.backbone(backbone_inputs)
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
             backbone_outputs, action_inputs, mode=mode
         )

@@ -89,6 +89,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             weight_paths = [weight_path]
         for weight_path in weight_paths:
             safetensors.torch.load_model(model, weight_path, strict=False)
+        if torch_dtype is not None:
+            model.to(dtype=torch_dtype)
         norm_stats_file = os.path.join(cfg.model_path, "norm_stats.json")
         if os.path.exists(norm_stats_file):
             model.norm_stats = model._read_normalization_stats(norm_stats_file)

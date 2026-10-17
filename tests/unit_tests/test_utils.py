@@ -35,6 +35,46 @@ from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
 
 
+@pytest.mark.parametrize("scalar", [None, True, 1, 1.0])
+def test_graph_signatures_distinguish_static_metadata_types(scalar):
+    from rlinf.utils.cuda_graph import graph_signature
+
+    inputs = {"pixels": torch.zeros(2, 3), "mode": scalar}
+    assert graph_signature(inputs) != graph_signature({**inputs, "mode": str(scalar)})
+    assert graph_signature(inputs) == graph_signature(
+        dict(reversed(list(inputs.items())))
+    )
+    assert graph_signature({1: torch.zeros(2)}) is None
+    assert graph_signature([torch.zeros(2)]) != graph_signature((torch.zeros(2),))
+
+
+def test_graph_buffer_updates_preserve_structure_and_validate_static_inputs():
+    from rlinf.utils.cuda_graph import clone_tensor_tree, copy_tensor_tree
+
+    source = {"x": [torch.ones(2, 3), {"mode": "train"}], "unused": None}
+    buffers = clone_tensor_tree(source)
+    source["x"][0].mul_(2)
+    copy_tensor_tree(buffers, source)
+    torch.testing.assert_close(buffers["x"][0], source["x"][0])
+    source["x"][0].zero_()
+    assert torch.count_nonzero(buffers["x"][0]) == 6
+    with pytest.raises(ValueError, match="shape mismatch"):
+        copy_tensor_tree(buffers, {"x": [torch.ones(3), {"mode": "train"}]})
+    with pytest.raises(ValueError, match="dtype mismatch"):
+        copy_tensor_tree(
+            buffers, {"x": [torch.ones(2, 3, dtype=torch.float64), {"mode": "train"}]}
+        )
+    with pytest.raises(ValueError, match="static metadata changed"):
+        copy_tensor_tree(buffers, {"x": [torch.ones(2, 3), {"mode": "eval"}]})
+
+
+def test_graph_manager_rejects_unsupported_devices_before_initialization():
+    from rlinf.utils.cuda_graph import CUDAGraphManager
+
+    with pytest.raises(ValueError, match="requires CUDA or NPU"):
+        CUDAGraphManager(device=torch.device("cpu"))
+
+
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
     metrics = compute_evaluate_metrics(
         [
@@ -594,3 +634,130 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_boolean_attention_mask_casts_only_binary_float_masks():
+    # The NPU keeps its fused SDPA kernel for boolean masks; the cast must
+    # accept exactly the {0, dtype-min} masks HF models build and refuse any
+    # mask that encodes a real bias.
+    import torch
+
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        boolean_attention_mask,
+    )
+
+    causal = torch.zeros(2, 1, 4, 4, dtype=torch.bfloat16)
+    causal[:, :, :, 2:] = torch.finfo(torch.bfloat16).min
+    out = boolean_attention_mask(causal)
+    assert out is not None and out.dtype == torch.bool
+    assert torch.equal(out, causal >= 0)
+
+    assert boolean_attention_mask(None) is None
+    assert boolean_attention_mask(causal.bool()) is None
+    biased = causal.clone()
+    biased[0, 0, 0, 0] = -1.5
+    assert boolean_attention_mask(biased) is None
+
+
+def test_boolean_attention_mask_caches_per_live_tensor():
+    # One mask tensor flows through every layer of a forward; the verdict is
+    # cached so only the first layer pays the device sync, and an in-place
+    # edit or a new tensor gets a fresh verdict.
+    import torch
+
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        boolean_attention_mask,
+    )
+
+    mask = torch.zeros(1, 1, 3, 3, dtype=torch.float32)
+    first = boolean_attention_mask(mask)
+    assert boolean_attention_mask(mask) is first
+
+    mask[0, 0, 0, 0] = -2.0  # bias now; version bump must invalidate
+    assert boolean_attention_mask(mask) is None
+
+
+@pytest.mark.parametrize("capturing", [False, True])
+def test_npu_sdpa_mask_cast_preserves_updates_and_biases(monkeypatch, capturing):
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        install_npu_sdpa_mask_cast,
+    )
+
+    monkeypatch.setattr(
+        torch,
+        "npu",
+        SimpleNamespace(
+            is_available=lambda: True,
+            is_current_stream_capturing=lambda: capturing,
+        ),
+        raising=False,
+    )
+    original = torch.nn.functional.scaled_dot_product_attention
+    # Restore the public entry point when this test ends.
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", original)
+    assert install_npu_sdpa_mask_cast()
+    query = torch.randn(2, 4, 5, 8)
+    key, value = torch.randn_like(query), torch.randn_like(query)
+    mask = torch.zeros(2, 1, 5, 5)
+    mask[..., 3:] = torch.finfo(mask.dtype).min
+    expected = original(query, key, value, mask)
+    scalar_reads = []
+    original_bool = torch.Tensor.__bool__
+
+    def record_scalar_read(tensor):
+        scalar_reads.append(tensor.shape)
+        return original_bool(tensor)
+
+    with monkeypatch.context() as guard:
+        guard.setattr(torch.Tensor, "__bool__", record_scalar_read)
+        for _ in range(6):
+            actual = torch.nn.functional.scaled_dot_product_attention(
+                query, key, value, mask
+            )
+    assert len(scalar_reads) == (6 if capturing else 1)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+    # Reusing the same mask object must not retain an old conversion.
+    for changed in (0.0, -0.5, 0.5):
+        mask[..., 3:] = changed
+        actual = torch.nn.functional.scaled_dot_product_attention(
+            query, key, value, mask
+        )
+        torch.testing.assert_close(
+            actual, original(query, key, value, mask), rtol=0, atol=0
+        )
+
+    # Inference tensors have no version counter and cannot enter the cache.
+    with torch.inference_mode():
+        inference_mask = torch.zeros_like(mask)
+    actual = torch.nn.functional.scaled_dot_product_attention(
+        query, key, value, inference_mask
+    )
+    torch.testing.assert_close(
+        actual, original(query, key, value, inference_mask), rtol=0, atol=0
+    )
+
+    # Finite additive masks retain a softmax distribution for an entirely
+    # masked row; boolean masks instead produce zero for that row.
+    for blocked_value in (torch.finfo(mask.dtype).min, -torch.inf):
+        blocked_mask = torch.full_like(mask, blocked_value)
+        torch.testing.assert_close(
+            torch.nn.functional.scaled_dot_product_attention(
+                query, key, value, blocked_mask
+            ),
+            original(query, key, value, blocked_mask),
+            rtol=0,
+            atol=0,
+        )
+
+    additive_mask = torch.zeros_like(mask, requires_grad=True)
+    expected = original(query, key, value, additive_mask)
+    actual = torch.nn.functional.scaled_dot_product_attention(
+        query, key, value, additive_mask
+    )
+    torch.testing.assert_close(
+        torch.autograd.grad(actual.sum(), additive_mask)[0],
+        torch.autograd.grad(expected.sum(), additive_mask)[0],
+        rtol=0,
+        atol=0,
+    )

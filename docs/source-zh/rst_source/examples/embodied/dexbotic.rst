@@ -177,6 +177,8 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
 2. 按 ``cluster.component_placement`` 构建 LIBERO actor、rollout 和 env worker。
 3. 运行 PPO，并把日志和检查点写入 ``runner.logger.log_path``。
 
+π₀ 加载参数时使用 ``actor.model.precision`` 指定的精度。需要以 BF16 运行时，将其设为 ``bf16``，并让 ``rollout.model`` 使用相同的精度；设为 ``null`` 则保留 checkpoint 的默认精度。
+
 .. admonition:: 进一步配置
    :class: note
 

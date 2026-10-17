@@ -244,6 +244,23 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
                         ).contiguous()
         return processed_obs
 
+    def embed_suffix(
+        self,
+        states: Optional[torch.Tensor] = None,
+        noisy_actions: Optional[torch.Tensor] = None,
+        time: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Project continuous inputs in the model's configured precision."""
+        if states is not None:
+            states = states.to(dtype=self.model.state_proj.weight.dtype)
+        if noisy_actions is not None:
+            noisy_actions = noisy_actions.to(
+                dtype=self.model.action_in_proj.weight.dtype
+            )
+        return super().embed_suffix(
+            states=states, noisy_actions=noisy_actions, time=time
+        )
+
     def forward(self, forward_type="default_forward", **kwargs):
         if "forward_inputs" in kwargs and "data" not in kwargs:
             kwargs["data"] = kwargs.pop("forward_inputs")

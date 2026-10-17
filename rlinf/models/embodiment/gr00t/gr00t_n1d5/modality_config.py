@@ -33,7 +33,10 @@ from gr00t.data.transform.video import (
     VideoToTensor,
 )
 from gr00t.experiment.data_config import BaseDataConfig
-from gr00t.model.transforms import GR00TTransform
+
+from rlinf.models.embodiment.gr00t.gr00t_n1d5.device_transform import (
+    BatchedEagleTransform as GR00TTransform,
+)
 
 
 class ManiskillWidowXDataConfig(BaseDataConfig):
