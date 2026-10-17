@@ -1,0 +1,266 @@
+defaults:
+- override hydra/job_logging: stdout
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-7
+    critic: 0-7
+    rollout: 0-7
+    reward: 0-7
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends:
+    - tensorboard
+  max_epochs: 1
+  max_steps: 2
+  val_check_interval: -1
+  save_interval: -1
+  seq_length: 7096
+  enable_dynamic_batch_size: true
+  max_tokens_per_mbs: 8192
+  resume_dir: null
+  experiment_name: searchr1-ppo-ci
+  output_dir: ../results
+  synchronous: true
+algorithm:
+  group_size: 1
+  n_minibatches: 2
+  training_batch_size_per_gpu: 1
+  logprob_forward_micro_batch_size: 16
+  recompute_logprobs: true
+  loss_type: actor
+  loss_agg_func: token-mean
+  use_valid_token_scale: true
+  early_stop_imp_ratio: null
+  kl_beta: 0.0
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: false
+  clip_ratio_c: null
+  adv_type: actor_gae
+  normalize_advantages: true
+  sampling_params:
+    do_sample: true
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: 3000
+  gamma: 1.0
+  gae_lambda: 1.0
+  value_cliprange: 0.5
+data:
+  type: math
+  max_prompt_length: 4096
+  filter_prompt_by_length: true
+  rollout_batch_size: 64
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: false
+  shuffle: true
+  seed: 1234
+  train_data_paths:
+  - /workspace/dataset/searchr1/train.jsonl
+agentloop:
+  group_name: AgentLoopGroup
+  toolcall_parser: searchr1-qwen
+  max_turns: 2
+  print_outputs: false
+  is_dynamic_rollout_batch: true
+tools:
+  search:
+    server_addr: 0.0.0.0:8000
+    topk: 3
+    dummy_mode: true
+rollout:
+  group_name: RolloutGroup
+  gpu_memory_utilization: 0.75
+  model:
+    model_path: /workspace/dataset/Qwen2.5-1.5B-Instruct
+    model_type: qwen2.5
+    precision: fp16
+  enforce_eager: false
+  detokenize: true
+  return_logprobs: false
+  rollout_backend: sglang
+  sglang: {}
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 128
+  cuda_graph_max_bs: 128
+  validate_weight_first_sync: true
+  validate_weight: false
+reward:
+  reward_type: searchr1
+actor:
+  group_name: ActorGroup
+  training_backend: megatron
+  enable_dp_load_balance: true
+  seed: 1234
+  pack_traj: true
+  spec_name: decoder_gpt
+  offload_optimizer: true
+  offload_weight: true
+  offload_grad: true
+  model:
+    precision: fp16
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    megatron_checkpoint: null
+    activation: swiglu
+    normalization: rmsnorm
+    add_bias_linear: false
+    position_embedding_type: rope
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 28
+    apply_rope_fusion: true
+    bias_dropout_fusion: false
+    persist_layer_norm: false
+    bias_activation_fusion: false
+    attention_softmax_in_fp32: true
+    batch_p2p_comm: false
+    variable_seq_lengths: true
+    gradient_accumulation_fusion: false
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: false
+  optim:
+    optimizer: adam
+    lr: 1.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    min_lr: 0.0
+    weight_decay: 0.01
+    clip_grad: 0.8
+    use_distributed_optimizer: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: false
+    bf16: false
+    fp16: true
+    initial_loss_scale: 8192
+    loss_scale_window: 1000
+  lr_sched:
+    lr_warmup_fraction: 0.285
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 662
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: false
+    trust_remote_code: true
+    padding_side: right
+  megatron:
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_hf_ckpt: true
+    ckpt_convertor:
+      model: Qwen2.5-1.5B
+      hf_model_path: ${rollout.model.model_path}
+      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+      use_gpu_num: 0
+      use_gpu_index: null
+      process_num: 16
+      tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
+      pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+critic:
+  group_name: CriticGroup
+  training_backend: megatron
+  enable_dp_load_balance: true
+  seed: 1234
+  spec_name: decoder_gpt
+  offload_optimizer: true
+  offload_weight: true
+  offload_grad: true
+  model:
+    precision: fp16
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    megatron_checkpoint: null
+    activation: swiglu
+    normalization: rmsnorm
+    add_bias_linear: false
+    position_embedding_type: rope
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 28
+    apply_rope_fusion: true
+    bias_dropout_fusion: false
+    persist_layer_norm: false
+    bias_activation_fusion: false
+    attention_softmax_in_fp32: true
+    batch_p2p_comm: false
+    variable_seq_lengths: true
+    gradient_accumulation_fusion: false
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: false
+  optim:
+    optimizer: adam
+    lr: 1.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    min_lr: 0.0
+    weight_decay: 0.01
+    clip_grad: 0.8
+    use_distributed_optimizer: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: false
+    bf16: false
+    fp16: true
+    initial_loss_scale: 32
+    loss_scale_window: 1000
+  lr_sched:
+    lr_warmup_fraction: 0.0
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-05
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 662
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: false
+    trust_remote_code: true
+    padding_side: right
+  megatron:
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_hf_ckpt: true
+    ckpt_convertor:
+      model: Qwen2.5-1.5B
+      hf_model_path: ${rollout.model.model_path}
+      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/critic
+      use_gpu_num: 0
+      use_gpu_index: null
+      process_num: 16
+      tensor_model_parallel_size: ${critic.model.tensor_model_parallel_size}
+      pipeline_model_parallel_size: ${critic.model.pipeline_model_parallel_size}
+  use_critic_model: true
+  value_head_init: normal # normal or zero

@@ -189,7 +189,7 @@ If you use `sampling_params.stop` to control model stop and save training time, 
       disable_log_stats: False
       detokenize: True
 
-Since Search-R1 will re-tokenize the model output, `recompute_logprobs`` should be set to True.
+SearchR1 re-tokenizes the model output, so set ``recompute_logprobs`` to True.
 
 .. code-block:: yaml
 
@@ -216,6 +216,124 @@ With `agentloop.is_dynamic_rollout_batch: True`, the entrypoint selects
 `actor.pack_traj: True`, which packs compatible turns from the same trajectory
 before FSDP training to avoid recomputing shared prefixes. Keep it enabled for
 the provided Search-R1 FSDP recipe.
+
+Synchronous PPO on 8×A100
+------------------------------------------------
+
+Use the PPO configurations to train an independent Megatron actor and critic
+with the same SearchR1 model, dataset, search tool, and reward. Each global step
+finishes every rollout, freezes its old predictions and GAE targets, updates both
+models, and installs the new actor weights in SGLang before admitting another
+batch. Reference models and KL rewards/losses are disabled.
+
+Choose the configuration that matches how you want to allocate eight GPUs:
+
+.. list-table:: PPO Placement
+   :header-rows: 1
+   :widths: 24 20 20 20
+
+   * - Configuration suffix
+     - Rollout GPUs
+     - Actor GPUs
+     - Critic GPUs
+   * - ``shared``
+     - 0–7
+     - 0–7
+     - 0–7
+   * - ``split``
+     - 0–3
+     - 4–7
+     - 4–7
+   * - ``separate``
+     - 0–3
+     - 4–5
+     - 6–7
+
+The shared configuration releases rollout memory once per batch, runs the
+complete critic phase followed by the complete actor phase, and restores
+rollout KV/graph memory after weight installation and actor offload. The split
+configuration keeps all models resident and serializes the two training phases.
+The separate configuration keeps all models resident and runs actor/critic
+inference and training in parallel, with a shared GAE barrier in between.
+
+Set the existing model, dataset, and search-server paths in
+``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``, then run one of:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_shared
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_split
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_separate
+
+All three commands use the same initial model, 2048 prompts with one trajectory
+each (``algorithm.group_size: 1``), and two global minibatches. Only placement
+and memory residency differ. The critic uses independent optimizer state and
+a normally initialized value head by default (mean 0, standard deviation 0.02).
+Set ``critic.value_head_init=zero`` for zero initialization; the default is
+``critic.value_head_init=normal``. Normal initialization uses
+``critic.model.init_method_std`` when set. These settings initialize a new head;
+checkpoint loading restores the saved weights.
+``runner.synchronous: true`` selects synchronous
+scheduling; ``critic.use_critic_model: true`` and
+``algorithm.adv_type: actor_gae`` select PPO. The original ``train_qwen2.5``
+command continues to select GRPO.
+
+The provided PPO configurations run one epoch and save both models every 25 global
+steps and at the final step. Set ``runner.max_steps=20 runner.save_interval=20``
+for a 20-step run.
+
+The configurations limit each training microbatch to 8192 tokens with
+``runner.max_tokens_per_mbs``. This bounds activation memory when actor and critic
+share training GPUs. Changing this budget changes microbatch scheduling while
+preserving the global batch and global valid-token loss weighting.
+
+The runner schedules the rollout and model phases. The existing multi-agent
+Megatron actor and Megatron critic execute inference and training; each worker
+owns minibatch updates, microbatch scheduling, and checkpoint saving.
+
+Keep ``algorithm.recompute_logprobs: true``: SearchR1 re-tokenizes generated text
+when preparing tool calls, so the actor must recompute old logprobs on the retained
+tokens. Both placements with shared training GPUs retain actor weights between
+inference and training. Tool observations stay outside policy/value losses, and
+the final reward is applied once per trajectory. SearchR1 settles a complete
+episode at natural termination or its turn/token budget; both boundaries use
+zero future value.
+
+Use ``actor.pack_traj: true`` to fold compatible turns from the same trajectory
+for both actor and critic training. This avoids recomputing shared prefixes.
+Old predictions and globally normalized GAE targets are fixed before packing;
+packing merges their action positions and keeps tool observations masked.
+Both losses use the global valid-token mean, so packing preserves their weighting.
+Set ``algorithm.loss_agg_func: token-mean`` and
+``algorithm.use_valid_token_scale: true`` to compensate Megatron's microbatch
+and data-parallel averaging with each update's global valid-token count.
+Workers pack the full rollout batch, balance its rows across DP replicas, then split optimizer
+minibatches, following the GRPO execution order. Packing preserves the full
+batch's action tokens and targets, but can change which tokens enter each
+optimizer update when there are multiple minibatches; the two settings can
+therefore produce different training curves.
+Append ``actor.pack_traj=false`` to train with separate turn rows.
+
+To alternate actor/critic offload on the split training GPUs, enable all three
+state components for both roles:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_split \
+     actor.offload_weight=true actor.offload_grad=true actor.offload_optimizer=true \
+     critic.offload_weight=true critic.offload_grad=true critic.offload_optimizer=true
+
+Inference and training then load and release each role's state once per batch.
+Default split and separate runs keep their state resident, including after
+checkpoint saves. Saving temporarily loads offloaded state and then applies each
+role's ``offload_weight``, ``offload_grad``, and ``offload_optimizer`` settings.
+With a positive ``runner.save_interval``, save both models, optimizers, and
+dataloader state at that interval and at the final step.
+
+TensorBoard uses the same minibatch step axis as ``AgentRunner``. Global step
+``g`` starts at ``(g - 1) * algorithm.n_minibatches``: reward and timings are
+recorded once there, while actor and critic training metrics are recorded for
+each minibatch.
 
 Checkpoint Export and Evaluation
 --------------------------------

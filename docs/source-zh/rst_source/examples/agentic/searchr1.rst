@@ -202,6 +202,68 @@ RLinf 同时提供基于 FSDP2 的 Search-R1 多智能体 Actor 实现。使用
 `actor.training_backend: fsdp` 下选择 `MAFSDPActor`。该配置设置了
 `actor.pack_traj: True`，会在 FSDP 训练前打包同一轨迹中可兼容的多轮样本，避免重复计算共享前缀。对于提供的 Search-R1 FSDP 配置，应保持该选项开启。
 
+在 8×A100 上运行同步 PPO
+-------------------------
+
+PPO 配置使用独立的 Megatron actor 和 critic，并复用现有 SearchR1 模型、数据、搜索工具与奖励。每个 global step 等待全部 rollout 完成，固定 old predictions 与 GAE targets，更新两边模型，再等待 SGLang 安装新 actor 权重后开始下一批。训练不加载 reference model，也不计算 KL reward 或 KL loss。
+
+根据八张 GPU 的分配方式选择配置：
+
+.. list-table:: PPO Placement
+   :header-rows: 1
+   :widths: 24 20 20 20
+
+   * - 配置后缀
+     - Rollout GPU
+     - Actor GPU
+     - Critic GPU
+   * - ``shared``
+     - 0–7
+     - 0–7
+     - 0–7
+   * - ``split``
+     - 0–3
+     - 4–7
+     - 4–7
+   * - ``separate``
+     - 0–3
+     - 4–5
+     - 6–7
+
+全共享配置每批释放一次 rollout 显存，先执行完整 critic 阶段，再执行完整 actor 阶段；新权重安装完成且 actor 卸载后，恢复 rollout KV/graph。生成训练分离配置默认让全部模型常驻，critic 与 actor 训练阶段串行执行。三者分离配置默认全部常驻，actor/critic 并行 inference，汇合计算一次 GAE，再并行 training。
+
+先在 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中设置现有模型、数据和搜索服务路径，再运行对应命令：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_shared
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_split
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_separate
+
+三条命令使用相同初始模型、每批 2048 个 prompt、每个 prompt 一条轨迹（``algorithm.group_size: 1``），以及两个全局 minibatch，仅 placement 与显存驻留方式不同。Critic 的 optimizer state 独立，value head 默认使用均值为 0、标准差为 0.02 的正态初始化。默认配置为 ``critic.value_head_init=normal``，设为 ``critic.value_head_init=zero`` 可使用零初始化；设置 ``critic.model.init_method_std`` 可调整正态分布的标准差。这些配置用于初始化新 head，加载 checkpoint 时恢复已保存的权重。``runner.synchronous: true`` 选择同步调度；``critic.use_critic_model: true`` 和 ``algorithm.adv_type: actor_gae`` 选择 PPO。原有 ``train_qwen2.5`` 命令仍选择 GRPO。
+
+提供的 PPO 配置运行一个 epoch，每 25 个 global step 及最后一步保存两个模型。设置 ``runner.max_steps=20 runner.save_interval=20`` 可运行 20 步。
+
+配置通过 ``runner.max_tokens_per_mbs`` 将每个训练 microbatch 限制为 8192 个 token，控制 actor 和 critic 共用训练 GPU 时的 activation 显存。调整该预算会改变 microbatch 调度，全局 batch 和全局有效 token 的 loss 权重保持不变。
+
+Runner 负责 rollout 与模型阶段的调度，inference 和 training 复用现有多轮 Megatron actor 与 Megatron critic。各 worker 负责 minibatch 更新、microbatch 调度和 checkpoint 保存。
+
+保持 ``algorithm.recompute_logprobs: true``：SearchR1 在准备工具调用时会重新编码生成文本，因此 actor 必须对保留的 token 重算 old logprob。训练 GPU 共享的两种模式在 actor inference 后保留权重，接着训练。工具 observation 不参与 policy/value loss，最终 reward 每条轨迹只应用一次。SearchR1 在自然终止或轮数/token 预算结束后结算完整 episode，两种边界的 future value 均为零。
+
+使用 ``actor.pack_traj: true``，可在 actor 和 critic 训练前合并同一轨迹中可兼容的多轮样本，避免重复计算共享前缀。Old predictions 和全局归一化后的 GAE targets 在打包前固定；打包合并其动作位置，并保持工具 observation 的 mask。两项 loss 均使用全局有效 token 均值，打包保持其权重语义。设置 ``algorithm.loss_agg_func: token-mean`` 和 ``algorithm.use_valid_token_scale: true``，按每次更新的全局有效 token 数补偿 Megatron 的 microbatch 和 DP 平均。Worker 按 GRPO 的执行顺序，先打包整轮 rollout batch，再在 DP 副本间平衡训练行，最后切分 optimizer minibatch。打包保留整轮 batch 的 action token 和 targets，但在多个 minibatch 下可能改变各次更新包含的 token，因此开关两边的训练曲线可能不同。追加 ``actor.pack_traj=false`` 可按独立 turn 行训练。
+
+要在生成训练分离模式中启用 actor/critic offload 轮换，为两个角色同时开启三项状态卸载：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_split \
+     actor.offload_weight=true actor.offload_grad=true actor.offload_optimizer=true \
+     critic.offload_weight=true critic.offload_grad=true critic.offload_optimizer=true
+
+开启后，inference 与 training 对每个角色每批执行一次 onload/offload。默认的生成训练分离与三者分离配置保持状态常驻，保存 checkpoint 后也保持常驻。保存时临时加载已卸载的状态，写入完成后按各角色的 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer`` 设置处理。``runner.save_interval`` 为正数时，按该间隔及最后一步保存两个模型、optimizer 和 dataloader state。
+
+TensorBoard 使用与 ``AgentRunner`` 相同的 minibatch 步数。第 ``g`` 个 global step 从 ``(g - 1) * algorithm.n_minibatches`` 开始，在该位置记录一次 reward 和耗时，并逐 minibatch 记录 actor、critic 的训练指标。
+
 Checkpoint 导出与评测
 ----------------------------------------
 

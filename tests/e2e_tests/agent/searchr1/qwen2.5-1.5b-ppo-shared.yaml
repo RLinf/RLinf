@@ -1,0 +1,11 @@
+defaults:
+- qwen2.5-1.5b-ppo
+- _self_
+runner:
+  experiment_name: searchr1-ppo-ci-shared
+cluster:
+  component_placement:
+    actor: 0-7
+    critic: 0-7
+    rollout: 0-7
+    reward: 0-7

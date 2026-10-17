@@ -1,0 +1,19 @@
+defaults:
+- train_qwen2.5_ppo
+- _self_
+runner:
+  experiment_name: searchr1-ppo-split
+cluster:
+  component_placement:
+    actor: 4-7
+    critic: 4-7
+    rollout: 0-3
+    reward: 0-3
+actor:
+  offload_weight: false
+  offload_grad: false
+  offload_optimizer: false
+critic:
+  offload_weight: false
+  offload_grad: false
+  offload_optimizer: false
