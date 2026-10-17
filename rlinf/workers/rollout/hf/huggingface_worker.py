@@ -43,7 +43,12 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import get_rng_state, isolated_rng, set_rng_state
+from rlinf.utils.utils import (
+    get_rng_state,
+    isolated_rng,
+    seed_everything,
+    set_rng_state,
+)
 
 
 class MultiStepRolloutWorker(Worker):
@@ -206,6 +211,9 @@ class MultiStepRolloutWorker(Worker):
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
+
+        if self.cfg.rollout.get("seed") is not None:
+            seed_everything(int(self.cfg.rollout.seed) + self._rank)
 
     def setup_sample_params(self):
         # sampling parameters for rollout
