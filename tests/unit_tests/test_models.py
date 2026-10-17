@@ -1540,3 +1540,326 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+@pytest.mark.parametrize("shape", [(4,), (4, 1)])
+def test_gt_bonus_uses_terminal_info_only_for_ended_environments(shape):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
+        apply_gt_success_bonus,
+    )
+
+    rewards = torch.ones(shape)
+    observations = {
+        "dones": torch.tensor(
+            [[True, False], [False, False], [False, True], [False, True]]
+        ),
+        "env_infos": {
+            "success": torch.tensor([False, True, True, True]),
+            "final_info": {"success": torch.tensor([True, False, False, False])},
+            "_final_info": torch.tensor([True, False, True, False]),
+        },
+    }
+    # Current success remains valid for ongoing envs and masked-out final infos.
+    assert apply_gt_success_bonus(rewards, observations, 20).flatten().tolist() == [
+        21,
+        21,
+        1,
+        21,
+    ]
+    assert torch.equal(rewards, torch.ones(shape))
+
+
+@pytest.mark.parametrize("boundary", ["dones", "_final_info"])
+def test_gt_bonus_terminal_success_survives_auto_reset(boundary):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
+        apply_gt_success_bonus,
+    )
+
+    observations = {
+        "env_infos": {
+            "success": [False, False],
+            "final_info": {"episode": {"success_at_end": [True, False]}},
+        }
+    }
+    target = observations if boundary == "dones" else observations["env_infos"]
+    target[boundary] = [True, True]
+    assert apply_gt_success_bonus(torch.zeros(2), observations, 20).tolist() == [20, 0]
+
+
+def test_gt_bonus_preserves_current_success_without_terminal_info():
+    from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
+        apply_gt_success_bonus,
+    )
+
+    data = {"dones": [False, False], "env_infos": {"success": [True, False]}}
+    assert apply_gt_success_bonus(torch.zeros(2), data, 20).tolist() == [20, 0]
+    assert apply_gt_success_bonus(torch.zeros(2), data, 0).tolist() == [0, 0]
+
+
+def test_reward_video_transport_preserves_processor_outputs():
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+        encode_video_inputs,
+    )
+
+    inputs = {
+        "input_ids": torch.tensor([[10, 20, 30]]),
+        "attention_mask": torch.ones(1, 3, dtype=torch.long),
+        "video_grid_thw": torch.tensor([[2, 2, 2], [2, 2, 2]]),
+        "pixel_values_videos": torch.arange(16 * 12, dtype=torch.float32).reshape(
+            16, 12
+        ),
+    }
+    restored = decode_video_inputs(encode_video_inputs(inputs))
+    assert set(restored) == set(inputs)
+    for key in inputs:
+        assert torch.equal(restored[key], inputs[key]), key
+        assert restored[key].dtype == inputs[key].dtype
+
+
+def test_reward_video_transport_rejects_padding_and_inconsistent_grids():
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+        encode_video_inputs,
+    )
+
+    inputs = {
+        "input_ids": torch.tensor([[10, 20, 30]]),
+        "attention_mask": torch.tensor([[0, 1, 1]]),
+        "video_grid_thw": torch.tensor([[2, 2, 2]]),
+        "pixel_values_videos": torch.zeros(8, 12),
+    }
+    with pytest.raises(ValueError, match="unpadded"):
+        decode_video_inputs(encode_video_inputs(inputs))
+    inputs.pop("attention_mask")
+    inputs["video_grid_thw"] = torch.tensor([[3, 2, 2]])
+    with pytest.raises(ValueError, match="pixels"):
+        decode_video_inputs(encode_video_inputs(inputs))
+
+
+def test_reward_video_server_preserves_native_requests_and_lifespan():
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from rlinf.workers.rollout.sglang_server.video_processor import (
+        RewardVideoProcessor,
+        install_reward_video_support,
+    )
+
+    class NativeProcessor:
+        async def process_mm_data_async(
+            self, image_data, input_text, request_obj, **kwargs
+        ):
+            return {"input_ids": input_text, "image_data": image_data}
+
+    native = NativeProcessor()
+    manager = SimpleNamespace(mm_processor=native)
+
+    @asynccontextmanager
+    async def lifecycle(app):
+        yield
+
+    async def generate_request():
+        return {}
+
+    server = SimpleNamespace(
+        app=FastAPI(lifespan=lifecycle),
+        _global_state=SimpleNamespace(tokenizer_manager=manager),
+        generate_request=generate_request,
+    )
+    install_reward_video_support(server)
+    install_reward_video_support(server)
+    assert server.app.state.reward_video_support
+
+    async def run():
+        async with server.app.router.lifespan_context(server.app):
+            assert isinstance(manager.mm_processor, RewardVideoProcessor)
+            result = await manager.mm_processor.process_mm_data_async(
+                ["ordinary.png"], [1, 2], None
+            )
+            assert result == {"input_ids": [1, 2], "image_data": ["ordinary.png"]}
+        assert manager.mm_processor is native
+
+    asyncio.run(run())
+
+
+def test_api_video_reward_preserves_views_and_terminal_bonus():
+    from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
+        VLMTrendRewardInputBuilder,
+    )
+    from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
+        VLMTrendRewardParser,
+    )
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+    )
+    from rlinf.workers.reward.api_reward_worker import EmbodiedAPIRewardWorker
+
+    class Processor:
+        video_token = "<|video_pad|>"
+
+        def __call__(self, text, videos, **kwargs):
+            # A deterministic stand-in for the external HF processor.
+            pixels = torch.tensor(
+                [[np.asarray(frame)[0, 0, 0]] for view in videos[0] for frame in view],
+                dtype=torch.float32,
+            )
+            return {
+                "input_ids": torch.tensor([[10, 20, 30]]),
+                "attention_mask": torch.ones(1, 3, dtype=torch.long),
+                "video_grid_thw": torch.tensor([[5, 1, 1], [5, 1, 1]]),
+                "pixel_values_videos": pixels,
+            }
+
+    class Endpoint:
+        def post(self, path, payload):
+            assert path == "/generate"
+            data = decode_video_inputs(payload["image_data"][0])
+            assert payload["input_ids"] == data["input_ids"][0].tolist()
+            assert data["video_grid_thw"].tolist() == [[5, 1, 1], [5, 1, 1]]
+            assert data["pixel_values_videos"].flatten().tolist() == list(range(10))
+            assert payload["sampling_params"] == {"max_new_tokens": 4}
+            return {"text": "positive"}
+
+    worker = EmbodiedAPIRewardWorker.__new__(EmbodiedAPIRewardWorker)
+    worker.input_builder = VLMTrendRewardInputBuilder(
+        history_buffer_names=["history_window"],
+        _processor=Processor(),
+        use_chat_template=False,
+    )
+    worker.reward_parser = VLMTrendRewardParser()
+    worker.http_client = Endpoint()
+    worker.model_cfg = {"infer_micro_batch_size": 2}
+    worker.sampling_params = {"max_tokens": 4}
+    worker.interval_reward = 0.0
+    worker.gt_success_bonus = 20.0
+    frames = [torch.full((4, 4, 3), i, dtype=torch.uint8) for i in range(10)]
+    result = worker.compute_reward(
+        {
+            "history_input": {
+                "history_window": {
+                    "main_images": [frames[:5], []],
+                    "extra_view_images": [frames[5:], []],
+                }
+            },
+            "dones": [True, True],
+            "env_infos": {
+                "success": [False, False],
+                "final_info": {"success": [True, True]},
+                "_final_info": [True, True],
+            },
+        }
+    )
+    # The empty history still receives terminal GT; only the valid window is scored.
+    assert result.tolist() == [[21.0], [20.0]]
+
+
+def test_rollout_evaluation_predictions_preserve_training_random_sequence():
+    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+    class StochasticPolicy:
+        def predict_action_batch(self, **kwargs):
+            return torch.rand(2, 3), {}
+
+    worker = MultiStepRolloutWorker.__new__(MultiStepRolloutWorker)
+    worker._timer_metrics = {}
+    worker._accelerator_type = None
+    worker.model_cfg = OmegaConf.create({"model_type": "mlp_policy"})
+    worker.algorithm_cfg = {}
+    worker._train_sampling_params = {}
+    worker._eval_sampling_params = {}
+    worker.enable_dagger = False
+    worker.expert_model = None
+    worker.hf_model = StochasticPolicy()
+    torch.manual_seed(17)
+    expected = torch.rand(2, 3)
+    torch.manual_seed(17)
+    first_eval, _ = worker.predict({}, mode="eval")
+    second_eval, _ = worker.predict({}, mode="eval")
+    train, _ = worker.predict({}, mode="train")
+    assert torch.equal(train, expected)
+    assert not torch.equal(first_eval, second_eval)
+
+
+@pytest.mark.parametrize("sample_frames", [True, False])
+def test_reward_video_inputs_match_hf_and_sglang(sample_frames, monkeypatch):
+    """Run with RLINF_TEST_VLM_CHECKPOINT pointing to a local Qwen3-VL export."""
+    import os
+
+    model_path = os.environ.get("RLINF_TEST_VLM_CHECKPOINT")
+    if not model_path or not torch.cuda.is_available():
+        pytest.skip("Requires a local Qwen3-VL checkpoint and a CUDA SGLang install")
+    pytest.importorskip("sglang")
+    monkeypatch.setenv("SGLANG_CPU_WORKERS", "1")
+    # Use the same import order as the managed server to initialize SGLang models.
+    importlib.import_module("sglang.srt.entrypoints.http_server")
+    from sglang.srt.multimodal.processors.qwen_vl import QwenVLImageProcessor
+    from transformers import AutoConfig, AutoProcessor
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel
+
+    from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+    from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
+        VLMTrendRewardInputBuilder,
+    )
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        encode_video_inputs,
+    )
+    from rlinf.workers.rollout.sglang_server.video_processor import RewardVideoProcessor
+
+    config = AutoConfig.from_pretrained(model_path, local_files_only=True)
+    processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+    processor.video_processor.do_sample_frames = sample_frames
+    native = QwenVLImageProcessor(
+        config, SimpleNamespace(), processor, transport_mode="default"
+    )
+    try:
+        builder = VLMTrendRewardInputBuilder(
+            history_buffer_names=["history_window"], _processor=processor
+        )
+        frames = [torch.full((224, 224, 3), i, dtype=torch.uint8) for i in range(5)]
+        prepared = builder.prepare_inputs(
+            {},
+            {
+                "history_window": {
+                    "main_images": [frames],
+                    "extra_view_images": [list(reversed(frames))],
+                }
+            },
+            [0],
+        )
+        inputs = builder.process_inputs(prepared)
+        ids = inputs["input_ids"][0].tolist()
+        output = asyncio.run(
+            RewardVideoProcessor(native).process_mm_data_async(
+                [encode_video_inputs(inputs)], ids, SimpleNamespace(input_ids=ids)
+            )
+        )
+        assert output["input_ids"] == ids
+        assert torch.equal(output["mm_items"][0].feature, inputs["pixel_values_videos"])
+        assert torch.equal(
+            output["mm_items"][0].video_grid_thw, inputs["video_grid_thw"]
+        )
+        positions, delta = Qwen3VLModel.get_rope_index(
+            SimpleNamespace(config=config),
+            input_ids=inputs["input_ids"],
+            video_grid_thw=inputs["video_grid_thw"],
+            attention_mask=inputs["attention_mask"],
+        )
+        assert torch.equal(output["mrope_positions"], positions.squeeze(1))
+        assert torch.equal(torch.as_tensor(output["mrope_position_delta"]), delta)
+        _, training, _ = VLMTrendRewardSFTDataset.process_inputs(
+            processor,
+            None,
+            True,
+            prepared["prompt_texts_list"],
+            prepared["videos_list"],
+            answer_text=["positive"],
+        )
+        assert torch.equal(training["input_ids"][:, : len(ids)], inputs["input_ids"])
+        assert torch.equal(
+            training["pixel_values_videos"], inputs["pixel_values_videos"]
+        )
+    finally:
+        native.io_executor.shutdown()
+        native.cpu_executor.shutdown()

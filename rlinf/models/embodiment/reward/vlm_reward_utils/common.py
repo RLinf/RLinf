@@ -32,12 +32,29 @@ def load_vlm_processor(model_path: str, subprocessor_kwargs: Any = None):
     return processor
 
 
+def _success_flags(infos: Any) -> torch.Tensor | None:
+    if not isinstance(infos, dict):
+        return None
+    for candidate in (infos, infos.get("episode")):
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("success", "success_at_end", "success_once"):
+            if candidate.get(key) is not None:
+                return torch.as_tensor(candidate[key]).reshape(-1).bool()
+    return None
+
+
 def apply_gt_success_bonus(
     rewards: torch.Tensor,
     reward_input: dict[str, Any],
     gt_success_bonus: float,
 ) -> torch.Tensor:
-    """Add a success bonus from env infos when configured."""
+    """Add per-step success bonuses, using final infos for ended episodes.
+
+    With auto-reset, ``env_infos`` can describe the next episode. For entries
+    marked by ``dones`` (or ``_final_info``), use ``final_info`` instead. Without
+    a boundary mask, retain current-info precedence and the final-info fallback.
+    """
     if rewards is None or gt_success_bonus == 0.0:
         return rewards
     env_infos = (
@@ -46,25 +63,40 @@ def apply_gt_success_bonus(
     if not isinstance(env_infos, dict):
         return rewards
 
-    success = None
-    final_info = env_infos.get("final_info", {})
-    for info_dict in (
-        env_infos,
-        env_infos.get("episode"),
-        final_info,
-        final_info.get("episode") if isinstance(final_info, dict) else None,
-    ):
-        if not isinstance(info_dict, dict):
-            continue
-        for key in ("success", "success_at_end", "success_once"):
-            value = info_dict.get(key)
-            if value is not None:
-                success = torch.as_tensor(value).reshape(-1).bool()
-                break
-        if success is not None:
-            break
+    def aligned(flags: torch.Tensor | None) -> torch.Tensor | None:
+        if flags is None or flags.numel() != rewards.shape[0]:
+            return None
+        return flags.to(device=rewards.device)
 
-    if success is None or success.shape[0] != rewards.shape[0]:
+    success = aligned(_success_flags(env_infos))
+    final_success = aligned(_success_flags(env_infos.get("final_info")))
+    if final_success is not None:
+        boundary = reward_input.get("dones")
+        if boundary is None:
+            boundary = env_infos.get("_final_info")
+        if boundary is None:
+            if success is None:
+                success = final_success
+        else:
+            boundary = torch.as_tensor(
+                boundary, device=rewards.device, dtype=torch.bool
+            )
+            if boundary.ndim > 1:
+                boundary = boundary.reshape(boundary.shape[0], -1).any(dim=-1)
+            boundary = boundary.reshape(-1)
+            valid_final = env_infos.get("_final_info")
+            if valid_final is not None:
+                valid_final = aligned(torch.as_tensor(valid_final).reshape(-1).bool())
+                if valid_final is None:
+                    boundary = torch.zeros_like(boundary)
+                elif boundary.numel() == valid_final.numel():
+                    boundary = boundary & valid_final
+            if boundary.numel() == rewards.shape[0]:
+                if success is None:
+                    success = torch.zeros_like(final_success)
+                success = torch.where(boundary, final_success, success)
+
+    if success is None:
         return rewards
-    bonus = success.to(device=rewards.device, dtype=rewards.dtype)
+    bonus = success.to(dtype=rewards.dtype)
     return rewards + (bonus * gt_success_bonus).view(-1, *([1] * (rewards.dim() - 1)))

@@ -594,3 +594,29 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_isolated_rng_restores_training_sequence_after_validation(fail):
+    import random
+
+    import numpy as np
+
+    from rlinf.utils.utils import isolated_rng, seed_everything
+
+    def sample():
+        return random.random(), np.random.rand(), torch.rand(3)
+
+    seed_everything(42)
+    expected = sample()
+    seed_everything(42)
+    try:
+        with isolated_rng(17):
+            sample()
+            if fail:
+                raise RuntimeError("evaluation failed")
+    except RuntimeError:
+        pass
+    actual = sample()
+    assert actual[:2] == expected[:2]
+    assert torch.equal(actual[2], expected[2])
