@@ -422,7 +422,7 @@ class ReasoningRunner:
 
     def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         if split_size is None:
-            split_size = self.component_placement.rollout_dp_size
+            split_size = self.component_placement.rollout_num_model_instances
 
         requests = build_rollout_requests_from_batch(
             batch,

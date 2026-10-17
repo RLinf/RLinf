@@ -15,123 +15,22 @@
 
 from __future__ import annotations
 
-import inspect
 import multiprocessing as mp
 import os
 import signal
-import time
-from typing import Callable, Optional
+from typing import Optional
 
 import ray.util
 import requests
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.scheduler import Worker
-from rlinf.utils.http_client import no_proxy_env
 
-
-def _ensure_no_proxy_for_localhost() -> None:
-    """Make sure sglang's intra-node IPC never tunnels through a proxy."""
-    local = "127.0.0.1,localhost,::1"
-    current = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
-    if not any(h in current for h in ("127.0.0.1", "localhost")):
-        os.environ["NO_PROXY"] = f"{current},{local}".strip(",") if current else local
-
-
-def _run_sglang_server(
-    server_type: str,
-    server_args_kwargs: dict,
-    dist_port: int,
-    ready_pipe,
-) -> None:
-    """Child-process entrypoint: launches a single sglang HTTP server.
-
-    Runs in a *spawned* subprocess so the parent's Ray actor isn't blocked
-    by sglang's uvicorn loop. ``ready_pipe`` is a one-shot
-    ``multiprocessing.Pipe`` end the child writes to once initialization
-    either completes or throws (mirrors sglang's ``pipe_finish_writer``
-    contract).
-    """
-    # Put this process in its own group so SIGTERM to the parent can
-    # forward via os.killpg without killing the Ray actor itself.
-    try:
-        os.setpgrp()
-    except OSError:
-        pass
-
-    _ensure_no_proxy_for_localhost()
-    os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
-
-    # Strip proxy env vars so sglang's internal HTTP calls (e.g. the
-    # tokenizer-manager / scheduler IPC that /get_server_info touches)
-    # don't tunnel through a user-configured proxy — otherwise the router's
-    # discover_metadata step hangs and worker registration fails.
-    with no_proxy_env():
-        if server_type == "embodied":
-            from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
-            from sglang.multimodal_gen.runtime.server_args import (
-                ServerArgs,
-                set_global_server_args,
-            )
-
-            server_args_kwargs["master_port"] = dist_port
-            server_args = ServerArgs.from_kwargs(**server_args_kwargs)
-            set_global_server_args(server_args)
-            dispatch_launch(server_args)
-        else:
-            from sglang.srt.entrypoints.http_server import launch_server
-            from sglang.srt.server_args import ServerArgs
-
-            server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
-            server_args = ServerArgs(**server_args_kwargs)
-            # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
-            # polling /health either way, so the pipe is only used to surface exceptions.
-            launch_kwargs = {}
-            if "pipe_finish_writer" in inspect.signature(launch_server).parameters:
-                launch_kwargs["pipe_finish_writer"] = ready_pipe
-            try:
-                launch_server(server_args, **launch_kwargs)
-            except Exception as e:  # pragma: no cover — surface to parent
-                try:
-                    ready_pipe.send(repr(e))
-                except Exception:
-                    pass
-                raise
-
-
-def _wait_for_http_health(
-    host: str,
-    port: int,
-    timeout: float = 900.0,
-    is_alive: Optional[Callable[[], bool]] = None,
-) -> None:
-    """Block until ``GET http://host:port/health`` returns 200, or raise."""
-    deadline = time.perf_counter() + timeout
-    url = f"http://{host}:{port}/health"
-    last_err: Optional[BaseException] = None
-    while time.perf_counter() < deadline:
-        if is_alive is not None and not is_alive():
-            raise RuntimeError(
-                f"sglang server subprocess exited before /health went 200 "
-                f"({url}); see the worker log for the child's error."
-            )
-        try:
-            resp = requests.get(url, timeout=5, proxies={"http": None, "https": None})
-            if resp.status_code == 200:
-                return
-        except requests.exceptions.RequestException as e:
-            last_err = e
-        time.sleep(1.0)
-    raise RuntimeError(
-        f"sglang server at {url} did not become healthy within {timeout:.0f}s "
-        f"(last error: {last_err!r})."
-    )
-
-
-# sglang derives its gRPC port as ``port + SGLANG_GRPC_PORT_OFFSET`` and rejects
-# the result above 65535, so the HTTP port has to leave room for it.
-SGLANG_GRPC_PORT_OFFSET = 10000
-MAX_SGLANG_HTTP_PORT = 65535 - SGLANG_GRPC_PORT_OFFSET
+from .process import (
+    MAX_SGLANG_HTTP_PORT,
+    _run_sglang_server,
+    _wait_for_http_health,
+)
 
 
 class SGLangServerWorker(Worker):
