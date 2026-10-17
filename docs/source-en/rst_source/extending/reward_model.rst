@@ -474,8 +474,7 @@ evaluation remains useful for checking repeatability. Report
 ``eval/success_once``.
 
 Set ``rollout.seed`` to control Hugging Face policy action sampling after model
-initialization; each rollout worker adds its rank to this seed. The SGLang Trend
-example sets it explicitly so repeated runs use the same initial sampling stream.
+initialization; each rollout worker adds its rank to this seed.
 
 SFT and reward inference share video processing and prompt construction. Keep
 the checkpoint's ``subprocessor_kwargs.video_processor.do_sample_frames``, frame

@@ -456,7 +456,7 @@ API 推理仍只支持 ``buffered_vlm``。
 
 设置 ``env.eval.use_fixed_reset_state_ids: true`` 后，各轮评估保留选定的 reset ID；ManiSkill 的固定评估在每轮开始时重建场景，清除上一轮的物理和 controller 状态。验证保留训练使用的随机数状态；rollout 的 RNG 切换仅覆盖同步预测调用，避免异步训练在验证结束时被回退。仍可使用独立进程评估检查可重复性。完整 episode 的结果应报告 ``eval/success_at_end``，并与 ``eval/success_once`` 区分。
 
-可设置 ``rollout.seed``，在 Hugging Face policy 初始化后固定动作采样的随机数起点；各 rollout worker 使用该值加自身 rank。SGLang Trend 示例显式设置了此参数，使重复运行从相同的采样序列开始。
+可设置 ``rollout.seed``，在 Hugging Face policy 初始化后固定动作采样的随机数起点；各 rollout worker 使用该值加自身 rank。
 
 SFT 与 reward 推理共用视频处理和 prompt 构造。应与 checkpoint 的训练设置保持一致，包括 ``subprocessor_kwargs.video_processor.do_sample_frames``、帧顺序、``video_fps``、system prompt 和 chat template。SFT 的 prompt 选项放在 ``data`` 下，推理端放在 ``reward.model.input_builder_params`` 下；独立 success head 使用 ``success_input_builder_params``。启用采样时，五帧输入窗口不一定产生五帧处理结果。SFT 在推理前缀后追加监督答案，不再在答案后附加另一个 assistant 生成前缀。
 
