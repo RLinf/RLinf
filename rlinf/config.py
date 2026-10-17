@@ -1565,6 +1565,8 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
 
+    with open_dict(cfg.agentloop):
+        cfg.agentloop.setdefault("truncate_response", True)
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
     if not cfg.actor.get("enable_dp_load_balance", False):
@@ -1632,8 +1634,6 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             raise ValueError(
                 "SearchR1 PPO requires actor_gae and zero KL reward/loss coefficients."
             )
-        if not cfg.algorithm.recompute_logprobs:
-            raise ValueError("SearchR1 PPO requires algorithm.recompute_logprobs=True.")
         if cfg.algorithm.group_size != 1:
             raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
         if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
