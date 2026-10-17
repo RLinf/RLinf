@@ -33,3 +33,4 @@
 
    OpenSora <embodied/opensora>
    Wan <embodied/wan>
+   BWM <embodied/bwm>
