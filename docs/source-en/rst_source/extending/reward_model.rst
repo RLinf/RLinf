@@ -475,7 +475,10 @@ evaluation remains useful for checking repeatability. Report
 
 SFT and reward inference share video processing and prompt construction. Keep
 the checkpoint's ``subprocessor_kwargs.video_processor.do_sample_frames``, frame
-order, ``video_fps``, system prompt, and chat-template settings consistent. A
+order, ``video_fps``, system prompt, and chat-template settings consistent. Set
+SFT prompt options under ``data`` and inference prompt options under
+``reward.model.input_builder_params`` (``success_input_builder_params`` for the
+separate success head). A
 five-frame window does not necessarily produce five processed frames when
 sampling is enabled. SFT appends the supervised answer to the inference prefix,
 without another assistant generation prompt after the answer.

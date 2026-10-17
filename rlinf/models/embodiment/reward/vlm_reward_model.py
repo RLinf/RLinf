@@ -80,13 +80,9 @@ class VLMRewardModel(BaseRewardModel):
         )
 
     def setup_input_builder(self) -> None:
-        params = dict(self.cfg.get("input_builder_params", {}))
-        for key in ("system_prompt", "use_chat_template"):
-            if key in self.cfg:
-                params.setdefault(key, self.cfg[key])
         self.input_builder = get_input_builder(
             self.cfg.get("input_builder_name", "base_vlm_input_builder")
-        )(**params, _processor=self._processor)
+        )(**self.cfg.get("input_builder_params", {}), _processor=self._processor)
 
     def setup_reward_parser(self) -> None:
         self.reward_parser = get_reward_parser(
@@ -213,14 +209,10 @@ class BufferedVLMRewardModel(VLMRewardModel):
         super().__init__(cfg)
 
     def setup_input_builder(self) -> None:
-        params = dict(self.cfg.get("input_builder_params", {}))
-        for key in ("system_prompt", "use_chat_template"):
-            if key in self.cfg:
-                params.setdefault(key, self.cfg[key])
         self.input_builder = get_input_builder(
             self.cfg.get("input_builder_name", "buffered_vlm_input_builder")
         )(
-            **params,
+            **self.cfg.get("input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )
@@ -341,17 +333,13 @@ class ShapedVLMRewardModel(BufferedVLMRewardModel):
         super().__init__(cfg)
 
         self.setup_scalar_head()
-        success_params = dict(self.cfg.get("success_input_builder_params", {}))
-        for key in ("system_prompt", "use_chat_template"):
-            if key in self.cfg:
-                success_params.setdefault(key, self.cfg[key])
         self.success_input_builder = get_input_builder(
             self.cfg.get(
                 "success_input_builder_name",
                 "vlm_trend_success_potential_input_builder",
             )
         )(
-            **success_params,
+            **self.cfg.get("success_input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )

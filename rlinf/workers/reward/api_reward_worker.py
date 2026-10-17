@@ -109,14 +109,10 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
         self._processor = load_vlm_processor(
             self.model_path, self.model_cfg.get("subprocessor_kwargs", {})
         )
-        params = dict(self.model_cfg.get("input_builder_params", {}))
-        for key in ("system_prompt", "use_chat_template"):
-            if key in self.model_cfg:
-                params.setdefault(key, self.model_cfg[key])
         self.input_builder = get_input_builder(
             self.model_cfg.get("input_builder_name", "buffered_vlm_input_builder")
         )(
-            **params,
+            **self.model_cfg.get("input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )
