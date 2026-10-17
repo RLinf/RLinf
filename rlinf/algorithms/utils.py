@@ -339,9 +339,7 @@ def preprocess_loss_inputs(
         if proximal_logprobs is not None:
             proximal_logprobs = proximal_logprobs.reshape(bsz, -1, single_action_dim)
         if rollout_logprobs is not None:
-            rollout_logprobs = rollout_logprobs.reshape(
-                bsz, -1, single_action_dim
-            )
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim)
         if versions is not None:
             versions = versions.reshape(bsz, -1, single_action_dim)
         if kwargs.get("loss_type") == "opd":
