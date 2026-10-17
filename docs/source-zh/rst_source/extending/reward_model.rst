@@ -431,6 +431,14 @@ API 推理仍只支持 ``buffered_vlm``。
    ``history_input``；窗口未满足 ``min_history_size`` 时，reward worker 会返回
    ``interval_reward``，而不是跳过 RPC。
 
+启用 ``gt_success_bonus`` 后，尚未结束的环境使用当前 success 标记，刚结束的环境使用自动 reset 前有效的 ``final_info``。该奖励仍按成功 step 发放，包括成功后不立即终止的任务。
+
+设置 ``env.eval.use_fixed_reset_state_ids: true`` 后，各轮评估保留选定的 reset ID；ManiSkill 的固定评估在每轮开始时重建场景，清除上一轮的物理和 controller 状态。验证保留训练使用的随机数状态；rollout 的 RNG 切换仅覆盖同步预测调用，避免异步训练在验证结束时被回退。仍可使用独立进程评估检查可重复性。完整 episode 的结果应报告 ``eval/success_at_end``，并与 ``eval/success_once`` 区分。
+
+可设置 ``rollout.seed``，在 Hugging Face policy 初始化后固定动作采样的随机数起点；各 rollout worker 使用该值加自身 rank。
+
+SFT 与 reward 推理共用视频处理和 prompt 构造。应与 checkpoint 的训练设置保持一致，包括 ``subprocessor_kwargs.video_processor.do_sample_frames``、帧顺序、``video_fps``、system prompt 和 chat template。SFT 的 prompt 选项放在 ``data`` 下，推理端放在 ``reward.model.input_builder_params`` 下；独立 success head 使用 ``success_input_builder_params``。启用采样时，五帧输入窗口不一定产生五帧处理结果。SFT 在推理前缀后追加监督答案，不再在答案后附加另一个 assistant 生成前缀。
+
 3.4.1 本地 Hugging Face 推理
 ............................
 
@@ -535,9 +543,9 @@ API 推理仍只支持 ``buffered_vlm``。
 3.4.2 SGLang API 推理
 .....................
 
-设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``）。可指向外部
-OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
-:doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
+设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``），留空 ``reward.api.api_base``，由 RLinf 按 :doc:`../guides/sglang_server` 启动 Ray 托管的 SGLang server/router。
+
+对于 Qwen3-VL 视频奖励，worker 将共用 processor 生成的不含 padding 的 token ID 和视频 tensor 无损发送到 ``/generate``。托管服务保留视频分组、采样帧、像素、grid 和时间位置，不再将视频展平成 JPEG 图片列表或重新采样。外部视频 endpoint 必须使用同一套 RLinf SGLang 接入实现；普通 OpenAI-compatible chat endpoint 不足以处理此输入。图像 builder 继续使用 chat API。输入一致不保证不同后端的浮点推理结果完全相同。
 
 这份配置需要包含 ``sglang_router`` 的 Qwen3-VL + SGLang 环境。仓库的 embodied E2E 工作流使用下面的安装命令创建 ``.venv``，并在激活后运行该配置；工作流未指定 Docker 镜像。``agentic-rlinf0.4-maniskill_libero`` 镜像可以提供 ManiSkill/LIBERO 基础环境，但预装的 ``openvla`` 环境缺少 ``sglang_router``。在该镜像内运行时，如果当前 shell 找不到 ``python``，先激活预装环境以运行安装脚本。在独立的 RLinf 检出目录中执行：
 
@@ -548,7 +556,7 @@ OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
    source .venv/bin/activate
    python -c "import sglang_router; from importlib.metadata import version; print(version('sglang'))"
 
-``openvla`` 仅用于在缺少 ``python`` 的 shell 中启动安装脚本；运行配置时使用新建的 ``.venv``。``source switch_env openvla`` 不会安装 ``sglang_router``。如果容器内没有 sudo 权限，但已具备所需系统依赖，可在安装命令末尾加 ``--no-root``。参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``，将 ``reward.model.model_path`` 从示例路径改为实际的 Qwen3-VL 模型路径。默认 ``router_server_args.tensor_parallel_size: 2`` 需要两张可用 GPU。
+``openvla`` 仅用于在缺少 ``python`` 的 shell 中启动安装脚本；运行配置时使用新建的 ``.venv``。``source switch_env openvla`` 不会安装 ``sglang_router``。如果容器内没有 sudo 权限，但已具备所需系统依赖，可在安装命令末尾加 ``--no-root``。参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``，将 ``reward.model.model_path`` 从示例路径改为实际的 Qwen3-VL 模型路径。根据分配给 reward server 的 GPU 数量设置 ``router_server_args.tensor_parallel_size``。
 
 .. code-block:: yaml
 

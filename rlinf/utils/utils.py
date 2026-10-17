@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Any, Callable, Iterable, Literal, Optional
+from typing import Any, Callable, Iterable, Iterator, Literal, Optional
 
 import numpy as np
 import torch
@@ -770,6 +770,21 @@ def set_rng_state(rng_state: dict) -> None:
         and Worker.torch_device_type in rng_state
     ):
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
+
+
+@contextmanager
+def isolated_rng(seed: Optional[int] = None) -> Iterator[None]:
+    """Restore the caller's RNG streams after a synchronous evaluation block."""
+    state = get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    try:
+        if seed is not None:
+            seed_everything(seed)
+        yield
+    finally:
+        set_rng_state(state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
 
 
 PIPELINE_BATCH_KEY_SEPARATOR = "::"
