@@ -103,6 +103,39 @@ PPO 的目标函数定义如下：
 
       huber_delta: 10.0         # 价值训练中 Huber 损失的 Delta 参数
 
+PhyAI PI0.5 rollout backend
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+在同一个虚拟环境中安装 RLinf、OpenPI、LIBERO 和 PhyAI rollout backend：
+
+.. code-block:: bash
+
+   bash requirements/install.sh \
+     --python 3.12 \
+     --torch 2.11.0 \
+     --install-rlinf \
+     embodied \
+     --model openpi \
+     --env libero \
+     --rollout-backend phyai
+
+PhyAI 包使用 ``--no-deps`` 安装，因此 RLinf 会保留 OpenPI 已安装的
+Torch 和 Transformers 版本，并从
+``requirements/embodied/backends/phyai.txt`` 安装经验证的额外运行时依赖。
+三个 PhyAI 包会从官方 PhyAI wheel index 安装，并选择 ``0.1.1`` 发布线中的
+最新版本（包括预发布版本）；用户不需要 clone PhyAI 源码或执行 editable install。
+
+下载 PI0.5 checkpoint，并在
+``examples/embodiment/config/libero_spatial_ppo_openpi_pi05_phyai.yaml`` 中设置
+``actor.model.model_path``。示例会读取 checkpoint 内的
+``physical-intelligence/libero/norm_stats.json``，rollout model 会复用权重和
+归一化统计。然后运行：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh \
+     libero_spatial_ppo_openpi_pi05_phyai
+
 当 rollout 生成和 Actor 训练使用不同的推理实现时，即使同步相同权重，二者的动作
 对数概率也可能不同。同步具身 PPO 可以使用 Actor 重放已采样的 transition，并应用与
 reasoning 训练相同的重要性采样修正：

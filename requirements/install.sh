@@ -14,6 +14,7 @@ LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
 SGLANG_VERSION=""
 ENGINE=""
+ROLLOUT_BACKEND=""
 TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
@@ -109,6 +110,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
+SUPPORTED_ROLLOUT_BACKENDS=("phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
@@ -126,6 +128,8 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+    --rollout-backend <name>
+                           Optional embodied rollout backend: ${SUPPORTED_ROLLOUT_BACKENDS[*]}.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -239,6 +243,14 @@ parse_args() {
                 ENGINE="${2:-}"
                 shift 2
                 ;;
+            --rollout-backend)
+                if [[ ! " ${SUPPORTED_ROLLOUT_BACKENDS[*]} " =~ " ${2:-} " ]]; then
+                    echo "--rollout-backend requires one of: ${SUPPORTED_ROLLOUT_BACKENDS[*]}." >&2
+                    exit 1
+                fi
+                ROLLOUT_BACKEND="${2:-}"
+                shift 2
+                ;;
             --transformers)
                 if [ -z "${2:-}" ]; then
                     echo "--transformers requires a version argument (e.g. 4.57.1)." >&2
@@ -339,6 +351,31 @@ validate_python_version() {
     local mm="${py_major}.${py_minor}"
     if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
         echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
+    fi
+}
+
+validate_rollout_backend() {
+    [ -z "$ROLLOUT_BACKEND" ] && return 0
+
+    if [ "$TARGET" != "embodied" ]; then
+        echo "--rollout-backend is only supported when target=embodied." >&2
+        exit 1
+    fi
+    if [ "$ROLLOUT_BACKEND" = "phyai" ]; then
+        if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
+            echo "--rollout-backend phyai currently requires --model openpi --env libero." >&2
+            exit 1
+        fi
+        if [ "$PLATFORM" != "nvidia" ]; then
+            echo "--rollout-backend phyai currently requires --platform nvidia." >&2
+            exit 1
+        fi
+        local py_major py_minor _py_patch
+        IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+        if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
+            echo "--rollout-backend phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
+            exit 1
+        fi
     fi
 }
 
@@ -2366,6 +2403,62 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_phyai_runtime() {
+    local phyai_version_spec=">=0.1.1.dev0,<0.1.2"
+    local torch_before transformers_before
+    read -r torch_before transformers_before < <(python - <<'PYEOF'
+import torch
+import transformers
+
+print(torch.__version__, transformers.__version__)
+PYEOF
+)
+
+    uv pip install -r "$SCRIPT_DIR/embodied/backends/phyai.txt"
+    uv pip install --no-deps \
+        "phyai${phyai_version_spec}" \
+        "phyai-kernel${phyai_version_spec}" \
+        "phyai-ext${phyai_version_spec}" \
+        --index https://mingti-org.github.io/phyai/simple/ \
+        --prerelease=allow
+
+    # CUTLASS ships CUDA 12 and CUDA 13 runtime libraries in the cu13 extra.
+    # Select the runtime matching RLinf's Torch 2.11 CUDA 13 stack explicitly.
+    export CUDNN_FRONTEND_CUDART_LIB_NAME=libcudart.so.13
+    if ! grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo 'export CUDNN_FRONTEND_CUDART_LIB_NAME=libcudart.so.13' >> "$VENV_DIR/bin/activate"
+    fi
+
+    python - "$torch_before" "$transformers_before" <<'PYEOF'
+import sys
+from importlib.metadata import version
+
+import torch
+import transformers
+from phyai.engine import Engine, EngineArgs
+from phyai.models.pi05.main_pi05 import PI05Args
+from phyai.models.pi05.scheduler_pi05 import PI05Request, PI05RolloutRequest
+
+expected_torch, expected_transformers = sys.argv[1:]
+if torch.__version__ != expected_torch:
+    raise SystemExit(
+        f"PhyAI installation changed Torch: {expected_torch} -> {torch.__version__}."
+    )
+if transformers.__version__ != expected_transformers:
+    raise SystemExit(
+        "PhyAI installation changed Transformers: "
+        f"{expected_transformers} -> {transformers.__version__}."
+    )
+assert all((Engine, EngineArgs, PI05Args, PI05Request, PI05RolloutRequest))
+print(
+    "[install.sh] PhyAI import smoke passed; "
+    f"phyai={version('phyai')}, phyai-kernel={version('phyai-kernel')}, "
+    f"phyai-ext={version('phyai-ext')}, torch={torch.__version__}, "
+    f"transformers={transformers.__version__}."
+)
+PYEOF
+}
+
 install_pi0_fast_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -3830,6 +3923,7 @@ install_docs() {
 main() {
     parse_args "$@"
     validate_python_version
+    validate_rollout_backend
     apply_env_default_torch
     apply_agentic_torch_default
     configure_platform
@@ -3915,6 +4009,9 @@ main() {
                     install_env_only
                     ;;
             esac
+            if [ "$ROLLOUT_BACKEND" = "phyai" ]; then
+                install_phyai_runtime
+            fi
             ;;
         agentic)
             # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
