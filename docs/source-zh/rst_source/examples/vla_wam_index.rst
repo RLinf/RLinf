@@ -158,6 +158,17 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/psi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/physical-superintelligence-lab/Psi0/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06/assets/media/arch.png" alt="Psi0 model architecture"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/psi0.html" style="text-decoration: underline; color: blue;">
+           <b>Psi0 模型强化学习训练</b>
+         </a><br>
+         Psi0 + SIMPLE + PPO 人形机器人强化学习训练
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -175,3 +186,4 @@
    Lingbot-VLA <embodied/lingbotvla>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
+   Psi0 <embodied/psi0>

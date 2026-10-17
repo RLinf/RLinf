@@ -49,6 +49,11 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
+    if cfg.env.eval.env_type == "simple":
+        from rlinf.workers.env.simple_env_worker import SimpleEnvWorker
+
+        env_worker_cls = SimpleEnvWorker
+
     if rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
@@ -120,6 +125,9 @@ def main(cfg) -> None:
 
     runner.init_workers()
     runner.run()
+    if cfg.env.eval.env_type == "simple":
+        # Results and videos are complete; avoid Isaac's unsafe exit teardown.
+        env_group._close()
 
 
 if __name__ == "__main__":
