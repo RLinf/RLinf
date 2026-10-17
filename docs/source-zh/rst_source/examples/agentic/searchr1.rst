@@ -177,7 +177,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
       disable_log_stats: False
       detokenize: True
 
-由于 Search-R1 会re-tokenize模型输出， `recompute_logprobs` 应当设置为True
+默认的 ``agentloop.truncate_response: true`` 会在工具边界截断生成结果并重新编码文本。此时保持 ``recompute_logprobs: true``，使训练使用保留 token 的 logprob。
 
 .. code-block:: yaml
 
@@ -186,6 +186,18 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
       recompute_logprobs: True
       shuffle_rollout: False
 
+要直接使用 rollout 概率训练，请保留原始生成 token：
+
+.. code-block:: yaml
+
+   agentloop:
+      truncate_response: false
+   algorithm:
+      recompute_logprobs: false
+   rollout:
+      return_logprobs: true
+
+两种模式都会执行响应长度上限：超出剩余预算的生成 token 及其 logprob 会一并移除。设置 ``truncate_response: false`` 时，上限内的原始 token ID 和 rollout logprob 保持不变，包括停止边界处的 token；仅跳过工具边界的手动截断和重新编码。工具解析和 reward 计算会解码文本，但不会改写这些 token。PPO 会跳过额外的 actor logprob inference；若要保留原始 token 并继续重算 logprob，可设置 ``recompute_logprobs: true``。
 运行 `bash examples/agent/searchr1/run_train.sh` 启动训练。
 
 MA-FSDP 训练
@@ -248,7 +260,7 @@ PPO 配置使用独立的 Megatron actor 和 critic，并复用现有 SearchR1 �
 
 Runner 负责 rollout 与模型阶段的调度，inference 和 training 复用现有多轮 Megatron actor 与 Megatron critic。各 worker 负责 minibatch 更新、microbatch 调度和 checkpoint 保存。
 
-保持 ``algorithm.recompute_logprobs: true``：SearchR1 在准备工具调用时会重新编码生成文本，因此 actor 必须对保留的 token 重算 old logprob。训练 GPU 共享的两种模式在 actor inference 后保留权重，接着训练。工具 observation 不参与 policy/value loss，最终 reward 每条轨迹只应用一次。SearchR1 在自然终止或轮数/token 预算结束后结算完整 episode，两种边界的 future value 均为零。
+按上文选择 response 处理方式。启用 logprob 重算时，训练 GPU 共享的两种模式在 actor inference 后保留权重，接着训练。工具 observation 不参与 policy/value loss，最终 reward 每条轨迹只应用一次。SearchR1 在自然终止或轮数/token 预算结束后结算完整 episode，两种边界的 future value 均为零。
 
 使用 ``actor.pack_traj: true``，可在 actor 和 critic 训练前合并同一轨迹中可兼容的多轮样本，避免重复计算共享前缀。Old predictions 和全局归一化后的 GAE targets 在打包前固定；打包合并其动作位置，并保持工具 observation 的 mask。两项 loss 均使用全局有效 token 均值，打包保持其权重语义。设置 ``algorithm.loss_agg_func: token-mean`` 和 ``algorithm.use_valid_token_scale: true``，按每次更新的全局有效 token 数补偿 Megatron 的 microbatch 和 DP 平均。Worker 按 GRPO 的执行顺序，先打包整轮 rollout batch，再在 DP 副本间平衡训练行，最后切分 optimizer minibatch。打包保留整轮 batch 的 action token 和 targets，但在多个 minibatch 下可能改变各次更新包含的 token，因此开关两边的训练曲线可能不同。追加 ``actor.pack_traj=false`` 可按独立 turn 行训练。
 

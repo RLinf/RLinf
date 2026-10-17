@@ -41,7 +41,7 @@ class AgentPPORunner(AgentRunner):
         self.release_rollout = bool(rollout_gpus & (actor_gpus | critic_gpus))
 
         self.rollout_output_channels = [self.rollout_channel]
-        if not self.shared_training:
+        if not self.shared_training and self.recompute_logprobs:
             self.actor_rollout_channel = Channel.create("ActorRollout")
             self.rollout_output_channels.append(self.actor_rollout_channel)
         self.training_channel = Channel.create("PPOTraining")
@@ -119,7 +119,8 @@ class AgentPPORunner(AgentRunner):
                             output_channel=self.value_channel,
                             do_offload=False,
                         )
-                        if not self.shared_training:
+                        actor_infer_handle = None
+                        if not self.shared_training and self.recompute_logprobs:
                             actor_infer_handle: Handle = self.actor.run_inference(
                                 input_channel=self.actor_rollout_channel,
                                 output_channel=self.actor_inference_channel,
@@ -143,6 +144,7 @@ class AgentPPORunner(AgentRunner):
                                 logprob_channel=(
                                     None
                                     if self.shared_training
+                                    or not self.recompute_logprobs
                                     else self.actor_inference_channel
                                 ),
                             )
@@ -160,14 +162,17 @@ class AgentPPORunner(AgentRunner):
                         critic_training_metrics = critic_metrics[0][1]
 
                         if self.shared_training:
-                            actor_infer_handle: Handle = self.actor.run_inference(
-                                input_channel=self.training_channel,
-                                output_channel=self.actor_inference_channel,
-                                compute_ref_logprobs=False,
-                            )
-                            actor_infer_handle.wait()
+                            actor_input_channel = self.training_channel
+                            if self.recompute_logprobs:
+                                actor_infer_handle = self.actor.run_inference(
+                                    input_channel=self.training_channel,
+                                    output_channel=self.actor_inference_channel,
+                                    compute_ref_logprobs=False,
+                                )
+                                actor_infer_handle.wait()
+                                actor_input_channel = self.actor_inference_channel
                             actor_handle: Handle = self.actor.run_training(
-                                input_channel=self.actor_inference_channel,
+                                input_channel=actor_input_channel,
                             )
                         actor_metrics = actor_handle.wait()
                         actor_rollout_metrics = actor_metrics[0][0]
@@ -191,8 +196,10 @@ class AgentPPORunner(AgentRunner):
                     time_metrics["training"] = actor_handle.consume_duration()
                     time_metrics["critic/training"] = critic_handle.consume_duration()
                     time_metrics["rollout"] = rollout_handle.consume_duration()
-                    time_metrics["inference"] = actor_infer_handle.consume_duration(
-                        reduction_type="min"
+                    time_metrics["inference"] = (
+                        actor_infer_handle.consume_duration(reduction_type="min")
+                        if actor_infer_handle is not None
+                        else 0.0
                     )
                     time_metrics["critic/inference"] = (
                         critic_infer_handle.consume_duration(reduction_type="min")

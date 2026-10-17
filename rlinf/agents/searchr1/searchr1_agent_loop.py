@@ -42,15 +42,15 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         max_total_len = int(self.cfg.runner.seq_length)
         self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
+        self.truncate_response = self.cfg.agentloop.get("truncate_response", True)
 
         assert self.toolcall_parser is not None, (
             "toolcall_parser must be set in searchr1"
         )
 
-        # Inserting tool info requires re-encode token_ids, so the recompute_logprobs must be true.
-        if self.cfg.runner.task_type != "reasoning_eval":
+        if self.cfg.runner.task_type != "reasoning_eval" and self.truncate_response:
             assert self.cfg.algorithm.recompute_logprobs, (
-                "search r1 must use recompute_logprobs"
+                "SearchR1 requires recompute_logprobs=True when truncate_response=True."
             )
 
     async def pre_process_query(
@@ -123,23 +123,36 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             turn_prompt_ids, sampling_params={"max_new_tokens": max_resp_len}
         )
         llm_response_ids: list[int] = generate_result["output_ids"]
+        response_logprobs = generate_result.get("logprobs")
 
         if len(llm_response_ids) > max_resp_len:
             llm_response_ids = llm_response_ids[:max_resp_len]
+            if response_logprobs is not None:
+                response_logprobs = response_logprobs[:max_resp_len]
         llm_response_text = self.tokenizer.decode(llm_response_ids)
 
         # split </search> manually
-        if "</search>" in llm_response_text:
+        if self.truncate_response and "</search>" in llm_response_text:
             llm_response_text = llm_response_text.split("</search>")[0] + "</search>"
             llm_response_ids = self.tokenizer.encode(llm_response_text)
 
         llm_output = AgentLoopOutput(
             prompt_ids=copy.deepcopy(turn_prompt_ids),
             response_ids=llm_response_ids,
+            response_logprobs=(
+                response_logprobs if not self.truncate_response else None
+            ),
         )
+        if self.return_logprobs and (
+            llm_output.response_logprobs is None
+            or len(llm_output.response_logprobs) != len(llm_response_ids)
+        ):
+            raise ValueError(
+                "SearchR1 requires one rollout logprob per generated token."
+            )
         generate_context["all_llm_response_ids"] += llm_response_ids
 
-        if len(llm_response_ids) == max_resp_len:
+        if len(llm_response_ids) >= max_resp_len:
             return False, None, None, llm_output
 
         return True, llm_response_ids, llm_response_text, llm_output

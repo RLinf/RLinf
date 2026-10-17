@@ -14,7 +14,9 @@
 
 """Synchronous agent PPO targets and placement-independent loss scaling."""
 
+import asyncio
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,7 +30,7 @@ from rlinf.algorithms.losses import (
 from rlinf.algorithms.registry import get_adv_and_returns
 from rlinf.data.schema.agent_trajectory import prepare_agent_ppo_targets
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
-from rlinf.scheduler import Channel
+from rlinf.scheduler import Channel, Cluster
 from rlinf.scheduler.channel.channel_worker import LocalChannel
 
 
@@ -36,6 +38,86 @@ def _local_channel():
     channel = Channel()
     channel._initialize("ppo-targets", None, None, None, local_channel=LocalChannel())
     return channel
+
+
+@pytest.mark.parametrize("truncate", [True, False])
+@pytest.mark.parametrize("budget", [12, 100])
+@pytest.mark.placement
+def test_searchr1_response_processing_preserves_behavior_tokens(truncate, budget):
+    from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
+
+    class Tokenizer:
+        def decode(self, ids):
+            return "".join(map(chr, ids))
+
+        def encode(self, text):
+            return [999, *map(ord, text)]
+
+    worker = object.__new__(Searchr1AgentLoopWorker)
+    worker.cfg = SimpleNamespace(agentloop=SimpleNamespace(max_turns=2))
+    worker.max_resp_len = budget
+    worker.truncate_response = truncate
+    worker.return_logprobs = not truncate
+    worker.tokenizer = Tokenizer()
+    Cluster(num_nodes=1)
+    worker.generate_input_channel = Channel.create(f"ResponseInput-{truncate}-{budget}")
+    worker.generate_output_channel = Channel.create(
+        f"ResponseOutput-{truncate}-{budget}"
+    )
+    ids = list(map(ord, "<search>x</search>\n"))
+    logprobs = [-0.01 * (i + 1) for i in range(len(ids))]
+    context = {"turn": 0, "all_llm_response_ids": []}
+
+    async def engine():
+        request = await worker.generate_input_channel.get(async_op=True).async_wait()
+        assert request["sampling_params"]["max_new_tokens"] == budget
+        await worker.generate_output_channel.put(
+            {"output_ids": ids.copy(), "logprobs": logprobs.copy()},
+            key=request["channel_key"],
+            async_op=True,
+        ).async_wait()
+
+    async def run():
+        output, _ = await asyncio.gather(
+            worker.generate_llm_response(context, [], [1], [1]), engine()
+        )
+        return output[-1]
+
+    output = asyncio.run(run())
+    if truncate:
+        expected = ids[:budget]
+        if budget == 100:
+            expected = [999, *map(ord, "<search>x</search>")]
+        assert output.response_ids == expected
+        assert output.response_logprobs is None
+    else:
+        assert output.response_ids == ids[:budget]
+        assert output.response_logprobs == logprobs[:budget]
+    assert context["all_llm_response_ids"] == output.response_ids
+
+
+@pytest.mark.parametrize("truncate", [None, True, False])
+@pytest.mark.parametrize("recompute", [True, False])
+def test_searchr1_response_config_defaults_and_raw_logprobs(truncate, recompute):
+    from omegaconf import OmegaConf
+
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.load(
+        Path(__file__).resolve().parents[2]
+        / "examples/agent/searchr1/config/train_qwen2.5_ppo.yaml"
+    )
+    cfg.agentloop.pop("truncate_response")
+    if truncate is not None:
+        cfg.agentloop.truncate_response = truncate
+    cfg.algorithm.recompute_logprobs = recompute
+    cfg.rollout.return_logprobs = not recompute
+    if not recompute and truncate is not False:
+        with pytest.raises(ValueError, match="truncate_response=False"):
+            validate_searchr1_cfg(cfg)
+    else:
+        validate_searchr1_cfg(cfg)
+        assert cfg.agentloop.truncate_response == (truncate is not False)
 
 
 def _prepare_targets(results, gamma, gae_lambda, normalize_advantages):

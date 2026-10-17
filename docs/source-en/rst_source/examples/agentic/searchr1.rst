@@ -189,7 +189,9 @@ If you use `sampling_params.stop` to control model stop and save training time, 
       disable_log_stats: False
       detokenize: True
 
-SearchR1 re-tokenizes the model output, so set ``recompute_logprobs`` to True.
+By default, ``agentloop.truncate_response: true`` trims generated responses at
+tool boundaries and re-encodes their text. Keep ``recompute_logprobs: true`` for
+this mode so training scores the retained tokens.
 
 .. code-block:: yaml
 
@@ -197,6 +199,25 @@ SearchR1 re-tokenizes the model output, so set ``recompute_logprobs`` to True.
       ……
       recompute_logprobs: True
       shuffle_rollout: False
+
+To train directly with rollout probabilities, preserve the generated tokens:
+
+.. code-block:: yaml
+
+   agentloop:
+      truncate_response: false
+   algorithm:
+      recompute_logprobs: false
+   rollout:
+      return_logprobs: true
+
+The response-length cap applies in both modes: generated tokens beyond the remaining
+budget are removed along with their logprobs. With ``truncate_response: false``,
+tokens within that cap and their rollout logprobs stay unchanged, including tokens
+at stop boundaries; manual tool-boundary trimming and re-encoding are skipped.
+Tool parsing and reward calculation decode text without rewriting those tokens.
+PPO skips the extra actor logprob inference pass. Set ``recompute_logprobs: true``
+to retain that pass while preserving the original response tokens.
 
 Run `bash examples/agent/searchr1/run_train.sh` to start training.
 
@@ -291,10 +312,9 @@ The runner schedules the rollout and model phases. The existing multi-agent
 Megatron actor and Megatron critic execute inference and training; each worker
 owns minibatch updates, microbatch scheduling, and checkpoint saving.
 
-Keep ``algorithm.recompute_logprobs: true``: SearchR1 re-tokenizes generated text
-when preparing tool calls, so the actor must recompute old logprobs on the retained
-tokens. Both placements with shared training GPUs retain actor weights between
-inference and training. Tool observations stay outside policy/value losses, and
+Choose the response-processing mode described above. With recomputation enabled,
+both placements with shared training GPUs retain actor weights between inference
+and training. Tool observations stay outside policy/value losses, and
 the final reward is applied once per trajectory. SearchR1 settles a complete
 episode at natural termination or its turn/token budget; both boundaries use
 zero future value.

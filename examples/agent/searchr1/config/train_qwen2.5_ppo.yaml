@@ -110,6 +110,7 @@ data:
 
 
 agentloop:
+  truncate_response: true
   group_name: "AgentLoopGroup"
   toolcall_parser: "searchr1-qwen"
   max_turns: 2
