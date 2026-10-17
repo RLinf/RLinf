@@ -96,10 +96,7 @@ SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
-SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
-SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
-    "rlt_td3_mlp_policy", force=True
-)
+SupportedModel.PREFIX_POLICY = SupportedModel.register("prefix_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
@@ -143,8 +140,7 @@ EMBODIED_MODEL = set(
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
-        SupportedModel.RLT_MLP_POLICY,
-        SupportedModel.RLT_TD3_MLP_POLICY,
+        SupportedModel.PREFIX_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
@@ -1063,6 +1059,20 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if algorithm_cfg.get("loss_type") == "prefix_off_policy":
+        assert model_type == SupportedModel.PREFIX_POLICY, (
+            "algorithm.loss_type=prefix_off_policy requires "
+            "actor.model.model_type=prefix_policy."
+        )
+        for path in ("actor_head.name", "critic_head.name"):
+            assert OmegaConf.select(model_cfg, path, default=None), (
+                "prefix_policy requires actor.model." + path
+            )
+        from rlinf.algorithms.prefix_off_policy import (
+            build_prefix_off_policy_algorithm,
+        )
+
+        build_prefix_off_policy_algorithm(cfg)
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
         # gap per action, which assumes the OpenVLA family's tokenized action layout.

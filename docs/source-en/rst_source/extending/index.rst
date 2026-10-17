@@ -58,6 +58,12 @@ SFT, then use Advanced Integrations for backend integration and weight transport
 
       Plug a new model into the SFT training flow.
 
+   .. grid-item-card:: Prefix Policy and Pluggable Components
+      :link: prefix
+      :link-type: doc
+
+      Extend frozen VLA features, MLP heads, and off-policy algorithms.
+
    .. grid-item-card:: Advanced Integrations
       :link: advanced-integrations/index
       :link-type: doc
@@ -75,4 +81,5 @@ SFT, then use Advanced Integrations for backend integration and weight transport
    New Model with Megatron <new_model_megatron>
    SGLang Embodied Model <sglang_embodied_model>
    New SFT Model <new_model_sft>
+   Prefix Policy and Pluggable Components <prefix>
    Advanced Integrations <advanced-integrations/index>
