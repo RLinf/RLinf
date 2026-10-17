@@ -55,8 +55,8 @@ env:
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
+      save_dir: ${runner.logger.log_path}
+      export_format: [replay_buffer, pickle_episode]
       only_success: False
       robot_type: "dosw1"
       fps: 10

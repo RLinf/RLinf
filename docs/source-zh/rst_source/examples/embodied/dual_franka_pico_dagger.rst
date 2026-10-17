@@ -394,8 +394,8 @@ PICO 操作：
 
 采集脚本会在 ``logs/<timestamp>/`` 下写出：
 
-* replay-buffer 轨迹：``demos/``
-* LeRobot 数据：``collected_data/rank_0/id_0/``，后续 shard 为 ``id_1``、``id_2``
+* replay-buffer 轨迹：``demo_buffer/``
+* LeRobot 数据：``lerobot_dataset/rank_0/id_0/``，后续 shard 为 ``id_1``、``id_2``
 
 PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数据动作就是
 tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``。
