@@ -32,7 +32,7 @@ always use ``B`` as their leading batch dimension during transport.
 import copy
 import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 import torch
@@ -42,6 +42,58 @@ from rlinf.utils.nested_dict_process import (
     split_dict,
     stack_list_of_dict_tensor,
 )
+
+
+@dataclass(frozen=True)
+class JointPositionTargets:
+    """Absolute joint targets with per-environment names, shaped [B,J] or [B,C,J]."""
+
+    joint_positions: torch.Tensor | np.ndarray
+    joint_names: list[list[str]]
+    joint_layout: Literal["active", "full"]
+
+    def __post_init__(self) -> None:
+        if self.joint_layout not in ("active", "full"):
+            raise ValueError(
+                f"Expected active or full joint layout, got {self.joint_layout!r}"
+            )
+        shape = self.joint_positions.shape
+        if len(shape) not in (2, 3) or shape[0] != len(self.joint_names):
+            raise ValueError(
+                f"Expected batched joint targets and one name list per env, got {shape}"
+            )
+        if any(len(names) != shape[-1] for names in self.joint_names):
+            raise ValueError(f"Expected {shape[-1]} joint names per environment")
+
+    def to_cpu(self) -> "JointPositionTargets":
+        """Detach targets and move their storage to CPU for transport."""
+        positions = self.joint_positions
+        if isinstance(positions, torch.Tensor):
+            positions = positions.detach().cpu().contiguous()
+        return replace(self, joint_positions=positions)
+
+    def split(self, sizes: list[int]) -> list["JointPositionTargets"]:
+        """Split targets and joint-name metadata on their environment dimension."""
+        if sum(sizes) != self.joint_positions.shape[0]:
+            raise ValueError("Joint action batch size must match the requested splits")
+        positions = self.joint_positions
+        shards = (
+            torch.split(positions, sizes, dim=0)
+            if isinstance(positions, torch.Tensor)
+            else np.split(positions, np.cumsum(sizes)[:-1], axis=0)
+        )
+        output, offset = [], 0
+        for shard, size in zip(shards, sizes, strict=True):
+            output.append(
+                replace(
+                    self,
+                    joint_positions=shard,
+                    joint_names=self.joint_names[offset : offset + size],
+                )
+            )
+            offset += size
+        return output
+
 
 # Source identity carried through the trajectory pipeline.
 
@@ -1702,6 +1754,7 @@ class EnvOutput:
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
+            **({"extra_obs": obs["extra_obs"]} if "extra_obs" in obs else {}),
         }
 
     def to_dict(self) -> dict[str, Any]:

@@ -385,6 +385,13 @@ def prepare_actions(
         )
     elif env_type == SupportedEnvType.BEHAVIOR:
         chunk_actions = raw_chunk_actions
+    elif env_type == SupportedEnvType.BENCH2DEX:
+        # Absolute joint coordinates have no gripper or end-effector remapping.
+        chunk_actions = (
+            torch.from_numpy(raw_chunk_actions)
+            if isinstance(raw_chunk_actions, np.ndarray)
+            else raw_chunk_actions
+        )
     elif env_type == SupportedEnvType.ISAACLAB:
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,

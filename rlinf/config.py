@@ -1048,6 +1048,100 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     )
 
 
+def validate_bench2dex_cfg(
+    cfg, model_cfg, env_world_size: int, only_eval: bool
+) -> None:
+    """Check Bench2Dex model/scene contracts before workers launch Isaac Sim."""
+    for split in ("eval",) if only_eval else ("train", "eval"):
+        env_cfg = cfg.env.get(split)
+        if (
+            env_cfg is None
+            or env_cfg.get("env_type") != SupportedEnvType.BENCH2DEX.value
+        ):
+            continue
+        from rlinf.envs.sim.bench2dex.spec import Bench2DexSpec
+
+        spec = Bench2DexSpec.from_config(
+            OmegaConf.to_container(env_cfg.init_params, resolve=True)
+        )
+        if cfg.rollout.pipeline_stage_num != 1:
+            raise ValueError("Bench2Dex requires pipeline_stage_num=1")
+        if (
+            env_world_size < 1
+            or env_cfg.total_num_envs < 1
+            or env_cfg.total_num_envs % env_world_size
+        ):
+            raise ValueError(
+                "Bench2Dex total_num_envs must be positive and divisible by "
+                f"env worker count {env_world_size}, got {env_cfg.total_num_envs}"
+            )
+        if cfg.env.get("enable_offload", False):
+            raise ValueError(
+                "Bench2Dex scene workers must use env.enable_offload=false"
+            )
+        if env_cfg.get("ignore_terminations", False):
+            raise ValueError(
+                "Bench2Dex uses ignore_terminations=false; select early_stop in init_params"
+            )
+        if int(model_cfg.action_dim) != spec.action_dim:
+            raise ValueError(
+                f"{spec.robot_key} needs {spec.action_dim} active joint coordinates, model declares {model_cfg.action_dim}"
+            )
+        if int(env_cfg.max_episode_steps) != spec.max_control_steps:
+            raise ValueError(
+                "env.max_episode_steps must match the Bench2Dex task control-step budget"
+            )
+        if (
+            env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+            and split == "eval"
+        ):
+            raise ValueError(
+                "Bench2Dex evaluation rollout must cover the task control-step budget"
+            )
+        chunk_length = int(model_cfg.num_action_chunks)
+        if chunk_length < 1:
+            raise ValueError(
+                f"Expected positive Bench2Dex action chunk length, got {chunk_length}"
+            )
+        if split == "train" and chunk_length > 1:
+            if env_cfg.auto_reset:
+                raise ValueError(
+                    "Bench2Dex chunk training requires auto_reset=false so "
+                    "the actor masks transitions after episode termination"
+                )
+            if (
+                cfg.algorithm.reward_type != "chunk_level"
+                or cfg.algorithm.logprob_type != "chunk_level"
+            ):
+                raise ValueError(
+                    "Bench2Dex chunk training requires chunk_level reward_type "
+                    "and logprob_type"
+                )
+        if model_cfg.model_type == "openpi":
+            horizon = model_cfg.openpi.get("action_horizon")
+            if horizon is not None and chunk_length > int(horizon):
+                raise ValueError(
+                    f"Expected Bench2Dex execution chunk <= action_horizon "
+                    f"{horizon}, got {chunk_length}"
+                )
+            if model_cfg.openpi.config_name != "pi05_bench2dex":
+                raise ValueError("Bench2Dex OpenPI requires config_name=pi05_bench2dex")
+            if int(model_cfg.openpi.model_action_dim) < spec.action_dim:
+                raise ValueError(
+                    "openpi.model_action_dim must cover the robot's active DOFs"
+                )
+            expected_keys = (
+                "base_0_rgb",
+                "base_1_rgb",
+                "left_wrist_0_rgb",
+                "right_wrist_0_rgb",
+            )
+            if tuple(model_cfg.openpi.get("image_keys", ())) != expected_keys:
+                raise ValueError(f"Bench2Dex pi05 requires image_keys={expected_keys}")
+            if len(spec.extra_cameras) != 1 or len(spec.wrist_cameras) != 2:
+                raise ValueError("Bench2Dex pi05 uses two stereo and two wrist images")
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1220,6 +1314,8 @@ def validate_embodied_cfg(cfg):
         assert stage_num == 1, (
             "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
         )
+
+    validate_bench2dex_cfg(cfg, model_cfg, env_world_size, only_eval)
 
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (
