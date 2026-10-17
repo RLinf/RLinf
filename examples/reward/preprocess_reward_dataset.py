@@ -16,7 +16,7 @@
 
 Example:
     python examples/reward/preprocess_reward_dataset.py \
-        --raw-data-path logs/xxx/collected_data \
+        --raw-data-path logs/xxx/pickle_episode \
         --output-dir logs/xxx/processed_reward_data
 """
 
@@ -270,6 +270,18 @@ def preprocess_and_save_reward_datasets(
         fail_success_ratio=fail_success_ratio,
         random_seed=random_seed,
     )
+    # Fail frames are sampled relative to success frames, so a split whose
+    # episodes have no success frame comes back empty.
+    for split_name, split_images in (("train", train_images), ("val", val_images)):
+        if not split_images:
+            raise ValueError(
+                f"The {split_name} split is empty because it has no episode with "
+                f"a success frame, and each split needs at least one. Collect "
+                f"more successful episodes into {raw_data_path}. Changing "
+                f"--val-split (now {val_split}) or --seed (now {random_seed}) "
+                f"only helps when several episodes contain success frames."
+            )
+
     metadata = {
         "raw_data_path": raw_data_path,
         "num_samples_per_episode": num_samples_per_episode,
@@ -304,7 +316,7 @@ def parse_args() -> argparse.Namespace:
         "--raw-data-path",
         type=str,
         required=True,
-        help="Path to raw collected_data directory containing .pkl episode files.",
+        help="Directory of raw .pkl episode files, such as {save_dir}/pickle_episode.",
     )
     parser.add_argument(
         "--output-dir",

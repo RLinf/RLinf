@@ -44,6 +44,8 @@ VR 软件准备
 VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToolkit 读取头显和手柄数据，
 再将数据发布到 ZeroMQ。
 
+.. _pico-software-setup:
+
 1. 准备 PICO / XRoboToolkit
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -56,7 +58,7 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
   `XRoboToolkit-PC-Service releases <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>`_
   选择适配版本并安装 PC Service。当前 release 页面提供的 PC Service 安装包仅覆盖
   Ubuntu 22.04 和 Ubuntu 24.04，请使用这两个系统版本之一进行安装；其他系统版本需要自行适配。
-- 确认 publisher 机器与 Franka 控制节点在同一网络中，或者与 RLinf env worker 在同一台机器上。
+- 确认 publisher 机器与机器人控制节点在同一网络中，或者与 RLinf env worker 在同一台机器上。
 
 在 PICO 头显连接前，先在收发数据的机器上启动 XRoboToolkit PC Service：
 
@@ -102,8 +104,9 @@ PICO 与收发数据机器的 XRT 链路是否已经连通：
 
 如果连接成功，移动 PICO 头显和手柄时，终端中应能看到持续变化的数据流。
 
-启动 VR 数据 publisher 前，先在 ``pico_software/configs/vr_bridge.yaml`` 中配置
-publisher 侧的 ZeroMQ 地址。
+.. _pico-publisher-setup:
+
+启动 VR 数据 publisher 前，先在 ``pico_software/configs/vr_bridge.yaml`` 中配置 publisher 侧的 ZeroMQ 地址。
 
 同机运行时可以使用 IPC：
 

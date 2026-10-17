@@ -29,19 +29,19 @@ them into processed training splits with the preprocessing script.
 1.1 Enable Data Collection
 """"""""""""""""""""""""""
 
-Enable ``data_collection`` under ``env`` in your YAML config:
+Enable ``data_collection`` under ``env.eval`` in your YAML config (use ``env.train`` for training episodes):
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-After training or evaluation starts, the environment will automatically save episodes into ``save_dir``.
-When ``export_format="pickle"``, each episode is written as an individual ``.pkl`` file for later offline preprocessing.
+After training or evaluation starts, each ``export_format: pickle_episode`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
 
 For ResNet rewards, ``maniskill_ppo_mlp_collect`` is a ready-to-run collection config. It
 trains a state-based MLP PPO policy on ManiSkill PickCube and, during the periodic evaluation
@@ -76,7 +76,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 By default, this produces:
@@ -118,7 +118,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -828,7 +828,7 @@ The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` usi
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
