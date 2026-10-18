@@ -175,6 +175,27 @@ actor:
     sharding_strategy: "no_shard"
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     use_orig_params: True
+    wrappers:
+      projections:
+        module_names: ["action_*proj", "*time_mlp_*"]
+      norms:
+        module_classes: [RMSNorm]
+      vision_embedding:
+        module_names: [img, img.stem]
+    mixed_precision_policies:
+      fp32:
+        param_dtype: fp32
+        reduce_dtype: fp32
+        buffer_dtype: fp32
+      fp32_preserve_inputs:
+        param_dtype: fp32
+        reduce_dtype: fp32
+        buffer_dtype: fp32
+        cast_forward_inputs: False
+    mixed_precision_rules:
+      projections: fp32
+      norms: fp32_preserve_inputs
+      vision_embedding: fp32_preserve_inputs
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

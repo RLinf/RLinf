@@ -1,0 +1,40 @@
+cluster:
+  component_placement:
+    actor: 0-3
+    rollout: 0-3
+    env: 0-3
+  tracer:
+    enable: false
+
+runner:
+  max_epochs: 3
+  max_steps: 3
+  save_interval: -1
+  val_check_interval: -1
+  logger:
+    log_path: ${oc.env:PHYAI_E2E_OUTPUT}
+    experiment_name: phyai-openpi-libero-4gpu
+    logger_backends: [tensorboard]
+
+env:
+  train:
+    total_num_envs: 4
+    rollout_epoch: 1
+    max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
+    video_cfg:
+      save_video: false
+  eval:
+    total_num_envs: 1
+    video_cfg:
+      save_video: false
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 8
+  model:
+    model_path: /workspace/dataset/RLinf-Pi05-LIBERO-SFT
+
+rollout:
+  phyai:
+    max_batch_size: 1
