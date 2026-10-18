@@ -56,6 +56,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         Turtle2Connection,
         Turtle2RobotState,
     )
+    from .yam import (
+        YamArm,
+        YamRobotState,
+    )
 
 _MODULE_BY_NAME: dict[str, str] = {
     "ARM_STATE_FIELDS": ".base",
@@ -79,6 +83,8 @@ _MODULE_BY_NAME: dict[str, str] = {
     "SO101RobotState": ".so101",
     "Turtle2Connection": ".turtle2",
     "Turtle2RobotState": ".turtle2",
+    "YamArm": ".yam",
+    "YamRobotState": ".yam",
 }
 
 __all__ = [
@@ -103,6 +109,8 @@ __all__ = [
     "SO101RobotState",
     "Turtle2Connection",
     "Turtle2RobotState",
+    "YamArm",
+    "YamRobotState",
 ]
 
 

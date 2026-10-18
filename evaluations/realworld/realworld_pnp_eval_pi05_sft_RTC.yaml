@@ -126,7 +126,7 @@ env:
     data_collection:
       enabled: False
       save_dir: "/path/to/data_collection/pnp_train" # Directory to save rollout data
-      export_format: "lerobot"
+      export_format: lerobot_dataset
       only_success: False
     override_cfg:
       is_dummy: False
@@ -158,7 +158,7 @@ env:
     data_collection:
       enabled: True
       save_dir: "/path/to/dir" # Directory to save evaluation data
-      export_format: "lerobot"
+      export_format: lerobot_dataset
       only_success: False
 
 rollout:

@@ -19,6 +19,7 @@ Importing this package registers each robot type and its discovery metadata.
 
 from .dosw1 import DOSW1Robot, DOSW1RobotConfig
 from .dual_franka import DualFrankaConfig, DualFrankaRobot
+from .dual_yam import DualYamConfig, DualYamRobot
 from .franka import FrankaConfig, FrankaRobot
 from .gim_arm import GimArmConfig, GimArmRobot
 from .kuavo import KuavoRobot, KuavoRobotConfig
@@ -31,6 +32,8 @@ __all__ = [
     "DOSW1RobotConfig",
     "DualFrankaConfig",
     "DualFrankaRobot",
+    "DualYamConfig",
+    "DualYamRobot",
     "FrankaConfig",
     "FrankaRobot",
     "GimArmConfig",
