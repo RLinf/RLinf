@@ -1402,8 +1402,6 @@ jobs:
         run: |
           nvidia-smi
           test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -ge 4
-          test -d /workspace/dataset/RLinf-Pi05-LIBERO-SFT
-          test -f /workspace/dataset/RLinf-Pi05-LIBERO-SFT/physical-intelligence/libero/norm_stats.json
 
       - name: Create PhyAI environment
         timeout-minutes: 45
