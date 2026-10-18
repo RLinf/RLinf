@@ -85,8 +85,24 @@ class ContractCheckingActor(EmbodiedFSDPActor):
         return metrics
 
 
+class ContractCheckingPhyAIWorker(PhyAIWorker):
+    """Expose a test-only assertion for the applied actor weight version."""
+
+    def assert_weight_version(self, expected_version: int) -> None:
+        """Fail the E2E on any rollout rank that missed a weight update."""
+        assert self.version == expected_version, (
+            "PhyAI E2E rollout weight version mismatch: "
+            f"expected {expected_version}, got {self.version}."
+        )
+
+
 class ContractCheckingRunner(EmbodiedRunner):
     """Verify a rollout after the final trained weight version is applied."""
+
+    def update_rollout_weights(self) -> None:
+        """Run production weight sync and verify every rollout rank."""
+        super().update_rollout_weights()
+        self.rollout.assert_weight_version(self.global_step).wait()
 
     def _finish_run(self) -> None:
         assert self.global_step == self.max_steps, (
@@ -143,7 +159,7 @@ def main() -> None:
         name=cfg.actor.group_name,
         placement_strategy=placement.get_strategy("actor"),
     )
-    rollout = PhyAIWorker.create_group(cfg).launch(
+    rollout = ContractCheckingPhyAIWorker.create_group(cfg).launch(
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=placement.get_strategy("rollout"),

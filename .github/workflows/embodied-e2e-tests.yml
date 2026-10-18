@@ -1462,20 +1462,11 @@ jobs:
           ray stop --force || true
           export REPO_PATH="$GITHUB_WORKSPACE"
           export PHYAI_E2E_OUTPUT="$RUNNER_TEMP/phyai-e2e/results"
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
           mkdir -p "$PHYAI_E2E_OUTPUT"
           python tests/e2e_tests/embodied/run_phyai_e2e.py \
             2>&1 | tee "$RUNNER_TEMP/phyai-e2e/train.log"
-
-      - name: Verify PhyAI PPO contract
-        run: |
-          log="$RUNNER_TEMP/phyai-e2e/train.log"
-          grep -q "PHYAI_E2E_COMPLETE_PASS ppo_steps=3" "$log"
-          grep -q "PHYAI_E2E_UPDATED_ROLLOUT_PASS version=3" "$log"
-          for step in 1 2 3; do
-            previous=$((step - 1))
-            test "$(grep -Fc "PHYAI_E2E_TRAIN_PASS optimizer_steps=${previous}->${step}" "$log")" -eq 4
-            test "$(grep -Fc "PhyAI hot weight update applied: version=${step}," "$log")" -eq 4
-          done
 
       - name: Upload PhyAI E2E logs
         if: always()
