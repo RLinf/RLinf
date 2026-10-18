@@ -39,6 +39,7 @@ _ROBOT_PACKAGES = (
     ".piper",
     ".so101",
     ".xsquare",
+    ".yam",
 )
 
 _loaded = False

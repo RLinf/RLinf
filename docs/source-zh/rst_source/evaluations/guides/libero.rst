@@ -13,7 +13,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
+使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
 
 支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
 
@@ -88,7 +88,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - MolmoAct2
    * - ``libero_10_pi0_fast_eval.yaml``
      - Long (libero_10)
-     - PI0-FAST
+     - π₀-FAST
 
 DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend 见 :doc:`cosmos3_sglang`。
 
@@ -224,7 +224,13 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
        auto_reset: True           # 可选；E >= S 时影响不大
        rollout_epoch: 1
 
-**方式二：自动重置（资源受限时推荐）**
+每个 LIBERO 环境运行在独立进程中，reset 后约占 2 GiB 主机内存（在 ``libero_spatial`` 上测得），且这部分内存不在环境之间共享。``total_num_envs: 500`` 时，env worker 合计约需 1 TiB 主机内存。
+
+.. warning::
+
+   这些环境进程是 env worker 的子进程，而不是 Ray worker。在一次耗尽主机内存的运行中，Ray 的内存监控（Ray 2.58.0）在日志中报告没有选中可终止的 worker，节点随后失去响应，任务并没有以内存不足错误退出。
+
+**方式二：自动重置（除非 env 节点能为每个环境提供超过约 2 GiB 的主机内存，并为 rollout 模型留出余量，否则推荐此方式）**
 
 .. code-block:: yaml
 
@@ -278,16 +284,20 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
 
 **调整并行规模**
 
+只调小 ``total_num_envs`` 会同时缩小覆盖范围：64 个环境配合配置中 240 步的预算，一轮 rollout epoch 只评测 500 个 init state 中的 64 个。因此需要同步调大 ``max_steps_per_rollout_epoch``，让每个环境依次运行多条轨迹。此外，``total_num_envs`` 必须能被 env worker 进程数整除；128 在 1、2、4、8 张 GPU 上均满足：
+
 .. code-block:: bash
 
+   # max_steps_per_rollout_epoch = ceil(S / E) * max_episode_steps = ceil(500 / 128) * 240
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
-     env.eval.total_num_envs=64 \
+     env.eval.total_num_envs=128 \
+     env.eval.max_steps_per_rollout_epoch=960 \
      rollout.model.model_path=/path/to/model
 
 常见问题
 --------
 
-- **渲染问题：** 若 headless 环境报错，尝试 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa`` （``run_eval.sh`` 默认已设置）。
+- **渲染问题：** ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，可 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。
 - **评测覆盖范围：** 见上文 :ref:`libero-eval-config`；核心是 ``total_num_envs``、``auto_reset`` 与 ``max_steps_per_rollout_epoch`` 三者的配合。
 
 .. toctree::

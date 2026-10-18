@@ -82,6 +82,7 @@ rollout:
       dit_cpu_offload: false
       cfg_parallel_degree: 1
       sp_degree: 1
+      batching_max_size: 8
 
   model:
     model_type: "cosmos3"
