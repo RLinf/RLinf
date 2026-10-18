@@ -56,6 +56,20 @@ class Bench2DexEnv(gym.Env):
             )
         self.cfg, self.num_envs = cfg, num_envs
         self.auto_reset = bool(cfg.auto_reset)
+        self.group_size = int(cfg.get("group_size", 1))
+        self.use_fixed_reset_state_ids = bool(cfg.use_fixed_reset_state_ids)
+        if self.group_size < 1 or num_envs % self.group_size:
+            raise ValueError(
+                f"Expected num_envs={num_envs} divisible by positive "
+                f"group_size, got {self.group_size}"
+            )
+        if self.group_size > 1 and (
+            not self.use_fixed_reset_state_ids or self.auto_reset
+        ):
+            raise ValueError(
+                "Grouped Bench2Dex rollouts require "
+                "use_fixed_reset_state_ids=true and auto_reset=false"
+            )
         self.reward_coef = float(cfg.get("reward_coef", 1.0))
         self.is_start = True
         self.device = torch.device("cpu")
@@ -71,6 +85,13 @@ class Bench2DexEnv(gym.Env):
         self._infos = [None] * num_envs
         self.results = None
         params = OmegaConf.to_container(cfg.init_params, resolve=True)
+        num_groups = num_envs // self.group_size
+        self._next_reset_state_id = (
+            int(params.get("start_episode", 1)) - 1 + seed_offset * num_groups
+        )
+        self._reset_state_stride = total_num_processes * num_groups
+        self.reset_state_ids = None
+        self.update_reset_state_ids()
         spec = Bench2DexSpec.from_config(params)
         self.spec = {
             name: getattr(spec, name)
@@ -198,7 +219,9 @@ class Bench2DexEnv(gym.Env):
         info["episode"] = episode
         return info
 
-    def reset(self, seed: int | None = None, env_ids=None) -> tuple[dict, dict]:
+    def reset(
+        self, seed: int | None = None, env_ids=None, reset_state_ids=None
+    ) -> tuple[dict, dict]:
         """Reset selected scenes and return their batch in the requested order."""
         ids = (
             list(range(self.num_envs))
@@ -213,7 +236,11 @@ class Bench2DexEnv(gym.Env):
             raise ValueError(
                 f"Expected unique env_ids in [0,{self.num_envs}), got {ids}"
             )
-        observations, infos = self.env.reset(id=ids, seed=seed)
+        if reset_state_ids is None and self.use_fixed_reset_state_ids:
+            reset_state_ids = self.reset_state_ids[ids]
+        observations, infos = self.env.reset(
+            id=ids, seed=seed, reset_state_ids=reset_state_ids
+        )
         for i, obs, info in zip(ids, observations, infos, strict=True):
             self._observations[i], self._infos[i] = obs, info
             self.episode_seed[i] = int(info["seed"])
@@ -351,7 +378,15 @@ class Bench2DexEnv(gym.Env):
         return observations, rewards, terminated, truncated, infos
 
     def update_reset_state_ids(self) -> None:
-        """Episode selection advances only when reset consumes a manifest entry."""
+        """Select the next scene per group for the following rollout."""
+        if not self.use_fixed_reset_state_ids:
+            return
+        num_groups = self.num_envs // self.group_size
+        self.reset_state_ids = np.repeat(
+            np.arange(num_groups, dtype=np.int64) + self._next_reset_state_id,
+            self.group_size,
+        )
+        self._next_reset_state_id += self._reset_state_stride
 
     def close(self) -> None:
         if not self.env.is_closed:

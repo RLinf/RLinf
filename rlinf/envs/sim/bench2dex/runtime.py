@@ -238,7 +238,9 @@ class Bench2DexRuntime:
         sample.robot_key = self.spec.robot_key
         return sample
 
-    def _prepare_episode_scene(self, seed: int | None):
+    def _prepare_episode_scene(
+        self, seed: int | None, reset_state_id: int | None = None
+    ):
         from build import scene_generalization_sample_to_dict
         from utils.seed_policy import (
             episode_seed_context,
@@ -246,10 +248,12 @@ class Bench2DexRuntime:
             seed_everything,
         )
 
-        anchor_index = self.episode_index % len(self.episodes)
+        episode_index = self.episode_index if reset_state_id is None else reset_state_id
+        anchor_index = episode_index % len(self.episodes)
         episode = self.episodes[anchor_index]
-        self.current_episode_index = self.episode_index + 1
-        self.episode_index += self.episode_stride
+        self.current_episode_index = episode_index + 1
+        if reset_state_id is None:
+            self.episode_index += self.episode_stride
         context = episode_seed_context(
             seed_namespace="eval",
             base_seed=self.namespace_base_seed,
@@ -287,8 +291,14 @@ class Bench2DexRuntime:
         )
         return scene_sample, sample
 
-    def reset(self, seed: int | None = None, env_ids=None) -> tuple[dict, dict]:
-        """Rebuild the scene from the next anchor, excluding warmup from metrics."""
+    def reset(
+        self,
+        seed: int | None = None,
+        env_ids=None,
+        *,
+        reset_state_id: int | None = None,
+    ) -> tuple[dict, dict]:
+        """Rebuild the selected or next episode, excluding warmup from metrics."""
         from benchmark.metric_tracker import MetricTracker
         from build import (
             build_scene,
@@ -305,8 +315,14 @@ class Bench2DexRuntime:
 
         if env_ids is not None and list(np.asarray(env_ids.cpu()).reshape(-1)) != [0]:
             raise ValueError("A Bench2Dex process contains only environment 0")
+        if reset_state_id is not None and (
+            not isinstance(reset_state_id, (int, np.integer)) or reset_state_id < 0
+        ):
+            raise ValueError(
+                f"Expected a nonnegative integer reset_state_id, got {reset_state_id!r}"
+            )
         self._clear_scene()
-        scene_sample, sample = self._prepare_episode_scene(seed)
+        scene_sample, sample = self._prepare_episode_scene(seed, reset_state_id)
         self.runtime = build_scene(
             self.task,
             str(self.spec.task_path.parent),

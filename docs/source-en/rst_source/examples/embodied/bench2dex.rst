@@ -3,7 +3,7 @@ Bench2Dex
 
 Train and evaluate π₀.₅ on Bench2Dex Task64 with two Panda arms and Allegro
 hands. Prepare the scene assets and converted checkpoint, choose synchronous
-or asynchronous PPO, then evaluate checkpoints on the four official
+PPO, asynchronous PPO or GRPO, then evaluate checkpoints on the four official
 generalization channels.
 
 Overview
@@ -33,7 +33,7 @@ environment batches the observations and pads scenes that finish early.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      Synchronous PPO · asynchronous PPO · policy evaluation
+      Synchronous PPO · asynchronous PPO · GRPO · policy evaluation
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -174,8 +174,8 @@ Both recipes start with 16 environments and one rollout per training epoch.
 Each episode has a 665-control-step budget, scheduled as 34 chunks of 20
 actions. Set ``env.train.total_num_envs`` and
 ``cluster.component_placement`` in the YAML to choose the scene and worker
-counts. The initial actor microbatch is 1; the global batch of 136 divides
-the 544 chunk samples into four minibatches.
+counts. The initial actor microbatch is 1 and the global batch is 136.
+Each rollout schedules 544 chunk samples.
 
 The training environment uses ``auto_reset=false``. An episode that ends
 inside a chunk contributes its executed rewards; subsequent chunks hold the
@@ -201,6 +201,39 @@ For asynchronous resume, use ``train_async.py`` and
 argument. Both recipes use independent checkpoint evaluation below. Watch
 ``env/success_once`` during training; see
 :doc:`Training metrics <../../reference/metrics>` for the metric definitions.
+
+Train with GRPO
+~~~~~~~~~~~~~~~
+
+Use GRPO to compare independent attempts from the same initial scene. The
+recipe keeps PPO's checkpoint, scene distribution and action budget, trains
+the action expert with Flow-SDE, and computes advantages from group returns
+instead of a value head:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh bench2dex_task64_grpo_openpi_pi05
+
+The recipe uses ``EmbodiedRunner`` with ``algorithm.adv_type=grpo`` and
+``algorithm.loss_type=actor``. The default placement uses four GPUs (``0-3``); its
+16 environments form four groups of four attempts. Set ``algorithm.group_size`` to change the group size;
+``env.train.group_size`` follows it. Each environment and actor worker must
+receive complete groups.
+
+With ``env.train.use_fixed_reset_state_ids=true``,
+``Bench2DexEnv.update_reset_state_ids()`` selects one initial-state index per
+group for the next rollout. ``reset()`` sends the repeated indices through
+``Bench2DexVectorEnv`` to ``Bench2DexRuntime.reset(reset_state_id=...)``.
+Group members use the same anchor and scene seed while the policy samples
+independent PyTorch action noise. Scene process IDs remain independent of
+initial-state IDs. PPO and evaluation retain their default episode sequence.
+
+Rewards remain 1 at first stable success and 0 otherwise. A group with both
+successes and failures supplies relative advantages; uniform-return groups
+have zero group-relative advantages. The recipe keeps
+``algorithm.filter_rewards=false`` and enables
+``algorithm.log_group_success_metrics``. Use the checkpoint evaluation below
+for saved policies.
 
 Evaluate a Checkpoint
 ~~~~~~~~~~~~~~~~~~~~~

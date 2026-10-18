@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Any, Callable
 
+import numpy as np
+
 from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
@@ -183,6 +185,33 @@ class Bench2DexSubprocEnvWorker(SubprocEnvWorker):
 
 class Bench2DexVectorEnv(BaseVectorEnv):
     """Schedule scene chunks using the existing subprocess pool and lifecycle."""
+
+    def reset(self, id=None, *, reset_state_ids=None, **kwargs: Any) -> tuple:
+        """Reset selected scenes with an optional initial-state ID per scene."""
+        if reset_state_ids is None:
+            return super().reset(id=id, **kwargs)
+        self._assert_is_not_closed()
+        ids = list(self._wrap_id(id))
+        states = np.asarray(reset_state_ids)
+        if (
+            not ids
+            or len(set(ids)) != len(ids)
+            or states.shape != (len(ids),)
+            or not np.issubdtype(states.dtype, np.integer)
+            or (states < 0).any()
+        ):
+            raise ValueError(
+                "Expected one nonnegative integer reset_state_id per unique "
+                f"environment, got env_ids={ids}, reset_state_ids={reset_state_ids}"
+            )
+        self._assert_id(ids)
+        for env_id, state_id in zip(ids, states, strict=True):
+            self.workers[env_id].send(None, reset_state_id=int(state_id), **kwargs)
+        results = [self.workers[env_id].recv() for env_id in ids]
+        return (
+            np.array([result[0] for result in results], dtype=object),
+            [result[1] for result in results],
+        )
 
     def chunk_step(self, commands: list, env_ids=None) -> list[list[tuple]]:
         """Send to all selected scenes, then collect their executed transitions.

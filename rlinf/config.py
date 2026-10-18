@@ -1049,7 +1049,12 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
 
 
 def validate_bench2dex_cfg(
-    cfg, model_cfg, env_world_size: int, only_eval: bool
+    cfg,
+    model_cfg,
+    env_world_size: int,
+    only_eval: bool,
+    *,
+    actor_world_size: int | None = None,
 ) -> None:
     """Check Bench2Dex model/scene contracts before workers launch Isaac Sim."""
     for split in ("eval",) if only_eval else ("train", "eval"):
@@ -1083,6 +1088,41 @@ def validate_bench2dex_cfg(
             raise ValueError(
                 "Bench2Dex uses ignore_terminations=false; select early_stop in init_params"
             )
+        if split == "train":
+            group_size = int(env_cfg.get("group_size", 1))
+            if group_size != int(cfg.algorithm.group_size) or group_size < 1:
+                raise ValueError(
+                    "Expected positive matching Bench2Dex env/algorithm "
+                    f"group_size, got {group_size}/{cfg.algorithm.group_size}"
+                )
+            if group_size > 1:
+                if not env_cfg.use_fixed_reset_state_ids or env_cfg.auto_reset:
+                    raise ValueError(
+                        "Grouped Bench2Dex training requires "
+                        "use_fixed_reset_state_ids=true and auto_reset=false"
+                    )
+                for name, world_size in (
+                    ("env", env_world_size),
+                    ("actor", actor_world_size),
+                ):
+                    if (
+                        world_size is None
+                        or world_size < 1
+                        or env_cfg.total_num_envs % (world_size * group_size)
+                    ):
+                        raise ValueError(
+                            "Expected complete Bench2Dex groups per "
+                            f"{name} worker, got total_num_envs="
+                            f"{env_cfg.total_num_envs}, {name}_world_size="
+                            f"{world_size}, group_size={group_size}"
+                        )
+            if (
+                cfg.algorithm.adv_type == "grpo"
+                and env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+            ):
+                raise ValueError(
+                    "Bench2Dex GRPO rollout must cover the task control-step budget"
+                )
         if int(model_cfg.action_dim) != spec.action_dim:
             raise ValueError(
                 f"{spec.robot_key} needs {spec.action_dim} active joint coordinates, model declares {model_cfg.action_dim}"
@@ -1315,7 +1355,15 @@ def validate_embodied_cfg(cfg):
             "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
         )
 
-    validate_bench2dex_cfg(cfg, model_cfg, env_world_size, only_eval)
+    validate_bench2dex_cfg(
+        cfg,
+        model_cfg,
+        env_world_size,
+        only_eval,
+        actor_world_size=(
+            component_placement.get_world_size("actor") if not only_eval else None
+        ),
+    )
 
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (

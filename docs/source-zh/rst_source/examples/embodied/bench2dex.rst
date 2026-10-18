@@ -1,7 +1,7 @@
 Bench2Dex
 =========
 
-使用 RLinf 同步或异步 PPO 训练 Bench2Dex Task64 的 π₀.₅ policy，机器人为双 Panda＋Allegro。先准备场景资产和转换后的 checkpoint，再启动训练，并通过官方四个泛化通道评测 checkpoint。
+使用 RLinf 同步 PPO、异步 PPO 或 GRPO 训练 Bench2Dex Task64 的 π₀.₅ policy，机器人为双 Panda＋Allegro。先准备场景资产和转换后的 checkpoint，再启动训练，并通过官方四个泛化通道评测 checkpoint。
 
 概览
 ----
@@ -21,7 +21,7 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
    .. grid-item-card:: 算法
       :text-align: center
 
-      同步 PPO · 异步 PPO · policy 评测
+      同步 PPO · 异步 PPO · GRPO · policy 评测
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -130,7 +130,7 @@ PPO 训练
 
 该命令使用 ``AsyncPPOEmbodiedRunner`` 和已有的 ``decoupled_actor_critic`` loss。异步 YAML 继承同步配方，模型、场景分布、采样预算和优化器参数保持一致。``algorithm.staleness_threshold: 1`` 允许采样权重落后一个版本，``algorithm.behave_weight_threshold`` 设为 ``2.0``。
 
-两份配方初始配置均为 16 个环境，每个训练 epoch 收集一次 rollout。每回合预算为 665 个控制步，调度为 34 个、每个 20 步的 action chunk。在 YAML 中通过 ``env.train.total_num_envs`` 和 ``cluster.component_placement`` 调整场景及 worker 数量。actor 初始 microbatch 为 1，global batch 为 136，将 544 个 chunk 样本分成四个 minibatch。
+两份配方初始配置均为 16 个环境，每个训练 epoch 收集一次 rollout。每回合预算为 665 个控制步，调度为 34 个、每个 20 步的 action chunk。在 YAML 中通过 ``env.train.total_num_envs`` 和 ``cluster.component_placement`` 调整场景及 worker 数量。actor 初始 microbatch 为 1，global batch 为 136，每次 rollout 调度 544 个 chunk 样本。
 
 训练环境使用 ``auto_reset=false``。回合在 chunk 内结束时，保留实际执行动作的奖励；后续 chunk 保持终态观测、奖励为零，由 RLinf 已有的 done-based loss mask 排除。同步和异步 PPO 均使用 chunk-level reward 与 log-probability。
 
@@ -146,6 +146,21 @@ runner 按 ``runner.save_interval`` 保存 checkpoint。恢复同步训练时，
      runner.resume_dir=/path/to/checkpoints/global_step_40
 
 恢复异步训练时，使用 ``train_async.py`` 和 ``bench2dex_task64_async_ppo_openpi_pi05``，传入相同的 ``runner.resume_dir`` 参数。两份配方均通过下面的独立入口评测 checkpoint。训练时关注 ``env/success_once``，其余指标定义见 :doc:`训练指标 <../../reference/metrics>`。
+
+GRPO 训练
+~~~~~~~~~
+
+GRPO 比较同一初始场景下的多次独立尝试。配方沿用 PPO 的初始 checkpoint、场景分布与动作预算，通过 Flow-SDE 训练 action expert，用组内轨迹回报计算优势：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh bench2dex_task64_grpo_openpi_pi05
+
+该命令使用 ``EmbodiedRunner``，配置为 ``algorithm.adv_type=grpo``、``algorithm.loss_type=actor``，不创建 value head。默认 placement 使用四张 GPU（``0-3``），16 个环境分为四组，每组四次尝试；在 ``algorithm.group_size`` 中设置组大小，``env.train.group_size`` 跟随该值。每个环境 worker 和 actor worker 接收的分片都必须包含完整的组。
+
+``env.train.use_fixed_reset_state_ids=true`` 时，``Bench2DexEnv.update_reset_state_ids()`` 为下一次 rollout 的每组选择一个初始场景索引。``reset()`` 将组内重复的索引经 ``Bench2DexVectorEnv`` 发给 ``Bench2DexRuntime.reset(reset_state_id=...)``。组内使用相同 anchor 和场景 seed，policy 独立采样 PyTorch 动作噪声；初始场景索引不改变各子进程的编号。PPO 和评测的默认 episode 顺序保持不变。
+
+奖励仍为首次稳定成功给 1，其余给 0。组内同时有成功和失败时产生相对优势，回报完全相同的组优势为零。配方保持 ``algorithm.filter_rewards=false``，开启 ``algorithm.log_group_success_metrics``；保存后的 policy 使用下方入口评测。
 
 Checkpoint 评测
 ~~~~~~~~~~~~~~~
