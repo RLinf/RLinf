@@ -2,9 +2,18 @@ defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
   - model/pi0_5@actor.model
+  - model/pi0_5@rollout.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1

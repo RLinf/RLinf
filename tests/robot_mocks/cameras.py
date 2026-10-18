@@ -266,6 +266,10 @@ def opencv() -> types.ModuleType:
         BUFFERSIZE = 38
 
     def cvtColor(image, code):
+        # Only the camera's I420 decode is faked. Every other conversion, such
+        # as a recorder's RGB to BGR before it writes a PNG, is the real one.
+        if code != fake.COLOR_YUV2BGR_I420 and real_cv2 is not None:
+            return real_cv2.cvtColor(image, code)
         return np.zeros((_LUMOS_H, _LUMOS_W, 3), dtype=np.uint8)
 
     def resize(image, size, interpolation=None):

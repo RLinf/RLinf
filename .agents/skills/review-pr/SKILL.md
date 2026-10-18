@@ -5,7 +5,7 @@ description: Reviews a pull request from a PR URL by directly fetching the URL c
 
 # Review PR (From PR URL)
 
-Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for the contribution rules referenced below.
+Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness, clean abstractions and code reuse, and eliminating unnecessary changes that deviate from the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [AGENTS.md](../../../AGENTS.md) and [CONTRIBUTING.md](../../../CONTRIBUTING.md) for the design and contribution rules referenced below.
 
 ## 1. Input: PR URL
 
@@ -48,18 +48,26 @@ For every changed function, branch, and config path, look for:
 
 Cite file:line in the diff and the matching `origin/main:file:line` when relevant.
 
-### (b) Design and pattern consistency vs `origin/main` — primary
+### (b) Design, code reuse, and unnecessary changes vs `origin/main` — primary
 
-The PR must match how RLinf already does things. Mismatches are usually defects from writing in isolation, not style nits.
+The PR must match how RLinf already does things and follow the [Design and review principles in `AGENTS.md`](../../../AGENTS.md#design-and-review-principles). Mismatches, bloated workarounds, and dead boilerplate are design defects, not style nits.
 
-- **Find the closest sibling in `origin/main`** — comparable model under `rlinf/models/embodiment/`, env under `rlinf/envs/`, runner under `rlinf/runners/`, worker under `rlinf/workers/`, advantage/loss/reward under `rlinf/algorithms/`. Compare structure, naming, registration, base-class usage, and config wiring.
-- **Registry wiring**: new advantage/loss/reward must use `register_advantage` / `register_policy_loss` / `register_reward`; new model/env must extend `SupportedModel` / `SupportedEnvType` and update `get_env_cls()` and `validate_cfg`. Flag ad-hoc bypasses.
-- **Worker conventions**: subclass `Worker`, implement `initialize`, use `self.log_info` / `log_warning` / `log_error` (not `print` or stdlib `logging`), launch via `create_group(...).launch(...)`.
-- **Base class / interface**: embodied policies must inherit `BasePolicy` and implement the documented forwards (`default_forward`, `predict_action_batch`, plus algorithm-specific). Flag re-implementations of base behavior.
-- **Config layout**: new YAML must be copied from a sibling in `examples/` and follow the same key hierarchy; no calculations or dynamic values in YAML; fields read-only in code.
-- **Reuse vs duplication**: if the change reimplements a helper that already exists in `rlinf/utils/` (placement, checkpoint, distributed, data-iter, logging), point to the existing helper with file:line.
-- **Simplicity**: prefer the approach the codebase already uses; flag clumsy / over-engineered alternatives with a concrete simpler suggestion.
-- **No hardcoded paths/hacks**: machine-specific paths, sleep-based sync, monkey-patches → propose a config/env-driven version.
+- **Compare against the *newest* idiomatic sibling in `origin/main`** — comparable model under `rlinf/models/embodiment/`, env under `rlinf/envs/`, runner under `rlinf/runners/`, worker under `rlinf/workers/`, advantage/loss/reward under `rlinf/algorithms/`. Check `git log` on siblings so you compare against current conventions rather than legacy boilerplate.
+- **Clean, explicit abstractions**:
+  - Prefer small abstractions with one responsibility and one stable name (`AGENTS.md`). Flag parallel vocabularies, pass-through wrapper classes/functions that hide ownership, and dynamic machinery where a direct constructor, method, or existing registry (`register_model`, `register_advantage`, `register_policy_loss`, `register_reward`, `get_env_cls()`) suffices.
+  - Design invalid states out of the API: explicit ownership, lifecycle order, and idempotent cleanup; keep the common local path direct and use the same API in local and remote configurations.
+  - Embodied policies must inherit `BasePolicy` and implement the documented forwards (`default_forward`, `predict_action_batch`, plus algorithm-specific); workers must subclass `Worker`, implement `initialize`, use `self.log_info` / `log_warning` / `log_error`, and launch via `create_group(...).launch(...)`.
+- **Code reuse over duplication**:
+  - Check whether new logic duplicates helpers or abstractions that already exist anywhere in the stack — `rlinf/utils/` (placement, checkpoint, distributed, data-iter, logging), `rlinf/models/embodiment/` (shared transforms, image parsing, action packing), `rlinf/envs/` (`prepare_actions`, wrappers), `rlinf/data/` (dataset writers/loaders), or `requirements/install.sh` helpers (`clone_or_reuse_repo`, `install_lerobot`, `install_flash_attn`). Always cite the existing helper with `origin/main:file:line` and propose reusing or extending it.
+- **Unnecessary changes, dead code, and bloat**:
+  - **Dead / unreferenced code**: grep `origin/main` + the PR diff for every newly added function, method, class, dataclass field, and config key. Flag anything with zero callers or consumers (e.g. copy-pasted legacy helpers like `make_*_example()`, `generate_observations()`, unused dataclass fields, or defensive branches for shapes/types that the caller pipeline never produces).
+  - **Redundant YAML config keys**: new YAML must start from a current sibling in `examples/`, keep all values static, and treat user-settable fields as read-only in code. When a YAML file inherits a base config via Hydra `defaults` (e.g. `model/pi0_5@actor.model`), flag blocks that re-declare unchanged default keys instead of overriding only task-specific fields.
+  - **Over-engineered install / Docker / CI changes**:
+    - In `requirements/install.sh`, flag bespoke subshells, inline `pyproject.toml` patching, or per-env `TORCH_VERSION` overrides when a small `case` branch calling shared helpers (`install_<env>_env`) or a pinned fork under `github.com/RLinf/<repo>` can express it cleanly (see [install-check](../install-check/SKILL.md)).
+    - In `docker/Dockerfile` and `.github/workflows/docker-build.yml`, check whether comparable targets on `origin/main` actually build Docker images (e.g. real-world hardware envs like `yam`, `so101`, `piper`, `dosw1`, `gim_arm`, `xsquare_turtle2` intentionally do not).
+    - In `.github/workflows/ci-tests.yml` and e2e workflows, flag single-file path filter entries that are already covered by existing directory globs (`rlinf/models/embodiment/**`, `evaluations/**`, `examples/sft/**`, etc.) and flag e2e steps that duplicate coverage already running in another workflow.
+  - **Test layout bloat**: `tests/unit_tests/` has one file per component (`test_models.py`, `test_worker.py`, `test_robotics.py`, etc.). Flag standalone test files named after a single model, env, symptom, or function, and flag mock-heavy tests that only prove mocks were called (`AGENTS.md` § *Tests*).
+  - **No hardcoded paths/hacks**: machine-specific paths, sleep-based sync, monkey-patches → propose a config/env-driven version.
 
 ### (c) Code ↔ docs consistency — required when code OR docs change
 
