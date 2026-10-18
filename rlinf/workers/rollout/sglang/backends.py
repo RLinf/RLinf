@@ -26,6 +26,7 @@ sglang HTTP server subprocess (plan: server mode).
 import asyncio
 from typing import Callable, Optional
 
+import aiohttp
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -222,7 +223,12 @@ class SGLangServerBackend(RolloutBackend):
             # delivers it to tp rank 0 (or each DP-group leader under DP
             # attention), which broadcasts to the whole TP group.
             return
-        self._client = InferenceHTTPClient(self._process.get_server_url())
+        # keepalive_timeout must be shorter than the server's keep-alive
+        # (uvicorn default 5s) so we never reuse a connection the server
+        # is about to close (an ECONNRESET race).
+        self._client = InferenceHTTPClient(
+            self._process.get_server_url(), keepalive_timeout=4.0
+        )
         await self._client.async_run_task_method(
             io_struct.TaskMethodInput(
                 method_name="init_rlinf_worker",
@@ -245,6 +251,28 @@ class SGLangServerBackend(RolloutBackend):
         image_data: Optional[list],
         return_logprob: list[bool] | bool,
     ) -> dict:
+        # The client's keep-alive is now shorter than the server's (uvicorn
+        # closes idle keep-alive connections after 5s), but a request can
+        # still race a closing connection or hit a transient disconnect and
+        # get ECONNRESET. Resending is safe for RL sampling (equivalent to
+        # drawing another sample), so retry connection-level errors a few
+        # times. HTTP status errors are not retried.
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return await self.http_client.async_generate(
+                    prompt=prompt,
+                    input_ids=input_ids,
+                    sampling_params=sampling_params,
+                    return_logprob=return_logprob,
+                    image_data=image_data,
+                )
+            except aiohttp.ClientConnectionError as e:
+                self._log_info(
+                    f"sglang server connection error on generate attempt "
+                    f"{attempt + 1}/{max_retries + 1} ({type(e).__name__}: {e}), retrying"
+                )
+                await asyncio.sleep(0.5 * (attempt + 1))
         return await self.http_client.async_generate(
             prompt=prompt,
             input_ids=input_ids,

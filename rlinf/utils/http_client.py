@@ -96,10 +96,12 @@ class InferenceHTTPClient:
         base_url: str,
         connect_timeout: float = 10.0,
         max_connections: int = 1024 * 16,
+        keepalive_timeout: Optional[float] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.connect_timeout = connect_timeout
         self.max_connections = max_connections
+        self.keepalive_timeout = keepalive_timeout
         self._session: Optional[aiohttp.ClientSession] = None
 
     # ------------------------------------------------------------------
@@ -217,11 +219,14 @@ class InferenceHTTPClient:
             # limit         = total in-flight conns across all hosts
             # limit_per_host=0  → no separate per-host ceiling, so `limit` rules
             # enable_cleanup_closed helps reclaim sockets when peers hang up.
-            connector = aiohttp.TCPConnector(
-                limit=self.max_connections,
-                limit_per_host=0,
-                enable_cleanup_closed=True,
-            )
+            connector_kwargs = {
+                "limit": self.max_connections,
+                "limit_per_host": 0,
+                "enable_cleanup_closed": True,
+            }
+            if self.keepalive_timeout is not None:
+                connector_kwargs["keepalive_timeout"] = self.keepalive_timeout
+            connector = aiohttp.TCPConnector(**connector_kwargs)
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 

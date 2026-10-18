@@ -15,6 +15,7 @@
 import asyncio
 import copy
 import dataclasses
+import traceback
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
@@ -658,21 +659,43 @@ class SGLangWorker(Worker):
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        result = await self._backend.async_generate(
-            input_ids=prompt_ids,
-            sampling_params=final_sampling_params,
-            image_data=None,
-            return_logprob=self._return_logprobs,
-        )
-        # sglang will trim matched stop in result text, so we should only return output_ids
-        result_dict = {
-            "output_ids": result["output_ids"],
-            "finish_reason": result["meta_info"]["finish_reason"]["type"],
-        }
-        if self._return_logprobs:
-            result_dict["logprobs"] = [
-                item[0] for item in result["meta_info"]["output_token_logprobs"]
-            ]
+        # This is a fire-and-forget task: nobody awaits it, so an exception
+        # would be swallowed and the requesting agent loop would wait on its
+        # channel key forever. Put an error payload on the same key instead,
+        # so the consumer raises. The try covers generation AND response
+        # parsing: a malformed result dict would hang the loop the same way.
+        try:
+            result = await self._backend.async_generate(
+                input_ids=prompt_ids,
+                sampling_params=final_sampling_params,
+                image_data=None,
+                return_logprob=self._return_logprobs,
+            )
+            # sglang will trim matched stop in result text, so we should only return output_ids
+            result_dict = {
+                "output_ids": result["output_ids"],
+                "finish_reason": result["meta_info"]["finish_reason"]["type"],
+            }
+            if self._return_logprobs:
+                result_dict["logprobs"] = [
+                    item[0] for item in result["meta_info"]["output_token_logprobs"]
+                ]
+        except Exception as e:
+            self.log_error(
+                f"Rollout generate request failed (channel_key={channel_key}):\n"
+                f"{traceback.format_exc()}"
+            )
+            try:
+                await output_channel.put(
+                    {"error": f"{type(e).__name__}: {e}"},
+                    key=channel_key,
+                    async_op=True,
+                ).async_wait()
+            except Exception:
+                self.log_error(
+                    f"Failed to deliver the generate error to channel_key={channel_key}"
+                )
+            return
         await output_channel.put(
             result_dict, key=channel_key, async_op=True
         ).async_wait()
