@@ -21,6 +21,10 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from rlinf.utils.logging import get_logger
+
+_logger = get_logger()
+
 
 class VideoPlayer:
     def __init__(self, enable: bool = True) -> None:
@@ -70,7 +74,7 @@ class VideoPlayer:
                 # Headless OpenCV (no GTK) raises here. Stop queueing frames
                 # instead of leaving is_running set and filling the queue.
                 self.is_running = False
-                warnings.warn(
+                _logger.warning(
                     "Camera preview disabled; OpenCV has no GUI backend "
                     f"({exc}). Set enable_camera_player: false to skip it."
                 )

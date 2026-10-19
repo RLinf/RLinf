@@ -413,7 +413,11 @@ class PicoTcp(Pico):
             and self._last_command is not None
         ):
             # Preserve the last operator pose until the current chunk ends.
-            return TeleopAction(parts=self._split(self._last_command), info=info)
+            return TeleopAction(
+                parts=self._split(self._last_command),
+                driving=True,
+                info={**info, "pico_holding": True},
+            )
 
         if self.hold_current_when_inactive:
             # Keep driving after grip release so collection zeros cannot walk
@@ -445,6 +449,8 @@ class PicoTcp(Pico):
     def on_action_chunk_begin(self) -> None:
         """Clear the pose held after a mid-chunk release."""
         self._holding_after_release = False
+        if not self.hold_current_when_inactive:
+            self._last_command = None
 
     def on_reset(self, context: Mapping[str, Any] = MappingProxyType({})) -> None:
         """Clear the held command and pose anchor."""

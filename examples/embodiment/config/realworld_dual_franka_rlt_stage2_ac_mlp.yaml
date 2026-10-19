@@ -63,7 +63,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf-rlt
-    experiment_name: "realworld_rlt_stage2_ac_mlp"
+    experiment_name: "realworld_dual_franka_rlt_stage2_ac_mlp"
     logger_backends: ["tensorboard"]
 
   max_epochs: 8000

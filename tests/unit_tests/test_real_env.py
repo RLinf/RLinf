@@ -1454,6 +1454,8 @@ def test_eval_control_idle_wait_steps_so_pico_can_move(monkeypatch):
         def __init__(self):
             self.action_space = spaces.Box(-1, 1, shape=(4,), dtype=np.float32)
             self.steps = 0
+            self._num_steps = 0
+            self._success_hold_counter = 0
 
         def reset(self, seed=None, options=None):
             return {"pose": 0}, {}
@@ -1463,11 +1465,15 @@ def test_eval_control_idle_wait_steps_so_pico_can_move(monkeypatch):
 
         def step(self, action):
             self.steps += 1
+            self._num_steps += 1
+            self._success_hold_counter += 1
             return {"pose": self.steps}, 0.0, False, False, {}
 
-    env = KeyboardEvalControlWrapper(Env())
+    env = KeyboardEvalControlWrapper(gym.Wrapper(Env()))
     obs, _ = env.reset()
-    assert env.env.steps == 1
+    assert env.unwrapped.steps == 1
+    assert env.unwrapped._num_steps == 0
+    assert env.unwrapped._success_hold_counter == 0
     assert obs["pose"] == 1
     assert env._running is True
 

@@ -190,9 +190,7 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
    export RLINF_NODE_RANK=<node_rank_of_this_node>
    export RLINF_COMM_NET_DEVICES=<network_device_for_communication> # 如果只有一个网卡可以省略
 
-其中 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``，
-用来在配置文件中唯一标识每个节点。DAgger 的 env 节点没有 ``keyboard_device``，
-需要在 ``ray start`` 前导出键盘或脚踏：
+其中 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``，用来在配置文件中唯一标识每个节点。DAgger 的 env 节点没有 ``keyboard_device``，需要在 ``ray start`` 前导出键盘或脚踏：
 
 .. code-block:: bash
 
@@ -240,36 +238,22 @@ DAgger 拆到多台机器上时，按下面的方式在各节点启动 Ray。单
 在采集和 DAgger 配置中替换以下字段：
 
 * ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``：左右臂 FCI IP。
-* ``BASE_CAMERA_SERIAL``、``LEFT_CAMERA_SERIAL``、``RIGHT_CAMERA_SERIAL``：
-  RealSense 用 librealsense 的 ASIC serial，不是 V4L USB serial。Lumos 腕部改用
-  该相机的 ``/dev/v4l/by-id`` 路径。
-* ``base_camera_type``、``left_camera_type``、``right_camera_type``：采集示例三路
-  都是 ``realsense``。DAgger 示例的底座是 ``realsense``，左右腕是 ``lumos``。
-  图像落到错误的手臂上时，对调对应 serial。
+* ``BASE_CAMERA_SERIAL``、``LEFT_CAMERA_SERIAL``、``RIGHT_CAMERA_SERIAL``：RealSense 用 librealsense 的 ASIC serial，不是 V4L USB serial。Lumos 腕部改用该相机的 ``/dev/v4l/by-id`` 路径。
+* ``base_camera_type``、``left_camera_type``、``right_camera_type``：采集示例三路都是 ``realsense``。DAgger 示例的底座是 ``realsense``，左右腕是 ``lumos``。图像落到错误的手臂上时，对调对应 serial。
 * ``left_gripper_type`` / ``right_gripper_type``：左右夹爪类型。
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定
-  ``/dev/serial/by-id`` 路径。
-* ``keyboard_device``：采集配置里的 evdev 节点；留空则使用
-  ``RLINF_KEYBOARD_DEVICE``。按键来自这台 USB 键盘或脚踏，不来自采集终端。
-* ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``：
-  采集示例三者都是 ``0``。DAgger 必须改成实际拥有机械臂和 env 的集群 rank。
+* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定 ``/dev/serial/by-id`` 路径。
+* ``keyboard_device``：采集配置里的 evdev 节点；留空则使用 ``RLINF_KEYBOARD_DEVICE``。按键来自这台 USB 键盘或脚踏，不来自采集终端。
+* ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``：采集示例三者都是 ``0``。DAgger 必须改成实际拥有机械臂和 env 的集群 rank。
 * ``TASK_DESCRIPTION``：采集和 DAgger 使用的任务文本，应与 checkpoint 训练时一致。
-* ``joint_reset_qpos``：采集配置不写这一项，reset 使用环境默认关节位。DAgger
-  配置里的全零占位要换成数据集首帧关节均值或安全 home。它是每臂 7 个关节角，
-  不是 ``target_ee_pose``。
-* ``target_ee_pose``：每臂 ``[x, y, z, roll, pitch, yaw]``。xyz 必须落在共享环境
-  ``realworld_dual_franka_tcp_rot6d`` 的限位内：x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，
-  z ∈ [0.02, 0.7]。示例 ``[0.5, ±0.2, 0.5, -3.14, 0, 0]`` 在这个盒子里。
+* ``joint_reset_qpos``：采集配置不写这一项，reset 使用环境默认关节位。DAgger 配置里的全零占位要换成数据集首帧关节均值或安全 home。它是每臂 7 个关节角，不是 ``target_ee_pose``。
+* ``target_ee_pose``：每臂 ``[x, y, z, roll, pitch, yaw]``。xyz 必须落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位内：x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，z ∈ [0.02, 0.7]。示例 ``[0.5, ±0.2, 0.5, -3.14, 0, 0]`` 在这个盒子里。
 
 PICO 配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集配置中 PICO consumer 地址位于 ``env.eval.pico.zmq_addr``；DAgger 配置中位于
-``env.train.pico.zmq_addr``。该地址必须与 publisher 绑定地址匹配。采集和 DAgger
-示例都默认 ``ipc:///tmp/vr_data.ipc``，即 publisher 和 env worker 在同一台机器。
+采集配置中 PICO consumer 地址位于 ``env.eval.pico.zmq_addr``；DAgger 配置中位于 ``env.train.pico.zmq_addr``。该地址必须与 publisher 绑定地址匹配。采集和 DAgger 示例都默认 ``ipc:///tmp/vr_data.ipc``，即 publisher 和 env worker 在同一台机器。
 
-``teleop`` 是按臂绑定的列表，不是单个 ``pico``。``pico.hand: dual`` 让左右手柄
-分别对应左右臂。
+``teleop`` 是按臂绑定的列表，不是单个 ``pico``。``pico.hand: dual`` 让左右手柄分别对应左右臂。
 
 .. code-block:: yaml
 
@@ -288,10 +272,7 @@ PICO 配置
          calibration:
            button: "trigger"
 
-DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设置
-``hold_current_when_inactive: False``、``keyboard_reward_wrapper: eval_control``。
-跨机器时，publisher 绑定 ``tcp://0.0.0.0:<port>``，consumer 填写
-``tcp://<vr_publisher_ip>:<port>``，不要把 ``0.0.0.0`` 写到 consumer 配置里。
+DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设置 ``hold_current_when_inactive: False``、``keyboard_reward_wrapper: eval_control``。跨机器时，publisher 绑定 ``tcp://0.0.0.0:<port>``，consumer 填写 ``tcp://<vr_publisher_ip>:<port>``，不要把 ``0.0.0.0`` 写到 consumer 配置里。
 
 默认手柄语义：
 
@@ -306,20 +287,15 @@ DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设�
 采集和 DAgger 的 ``hold_current_when_inactive`` 语义不同：
 
 * 采集配置为 ``True``：未按 ``grip`` 的手臂保持当前 TCP，适合纯遥操作数据采集。
-* DAgger 配置为 ``False``：未按 ``grip`` 的手臂保留 rollout action；按下任意一侧
-  ``grip`` 时，只用对应侧的 PICO action 覆盖策略动作，另一侧仍保留 rollout action。
+* DAgger 配置为 ``False``：未按 ``grip`` 的手臂保留 rollout action；按下任意一侧 ``grip`` 时，只用对应侧的 PICO action 覆盖 policy 动作，另一侧仍保留 rollout action。
 
-双臂 DAgger 的接管与记录按臂合成。例如只接管左臂时，实际执行并写入
-``intervene_action`` 的 20D 动作为：
+双臂 DAgger 的接管与记录按臂合成。例如只接管左臂时，实际执行并写入 ``intervene_action`` 的 20D 动作为：
 
 .. code-block:: text
 
    [左臂 PICO 10D action, 右臂 rollout 10D action]
 
-只接管右臂时则相反。任意一臂发生替换都会设置 ``intervene_flag=True``；只有两臂
-都未接管时才不会产生 intervention 记录。完整成功 episode 仍会由 online LeRobot
-collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
-``intervene_flag``，只暴露所有非 padding 帧均为人工纠正的 action chunk。
+只接管右臂时则相反。任意一臂发生替换都会设置 ``intervene_flag=True``；只有两臂都未接管时才不会产生 intervention 记录。完整成功 episode 仍会由 online LeRobot collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用 ``intervene_flag``，只暴露所有非 padding 帧均为人工纠正的 action chunk。
 
 
 机械臂柔顺性参数
@@ -342,8 +318,7 @@ collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
 启动 PICO 数据流
 ----------------------------------------
 
-先在 PICO publisher 机器启动 XRoboToolkit PC Service，再启动 VR 数据发布进程。
-示例命令如下，具体安装路径见 :doc:`franka_vr`：
+先在 PICO publisher 机器启动 XRoboToolkit PC Service，再启动 VR 数据发布进程。示例命令如下，具体安装路径见 :doc:`franka_vr`：
 
 .. code-block:: bash
 
@@ -367,8 +342,7 @@ collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
    python toolkits/realworld_check/test_pico_data.py \
        --zmq-addr tcp://<vr_publisher_ip>:<port>
 
-输出持续刷新，并且按下 ``grip``、``trigger``、``A/B``、``X/Y`` 时数值变化，
-才继续启动真机采集或 DAgger。
+输出持续刷新，并且按下 ``grip``、``trigger``、``A/B``、``X/Y`` 时数值变化，才继续启动真机采集或 DAgger。
 
 
 采集 PICO 示教数据
@@ -377,9 +351,7 @@ collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
 执行采集
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-确认左右 Franka、Robotiq、相机、``keyboard_device``、PICO 数据流都正常后，在
-这台机器上执行。采集脚本调用的是当前环境里的 ``python``，需要先激活 Python 3.11
-虚拟环境；系统 ``/usr/bin/python`` 不能运行这份脚本。
+确认左右 Franka、Robotiq、相机、``keyboard_device``、PICO 数据流都正常后，在这台机器上执行。采集脚本调用的是当前环境里的 ``python``，需要先激活 Python 3.11 虚拟环境；系统 ``/usr/bin/python`` 不能运行这份脚本。
 
 .. code-block:: bash
 
@@ -404,10 +376,7 @@ PICO 操作：
 * replay-buffer 轨迹：``demo_buffer/``
 * LeRobot 数据：``lerobot_dataset/rank_0/id_0/``，后续 shard 为 ``id_1``、``id_2``
 
-PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数据动作就是
-tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``。
-无图形界面的 OpenCV 打不开预览，采集示例因此把 ``enable_camera_player`` 设为
-``False``。
+PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数据动作就是 tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``。无图形界面的 OpenCV 打不开预览，采集示例因此把 ``enable_camera_player`` 设为 ``False``。
 
 .. note::
 

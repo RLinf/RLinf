@@ -122,7 +122,7 @@ env:
       gripper_close_threshold: 0.5
 
       # Motion gain from controller movement/rotation to TCP delta command.
-      # Keep these at or below 1.0. compliance.max_step is the hard per-step cap.
+      # compliance.max_step is the hard per-step cap.
       position_scale: 1.2
       rotation_scale: 1.0
 

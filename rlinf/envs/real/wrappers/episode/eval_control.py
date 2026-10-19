@@ -46,10 +46,16 @@ class KeyboardEvalControlWrapper(KeyboardSession):
         obs, info = self.env.reset(seed=seed, options=options)
         self._last_obs = obs
         # Emit a heartbeat while the homed robot waits for the start signal.
-        self.log(
-            "Arms homed and idle. Hold Pico grip to move an arm. "
-            "Press USB-keyboard 'a' to start the policy rollout."
-        )
+        if self._hold_fn() is not None:
+            self.log(
+                "Arms homed and idle. Hold Pico grip to move an arm. "
+                "Press USB-keyboard 'a' to start the policy rollout."
+            )
+        else:
+            self.log(
+                "Arms homed and idle. "
+                "Press USB-keyboard 'a' to start the policy rollout."
+            )
         last_heartbeat = time.monotonic()
         while True:
             # The wait used to only sleep, so Pico (applied inside step)
@@ -62,6 +68,7 @@ class KeyboardEvalControlWrapper(KeyboardSession):
                 self.log("Still waiting for USB-keyboard 'a' to start the rollout...")
             for key in self.listener.pop_pressed_keys():
                 if key == "a":
+                    self._reset_inner_counters()
                     self._running = True
                     self.log("Key 'a' pressed; starting rollout.")
                     return obs, info
@@ -74,6 +81,7 @@ class KeyboardEvalControlWrapper(KeyboardSession):
             self._idle_env_step(self._last_obs, {})
             for key in self.presses():
                 if key == "a":
+                    self._reset_inner_counters()
                     self._running = True
                     return self._idle_response(event="start")
             return self._idle_response(event=None)
@@ -109,6 +117,22 @@ class KeyboardEvalControlWrapper(KeyboardSession):
         info["eval_result"] = result
         return obs, reward, terminated, truncated, info
 
+    def _hold_fn(self) -> Any:
+        env = self.env
+        try:
+            hold = env.get_wrapper_attr("get_hold_action")
+        except AttributeError:
+            hold = getattr(env, "get_hold_action", None)
+        return hold if callable(hold) else None
+
+    def _reset_inner_counters(self) -> None:
+        """Clear step and reward counters advanced during pre-rollout jogging."""
+        unwrapped = getattr(self.env, "unwrapped", self.env)
+        if hasattr(unwrapped, "_num_steps"):
+            unwrapped._num_steps = 0
+        if hasattr(unwrapped, "_success_hold_counter"):
+            unwrapped._success_hold_counter = 0
+
     def _idle_env_step(
         self, obs: Any, info: dict[str, Any]
     ) -> tuple[Any, dict[str, Any]]:
@@ -118,9 +142,8 @@ class KeyboardEvalControlWrapper(KeyboardSession):
         ``get_hold_action``, or one that raises ``AttributeError`` because the
         device commands deltas, sleeps so the robot stays at the reset pose.
         """
-        env = self.env
-        hold = getattr(env, "get_hold_action", None)
-        if not callable(hold):
+        hold = self._hold_fn()
+        if hold is None:
             time.sleep(self.IDLE_POLL_S)
             return obs, info
         try:
@@ -129,7 +152,7 @@ class KeyboardEvalControlWrapper(KeyboardSession):
             time.sleep(self.IDLE_POLL_S)
             return obs, info
         started = time.monotonic()
-        obs, _, _, _, stepped_info = env.step(hold_action)
+        obs, _, _, _, stepped_info = self.env.step(hold_action)
         self._last_obs = obs
         elapsed = time.monotonic() - started
         if elapsed < self.IDLE_POLL_S:
