@@ -16,11 +16,14 @@
 
 import asyncio
 import copy
+import importlib.util
 import inspect
 import json
+import pickle
 import random
 import shutil
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
@@ -34,6 +37,7 @@ import rlinf.data.datasets.d4rl as d4rl_dataset_module
 import rlinf.utils.obs_compression as obs_compression
 from rlinf.data.datasets.d4rl import D4RLDataset
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
+from rlinf.data.datasets.reward_model import RewardDatasetPayload
 from rlinf.data.schema.embodied_trajectory import (
     LeRobotEpisodeAccumulator,
     RolloutGeometry,
@@ -84,6 +88,7 @@ from rlinf.utils.obs_compression import (
 )
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.reward.reward_worker import FSDPRewardWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
@@ -3299,3 +3304,188 @@ def test_vlm_collate_still_rejects_unknown_mm_keys():
 
     with pytest.raises(ValueError, match="Unsupported multi_modal_input key"):
         collate_fn([sample])
+
+
+# --------------------------------------------------------------------------
+# Reward model splits: preprocessing and FSDPRewardWorker loaders
+# --------------------------------------------------------------------------
+
+_PREPROCESS_REWARD_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "examples/reward/preprocess_reward_dataset.py"
+)
+
+
+@pytest.fixture(scope="module")
+def preprocess_reward():
+    spec = importlib.util.spec_from_file_location(
+        "preprocess_reward_dataset_under_test", _PREPROCESS_REWARD_SCRIPT
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_reward_episodes(raw_dir: Path, successes: list[bool], num_frames: int = 4):
+    """Write episode pickles in the layout produced by ``CollectEpisode``.
+
+    The first entry is the reset frame with an empty info dict. A successful
+    episode reports ``success`` on its last frame only.
+    """
+    raw_dir.mkdir()
+    for ep_idx, success in enumerate(successes):
+        observations = [
+            {"main_images": torch.full((3, 8, 8), ep_idx, dtype=torch.uint8)}
+            for _ in range(num_frames)
+        ]
+        infos = [{}] + [
+            {"success": success and step == num_frames - 1}
+            for step in range(1, num_frames)
+        ]
+        label = "success" if success else "fail"
+        with open(raw_dir / f"episode_{ep_idx}_{label}.pkl", "wb") as f:
+            pickle.dump({"observations": observations, "infos": infos}, f)
+
+
+def _save_reward_split(path: Path, num_samples: int) -> None:
+    RewardDatasetPayload(
+        images=[torch.zeros(3, 8, 8, dtype=torch.uint8)] * num_samples,
+        labels=[i % 2 for i in range(num_samples)],
+    ).save(str(path))
+
+
+def _build_reward_loaders(
+    train_path: Path,
+    val_path: Path,
+    micro_batch_size: int,
+    world_size: int,
+    val_check_interval: int,
+):
+    """Run ``FSDPRewardWorker.build_dataloader`` as rank 0 without launching it."""
+    worker = object.__new__(FSDPRewardWorker)
+    worker.cfg = OmegaConf.create(
+        {
+            "data": {
+                "train_data_paths": str(train_path),
+                "val_data_paths": str(val_path),
+                "num_workers": 0,
+            },
+            "actor": {"micro_batch_size": micro_batch_size},
+            "runner": {"val_check_interval": val_check_interval},
+        }
+    )
+    worker._world_size = world_size
+    worker._rank = 0
+    return worker.build_dataloader()
+
+
+@pytest.mark.parametrize(
+    ("successes", "empty_split"),
+    [
+        # No successful episode: both splits are empty, train is reported first.
+        ([False] * 5, "train"),
+        # A single episode always goes to val, leaving train with no episode.
+        ([True], "train"),
+        # The only successful episode lands in train under seed 0.
+        ([True] + [False] * 9, "val"),
+    ],
+)
+def test_reward_preprocess_rejects_split_without_success_frames(
+    preprocess_reward, tmp_path, successes, empty_split
+):
+    raw_dir = tmp_path / "raw"
+    _write_reward_episodes(raw_dir, successes)
+    train_path = tmp_path / "out" / "train.pt"
+    val_path = tmp_path / "out" / "val.pt"
+
+    with pytest.raises(ValueError, match=f"The {empty_split} split is empty"):
+        preprocess_reward.preprocess_and_save_reward_datasets(
+            raw_data_path=str(raw_dir),
+            train_output_path=str(train_path),
+            val_output_path=str(val_path),
+            random_seed=0,
+        )
+
+    assert not train_path.exists()
+    assert not val_path.exists()
+
+
+def test_reward_preprocess_output_feeds_the_worker_loaders(preprocess_reward, tmp_path):
+    raw_dir = tmp_path / "raw"
+    _write_reward_episodes(raw_dir, [True] * 5)
+    train_path = tmp_path / "out" / "train.pt"
+    val_path = tmp_path / "out" / "val.pt"
+
+    metadata = preprocess_reward.preprocess_and_save_reward_datasets(
+        raw_data_path=str(raw_dir),
+        train_output_path=str(train_path),
+        val_output_path=str(val_path),
+        random_seed=0,
+    )
+    train_loader, val_loader = _build_reward_loaders(
+        train_path, val_path, micro_batch_size=1, world_size=1, val_check_interval=1
+    )
+
+    assert len(train_loader.dataset) == metadata["num_train_samples"] > 0
+    assert len(val_loader.dataset) == metadata["num_val_samples"] > 0
+
+
+@pytest.mark.parametrize("num_train", [0, 6])
+def test_reward_loaders_reject_train_split_without_full_batch(tmp_path, num_train):
+    # 6 samples over 2 ranks leave 3 per rank, fewer than a micro batch of 4.
+    _save_reward_split(tmp_path / "train.pt", num_train)
+    _save_reward_split(tmp_path / "val.pt", 8)
+
+    with pytest.raises(ValueError, match=f"has {num_train} samples"):
+        _build_reward_loaders(
+            tmp_path / "train.pt",
+            tmp_path / "val.pt",
+            micro_batch_size=4,
+            world_size=2,
+            val_check_interval=1,
+        )
+
+
+def test_reward_loaders_reject_empty_val_split_when_validating(tmp_path):
+    _save_reward_split(tmp_path / "train.pt", 8)
+    _save_reward_split(tmp_path / "val.pt", 0)
+
+    with pytest.raises(ValueError, match="validation split is empty"):
+        _build_reward_loaders(
+            tmp_path / "train.pt",
+            tmp_path / "val.pt",
+            micro_batch_size=4,
+            world_size=2,
+            val_check_interval=1,
+        )
+
+
+def test_reward_loaders_allow_empty_val_split_without_validation(tmp_path):
+    # runner.val_check_interval <= 0 disables validation, so val data is unused.
+    _save_reward_split(tmp_path / "train.pt", 8)
+    _save_reward_split(tmp_path / "val.pt", 0)
+
+    train_loader, _ = _build_reward_loaders(
+        tmp_path / "train.pt",
+        tmp_path / "val.pt",
+        micro_batch_size=4,
+        world_size=2,
+        val_check_interval=-1,
+    )
+
+    assert len(train_loader) == 1
+
+
+def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
+    _save_reward_split(tmp_path / "train.pt", 8)
+    _save_reward_split(tmp_path / "val.pt", 1)
+
+    train_loader, val_loader = _build_reward_loaders(
+        tmp_path / "train.pt",
+        tmp_path / "val.pt",
+        micro_batch_size=4,
+        world_size=2,
+        val_check_interval=1,
+    )
+
+    assert len(train_loader) == 1
+    assert len(val_loader) == 1
