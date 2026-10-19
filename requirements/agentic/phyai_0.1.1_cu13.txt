@@ -1,4 +1,4 @@
-# Runtime dependencies for RLinf's in-process PhyAI PI0.5 backend.
+# Runtime dependencies for RLinf's in-process PhyAI 0.1.1 PI0.5 backend on CUDA 13.
 # PhyAI packages are installed separately with --no-deps so their metadata
 # cannot replace the RLinf/OpenPI Torch and Transformers stack.
 

@@ -117,12 +117,12 @@ environment:
      embodied \
      --model openpi \
      --env libero \
-     --rollout-backend phyai
+     --engine phyai
 
 The PhyAI packages are installed with ``--no-deps``. RLinf therefore retains the
 Torch and Transformers versions installed for OpenPI while installing the
 additional, validated runtime dependencies from
-``requirements/embodied/backends/phyai.txt``. The three PhyAI packages are
+``requirements/agentic/phyai_0.1.1_cu13.txt``. The three PhyAI packages are
 installed from the official PhyAI wheel index using the latest version in the
 ``0.1.1`` release line, including prereleases. No PhyAI source checkout or
 editable installation is required.

@@ -14,7 +14,6 @@ LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
 SGLANG_VERSION=""
 ENGINE=""
-ROLLOUT_BACKEND=""
 TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
@@ -118,8 +117,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_ROLLOUT_BACKENDS=("phyai")
+SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
@@ -137,8 +135,6 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
-    --rollout-backend <name>
-                           Optional embodied rollout backend: ${SUPPORTED_ROLLOUT_BACKENDS[*]}.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -149,10 +145,10 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
-    --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
-                           (default: sglang). One venv holds one engine -- they pin the
-                           same kernel libraries to different versions, so run install.sh
-                           twice with different --venv to get both.
+    --engine <name>        Backend engine: ${SUPPORTED_ENGINES[*]}. Use phyai with
+                           embodied OpenPI/LIBERO; agentic supports sglang (default)
+                           and vllm. Use separate venvs for engines with incompatible
+                           kernel dependencies.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
                            versions in requirements/agentic/; torch is derived from it.
                            Applies to target agentic and to --model sglang / qwen3_vl.
@@ -252,14 +248,6 @@ parse_args() {
                     exit 1
                 fi
                 ENGINE="${2:-}"
-                shift 2
-                ;;
-            --rollout-backend)
-                if [[ ! " ${SUPPORTED_ROLLOUT_BACKENDS[*]} " =~ " ${2:-} " ]]; then
-                    echo "--rollout-backend requires one of: ${SUPPORTED_ROLLOUT_BACKENDS[*]}." >&2
-                    exit 1
-                fi
-                ROLLOUT_BACKEND="${2:-}"
                 shift 2
                 ;;
             --transformers)
@@ -365,28 +353,36 @@ validate_python_version() {
     fi
 }
 
-validate_rollout_backend() {
-    [ -z "$ROLLOUT_BACKEND" ] && return 0
+validate_engine() {
+    [ -z "$ENGINE" ] && return 0
 
-    if [ "$TARGET" != "embodied" ]; then
-        echo "--rollout-backend is only supported when target=embodied." >&2
-        exit 1
-    fi
-    if [ "$ROLLOUT_BACKEND" = "phyai" ]; then
+    if [ "$TARGET" = "embodied" ]; then
+        if [ "$ENGINE" != "phyai" ]; then
+            echo "target=embodied supports only --engine phyai." >&2
+            exit 1
+        fi
         if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
-            echo "--rollout-backend phyai currently requires --model openpi --env libero." >&2
+            echo "--engine phyai currently requires --model openpi --env libero." >&2
             exit 1
         fi
         if [ "$PLATFORM" != "nvidia" ]; then
-            echo "--rollout-backend phyai currently requires --platform nvidia." >&2
+            echo "--engine phyai currently requires --platform nvidia." >&2
             exit 1
         fi
         local py_major py_minor _py_patch
         IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
         if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
-            echo "--rollout-backend phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
+            echo "--engine phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
             exit 1
         fi
+    elif [ "$TARGET" = "agentic" ]; then
+        if [ "$ENGINE" = "phyai" ]; then
+            echo "--engine phyai is supported only with target=embodied." >&2
+            exit 1
+        fi
+    else
+        echo "--engine is not supported when target=${TARGET}." >&2
+        exit 1
     fi
 }
 
@@ -2624,7 +2620,7 @@ print(torch.__version__, transformers.__version__)
 PYEOF
 )
 
-    uv pip install -r "$SCRIPT_DIR/embodied/backends/phyai.txt"
+    uv pip install -r "$SCRIPT_DIR/agentic/phyai_0.1.1_cu13.txt"
     uv pip install --no-deps \
         "phyai${phyai_version_spec}" \
         "phyai-kernel${phyai_version_spec}" \
@@ -4211,7 +4207,7 @@ install_docs() {
 main() {
     parse_args "$@"
     validate_python_version
-    validate_rollout_backend
+    validate_engine
     apply_model_default_torch
     apply_env_default_torch
     apply_agentic_torch_default
@@ -4301,7 +4297,7 @@ main() {
                     install_env_only
                     ;;
             esac
-            if [ "$ROLLOUT_BACKEND" = "phyai" ]; then
+            if [ "$ENGINE" = "phyai" ]; then
                 install_phyai_runtime
             fi
             ;;

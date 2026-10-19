@@ -1419,7 +1419,7 @@ jobs:
             embodied \
             --model openpi \
             --env libero \
-            --rollout-backend phyai
+            --engine phyai
 
       - name: Check PhyAI package provenance
         run: |

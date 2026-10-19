@@ -37,7 +37,7 @@ def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch):
     assert cfg.rollout.model.num_action_chunks == cfg.actor.model.num_action_chunks
     assert cfg.rollout.model.model_path == cfg.actor.model.model_path
     assert cfg.rollout.phyai.kernel_config.endswith(
-        "examples/embodiment/phyai/kernel_policies/rlinf_bf16.yaml"
+        "examples/embodiment/config/hybrid_engines/phyai.yaml"
     )
     assert Path(cfg.rollout.phyai.kernel_config).is_file()
 

@@ -113,7 +113,7 @@ rollout:
 
   phyai:
     plugin: pi05
-    kernel_config: ${oc.env:PHYAI_KERNEL_CONFIG,${oc.env:EMBODIED_PATH}/phyai/kernel_policies/rlinf_bf16.yaml}
+    kernel_config: ${oc.env:PHYAI_KERNEL_CONFIG,${oc.env:EMBODIED_PATH}/config/hybrid_engines/phyai.yaml}
     max_batch_size: null
     vision_params_dtype: null
     use_cuda_graph: True

@@ -1,4 +1,4 @@
-# RLinf PI0.5 BF16 compatibility policy.
+# RLinf PI0.5 BF16 compatibility policy for the PhyAI hybrid engine.
 #
 # Model semantics:
 # - RLinf calls exact F.gelu in SigLIP and Gemma. The rules below select the
