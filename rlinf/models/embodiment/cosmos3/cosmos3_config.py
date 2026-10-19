@@ -33,10 +33,6 @@ duplicated here or in ``model/cosmos3.yaml``.
 
 from omegaconf import DictConfig, open_dict
 
-from rlinf.utils.logging import get_logger
-
-logger = get_logger()
-
 
 def validate_cosmos3_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
     """Validate a Cosmos3 SFT cfg."""
@@ -45,15 +41,4 @@ def validate_cosmos3_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
         model_path = model_cfg.get("model_path", None)
         assert model_path, "Cosmos3 SFT requires actor.model.model_path"
 
-    logger.info(
-        "Cosmos3 SFT model cfg validated: model_path=%s "
-        "ema_enabled=%s disable_cosmos_parallelism=%s (keys_to_select=%d, "
-        "lr_multipliers=%d, skip=%d)",
-        model_path,
-        model_cfg.get("ema_enabled"),
-        model_cfg.get("disable_cosmos_parallelism"),
-        len(model_cfg.get("keys_to_select", [])),
-        len(model_cfg.get("lr_multipliers", {})),
-        len(model_cfg.get("keys_to_skip_loading", [])),
-    )
     return model_cfg

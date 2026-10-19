@@ -37,8 +37,6 @@ from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionMo
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
 
-logger = get_logger()
-
 
 def _cosmos_framework_root() -> Path:
     """cosmos-framework repo root (its configs reference files relative to it)."""
@@ -73,23 +71,28 @@ def _apply_freeze(cosmos3_model: nn.Module, keys_to_select: list[str]) -> None:
     ``net_ema`` is a separate frozen copy, left untouched."""
     if not keys_to_select:
         return
+    logger = get_logger()
     net = getattr(cosmos3_model, "net", None)
     if net is None:
         logger.warning("Cosmos3: cosmos3_model has no `net`; skipping freeze.")
         return
-    frozen = trainable = 0
     for name, p in net.named_parameters():
-        if any(k in name for k in keys_to_select):
-            trainable += p.numel()
-        else:
+        if not any(k in name for k in keys_to_select):
             p.requires_grad = False
-            frozen += p.numel()
-    logger.info(
-        "Cosmos3: froze understanding tower -- trainable=%.2fM frozen=%.2fM (keys_to_select=%s)",
-        trainable / 1e6,
-        frozen / 1e6,
-        keys_to_select,
+
+
+def _initialize_rotary_buffers(net: nn.Module) -> None:
+    """Restore nonpersistent RoPE buffers after meta materialization."""
+    from cosmos_framework.model.generator.reasoner.qwen3_vl.qwen3_vl import (
+        Qwen3VLTextRotaryEmbedding,
+        Qwen3VLVisionRotaryEmbedding,
     )
+
+    for module in net.modules():
+        if isinstance(
+            module, (Qwen3VLTextRotaryEmbedding, Qwen3VLVisionRotaryEmbedding)
+        ):
+            module.init_weights(buffer_device=torch.device("cpu"))
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -101,6 +104,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     ``checkpoint_format`` only selects how weights are read into the native
     implementation; it never changes the inference or training code.
     """
+    logger = get_logger()
     if str(cfg.get("model_backend", "native")).lower() != "native":
         raise ValueError(
             "Cosmos3 uses one native model for actor, HF rollout and eval; "
@@ -218,7 +222,15 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         for _mod in cosmos3_model.modules():
             if getattr(_mod, "inv_freq", None) is not None:
                 _mod.inv_freq = _mod.inv_freq.float()
-        cosmos3_model.net.init_weights(buffer_device=_CosmosDevice.CPU)
+        if checkpoint_format == "diffusers":
+            # Complete checkpoints overwrite every parameter; only RoPE buffers
+            # are nonpersistent and must be rebuilt after to_empty().
+            _initialize_rotary_buffers(cosmos3_model.net)
+            net_ema = getattr(cosmos3_model, "net_ema", None)
+            if net_ema is not None:
+                _initialize_rotary_buffers(net_ema)
+        else:
+            cosmos3_model.net.init_weights(buffer_device=_CosmosDevice.CPU)
 
     # Native checkpoints warm-start from a base model; Diffusers packages load
     # the complete trained policy, including action heads, into the same native

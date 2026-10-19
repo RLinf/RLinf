@@ -23,10 +23,6 @@ from pathlib import Path
 import torch.distributed.checkpoint as dcp
 from torch import nn
 
-from rlinf.utils.logging import get_logger
-
-logger = get_logger()
-
 
 def load_pretrained_checkpoint(
     model: nn.Module,
@@ -86,19 +82,30 @@ def _load_diffusers_checkpoint(model: nn.Module, checkpoint_path: Path) -> None:
             + ", ".join(sorted(missing_action_keys))
         )
 
+    state_dict = net.state_dict()
+    planner = _DiffusersLoadPlanner(checkpoint_path)
+    target_state = planner._normalize_target_state_dict(state_dict)
+    _, loaded_keys = planner._build_remapped_state_dict(target_state)
+    missing_keys = set(target_state) - loaded_keys
+    if missing_keys:
+        raise ValueError(
+            "Cosmos3 full checkpoint must cover every model tensor because random "
+            f"initialization is skipped; missing: {sorted(missing_keys)[:10]}"
+        )
+
     # The framework's public from_pretrained_dcp builds a second, full model.
     # Load directly into the native model already constructed for RLinf FSDP.
     # Each rank loads its local CPU replica before FSDP sharding, so no_dist
     # also avoids pickling the framework's regex-based custom load planner.
-    logger.info(
-        "Cosmos3: loading complete Diffusers action weights from %s", checkpoint_path
-    )
     dcp.load(
-        state_dict=net.state_dict(),
+        state_dict=state_dict,
         storage_reader=_DiffusersHuggingFaceStorageReader(checkpoint_path),
-        planner=_DiffusersLoadPlanner(checkpoint_path),
+        planner=planner,
         no_dist=True,
     )
+    net_ema = getattr(model, "net_ema", None)
+    if net_ema is not None:
+        net_ema.load_state_dict(state_dict)
 
 
 def _load_native_checkpoint(
@@ -117,11 +124,6 @@ def _load_native_checkpoint(
 
         skip_patterns = [f".*{re.escape(key)}.*" for key in keys_to_skip_loading]
         net = getattr(model, "net", model)
-        logger.info(
-            "Cosmos3: loading native VFM safetensors from %s (skip=%s)",
-            model_path,
-            skip_patterns,
-        )
         load_vfm_model(
             net,
             model_path,
@@ -135,11 +137,6 @@ def _load_native_checkpoint(
         os.path.join(model_path, "model")
         if os.path.isdir(os.path.join(model_path, "model"))
         else model_path
-    )
-    logger.info(
-        "Cosmos3: loading native DCP base from %s (skip=%s)",
-        dcp_dir,
-        keys_to_skip_loading,
     )
     _load_model(
         model,
