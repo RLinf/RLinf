@@ -425,14 +425,15 @@ A typical collection loop:
 5. The script exits after ``runner.num_data_episodes`` (default ``20``)
    saved episodes.
 
-Saved trajectories land in ``<log_path>/demos/``. Plug that path into the
-training config:
+Saved trajectories land in ``<log_path>/demo_buffer/``. The same
+config also writes raw episodes to ``<log_path>/pickle_episode/``.
+Point RLPD at the replay-buffer directory:
 
 .. code-block:: yaml
 
    algorithm:
      demo_buffer:
-       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demos"
+       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demo_buffer"
 
 Remove the ``demo_buffer`` block if you do not want RLPD.
 

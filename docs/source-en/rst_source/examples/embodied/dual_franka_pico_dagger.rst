@@ -484,9 +484,9 @@ PICO operation:
 
 The collection script writes under ``logs/<timestamp>/``:
 
-* replay-buffer trajectories: ``demos/``
-* LeRobot data: ``collected_data/rank_0/id_0/``; later shards are ``id_1``,
-  ``id_2``
+* replay-buffer trajectories: ``demo_buffer/``
+* LeRobot data: ``lerobot_dataset/rank_0/id_0/``; later shards
+  are ``id_1``, ``id_2``
 
 Headless OpenCV cannot open a preview, so the collection example sets
 ``enable_camera_player: False``.

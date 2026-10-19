@@ -223,7 +223,7 @@ Franka 真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会提�
 ``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。
 
 ManiSkill joint 配置中，``env.*.rlt_policy_switch`` 使用任务信息自动产生
-``rlt_switch_flags``（actor/ref 阶段）和 ``intervene_flag``（expert 接管请求）。
+``rlt_switch_flags``\ （actor/ref 阶段）和 ``intervene_flag``\ （expert 接管请求）。
 HF rollout route 根据这些标记在整 chunk 级别选择 actor action、VLA
 ``ref_chunk`` 或 expert action，并把 ``record_transition``、``actor_switch`` 和
 ``intervention_requested`` 写入 ``forward_inputs``，供 replay 和监控使用。
@@ -338,7 +338,7 @@ LeRobot 格式数据：
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 然后启动采集：
 
@@ -346,7 +346,8 @@ LeRobot 格式数据：
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-采集完成后，将 LeRobot 数据集放到训练节点，并为当前 RLT OpenPI dataconfig
+LeRobot shard 位于 ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``，
+其中直接包含 ``data/`` 和 ``meta/``。采集完成后，将这个 shard 放到训练节点，并为当前 RLT OpenPI dataconfig
 计算归一化统计。``repo_id`` 需要与 Stage 1 / Stage 2 配置中的
 ``actor.openpi_data.repo_id`` 和 ``rollout.rlt_feature_model.openpi_data.repo_id`` 保持一致：
 
