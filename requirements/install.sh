@@ -3701,6 +3701,13 @@ install_robodojo_env() {
     # Torch first: the runtime pins torch==2.7.0, and cuRobo is a source build
     # that compiles against whichever Torch is already installed. TORCH_CUDA_ARCH_LIST
     # only affects that build.
+    #
+    # ``--no-config`` is required here: the repository's [tool.uv]
+    # override-dependencies pins torch==2.11.0 for every other environment, and
+    # uv applies that override to ``uv pip install`` as well, silently replacing
+    # the runtime's torch==2.7.0. The simulator stack must resolve on its own
+    # pins, so these three commands ignore pyproject.toml and re-state the
+    # prerelease policy the project sets.
     if [ "$PLATFORM" = "nvidia" ]; then
         local cuda_mm cuda_major cuda_minor
         cuda_mm=$(detect_cuda_major_minor) || {
@@ -3716,17 +3723,18 @@ install_robodojo_env() {
         fi
     fi
 
-    uv pip install "${index_args[@]}" torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
+    uv pip install --no-config --prerelease=allow "${index_args[@]}" \
+        torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
 
     # cuRobo and the IsaacLab fork are pinned to the revisions the RoboDojo
     # runtime was validated with; rlinf-robodojo-runtime's metadata carries
     # the same two commits. Bump both together after revalidating.
     #   cuRobo    yuechen0614/curobo    895c6517243f8cb091c73c018c8167192d39599a
     #   IsaacLab  yuechen0614/IsaacLab  afca7b09d60d8beb9c1cb28b43066499940b969b
-    uv pip install --no-build-isolation \
+    uv pip install --no-config --prerelease=allow --no-build-isolation \
         "nvidia-curobo[cu12] @ git+${GITHUB_PREFIX}https://github.com/yuechen0614/curobo.git@895c6517243f8cb091c73c018c8167192d39599a"
 
-    uv pip install "${index_args[@]}" \
+    uv pip install --no-config --prerelease=allow "${index_args[@]}" \
         "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@rpent"
 }
 
