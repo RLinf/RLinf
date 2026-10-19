@@ -51,11 +51,11 @@ cluster:
             node_rank: 0
             compliance:
               translational_stiffness: 1000
-              rotational_stiffness: 60
+              rotational_stiffness: 40
               translational_clip: 0.02
-              rotational_clip: 0.06
+              rotational_clip: 0.3
               max_step: 0.02
-              max_step_rad: 0.08
+              max_step_rad: 0.30
               max_delta_tau: 0.2
 
 runner:

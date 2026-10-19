@@ -325,7 +325,7 @@ collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用
 机械臂柔顺性参数
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集配置在 ``DualFranka`` 硬件条目里写了两条臂共用的 ``compliance``：平移刚度 1000 N/m，旋转刚度 60 Nm/rad，平移限幅 0.02 m，旋转限幅 0.06 rad，每步平移上限 0.02 m，每步旋转上限 0.08 rad，``max_delta_tau`` 0.2。Franky 默认只对约 8 mm / 0.04 rad 的误差施力，遥操作会滞后，松开 grip 后还会爬行。旋转刚度 80 且旋转限幅 0.12 会在刚接管时抖动。``max_step`` 0.03 m（10 Hz）在带 Robotiq 负载时容易触发 ``joint_velocity_violation``。DAgger 配置没有这段 mapping，因此使用 Franky 默认值；要和采集手感一致，把同一段抄到 DAgger 的硬件条目。默认值和 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。
+采集配置在 ``DualFranka`` 硬件条目里写了两条臂共用的 ``compliance``：平移刚度 1000 N/m，旋转刚度 40 Nm/rad，平移限幅 0.02 m，旋转限幅 0.3 rad，每步平移上限 0.02 m，每步旋转上限 0.30 rad，``max_delta_tau`` 0.2。旋转刚度、旋转限幅和每步转角与 Franky 脚本一致。``max_step`` 0.03 m（10 Hz）在带 Robotiq 负载时容易触发 ``joint_velocity_violation``，所以平移步长保持 0.02 m。DAgger 配置没有这段 mapping，因此使用 Franky 默认值；要和采集手感一致，把同一段抄到 DAgger 的硬件条目。默认值和 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。
 
 单侧 mapping 会替换该机械臂使用的共享 mapping，其中未填写的字段使用 Franky 默认值。例如：
 

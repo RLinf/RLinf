@@ -44,17 +44,16 @@ cluster:
             left_controller_node_rank: 0
             right_controller_node_rank: 0
             node_rank: 0
-            # Defaults only act on 8 mm / 0.04 rad of error (~8 N, ~2 Nm), so
-            # the TCP lags the hand and then keeps creeping after grip release.
-            # K_r stays at 60: 80 Nm/rad with a 0.12 rad clip shook on takeover.
-            # max_step stays under the 3 cm/step that trips joint_velocity_violation.
+            # Rotation matches the Franky script: K_r 40 Nm/rad, 0.3 rad clip,
+            # 0.30 rad/step. max_step stays under the 3 cm/step that trips
+            # joint_velocity_violation with a Robotiq payload.
             compliance:
               translational_stiffness: 1000
-              rotational_stiffness: 60
+              rotational_stiffness: 40
               translational_clip: 0.02
-              rotational_clip: 0.06
+              rotational_clip: 0.3
               max_step: 0.02
-              max_step_rad: 0.08
+              max_step_rad: 0.30
               max_delta_tau: 0.2
 
 runner:
