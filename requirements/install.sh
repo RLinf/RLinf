@@ -12,6 +12,7 @@ PYTHON_VERSION="3.11.14"
 USER_SET_PYTHON=0
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
+TORCH_VERSION_EXPLICIT=0
 SGLANG_VERSION=""
 ENGINE=""
 TRANSFORMERS_VERSION=""
@@ -224,6 +225,7 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
+                TORCH_VERSION_EXPLICIT=1
                 shift 2
                 ;;
             --sglang)
@@ -519,17 +521,40 @@ detect_nvidia_driver_max_cuda() {
     echo "$(( maj * 10 + min ))"
 }
 
-# Prints the newest cuXXX tag <= driver_num that publishes the given torch
-# version. Returns 1 when no index has the wheel, and 2 when an index cannot be
-# fetched, so a network failure never silently selects an older CUDA build.
+# Prints the highest compute capability of any NVIDIA GPU on the host
+# (e.g. "9.0", "12.0"). Returns 1 when no GPU or no nvidia-smi is found.
+detect_nvidia_compute_cap() {
+    command -v nvidia-smi &>/dev/null || return 1
+    local cap
+    # CSV output starts with a "compute_cap" header row; keep numeric rows only.
+    cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | grep -E '^[0-9]+\.[0-9]+$' | sort -r | head -1 | tr -d ' ')
+    [ -n "$cap" ] || return 1
+    echo "$cap"
+}
+
+# Whether the host has a Blackwell (or newer, cc >= 10.0) GPU. Those need a
+# torch wheel built with CUDA >= 12.8; older cuXXX builds top out at sm_90.
+host_is_blackwell_or_newer() {
+    local cap
+    cap=$(detect_nvidia_compute_cap) || return 1
+    local maj
+    maj=${cap%%.*}
+    [ "$maj" -ge 10 ]
+}
+
+# Prints the newest cuXXX tag <= driver_num (and >= min_tag) that publishes
+# the given torch version. Returns 1 when no index has the wheel, and 2 when
+# an index cannot be fetched, so a network failure never silently selects an
+# older CUDA build.
 detect_nvidia_torch_cuda_tag() {
-    local torch_ver="$1" index_base="$2" driver_num="$3"
+    local torch_ver="$1" index_base="$2" driver_num="$3" min_tag="${4:-0}"
     local ver_re n url listing http_code attempt
     local listing_file
     ver_re=$(printf '%s' "$torch_ver" | sed 's/\./\\./g')
     listing_file=$(mktemp)
     for n in 130 129 128 126 124 121 118; do
         [ "$n" -le "$driver_num" ] || continue
+        [ "$n" -ge "$min_tag" ] || continue
         url="${index_base}/cu${n}/torch/"
         http_code=""
         # curl on Ubuntu 20.04 lacks --retry-all-errors, so retry explicitly.
@@ -586,7 +611,7 @@ configure_nvidia() {
         export UV_TORCH_BACKEND="$DEFAULT_BACKEND_NVIDIA"
     fi
 
-    local _torch_ver _tmaj _tmin _rest _driver_num _index_base _cuda_tag
+    local _torch_ver _tmaj _tmin _rest _driver_num _index_base _cuda_tag _min_tag
     _torch_ver="$TORCH_VERSION"
     if [ -z "$_torch_ver" ] && [ -f "$PYPROJECT_FILE" ]; then
         _torch_ver=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
@@ -594,9 +619,21 @@ configure_nvidia() {
     _tmaj=${_torch_ver%%.*}
     _rest=${_torch_ver#*.}
     _tmin=${_rest%%.*}
-    if [ -n "$_torch_ver" ] && [[ "$_tmaj" =~ ^[0-9]+$ ]] && [[ "$_tmin" =~ ^[0-9]+$ ]] \
-        && { [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
+    # Route every torch version (not just >= 2.11) through the platform index:
+    # PyPI's CUDA builds lag the driver (torch 2.7.1 on PyPI is +cu126, which
+    # tops out at sm_90), so a Blackwell host installing an older torch needs
+    # the cu128/cu129 index just as much as a 2.11 one. detect_nvidia_torch_cuda_tag
+    # verifies the wheel exists on the index, so a version without a matching
+    # CUDA build simply keeps the default index.
+    if [ -n "$_torch_ver" ] && [[ "$_tmaj" =~ ^[0-9]+$ ]] && [[ "$_tmin" =~ ^[0-9]+$ ]]; then
         local _cpu_only=0
+        # Blackwell (cc >= 10.0) needs CUDA >= 12.8: cu126 and older builds do
+        # not contain sm_120 kernels and fail on the first CUDA op.
+        _min_tag=0
+        if host_is_blackwell_or_newer; then
+            _min_tag=128
+            echo "[install.sh] Detected Blackwell (compute capability >= 10.0) GPU; requiring a cu128+ torch build."
+        fi
         # An explicit UV_TORCH_BACKEND=cuXXX wins over driver detection, for
         # hosts with CUDA forward-compatibility libraries installed.
         if [ "$_uvtb_user_set" -eq 1 ] && [[ "$UV_TORCH_BACKEND" =~ ^cu[0-9]+$ ]]; then
@@ -621,8 +658,33 @@ configure_nvidia() {
         local _tag_rc=1
         if [ "$_cpu_only" -eq 0 ]; then
             _tag_rc=0
-            _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num") || _tag_rc=$?
+            _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num" "$_min_tag") || _tag_rc=$?
             if [ "$_tag_rc" -eq 2 ]; then
+                exit 1
+            fi
+            # Blackwell + a torch pin without cu128+ wheels (e.g. BEHAVIOR's
+            # 2.5.1): bump to the first release that ships cu128 wheels rather
+            # than install a build that cannot run on the GPU.
+            if [ "$_tag_rc" -eq 1 ] && [ "$_min_tag" -ge 128 ]; then
+                if [ "$TORCH_VERSION_EXPLICIT" -eq 1 ]; then
+                    echo "[install.sh] ERROR: torch ${_torch_ver} has no cu128+ wheel, which a Blackwell GPU requires. Pass --torch 2.7.1 (or newer)." >&2
+                    exit 1
+                fi
+                echo "[install.sh] torch ${_torch_ver} has no cu128+ wheel; bumping to 2.7.1 (first release with cu128 builds) for Blackwell."
+                TORCH_VERSION="2.7.1"
+                _torch_ver="2.7.1"
+                _tmaj=2
+                _tmin=7
+                _tag_rc=0
+                _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num" "$_min_tag") || _tag_rc=$?
+                if [ "$_tag_rc" -eq 2 ]; then
+                    exit 1
+                fi
+            fi
+            # A Blackwell host without a resolvable cu128+ build cannot run
+            # CUDA at all; fail loudly instead of installing a broken torch.
+            if [ "$_tag_rc" -ne 0 ] && [ "$_min_tag" -ge 128 ]; then
+                echo "[install.sh] ERROR: no driver-compatible cu128+ torch wheel found for torch ${_torch_ver}; refusing to install a build without sm_120 kernels." >&2
                 exit 1
             fi
         fi
@@ -3472,8 +3534,14 @@ install_behavior_env() {
     uv pip install click==8.2.1
     uv pip install llvmlite==0.47.0 numba==0.65.1
     # Re-assert the pin after OmniGibson's setup, which otherwise leaves a torch
-    # tree mixing two versions (inductor then fails in _pad_mm_init).
-    uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+    # tree mixing two versions (inductor then fails in _pad_mm_init). Derive
+    # torchvision/torchaudio the same way apply_torch_override does so a
+    # Blackwell host (which bumps 2.5.1 -> 2.7.1 in configure_nvidia) keeps a
+    # consistent torch tree; UV_TORCH_BACKEND points at the routed cuXXX index.
+    local _bt_maj _bt_min _bt_patch _bt_tv
+    IFS='.' read -r _bt_maj _bt_min _bt_patch <<< "${TORCH_VERSION:-2.5.1}"
+    _bt_tv="0.$((_bt_min + 15)).${_bt_patch}"
+    uv pip install "torch==${TORCH_VERSION:-2.5.1}" "torchvision==${_bt_tv}" "torchaudio==${TORCH_VERSION:-2.5.1}"
 }
 
 install_metaworld_env() {
