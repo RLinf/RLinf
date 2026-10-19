@@ -154,6 +154,7 @@ jobs:
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
+              - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
               - 'evaluations/libero/*fastwam*'
@@ -182,6 +183,8 @@ jobs:
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
+              # test_data.py loads this script to test reward split preprocessing.
+              - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'

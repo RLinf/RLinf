@@ -1,0 +1,13 @@
+# engine: sglang==0.5.19
+# sglang 0.5.19 on CUDA 12 (torch 2.13). PyPI's sglang-kernel / sgl-deep-gemm
+# link CUDA 13, so use upstream's cu129 builds; sgl-deep-ep has no CUDA 12 build.
+-r sglang_0.5.19_common.txt
+
+cuda-python>=12.9,<13
+flashinfer-python[cu12]==0.6.18
+humming-kernels[cu12]==0.1.12
+nvidia-cutlass-dsl==4.6.2
+sglang-kernel @ https://github.com/sgl-project/whl/releases/download/v0.4.6.post1/sglang_kernel-0.4.6.post1%2Bcu129-cp310-abi3-manylinux2014_x86_64.whl ; platform_machine == "x86_64"
+sglang-kernel @ https://github.com/sgl-project/whl/releases/download/v0.4.6.post1/sglang_kernel-0.4.6.post1%2Bcu129-cp310-abi3-manylinux2014_aarch64.whl ; platform_machine == "aarch64"
+sgl-deep-gemm @ https://github.com/sgl-project/whl/releases/download/v0.1.7/sgl_deep_gemm-0.1.7%2Bcu129-py3-none-manylinux2014_x86_64.whl ; platform_machine == "x86_64"
+sgl-deep-gemm @ https://github.com/sgl-project/whl/releases/download/v0.1.7/sgl_deep_gemm-0.1.7%2Bcu129-py3-none-manylinux2014_aarch64.whl ; platform_machine == "aarch64"

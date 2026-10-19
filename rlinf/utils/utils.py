@@ -25,9 +25,9 @@ from typing import Any, Callable, Iterable, Literal, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+from rlinf.hybrid_engines.fsdp import DTensor
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 
@@ -743,7 +743,7 @@ def get_rng_state() -> dict:
     }
     from rlinf.scheduler.worker.worker import Worker
 
-    if Worker.torch_platform.is_available():
+    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
         rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
     return rng_state
 
@@ -764,7 +764,11 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     from rlinf.scheduler.worker.worker import Worker
 
-    if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
+    if (
+        Worker.torch_platform is not None
+        and Worker.torch_platform.is_available()
+        and Worker.torch_device_type in rng_state
+    ):
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
 
 

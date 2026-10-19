@@ -82,7 +82,7 @@ IQL 工作原理
 
 2. **训练流程**
 
-   每个 update step：Actor 从各 rank 本地的 ``DataLoader``（在 ``EmbodiedIQLFSDPPolicy.build_offline_dataloader`` 中构建）取一个 batch，然后按当前实现顺序执行 IQL：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
+   每个 update step：Actor 从各 rank 本地的 ``DataLoader``\ （在 ``EmbodiedIQLFSDPPolicy.build_offline_dataloader`` 中构建）取一个 batch，然后按当前实现顺序执行 IQL：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
 
 安装
 ----------------------------------------
@@ -158,6 +158,8 @@ RLinf 为不同 D4RL 任务族提供默认 IQL 配置：
      task_name: "antmaze-large-play-v0"
 
 将 ``data.dataset_type`` 设为 ``d4rl``，并将 ``data.task_name`` 和 ``env.eval.task_name`` 设为所需的 D4RL 任务（如 ``antmaze-large-play-v0``）。
+
+``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，该文件不存在时由 D4RL 下载对应任务的数据集。若要使用已有的 D4RL HDF5 文件，将 ``data.dataset_path`` 设为该文件路径，文件中 observation 和 action 的 shape 须与 ``data.task_name`` 对应的环境一致。标准 D4RL 文件与下载的数据集一样经过 ``d4rl.qlearning_dataset`` 转换，转换时依据 ``timeouts`` 字段切分 episode，不会把一条 episode 的最后一个 observation 与下一条 episode 的第一个 observation 配成 transition。已整理好的 transition 文件（包含 ``next_observations`` 且没有 ``timeouts``）则直接使用。
 
 **3. 启动脚本**
 

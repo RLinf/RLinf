@@ -1,0 +1,8 @@
+# AgentLightning 0.3.0 mutates private OTLP HTTP exporter fields that changed
+# in OpenTelemetry 1.45. Keep the last compatible core and contrib releases in
+# sync until AgentLightning supports the new exporter implementation.
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp==1.44.0
+opentelemetry-exporter-prometheus==0.65b0
+opentelemetry-instrumentation==0.65b0

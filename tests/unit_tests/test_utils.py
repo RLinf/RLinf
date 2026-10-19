@@ -29,6 +29,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
@@ -255,6 +256,44 @@ def test_entropy_loss_rejects_a_model_that_computes_no_entropy():
     # entropy_bonus is a config error, not a zero bonus.
     with pytest.raises(ValueError, match="algorithm.entropy_bonus"):
         compute_entropy_loss(None, "chunk_level", torch.ones(4, 1, dtype=torch.bool))
+
+
+# ReinForce++ advantages on the reasoning path: rewards are one scalar per
+# response and response_mask is [bsz, seq_len], right-padded.
+
+
+def _reinpp_advantages(rewards, use_reinpp_baseline):
+    response_mask = torch.tensor(
+        [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1], [1, 0, 0, 0, 0], [1, 1, 1, 1, 0]]
+    )
+    advantages, _ = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="reinpp",
+        rewards=rewards,
+        loss_mask=response_mask,
+        group_size=2,
+        use_reinpp_baseline=use_reinpp_baseline,
+    )
+    return advantages
+
+
+def test_reinpp_baseline_subtracts_the_group_mean_reward():
+    rewards = torch.tensor([1.0, 0.0, 1.0, 1.0])
+
+    with_baseline = _reinpp_advantages(rewards, use_reinpp_baseline=True)
+    centered = torch.tensor([0.5, -0.5, 0.0, 0.0])
+    expected = _reinpp_advantages(centered, use_reinpp_baseline=False)
+
+    assert torch.allclose(with_baseline, expected)
+
+
+def test_reinpp_baseline_leaves_the_caller_rewards_unchanged():
+    # The workers pass batch["rewards"] straight through and log it afterwards.
+    rewards = torch.tensor([1.0, 0.0, 1.0, 1.0])
+
+    _reinpp_advantages(rewards, use_reinpp_baseline=True)
+
+    assert rewards.tolist() == [1.0, 0.0, 1.0, 1.0]
 
 
 def _load_checkpoint_utils():
@@ -495,3 +534,63 @@ def test_redirected_entrypoint_failure_is_not_reported_as_success(tmp_path):
 
     assert result.returncode == 1, result.stderr
     assert "entrypoint failed" in (tmp_path / "exp" / "log" / "main.log").read_text()
+
+
+def _flash_availability(monkeypatch, **installed):
+    """Pretend transformers reports exactly the given flash variants."""
+    import transformers.utils as transformers_utils
+
+    for version in (2, 3, 4):
+        name = f"is_flash_attn_{version}_available"
+        monkeypatch.setattr(
+            transformers_utils,
+            name,
+            lambda version=version: installed.get(f"fa{version}", False),
+            raising=False,
+        )
+
+
+def test_attn_implementation_keeps_the_preferred_variant(monkeypatch):
+    from rlinf.utils.attention import resolve_attn_implementation
+
+    _flash_availability(monkeypatch, fa2=True)
+    assert resolve_attn_implementation() == "flash_attention_2"
+
+
+def test_attn_implementation_falls_back_to_the_installed_variant(monkeypatch):
+    """An sm90+ image ships FA4 instead of FA2, so FA2 must not be requested."""
+    from rlinf.utils.attention import resolve_attn_implementation
+
+    _flash_availability(monkeypatch, fa4=True)
+    assert resolve_attn_implementation("flash_attention_2") == "flash_attention_4"
+
+
+def test_attn_implementation_falls_back_to_sdpa_without_flash_attn(monkeypatch):
+    from rlinf.utils.attention import resolve_attn_implementation
+
+    _flash_availability(monkeypatch)
+    assert resolve_attn_implementation("flash_attention_2") == "sdpa"
+
+
+def test_attn_implementation_survives_a_probe_that_raises(monkeypatch):
+    """A probe can import kernels and fail on platforms without flash-attn."""
+    import transformers.utils as transformers_utils
+
+    from rlinf.utils.attention import resolve_attn_implementation
+
+    _flash_availability(monkeypatch)
+
+    def explode():
+        raise RuntimeError("no flash-attn kernels for this platform")
+
+    monkeypatch.setattr(
+        transformers_utils, "is_flash_attn_2_available", explode, raising=False
+    )
+    assert resolve_attn_implementation("flash_attention_2") == "sdpa"
+
+
+def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
+    from rlinf.utils.attention import resolve_attn_implementation
+
+    _flash_availability(monkeypatch)
+    assert resolve_attn_implementation("eager") == "eager"

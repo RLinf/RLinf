@@ -39,14 +39,19 @@ from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
-from rlinf.hybrid_engines.fsdp.optim import build_adamw
+from rlinf.hybrid_engines.fsdp.optim import (
+    build_adamw,
+    validate_adam_mixed_precision,
+)
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
+    gradient_reduction_group,
 )
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
+from rlinf.utils.attention import resolve_attn_implementation
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import (
     collect_param_names_need_sync,
@@ -103,11 +108,7 @@ class FSDPModelManager:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
         self._device_mesh = create_device_mesh(world_size)
-        self._dp_group = (
-            self._device_mesh["ddp"].get_group()
-            if "ddp" in self._device_mesh.mesh_dim_names
-            else None
-        )
+        self._dp_group = gradient_reduction_group(self._device_mesh)
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
@@ -178,7 +179,7 @@ class FSDPModelManager:
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
             trust_remote_code=True,
-            attn_implementation="flash_attention_2",
+            attn_implementation=resolve_attn_implementation(),
         )
 
         if use_gptq:
@@ -609,6 +610,9 @@ class FSDPModelManager:
             )
 
         use_fp32_master_params = self._cfg.optim.get("use_fp32_master_params", False)
+        validate_adam_mixed_precision(
+            model, use_fp32_master_params=use_fp32_master_params
+        )
 
         # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
         # for NO_SHARD models. Sharded scalar parameters cannot use this path.
@@ -642,6 +646,7 @@ class FSDPModelManager:
         param_filters: dict[str, list[str]],
         filtered_optim_config: dict[str, DictConfig],
     ):
+        validate_adam_mixed_precision(model, optimizer_name="Adam")
         main_betas = (
             main_optim_config.get("adam_beta1", 0.9),
             main_optim_config.get("adam_beta2", 0.999),
