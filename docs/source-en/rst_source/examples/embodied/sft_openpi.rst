@@ -102,31 +102,45 @@ The BEHAVIOR / dual-Franka streaming SFT loaders currently still use
 ``num_action_chunks`` as the data window, so those recipes keep it equal to
 the official horizon.
 
-Precision and FSDP:
+Keep original parameters and optimizer updates in FP32 with
+``actor.model.precision: fp32``. Set ``actor.model.openpi.embed_dtype: bf16``
+for BF16 backbone activations and residuals. If omitted or null,
+``embed_dtype`` follows ``model.precision``; ``precision: null`` selects BF16
+activations. Configure FSDP separately: BF16 parameters
+for forward/backward computation, FP32 gradient reduction, and FP32 buffers.
+The shared model templates use ``precision: null`` for OpenPI's selective
+BF16/FP32 parameter dtypes. BEHAVIOR, RoboTwin, dual-Franka, and RLT Stage 1
+SFT recipes set ``precision: fp32``.
 
-- ``actor.model.precision: null`` (OpenPI default: Gemma / SigLIP in bf16,
-  action head in fp32).
-- ``actor.fsdp_config.sharding_strategy`` **must** be ``no_shard``
-  (``full_shard`` / ``shard_grad_op`` fail at startup). Each rank holds full
-  parameters, gradients, and optimizer state.
-- Bind FSDP dtypes to ``actor.model.precision``. BEHAVIOR / RoboTwin recipes
-  also set ``gradient_checkpointing: True`` and
-  ``actor.optim.lr_scheduler: openpi_cosine`` (warmup from
-  ``peak / (warmup + 1)``, then cosine decay to ``min_lr``).
+Select ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm weights,
+and vision embeddings in FP32. The profile preserves FP32 action/time inputs
+and adaptive-norm conditioning while the backbone computes in BF16.
+RLT Stage 1 recipes also keep ``rlt_module`` in FP32.
+
+Use ``no_shard`` and ``use_orig_params: true`` for OpenPI. Each rank holds
+complete parameters, gradients, and optimizer states. BEHAVIOR / RoboTwin
+recipes use the ``openpi_cosine`` learning rate schedule.
 
 .. code:: yaml
 
+   defaults:
+     - model/pi0_5@actor.model
+     - hybrid_engines/openpi_fsdp@actor.fsdp_config
+     - _self_
+
    actor:
      model:
-       precision: null
+       precision: fp32
        openpi:
          task: sft
+         embed_dtype: bf16
      fsdp_config:
        sharding_strategy: no_shard
+       use_orig_params: true
        mixed_precision:
-         param_dtype: ${actor.model.precision}
-         reduce_dtype: ${actor.model.precision}
-         buffer_dtype: ${actor.model.precision}
+         param_dtype: bf16
+         reduce_dtype: fp32
+         buffer_dtype: fp32
 
 The tokenizer is loaded by OpenPI's ``ModelTransformFactory`` from the base
 model; the SFT YAML does not need a SentencePiece path.
@@ -286,6 +300,7 @@ Typical overrides:
        is_lora: False                # set True and lora_rank for LoRA
        openpi:
          task: sft
+         embed_dtype: bf16
          config_name: "pi0_libero"   # use pi0_realworld for Franka
 
 Launch:
@@ -297,6 +312,64 @@ Launch:
 
 Logs and checkpoints go under ``runner.logger.log_path``, saved every
 ``runner.save_interval`` steps at ``.../checkpoints/global_step_<N>/``.
+
+Pi0.5 Base Checkpoint Download and Conversion
+---------------------------------------------
+
+The π₀.₅ JAX base checkpoint is available at
+``gs://openpi-assets/checkpoints/pi05_base``. The downloaded directory contains
+``params/`` and must be converted to the RLinf OpenPI layout before use as
+``actor.model.model_path``. Replace the YAML's ``/path/to/...`` placeholders
+with actual paths on your server.
+
+Run from the RLinf repository root in the OpenPI environment with JAX / Orbax
+installed. Downloading requires the Google Cloud CLI:
+
+.. code:: bash
+
+   mkdir -p /path/to/checkpoints/jax
+   gcloud storage cp --recursive \
+     gs://openpi-assets/checkpoints/pi05_base /path/to/checkpoints/jax/
+
+Prepare task-specific ``norm_stats.json`` first (see normalization statistics
+above). This example uses BEHAVIOR's 32-step horizon. ``--input-model`` must
+point to the directory containing ``params/``:
+
+.. code:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+     --input-model /path/to/checkpoints/jax/pi05_base \
+     --input-norm-stats /path/to/task/norm_stats.json \
+     --output-model /path/to/pi05_base_openpi \
+     --output-norm-stats /path/to/pi05_base_openpi/task/norm_stats.json \
+     --action-dim 32 \
+     --action-horizon 32 \
+     --max-token-len 200
+
+The converter defaults to π₀.₅; do not add ``--no-pi05``. Other π₀.₅ SFT
+recipes use the same workflow with ``--action-horizon`` matching their existing
+configs: 10 for ManiSkill RLT, and 20 for Franka RLT and dual-Franka. Conversion
+does not require changing action dimensions, image counts, or training settings
+in the YAML.
+
+Verify that the output directory contains ``model.safetensors`` and
+``config.json``. Replace the ``actor.model.model_path`` placeholder with that
+output directory and point ``actor.model.openpi_data.norm_stats_path`` at the
+statistics for the same task, for example:
+
+.. code:: yaml
+
+   actor:
+     model:
+       model_path: /path/to/pi05_base_openpi
+       openpi_data:
+         norm_stats_path: /path/to/pi05_base_openpi/task/norm_stats.json
+
+Checkpoints already in the RLinf OpenPI layout need no further conversion.
+Official OpenPI PyTorch checkpoints (with ``paligemma_with_expert.*`` keys)
+still require ``openpi_pytorch_to_openpi`` even when they contain
+``model.safetensors``. See ``rlinf/utils/ckpt_convertor/openpi/README.md`` for
+that command.
 
 Pi0.5 + BEHAVIOR-1K
 -------------------
@@ -331,9 +404,10 @@ The streaming loader reads only ``data:`` (no hidden defaults). Change at least:
 
    actor:
      model:
-       model_path: /path/to/pi05_base_pytorch_new   # new-format fp32 base weights
+       model_path: /path/to/pi05_base_openpi   # new-format fp32 base weights
        openpi:
          task: sft
+         embed_dtype: bf16
        openpi_data:
          norm_stats_path: /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json
 
@@ -368,6 +442,7 @@ matching HF SFT weights:
        action_dim: 14
        openpi:
          task: sft
+         embed_dtype: bf16
          config_name: "pi0_aloha_robotwin"
          num_images_in_input: 3
        openpi_data:

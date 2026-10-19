@@ -52,7 +52,7 @@ PPO 训练 MLP actor-critic。
    * - 任务
      - 描述
    * - CartPole
-     - 使用 ``embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json`` 中的状态观测平衡 pole。
+     - 使用 ``embodichain_tasks/configs/tasks/classic_control/cart_pole/env.json`` 中的状态观测平衡 pole。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -99,7 +99,7 @@ PPO 训练 MLP actor-critic。
 
 **自定义环境**
 
-安装 EmbodiChain 依赖：
+安装 EmbodiChain 0.3.0 及其依赖。安装脚本从 ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` 获取 ``dexsim-engine==0.5.0``，其余包通过配置的 Python 包索引解析。运行安装的机器需要能够访问厂商服务器的 2345 端口。
 
 .. code:: bash
 
