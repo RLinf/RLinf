@@ -169,7 +169,7 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。
 下载完成后，请将 ``env.train.assets_path`` 和 ``env.eval.assets_path``
-设置为 ``/path/to/RoboTwin``（即 ``assets/`` 的上一级目录）。
+设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
 下载模型
 ----------------------------------------
