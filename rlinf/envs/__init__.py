@@ -28,6 +28,7 @@ class SupportedEnvType(Enum):
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
     ISAACLAB = "isaaclab"
+    BENCH2DEX = "bench2dex"
     METAWORLD = "metaworld"
     BEHAVIOR = "behavior"
     CALVIN = "calvin"
@@ -125,6 +126,10 @@ def get_env_cls(env_type: str, env_cfg=None):
             f"Available tasks: {list(REGISTER_ISAACLAB_ENVS.keys())}"
         )
         return REGISTER_ISAACLAB_ENVS[task_id]
+    elif env_type == SupportedEnvType.BENCH2DEX:
+        from rlinf.envs.sim.bench2dex import Bench2DexEnv
+
+        return Bench2DexEnv
     elif env_type == SupportedEnvType.METAWORLD:
         from rlinf.envs.sim.metaworld.metaworld_env import MetaWorldEnv
 

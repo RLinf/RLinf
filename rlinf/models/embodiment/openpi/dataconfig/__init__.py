@@ -16,7 +16,7 @@
 import dataclasses
 import difflib
 import pathlib
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import openpi.models.pi0_config as pi0_config
 import openpi.training.optimizer as _optimizer
@@ -30,6 +30,9 @@ from openpi.training.config import (
 
 from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
     LeRobotBehaviorDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.bench2dex_dataconfig import (
+    Bench2DexDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
@@ -74,7 +77,19 @@ from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import 
     LeRobotAlohaDataConfig,
 )
 
+if TYPE_CHECKING:
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
 _CONFIGS = [
+    TrainConfig(
+        name="pi05_bench2dex",
+        model=pi0_config.Pi0Config(
+            pi05=True, discrete_state_input=True, max_token_len=280
+        ),
+        data=Bench2DexDataConfig(
+            repo_id="bench2dex", assets=AssetsConfig(asset_id="assets/dex2bench")
+        ),
+    ),
     TrainConfig(
         name="pi0_libero",
         model=pi0_config.Pi0Config(),
@@ -648,6 +663,9 @@ def get_openpi_config(
     batch_size: Optional[int] = None,
     repo_id: Optional[str] = None,
     data_kwargs: Optional[dict] = None,
+    *,
+    runtime_model_config: Optional["Pi0Config"] = None,
+    action_env_dim: Optional[int] = None,
 ) -> TrainConfig:
     """Get a config by name.
 
@@ -658,6 +676,10 @@ def get_openpi_config(
         repo_id: Optional LeRobot repo_id or local data path to override.
             When using a local path, the original asset_id is preserved so
             that norm_stats can still be loaded from the model checkpoint.
+        runtime_model_config: Resolved PyTorch model configuration. Bench2Dex
+            derives its variable-width transforms from it; fixed task recipes
+            retain their registered model configuration.
+        action_env_dim: Environment action width for variable-width transforms.
     """
     if config_name not in _CONFIGS_DICT:
         closest = difflib.get_close_matches(
@@ -677,6 +699,34 @@ def get_openpi_config(
         config = _override_with_model_path(config, model_path)
     if data_kwargs is not None:
         config = _override_with_data_kwargs(config, data_kwargs)
+    if (
+        isinstance(config.data, Bench2DexDataConfig)
+        and runtime_model_config is not None
+    ):
+        if action_env_dim is None or action_env_dim <= 0:
+            raise ValueError(
+                f"Expected a positive action_env_dim, got {action_env_dim}"
+            )
+        if (
+            config.data.action_dim is not None
+            and int(config.data.action_dim) != action_env_dim
+        ):
+            raise ValueError(
+                f"Expected Bench2Dex data action_dim={action_env_dim}, got {config.data.action_dim}"
+            )
+        # Upstream Pi0Config describes token/state transforms, not runtime camera keys.
+        config = dataclasses.replace(
+            config,
+            data=dataclasses.replace(config.data, action_dim=action_env_dim),
+            model=dataclasses.replace(
+                config.model,
+                action_dim=runtime_model_config.action_dim,
+                action_horizon=runtime_model_config.action_horizon,
+                max_token_len=runtime_model_config.max_token_len,
+                pi05=runtime_model_config.pi05,
+                discrete_state_input=runtime_model_config.discrete_state_input,
+            ),
+        )
     if batch_size is not None:
         config = dataclasses.replace(config, batch_size=batch_size)
 

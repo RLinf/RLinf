@@ -14,9 +14,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from rlinf.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
 logger = get_logger()
 
@@ -64,6 +67,9 @@ def build_openpi_transforms(
     model_path: str,
     config_name: str,
     data_kwargs: dict[str, Any] | None = None,
+    *,
+    runtime_model_config: Pi0Config | None = None,
+    action_env_dim: int | None = None,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -76,32 +82,61 @@ def build_openpi_transforms(
     to pin the stats file. When it is empty, OpenPI loads
     ``{assets_dir}/{asset_id}/norm_stats.json`` from the TrainConfig (after
     ``model_path`` is applied) and missing files skip normalization.
+
+    Runtime model dimensions are passed to the registered task configuration;
+    camera keys are owned by the policy input transform and runtime model.
+    Data-owned normalizers replace the default OpenPI normalization stage.
     """
     import openpi.transforms as transforms
 
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
     train_config = get_openpi_config(
-        config_name, model_path=str(model_path), data_kwargs=data_kwargs
+        config_name,
+        model_path=str(model_path),
+        data_kwargs=data_kwargs,
+        runtime_model_config=runtime_model_config,
+        action_env_dim=action_env_dim,
     )
-    upstream_model_config = train_config.model
-    data_config = train_config.data.create(
-        train_config.assets_dirs, upstream_model_config
-    )
+    data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
     norm_stats = select_openpi_norm_stats(
         data_config.norm_stats,
         norm_stats_path=norm_stats_path_from_data_kwargs(data_kwargs),
     )
 
+    input_normalizers = (
+        []
+        if any(
+            isinstance(transform, transforms.Normalize)
+            for transform in data_config.data_transforms.inputs
+        )
+        else [
+            transforms.Normalize(
+                norm_stats, use_quantiles=data_config.use_quantile_norm
+            )
+        ]
+    )
+    output_normalizers = (
+        []
+        if any(
+            isinstance(transform, transforms.Unnormalize)
+            for transform in data_config.data_transforms.outputs
+        )
+        else [
+            transforms.Unnormalize(
+                norm_stats, use_quantiles=data_config.use_quantile_norm
+            )
+        ]
+    )
     input_transforms = [
         transforms.InjectDefaultPrompt(None),
         *data_config.data_transforms.inputs,
-        transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+        *input_normalizers,
         *data_config.model_transforms.inputs,
     ]
     output_transforms = [
         *data_config.model_transforms.outputs,
-        transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+        *output_normalizers,
         *data_config.data_transforms.outputs,
     ]
     return input_transforms, output_transforms
