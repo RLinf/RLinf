@@ -2477,6 +2477,7 @@ install_openpi_model() {
                 i2rt_build=$(mktemp -d)
                 trap 'rm -rf -- "$i2rt_build"' EXIT
                 git -C "$i2rt_repo" archive "${i2rt_spec##*@}" | tar -x -C "$i2rt_build"
+                # TODO(guozhen): relax these pinned OpenPI dependencies once rlinf-openpi-lite is adopted.
                 # OpenPI needs NumPy 1; Rerun is only used by SDK visualization examples.
                 python - "$i2rt_build" <<'EOF'
 from pathlib import Path
