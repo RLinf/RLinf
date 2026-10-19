@@ -87,18 +87,24 @@ def build_cosmos3_sft_dataloader(
 
     with contextlib.chdir(_cosmos_framework_root()):
         cosmos_data_cfg = make_config()
-        cosmos_data_cfg = override(
-            cosmos_data_cfg, ["--", f"experiment={experiment_name}"]
-        )
+        overrides = ["--", f"experiment={experiment_name}"]
+        tokenizer_path = model_cfg.get("tokenizer_path")
+        if tokenizer_path:
+            overrides.append(
+                f"model.config.vlm_config.tokenizer.pretrained_model_name={tokenizer_path}"
+            )
+        cosmos_data_cfg = override(cosmos_data_cfg, overrides)
 
         dl_cfg = cosmos_data_cfg.dataloader_train
         # Optional smoke/memory knob: shrink the packed batch (recipe default 128).
         if max_samples_per_batch is not None:
             dl_cfg.max_samples_per_batch = int(max_samples_per_batch)
-        try:
-            dl_cfg.dataloader.num_workers = num_workers
-        except Exception:  # noqa: BLE001
-            pass
+        dl_cfg.dataloader.num_workers = num_workers
+        if num_workers > 0:
+            dl_cfg.dataloader.prefetch_factor = int(data_cfg.get("prefetch_factor", 4))
+        else:
+            dl_cfg.dataloader.prefetch_factor = None
+            dl_cfg.dataloader.persistent_workers = False
 
         loader = instantiate(dl_cfg)
 

@@ -24,6 +24,27 @@ import torch.distributed.checkpoint as dcp
 from torch import nn
 
 
+def native_checkpoint_covers_language_model(
+    model: nn.Module, model_path: str, keys_to_skip_loading: list[str]
+) -> bool:
+    """Whether a local DCP replaces every persistent language-model tensor."""
+    checkpoint_path = Path(model_path).expanduser()
+    if (checkpoint_path / "model").is_dir():
+        checkpoint_path /= "model"
+    if not (checkpoint_path / ".metadata").is_file():
+        return False
+    metadata = dcp.FileSystemReader(checkpoint_path).read_metadata().state_dict_metadata
+    state = model.net.language_model.state_dict()
+    for name, tensor in state.items():
+        name = f"net.language_model.{name}"
+        if any(key in name for key in keys_to_skip_loading):
+            return False
+        entry = metadata.get(name)
+        if entry is None or tuple(entry.size) != tuple(tensor.shape):
+            return False
+    return bool(state)
+
+
 def load_pretrained_checkpoint(
     model: nn.Module,
     model_path: str,
@@ -41,6 +62,10 @@ def load_pretrained_checkpoint(
         _load_diffusers_checkpoint(model, Path(model_path).expanduser())
     elif checkpoint_format == "native":
         _load_native_checkpoint(model, model_path, keys_to_skip_loading)
+        if any("net_ema.".startswith(key) for key in keys_to_skip_loading):
+            net_ema = getattr(model, "net_ema", None)
+            if net_ema is not None:
+                net_ema.load_state_dict(model.net.state_dict())
     else:
         raise ValueError(
             f"Unsupported Cosmos3 checkpoint_format={checkpoint_format!r}; "

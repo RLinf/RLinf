@@ -32,7 +32,10 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.cosmos3.checkpoint_loader import load_pretrained_checkpoint
+from rlinf.models.embodiment.cosmos3.checkpoint_loader import (
+    load_pretrained_checkpoint,
+    native_checkpoint_covers_language_model,
+)
 from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionModel
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
@@ -93,6 +96,32 @@ def _initialize_rotary_buffers(net: nn.Module) -> None:
             module, (Qwen3VLTextRotaryEmbedding, Qwen3VLVisionRotaryEmbedding)
         ):
             module.init_weights(buffer_device=torch.device("cpu"))
+
+
+def _initialize_native_weights(
+    model: nn.Module, model_path: str, keys_to_skip_loading: list[str]
+) -> None:
+    """Initialize fresh heads and buffers before loading a native checkpoint."""
+    if not native_checkpoint_covers_language_model(
+        model, model_path, keys_to_skip_loading
+    ):
+        model.net.init_weights(buffer_device=torch.device("cpu"))
+        return
+
+    language_model = model.net.language_model
+    original = language_model.init_weights
+    had_instance_initializer = "init_weights" in language_model.__dict__
+    # The native initializer still owns fresh action heads; DCP owns the backbone.
+    language_model.init_weights = lambda buffer_device=None: _initialize_rotary_buffers(
+        language_model
+    )
+    try:
+        model.net.init_weights(buffer_device=torch.device("cpu"))
+    finally:
+        if had_instance_initializer:
+            language_model.init_weights = original
+        else:
+            del language_model.init_weights
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -158,6 +187,11 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_cfg.model.config.compile.enabled = bool(
             cfg.get("compile_enabled", False)
         )
+        if cfg.get("activation_checkpointing_mode") is not None:
+            cosmos3_cfg.model.config.activation_checkpointing.mode = str(
+                cfg.activation_checkpointing_mode
+            )
+        torch.backends.cudnn.benchmark = True
 
         # Wan2.2 VAE: the cookbook injects via ${oc.env:WAN_VAE_PATH}; we build the
         # config directly, so set the local file path here instead.
@@ -170,14 +204,21 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                     "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
                 )
 
-        if checkpoint_format == "diffusers":
+        tokenizer_path = cfg.get("tokenizer_path") or None
+        if tokenizer_path:
+            tokenizer_path = Path(str(tokenizer_path)).expanduser()
+        elif checkpoint_format == "diffusers":
             # The packaged policy ships its matching tokenizer. The recipe's
             # default Qwen identifier may resolve to a different local cache
             # (or be unavailable on an offline actor node).
             tokenizer_path = Path(str(model_path)).expanduser() / "text_tokenizer"
-            if not (tokenizer_path / "vocab.json").is_file():
+        if tokenizer_path is not None:
+            if not all(
+                (tokenizer_path / name).is_file()
+                for name in ("vocab.json", "merges.txt")
+            ):
                 raise FileNotFoundError(
-                    f"Cosmos3 Diffusers tokenizer not found: {tokenizer_path}"
+                    f"Cosmos3 tokenizer requires vocab.json and merges.txt: {tokenizer_path}"
                 )
             cosmos3_cfg.model.config.vlm_config.tokenizer.pretrained_model_name = str(
                 tokenizer_path
@@ -230,7 +271,11 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             if net_ema is not None:
                 _initialize_rotary_buffers(net_ema)
         else:
-            cosmos3_model.net.init_weights(buffer_device=_CosmosDevice.CPU)
+            _initialize_native_weights(
+                cosmos3_model,
+                str(model_path),
+                list(cfg.get("keys_to_skip_loading", [])),
+            )
 
     # Native checkpoints warm-start from a base model; Diffusers packages load
     # the complete trained policy, including action heads, into the same native

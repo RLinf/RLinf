@@ -179,7 +179,13 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             )
         from cosmos_framework.utils.misc import to as _cosmos_to
 
-        data = _cosmos_to(data, "cuda")
+        # Cosmos reads token IDs and image sizes back as Python lists/integers.
+        # Keep these on the host instead of copying them to CUDA and back.
+        host_keys = {"text_token_ids", "image_size"}
+        data = {
+            key: value if key in host_keys else _cosmos_to(value, self.device)
+            for key, value in data.items()
+        }
         self._ensure_vision_device_patch()
         output_batch, loss = self.omni.training_step(data, self._global_step)
         result: dict[str, Any] = {"loss": loss}
