@@ -107,7 +107,8 @@ evaluation.
 Online Mode
 ~~~~~~~~~~~
 
-Online mode uses `Serper <https://serper.dev>`__ for web search and
+Online mode uses `Serper <https://serper.dev>`__ (default) or
+`You.com <https://you.com>`__ for web search, and
 `Jina AI <https://jina.ai>`__ for webpage access.
 
 API Keys
@@ -117,7 +118,9 @@ Export the required API keys before running training or evaluation:
 
 .. code-block:: bash
 
-   export SERPER_API_KEY=your_serper_api_key
+   export SERPER_API_KEY=your_serper_api_key   # default search provider
+   # or, for You.com search:
+   export YDC_API_KEY=your_youcom_api_key
    export JINA_API_KEY=your_jina_api_key
 
 Configuration
@@ -129,6 +132,7 @@ In the YAML config under ``examples/agent/wideseek_r1/config``, set:
 
    tools:
      online: True
+     search_provider: serper  # optional; "serper" (default) or "you"
      use_jina: True
      enable_cache: True
      cache_file: "./webpage_cache.json"

@@ -97,7 +97,7 @@ WideSeek-R1 提供两种搜索后端：
 在线模式
 ~~~~~~~~
 
-在线模式使用 `Serper <https://serper.dev>`__ 进行网页搜索，并使用 `Jina AI <https://jina.ai>`__ 进行网页访问。
+在线模式默认使用 `Serper <https://serper.dev>`__ 进行网页搜索（也可选用 `You.com <https://you.com>`__），并使用 `Jina AI <https://jina.ai>`__ 进行网页访问。
 
 API 密钥
 ^^^^^^^^
@@ -106,7 +106,9 @@ API 密钥
 
 .. code-block:: bash
 
-   export SERPER_API_KEY=your_serper_api_key
+   export SERPER_API_KEY=your_serper_api_key   # 默认搜索 provider
+   # 或使用 You.com 搜索：
+   export YDC_API_KEY=your_youcom_api_key
    export JINA_API_KEY=your_jina_api_key
 
 配置
@@ -118,6 +120,7 @@ API 密钥
 
    tools:
      online: True
+     search_provider: serper  # 可选；"serper"（默认）或 "you"
      use_jina: True
      enable_cache: True
      cache_file: "./webpage_cache.json"
