@@ -29,7 +29,10 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 
-from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
+from rlinf.data.datasets.world_model import (
+    NpyTrajectoryDatasetWrapper,
+    get_libero_task_descriptions,
+)
 from rlinf.envs.sim.world_model.backend import WorldModelBackend
 from rlinf.envs.sim.world_model.registry import get_backend, get_backend_name
 from rlinf.envs.utils import recursive_to_device
@@ -204,8 +207,17 @@ class WorldModelEnv:
                     f"{self._backend_cls.__name__} does not support enable_kir"
                 )
             self.enable_kir = False
+        expected_tasks = None
+        suite_name = cfg.get("task_suite_name", None)
+        if suite_name:
+            # Fail fast when the initial trajectories were collected for a
+            # different task suite (see issue #1655). Skipped when LIBERO is
+            # unavailable.
+            expected_tasks = get_libero_task_descriptions(suite_name)
         return NpyTrajectoryDatasetWrapper(
-            cfg.initial_image_path, enable_kir=self.enable_kir
+            cfg.initial_image_path,
+            enable_kir=self.enable_kir,
+            expected_tasks=expected_tasks,
         )
 
     def _record_metrics(self, step_reward, terminations, infos):
