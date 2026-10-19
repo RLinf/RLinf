@@ -254,6 +254,27 @@ class TeleopDevice(TeleopPart):
         """
         return None
 
+    @classmethod
+    def interlock(
+        cls,
+        cfg: Mapping[str, Any],
+        facts: Any,
+        entries: "Sequence[TeleopEntry]",
+    ) -> Optional[Callable[[Any, Mapping[str, Any]], Any]]:
+        """Build an optional check that can hold the robot before it moves.
+
+        Only devices whose entries must stop together need one. The check runs
+        after every entry has mapped its reading and before the action is sent.
+        It takes the composed sample and the tick's context, and returns the
+        sample to send.
+
+        Args:
+            cfg: The environment config.
+            facts: Action layout and kinds of the robot being driven.
+            entries: Every entry built for this robot.
+        """
+        return None
+
     # What the operator is doing, and what the robot should do about it.
 
     @abstractmethod
