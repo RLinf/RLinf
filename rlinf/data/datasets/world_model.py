@@ -14,13 +14,40 @@
 
 
 import glob
+import logging
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Collection, Optional
 
 import numpy as np
 import torch
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
+
+logger = logging.getLogger(__name__)
+
+
+def get_libero_task_descriptions(suite_name: str) -> Optional[list[str]]:
+    """Best-effort lookup of the canonical task descriptions of a LIBERO suite.
+
+    Returns ``None`` when LIBERO (or the requested suite) is not available, so
+    callers can skip task-consistency validation instead of failing.
+    """
+    try:
+        from rlinf.envs.sim.libero.utils import get_benchmark_overridden
+
+        benchmark = get_benchmark_overridden(suite_name)()
+        return [
+            benchmark.get_task(task_id).language
+            for task_id in range(benchmark.get_task_num())
+        ]
+    except Exception as e:  # pragma: no cover - depends on optional LIBERO install
+        logger.warning(
+            "Could not load LIBERO task descriptions for suite %r "
+            "(%s); skipping initial-trajectory task validation.",
+            suite_name,
+            e,
+        )
+        return None
 
 
 class FuncRegistry:
@@ -99,6 +126,13 @@ class NpyTrajectoryDatasetWrapper(Dataset):
         start_select_policy: The policy to select the start frames.
         target_select_policy: The policy to select the target frames.
         camera_names: List of camera names to use. If None, will use 'image' as default.
+        expected_tasks: Optional collection of task descriptions that the
+            trajectories are expected to contain (e.g. the canonical task
+            descriptions of the configured LIBERO suite). When given, the
+            dataset validates that the tasks stored in the trajectory files
+            match; a mismatch means the initial trajectories belong to a
+            different task suite (see RLinf issue #1655) and raises a
+            ``ValueError`` instead of silently rolling out from wrong states.
         target_timestamp: The target timestamp for the 'closest_timestamp' policy.
         start_n_frames: The number of start frames for the 'first_n_frames' policy.
         target_n_frames: The number of target frames for the 'last_n_frames' policy.
@@ -122,6 +156,7 @@ class NpyTrajectoryDatasetWrapper(Dataset):
         action_key: str = "delta_action",
         state_key: str = "init_ee_pose",
         enable_kir: bool = False,
+        expected_tasks: Optional[Collection[str]] = None,
     ):
         self.data_dir = data_dir
         self.action_key = action_key
@@ -198,9 +233,49 @@ class NpyTrajectoryDatasetWrapper(Dataset):
 
         # Pre-compute timestamps for all episodes (using frame indices as timestamps)
         self._episode_lengths = []
+        dataset_tasks = set()
         for npy_file in self.npy_files:
             data = np.load(npy_file, allow_pickle=True)
             self._episode_lengths.append(len(data))
+            first_frame = data[0]
+            for key in ("task", "instruction"):
+                if key in first_frame:
+                    task = first_frame[key]
+                    if isinstance(task, (bytes, np.bytes_)):
+                        task = task.decode("utf-8")
+                    dataset_tasks.add(str(task))
+                    break
+
+        self._validate_expected_tasks(dataset_tasks, expected_tasks)
+
+    @staticmethod
+    def _validate_expected_tasks(
+        dataset_tasks: set, expected_tasks: Optional[Collection[str]]
+    ) -> None:
+        """Check that trajectory tasks belong to the expected task suite.
+
+        Every trajectory frame stores the task description it was collected
+        for. If none of the descriptions stored in the dataset match the
+        expected suite (e.g. ``libero_object``), the trajectories were almost
+        certainly generated for a different suite and the run would roll out
+        from wrong initial states, so we fail fast. A strict full-set
+        comparison is not required: suites can legitimately share tasks.
+        """
+        if expected_tasks is None or not dataset_tasks:
+            return
+        expected = {str(task) for task in expected_tasks}
+        if dataset_tasks & expected:
+            return
+        raise ValueError(
+            "The initial trajectories do not match the expected task suite: "
+            f"dataset contains tasks {sorted(dataset_tasks)[:5]}..., none of "
+            f"which is among the {len(expected)} expected task descriptions. "
+            "This usually means the dataset directory holds trajectories "
+            "collected for a different LIBERO suite (e.g. the "
+            "RLinf-Wan-LIBERO-Object checkpoint shipped with the "
+            "RLinf-Wan-LIBERO-Spatial dataset, see issue #1655). Please point "
+            "initial_image_path at the correct dataset."
+        )
 
     def __len__(self) -> int:
         """Return the total number of episodes (npy files)."""
