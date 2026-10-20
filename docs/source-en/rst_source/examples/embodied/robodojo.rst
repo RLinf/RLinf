@@ -161,6 +161,12 @@ Common problems
    Do not install the runtime manually. Remove the failed installation and run
    the one-command installer above.
 
+``pip check`` reports Isaac Sim/IsaacLab metadata pins
+   Isaac Sim 5.1, IsaacLab, and the agent stack use overlapping but incompatible
+   exact pins. The installer selects the validated combination; use runtime
+   imports and the single-environment smoke test as the final check. Do not
+   manually upgrade ``starlette``, ``uvicorn``, or ``typing-extensions``.
+
 ``Could not detect CUDA`` or ``torch.cuda.is_available() == False``
    Run ``nvidia-smi`` first. RoboDojo does not currently support CPU-only,
    macOS, or AMD ROCm execution.

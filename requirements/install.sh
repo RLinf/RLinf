@@ -1057,6 +1057,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        robodojo) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -3748,6 +3749,8 @@ install_robodojo_env() {
 
     local override_file="$SCRIPT_DIR/embodied/envs/robodojo-override.txt"
     local runtime_ref="${ROBODOJO_RUNTIME_REF:-6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7}"
+    local isaaclab_ref="afca7b09d60d8beb9c1cb28b43066499940b969b"
+    local isaaclab_dir
     local assets_root="${ROBODOJO_ASSETS_ROOT:-$PWD/data/robodojo}"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
@@ -3815,8 +3818,30 @@ install_robodojo_env() {
     uv pip install --no-config --prerelease=allow \
         --overrides "$override_file" "${index_args[@]}" \
         "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
+    # RLinf and RoboDojo resolve different OpenCV distributions. Keep one GUI
+    # wheel so cv2 cannot be silently replaced by an ABI-incompatible variant.
+    use_opencv_gui_wheel
+
+    # IsaacLab's wheel intentionally contains only isaaclab/__init__.py. The
+    # extension metadata and modules live beside the source package, so the
+    # runtime's three IsaacLab dependencies must be installed editable on top.
+    isaaclab_dir=$(clone_or_reuse_repo \
+        ROBODOJO_ISAACLAB_PATH \
+        "$VENV_DIR/robodojo-isaaclab" \
+        "https://github.com/yuechen0614/IsaacLab.git")
+    if ! git -C "$isaaclab_dir" cat-file -e "${isaaclab_ref}^{commit}" 2>/dev/null; then
+        git -C "$isaaclab_dir" fetch --depth 1 origin "$isaaclab_ref"
+    fi
+    git -C "$isaaclab_dir" checkout --detach "$isaaclab_ref"
+    uv pip install --no-config --no-deps --no-build-isolation \
+        -e "$isaaclab_dir/source/isaaclab" \
+        -e "$isaaclab_dir/source/isaaclab_assets" \
+        -e "$isaaclab_dir/source/isaaclab_tasks"
+    export ROBODOJO_ISAACLAB_SOURCE="$isaaclab_dir/source"
 
     python - <<'PY'
+import json
+import os
 from pathlib import Path
 
 import torch
@@ -3826,8 +3851,15 @@ from robodojo_runtime.bridge import VectorEnv
 assert torch.cuda.is_available(), "PyTorch cannot see a CUDA GPU."
 source = source_root()
 assert source.is_dir(), f"RoboDojo source tree is missing: {source}"
+isaaclab_source = Path(os.environ["ROBODOJO_ISAACLAB_SOURCE"])
+assert (isaaclab_source / "isaaclab" / "config" / "extension.toml").is_file()
+from importlib.metadata import distribution
+
+direct_url = json.loads(distribution("isaaclab").read_text("direct_url.json"))
+assert direct_url["url"].startswith("file://"), direct_url
 assets = assets_root()
 print(f"[install.sh] RoboDojo runtime: {source}")
+print(f"[install.sh] IsaacLab source: {isaaclab_source}")
 print(f"[install.sh] RoboDojo assets root: {assets}")
 print(f"[install.sh] torch={torch.__version__} cuda={torch.version.cuda}")
 PY

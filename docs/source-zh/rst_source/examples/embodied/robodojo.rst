@@ -152,6 +152,11 @@ override 文件。
 ``No solution found when resolving dependencies``
    不要绕过安装器手工安装 runtime。删除错误的安装结果后，使用本文的一键命令重新安装。
 
+``pip check`` 报告 Isaac Sim 与 IsaacLab 的元数据版本不一致
+   Isaac Sim 5.1、IsaacLab 和上层框架使用互相重叠但不完全一致的精确版本 pin。
+   安装器会选择已验证的组合；最终应以 runtime 导入和单环境 smoke test 为准，
+   不要手工升级 ``starlette``、``uvicorn`` 或 ``typing-extensions``。
+
 ``Could not detect CUDA`` 或 ``torch.cuda.is_available() == False``
    先运行 ``nvidia-smi``。RoboDojo 当前不支持纯 CPU、macOS 或 AMD ROCm。
 
