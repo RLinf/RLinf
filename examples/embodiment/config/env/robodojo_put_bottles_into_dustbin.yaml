@@ -18,7 +18,7 @@ max_episode_steps: 700 # ARX-X5 tasks are budgeted 700 control steps
 is_eval: False
 
 # Directory that contains Assets/, not Assets/ itself.
-assets_path: "/workspace/dataset/robodojo"
+assets_path: ${oc.env:ROBODOJO_ASSETS_ROOT,/workspace/dataset/robodojo}
 # Optional JSON with per-task success seeds; null samples reset seeds instead.
 seeds_path: null
 

@@ -3737,11 +3737,44 @@ install_robodojo_env() {
     # The runtime distribution owns the simulator stack: Isaac Sim 5.1, the
     # IsaacLab fork RoboDojo tracks, cuRobo and the Torch family they need.
     # Installing it here keeps those pins out of the rest of the environment.
+    if [[ "${PLATFORM}" != "nvidia" ]]; then
+        echo "RoboDojo currently requires --platform nvidia and a CUDA GPU." >&2
+        exit 1
+    fi
+    if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+        echo "RoboDojo currently supports Linux x86_64 only." >&2
+        exit 1
+    fi
+
     local override_file="$SCRIPT_DIR/embodied/envs/robodojo-override.txt"
     local runtime_ref="${ROBODOJO_RUNTIME_REF:-6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7}"
+    local assets_root="${ROBODOJO_ASSETS_ROOT:-$PWD/data/robodojo}"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     index_args+=(--extra-index-url https://pypi.nvidia.com)
+
+    if [[ ! -f "${override_file}" ]]; then
+        echo "Missing RoboDojo compatibility overrides: ${override_file}" >&2
+        exit 1
+    fi
+
+    # Isaac Sim needs the EULA flag at import time. Keep it in the venv so
+    # later eval/training shells work without another undocumented setup step.
+    export OMNI_KIT_ACCEPT_EULA=YES
+    export ROBODOJO_ASSETS_ROOT="${assets_root}"
+    if [[ -z "${TERM:-}" || "${TERM}" == "dumb" ]]; then
+        export TERM=xterm-256color
+    fi
+    export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    local escaped_assets_root
+    printf -v escaped_assets_root '%q' "${assets_root}"
+    if grep -q '^export ROBODOJO_ASSETS_ROOT=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i '/^export ROBODOJO_ASSETS_ROOT=/d' "$VENV_DIR/bin/activate"
+    fi
+    echo "export ROBODOJO_ASSETS_ROOT=${escaped_assets_root}" >> "$VENV_DIR/bin/activate"
 
     # Torch first: the runtime pins torch==2.7.0, and cuRobo is a source build
     # that compiles against whichever Torch is already installed. TORCH_CUDA_ARCH_LIST
@@ -3753,19 +3786,17 @@ install_robodojo_env() {
     # the runtime's torch==2.7.0. The simulator stack must resolve on its own
     # pins, so the RoboDojo installs below ignore pyproject.toml and use the
     # compatibility overrides from the upstream simulator installer.
-    if [ "$PLATFORM" = "nvidia" ]; then
-        local cuda_mm cuda_major cuda_minor
-        cuda_mm=$(detect_cuda_major_minor) || {
-            echo "Could not detect CUDA version. Cannot build the RoboDojo environment." >&2
-            exit 1
-        }
-        cuda_major="${cuda_mm%% *}"
-        cuda_minor="${cuda_mm##* }"
-        if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
-        else
-            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
-        fi
+    local cuda_mm cuda_major cuda_minor
+    cuda_mm=$(detect_cuda_major_minor) || {
+        echo "Could not detect CUDA. RoboDojo requires a working NVIDIA CUDA driver." >&2
+        exit 1
+    }
+    cuda_major="${cuda_mm%% *}"
+    cuda_minor="${cuda_mm##* }"
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    else
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
     fi
 
     uv pip install --no-config --prerelease=allow \
@@ -3784,6 +3815,54 @@ install_robodojo_env() {
     uv pip install --no-config --prerelease=allow \
         --overrides "$override_file" "${index_args[@]}" \
         "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
+
+    python - <<'PY'
+from pathlib import Path
+
+import torch
+from robodojo_runtime import assets_root, source_root
+from robodojo_runtime.bridge import VectorEnv
+
+assert torch.cuda.is_available(), "PyTorch cannot see a CUDA GPU."
+source = source_root()
+assert source.is_dir(), f"RoboDojo source tree is missing: {source}"
+assets = assets_root()
+print(f"[install.sh] RoboDojo runtime: {source}")
+print(f"[install.sh] RoboDojo assets root: {assets}")
+print(f"[install.sh] torch={torch.__version__} cuda={torch.version.cuda}")
+PY
+
+    if [[ "${ROBODOJO_DOWNLOAD_ASSETS:-0}" == "1" ]]; then
+        echo "[install.sh] Downloading RoboDojo scene assets into ${ROBODOJO_ASSETS_ROOT}"
+        echo "[install.sh] The Assets download is about 39 GB."
+        uv pip install "huggingface_hub>=0.34,<2"
+        python - <<'PY'
+import os
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+root = Path(os.environ["ROBODOJO_ASSETS_ROOT"]).expanduser().resolve()
+required = ("Robots", "Object", "Material", "Eval_Layout")
+if not all((root / "Assets" / name).is_dir() for name in required):
+    root.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=os.environ.get("ROBODOJO_HF_REPO", "RoboDojo-Benchmark/RoboDojo"),
+        repo_type="dataset",
+        revision=os.environ.get("ROBODOJO_HF_REVISION", "main"),
+        local_dir=root,
+        allow_patterns=["Assets/**"],
+    )
+missing = [name for name in required if not (root / "Assets" / name).is_dir()]
+if missing:
+    raise SystemExit(f"RoboDojo assets are incomplete; missing: {', '.join(missing)}")
+print(f"[install.sh] RoboDojo assets ready: {root / 'Assets'}")
+PY
+    else
+        echo "[install.sh] Dependencies installed; scene assets were not downloaded."
+        echo "[install.sh] To include assets in the install, rerun with:"
+        echo "  ROBODOJO_DOWNLOAD_ASSETS=1 ROBODOJO_ASSETS_ROOT=${ROBODOJO_ASSETS_ROOT} bash requirements/install.sh embodied --env robodojo"
+    fi
 }
 
 install_robotwin_env() {
