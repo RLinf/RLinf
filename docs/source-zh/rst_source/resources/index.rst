@@ -36,6 +36,12 @@
 
       RLinf v0.3 的更新内容。
 
+   .. grid-item-card:: v0.4 发布说明
+      :link: release_v0.4
+      :link-type: doc
+
+      RLinf v0.4 的更新内容。
+
    .. grid-item-card:: FAQ
       :link: faq
       :link-type: doc
@@ -50,4 +56,5 @@
    论文 <publications/index>
    v0.1 & v0.2 发布说明 <release_v0.1_v0.2>
    v0.3 发布说明 <release_v0.3>
+   v0.4 发布说明 <release_v0.4>
    FAQ <faq>
