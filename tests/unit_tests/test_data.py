@@ -1955,6 +1955,33 @@ def test_offline_lerobot_export_reuses_canonical_frame_conversion():
     assert frame["done"].item()
 
 
+def test_lerobot_frame_keeps_last_substep_of_flattened_intervene_chunk():
+    action_dim = 20
+    chunk = 20
+    policy = np.arange(action_dim, dtype=np.float32)
+    expert = np.arange(chunk * action_dim, dtype=np.float32) + 100
+    collector = object.__new__(CollectEpisode)
+    collector.num_envs = 1
+    buffer = {
+        "observations": [{"state": np.zeros(32, dtype=np.float32)}],
+        "actions": [policy],
+        "terminated": [True],
+        "infos": [
+            {},
+            {
+                "intervene_flag": np.ones(chunk, dtype=bool),
+                "intervene_action": expert,
+            },
+        ],
+        "segment_ids": [0],
+    }
+    frames = collector._buffer_to_lerobot_ep(buffer, env_idx=0, is_success=True)
+    assert frames is not None and len(frames) == 1
+    assert frames[0]["actions"].shape == (action_dim,)
+    assert np.array_equal(frames[0]["actions"], expert[-action_dim:])
+    assert bool(frames[0]["intervene_flag"][0]) is True
+
+
 def _policy_input() -> PolicyInput:
     return PolicyInput(
         obs={"states": torch.zeros(16, 4)},
