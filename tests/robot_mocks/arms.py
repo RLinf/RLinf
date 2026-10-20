@@ -162,6 +162,7 @@ def franky() -> types.ModuleType:
         CartesianImpedanceTracker=_Tracker,
         JointMotion=lambda *a, **k: ("joint", a, k),
         CartesianMotion=lambda *a, **k: ("cartesian", a, k),
+        RelativeDynamicsFactor=lambda *a, **k: ("rdf", a, k),
         # A joint waypoint, which a reset motion is built from.
         JointState=lambda position=None, **_k: types.SimpleNamespace(
             position=np.asarray(
