@@ -339,7 +339,7 @@ Dual Franka 部署
 
 ``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 是双节点回退配置。``run_eval.sh`` 在 ``evaluations/realworld/`` 找不到同名文件时使用它。将 ``rollout.model.model_path`` 设为已同步的 checkpoint 目录，将 ``actor.model.openpi_data.repo_id`` 设为包含 ``norm_stats.json`` 的 repo id。
 
-``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` 是单机 RTC 评测：GPU、两台机械臂和三路相机在同一台机器上。动作是 20 维 tcp_rot6d，``openpi.config_name`` 为 ``pi05_dualfranka_tcp_rot6d``，主相机是 ``left_wrist_0_rgb``。把 ``MODEL_PATH``、``norm_stats`` 路径、机械臂 IP、相机 serial、夹爪串口、``keyboard_device`` 和 ``TASK_DESCRIPTION`` 换成自己的值。复位完成后，在这台 USB 键盘或脚踏上按 ``a`` 才开始 policy；``c`` 记成功，``b`` 记失败。终端里按 ``a`` 无效。无图形界面时保持 ``enable_camera_player: False``。``max_steps_per_rollout_epoch`` 必须能被 20 整除。
+``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` 是单机 RTC 评测：GPU、两台机械臂和三路相机在同一台机器上。动作是 20 维 tcp_rot6d，``openpi.config_name`` 为 ``pi05_dualfranka_tcp_rot6d``，主相机是 ``left_wrist_0_rgb``。把 ``MODEL_PATH``、``norm_stats`` 路径、机械臂 IP、相机 serial、夹爪串口、``keyboard_device`` 和 ``TASK_DESCRIPTION`` 换成自己的值。复位完成后，在这台 USB 键盘或脚踏上按 ``a`` 才开始 policy；``c`` 记成功，``b`` 记失败。脚本不读终端输入。``a`` 要按在 ``keyboard_device`` 指向的 evdev 设备上，该字段为空时用 ``RLINF_KEYBOARD_DEVICE``。SSH 会话里输入的 ``a`` 到不了这台设备；如果这台设备就是本机键盘，即使焦点在终端上，按下也会生效。无图形界面时保持 ``enable_camera_player: False``。``max_steps_per_rollout_epoch`` 必须能被 20 整除。
 
 .. code-block:: bash
 

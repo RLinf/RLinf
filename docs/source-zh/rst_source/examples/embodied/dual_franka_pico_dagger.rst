@@ -81,9 +81,16 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
    * - Action
      - 双臂 tcp_rot6d：``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``。
    * - Reward
-     - ``keyboard_device`` 上的 a/b/c。PICO 的 A/B/X/Y 只控制夹爪。
+     - 来自 USB 键盘或脚踏（``keyboard_device``）的人工标记。
    * - Prompt
      - ``task_description`` 写入数据并作为 OpenPI 语言条件。
+
+这个标记不来自 PICO 正面按键。采集和 DAgger 在 ``keyboard_device`` 上的按键不同：
+
+* 采集（``start_end``）：``c`` 记成功并写入本段数据。``a`` 开始或中止录制。``b`` 递增 ``segment_id``，不是失败。
+* DAgger（``eval_control``）：``a`` 开始 policy，``b`` 记失败，``c`` 记成功。
+
+PICO 的 A/B/X/Y 只开合夹爪。按键时序写在「执行采集」和「执行 DAgger」。
 
 
 安装与节点布局
@@ -123,7 +130,7 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 Ray 节点布局
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集配置使用一台主机。两台机械臂使用不同的 FCI IP，可以直连到这台主机（每台机械臂一根网线接到主机的一块网卡），也可以经过交换机（两台机械臂和主机接在同一台交换机上）。两个夹爪和三路相机都在 rank ``0``，``left_controller_node_rank``、``right_controller_node_rank`` 和 ``node_rank`` 都是 ``0``。采集前不要执行 ``ray start``，启动脚本会自己拉起本地 Ray。只有把两台机械臂拆到不同机器上时，才提高 ``num_nodes`` 和对应的 controller rank，那种拆分仍使用下面的 Ray 集群。
+采集配置使用一台主机。两台机械臂使用不同的 FCI IP，可以直连到这台主机（每台机械臂一根网线接到主机的一块网卡），也可以经过交换机（两台机械臂和主机接在同一台交换机上）。两个夹爪和三路相机都在 rank ``0``，``left_controller_node_rank``、``right_controller_node_rank`` 和 ``node_rank`` 都是 ``0``。采集前不要执行 ``ray start``，启动脚本会自己拉起本地 Ray。两台机械臂分到两台机器时，把 ``num_nodes`` 设为 2，两台机器放在同一个 node group，``node_rank`` 和 ``left_controller_node_rank`` 设为 env 所在机器（通常是 ``0``），``right_controller_node_rank`` 设为另一台（通常是 ``1``）。这种拆分用下面「集群设置」里的 Ray 启动步骤，不要套用后面的三节点 DAgger 表。
 
 .. list-table::
    :header-rows: 1
@@ -150,7 +157,7 @@ Ray 节点布局
      - 通常为 GPU 节点，运行 OpenPI。
    * - ``1``
      - 左臂控制、env worker、三路相机、PICO consumer
-     - 需要脚踏设备和 PICO ZeroMQ 地址可达。
+     - 需要键盘或脚踏。``ray start`` 前导出 ``RLINF_KEYBOARD_DEVICE``。PICO ZeroMQ 地址须可达。
    * - ``2``
      - 右臂控制
      - 只需要右臂 Franka / Robotiq 控制链路。
@@ -162,9 +169,9 @@ Ray 节点布局
 集群设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-单机采集跳过这一节。启动脚本会自己拉起本地 Ray，不要执行 ``ray start``。下面的步骤只在 DAgger 拆到多台机器上时使用。
+单机采集跳过这一节。启动脚本会自己拉起本地 Ray，不要执行 ``ray start``。下面的步骤在 DAgger 或多机采集拆到多台机器上时使用。
 
-那种拆分运行之前，需要先正确地搭建 Ray 集群。
+在这种多机拆分之前，需要先正确地搭建 Ray 集群。
 
 .. warning::
   这一步非常关键，请谨慎操作！任何细微的配置错误，都可能导致依赖缺失或无法正确控制机器人。
@@ -196,9 +203,9 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
    export RLINF_KEYBOARD_DEVICE=/dev/input/by-id/usb-KEYBOARD-event-kbd
 
-采集配置 ``N=1``，两台机械臂都在这一台主机上：rank ``0`` 同时运行双臂控制器、env、三路相机和 PICO consumer。不要执行 ``ray start``。如果 ``ray status`` 还能看到上次留下的集群，先执行 ``ray stop --force``，避免启动脚本连上那个集群。DAgger 配置 ``N=3``：rank ``0`` 为 OpenPI inference / actor，rank ``1`` 为左臂 / env / PICO consumer，rank ``2`` 为右臂。DAgger 硬件里的 ``node_rank`` 和两侧 ``*_controller_node_rank`` 必须改成实际连接机械臂的集群 rank。
+采集配置 ``N=1``，两台机械臂都在这一台主机上：rank ``0`` 同时运行双臂控制器、env、三路相机和 PICO consumer。不要执行 ``ray start``。如果 ``ray status`` 还能看到上次留下的集群，先执行 ``ray stop --force``，避免启动脚本连上那个集群。DAgger 配置 ``N=3``：rank ``0`` 为 OpenPI inference / actor，rank ``1`` 为左臂 / env / PICO consumer，rank ``2`` 为右臂。这些都是集群 rank，不是 node group 内的下标。DAgger 硬件条目写 ``node_rank: 1``、``left_controller_node_rank: 1``、``right_controller_node_rank: 2``。``node_rank`` 是 env 节点，必须落在 franka 这个 node group 里。只有某条臂接到了别的机器上，才改对应的 controller rank。
 
-DAgger 拆到多台机器上时，按下面的方式在各节点启动 Ray。单机采集跳过这一步：
+多机运行时，按下面的方式在各节点启动 Ray。单机采集跳过这一步：
 
 其中 `<head_node_ip_address>` 为 head 节点的 IP 地址，**必须** 能被集群中其他节点访问。
 
@@ -243,7 +250,7 @@ DAgger 拆到多台机器上时，按下面的方式在各节点启动 Ray。单
 * ``left_gripper_type`` / ``right_gripper_type``：左右夹爪类型。
 * ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定 ``/dev/serial/by-id`` 路径。
 * ``keyboard_device``：采集配置里的 evdev 节点；留空则使用 ``RLINF_KEYBOARD_DEVICE``。按键来自这台 USB 键盘或脚踏，不来自采集终端。
-* ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``：采集示例三者都是 ``0``。DAgger 必须改成实际拥有机械臂和 env 的集群 rank。
+* ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``：采集示例三者都是 ``0``。DAgger 示例分别是集群 rank ``1``、``2``、``1``。``node_rank`` 是 env 节点，必须落在 franka node group 内；两侧 controller rank 是接该臂的那台机器的集群 rank。
 * ``TASK_DESCRIPTION``：采集和 DAgger 使用的任务文本，应与 checkpoint 训练时一致。
 * ``joint_reset_qpos``：采集配置不写这一项，reset 使用环境默认关节位。DAgger 配置里的全零占位要换成数据集首帧关节均值或安全 home。它是每臂 7 个关节角，不是 ``target_ee_pose``。
 * ``target_ee_pose``：每臂 ``[x, y, z, roll, pitch, yaw]``。xyz 必须落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位内：x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，z ∈ [0.02, 0.7]。示例 ``[0.5, ±0.2, 0.5, -3.14, 0, 0]`` 在这个盒子里。
@@ -360,7 +367,7 @@ DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设�
 按键来自 ``keyboard_device``，不是终端，也不是 PICO A/B/X/Y：
 
 * ``a``：开始录制。开始后 1.5 秒内再按 ``a`` 会被忽略；之后再按则中止并丢弃 buffer。
-* ``b``：录制中递增 ``segment_id``。未在录制时按下会被忽略。
+* ``b``：录制中递增 ``segment_id``。1 秒内的重复按下会被忽略，未在录制时按下也会被忽略。
 * ``c``：标记成功并写入 LeRobot shard。未在录制时按下会被忽略。
 
 PICO 操作：
@@ -512,4 +519,4 @@ episode 计数和 LeRobot 写出路径。在线 DAgger shard 位于
 
 **DAgger 等待时间过长未启动**
    这是 ``keyboard_reward_wrapper: eval_control`` 的预期行为。若 DAgger 运行后长时间
-   等待未开始，可踩一下映射到键盘 ``a`` 的脚踏启动 rollout。
+   等待未开始，在 USB 键盘或脚踏上按 ``a`` 启动 rollout。

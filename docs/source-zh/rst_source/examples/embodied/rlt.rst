@@ -445,9 +445,9 @@ Stage 2：运行 RLT Actor-Critic
 双臂 Franka Stage 2
 ~~~~~~~~~~~~~~~~~~~
 
-两台机械臂和 GPU 在同一台主机上，并且冻结的 Stage 1 checkpoint 是 ``pi05_dualfranka_tcp_rot6d`` 时，使用 ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``。上面的单臂配置是插销配方：7 维动作、一路相机。这份配置是 20 维 tcp_rot6d。机械臂执行 10 步，Stage 1 的参考 horizon 是 20。
+两台机械臂和 GPU 在同一台主机上，并且冻结的 Stage 1 checkpoint 是 ``pi05_dualfranka_tcp_rot6d`` 时，使用 ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``。上面那份单臂配置是插销任务：7 维动作、一路相机。这份配置是 20 维 tcp_rot6d。机械臂执行 10 步，Stage 1 的参考 horizon 是 20。
 
-替换机械臂 IP、相机 serial、夹爪路径、``TASK_DESCRIPTION`` 和目标位姿。把 ``rollout.rlt_feature_model.model_path`` 指到双臂 Stage 1 checkpoint，并把 ``openpi_data.repo_id`` 设成该 checkpoint 的数据集 id。``keyboard_device`` 留空并导出 ``RLINF_KEYBOARD_DEVICE``，或者在 ``env.train`` 和 ``env.eval`` 里都写上 evdev 路径。保持 ``hold_current_when_inactive: False``，松开 Pico 握把后该臂交回 policy。USB 键盘 ``b`` 把 rollout 从 Stage 1 policy 切到 Stage 2 actor。Pico 的 A/B/X/Y 仍是夹爪按键。
+替换机械臂 IP、相机 serial、夹爪路径、``TASK_DESCRIPTION`` 和目标位姿。把 ``rollout.rlt_feature_model.model_path`` 指到双臂 Stage 1 checkpoint，并把 ``openpi_data.repo_id`` 设成该 checkpoint 的数据集 id。``keyboard_device`` 留空并导出 ``RLINF_KEYBOARD_DEVICE``，或者在 ``env.train`` 和 ``env.eval`` 里都写上 evdev 路径。保持 ``hold_current_when_inactive: False``。松开 grip 后，该臂先保持最后一条遥操作指令，当前 action chunk 结束后才交回 policy。USB 键盘 ``b`` 把 rollout 从 Stage 1 policy 切到 Stage 2 actor。Pico 的 A/B/X/Y 仍是夹爪按键。
 
 .. code:: bash
 

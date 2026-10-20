@@ -350,9 +350,13 @@ are on one machine. Actions are 20-dimensional tcp_rot6d,
 ``left_wrist_0_rgb``. Replace ``MODEL_PATH``, the ``norm_stats`` path, arm IPs,
 camera serials, gripper ports, ``keyboard_device``, and ``TASK_DESCRIPTION``.
 After the arms home, press ``a`` on that USB keyboard or pedal to start the
-policy; ``c`` marks success and ``b`` marks failure. Typing ``a`` in the
-terminal does nothing. Keep ``enable_camera_player: False`` on a machine
-without a display. ``max_steps_per_rollout_epoch`` must be divisible by 20.
+policy; ``c`` marks success and ``b`` marks failure. The script does not read
+the terminal. Press ``a`` on the evdev device named by ``keyboard_device``, or
+by ``RLINF_KEYBOARD_DEVICE`` when that field is null. Typing ``a`` in an SSH
+session does not reach that device. If the device is the keyboard attached to
+this machine, the press counts even while the terminal is focused. Keep
+``enable_camera_player: False`` on a machine without a display.
+``max_steps_per_rollout_epoch`` must be divisible by 20.
 
 .. code-block:: bash
 
