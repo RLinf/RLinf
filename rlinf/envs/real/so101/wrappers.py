@@ -162,7 +162,7 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
                 terminated = True
                 break
 
-        info["pre_record"] = not self._recording
+        info["pre_record"] = not self._recording and event != "end_success"
         info["record_reset"] = record_reset
         info["keyboard_phase"] = "rec" if self._recording else "pre"
         info["keyboard_event"] = event
