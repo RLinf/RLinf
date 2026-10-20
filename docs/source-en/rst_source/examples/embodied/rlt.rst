@@ -484,9 +484,10 @@ target poses. Point ``rollout.rlt_feature_model.model_path`` at the dual-arm
 Stage 1 checkpoint and set ``openpi_data.repo_id`` to that checkpoint's dataset
 id. Leave ``keyboard_device`` null and export ``RLINF_KEYBOARD_DEVICE``, or set
 the evdev path under both ``env.train`` and ``env.eval``. Keep
-``hold_current_when_inactive: False`` so a released Pico grip returns that arm
-to the policy. USB-keyboard ``b`` switches the rollout from the Stage 1 policy
-to the Stage 2 actor. Pico A/B/X/Y stay gripper buttons.
+``hold_current_when_inactive: False``. After the Pico grip is released, that
+arm holds the last teleop command until the current action chunk ends, then
+returns to the policy. USB-keyboard ``b`` switches the rollout from the Stage 1
+policy to the Stage 2 actor. Pico A/B/X/Y stay gripper buttons.
 
 .. code:: bash
 

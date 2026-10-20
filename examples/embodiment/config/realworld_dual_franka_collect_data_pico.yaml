@@ -11,7 +11,9 @@ hydra:
 
 cluster:
   # One workstation owns both arms, both grippers, and the cameras.
-  # Split the arms by raising num_nodes and the controller ranks below.
+  # Two machines: num_nodes 2, both in one node group. node_rank and
+  # left_controller_node_rank stay on the env machine (usually 0);
+  # right_controller_node_rank is the other machine (usually 1).
   num_nodes: 1
   component_placement:
     env:

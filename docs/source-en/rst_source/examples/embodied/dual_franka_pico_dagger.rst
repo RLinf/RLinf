@@ -85,9 +85,21 @@ Observation and Action
    * - Action
      - Dual-arm tcp_rot6d: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
    * - Reward
-     - a/b/c from ``keyboard_device``. PICO A/B/X/Y only drive the grippers.
+     - Operator label from the USB keyboard or pedal (``keyboard_device``).
    * - Prompt
      - ``task_description`` stored in the data and used as the OpenPI language condition.
+
+That label does not come from the PICO face buttons. Collection and DAgger
+use different keys on ``keyboard_device``:
+
+* Collection (``start_end``): ``c`` is success and writes the episode. ``a``
+  starts or aborts recording. ``b`` advances ``segment_id`` and is not a
+  failure.
+* DAgger (``eval_control``): ``a`` starts the policy, ``b`` is failure, and
+  ``c`` is success.
+
+PICO A/B/X/Y only open and close the grippers. Press timing is in Run
+Collection and Run DAgger.
 
 
 Installation and Node Layout
@@ -146,9 +158,12 @@ the host) or through a switch (both arms and the host on the same switch).
 Both grippers and the three cameras are on rank ``0``.
 ``left_controller_node_rank``, ``right_controller_node_rank``, and
 ``node_rank`` are all ``0``. Do not run ``ray start`` before collection; the
-launch script starts a local Ray instance. Raise ``num_nodes`` and the
-controller ranks only when you split the arms across machines. That split
-still uses the Ray cluster below.
+launch script starts a local Ray instance. To put the arms on two machines,
+set ``num_nodes: 2``, keep both machines in one node group, and set
+``node_rank`` and ``left_controller_node_rank`` to the env machine (usually
+``0``) and ``right_controller_node_rank`` to the other machine (usually
+``1``). Start Ray with the steps in Cluster Setup. That layout is not the
+three-node DAgger table below.
 
 .. list-table::
    :header-rows: 1
@@ -175,7 +190,7 @@ The online DAgger config uses three nodes:
      - Usually the GPU node running OpenPI.
    * - ``1``
      - Left-arm control, env worker, three cameras, PICO consumer
-     - Requires the foot pedal and access to the PICO ZeroMQ address.
+     - Needs the keyboard or pedal. Export ``RLINF_KEYBOARD_DEVICE`` before ``ray start``. The PICO ZeroMQ address must be reachable.
    * - ``2``
      - Right-arm control
      - Only needs the right-arm Franka / Robotiq control path.
@@ -195,10 +210,10 @@ Cluster Setup
 ~~~~~~~~~~~~~
 
 Skip this section for single-host collection. The launch script starts a local
-Ray instance, and you do not run ``ray start``. Use the steps below only when
-DAgger is split across machines.
+Ray instance, and you do not run ``ray start``. Use the steps below when
+DAgger, or collection with the arms on two machines, runs across machines.
 
-Before that split run, set up the Ray cluster correctly.
+Before that multi-machine run, set up the Ray cluster correctly.
 
 .. warning::
    This step is critical. Small configuration mistakes can lead to missing
@@ -241,11 +256,14 @@ the env, the three cameras, and the PICO consumer. Do not run ``ray start``.
 If ``ray status`` still shows a cluster from an earlier run, stop it with
 ``ray stop --force`` so the launcher does not attach to it.
 DAgger uses ``N=3``: rank ``0`` is OpenPI inference / actor, rank ``1`` is the
-left arm / env / PICO consumer, and rank ``2`` is the right arm. Set the DAgger
-hardware ``node_rank`` and both ``*_controller_node_rank`` fields to the cluster
-ranks that actually own the arms.
+left arm / env / PICO consumer, and rank ``2`` is the right arm. These are
+cluster ranks, not indexes inside the node group. The DAgger hardware entry
+sets ``node_rank: 1``, ``left_controller_node_rank: 1``, and
+``right_controller_node_rank: 2``. ``node_rank`` is the env node and must
+belong to the franka node group. Change a controller rank only when that arm
+is wired to a different machine.
 
-When DAgger is split across machines, start Ray on each node. Skip this step
+When the run is split across machines, start Ray on each node. Skip this step
 for the single-host collection:
 
 ``<head_node_ip_address>`` must be reachable by all other cluster nodes.
@@ -300,8 +318,10 @@ Replace the following fields in the collection and DAgger configs:
   ``RLINF_KEYBOARD_DEVICE``. Episode keys come from this USB keyboard or pedal,
   not from the collection terminal.
 * ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``:
-  all three are ``0`` in the collection example. DAgger must use the cluster
-  ranks that own the arms and the env.
+  all three are ``0`` in the collection example. The DAgger example uses
+  cluster ranks ``1``, ``2``, and ``1``. ``node_rank`` is the env node and
+  must sit in the franka node group. Each controller rank is the cluster rank
+  of the machine wired to that arm.
 * ``TASK_DESCRIPTION``: task text used by collection and DAgger. It should match
   the task text used to train the checkpoint.
 * ``joint_reset_qpos``: the collection config omits this, so reset uses the
@@ -469,8 +489,8 @@ A/B/X/Y:
 
 * ``a``: start recording. Another ``a`` within 1.5 s is ignored; after that it
   aborts and drops the buffer.
-* ``b``: while recording, increment ``segment_id``. Presses outside recording
-  are ignored.
+* ``b``: while recording, increment ``segment_id``. Repeats within 1 s are
+  ignored, as are presses outside recording.
 * ``c``: mark success and write the LeRobot shard. Presses outside recording
   are ignored.
 
@@ -629,5 +649,5 @@ Troubleshooting
 
 **DAgger waits too long and does not start**
    This is expected behavior for ``keyboard_reward_wrapper: eval_control``. If
-   DAgger waits for a long time after launch, press the foot pedal mapped to
-   keyboard ``a`` to start the rollout.
+   DAgger waits for a long time after launch, press ``a`` on the USB keyboard
+   or pedal to start the rollout.
