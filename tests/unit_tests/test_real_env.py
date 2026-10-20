@@ -1920,6 +1920,56 @@ def test_so101_selects_its_episode_wrapper_without_changing_generic_modes():
     assert WrapperStack._keyboard_wrapper_for_mode(object(), "start_end") is None
 
 
+def test_so101_success_holds_leader_before_processing_c(monkeypatch):
+    """A success key must not send the still-manual leader pose downstream."""
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, *args):
+            self.batches = [[], [], ["a"], ["c"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0)
+
+    class Env(gym.Env):
+        manual_start_hold_seconds = 0.0
+
+        def __init__(self):
+            self.events = []
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def hold_for_reset(self):
+            self.events.append("hold")
+
+        def get_hold_action(self, action):
+            self.events.append("hold_action")
+            return np.array([-1.0])
+
+        def step(self, action):
+            self.events.append("step")
+            self.actions.append(np.asarray(action).copy())
+            return {}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = Env()
+    wrapper = SO101StartEndWrapper(env)
+    wrapper.reset()
+
+    wrapper.step(np.array([1.0]))
+    wrapper.step(np.array([1.0]))
+    _, reward, terminated, _, info = wrapper.step(np.array([999.0]))
+
+    assert reward == 1.0
+    assert terminated is True
+    assert info["keyboard_event"] == "end_success"
+    assert env.actions[-1].tolist() == [-1.0]
+    assert env.events[-3:] == ["hold", "hold_action", "step"]
+
+
 def test_generic_start_end_holds_absolute_teleop_while_idle(monkeypatch):
     """Generic start/end collection keeps absolute teleop pose before a start."""
     from rlinf.envs.real.wrappers.episode import session as session_module

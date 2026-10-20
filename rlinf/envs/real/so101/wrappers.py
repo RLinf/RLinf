@@ -110,7 +110,15 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         elif aborted:
             self.before_recording_abort()
 
-        if not self._recording or started or aborted:
+        success = "c" in pressed and self._recording
+        if success:
+            # The leader can still be in the operator's hand on the key-down
+            # frame. Hold it before the wrapped environment sees this action.
+            self.before_recording_success()
+            self._recording = False
+            self._last_segment_ts = -math.inf
+
+        if not self._recording or started or aborted or success:
             action = self._hold_action(action)
 
         obs, reward, terminated, truncated, info = self.env.step(action)
@@ -148,11 +156,10 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
                     event = "segment"
                     segment_advance = True
                     self._last_segment_ts = now
-            elif key == "c" and self._recording:
+            elif key == "c" and success:
                 event = "end_success"
                 reward = 1.0
                 terminated = True
-                self.before_recording_success()
                 break
 
         info["pre_record"] = not self._recording
