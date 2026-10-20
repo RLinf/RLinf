@@ -208,6 +208,7 @@
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
    RoboTwin <embodied/robotwin>
+   RoboDojo <embodied/robodojo>
    RoboVerse <embodied/roboverse>
    Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
