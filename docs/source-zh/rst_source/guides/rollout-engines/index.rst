@@ -20,6 +20,8 @@ RLinf 任务一起启动或独立运行的 HTTP 服务。
        ``/generate`` / ``/v1/chat/completions`` 请求。
    * - :doc:`SGLang 版本切换 <../version>`
      - 在不同 SGLang 版本之间切换 rollout 引擎。
+   * - :doc:`PhyAI <phyai>`
+     - 使用 FSDP actor 和 PhyAI 的进程内 GPU rollout 后端，在 LIBERO 上训练 PI0.5。
 
 .. toctree::
    :hidden:
@@ -28,3 +30,4 @@ RLinf 任务一起启动或独立运行的 HTTP 服务。
    SGLang Server 与 Router <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
    SGLang 版本切换 <../version>
+   PhyAI <phyai>

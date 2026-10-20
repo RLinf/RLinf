@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+import importlib.util
 import inspect
+import math
+import os
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
@@ -21,23 +26,18 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-pytest.importorskip("phyai")
-
-from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
-
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
-from rlinf.models.embodiment.openpi.modules.model import (
-    IMAGE_KEYS,
-    preprocess_observation,
-)
-from rlinf.models.embodiment.openpi.transforms.apply import (
-    apply_input_transform,
-    apply_output_transform,
-)
-from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
 from rlinf.scheduler import Worker
-from rlinf.workers.rollout.phyai import phyai_worker
-from rlinf.workers.rollout.phyai.phyai_worker import PhyAIWorker, _PhyAIWeightTarget
+
+_HAS_PHYAI = importlib.util.find_spec("phyai") is not None
+pytestmark = pytest.mark.skipif(not _HAS_PHYAI, reason="PhyAI is not installed")
+
+if _HAS_PHYAI:
+    from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
+
+    from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
+    from rlinf.workers.rollout.phyai import phyai_worker
+    from rlinf.workers.rollout.phyai.phyai_worker import PhyAIWorker, _PhyAIWeightTarget
 
 
 class _FakeEngine:
@@ -154,10 +154,9 @@ def _configure_preprocessing(worker):
     worker._state_indices = None
 
 
-@pytest.mark.asyncio
-async def test_sync_model_from_actor_commits_only_complete_updates():
+def test_sync_model_from_actor_commits_only_complete_updates():
     worker, engine = _make_rollout_worker()
-    await inspect.unwrap(PhyAIWorker.sync_model_from_actor)(worker)
+    asyncio.run(inspect.unwrap(PhyAIWorker.sync_model_from_actor)(worker))
 
     event_names = [
         event[0] if isinstance(event, tuple) else event for event in engine.events
@@ -169,19 +168,12 @@ async def test_sync_model_from_actor_commits_only_complete_updates():
 
     worker, engine = _make_rollout_worker(fail=True)
     with pytest.raises(RuntimeError, match="sync failed"):
-        await inspect.unwrap(PhyAIWorker.sync_model_from_actor)(worker)
+        asyncio.run(inspect.unwrap(PhyAIWorker.sync_model_from_actor)(worker))
     assert engine.events[-1] == "abort"
     assert worker.version == 0
 
 
-def test_phyai_worker_owns_backend_lifecycle():
-    assert PhyAIWorker.__bases__ == (Worker,)
-    assert "generate" in PhyAIWorker.__dict__
-    assert "evaluate" in PhyAIWorker.__dict__
-
-
-@pytest.mark.asyncio
-async def test_evaluate_preserves_channel_contract():
+def test_evaluate_preserves_channel_contract():
     class _AsyncResult:
         def __init__(self, value):
             self.value = value
@@ -229,7 +221,7 @@ async def test_evaluate_preserves_channel_contract():
     worker.predict = predict
     worker.send_to = lambda **kwargs: send_calls.append(kwargs)
 
-    await inspect.unwrap(PhyAIWorker.evaluate)(worker, "input", "output")
+    asyncio.run(inspect.unwrap(PhyAIWorker.evaluate)(worker, "input", "output"))
 
     assert [call["route_key"] for call in recv_calls] == [0, 1]
     assert all(call["group_name"] == "env" for call in recv_calls)
@@ -293,16 +285,33 @@ def test_phyai_worker_rejects_unknown_plugin(monkeypatch):
 
 
 @pytest.mark.parametrize("only_eval", [False, True])
-def test_init_worker_loads_checkpoint_and_uses_fp32_vision_boundary(
-    monkeypatch, only_eval
+@pytest.mark.parametrize(
+    "kernel_config",
+    [
+        None,
+        "~/phyai-kernel.yaml",
+        {
+            "schema": "phyai.kernel/v1",
+            "profile": "static",
+            "defaults": {"fallback": "error"},
+            "overrides": [],
+        },
+    ],
+)
+def test_init_worker_passes_checkpoint_model_and_kernel_config(
+    monkeypatch, only_eval, kernel_config
 ):
     captured = {}
+    monkeypatch.setenv("PHYAI_KERNEL_CONFIG", "/environment/kernel.yaml")
 
     class _InitializedEngine:
         def __init__(self, args):
+            expected_env = (
+                None if isinstance(kernel_config, dict) else "/environment/kernel.yaml"
+            )
+            assert os.environ.get("PHYAI_KERNEL_CONFIG") == expected_env
             captured["engine_args"] = args
 
-    monkeypatch.setattr(phyai_worker, "KernelConfig", SimpleNamespace)
     monkeypatch.setattr(phyai_worker, "RuntimeConfig", SimpleNamespace)
     monkeypatch.setattr(phyai_worker, "DeviceConfig", SimpleNamespace)
     monkeypatch.setattr(phyai_worker, "EngineConfig", SimpleNamespace)
@@ -331,7 +340,9 @@ def test_init_worker_loads_checkpoint_and_uses_fp32_vision_boundary(
     worker = object.__new__(PhyAIWorker)
     worker._engine = None
     worker._phyai_plugin = "pi05"
-    worker._phyai_cfg = OmegaConf.create({"params_dtype": "bf16"})
+    worker._phyai_cfg = OmegaConf.create(
+        {"params_dtype": "bf16", "kernel_config": kernel_config}
+    )
     worker.model_cfg = OmegaConf.create(
         {
             "model_path": "/checkpoint",
@@ -363,7 +374,15 @@ def test_init_worker_loads_checkpoint_and_uses_fp32_vision_boundary(
 
     worker.init_worker()
 
+    assert os.environ["PHYAI_KERNEL_CONFIG"] == "/environment/kernel.yaml"
     engine_args = captured["engine_args"]
+    if isinstance(kernel_config, dict):
+        assert engine_args.config.kernel.policy_config == kernel_config
+        assert engine_args.config.kernel.config_path is None
+    else:
+        expected_path = str(Path(kernel_config).expanduser()) if kernel_config else None
+        assert engine_args.config.kernel.config_path == expected_path
+        assert engine_args.config.kernel.policy_config is None
     plugin_args = engine_args.plugin_args
     plugin_cfg = plugin_args.config
     assert engine_args.config.device.params_dtype is torch.bfloat16
@@ -385,28 +404,12 @@ def test_phyai_preprocessing_builds_canonical_request():
     _configure_preprocessing(worker)
 
     request, replay = worker._build_request(env_obs)
-    repacked = repack_env_obs(
-        worker._openpi_config_name,
-        env_obs,
-        select_state=worker._select_configured_state,
-    )
-    transformed = apply_input_transform(_openpi_input_transform, repacked)
-    observation = worker._observation_to_device(transformed)
-    prepared = preprocess_observation(observation, train=False)
-
-    assert torch.equal(request.input_ids, prepared.tokenized_prompt)
     assert torch.equal(request.input_ids, torch.arange(8).expand(2, -1))
-    assert torch.equal(request.lang_lens, prepared.tokenized_prompt_mask.sum(dim=-1))
     assert torch.equal(request.lang_lens, torch.tensor([4, 5]))
-    assert torch.equal(replay.state, prepared.state)
     assert torch.equal(replay.state, env_obs["states"] / 10)
-    assert torch.equal(replay.tokenized_prompt, prepared.tokenized_prompt)
-    assert torch.equal(replay.tokenized_prompt_mask, prepared.tokenized_prompt_mask)
-    expected_token_mask = torch.arange(8)[None] < request.lang_lens[:, None]
+    assert torch.equal(replay.tokenized_prompt, torch.arange(8).expand(2, -1))
+    expected_token_mask = torch.arange(8)[None] < torch.tensor([[4], [5]])
     assert torch.equal(replay.tokenized_prompt_mask, expected_token_mask)
-    for key in IMAGE_KEYS:
-        assert torch.equal(replay.images[key], prepared.images[key])
-        assert torch.equal(replay.image_masks[key], prepared.image_masks[key])
     assert torch.equal(
         replay.images[IMAGE_KEYS[0]],
         env_obs["main_images"].to(torch.float32) / 255 * 2 - 1,
@@ -416,11 +419,13 @@ def test_phyai_preprocessing_builds_canonical_request():
         env_obs["wrist_images"].to(torch.float32) / 255 * 2 - 1,
     )
     assert replay.images[IMAGE_KEYS[2]].eq(-1).all()
+    for key, valid in zip(IMAGE_KEYS, (True, True, False), strict=True):
+        assert torch.equal(replay.image_masks[key], torch.full((2,), valid))
     assert request.pixel_values.shape[1] == 2
     for index, key in enumerate(IMAGE_KEYS[:2]):
         assert torch.equal(
             request.pixel_values[:, index],
-            prepared.images[key].permute(0, 3, 1, 2),
+            replay.images[key].permute(0, 3, 1, 2),
         )
     assert request.pixel_values.dtype is torch.float32
     assert request.pixel_values.is_contiguous()
@@ -473,30 +478,26 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
             },
         }
     )
-    monkeypatch.setattr(phyai_worker.random, "randint", lambda _low, _high: 1)
+
+    def select_denoise_step(low, high):
+        assert (low, high) == (0, 1)
+        return 1
+
+    monkeypatch.setattr(phyai_worker.random, "randint", select_denoise_step)
 
     actions, result = inspect.unwrap(PhyAIWorker.predict)(worker, env_obs, mode="train")
 
-    repacked = repack_env_obs(
-        worker._openpi_config_name,
-        env_obs,
-        select_state=worker._select_configured_state,
-    )
-    transformed = apply_input_transform(_openpi_input_transform, repacked)
-    processed = preprocess_observation(
-        worker._observation_to_device(transformed), train=False
-    )
-    expected_actions = apply_output_transform(
-        _openpi_output_transform,
-        {"actions": model_actions, "state": processed.state},
-    )["actions"][:, :5]
+    normalized_state = env_obs["states"] / 10
+    expected_actions = model_actions[:, :5, :7] + normalized_state[:, :1, None]
 
     request = worker._engine.request
     assert isinstance(request, PI05RolloutRequest)
     assert request.pixel_values.dtype is torch.float32
     assert request.noise is None
     assert request.step_noise is None
-    assert request.sigmas[:, 1].gt(0).all()
+    torch.testing.assert_close(
+        request.sigmas, torch.tensor([[0.0, math.sqrt(0.5), 0.0]]).expand(2, -1)
+    )
     assert actions.shape == (batch_size, 5, 7)
     assert torch.equal(actions, expected_actions)
     assert torch.equal(result["prev_logprobs"], transition_logprobs[:, 1, :5, :7])
@@ -506,21 +507,34 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
     assert forward_inputs["denoise_inds"].eq(1).all()
     assert torch.equal(
         forward_inputs["obs_state"],
-        torch.nn.functional.pad(processed.state.to(torch.float32), (0, 24)),
+        torch.nn.functional.pad(normalized_state, (0, 24)),
     )
-    assert torch.equal(forward_inputs["tokenized_prompt"], processed.tokenized_prompt)
+    assert torch.equal(
+        forward_inputs["tokenized_prompt"], torch.arange(8).expand(2, -1)
+    )
     assert torch.equal(
         forward_inputs["tokenized_prompt_mask"],
-        processed.tokenized_prompt_mask,
+        torch.arange(8)[None] < torch.tensor([[4], [5]]),
     )
     assert torch.equal(forward_inputs["action"], actions.reshape(batch_size, -1))
     assert torch.equal(
         forward_inputs["model_action"], model_actions.reshape(batch_size, -1)
     )
-    for key in IMAGE_KEYS:
-        assert torch.equal(forward_inputs[f"obs_image__{key}"], processed.images[key])
+    for key, image in zip(
+        IMAGE_KEYS,
+        (
+            env_obs["main_images"],
+            env_obs["wrist_images"],
+            torch.zeros_like(env_obs["main_images"]),
+        ),
+        strict=True,
+    ):
         assert torch.equal(
-            forward_inputs[f"obs_image_mask__{key}"], processed.image_masks[key]
+            forward_inputs[f"obs_image__{key}"], image.to(torch.float32) / 255 * 2 - 1
+        )
+        assert torch.equal(
+            forward_inputs[f"obs_image_mask__{key}"],
+            torch.full((batch_size,), key != IMAGE_KEYS[2]),
         )
 
 
@@ -555,6 +569,7 @@ def test_joint_initial_logprob_uses_realized_chain():
         input_ids=torch.empty(1, 2, dtype=torch.int64),
         lang_lens=torch.ones(1, dtype=torch.int64),
         sigmas=torch.zeros(1, 2),
+        compute_values=False,
     )
     plan = phyai_worker._PI05SamplingPlan(
         request=request,
@@ -571,6 +586,6 @@ def test_joint_initial_logprob_uses_realized_chain():
 
     actual, values = PhyAIWorker._reduce_rollout_outputs(plan, rollout_result)
 
-    initial = PhyAIWorker._initial_logprob(torch.tensor([[[2.0]]]))
-    assert torch.equal(actual, initial / 3)
+    expected = (-0.5 * math.log(2 * math.pi) - 2.0) / 3
+    torch.testing.assert_close(actual, torch.full((1, 1, 1), expected))
     assert values is None

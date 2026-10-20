@@ -103,42 +103,10 @@ PPO 的目标函数定义如下：
 
       huber_delta: 10.0         # 价值训练中 Huber 损失的 Delta 参数
 
-PhyAI PI0.5 rollout backend
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Rollout 与 Actor 的重要性采样修正
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-在同一个虚拟环境中安装 RLinf、OpenPI、LIBERO 和 PhyAI rollout backend：
-
-.. code-block:: bash
-
-   bash requirements/install.sh \
-     --python 3.12 \
-     --torch 2.11.0 \
-     --install-rlinf \
-     embodied \
-     --model openpi \
-     --env libero \
-     --engine phyai
-
-PhyAI 包使用 ``--no-deps`` 安装，因此 RLinf 会保留 OpenPI 已安装的
-Torch 和 Transformers 版本，并从
-``requirements/agentic/phyai_0.1.1_cu13.txt`` 安装经验证的额外运行时依赖。
-三个 PhyAI 包会从官方 PhyAI wheel index 安装，并选择 ``0.1.1`` 发布线中的
-最新版本（包括预发布版本）；用户不需要 clone PhyAI 源码或执行 editable install。
-
-下载 PI0.5 checkpoint，并在
-``examples/embodiment/config/libero_spatial_ppo_openpi_pi05_phyai.yaml`` 中设置
-``actor.model.model_path``。示例会读取 checkpoint 内的
-``physical-intelligence/libero/norm_stats.json``，rollout model 会复用权重和
-归一化统计。然后运行：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh \
-     libero_spatial_ppo_openpi_pi05_phyai
-
-当 rollout 生成和 Actor 训练使用不同的推理实现时，即使同步相同权重，二者的动作
-对数概率也可能不同。同步具身 PPO 可以使用 Actor 重放已采样的 transition，并应用与
-reasoning 训练相同的重要性采样修正：
+当 rollout 和 actor 使用不同的推理实现时，即使同步相同权重，二者的动作对数概率也可能不同。同步具身 PPO 可以用 actor 重放已采样的 transition，再应用与 reasoning 训练相同的重要性采样修正：
 
 .. code-block:: yaml
 
@@ -147,16 +115,9 @@ reasoning 训练相同的重要性采样修正：
       importance_sampling_clip: 1.0
       recompute_logprobs: True
 
-启用 ``algorithm.recompute_logprobs`` 后，Actor 会在训练前重新计算旧策略的
-log-probability。设 :math:`q`\ 为 rollout 行为策略，:math:`p`\ 为 Actor 重放策略；
-该修正使用 :math:`\min(p/q,\;c)`\ 乘以 advantage，并将 :math:`p`\ 作为 PPO 的旧策略
-锚点。概率比会按照 ``logprob_type`` 配置的粒度计算。value 预测和 GAE 仍使用 rollout
-返回的 value。
+启用 ``algorithm.recompute_logprobs`` 后，actor 会在训练前重算旧 policy 的 log-probability。设 :math:`q` 为 rollout 的行为 policy，:math:`p` 为 actor 重放的 policy；修正时将 advantage 乘以 :math:`\min(p/q,\;c)`，并用 :math:`p` 作为 PPO 的旧 policy 锚点。概率比按 ``logprob_type`` 配置的粒度计算；value 预测和 GAE 仍使用 rollout 返回的 value。
 
-该模式要求使用同步、非流水线的具身训练，且 ``loss_type`` 必须为 ``actor`` 或
-``actor_critic``。可以监控 ``actor/importance_sampling_weight``、
-``actor/importance_sampling_clip_fraction``、``actor/behav_approx_kl`` 和
-``actor/recomputed_logprob_abs_diff`` 来衡量 rollout 与 Actor 的差异。
+该模式要求使用同步、非流水线的具身训练，``loss_type`` 为 ``actor`` 或 ``actor_critic``。通过 ``actor/importance_sampling_weight``、``actor/importance_sampling_clip_fraction``、``actor/behav_approx_kl`` 和 ``actor/recomputed_logprob_abs_diff`` 监控 rollout 与 actor 的差异。
 
 3.2. LLM 推理任务
 ~~~~~~~~~~~~~~~~~

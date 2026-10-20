@@ -43,7 +43,7 @@
       :link: rollout-engines/index
       :link-type: doc
 
-      启动 sglang server 与 router，向外暴露统一的推理入口。
+      配置具身 rollout 后端，向外暴露统一的推理入口。
 
 .. toctree::
    :hidden:
