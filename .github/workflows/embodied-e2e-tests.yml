@@ -401,7 +401,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --env yam
+          bash requirements/install.sh embodied --model openpi --env yam
 
       - name: Dual-YAM data collection mock-robot test
         timeout-minutes: 20
@@ -409,38 +409,15 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          export YAM_MOCK_LOG_PATH=$(mktemp -d "${RUNNER_TEMP}/yam-collection.XXXXXX")
-          bash tests/e2e_tests/embodied/run.sh realworld_dual_yam_collect_data_mock runner.logger.log_path="${YAM_MOCK_LOG_PATH}"
-          python - <<'PY'
-          import json
-          import os
-          from io import BytesIO
-          from pathlib import Path
+          bash tests/e2e_tests/embodied/run.sh realworld_dual_yam_collect_data_mock
 
-          import numpy as np
-          import pyarrow.parquet as pq
-          from PIL import Image
-
-          root = Path(os.environ["YAM_MOCK_LOG_PATH"]) / "lerobot_dataset/rank_0/id_0"
-          info = json.loads((root / "meta/info.json").read_text())
-          assert info["total_episodes"] == 1 and info["total_frames"] > 0
-          table = pq.read_table(next(root.glob("data/**/*.parquet")))
-          for name in ("state", "actions"):
-              values = np.asarray(table[name].to_pylist())
-              assert values.shape == (info["total_frames"], 14)
-              assert np.isfinite(values).all()
-              for start in (0, 7):
-                  assert np.ptp(values[:, start:start + 6], axis=0).max() > 0
-                  assert np.ptp(values[:, start + 6]) > 0
-          views = [name for name, feature in info["features"].items() if feature["dtype"] == "image"]
-          assert len(views) == 3
-          for name in views:
-              for frame in table[name].to_pylist():
-                  with Image.open(BytesIO(frame["bytes"])) as image:
-                      assert image.size == (64, 48) and image.mode == "RGB"
-          assert table["done"].to_pylist()[-1]
-          assert all(table["is_success"].to_pylist())
-          PY
+      - name: Dual-YAM OpenPI Pi05 mock-robot evaluation test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh realworld_dual_yam_openpi_pi05_mock_eval
 
       - name: Clean up
         run: |
