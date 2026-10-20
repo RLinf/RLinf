@@ -16,38 +16,37 @@
 # - RMSNorm reduction order, compiled RoPE, and GEMM selection add smaller
 #   numerical differences.
 # - Repeated Euler updates can amplify these differences.
-#
-# Author: chenghua.wang
 
-schema: phyai.kernel/v1
-profile: static
-defaults:
-  fallback: error
+kernel_config:
+  schema: phyai.kernel/v1
+  profile: static
+  defaults:
+    fallback: error
 
-overrides:
-  - id: pi05-rlinf-paged-fa2
-    priority: 100
-    match:
-      op: attention_paged
-      model.family: pi05
-    use: flashinfer.attention_paged.fa2
+  overrides:
+    - id: pi05-rlinf-paged-fa2
+      priority: 100
+      match:
+        op: attention_paged
+        model.family: pi05
+      use: flashinfer.attention_paged.fa2
 
-  - id: pi05-rlinf-exact-geglu
-    priority: 100
-    match:
-      op: activation
-      model.family: pi05
-      attrs:
-        activation: gelu
-        gated: true
-    use: flashinfer.activation.gelu_and_mul
+    - id: pi05-rlinf-exact-geglu
+      priority: 100
+      match:
+        op: activation
+        model.family: pi05
+        attrs:
+          activation: gelu
+          gated: true
+      use: flashinfer.activation.gelu_and_mul
 
-  - id: pi05-rlinf-exact-gelu
-    priority: 100
-    match:
-      op: activation
-      model.family: pi05
-      attrs:
-        activation: gelu
-        gated: false
-    use: torch.activation.gelu
+    - id: pi05-rlinf-exact-gelu
+      priority: 100
+      match:
+        op: activation
+        model.family: pi05
+        attrs:
+          activation: gelu
+          gated: false
+      use: torch.activation.gelu

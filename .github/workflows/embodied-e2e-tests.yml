@@ -1393,15 +1393,10 @@ jobs:
     runs-on: embodied
     timeout-minutes: 90
     env:
-      CUDA_VISIBLE_DEVICES: 0,1,2,3
+      CUDA_VISIBLE_DEVICES: 0,1
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-
-      - name: Check GPU resources
-        run: |
-          nvidia-smi
-          test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -ge 4
 
       - name: Create PhyAI environment
         timeout-minutes: 45
@@ -1421,62 +1416,13 @@ jobs:
             --env libero \
             --engine phyai
 
-      - name: Check PhyAI package provenance
-        run: |
-          unset PYTHONPATH
-          source .venv/bin/activate
-          python - <<'PY'
-          import importlib.metadata
-          import os
-          from pathlib import Path
-
-          import phyai
-          import torch
-          import transformers
-
-          venv = Path(os.environ["VIRTUAL_ENV"]).resolve()
-          phyai_path = Path(phyai.__file__).resolve()
-          if not phyai_path.is_relative_to(venv):
-              raise RuntimeError(f"PhyAI was imported outside the venv: {phyai_path}")
-          if torch.cuda.device_count() != 4:
-              raise RuntimeError(
-                  f"Expected four visible GPUs, got {torch.cuda.device_count()}."
-              )
-          versions = {
-              name: importlib.metadata.version(name)
-              for name in ("phyai", "phyai-kernel", "phyai-ext")
-          }
-          print(
-              f"python={os.sys.version.split()[0]} torch={torch.__version__} "
-              f"transformers={transformers.__version__} packages={versions} "
-              f"phyai_path={phyai_path}"
-          )
-          PY
-
-      - name: Run PhyAI PPO closed-loop test
+      - name: Libero-Spatial PPO OpenPI Pi05 PhyAI test
         timeout-minutes: 40
         run: |
-          set -o pipefail
           unset PYTHONPATH
+          export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          ray stop --force || true
-          export REPO_PATH="$GITHUB_WORKSPACE"
-          export PHYAI_E2E_OUTPUT="$RUNNER_TEMP/phyai-e2e/results"
-          export MUJOCO_GL=egl
-          export PYOPENGL_PLATFORM=egl
-          mkdir -p "$PHYAI_E2E_OUTPUT"
-          python tests/e2e_tests/embodied/run_phyai_e2e.py \
-            2>&1 | tee "$RUNNER_TEMP/phyai-e2e/train.log"
-
-      - name: Upload PhyAI E2E logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: phyai-openpi-libero-4gpu
-          path: |
-            ${{ runner.temp }}/phyai-e2e/train.log
-            ${{ runner.temp }}/phyai-e2e/results
-          retention-days: 7
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_pi05_phyai_ci
 
       - name: Clean up
         if: always()
@@ -1484,7 +1430,6 @@ jobs:
           source .venv/bin/activate 2>/dev/null || true
           ray stop --force || true
           rm -rf "$GITHUB_WORKSPACE/.venv"
-          rm -rf "$RUNNER_TEMP/phyai-e2e"
           uv cache prune
 
   embodied-openpi-maniskill-gsenv-test:

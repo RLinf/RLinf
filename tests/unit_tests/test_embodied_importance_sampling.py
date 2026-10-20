@@ -81,17 +81,28 @@ def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
     assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(11.75)
 
 
-@pytest.mark.parametrize("logprob_type", ["token_level", "action_level", "chunk_level"])
-def test_embodied_importance_sampling_uses_loss_logprob_granularity(logprob_type):
-    rollout_logprobs = torch.zeros(2, 1, 2, dtype=torch.float32)
-    per_element_gap = math.log(2.0)
-    if logprob_type in {"action_level", "chunk_level"}:
-        per_element_gap /= 2.0
-    recomputed_logprobs = torch.full_like(rollout_logprobs, per_element_gap)
-    advantages = (
-        torch.ones(2, 1, dtype=torch.float32)
-        if logprob_type == "token_level"
-        else torch.ones(2, dtype=torch.float32)
+@pytest.mark.parametrize(
+    (
+        "logprob_type",
+        "expected_loss",
+        "mean_weight",
+        "max_weight",
+        "clip_fraction",
+        "log_gap",
+    ),
+    [
+        ("token_level", -2.5, 2.5, 3.0, 0.0, math.log(6.0) / 2),
+        ("action_level", -4.5, 6.5, 9.0, 0.5, math.log(6.0)),
+        ("chunk_level", -5.0, 36.0, 36.0, 1.0, math.log(36.0)),
+    ],
+)
+def test_embodied_importance_sampling_uses_loss_logprob_granularity(
+    logprob_type, expected_loss, mean_weight, max_weight, clip_fraction, log_gap
+):
+    rollout_logprobs = torch.zeros(2, 2, 2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [[[math.log(2.0)] * 2, [math.log(3.0)] * 2]] * 2,
+        dtype=torch.float32,
     )
 
     loss, metrics = policy_loss(
@@ -103,23 +114,28 @@ def test_embodied_importance_sampling_uses_loss_logprob_granularity(logprob_type
         logprobs=recomputed_logprobs.clone(),
         old_logprobs=recomputed_logprobs,
         rollout_logprobs=rollout_logprobs,
-        advantages=advantages,
+        advantages=torch.ones(2, dtype=torch.float32),
         clip_ratio_low=0.2,
         clip_ratio_high=0.2,
-        importance_sampling_clip=1.5,
+        importance_sampling_clip=5.0,
     )
 
-    assert loss.item() == pytest.approx(-1.5)
+    assert loss.item() == pytest.approx(expected_loss)
     assert metrics["actor/ratio"] == pytest.approx(1.0)
-    assert metrics["actor/importance_sampling_weight"] == pytest.approx(2.0)
-    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(2.0)
-    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(1.0)
-    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(math.log(2.0))
+    assert metrics["actor/importance_sampling_weight"] == pytest.approx(mean_weight)
+    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(max_weight)
+    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(
+        clip_fraction
+    )
+    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(log_gap)
 
 
 def test_embodied_importance_sampling_metrics_broadcast_loss_mask():
     rollout_logprobs = torch.zeros(1, 2, 2, dtype=torch.float32)
-    recomputed_logprobs = torch.full_like(rollout_logprobs, math.log(2.0))
+    recomputed_logprobs = torch.tensor(
+        [[[math.log(2.0), math.log(4.0)], [math.log(128.0), math.log(256.0)]]],
+        dtype=torch.float32,
+    )
 
     _, metrics = policy_loss(
         task_type="embodied",
@@ -134,11 +150,15 @@ def test_embodied_importance_sampling_metrics_broadcast_loss_mask():
         loss_mask=torch.tensor([[True, False]]),
         clip_ratio_low=0.2,
         clip_ratio_high=0.2,
-        importance_sampling_clip=2.0,
+        importance_sampling_clip=3.0,
     )
 
-    assert metrics["actor/importance_sampling_weight"] == pytest.approx(2.0)
-    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(2.0)
+    assert metrics["actor/importance_sampling_weight"] == pytest.approx(3.0)
+    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(4.0)
+    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(0.5)
+    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(
+        math.log(8.0) / 2
+    )
 
 
 def test_embodied_loss_is_unchanged_without_importance_sampling():

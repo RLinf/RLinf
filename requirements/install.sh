@@ -145,10 +145,10 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
-    --engine <name>        Backend engine: ${SUPPORTED_ENGINES[*]}. Use phyai with
-                           embodied OpenPI/LIBERO; agentic supports sglang (default)
-                           and vllm. Use separate venvs for engines with incompatible
-                           kernel dependencies.
+    --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
+                           (default: sglang, vllm, phyai). One venv holds one engine -- they pin the
+                           same kernel libraries to different versions, so run install.sh
+                           twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
                            versions in requirements/agentic/; torch is derived from it.
                            Applies to target agentic and to --model sglang / qwen3_vl.

@@ -18,6 +18,7 @@ import gc
 import math
 import os
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -262,14 +263,20 @@ class PhyAIWorker(Worker):
             self._phyai_cfg.get("use_cuda_graph", self.only_eval)
         )
         runtime_values.setdefault("use_cuda_graph", requested_cuda_graph)
-        kernel_config_path = self._phyai_cfg.get("kernel_config")
-        kernel_cfg = KernelConfig(
-            config_path=(
-                str(Path(kernel_config_path).expanduser())
-                if kernel_config_path
-                else None
+        kernel_config = self._phyai_cfg.get("kernel_config")
+        if isinstance(kernel_config, Mapping):
+            policy_config = (
+                OmegaConf.to_container(kernel_config, resolve=True)
+                if OmegaConf.is_config(kernel_config)
+                else dict(kernel_config)
             )
-        )
+            kernel_cfg = KernelConfig(policy_config=policy_config)
+        else:
+            kernel_cfg = KernelConfig(
+                config_path=(
+                    str(Path(kernel_config).expanduser()) if kernel_config else None
+                )
+            )
 
         configured_max_batch_size = self._phyai_cfg.get("max_batch_size", None)
         max_batch_size = int(
@@ -327,14 +334,15 @@ class PhyAIWorker(Worker):
             "model_config_source=rlinf, "
             f"max_batch_size={max_batch_size}, num_images={num_images}, "
             f"device={self._engine_device}, dtype={dtype}, "
-            f"kernel_config={kernel_cfg.config_path}."
+            f"kernel_config={'inline' if isinstance(kernel_config, Mapping) else kernel_cfg.config_path}."
         )
         # RLinf's worker-group launcher exports its own WORLD_SIZE/RANK. The
         # single-GPU PhyAI engine must resolve as an independent replica.
-        launcher_values = {
-            key: os.environ.pop(key, None)
-            for key in ("WORLD_SIZE", "RANK", "MASTER_ADDR", "MASTER_PORT")
-        }
+        launcher_keys = ["WORLD_SIZE", "RANK", "MASTER_ADDR", "MASTER_PORT"]
+        if isinstance(kernel_config, Mapping):
+            # Explicit Hydra rules take precedence over a kernel file from the environment.
+            launcher_keys.append("PHYAI_KERNEL_CONFIG")
+        launcher_values = {key: os.environ.pop(key, None) for key in launcher_keys}
         try:
             engine = Engine(
                 EngineArgs(

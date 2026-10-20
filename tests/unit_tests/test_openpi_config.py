@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import inspect
 from pathlib import Path
 
@@ -21,32 +22,44 @@ from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from rlinf.config import validate_embodied_cfg
+from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
-def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch):
+@pytest.fixture
+def phyai_config(monkeypatch):
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
-    monkeypatch.delenv("PHYAI_KERNEL_CONFIG", raising=False)
     with initialize_config_dir(config_dir=str(config_dir), version_base=None):
-        cfg = compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+        return compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+
+
+def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch, phyai_config):
+    monkeypatch.setenv("PHYAI_KERNEL_CONFIG", "/unused/kernel.yaml")
+    cfg = phyai_config
+    validate_embodied_cfg(cfg)
 
     assert cfg.rollout.model.model_type == cfg.actor.model.model_type
     assert cfg.rollout.model.openpi.config_name == cfg.actor.model.openpi.config_name
     assert cfg.rollout.model.openpi.num_images_in_input == 2
     assert cfg.rollout.model.num_action_chunks == cfg.actor.model.num_action_chunks
     assert cfg.rollout.model.model_path == cfg.actor.model.model_path
-    assert cfg.rollout.phyai.kernel_config.endswith(
-        "examples/embodiment/config/hybrid_engines/phyai.yaml"
+    assert cfg.rollout.model.openpi_data == cfg.actor.model.openpi_data
+    kernel_config = OmegaConf.to_container(
+        cfg.rollout.phyai.kernel_config, resolve=True
     )
-    assert Path(cfg.rollout.phyai.kernel_config).is_file()
+    assert kernel_config["schema"] == "phyai.kernel/v1"
+    assert kernel_config["profile"] == "static"
+    assert kernel_config["defaults"]["fallback"] == "error"
+    assert [rule["use"] for rule in kernel_config["overrides"]] == [
+        "flashinfer.attention_paged.fa2",
+        "flashinfer.activation.gelu_and_mul",
+        "torch.activation.gelu",
+    ]
 
 
-def test_phyai_training_requires_bucket_weight_sync(monkeypatch):
-    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
-    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
-    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
-        cfg = compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+def test_phyai_training_requires_bucket_weight_sync(phyai_config):
+    cfg = phyai_config
     cfg.weight_syncer.type = "patch"
 
     with pytest.raises(AssertionError, match="weight_syncer.type='bucket'"):
@@ -79,12 +92,9 @@ def test_phyai_training_requires_bucket_weight_sync(monkeypatch):
     ],
 )
 def test_phyai_training_rejects_unsupported_algorithms(
-    monkeypatch, path, value, message
+    phyai_config, path, value, message
 ):
-    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
-    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
-    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
-        cfg = compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+    cfg = phyai_config
     if path == "algorithm.adv_type":
         cfg.algorithm.recompute_logprobs = False
     OmegaConf.update(cfg, path, value)
@@ -103,42 +113,32 @@ def test_phyai_training_rejects_unsupported_algorithms(
         ("actor.model.openpi.noise_method", "flow_noise", "flow_ode or flow_sde"),
     ],
 )
-def test_phyai_training_validates_actor_contract(monkeypatch, path, value, message):
-    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
-    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
-    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
-        cfg = compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+def test_phyai_training_validates_actor_contract(phyai_config, path, value, message):
+    cfg = phyai_config
     OmegaConf.update(cfg, path, value)
 
     with pytest.raises(AssertionError, match=message):
         validate_embodied_cfg(cfg)
 
 
-@pytest.mark.asyncio
-async def test_actor_weight_sync_uses_selective_state():
-    class _SenderSyncer:
-        def __init__(self) -> None:
-            self.initialized = False
-            self.names = []
-            self.init_calls = []
-            self.sync_calls = []
+def test_actor_weight_sync_uses_selective_state():
+    sent = []
 
-        def sender_initialized(self):
-            return self.initialized
+    class _SendResult:
+        async def async_wait(self):
+            return None
 
-        async def init_sender(self, *, param_names_need_sync, **_kwargs):
-            self.initialized = True
-            self.names = list(param_names_need_sync)
-            self.init_calls.append(self.names)
-
-        async def sync(self, _state_dict, _send, version):
-            self.sync_calls.append((list(self.names), version))
+    def broadcast(data, **_kwargs):
+        sent.append(data)
+        return _SendResult()
 
     actor = object.__new__(EmbodiedFSDPActor)
     actor.enable_offload = False
-    actor.weight_syncer = _SenderSyncer()
+    actor.weight_syncer = BucketWeightSyncer(
+        bucket_size=1024, bucket_dtype=None, bucket_device="cpu"
+    )
     actor.param_names_need_sync = ["model.trainable", "value_head.weight"]
-    actor._is_weight_sender = False
+    actor._is_weight_sender = True
     actor._sync_weight_comm_options = None
     actor._group_name = "actor"
     actor._rollout_group_name = "rollout"
@@ -151,14 +151,20 @@ async def test_actor_weight_sync_uses_selective_state():
     actor.version = 3
     actor.get_rollout_sync_version = lambda: 7
     actor.log_info = lambda _message: None
+    actor.broadcast = broadcast
 
     sync = inspect.unwrap(EmbodiedFSDPActor.sync_model_to_rollout)
-    await sync(actor)
-    await sync(actor)
+    asyncio.run(sync(actor))
+    asyncio.run(sync(actor))
 
-    selected = ["model.trainable", "value_head.weight"]
-    assert actor.weight_syncer.init_calls == [selected]
-    assert actor.weight_syncer.sync_calls == [
-        (selected, 7),
-        (selected, 7),
-    ]
+    assert len(sent) == 2
+    for bucket in sent:
+        assert set(bucket) == {
+            "model.trainable",
+            "value_head.weight",
+            "total_buckets",
+            "syncer_version",
+        }
+        assert bucket["syncer_version"].item() == 7
+        assert torch.equal(bucket["model.trainable"], torch.ones(1))
+        assert torch.equal(bucket["value_head.weight"], torch.ones(1))
