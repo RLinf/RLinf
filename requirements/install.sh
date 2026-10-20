@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -2557,6 +2557,13 @@ EOF
             install_flash_attn
             install_robotwin_env
             ;;
+        robodojo)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_robodojo_env
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            ;;
         isaaclab)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3216,6 +3223,10 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        robodojo)
+            install_common_embodied_deps
+            install_robodojo_env
+            ;;
         libero|maniskill_libero)
             install_common_embodied_deps
             install_${ENV_NAME}_env
@@ -3720,6 +3731,59 @@ install_xsquare_turtle2_env() {
 
 install_gim_arm_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/gim_arm.txt"
+}
+
+install_robodojo_env() {
+    # The runtime distribution owns the simulator stack: Isaac Sim 5.1, the
+    # IsaacLab fork RoboDojo tracks, cuRobo and the Torch family they need.
+    # Installing it here keeps those pins out of the rest of the environment.
+    local override_file="$SCRIPT_DIR/embodied/envs/robodojo-override.txt"
+    local runtime_ref="${ROBODOJO_RUNTIME_REF:-6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7}"
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    index_args+=(--extra-index-url https://pypi.nvidia.com)
+
+    # Torch first: the runtime pins torch==2.7.0, and cuRobo is a source build
+    # that compiles against whichever Torch is already installed. TORCH_CUDA_ARCH_LIST
+    # only affects that build.
+    #
+    # ``--no-config`` is required here: the repository's [tool.uv]
+    # override-dependencies pins torch==2.11.0 for every other environment, and
+    # uv applies that override to ``uv pip install`` as well, silently replacing
+    # the runtime's torch==2.7.0. The simulator stack must resolve on its own
+    # pins, so the RoboDojo installs below ignore pyproject.toml and use the
+    # compatibility overrides from the upstream simulator installer.
+    if [ "$PLATFORM" = "nvidia" ]; then
+        local cuda_mm cuda_major cuda_minor
+        cuda_mm=$(detect_cuda_major_minor) || {
+            echo "Could not detect CUDA version. Cannot build the RoboDojo environment." >&2
+            exit 1
+        }
+        cuda_major="${cuda_mm%% *}"
+        cuda_minor="${cuda_mm##* }"
+        if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+        else
+            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+        fi
+    fi
+
+    uv pip install --no-config --prerelease=allow \
+        --overrides "$override_file" "${index_args[@]}" \
+        torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
+
+    # cuRobo and the IsaacLab fork are pinned to the revisions the RoboDojo
+    # runtime was validated with. Bump the runtime, override file, and these
+    # revisions together after revalidating.
+    #   cuRobo    yuechen0614/curobo    895c6517243f8cb091c73c018c8167192d39599a
+    #   IsaacLab  yuechen0614/IsaacLab  afca7b09d60d8beb9c1cb28b43066499940b969b
+    uv pip install --no-config --prerelease=allow --no-build-isolation \
+        --overrides "$override_file" \
+        "nvidia-curobo[cu12] @ git+${GITHUB_PREFIX}https://github.com/yuechen0614/curobo.git@895c6517243f8cb091c73c018c8167192d39599a"
+
+    uv pip install --no-config --prerelease=allow \
+        --overrides "$override_file" "${index_args[@]}" \
+        "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
 }
 
 install_robotwin_env() {
