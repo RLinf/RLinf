@@ -14,35 +14,33 @@
 
 """Cosmos3 SFT dataloader builder.
 
-The batch structure ``OmniMoTModel.training_step`` consumes (per-sample grouped
-lists for video / text_token_ids / action, packed under a token budget) is
-produced by cosmos's own ``PackingDataLoader``.
+The batch structure ``OmniMoTModel.training_step`` consumes is produced by
+cosmos's own ``PackingDataLoader``, using ``actor.micro_batch_size`` as its
+sample-count limit.
 """
 
 from __future__ import annotations
 
 import contextlib
-import os
 
+from rlinf.models.embodiment.cosmos3.cosmos3_config import (
+    DATA_EXPERIMENTS,
+    LIBERO_SUITES,
+    build_cosmos3_config,
+    cosmos_framework_root,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
-# Now the cosmos3 model just support libero in RLinf.
-_DATA_TYPE_TO_EXPERIMENT = {
-    "libero_10": "action_policy_libero_nano",  # libero_10 task, Default Settings
-    "libero_all": "action_policy_libero_all_nano",  # libero_all task
-}
-
-_VALID_DATA_TYPES = frozenset(_DATA_TYPE_TO_EXPERIMENT.keys())
+_VALID_DATA_TYPES = frozenset(DATA_EXPERIMENTS)
 
 
 def _detect_data_type(data_paths: str) -> str:
     """Auto-detect data_type from the dataset directory structure."""
     import os as _os
 
-    _LIBERO_SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
-    if all(_os.path.isdir(_os.path.join(data_paths, s)) for s in _LIBERO_SUITES):
+    if all(_os.path.isdir(_os.path.join(data_paths, s)) for s in LIBERO_SUITES):
         return "libero_all"
     return "libero_10"
 
@@ -53,11 +51,7 @@ def build_cosmos3_sft_dataloader(
     eval_dataset: bool = False,
 ):
     """Build the Cosmos3 action-policy SFT dataloader."""
-    from cosmos_framework.configs.base.config import make_config
-    from cosmos_framework.utils.config_helper import override
     from cosmos_framework.utils.lazy_config import instantiate
-
-    from rlinf.models.embodiment.cosmos3 import _cosmos_framework_root
 
     if eval_dataset:
         raise NotImplementedError("Cosmos3 SFT eval dataloader is not supported yet.")
@@ -77,28 +71,17 @@ def build_cosmos3_sft_dataloader(
         f"Invalid data_type='{data_type}'. Valid: {sorted(_VALID_DATA_TYPES)}"
     )
 
-    experiment_name = _DATA_TYPE_TO_EXPERIMENT[data_type]
-
-    # Set the LIBERO_ROOT environment variable to the dataset directory.
-    os.environ["LIBERO_ROOT"] = str(data_paths)
-
-    max_samples_per_batch = model_cfg.get("max_samples_per_batch", None)
+    micro_batch_size = int(cfg.actor.micro_batch_size)
+    if micro_batch_size < 1:
+        raise ValueError("Cosmos3 SFT requires actor.micro_batch_size >= 1")
     num_workers = int(data_cfg.get("num_workers", 4))
 
-    with contextlib.chdir(_cosmos_framework_root()):
-        cosmos_data_cfg = make_config()
-        overrides = ["--", f"experiment={experiment_name}"]
-        tokenizer_path = model_cfg.get("tokenizer_path")
-        if tokenizer_path:
-            overrides.append(
-                f"model.config.vlm_config.tokenizer.pretrained_model_name={tokenizer_path}"
-            )
-        cosmos_data_cfg = override(cosmos_data_cfg, overrides)
+    with contextlib.chdir(cosmos_framework_root()):
+        cosmos_data_cfg = build_cosmos3_config(model_cfg, data_type, data_paths)
 
         dl_cfg = cosmos_data_cfg.dataloader_train
-        # Optional smoke/memory knob: shrink the packed batch (recipe default 128).
-        if max_samples_per_batch is not None:
-            dl_cfg.max_samples_per_batch = int(max_samples_per_batch)
+        # Packing and gradient accumulation share the same per-rank batch size.
+        dl_cfg.max_samples_per_batch = micro_batch_size
         dl_cfg.dataloader.num_workers = num_workers
         if num_workers > 0:
             dl_cfg.dataloader.prefetch_factor = int(data_cfg.get("prefetch_factor", 4))
@@ -115,12 +98,13 @@ def build_cosmos3_sft_dataloader(
 
     logger.info(
         "Cosmos3 SFT dataloader (cosmos PackingDataLoader): "
-        "data_type='%s' -> experiment='%s' dataset=%s "
-        "len=%s max_samples_per_batch=%s",
+        "variant='%s' data_type='%s' -> experiment='%s' dataset=%s "
+        "len=%s micro_batch_size=%s",
+        model_cfg.get("model_variant", "nano"),
         data_type,
-        experiment_name,
+        DATA_EXPERIMENTS[data_type],
         data_paths,
         num_batches,
-        max_samples_per_batch,
+        micro_batch_size,
     )
     return loader, {"num_samples": num_batches if num_batches > 0 else 1}

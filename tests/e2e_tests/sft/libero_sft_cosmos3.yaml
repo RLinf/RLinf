@@ -52,7 +52,6 @@ actor:
     ema_enabled: false
     model_path: /workspace/dataset/Cosmos3-Nano-DCP
     wan_vae_path: /workspace/dataset/Wan-AI/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-    max_samples_per_batch: 2
 
   optim:
     lr: 5.0e-05

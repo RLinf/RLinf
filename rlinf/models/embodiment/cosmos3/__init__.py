@@ -16,17 +16,15 @@
 
 Builds cosmos's *training* config directly, then disables only its internal
 FSDP/CP/CFGP (via ``enable_inference_mode`` so AC + EMA stay on) -- RLinf's
-FSDPModelManager owns the single ``fully_shard``. The model is materialized on
-CPU (net bf16 ~27GB + net_ema fp32 ~54GB ~= 81GB > a single 80GB GPU) and
-sharded to GPU later by FSDP2. Shared model defaults live in the Hydra config
-group ``examples/embodiment/config/model/cosmos3.yaml``.
+FSDPModelManager owns the single ``fully_shard``. The network and FP32 EMA are
+materialized on CPU and sharded to GPU by FSDP2. Shared model defaults live in
+``examples/embodiment/config/model/cosmos3.yaml``.
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
-from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -37,15 +35,14 @@ from rlinf.models.embodiment.cosmos3.checkpoint_loader import (
     native_checkpoint_covers_language_model,
 )
 from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionModel
+from rlinf.models.embodiment.cosmos3.cosmos3_config import (
+    build_cosmos3_config,
+)
+from rlinf.models.embodiment.cosmos3.cosmos3_config import (
+    cosmos_framework_root,
+)
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
-
-
-def _cosmos_framework_root() -> Path:
-    """cosmos-framework repo root (its configs reference files relative to it)."""
-    import cosmos_framework
-
-    return Path(cosmos_framework.__file__).resolve().parent.parent
 
 
 def _promote_scalar_params_to_1d(model: nn.Module) -> None:
@@ -86,6 +83,9 @@ def _apply_freeze(cosmos3_model: nn.Module, keys_to_select: list[str]) -> None:
 
 def _initialize_rotary_buffers(net: nn.Module) -> None:
     """Restore nonpersistent RoPE buffers after meta materialization."""
+    from cosmos_framework.model.generator.reasoner.nemotron_3_dense_vl.nemotron_3_dense_vl import (
+        MultiModalRotaryEmbedding,
+    )
     from cosmos_framework.model.generator.reasoner.qwen3_vl.qwen3_vl import (
         Qwen3VLTextRotaryEmbedding,
         Qwen3VLVisionRotaryEmbedding,
@@ -93,9 +93,16 @@ def _initialize_rotary_buffers(net: nn.Module) -> None:
 
     for module in net.modules():
         if isinstance(
-            module, (Qwen3VLTextRotaryEmbedding, Qwen3VLVisionRotaryEmbedding)
+            module,
+            (
+                Qwen3VLTextRotaryEmbedding,
+                Qwen3VLVisionRotaryEmbedding,
+                MultiModalRotaryEmbedding,
+            ),
         ):
             module.init_weights(buffer_device=torch.device("cpu"))
+            if hasattr(module, "original_inv_freq"):
+                module.original_inv_freq = module.inv_freq.clone()
 
 
 def _initialize_native_weights(
@@ -143,35 +150,16 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     checkpoint_format = str(cfg.get("checkpoint_format", "native")).lower()
 
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
-    from cosmos_framework.configs.base.config import make_config
     from cosmos_framework.utils import distributed as cosmos_distributed
-    from cosmos_framework.utils.config_helper import override
     from cosmos_framework.utils.flags import Device as _CosmosDevice
     from cosmos_framework.utils.lazy_config import instantiate
 
     model_path = cfg.get("model_path")
 
-    # Build + instantiate under cosmos-framework root (its configs use paths
-    # relative to that root).
-    cosmos_root = _cosmos_framework_root()
+    # Native architecture configs contain paths relative to cosmos-framework.
+    cosmos_root = cosmos_framework_root()
     with contextlib.chdir(cosmos_root):
-        cosmos3_cfg = make_config()
-        experiment_name = "action_policy_libero_nano"
-        # ``override`` resolves the complete cosmos training recipe, including its
-        # unused dataloader subtree.  HF rollout only instantiates the model, but
-        # resolving that subtree would still require callers to export
-        # ``LIBERO_ROOT``.  Replace the unused dataset root with an existing local
-        # path so eval/model construction is self-contained.  RLinf's SFT loader
-        # owns the real training dataset and does not consume this value either.
-        cosmos3_cfg = override(
-            cosmos3_cfg,
-            [
-                "--",
-                f"experiment={experiment_name}",
-                "dataloader_train.dataloader.datasets.libero.dataset.root="
-                f"{cosmos_root}",
-            ],
-        )
+        cosmos3_cfg = build_cosmos3_config(cfg)
 
         # Disable cosmos internal FSDP/CP/CFGP at any world size; RLinf FSDP owns
         # fully_shard. enable_inference_mode avoids degrees=1 re-enabling cosmos
@@ -204,26 +192,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                     "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
                 )
 
-        tokenizer_path = cfg.get("tokenizer_path") or None
-        if tokenizer_path:
-            tokenizer_path = Path(str(tokenizer_path)).expanduser()
-        elif checkpoint_format == "diffusers":
-            # The packaged policy ships its matching tokenizer. The recipe's
-            # default Qwen identifier may resolve to a different local cache
-            # (or be unavailable on an offline actor node).
-            tokenizer_path = Path(str(model_path)).expanduser() / "text_tokenizer"
-        if tokenizer_path is not None:
-            if not all(
-                (tokenizer_path / name).is_file()
-                for name in ("vocab.json", "merges.txt")
-            ):
-                raise FileNotFoundError(
-                    f"Cosmos3 tokenizer requires vocab.json and merges.txt: {tokenizer_path}"
-                )
-            cosmos3_cfg.model.config.vlm_config.tokenizer.pretrained_model_name = str(
-                tokenizer_path
-            )
-
         # cosmos probes on CPU unless get_backend() == "nccl", which RLinf's lazily
         # bound group never reports; the probe is diagnostic only, so skip it.
         _ensure_world_communicator = getattr(
@@ -240,8 +208,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                 )
         cosmos3_cfg.freeze()
 
-        # Materialize on CPU: net(bf16 ~27GB) + net_ema(fp32 ~54GB) ~= 81GB would
-        # OOM a single 80GB GPU before FSDP2 can shard. FSDP2 shards it to GPU.
+        # Build on CPU to avoid allocating the full network and EMA on one GPU.
         _orig_device = omni_mot_model.DEVICE
         omni_mot_model.DEVICE = _CosmosDevice.CPU
         try:
@@ -263,19 +230,17 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         for _mod in cosmos3_model.modules():
             if getattr(_mod, "inv_freq", None) is not None:
                 _mod.inv_freq = _mod.inv_freq.float()
-        if checkpoint_format == "diffusers":
-            # Complete checkpoints overwrite every parameter; only RoPE buffers
-            # are nonpersistent and must be rebuilt after to_empty().
-            _initialize_rotary_buffers(cosmos3_model.net)
-            net_ema = getattr(cosmos3_model, "net_ema", None)
-            if net_ema is not None:
-                _initialize_rotary_buffers(net_ema)
-        else:
+        if checkpoint_format != "diffusers":
             _initialize_native_weights(
                 cosmos3_model,
                 str(model_path),
                 list(cfg.get("keys_to_skip_loading", [])),
             )
+        # Nonpersistent buffers are absent from both DCP and Diffusers weights.
+        _initialize_rotary_buffers(cosmos3_model.net)
+        net_ema = getattr(cosmos3_model, "net_ema", None)
+        if net_ema is not None:
+            _initialize_rotary_buffers(net_ema)
 
     # Native checkpoints warm-start from a base model; Diffusers packages load
     # the complete trained policy, including action heads, into the same native

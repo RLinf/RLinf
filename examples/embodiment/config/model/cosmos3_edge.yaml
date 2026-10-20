@@ -1,0 +1,7 @@
+defaults:
+  - cosmos3
+  - _self_
+
+model_variant: edge
+# Edge's gen-to-understanding attention also has a trainable key normalization.
+keys_to_select: ["moe_gen", "time_embedder", "vae2llm", "llm2vae", "action2llm", "llm2action", "action_modality_embed", "k_norm_und_for_gen"]

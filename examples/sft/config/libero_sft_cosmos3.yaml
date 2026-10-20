@@ -31,7 +31,7 @@ runner:
   resume_dir: null
 
 data:
-  train_data_paths: path/to/LIBERO_LeRobot_v3
+  train_data_paths: /mnt/public/new_fuxu/data/LIBERO_LeRobot_v3
   data_type: "libero_all"
   num_workers: 4
   prefetch_factor: 4
@@ -54,10 +54,13 @@ actor:
     load_to_device: false
     # Cosmos3 power-EMA (rate=0.1); RLinf updates net_ema each optimizer step.
     ema_enabled: true
-    model_path: path/to/Cosmos3-Nano-DCP
-    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-    action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
-    max_samples_per_batch: 32
+    # Native Cosmos activation checkpointing is separate from the FSDP switch.
+    # activation_checkpointing_mode: selective
+    model_path: /mnt/public/new_fuxu/model/Cosmos3-Nano-DCP-py311
+    # Qwen vocabulary only; model weights still come from model_path above.
+    tokenizer_path: /mnt/public/new_fuxu/model/Qwen3-VL-8B-Instruct-tokenizer
+    wan_vae_path: /mnt/public/new_fuxu/model/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    action_stats_path: /mnt/public/new_fuxu/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
 
   optim:
     lr: 5.0e-05
@@ -83,8 +86,8 @@ actor:
       enabled: False
     mixed_precision:
       param_dtype: bf16
-      reduce_dtype: bf16
-      buffer_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: null
       cast_forward_inputs: false
     amp_autocast:
       enabled: False

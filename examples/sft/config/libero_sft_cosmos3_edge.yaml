@@ -1,0 +1,96 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/cosmos3_edge@actor.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config/
+
+cluster:
+  # Native LIBERO-all assigns one suite per rank group: use at least four GPUs.
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_cosmos3_edge"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 10000
+  val_check_interval: -1
+  save_interval: 1000
+  log_interval: 50
+  resume_dir: null
+
+data:
+  train_data_paths: /mnt/public/new_fuxu/data/LIBERO_LeRobot_v3
+  data_type: "libero_all"
+  num_workers: 4
+  prefetch_factor: 4
+  val_ratio: 0.01
+  seed: 0
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 64
+  global_batch_size: 256
+  seed: 42
+
+  model:
+    precision: bf16
+    is_lora: false
+    # Keep model on CPU after build; FSDP2's fully_shard will shard it to GPU.
+    load_to_device: false
+    # Cosmos3 power-EMA (rate=0.1); RLinf updates net_ema each optimizer step.
+    ema_enabled: true
+    # Native Cosmos activation checkpointing is separate from the FSDP switch.
+    # activation_checkpointing_mode: selective
+    # Full Edge base converted with cosmos_framework.scripts.convert_model_to_dcp.
+    checkpoint_format: native
+    model_path: /mnt/public/new_fuxu/model/Cosmos3-Edge-DCP-py311
+    # Original Edge HF snapshot root, including processor metadata and tokenizer.
+    tokenizer_path: /mnt/public/new_fuxu/model/Cosmos3-Edge
+    wan_vae_path: /mnt/public/new_fuxu/model/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    action_stats_path: /mnt/public/new_fuxu/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+  optim:
+    lr: 5.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.99
+    adam_eps: 1.0e-08
+    weight_decay: 0.05
+    clip_grad: 1.0
+    lr_scheduler: "lambda_linear"
+    lr_warmup_steps: 500
+    total_training_steps: 16000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    use_orig_params: True
+    gradient_checkpointing: False
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: True
+    save_full_model_weights: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: null
+      cast_forward_inputs: false
+    amp_autocast:
+      enabled: False
+      precision: "bf16"
