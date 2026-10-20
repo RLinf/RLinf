@@ -14,7 +14,6 @@
 
 from typing import Any, SupportsFloat
 
-import gymnasium as gym
 from gymnasium.core import ActType, ObsType
 
 from .session import KeyboardSession
@@ -23,17 +22,8 @@ from .session import KeyboardSession
 class BaseKeyboardRewardDoneWrapper(KeyboardSession):
     """Replace environment rewards with operator keyboard ratings."""
 
-    def __init__(
-        self,
-        env: gym.Env,
-        reward_mode: str = "always_replace",
-        *,
-        device: str | None = None,
-    ) -> None:
-        super().__init__(env, device=device)
-        self.reward_modifier = 0
-        self.reward_mode = reward_mode
-        assert self.reward_mode in ["always_replace"]
+    reward_modifier = 0
+    reward_mode = "always_replace"
 
     def _check_keypress(self) -> tuple[bool, bool, float]:
         raise NotImplementedError
@@ -84,11 +74,9 @@ class KeyboardRewardDoneWrapper(BaseKeyboardRewardDoneWrapper):
 class KeyboardRewardDoneMultiStageWrapper(BaseKeyboardRewardDoneWrapper):
     """Score an episode in stages: ``a``/``b``/``c`` select how far it got."""
 
-    def __init__(self, env: gym.Env, *, device: str | None = None) -> None:
-        super().__init__(env, device=device)
-        self.stage_rewards = [0, 0.1, 1]
-        # Initialize eagerly so step() remains valid before the first reset.
-        self.reward_stage = 0
+    stage_rewards = (0, 0.1, 1)
+    #: Valid before the first reset, so step() does not need begin_episode first.
+    reward_stage = 0
 
     def begin_episode(self) -> None:
         """Reset the stage counter at the start of an episode."""

@@ -16,7 +16,7 @@ import math
 import time
 from typing import Any, SupportsFloat
 
-from gymnasium.core import ActType, Env, ObsType
+from gymnasium.core import ActType, ObsType
 
 from .session import KeyboardSession
 
@@ -34,12 +34,9 @@ class KeyboardStartEndWrapper(KeyboardSession):
     SEGMENT_DEBOUNCE_S = 1.0
     #: A second ``a`` this soon after start is a double tap, not an abort.
     ABORT_LOCKOUT_S = 1.5
-
-    def __init__(self, env: Env, *, device: str | None = None) -> None:
-        super().__init__(env, device=device)
-        self._recording = False
-        self._recording_since = -math.inf
-        self._last_segment_ts = -math.inf
+    _recording = False
+    _recording_since = -math.inf
+    _last_segment_ts = -math.inf
 
     def begin_episode(self) -> None:
         """Clear segment history before recording a new episode."""

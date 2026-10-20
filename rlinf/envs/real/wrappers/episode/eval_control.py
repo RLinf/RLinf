@@ -22,7 +22,7 @@ so the outer ``auto_reset`` can return the robot home.
 import time
 from typing import Any, Optional, SupportsFloat
 
-from gymnasium.core import ActType, Env, ObsType
+from gymnasium.core import ActType, ObsType
 
 from .session import KeyboardSession
 
@@ -32,11 +32,8 @@ class KeyboardEvalControlWrapper(KeyboardSession):
 
     IDLE_POLL_S = 0.05
     WAIT_HEARTBEAT_S = 10.0
-
-    def __init__(self, env: Env, *, device: str | None = None) -> None:
-        super().__init__(env, device=device)
-        self._running = False
-        self._last_obs: Any = None
+    _running = False
+    _last_obs: Any = None
 
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None

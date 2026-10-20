@@ -28,8 +28,9 @@ from .keyboard import KeyboardListener
 class KeyboardSession(gym.Wrapper):
     """Base wrapper for debounced operator key input.
 
-    Subclasses read :meth:`presses` for debounced keys, or ``self.listener``
-    directly when they want the raw stream.
+    ``device`` is the evdev node from ``keyboard_device``. Subclasses inherit
+    this constructor and read :meth:`presses`, or ``self.listener`` for the
+    raw stream.
     """
 
     #: Minimum interval between accepted presses of the same key.
