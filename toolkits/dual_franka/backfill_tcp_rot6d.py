@@ -25,7 +25,7 @@ Run from the repo root::
 
     export PYTHONPATH=$(pwd)
     python toolkits/dual_franka/backfill_tcp_rot6d.py \\
-        --src /path/to/collected_data/rank_0/id_0 \\
+        --src /path/to/lerobot_dataset/rank_0/id_0 \\
         --dst /path/to/lerobot_tcp_rot6d_root
 """
 

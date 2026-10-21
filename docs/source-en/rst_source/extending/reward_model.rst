@@ -29,19 +29,28 @@ them into processed training splits with the preprocessing script.
 1.1 Enable Data Collection
 """"""""""""""""""""""""""
 
-Enable ``data_collection`` under ``env`` in your YAML config:
+Enable ``data_collection`` under ``env.eval`` in your YAML config (use ``env.train`` for training episodes):
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-After training or evaluation starts, the environment will automatically save episodes into ``save_dir``.
-When ``export_format="pickle"``, each episode is written as an individual ``.pkl`` file for later offline preprocessing.
+After training or evaluation starts, each ``export_format: pickle_episode`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
+
+For ResNet rewards, ``maniskill_ppo_mlp_collect`` is a ready-to-run collection config. It
+trains a state-based MLP PPO policy on ManiSkill PickCube and, during the periodic evaluation
+(every ``runner.val_check_interval`` steps), collects RGB episodes in ``pickle`` format, keeping
+only successful ones (``only_success: True``):
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
 
 For VLM Trend rewards, RLinf also provides a ready-to-run collection config:
 
@@ -67,7 +76,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 By default, this produces:
@@ -109,7 +118,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -210,6 +219,15 @@ Once the dataset and model are configured, run:
    bash examples/reward/run_reward_training.sh
 
 Training logs are written to a newly created ``logs/<timestamp>-reward_training`` directory.
+
+Checkpoints are saved under ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/``:
+``global_step_<N>/`` every ``runner.save_interval`` steps, and ``best_model/`` whenever the
+validation accuracy improves (this requires ``runner.early_stop``). To use the trained model in
+RL, set ``reward.model.model_path`` to the weights file, for example:
+
+.. code-block:: text
+
+   logs/<timestamp>-reward_training/reward_training/checkpoints/best_model/actor/model_state_dict/full_weights.pt
 
 2.3 Fine-Tune the VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
@@ -370,6 +388,10 @@ Where:
   For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
   The top-level ``reward_threshold`` is not read by either VLM path today.
 - ``model_path`` points to the reward model checkpoint used for online inference.
+  For ``model_type: resnet``, it is the weights file itself, such as
+  ``checkpoints/best_model/actor/model_state_dict/full_weights.pt`` from section 2.2.3.
+  With ``model_path: null``, as shipped in ``maniskill_ppo_mlp_resnet_reward.yaml``,
+  no trained weights are loaded.
 
 3.2 Worker Interaction During Rollout
 """""""""""""""""""""""""""""""""""""
@@ -418,6 +440,35 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+
+Before deploying any of the reward methods below, warm up the MLP policy with
+ManiSkill's dense environment reward using ``maniskill_ppo_mlp`` with
+``reward.use_reward_model: false``. This is a shared prerequisite for local
+VLM Trend, local Success + Potential, and SGLang API inference. Evaluate saved
+checkpoints on the same 1,024 fixed reset states over 50-step episodes, and
+select one with ``eval/success_at_end`` around 50% before starting reward-model
+PPO:
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+This command saves and evaluates checkpoints every 5 PPO steps. Extend
+``runner.max_steps`` if needed to reach the target; select the checkpoint by
+its measured success rate rather than its training step. Set the selected
+policy weights for the deployment commands below:
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+The Trend launch commands pass this path through ``runner.ckpt_path``. For
+Success + Potential, set ``vlm_trend_paths.policy_checkpoint`` to the same path.
 
 Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
 ``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
@@ -486,24 +537,12 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
-
-Warm up the MLP policy with the existing dense ManiSkill reward. This reuses
-``maniskill_ppo_mlp`` unchanged; do not enable the reward overlay during warmup.
-Evaluate saved checkpoints on the same 1,024 fixed reset states and select one
-with a non-zero ``success_once`` near 5% (roughly 3--7%). Do not start formal
-PPO from a zero-success checkpoint:
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp \
-     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
-     env.eval.total_num_envs=1024
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
-Then launch the dual-output branch with the selected checkpoint and the three
+For Success + Potential, use the warmup checkpoint selected above and the three
 reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
 1,024 environments, evaluates every 5 PPO steps, disables environment reward,
 and runs 160 steps by default:
@@ -515,7 +554,7 @@ The runtime fields reference this YAML section directly:
 .. code-block:: yaml
 
    vlm_trend_paths:
-     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
      model_path: /path/to/Qwen3-VL-4B-Instruct
      success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
      potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
@@ -603,7 +642,10 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 4. Summary
 ^^^^^^^^^^
@@ -806,7 +848,7 @@ The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` usi
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
