@@ -118,12 +118,6 @@ class SO101Arm(BaseArm):
     #: Poll interval for the closed-loop reset convergence pass.
     RESET_CONVERGENCE_POLL: float = 1.0 / 30.0
 
-    #: Position tolerance for a completed gripper reset, on the 0..100 scale.
-    GRIPPER_RESET_TOLERANCE: float = 2.0
-
-    #: Maximum time spent retrying a gripper reset target.
-    GRIPPER_RESET_TIMEOUT: float = 8.0
-
     #: Transient serial failures during startup are retried before surfacing.
     SERIAL_CONNECT_RETRIES: int = 3
     SERIAL_RETRY_DELAY_S: float = 0.1
@@ -369,7 +363,9 @@ class SO101Arm(BaseArm):
             self._check_gripper_monitor()
             reading = self._robot.get_observation()
         joints = [reading[f"{motor}.pos"] for motor in self.MOTORS]
-        grip = reading[f"{self.GRIPPER}.pos"] / self.GRIPPER_SCALE
+        grip = np.clip(
+            reading[f"{self.GRIPPER}.pos"] / self.GRIPPER_SCALE, 0.0, 1.0
+        )
         return SO101RobotState(
             arm_joint_position=np.deg2rad(np.asarray(joints, dtype=float)),
             gripper_position=np.asarray([grip], dtype=float),
@@ -431,33 +427,6 @@ class SO101Arm(BaseArm):
             sent = self._robot.send_action({f"{self.GRIPPER}.pos": opening})
             self._gripper_requested = opening
             self._gripper_target = float(sent[f"{self.GRIPPER}.pos"])
-
-    def move_gripper_to(self, target: "Sequence[float]") -> None:
-        """Move a gripper target to completion while preserving safety limits.
-
-        LeRobot applies ``max_relative_target`` to every command, including a
-        reset command. A single command can therefore stop at a safe intermediate
-        position and still satisfy ``wait_for_gripper``. Reissue the target until
-        feedback reaches it, or stop after the bounded reset timeout.
-        """
-        value = float(np.asarray(target, dtype=float).reshape(-1)[0])
-        opening = float(np.clip(value, 0.0, 1.0))
-        target_units = opening * self.GRIPPER_SCALE
-        deadline = time.monotonic() + self.GRIPPER_RESET_TIMEOUT
-        while True:
-            self.move_gripper([opening])
-            self.wait_for_gripper()
-            current_units = float(self.get_state().gripper_position[0]) * self.GRIPPER_SCALE
-            if abs(current_units - target_units) <= self.GRIPPER_RESET_TOLERANCE:
-                return
-            if time.monotonic() >= deadline:
-                self._logger.warning(
-                    "SO-101 gripper reset did not reach target: target=%.3f current=%.3f",
-                    target_units,
-                    current_units,
-                )
-                return
-            time.sleep(self.RESET_CONVERGENCE_POLL)
 
     def _check_gripper_monitor(self) -> None:
         """Surface a failed monitor before further reads or commands."""
@@ -597,8 +566,12 @@ class SO101Arm(BaseArm):
     ) -> None:
         """Execute a validated pose from one state snapshot."""
         start_gripper = float(
-            np.asarray(getattr(state, "gripper_position", [0.0]), dtype=float)
-            .reshape(-1)[0]
+            np.clip(
+                np.asarray(getattr(state, "gripper_position", [0.0]), dtype=float)
+                .reshape(-1)[0],
+                0.0,
+                1.0,
+            )
         )
         start = np.concatenate(
             (np.asarray(state.arm_joint_position, dtype=float), [start_gripper])

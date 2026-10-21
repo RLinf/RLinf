@@ -28,7 +28,6 @@ from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.real import RealWorldEnv
 from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
-from rlinf.utils.logging import get_logger
 
 
 class DataCollector(Worker):
@@ -134,8 +133,8 @@ class DataCollector(Worker):
             try:
                 self.env.get_wrapper_attr("park")()
                 parked = True
-            except BaseException:  # noqa: BLE001 - preserve cleanup failure
-                get_logger().exception("Failed to park real-world hardware")
+            except BaseException as exc:  # noqa: BLE001 - preserve cleanup failure
+                self.log_error(f"Failed to park real-world hardware: {exc!r}")
 
         try:
             return self._collect()
@@ -147,14 +146,29 @@ class DataCollector(Worker):
             raise
         finally:
             park_once()
+            cleanup_error = None
             try:
                 self.env.close()
-            except BaseException:  # noqa: BLE001 - preserve the collection failure
-                if not failed:
-                    raise
-                get_logger().exception(
-                    "Failed to close real-world hardware after error"
-                )
+            except BaseException as exc:  # noqa: BLE001 - preserve collection errors
+                if failed:
+                    self.log_error(
+                        f"Failed to close real-world hardware after error: {exc!r}"
+                    )
+                else:
+                    cleanup_error = exc
+
+            try:
+                self.buffer.close()
+            except BaseException as exc:  # noqa: BLE001 - preserve collection errors
+                if failed:
+                    self.log_error(f"Failed to close trajectory buffer: {exc!r}")
+                elif cleanup_error is None:
+                    cleanup_error = exc
+                else:
+                    self.log_error(f"Failed to close trajectory buffer: {exc!r}")
+
+            if cleanup_error is not None:
+                raise cleanup_error
 
     def _collect(self) -> None:
         """Run the collection loop while :meth:`run` owns hardware cleanup."""
@@ -285,7 +299,6 @@ class DataCollector(Worker):
                 if sleep_for > 0:
                     time.sleep(sleep_for)
 
-        self.buffer.close()
         self.log_info(
             f"Finished. Demos saved in: {os.path.join(self.cfg.runner.logger.log_path, 'demos')}"
         )

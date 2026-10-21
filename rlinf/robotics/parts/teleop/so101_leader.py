@@ -379,7 +379,10 @@ class SO101Leader(TeleopDevice):
                 [reading[f"{name}.pos"] for name in names], dtype=float
             )
             current = np.concatenate(
-                (np.deg2rad(current[: len(MOTORS)]), [current[-1] / GRIPPER_SCALE])
+                (
+                    np.deg2rad(current[: len(MOTORS)]),
+                    [np.clip(current[-1] / GRIPPER_SCALE, 0.0, 1.0)],
+                )
             )
             plan = plan_so101_motion(
                 current,
@@ -396,7 +399,10 @@ class SO101Leader(TeleopDevice):
                     zip(
                         names,
                         np.concatenate(
-                            (np.rad2deg(current[: len(MOTORS)]), [current[-1] * GRIPPER_SCALE])
+                            (
+                                np.rad2deg(current[: len(MOTORS)]),
+                                [current[-1] * GRIPPER_SCALE],
+                            )
                         ).tolist(),
                         strict=True,
                     )

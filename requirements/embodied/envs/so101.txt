@@ -1,4 +1,4 @@
-numpy
+numpy<2
 gymnasium
 opencv-python
 pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'

@@ -686,18 +686,6 @@ class EnvWorker(Worker):
         """Park and close real evaluation environments at runner shutdown."""
         self._cleanup_real_eval_envs()
 
-    @staticmethod
-    def _success_from_info(env_info: dict[str, Any]) -> bool:
-        """Return whether an evaluation info mapping reports success."""
-        for key in ("success_once", "success_at_end", "success"):
-            value = env_info.get(key)
-            if value is None:
-                continue
-            if isinstance(value, torch.Tensor):
-                return bool(value.any().item())
-            return bool(np.asarray(value).any())
-        return False
-
     @Worker.timer("get_reward_model_output")
     def get_reward_model_output(
         self,
@@ -1303,7 +1291,7 @@ class EnvWorker(Worker):
         self._eval_cleanup_done = False
         try:
             return self._evaluate_standard(
-                input_channel, rollout_channel, control_channel=control_channel
+                input_channel, rollout_channel
             )
         except KeyboardAbort:
             self._request_eval_stop(control_channel)
@@ -1324,7 +1312,6 @@ class EnvWorker(Worker):
         self,
         input_channel: Channel,
         rollout_channel: Channel,
-        control_channel: Channel | None = None,
     ):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
@@ -1334,11 +1321,7 @@ class EnvWorker(Worker):
                     self.eval_prev_done[stage_id] = torch.zeros(
                         self.eval_num_envs_per_stage, dtype=torch.bool
                     )
-                    try:
-                        extracted_obs, infos = self.eval_env_list[stage_id].reset()
-                    except KeyboardAbort:
-                        self._request_eval_stop(control_channel)
-                        return eval_metrics
+                    extracted_obs, infos = self.eval_env_list[stage_id].reset()
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         final_obs=(
@@ -1382,13 +1365,9 @@ class EnvWorker(Worker):
                         raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
                     else:
                         raw_chunk_actions = np.asarray(raw_chunk_actions)
-                    try:
-                        env_output, env_info = self.env_evaluate_step(
-                            raw_chunk_actions, stage_id
-                        )
-                    except KeyboardAbort:
-                        self._request_eval_stop(control_channel)
-                        return eval_metrics
+                    env_output, env_info = self.env_evaluate_step(
+                        raw_chunk_actions, stage_id
+                    )
 
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)

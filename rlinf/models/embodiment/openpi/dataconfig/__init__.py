@@ -293,7 +293,6 @@ _CONFIGS = [
             repo_id="id_0",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_so101/assets"),
-            extra_delta_transform=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "checkpoints/jax/pi05_base"

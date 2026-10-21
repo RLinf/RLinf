@@ -238,6 +238,44 @@ def test_standard_real_eval_keyboard_abort_is_clean_shutdown():
     worker.log_info.assert_called_once()
 
 
+@pytest.mark.parametrize("abort_at", ["reset", "step"])
+def test_standard_eval_propagates_keyboard_abort_to_cleanup(abort_at):
+    """The standard evaluation loop leaves abort handling to its owner."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create(
+        {
+            "env": {"eval": {"auto_reset": False}},
+            "rollout": {"group_name": "RolloutGroup"},
+        }
+    )
+    worker.eval_rollout_epoch = 1
+    worker.stage_num = 1
+    worker.eval_num_envs_per_stage = 1
+    worker.eval_prev_done = [None]
+    worker.eval_env_list = [Mock()]
+    worker.env_decoupled_mode = False
+    worker.eval_batch_size = 1
+    worker.n_eval_chunk_steps = 1
+    worker._obs_split_fn = None
+    worker._build_rollout_input_data = Mock(return_value={})
+    worker.send_to = Mock()
+    worker._request_eval_stop = Mock()
+
+    if abort_at == "reset":
+        worker.eval_env_list[0].reset.side_effect = KeyboardAbort("operator quit")
+    else:
+        worker.eval_env_list[0].reset.return_value = ({"state": np.zeros((1, 1))}, {})
+        worker.recv_from = Mock(
+            return_value=SimpleNamespace(actions=np.zeros((1, 1)))
+        )
+        worker.env_evaluate_step = Mock(side_effect=KeyboardAbort("operator quit"))
+
+    with pytest.raises(KeyboardAbort, match="operator quit"):
+        worker._evaluate_standard(Mock(), Mock())
+
+    worker._request_eval_stop.assert_not_called()
+
+
 def _assert_legacy_transition(env) -> None:
     observation, _ = env.reset()
     transition = env.step(env.action_space.sample())
@@ -1147,13 +1185,53 @@ def test_so101_env_without_park_config_is_a_noop():
         {
             "is_dummy": True,
             "enable_camera_player": False,
-            "target_joint_qpos": [0.0] * 5,
         }
     )
     try:
         env._move_to_configured_pose = Mock()
         env.park()
         env._move_to_configured_pose.assert_not_called()
+        assert env.get_park_joint_positions() is None
+        assert env.get_park_gripper_position() is None
+        assert env.get_park_duration() is None
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    "park_config",
+    [
+        {"park_joint_qpos": [0.0] * 5},
+        {"park_gripper_position": 0.5},
+    ],
+)
+def test_so101_park_pose_requires_joints_and_gripper_together(park_config):
+    """A configured park pose must include both arm and gripper targets."""
+    from rlinf.envs.real.so101.base import SO101EnvConfig
+
+    with pytest.raises(ValueError, match="park_joint_qpos and park_gripper_position"):
+        SO101EnvConfig(**park_config)
+
+
+def test_so101_dummy_park_ignores_configured_target():
+    """A dummy env does not expose park context for a hardware-only move."""
+    from rlinf.envs.real.so101 import SO101ReachEnv
+
+    env = SO101ReachEnv(
+        {
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "park_joint_qpos": [0.0] * 5,
+            "park_gripper_position": 0.5,
+        }
+    )
+    try:
+        env._move_to_configured_pose = Mock()
+        env.park()
+        env._move_to_configured_pose.assert_not_called()
+        assert env.get_park_joint_positions() is None
+        assert env.get_park_gripper_position() is None
+        assert env.get_park_duration() is None
     finally:
         env.close()
 
@@ -1860,8 +1938,8 @@ def test_so101_configured_pose_uses_one_synchronized_arm_command():
     calls = []
 
     class FakeArm:
-        def move_to_pose(self, target, duration, max_velocity, start_barrier=None):
-            calls.append((target, duration, max_velocity, start_barrier))
+        def move_to_pose(self, target, duration, max_velocity, start_at=None):
+            calls.append((target, duration, max_velocity, start_at))
 
     env = object.__new__(SO101Env)
     env._arm = FakeArm()
@@ -1870,6 +1948,46 @@ def test_so101_configured_pose_uses_one_synchronized_arm_command():
     env._move_to_configured_pose([0.0] * 5, 0.0, 1.0)
 
     assert calls == [([0.0] * 6, 1.0, 1.0, None)]
+
+
+@pytest.mark.parametrize("pressed", [["a", "c"], ["c", "a"]])
+def test_so101_start_end_abort_wins_over_simultaneous_success(monkeypatch, pressed):
+    """A simultaneous discard and success input cannot save an aborted episode."""
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, *args):
+            self.keys = list(pressed)
+
+        def pop_pressed_keys(self):
+            keys, self.keys = self.keys, []
+            return keys
+
+        def close(self):
+            pass
+
+    class Env(gym.Env):
+        def step(self, action):
+            return {}, 0.0, False, False, {}
+
+        def get_wrapper_attr(self, name):
+            raise AttributeError(name)
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    wrapper = SO101StartEndWrapper(Env())
+    wrapper._recording = True
+    success_hook = Mock()
+    wrapper.before_recording_success = success_hook
+
+    _, reward, terminated, truncated, info = wrapper.step(np.zeros(6))
+
+    assert reward == 0.0
+    assert terminated is True
+    assert truncated is False
+    assert info["keyboard_event"] == "abort"
+    assert success_hook.call_count == 0
+    wrapper.close()
 
 
 def test_presses_queued_between_episodes_do_not_leak(monkeypatch):
@@ -2990,6 +3108,24 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+def test_so101_zero_pose_is_observed_once_before_teleop_context_is_cached():
+    """A real all-zero pose is a valid observation, not an uninitialized marker."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(reset_on_init=False)
+        try:
+            get_observation = Mock(wraps=env._get_observation)
+            env._get_observation = get_observation
+
+            np.testing.assert_array_equal(env.get_joint_positions(), np.zeros((1, 5)))
+            np.testing.assert_array_equal(env.get_gripper_position(), np.zeros((1, 1)))
+
+            get_observation.assert_called_once()
+        finally:
+            env.close()
+
+
 @pytest.mark.placement
 
 
@@ -3578,6 +3714,39 @@ def test_so101_leader_calibrates_when_the_caller_asks():
             leader.disconnect()
         finally:
             fake.calibrated = True
+
+
+def test_so101_leader_clips_measured_gripper_before_planning(monkeypatch):
+    """Servo feedback outside the normalized range must not poison planning."""
+    from rlinf.robotics.parts.teleop import so101_leader as leader_module
+    from rlinf.robotics.parts.teleop.so101_leader import GRIPPER, MOTORS, SO101Leader
+
+    starts = []
+
+    class Plan:
+        steps = 1
+        period = 0.0
+
+        def frames(self):
+            yield np.zeros(6)
+
+    def plan_motion(start, target, **kwargs):
+        starts.append(np.asarray(start).copy())
+        return Plan()
+
+    monkeypatch.setattr(leader_module, "plan_so101_motion", plan_motion)
+    leader = object.__new__(SO101Leader)
+    leader._serial_lock = threading.Lock()
+    leader._align_fps = 30.0
+    leader._set_torque = Mock()
+    leader._device = SimpleNamespace(
+        get_action=lambda: {**{f"{motor}.pos": 0.0 for motor in MOTORS}, f"{GRIPPER}.pos": 110.0},
+        bus=SimpleNamespace(sync_write=Mock()),
+    )
+
+    leader._move_to(np.zeros(5), np.array([0.5]), minimum_duration=0.0)
+
+    assert starts[0][-1] == pytest.approx(1.0)
 
 
 def test_so101_leader_holds_follower_pose_until_manual_handover():

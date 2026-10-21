@@ -334,6 +334,23 @@ def test_openpi_sft_dispatches_so101_to_registered_loader(monkeypatch):
     assert result is sentinel
 
 
+def test_lerobot_v3_task_metadata_becomes_openpi_task_mapping():
+    """OpenPI receives an id-to-task mapping from LeRobot v3 metadata."""
+    import pandas as pd
+
+    from rlinf.data.datasets.openpi.task_prompt import lerobot_tasks_to_mapping
+
+    tasks = pd.DataFrame(
+        {"task_index": [3, 8], "task": ["pick up duck", "place duck"]},
+        index=[11, 12],
+    )
+
+    assert lerobot_tasks_to_mapping(tasks) == {
+        3: "pick up duck",
+        8: "place duck",
+    }
+
+
 def test_so101_pi05_config_uses_discrete_state_input():
     """SO-101 Pi05 must tokenize proprioceptive state with the prompt."""
     pytest.importorskip("openpi")
@@ -343,6 +360,7 @@ def test_so101_pi05_config_uses_discrete_state_input():
 
     assert config.model.pi05 is True
     assert config.model.discrete_state_input is True
+    assert config.data.base_config.prompt_from_task is True
 
 
 def test_so101_norm_stats_match_padded_model_dimension():
@@ -1008,6 +1026,40 @@ def test_empty_episode_is_skipped():
 
     assert dataset.frames == []
     assert dataset.saved_episodes == 0
+
+
+def test_data_collector_closes_buffer_after_operator_abort():
+    from examples.embodiment.collect_real_data import DataCollector
+    from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
+
+    collector = object.__new__(DataCollector)
+    collector._collect = Mock(side_effect=KeyboardAbort())
+    collector.log_info = Mock()
+    collector.buffer = Mock()
+    collector.env = Mock()
+
+    assert collector.run() is None
+    collector.buffer.close.assert_called_once_with()
+
+
+def test_data_collector_preserves_collection_error_when_buffer_close_fails():
+    from examples.embodiment.collect_real_data import DataCollector
+
+    collection_error = RuntimeError("collection failed")
+    collector = object.__new__(DataCollector)
+    collector._collect = Mock(side_effect=collection_error)
+    collector.log_info = Mock()
+    collector.log_error = Mock()
+    collector.log_warning = Mock()
+    collector.buffer = Mock()
+    collector.buffer.close.side_effect = RuntimeError("buffer close failed")
+    collector.env = Mock()
+
+    with pytest.raises(RuntimeError, match="collection failed") as raised:
+        collector.run()
+
+    assert raised.value is collection_error
+    collector.buffer.close.assert_called_once_with()
 
 
 # --------------------------------------------------------------------------

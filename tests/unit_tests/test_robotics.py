@@ -4974,6 +4974,63 @@ def test_so101_reports_joints_in_radians_and_the_gripper_as_a_fraction():
         arm.disconnect()
 
 
+@pytest.mark.parametrize("raw_gripper, expected", [(-5.0, 0.0), (110.0, 1.0)])
+def test_so101_state_clips_gripper_feedback_to_normalized_range(raw_gripper, expected):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101", calibration_id="bench")
+        arm.connect()
+        try:
+            arm._robot.positions["gripper.pos"] = raw_gripper
+            assert arm.get_state().gripper_position[0] == pytest.approx(expected)
+        finally:
+            arm.disconnect()
+
+
+def test_so101_motion_plan_clips_gripper_in_start_snapshot(monkeypatch):
+    import threading
+
+    from rlinf.robotics.parts.arms import so101 as arm_module
+    from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+    starts = []
+
+    class Plan:
+        steps = 1
+        period = 0.0
+
+        def frames(self):
+            yield np.zeros(6)
+
+    def plan_motion(start, target, **kwargs):
+        starts.append(np.asarray(start).copy())
+        return Plan()
+
+    monkeypatch.setattr(arm_module, "plan_so101_motion", plan_motion)
+    arm = object.__new__(SO101Arm)
+    arm._gripper_condition = threading.Condition()
+    arm._robot = SimpleNamespace(send_action=lambda action: None)
+    arm._max_relative_target = None
+    arm._gripper_target = None
+    arm._gripper_requested = 0.0
+    arm._check_gripper_monitor = lambda: None
+    arm.wait_for_gripper = lambda: None
+    arm.wait_until_still = lambda: None
+    arm._execute_pose(
+        np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.5]),
+        SimpleNamespace(
+            arm_joint_position=np.zeros(5), gripper_position=np.array([1.2])
+        ),
+        duration=0.01,
+        max_velocity=1.0,
+    )
+
+    assert starts[0][-1] == pytest.approx(1.0)
+
+
 def test_so101_commands_are_converted_back_to_degrees():
     from robot_mocks import mocked_sdks
 

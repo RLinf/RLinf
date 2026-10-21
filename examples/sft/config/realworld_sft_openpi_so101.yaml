@@ -21,8 +21,9 @@ hydra:
 # meta/info.json. The loader does not combine a parent directory with a
 # separate repo_id field.
 #
-# Norm stats are loaded from <assets_dir>/<asset_id>/norm_stats.json and should
-# match the padded model tensors (state/actions last dim = openpi.model_action_dim).
+# Norm stats are loaded from the explicit openpi_data.norm_stats_path below and
+# should match the padded model tensors (state/actions last dim =
+# openpi.model_action_dim).
 
 cluster:
   num_nodes: 1
@@ -81,7 +82,7 @@ actor:
       # The SO-101 statistics are external to the base model checkpoint. Keep
       # this path explicit so the official OpenPI loader and the RLinf model
       # factory consume the same normalization file.
-      norm_stats_path: ${actor.model.openpi.assets_dir}/${actor.model.openpi.asset_id}/norm_stats.json
+      norm_stats_path: /path/to/openpi_assets/<repo_id>/norm_stats.json
 
   optim:
     lr: 2.5e-5

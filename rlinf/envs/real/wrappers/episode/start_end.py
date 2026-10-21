@@ -125,16 +125,6 @@ class KeyboardStartEndWrapper(KeyboardSession):
             if key == "a":
                 if aborted:
                     reward = 0.0
-                elif self._recording:
-                    if event != "start":
-                        event = "abort"
-                        self._recording = False
-                        record_reset = True
-                        self._last_segment_ts = -math.inf
-                        terminated = True
-                        reward = 0.0
-                else:
-                    continue
             elif key == "b" and self._recording:
                 now = time.monotonic()
                 if now - self._last_segment_ts >= self.SEGMENT_DEBOUNCE_S:

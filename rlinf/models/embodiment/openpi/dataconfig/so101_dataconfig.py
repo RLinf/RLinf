@@ -9,7 +9,6 @@
 import dataclasses
 import pathlib
 
-import numpy as np
 import openpi.models.model as _model
 import openpi.transforms as _transforms
 from openpi.training.config import DataConfig, DataConfigFactory, ModelTransformFactory
@@ -27,17 +26,6 @@ class SO101JointDataConfig(DataConfigFactory):
     """
 
     default_prompt: str | None = None
-    extra_delta_transform: bool = True
-
-    def generate_observations(
-        image: np.ndarray, state: np.ndarray, prompt: str
-    ) -> dict:
-        """Creates an input example for the SO-101 policy."""
-        return {
-            "observation/image": image,
-            "observation/state": state,
-            "prompt": prompt,
-        }
 
     @override
     def create(
@@ -65,15 +53,6 @@ class SO101JointDataConfig(DataConfigFactory):
             ],
             outputs=[so101_policy.SO101Outputs()],
         )
-
-        if not self.extra_delta_transform:
-            delta_action_mask = _transforms.make_bool_mask(
-                so101_policy.SO101_ACTION_DIM, -1
-            )
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-            )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
             model_config

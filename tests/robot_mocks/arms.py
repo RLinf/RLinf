@@ -499,12 +499,30 @@ def lerobot() -> dict[str, types.ModuleType]:
             self.id = id
             self.use_degrees = use_degrees
 
+    class FakeSO101LeaderBus:
+        """Minimal leader bus used by reset and torque tests."""
+
+        def __init__(self, owner: Any) -> None:
+            self.owner = owner
+
+        def sync_write(self, _register: str, values: dict[str, float]) -> None:
+            self.owner.positions.update(
+                {f"{name}.pos": value for name, value in values.items()}
+            )
+
+        def enable_torque(self, *args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+
+        def disable_torque(self, *args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+
     class FakeSO101Leader:
         #: Set false to model a leader whose calibration file is missing.
         calibrated = True
 
         def __init__(self, config: Any) -> None:
             self.config = config
+            self.bus = FakeSO101LeaderBus(self)
             self.is_connected = False
             self.is_calibrated = type(self).calibrated
             self.calibrate_calls = 0

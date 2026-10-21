@@ -148,6 +148,12 @@ class SO101EnvConfig:
         """Coerce the array-valued fields, which may arrive as lists."""
         self.joint_limit_low = np.asarray(self.joint_limit_low, dtype=np.float64)
         self.joint_limit_high = np.asarray(self.joint_limit_high, dtype=np.float64)
+        has_park_joints = self.park_joint_qpos is not None
+        has_park_gripper = self.park_gripper_position is not None
+        if has_park_joints != has_park_gripper:
+            raise ValueError(
+                "park_joint_qpos and park_gripper_position must be configured together."
+            )
 
 
 class SO101Env(gym.Env):
@@ -211,6 +217,7 @@ class SO101Env(gym.Env):
         self._last_camera_frame_at: dict[str, float] = {}
         self._gripper_position = np.zeros(1, dtype=np.float32)
         self._joints = np.zeros(_DOF)
+        self._has_observation = False
         self.robot: Optional[SO101Robot] = None
 
         if not self.config.is_dummy:
@@ -379,15 +386,13 @@ class SO101Env(gym.Env):
 
     def get_joint_positions(self) -> np.ndarray:
         """Arm joints as ``(1, 5)``, the shape teleop bindings index by arm."""
-        # The cache starts at zeros before the first hardware observation.
-        # Teleoperation hold actions must never use that placeholder pose.
-        if not self.config.is_dummy and np.allclose(self._joints, 0.0):
+        if not self.config.is_dummy and not self._has_observation:
             self._get_observation()
         return self._joints.reshape(1, -1).copy()
 
     def get_gripper_position(self) -> np.ndarray:
         """Current gripper opening as ``(1, 1)`` for teleop context."""
-        if not self.config.is_dummy and np.allclose(self._joints, 0.0):
+        if not self.config.is_dummy and not self._has_observation:
             self._get_observation()
         return self._gripper_position.reshape(1, -1).copy()
 
@@ -428,7 +433,7 @@ class SO101Env(gym.Env):
 
     def park(self) -> None:
         """Move to the configured park state when explicitly requested."""
-        if self.config.park_joint_qpos is None:
+        if self.config.is_dummy or self.config.park_joint_qpos is None:
             return
         assert self.config.park_gripper_position is not None
         self._move_to_configured_pose(
@@ -470,19 +475,21 @@ class SO101Env(gym.Env):
         return float(self.config.reset_joint_speed)
 
     def get_park_joint_positions(self) -> Optional[np.ndarray]:
-        """Return the configured park joint target."""
-        if self.config.park_joint_qpos is None:
+        """Return the configured park joint target for a real arm."""
+        if self.config.is_dummy or self.config.park_joint_qpos is None:
             return None
         return np.asarray(self.config.park_joint_qpos, dtype=np.float64)[None, :]
 
     def get_park_gripper_position(self) -> Optional[np.ndarray]:
-        """Return the configured park gripper target."""
-        if self.config.park_gripper_position is None:
+        """Return the configured park gripper target for a real arm."""
+        if self.config.is_dummy or self.config.park_gripper_position is None:
             return None
         return np.asarray([[self.config.park_gripper_position]], dtype=np.float64)
 
-    def get_park_duration(self) -> float:
-        """Return the minimum park trajectory duration in seconds."""
+    def get_park_duration(self) -> Optional[float]:
+        """Return park duration only when a real park target is configured."""
+        if self.config.is_dummy or self.config.park_joint_qpos is None:
+            return None
         return float(self.config.park_duration)
 
     # Reward.
@@ -535,6 +542,7 @@ class SO101Env(gym.Env):
         # Kept in step with the space, which omits 'frames' when there are none.
         if "frames" in self.observation_space.spaces:
             observation["frames"] = self._get_camera_frames()
+        self._has_observation = True
         return copy.deepcopy(observation)
 
     # Cameras.

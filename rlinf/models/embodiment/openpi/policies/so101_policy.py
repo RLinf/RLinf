@@ -30,7 +30,7 @@ SO101_ACTION_DIM = len(SO101_JOINT_NAMES)
 
 
 def _parse_image(image: np.ndarray) -> np.ndarray:
-    """将 LeRobot 的图像统一成 HWC、uint8。"""
+    """Convert a LeRobot image to HWC uint8 format."""
     image = np.asarray(image)
     if np.issubdtype(image.dtype, np.floating):
         # LeRobot normally sends uint8 frames, but callers may provide either
@@ -46,7 +46,7 @@ def _parse_image(image: np.ndarray) -> np.ndarray:
 
 @dataclasses.dataclass(frozen=True)
 class SO101Outputs(transforms.DataTransformFn):
-    """从模型补齐后的动作中取回 SO-101 六维动作。"""
+    """Extract the six-dimensional SO-101 action from model output."""
 
     joint_dim: int = SO101_ACTION_DIM
 
