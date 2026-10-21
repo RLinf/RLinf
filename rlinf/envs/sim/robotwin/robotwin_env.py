@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import json
 import os
 from typing import Optional, Union
@@ -67,6 +68,7 @@ class RoboTwinEnv(gym.Env):
             cfg.get("skip_intermediate_renders", True)
         )
         self._is_start = True
+        self._reset_count = 0
 
         self.task_name = cfg.task_config.task_name
 
@@ -262,6 +264,11 @@ class RoboTwinEnv(gym.Env):
         self._reset_metrics(env_idx)
 
         extracted_obs = self._extract_obs_image(raw_obs)
+
+        self._reset_count += 1
+        trim_interval = self.cfg.get("malloc_trim_reset_interval", 0)
+        if trim_interval > 0 and self._reset_count % trim_interval == 0:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
 
         return extracted_obs, infos
 

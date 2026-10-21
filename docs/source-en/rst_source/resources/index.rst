@@ -37,6 +37,12 @@ and troubleshooting.
 
       What changed in RLinf v0.3.
 
+   .. grid-item-card:: v0.4 Release Notes
+      :link: release_v0.4
+      :link-type: doc
+
+      What changed in RLinf v0.4.
+
    .. grid-item-card:: FAQ
       :link: faq
       :link-type: doc
@@ -51,4 +57,5 @@ and troubleshooting.
    Publications <publications/index>
    v0.1 & v0.2 Release Notes <release_v0.1_v0.2>
    v0.3 Release Notes <release_v0.3>
+   v0.4 Release Notes <release_v0.4>
    FAQ <faq>

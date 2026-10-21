@@ -50,7 +50,10 @@ RLT 的两个训练阶段通过完整的 Stage 1 ``actor`` checkpoint 衔接。S
      - 在 Franka 示范数据上联合 SFT π₀.₅ 和 RLT token transformer。
    * - Franka Stage 2（RL token）
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
-     - 使用冻结的 Stage 1 token 特征，在真机上训练 RLT actor-critic。
+     - 使用冻结的 Stage 1 特征模型，在真机上训练 RLT actor-critic。
+   * - 双臂 Franka Stage 2
+     - ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``
+     - 在同一台主机上驱动双臂，用 ``pi05_dualfranka_tcp_rot6d`` 的 Stage 1 checkpoint 训练 Stage 2 MLP。
    * - ManiSkill Stage 1
      - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
      - 联合训练 ManiSkill OpenPI 基座和 RLT token transformer。
@@ -333,7 +336,7 @@ LeRobot 格式数据：
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 然后启动采集：
 
@@ -341,7 +344,8 @@ LeRobot 格式数据：
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-采集完成后，将 LeRobot 数据集放到训练节点，并为当前 RLT OpenPI dataconfig
+LeRobot shard 位于 ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``，
+其中直接包含 ``data/`` 和 ``meta/``。采集完成后，将这个 shard 放到训练节点，并为当前 RLT OpenPI dataconfig
 计算归一化统计。``repo_id`` 需要与 Stage 1 / Stage 2 配置中的
 ``actor.openpi_data.repo_id`` 和 ``rollout.prefix_feature_model.openpi_data.repo_id`` 保持一致：
 
@@ -436,6 +440,17 @@ Stage 2：运行 RLT Actor-Critic
 当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
 控制阶段。其他功能可根据具体任务需求进行定制
 （``rlinf/envs/real/wrappers/episode/policy_switch.py``）。
+
+双臂 Franka Stage 2
+~~~~~~~~~~~~~~~~~~~
+
+两台机械臂和 GPU 在同一台主机上，并且冻结的 Stage 1 checkpoint 是 ``pi05_dualfranka_tcp_rot6d`` 时，使用 ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``。上面那份单臂配置是插销任务：7 维动作、一路相机。这份配置是 20 维 tcp_rot6d。机械臂执行 10 步，Stage 1 的参考 horizon 是 20。
+
+替换机械臂 IP、相机 serial、夹爪路径、``TASK_DESCRIPTION`` 和目标位姿。把 ``rollout.rlt_feature_model.model_path`` 指到双臂 Stage 1 checkpoint，并把 ``openpi_data.repo_id`` 设成该 checkpoint 的数据集 id。``keyboard_device`` 留空并导出 ``RLINF_KEYBOARD_DEVICE``，或者在 ``env.train`` 和 ``env.eval`` 里都写上 evdev 路径。保持 ``hold_current_when_inactive: False``。松开 grip 后，该臂先保持最后一条遥操作指令，当前 action chunk 结束后才交回 policy。USB 键盘 ``b`` 把 rollout 从 Stage 1 policy 切到 Stage 2 actor。Pico 的 A/B/X/Y 仍是夹爪按键。
+
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_async.sh realworld_dual_franka_rlt_stage2_ac_mlp
 
 运行 ManiSkill Joint 示例
 -------------------------

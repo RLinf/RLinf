@@ -46,16 +46,16 @@ runner:
   max_epochs: 1000
   max_steps: 1000
   only_eval: false
-  val_check_interval: -1
-  save_interval: -1
+  val_check_interval: 10
+  save_interval: 100
   resume_dir: null
-  ckpt_path: null
+  ckpt_path: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
   per_worker_log: false
   per_worker_log_path: null
   weight_sync_interval: 1
 
 algorithm:
-  update_epoch: 4
+  update_epoch: 2
   normalize_advantages: true
   kl_penalty: kl
   group_size: 1
@@ -68,8 +68,8 @@ algorithm:
   bootstrap_type: always
   kl_beta: 0.0
   entropy_bonus: 0
-  clip_ratio_high: 0.2
-  clip_ratio_low: 0.2
+  clip_ratio_high: 0.1
+  clip_ratio_low: 0.1
   clip_ratio_c: 3.0
   value_clip: 1.0
   huber_delta: 10.0
@@ -94,7 +94,7 @@ env:
   group_name: "EnvGroup"
   train:
     rollout_epoch: 1
-    total_num_envs: 32
+    total_num_envs: 128
     auto_reset: true
     ignore_terminations: false
     use_fixed_reset_state_ids: false
@@ -167,7 +167,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 1600
-  global_batch_size: 1600
+  global_batch_size: 6400
   seed: 1234
   enable_offload: false
   model:
@@ -175,8 +175,8 @@ actor:
     model_type: "mlp_policy"
     obs_dim: 42
   optim:
-    lr: 1.0e-4
-    value_lr: 1.0e-4
+    lr: 1.0e-5
+    value_lr: 3.0e-5
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-08
@@ -205,7 +205,7 @@ reward:
       max_tokens: 16
       temperature: 0.0
   model:
-    model_path: "/path/to/Qwen3-VL-4B-Instruct"
+    model_path: "/path/to/finetuned_trend_hf"
     model_type: "buffered_vlm"
     gt_success_bonus: 20.0
     precision: "bf16"
