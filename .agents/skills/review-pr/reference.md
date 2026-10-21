@@ -48,3 +48,7 @@ Use alongside the PR diff. **Always cross-reference against `origin/main`** (`gi
 - [ ] Newly-added files (`git diff --name-status origin/main...<pr-head>`, status `A`) carry the `# Copyright <YEAR> The RLinf Authors.` header with `<YEAR>` = current year (`date +%Y`); third-party-vendored files keep their upstream copyright line
 - [ ] Every commit `Signed-off-by`; Conventional Commits subject
 - [ ] PR title in Conventional Commits format; PR Description + Checklist sections filled
+
+## Output clarity
+- [ ] Each finding includes **both** a plain-language explanation for a reviewer with little background in that module (what it tries to do, what happens instead, and why it matters) **and** a step-by-step code walkthrough that directly shows the key offending code snippet(s) inline rather than only pointing to line numbers
+
