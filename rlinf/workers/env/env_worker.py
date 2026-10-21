@@ -364,6 +364,7 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
+                    resume=bool(getattr(env_cfg.data_collection, "resume", False)),
                     streaming=getattr(env_cfg.data_collection, "streaming", False),
                 )
             env_list.append(env)
