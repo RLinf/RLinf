@@ -1,18 +1,34 @@
-# RoboDojo's simulator stack and RLinf's model stack use incompatible pins.
-# IsaacLab requires starlette==0.49.1, while Isaac Sim's FastAPI dependency
-# requires starlette<0.46. Keep the simulator revisions fixed and use the
-# compatibility set validated by the upstream RoboDojo installer.
-starlette==0.45.3
-typing-extensions>=4.16.0
-uvicorn>=0.31.1
-wrapt>=1.17.0
-filelock>=3.16.1
+# Canonical dependency lock for the RoboDojo integration.
+#
+# Platform: Linux x86_64, NVIDIA GPU, Python 3.11.
+# Torch packages are installed from https://download.pytorch.org/whl/cu126.
+# Runtime: rlinf-robodojo-runtime 0.3.0 at
+#   6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7.
+# Isaac Sim 5.1 and IsaacLab require conflicting exact pins. The values below
+# are the combination used by RoboDojo and validated with RLinf.
+#
+# Keep this file, requirements/install.sh, and the runtime metadata in sync.
+rlinf-robodojo-runtime==0.3.0
 torch==2.7.0
-pyperclip>=1.9.0
-idna>=3.18
+torchvision==0.22.0
+torchaudio==2.7.0
+numpy==1.26.0
+isaacsim[all,extscache]==5.1.0
+fastapi==0.115.7
+starlette==0.45.3
+typing-extensions==4.16.0
+uvicorn==0.54.0
+wrapt==2.5.1
+filelock==4.2.4
+pyperclip==1.11.0
+idna==3.20
+opencv-python==4.11.0.86
+scipy==1.15.3
+h5py==3.16.0
+warp-lang==1.18.0
 
-# Pin the simulator packages even when the runtime metadata still references
-# floating branches. Bump these together with requirements/install.sh.
+# Source pins. The IsaacLab distributions are installed editable so their
+# extension metadata is present; cuRobo is built against Torch 2.7.
 isaaclab @ git+https://github.com/yuechen0614/IsaacLab.git@afca7b09d60d8beb9c1cb28b43066499940b969b#subdirectory=source/isaaclab
 isaaclab_assets @ git+https://github.com/yuechen0614/IsaacLab.git@afca7b09d60d8beb9c1cb28b43066499940b969b#subdirectory=source/isaaclab_assets
 isaaclab_tasks @ git+https://github.com/yuechen0614/IsaacLab.git@afca7b09d60d8beb9c1cb28b43066499940b969b#subdirectory=source/isaaclab_tasks

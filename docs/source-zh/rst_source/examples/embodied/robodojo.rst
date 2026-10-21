@@ -82,6 +82,34 @@ RoboDojo 的其他任务使用相同的环境接口，只需修改 ``task_config
    * - 奖励
      - 默认根据任务成功状态生成稀疏奖励。
 
+版本锁定
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 使用
+``requirements/embodied/envs/robodojo-override.txt`` 统一锁定 RoboDojo 的
+模拟器、PyTorch 和兼容性依赖。当前组合如下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 组件
+     - 固定版本
+   * - Python
+     - 3.11
+   * - RoboDojo runtime
+     - 0.3.0 · 提交 ``6d76a0c``
+   * - PyTorch
+     - 2.7.0 · CUDA 12.6 wheel
+   * - TorchVision / TorchAudio
+     - 0.22.0 / 2.7.0 · CUDA 12.6 wheel
+   * - Isaac Sim
+     - 5.1.0
+   * - IsaacLab
+     - 0.54.3 · 提交 ``afca7b09``
+   * - cuRobo
+     - 提交 ``895c651``
+
 安装
 ----------------------------------------
 

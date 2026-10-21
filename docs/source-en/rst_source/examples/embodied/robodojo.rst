@@ -88,6 +88,34 @@ Observation and Action
    * - Reward
      - Sparse task-completion reward by default.
 
+Version Lock
+~~~~~~~~~~~~
+
+RLinf locks the RoboDojo simulator, PyTorch stack, and compatibility
+dependencies in ``requirements/embodied/envs/robodojo-override.txt``. The
+current combination is:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Component
+     - Pinned version
+   * - Python
+     - 3.11
+   * - RoboDojo runtime
+     - 0.3.0 · commit ``6d76a0c``
+   * - PyTorch
+     - 2.7.0 · CUDA 12.6 wheel
+   * - TorchVision / TorchAudio
+     - 0.22.0 / 2.7.0 · CUDA 12.6 wheel
+   * - Isaac Sim
+     - 5.1.0
+   * - IsaacLab
+     - 0.54.3 · commit ``afca7b09``
+   * - cuRobo
+     - commit ``895c651``
+
 Installation
 ------------
 

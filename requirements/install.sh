@@ -3802,8 +3802,14 @@ install_robodojo_env() {
         export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
     fi
 
+    local torch_index
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        torch_index="https://download.pytorch.org/whl/cu128"
+    else
+        torch_index="https://download.pytorch.org/whl/cu126"
+    fi
     uv pip install --no-config --prerelease=allow \
-        --overrides "$override_file" "${index_args[@]}" \
+        --index-url "$torch_index" --overrides "$override_file" \
         torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
 
     # cuRobo and the IsaacLab fork are pinned to the revisions the RoboDojo
