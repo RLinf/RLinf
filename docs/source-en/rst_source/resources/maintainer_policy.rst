@@ -34,7 +34,8 @@ readiness for promotion.
 
 Area Owners maintain their assigned areas, review contributions, and mentor contributors. Their
 authority covers routine technical work within an approved scope. **Lead Maintainers** are
-responsible for the project's overall direction and project-wide decisions, as defined in Section 9.
+responsible for the project's overall direction and project-wide decisions, as defined in
+:ref:`Section 9 <maintainer-policy-section-9>`.
 
 Authority is granted only after the contributor demonstrates the work it requires. Area Owner
 status does not confer project-wide governance authority, repository administration, release
@@ -51,25 +52,28 @@ standards draw on established open source practices and are specific to RLinf.
 
 This policy supplements RLinf's contribution and review requirements:
 
-- RLinf's contribution guide requires user-facing changes to include tests and documentation, with a
-  reviewer following and validating the documentation for reproducibility. It also requires DCO
-  sign-off and assigns at least two maintainers to a PR. These requirements apply to all
-  contributors, including maintainers. R1_
+- RLinf's `contribution guide <https://github.com/RLinf/RLinf/blob/main/CONTRIBUTING.md>`_ requires
+  user-facing changes to include tests and documentation, with a reviewer following and validating
+  the documentation for reproducibility. It also requires DCO sign-off and assigns at least two
+  maintainers to a PR. These requirements apply to all contributors, including maintainers.
 
-- The ``CODEOWNERS`` file divides review responsibilities across algorithms, training and rollout
-  engines, environments, robotics, scheduling, documentation, tests, and other areas. Area Owner
-  appointments define an explicit ownership scope and backup coverage. R2_
+- The `.github/CODEOWNERS <https://github.com/RLinf/RLinf/blob/main/.github/CODEOWNERS>`_ file
+  divides review responsibilities across algorithms, training and rollout engines, environments,
+  robotics, scheduling, documentation, tests, and other areas. Area Owner appointments define an
+  explicit ownership scope and backup coverage.
 
-- The CI workflow uses a ``run-ci`` label to authorize the test workflow to proceed, with path-based
-  selection of test suites. Label-management privileges therefore carry operational responsibilities
-  and are subject to the access controls in Section 10. R3_
+- The `CI workflow <https://github.com/RLinf/RLinf/blob/main/.github/workflows/ci-tests.yml>`_ uses
+  a ``run-ci`` label to authorize the test workflow to proceed, with path-based selection of test
+  suites. Label-management privileges therefore carry operational responsibilities and are subject
+  to the access controls in :ref:`Section 10 <maintainer-policy-section-10>`.
 
-- Contributor recognition in the README is complemented by the role registry, contribution records,
-  and certificates defined in this policy. R4_
+- Contributor recognition in the
+  `README <https://github.com/RLinf/RLinf/blob/main/README.md#contribution-guidelines>`_ is
+  complemented by the role registry, contribution records, and certificates defined in this policy.
 
-This policy applies to maintenance responsibilities across the RLinf repository. Area Owner
-appointments, approval authority, and operational access are governed by the requirements below.
-R5_
+This policy applies to maintenance responsibilities across the
+`RLinf repository <https://github.com/RLinf/RLinf>`_. Area Owner appointments, approval authority,
+and operational access are governed by the requirements below.
 
 .. _maintainer-policy-section-3:
 
@@ -145,7 +149,7 @@ one outcome into many PRs does not create extra credit.
      - Reviewer-level evidence, a defined ownership boundary, an agreed maintenance plan, and two
        sponsors who have directly observed the work. At least one assessor must be independent of
        the candidate's institution and reporting relationships. Complete the supervised trial in
-       Section 5.
+       :ref:`Section 5 <maintainer-policy-section-5>`.
      - Public candidacy announcement with consent; mentor assignment, written midpoint feedback, and
        a trial completion record stating the assessment outcome.
      - Lead reviews and triage under supervision. An existing authorized Area Owner remains
@@ -153,11 +157,13 @@ one outcome into many PRs does not create extra credit.
    * - **5. Area Owner**
      - Successful trial; all baseline quality dimensions pass; at least one area of expertise
        reaches the expert standard; an independent assessment and public promotion process conclude
-       with an approved appointment under Section 9. A **6–9 month** progression from first sustained
-       involvement is planning guidance, not a fixed waiting period or a promise of
-       promotion. The required evidence and observed service determine readiness.
-     - Appointment in ``MAINTAINERS.md`` as an Area Owner, defined scope and responsibilities,
-       verifiable “RLinf Area Owner — [area]” certificate, and a community announcement.
+       with an approved appointment under :ref:`Section 9 <maintainer-policy-section-9>`. A **6–9
+       month** progression from first sustained involvement is planning guidance, not a fixed
+       waiting period or a promise of promotion. The required evidence and observed service
+       determine readiness.
+     - Appointment in the project role registry as an Area Owner, defined scope and
+       responsibilities, verifiable “RLinf Area Owner — [area]” certificate, and a community
+       announcement.
      - Authority to accept routine contributions in the approved area through the protected merge
        process. No self-approval, automatic release rights, or authority outside scope.
 
@@ -291,7 +297,7 @@ expensive equipment.
 
 The following procedure applies to Reviewer, Area Owner Candidate, and Area Owner appointments,
 with the evidence and trial appropriate to each stage. Contributor acknowledgement and Recognized
-Contributor status use the validation in Section 4.
+Contributor status use the validation in :ref:`Section 4 <maintainer-policy-section-4>`.
 
 1. **Open a nomination.** Anyone may self-nominate or nominate another consenting contributor in a
    public issue or governance PR. Include contribution links, target role and scope, affiliation,
@@ -314,8 +320,9 @@ Contributor status use the validation in Section 4.
 
 5. **Record a decision.** Reviewer and Candidate appointments require two qualified Area Owner
    approvals, including the independence requirement for Candidate assessment. Area Owner
-   appointments require the assessment and recommendations in Section 9. Assessors and sponsors
-   cannot grant Area Owner status.
+   appointments require the assessment and recommendations in
+   :ref:`Section 9 <maintainer-policy-section-9>`. Assessors and sponsors cannot grant Area Owner
+   status.
    The decision target for routine cases is 10 business days after feedback closes. If a case takes
    longer, the decision-makers must publish the outstanding question and next review date. Silence
    is not approval.
@@ -388,7 +395,8 @@ does not replace the quality, independent assessment, or security requirements i
 The following decision rules apply:
 
 - **Reviewer and Area Owner Candidate appointments:** require two qualified Area Owner approvals
-  under Section 7, including the independent assessment required for candidacy.
+  under :ref:`Section 7 <maintainer-policy-section-7>`, including the independent assessment
+  required for candidacy.
 
 - **Area Owner appointments, expanded ownership scope, disciplinary removal, and significant
   access grants:** require at least 14 days of notice and comment and three affirmative
@@ -404,7 +412,7 @@ The following decision rules apply:
 - **Departures, leave, and reinstatement:** record the approved status and handover before
   custodians update access. A person may stop volunteering at any time. Routine leave and voluntary
   departures do not require the 14-day comment period used for disciplinary removal. Reinstatement
-  follows Section 11.
+  follows :ref:`Section 11 <maintainer-policy-section-11>`.
 
 - **Changes to this policy:** require at least 14 days of public discussion before final approval,
   with input sought from affected areas and external contributors. Publish the reasons and how
@@ -423,8 +431,9 @@ The following decision rules apply:
 
 Decision-makers publish recommendations, approvals, recusals, and rationales. Before disciplinary
 removal, reviewers must hear the affected person's response; allegations alone are not
-findings. Appeals follow Section 7. Institutional sponsorship, founder status, or a commercial
-relationship provides no entitlement to appointment or an unexplained veto.
+findings. Appeals follow :ref:`Section 7 <maintainer-policy-section-7>`. Institutional sponsorship,
+founder status, or a commercial relationship provides no entitlement to appointment or an
+unexplained veto.
 
 For an active credential or infrastructure incident, an authorized custodian may immediately suspend
 affected access and promptly report the incident. A second custodian must review the suspension
@@ -439,9 +448,10 @@ an Area Owner.
 ----------------------------------------------
 
 **Policy scope is not a technical access boundary.** GitHub's standard repository write role is
-repository-wide; listing someone against one path in ``CODEOWNERS`` does not make their write access
-path-limited. GitHub also requires write access for recognized code owners, and listing multiple
-owners does not require every listed owner to approve. R9_
+repository-wide; listing someone against one path in ``.github/CODEOWNERS`` does not make their
+write access path-limited. GitHub also requires write access for
+`recognized code owners <https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners>`_,
+and listing multiple owners does not require every listed owner to approve.
 
 Operational capabilities require the following authorization:
 
@@ -455,7 +465,7 @@ Operational capabilities require the following authorization:
      - Everyone under the conduct and contribution rules.
    * - Official review recommendations
      - Recognized Reviewer or higher, within the recorded expertise area. Maintain a reviewer
-       registry separate from GitHub ``CODEOWNERS`` if write access is inappropriate.
+       registry separate from GitHub ``.github/CODEOWNERS`` if write access is inappropriate.
    * - Issue labels and triage
      - Read access plus narrowly authorized bot operations initially. Grant native Triage only after
        its CI-trigger and other workflow effects are checked and controlled.
@@ -473,8 +483,9 @@ Operational capabilities require the following authorization:
        release authorization.
    * - Repository admin, organization ownership, and credential management
      - A minimal, named custody team, normally 2–3 people spanning at least 2 institutions when
-       qualified people are available. Separate evidence, explicit approval under Section 9,
-       account security, backup coverage, and periodic access review are required.
+       qualified people are available. Separate evidence, explicit approval under
+       :ref:`Section 9 <maintainer-policy-section-9>`, account security, backup coverage, and
+       periodic access review are required.
 
 The trusted merge process must enforce:
 
@@ -488,11 +499,12 @@ The trusted merge process must enforce:
 3. Appropriate tests and reviewer-validated documentation. Cross-area changes require acceptance
    from each affected area. High-risk workflow, credential, dependency-execution, release, or
    protection-rule changes require two specifically qualified custodians. Changes that implement
-   decisions reserved under Section 9 must link to the recorded approval before merging.
+   decisions reserved under :ref:`Section 9 <maintainer-policy-section-9>` must link to the recorded
+   approval before merging.
 
 4. Checks and approvals tied to the current revision; material changes invalidate prior approval.
-   Protect the ownership registry, workflow rules, merge authorization policy, and ``CODEOWNERS``
-   against self-authorized edits.
+   Protect the ownership registry, workflow rules, merge authorization policy, and
+   ``.github/CODEOWNERS`` against self-authorized edits.
 
 5. An approved, recorded exception process for emergency fixes, with scope, reason, approvers,
    recovery plan, and prompt retrospective. Emergency status does not justify
@@ -507,7 +519,8 @@ ownership as a permission restriction.
 
 Area Owner appointments and certificates do not automatically grant GitHub's built-in **Maintain**,
 **Admin**, or organization **Owner** roles. Those are platform capabilities, not equivalents of the
-community title “Area Owner,” and require separate authorization under Section 9.
+community title “Area Owner,” and require separate authorization under
+:ref:`Section 9 <maintainer-policy-section-9>`.
 
 Before granting any non-public operational capability, custodians must verify two-factor
 authentication, an individual account, permission-specific onboarding, and a recorded recovery
@@ -547,8 +560,8 @@ supervised refresher before restoring acceptance authority.
 
 For repeated quality problems, responsible Area Owners document examples and provide mentoring and
 a 30–60 day improvement plan. Any necessary reduction in authority or removal follows the fair
-process in Section 9. Decisions to revoke authority must address demonstrated risk and preserve
-credit for legitimate past work.
+process in :ref:`Section 9 <maintainer-policy-section-9>`. Decisions to revoke authority must
+address demonstrated risk and preserve credit for legitimate past work.
 
 .. _maintainer-policy-section-12:
 
@@ -561,8 +574,8 @@ The implementation schedule begins on publication of this policy.
 nomination contacts, and access roles, and establishes contributor and reviewer registries,
 nomination templates, credential verification, mentoring contacts, and a permission inventory.
 During the first 14 days, the project collects public feedback on implementation; any policy
-amendments follow Section 9. The implementation report identifies which safeguards are enforced and
-which require further implementation.
+amendments follow :ref:`Section 9 <maintainer-policy-section-9>`. The implementation report
+identifies which safeguards are enforced and which require further implementation.
 
 Authorized custodians publish who holds the GitHub organization, package and container publication
 accounts, domains, trademarks, and other essential assets, together with the custodians'
@@ -612,47 +625,34 @@ authority.
    * - Reference
      - Established practice
      - Application in RLinf
-   * - **Kubernetes community membership** R6_
+   * - `Kubernetes community membership <https://github.com/kubernetes/community/blob/master/community-membership.md>`_
      - Separate Member, Reviewer, Approver, and subproject leadership roles; sponsorship;
        scope-specific review and approval responsibilities; activity expectations.
      - A staged path with mentoring and separate review/acceptance authority. RLinf sets its own
        numerical thresholds in this policy.
-   * - **PyTorch technical governance** R7_
+   * - `PyTorch technical governance <https://docs.pytorch.org/docs/2.14/community/governance.html>`_
      - Module-level ownership, evidence-based maintainer nominations, public reasoning, individual
        rather than company membership, and separation of technical governance from business
        sponsorship.
      - Area Owners with explicit evidence and personal membership. RLinf's admission process
        and separate administrative custody apply these principles at its current scale.
-   * - **Apache governance** R8_
+   * - `Apache governance <https://www.apache.org/foundation/governance/>`_
      - Committer access is earned through demonstrated contributions; sponsors do not acquire
        governance merit through funding.
      - Technical responsibility is earned independently of institutional sponsorship. RLinf's DCO
        remains in place; this policy does not import Apache's ICLA requirement or imply ASF
        affiliation.
-   * - **GitHub CODEOWNERS documentation** R9_
+   * - `GitHub CODEOWNERS documentation <https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners>`_
      - Code owners need repository write permission; multiple listed owners do not imply multiple
        mandatory approvals.
      - Review routing is distinct from enforced authority. RLinf requires a trusted merge control
        and separately authorized permissions.
 
-vLLM's governance process separates area ownership from project leadership and assigns governance,
-unresolved disputes, and final confirmation of committer onboarding to project leadership. This
-distinction informs the allocation of authority in Section 9. R10_
+`vLLM's governance process <https://github.com/vllm-project/vllm/blob/91ed2859c7345dc160956781b4662dbf99870005/docs/governance/process.md>`_
+separates area ownership from project leadership and assigns governance, unresolved disputes, and
+final confirmation of committer onboarding to project leadership. This distinction informs the
+allocation of authority in :ref:`Section 9 <maintainer-policy-section-9>`.
 
-References R1–R9 were consulted on 3 October 2026; vLLM's governance process (R10) was consulted on
-15 October 2026. Repository references for ownership and CI use commit
-``c70606f08cdca259b8dec03d4430926b5b8fac9d``; the contribution guide and README were consulted on
-``main``. These sources inform the policy. The requirements stated in this document govern RLinf
-Area Owner admission and responsibilities; changes to upstream references do not automatically
-change this policy.
-
-.. _R1: https://github.com/RLinf/RLinf/blob/main/CONTRIBUTING.md
-.. _R2: https://github.com/RLinf/RLinf/blob/c70606f08cdca259b8dec03d4430926b5b8fac9d/.github/CODEOWNERS
-.. _R3: https://github.com/RLinf/RLinf/blob/c70606f08cdca259b8dec03d4430926b5b8fac9d/.github/workflows/ci-tests.yml
-.. _R4: https://github.com/RLinf/RLinf/blob/main/README.md#contribution-guidelines
-.. _R5: https://github.com/RLinf/RLinf/tree/c70606f08cdca259b8dec03d4430926b5b8fac9d
-.. _R6: https://github.com/kubernetes/community/blob/master/community-membership.md
-.. _R7: https://docs.pytorch.org/docs/2.14/community/governance.html
-.. _R8: https://www.apache.org/foundation/governance/
-.. _R9: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
-.. _R10: https://github.com/vllm-project/vllm/blob/91ed2859c7345dc160956781b4662dbf99870005/docs/governance/process.md
+These external references and the repository files on ``main`` inform the policy. The requirements
+stated in this document govern RLinf Area Owner admission and responsibilities; changes to upstream
+references do not automatically change this policy.

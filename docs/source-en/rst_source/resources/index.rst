@@ -1,8 +1,8 @@
 Resources
 =========
 
-Use Resources for the project rationale, contributor policy, updates, publications,
-release notes, and troubleshooting.
+Use Resources for the project rationale, updates, publications, release notes,
+troubleshooting, and contributor policy.
 
 .. grid:: 1 2 2 3
    :gutter: 2
