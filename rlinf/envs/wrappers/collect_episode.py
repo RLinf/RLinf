@@ -709,20 +709,16 @@ class CollectEpisode(gym.Wrapper):
             self._extract_success_from_info(env_info)
         )
 
-        np_action = self._to_numpy(self._slice_data(action, env_idx))
-        if (
-            isinstance(env_info, dict)
-            and "intervene_flag" in env_info
-            and "intervene_action" in env_info
-            and np.asarray(env_info["intervene_flag"]).all()
-        ):
-            np_action = self._to_numpy(env_info["intervene_action"])
+        np_action = self._to_numpy(self._slice_data(action, env_idx)).reshape(-1)
+        np_action, intervene_flag = LeRobotFrame._executed_action(
+            np_action, env_info, np_action.size
+        )
 
         frame = LeRobotFrame.from_values(
             observation=prev_obs,
             action=np_action,
             task=self._stream_task[env_idx] or "unknown task",
-            intervene_flag=self._intervene_flag_from_info(env_info),
+            intervene_flag=intervene_flag,
             segment_id=int(self._segment_ids[env_idx]),
         )
         if frame is None:
@@ -965,14 +961,11 @@ class CollectEpisode(gym.Wrapper):
                 )
                 continue
             info_with_intervene = copy.deepcopy(raw_info)
-
-            if (
-                "intervene_flag" in info_with_intervene
-                and "intervene_action" in info_with_intervene
-            ):
-                if info_with_intervene["intervene_flag"].all():
-                    np_action = self._to_numpy(info_with_intervene["intervene_action"])
-            intervene_flag = self._intervene_flag_from_info(info_with_intervene)
+            if np_action is None:
+                continue
+            np_action, intervene_flag = LeRobotFrame._executed_action(
+                np_action, info_with_intervene, np_action.size
+            )
             seg_id = int(seg_ids[i]) if i < len(seg_ids) else 0
             frame = LeRobotFrame.from_values(
                 observation=obs,
@@ -1228,19 +1221,6 @@ class CollectEpisode(gym.Wrapper):
         if found_any:
             return is_success
         return self._episode_success[env_idx]
-
-    @staticmethod
-    def _intervene_flag_from_info(info: Any) -> bool:
-        """Whether this timestep used human / expert intervention (per-env info)."""
-        if not isinstance(info, dict):
-            return False
-        val = info.get("intervene_flag")
-        if val is None:
-            return False
-        arr = CollectEpisode._to_numpy(val)
-        if arr is None:
-            return False
-        return bool(np.asarray(arr, dtype=bool).reshape(-1).any())
 
     @staticmethod
     def _to_bool_scalar(val) -> Optional[bool]:
