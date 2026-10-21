@@ -4,7 +4,7 @@ MolmoAct2 评测
 `MolmoAct2 <https://github.com/allenai/molmoact2>`__ 是 AllenAI 开源的
 vision-language-action 模型，通过 LeRobot policy 提供服务，并使用 flow-matching
 action expert 预测连续动作。RLinf 通过其 LIBERO 入口运行官方 MolmoAct2-LIBERO
-checkpoint。当前接入**仅支持评测**：上游 policy 只提供推理，没有训练路径。
+checkpoint。当前接入\ **仅支持评测**：上游 policy 只提供推理，没有训练路径。
 
 概览
 ----
@@ -93,7 +93,7 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-libero``：
+**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
 
 .. code-block:: bash
 
@@ -102,8 +102,8 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-libero
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # 在容器内切换到 MolmoAct2 虚拟环境：
    source switch_env molmoact2

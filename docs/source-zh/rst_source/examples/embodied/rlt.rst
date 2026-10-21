@@ -60,6 +60,9 @@ RLT 将表示学习和在线 RL 控制拆开。
    * - Franka Stage 2
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
      - 使用冻结的 Stage 1 特征模型，在真机上训练 RLT actor-critic。
+   * - 双臂 Franka Stage 2
+     - ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``
+     - 在同一台主机上驱动双臂，用 ``pi05_dualfranka_tcp_rot6d`` 的 Stage 1 checkpoint 训练 Stage 2 MLP。
    * - ManiSkill Stage 1
      - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
      - 联合训练 ManiSkill OpenPI 基座和 RLT token transformer。
@@ -95,9 +98,9 @@ RLT 将表示学习和在线 RL 控制拆开。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 为提高国内下载速度，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 进入容器后，切换到 OpenPI 虚拟环境：
 
@@ -114,11 +117,9 @@ RLT 将表示学习和在线 RL 控制拆开。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-下面的 RLT 配置使用 ``model_type: openpi_rlinf``。安装命令仍使用
+下面的 RLT 配置使用 ``model_type: openpi``。安装命令仍使用
 ``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT
 Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
-这里的 ``openpi_rlinf`` 是 RLinf vendored、已对齐 JAX OpenPI 参考实现精度的
-PyTorch Pi0.5 路径，不是旧的官方 OpenPI PyTorch 路径。
 
 RLT 如何工作
 ------------
@@ -151,10 +152,9 @@ Stage 1 中比较关键的字段：
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi_rlinf"
-       precision: fp32
+       model_type: "openpi"
        is_lora: False
-       model_path: "/path/to/model"
+       model_path: "/path/to/pi05_base_openpi"
        num_action_chunks: 20
        action_dim: 7
        num_steps: 4
@@ -163,7 +163,10 @@ Stage 1 中比较关键的字段：
          task: sft
          config_name: "pi05_franka_state"
          num_images_in_input: 1
-         action_horizon: ${actor.model.num_action_chunks}
+         # Network prediction horizon (Pi0Config.action_horizon). Matches official
+         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+         # / num_action_chunks, which is the env-executed (RLT) window.
+         action_horizon: 20
          action_chunk: ${actor.model.num_action_chunks}
          action_env_dim: ${actor.model.action_dim}
          num_steps: ${actor.model.num_steps}
@@ -220,7 +223,7 @@ Franka 真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会提�
 ``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。
 
 ManiSkill joint 配置中，``env.*.rlt_policy_switch`` 使用任务信息自动产生
-``rlt_switch_flags``（actor/ref 阶段）和 ``intervene_flag``（expert 接管请求）。
+``rlt_switch_flags``\ （actor/ref 阶段）和 ``intervene_flag``\ （expert 接管请求）。
 HF rollout route 根据这些标记在整 chunk 级别选择 actor action、VLA
 ``ref_chunk`` 或 expert action，并把 ``record_transition``、``actor_switch`` 和
 ``intervention_requested`` 写入 ``forward_inputs``，供 replay 和监控使用。
@@ -257,7 +260,7 @@ Stage 2 中比较关键的字段：
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi_rlinf"
+       model_type: "openpi"
        precision: bf16
        is_lora: False
        num_action_chunks: 20
@@ -272,8 +275,11 @@ Stage 2 中比较关键的字段：
          task: eval
          config_name: "pi05_franka_state"
          num_images_in_input: 1
+         # Network prediction horizon (Pi0Config.action_horizon). Matches official
+         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+         # / num_action_chunks, which is the env-executed (RLT) window.
+         action_horizon: 20
          action_chunk: ${actor.model.ref_num_action_chunks}
-         action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
          action_env_dim: ${rollout.rlt_feature_model.action_dim}
          num_steps: ${rollout.rlt_feature_model.num_steps}
          model_action_dim: 32
@@ -332,7 +338,7 @@ LeRobot 格式数据：
    env:
      data_collection:
        enabled: True
-       export_format: "lerobot"
+       export_format: lerobot_dataset
 
 然后启动采集：
 
@@ -340,7 +346,8 @@ LeRobot 格式数据：
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-采集完成后，将 LeRobot 数据集放到训练节点，并为当前 RLT OpenPI dataconfig
+LeRobot shard 位于 ``logs/<timestamp>/lerobot_dataset/rank_0/id_0/``，
+其中直接包含 ``data/`` 和 ``meta/``。采集完成后，将这个 shard 放到训练节点，并为当前 RLT OpenPI dataconfig
 计算归一化统计。``repo_id`` 需要与 Stage 1 / Stage 2 配置中的
 ``actor.openpi_data.repo_id`` 和 ``rollout.rlt_feature_model.openpi_data.repo_id`` 保持一致：
 
@@ -367,7 +374,7 @@ Stage 1：训练 RLT 特征模型
      openpi_data:
        repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
-       model_path: /path/to/model
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -434,7 +441,18 @@ Stage 2：运行 RLT Actor-Critic
 
 当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
 控制阶段。其他功能可根据具体任务需求进行定制
-（``rlinf/envs/realworld/common/wrappers/keyboard_rlt_policy_switch_wrapper.py``）。
+（``rlinf/envs/real/wrappers/episode/policy_switch.py``）。
+
+双臂 Franka Stage 2
+~~~~~~~~~~~~~~~~~~~
+
+两台机械臂和 GPU 在同一台主机上，并且冻结的 Stage 1 checkpoint 是 ``pi05_dualfranka_tcp_rot6d`` 时，使用 ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``。上面那份单臂配置是插销任务：7 维动作、一路相机。这份配置是 20 维 tcp_rot6d。机械臂执行 10 步，Stage 1 的参考 horizon 是 20。
+
+替换机械臂 IP、相机 serial、夹爪路径、``TASK_DESCRIPTION`` 和目标位姿。把 ``rollout.rlt_feature_model.model_path`` 指到双臂 Stage 1 checkpoint，并把 ``openpi_data.repo_id`` 设成该 checkpoint 的数据集 id。``keyboard_device`` 留空并导出 ``RLINF_KEYBOARD_DEVICE``，或者在 ``env.train`` 和 ``env.eval`` 里都写上 evdev 路径。保持 ``hold_current_when_inactive: False``。松开 grip 后，该臂先保持最后一条遥操作指令，当前 action chunk 结束后才交回 policy。USB 键盘 ``b`` 把 rollout 从 Stage 1 policy 切到 Stage 2 actor。Pico 的 A/B/X/Y 仍是夹爪按键。
+
+.. code:: bash
+
+   bash examples/embodiment/run_realworld_async.sh realworld_dual_franka_rlt_stage2_ac_mlp
 
 运行 ManiSkill Joint 示例
 -------------------------
@@ -527,7 +545,7 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
    actor:
      model:
-       model_path: /path/to/pi05_base
+       model_path: /path/to/pi05_base_openpi
        openpi:
          config_name: pi05_rlt_maniskill_joint
        openpi_data:

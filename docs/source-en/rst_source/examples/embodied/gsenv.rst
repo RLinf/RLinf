@@ -100,7 +100,7 @@ Installation
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Switch to the OpenPI virtual environment inside the image:
 

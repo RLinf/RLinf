@@ -44,15 +44,16 @@ if not ray.is_initialized():
 
 from gello.dynamixel.driver import DynamixelDriver  # noqa: E402
 
-from rlinf.envs.realworld.common.gello.gello_joint_expert import (  # noqa: E402
-    GelloJointExpert,
-)
-from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
+from rlinf.envs.real.utils.pose import wrap_to_pi  # noqa: E402
+from rlinf.robotics.parts.arms.franka import (  # noqa: E402
     JOINT_LIMITS_LOWER,
     JOINT_LIMITS_UPPER,
-    FrankyController,
+    FrankyArm,
 )
-from rlinf.envs.realworld.franka.utils import wrap_to_pi  # noqa: E402
+from rlinf.robotics.parts.end_effectors import EndEffector  # noqa: E402
+from rlinf.robotics.parts.teleop.gello_joint import (  # noqa: E402
+    GelloJointExpert,
+)
 
 # ───────────────────────── shared helpers ──────────────────────────────
 
@@ -121,21 +122,22 @@ def fmt_deg(q: np.ndarray) -> str:
     return "[" + ", ".join(f"{math.degrees(v):+.1f}°" for v in q) + "]"
 
 
-def setup_franky() -> FrankyController:
-    """Connect to the local Franka via FrankyController and wait until it is up."""
+def setup_franky():
+    """Connect to the local Franka via FrankyArm and wait until it is up.
+
+    The Robotiq gripper opens alongside the arm, as it did when the arm still
+    built it, so this check keeps covering the serial port GELLO teleop needs.
+    """
     robot_ip = os.environ.get("FRANKA_ROBOT_IP", "172.16.0.2")
-    gripper_port = _resolve_local_robotiq_port()
     print(f"Connecting to Franka at {robot_ip} ...", flush=True)
-    controller = FrankyController.launch_controller(
-        robot_ip=robot_ip,
-        env_idx=0,
-        node_rank=0,
-        worker_rank=0,
-        gripper_type="robotiq",
-        gripper_connection=gripper_port,
+    controller = FrankyArm(robot_ip=robot_ip, node_rank=0)
+    gripper = EndEffector.of(
+        "robotiq_gripper", port=_resolve_local_robotiq_port(), node_rank=0
     )
+    controller.connect()
+    gripper.connect()
     for _ in range(60):
-        if controller.is_robot_up().wait()[0]:
+        if controller.is_robot_up():
             break
         time.sleep(0.5)
     else:
@@ -164,7 +166,7 @@ def setup_gello_expert() -> GelloJointExpert:
     return gello
 
 
-def safe_reset_to(controller: FrankyController, q_target: Sequence[float]) -> None:
+def safe_reset_to(controller, q_target: Sequence[float]) -> None:
     """Move robot to ``q_target`` via the slow safe path with actionable errors.
 
     Bails out with a hint if the robot is too far from ``q_target`` (the
@@ -172,7 +174,7 @@ def safe_reset_to(controller: FrankyController, q_target: Sequence[float]) -> No
     offline.
     """
     try:
-        q_now = controller.get_state().wait()[0].arm_joint_position
+        q_now = controller.get_state().arm_joint_position
         delta = np.asarray(q_target) - np.asarray(q_now)
         max_d = float(np.max(np.abs(delta)))
         worst = int(np.argmax(np.abs(delta)))
@@ -204,7 +206,7 @@ def safe_reset_to(controller: FrankyController, q_target: Sequence[float]) -> No
 
     print("  → calling reset_joint (slow, ~4.5% dynamics) ...", flush=True)
     try:
-        controller.reset_joint(list(q_target)).wait()
+        controller.reset_joint(list(q_target))
     except Exception as e:
         msg = str(e)
         print(colour(f"\n  reset_joint failed: {msg}", "31;1"), file=sys.stderr)
@@ -280,7 +282,7 @@ def run_align_check(_args: argparse.Namespace) -> None:
     try:
         while True:
             try:
-                q_robot = controller.get_state().wait()[0].arm_joint_position
+                q_robot = controller.get_state().arm_joint_position
                 q_gello, _grip = gello.get_action()
             except KeyboardInterrupt:
                 raise
@@ -400,7 +402,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
     confirm_or_exit("Proceed with motion to HOME? [y/N]: ")
     print(colour("Moving robot to HOME pose before alignment ...", "36;1"))
     safe_reset_to(controller, home_joints)
-    q_at_home = controller.get_state().wait()[0].arm_joint_position
+    q_at_home = controller.get_state().arm_joint_position
     print(
         colour(
             f"  at home: {[round(float(x), 3) for x in q_at_home]}",
@@ -423,7 +425,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
             entered = time.time()
             while True:
                 try:
-                    q_robot = controller.get_state().wait()[0].arm_joint_position
+                    q_robot = controller.get_state().arm_joint_position
                     q_gello, _ = gello.get_action()
                 except KeyboardInterrupt:
                     raise
@@ -471,7 +473,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
         return
 
     # Final sanity print
-    q_robot = controller.get_state().wait()[0].arm_joint_position
+    q_robot = controller.get_state().arm_joint_position
     q_gello, _ = gello.get_action()
     deltas = [wrap_to_pi(float(q_gello[i]) - float(q_robot[i])) for i in range(7)]
     max_d = max(abs(d) for d in deltas)
@@ -491,7 +493,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
     print("Holding here so you don't lose the alignment — Ctrl-C to exit.")
     try:
         while True:
-            q_robot = controller.get_state().wait()[0].arm_joint_position
+            q_robot = controller.get_state().arm_joint_position
             q_gello, _ = gello.get_action()
             deltas = [
                 wrap_to_pi(float(q_gello[i]) - float(q_robot[i])) for i in range(7)
@@ -584,14 +586,14 @@ def _calib_read_raw_gripper(driver, n_samples: int = 30) -> float:
     return float(np.median(np.asarray(samples)))
 
 
-def _calib_wait_for_enter(prompt: str, driver=None) -> None:
+def _calib_wait_for_enter(prompt: str, gello=None) -> None:
     """Block on ENTER while optionally streaming raw GELLO values."""
     print()
     print(prompt)
-    if driver is not None:
+    if gello is not None:
         print("(raw motor positions stream below — press ENTER when GELLO matches)")
     try:
-        if driver is None:
+        if gello is None:
             input("  press ENTER to continue: ")
             return
         import select
@@ -604,7 +606,7 @@ def _calib_wait_for_enter(prompt: str, driver=None) -> None:
                 return
             now = time.time()
             if now - last_print > 0.2:
-                q = driver.get_joints()
+                q = gello.get_joints()
                 arm = np.asarray(q[:CALIB_NUM_ARM], dtype=np.float64)
                 line = "  raw motors: " + " ".join(
                     f"J{i + 1}={arm[i]:+.3f}" for i in range(CALIB_NUM_ARM)
@@ -662,7 +664,7 @@ def run_calibrate(_args: argparse.Namespace) -> None:
 
     print_banner("Step 1 — move robot to POSE A and align GELLO")
     safe_reset_to(controller, CALIB_POSE_A)
-    q_robot_A = controller.get_state().wait()[0].arm_joint_position
+    q_robot_A = controller.get_state().arm_joint_position
     print(f"  robot now at A: {[round(float(x), 3) for x in q_robot_A]}", flush=True)
     _calib_wait_for_enter(
         "Physically pose the GELLO leader so it visually matches the Franka.\n"
@@ -676,7 +678,7 @@ def run_calibrate(_args: argparse.Namespace) -> None:
 
     print_banner("Step 2 — move robot to POSE B and re-align GELLO")
     safe_reset_to(controller, CALIB_POSE_B)
-    q_robot_B = controller.get_state().wait()[0].arm_joint_position
+    q_robot_B = controller.get_state().arm_joint_position
     print(f"  robot now at B: {[round(float(x), 3) for x in q_robot_B]}", flush=True)
     _calib_wait_for_enter(
         "Re-pose the GELLO leader so it visually matches the new Franka pose.\n"
@@ -817,7 +819,7 @@ def run_reset_to_gello(_args: argparse.Namespace) -> None:
         time.sleep(0.02)
     target = np.mean(samples, axis=0)
 
-    state = controller.get_state().wait()[0]
+    state = controller.get_state()
     current = state.arm_joint_position
 
     delta = target - current
@@ -876,10 +878,10 @@ def run_reset_to_gello(_args: argparse.Namespace) -> None:
         return
 
     print("\n  Moving robot (slow, ~4.5% dynamics) ...", flush=True)
-    controller.reset_joint(target.tolist()).wait()
+    controller.reset_joint(target.tolist())
     time.sleep(0.5)
 
-    state = controller.get_state().wait()[0]
+    state = controller.get_state()
     final = state.arm_joint_position
     final_delta = target - final
     max_err = float(np.max(np.abs(final_delta)))

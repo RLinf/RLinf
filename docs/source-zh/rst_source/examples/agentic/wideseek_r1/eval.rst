@@ -43,13 +43,13 @@ WideSeek-R1 评测
    :local:
 
 前置条件
-----------------------------------------
+--------
 
-评测前，请确保以下组件已准备就绪：
+评测前，请先完成 :doc:`环境与工具配置 <tools>`：
 
-- RLinf 环境已安装。参见 :doc:`../../../start/installation`。
-- 评判模型服务已启动。参见 :doc:`index`。
-- 已配置相应的工具后端。参见 :doc:`tools`。
+- RLinf 环境已安装。
+- 评判模型已启动。
+- 已配置相应的工具后端。
 
 下载模型
 ----------------------------------------
@@ -59,6 +59,16 @@ WideSeek-R1 评测
 - `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__
 
 你也可以评测你自己的 Qwen3 系列稠密模型。
+
+.. note::
+
+   已发布的 WideSeek-R1-4B checkpoint 权重实际以 fp16 存储，但其 ``config.json``
+   声明为 ``bfloat16``。默认跟随 config dtype 的推理框架（vLLM/SGLang/HF
+   Transformers 的 ``dtype="auto"``）会把权重上转为 bf16，在 WideSearch 上约损失
+   3 分 avg@4（55.9 vs 59.0）。在 RLinf 之外部署该 checkpoint 时，请显式传入
+   ``--dtype float16``。在 RLinf 内部无需额外设置：自带的评测与训练配置已指定
+   ``rollout.model.precision: fp16`` 并会传给 rollout 引擎
+   （见 `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__）。
 
 下载模型后，在评测配置中设置本地模型路径：
 
@@ -133,7 +143,7 @@ WideSearch 基准
 - ``rollout.model.model_path`` 指向你要评测的模型。
 - ``data.val_data_paths`` 指向正确的数据集。
 - ``agentloop.llm_ip`` 设置正确。
-- 所需工具已配置完成。参见 :doc:`tools`。
+- 所需工具已配置完成。参见 :doc:`环境与工具配置 <tools>`。
 
 然后运行以下命令之一：
 
@@ -141,6 +151,8 @@ WideSearch 基准
 
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+
+多节点启动请参见 :ref:`wideseek-r1-multinode`。
 
 输出文件
 ----------------------------------------

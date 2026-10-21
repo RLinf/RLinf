@@ -71,6 +71,7 @@ env:
   # Override the default values in env/robotwin_click_bell
   train:
     rollout_epoch: 8
+    malloc_trim_reset_interval: 8
     total_num_envs: 128
     reward_coef: ${algorithm.reward_coef}
     use_custom_reward: False
@@ -81,7 +82,7 @@ env:
     max_steps_per_rollout_epoch: 400
     group_size: ${algorithm.group_size}
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/train_seeds.json
     enable_offload: True
 
   eval:
@@ -98,7 +99,7 @@ env:
     use_fixed_reset_state_ids: True 
     is_eval: True
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval

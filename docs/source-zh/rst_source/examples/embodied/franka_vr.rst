@@ -7,8 +7,7 @@ Franka 真机使用 VR 遥操作设备
 
 .. note::
 
-   如果你还没有阅读过基础的 Franka 指南，请先参考 :doc:`franka`。
-   本页默认 Franka 控制、ROS、Ray 集群和相机已经按基础指南完成配置。
+   如果你还没有阅读过基础的 Franka 指南，请先参考 :doc:`franka`。本页默认 Franka 控制、Ray 集群和相机已经按基础指南完成配置。
 
 
 硬件架构概览
@@ -29,8 +28,8 @@ ZeroMQ 发布，RLinf 中的 PICO intervention wrapper 订阅该数据流，并�
      - Actor、rollout、可选相机采集
      - NVIDIA GPU、RLinf
    * - **Franka 控制节点** (node 1 或单节点)
-     - FrankaController、env worker、VR 数据订阅
-     - Franka、ROS Noetic、serl_franka_controllers、pyzmq
+     - Franka 机械臂、env worker、VR 数据订阅
+     - Franky、pyzmq
    * - **VR / PICO PC**
      - 运行 XRoboToolkit 和 VR 数据发布进程
      - PICO 头显、手柄、VR publisher
@@ -45,6 +44,8 @@ VR 软件准备
 VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToolkit 读取头显和手柄数据，
 再将数据发布到 ZeroMQ。
 
+.. _pico-software-setup:
+
 1. 准备 PICO / XRoboToolkit
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -57,7 +58,7 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
   `XRoboToolkit-PC-Service releases <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>`_
   选择适配版本并安装 PC Service。当前 release 页面提供的 PC Service 安装包仅覆盖
   Ubuntu 22.04 和 Ubuntu 24.04，请使用这两个系统版本之一进行安装；其他系统版本需要自行适配。
-- 确认 publisher 机器与 Franka 控制节点在同一网络中，或者与 RLinf env worker 在同一台机器上。
+- 确认 publisher 机器与机器人控制节点在同一网络中，或者与 RLinf env worker 在同一台机器上。
 
 在 PICO 头显连接前，先在收发数据的机器上启动 XRoboToolkit PC Service：
 
@@ -103,8 +104,9 @@ PICO 与收发数据机器的 XRT 链路是否已经连通：
 
 如果连接成功，移动 PICO 头显和手柄时，终端中应能看到持续变化的数据流。
 
-启动 VR 数据 publisher 前，先在 ``pico_software/configs/vr_bridge.yaml`` 中配置
-publisher 侧的 ZeroMQ 地址。
+.. _pico-publisher-setup:
+
+启动 VR 数据 publisher 前，先在 ``pico_software/configs/vr_bridge.yaml`` 中配置 publisher 侧的 ZeroMQ 地址。
 
 同机运行时可以使用 IPC：
 
@@ -144,15 +146,13 @@ publisher 侧的 ZeroMQ 地址。
 
 .. warning::
 
-   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。若 ``pyzmq``、
-   ROS 环境或 ``PYTHONPATH`` 在 ``ray start`` 之后才配置，worker 进程可能无法导入
-   ``PicoIntervention`` 或无法连接 ZeroMQ。
+   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。若 ``pyzmq``、Franka 环境或 ``PYTHONPATH`` 在 ``ray start`` 之后才配置，worker 进程可能无法读取控制器数据或无法连接 ZeroMQ。
 
 
 3. 验证 PICO 数据流
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-启动 VR 数据 publisher 后，可以在运行 ``PicoIntervention`` 的节点上先执行
+启动 VR 数据 publisher 后，可以在读取控制器的节点上先执行
 RLinf 内置检查脚本，确认已经能收到 PICO / ZeroMQ 数据：
 
 .. code-block:: bash
@@ -195,8 +195,7 @@ consumer 连接地址。
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
 
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
@@ -204,6 +203,14 @@ consumer 连接地址。
          rotation_scale: 1.0
          calibration:
            button: "trigger"
+
+
+机械臂运动参数
+----------------------
+
+采集示例使用 Franky 默认运动参数，每次调用的目标变化上限为 3 cm 和 0.10 rad，无需为 PICO 另加 ``compliance``。数采和 policy 执行共用这些默认值；完整参数、任务 reset 的影响及硬件覆盖方法见 :ref:`配置机械臂运动 <franka-motion-settings>`。
+
+``pico.position_scale`` 和 ``pico.rotation_scale`` 控制手柄运动映射为机器人请求运动的比例，只影响 PICO 输入，包括训练时的人工接管。环境先应用动作缩放和工作空间边界，再将请求交给 Franky；Franky 的控制参数同时作用于 PICO 和 policy 下发的目标。
 
 
 夹爪配置
@@ -237,7 +244,7 @@ consumer 连接地址。
 
 集群配置步骤与 :doc:`franka` 中描述的相同，主要额外要求如下：
 
-- 运行 ``PicoIntervention`` 的节点必须能访问 VR publisher 的 ZeroMQ 地址。
+- 读取控制器的节点必须能访问 VR publisher 的 ZeroMQ 地址。
 - 如果 VR publisher 使用 TCP，确认防火墙和网卡路由允许访问对应端口。
 - 如果 VR publisher 使用 IPC，publisher 和 RLinf env worker 必须在同一台机器上。
 - ``RLINF_NODE_RANK``、YAML 中的 ``cluster.node_groups[*].node_ranks`` 和
@@ -249,19 +256,18 @@ consumer 连接地址。
 
 - 首次上真机将 ``position_scale`` 调低，例如 ``0.3`` 到 ``0.5``。
 - 工作空间安全盒、单步 action scale 和 Franka Desk 状态都确认后再放任务物体。
-- 每次修改 Ray 环境、Python 依赖、ROS 环境变量或 ZeroMQ 地址后，先 ``ray stop`` 再重启。
+- 每次修改 Ray 环境、Python 依赖、机器人配置或 ZeroMQ 地址后，先 ``ray stop`` 再重启。
 - 若控制方向明显不对，先松开 ``grip``，重新站位并扣下 ``trigger`` 标定，不要在接管中强行纠正。
 
 启动顺序
 ---------------------
 
-1. 在 Franka 控制节点上完成 ROS、catkin workspace、RLinf venv 和 ``PYTHONPATH`` 配置。
-2. 在启动 Ray 前确认已经安装并 source ``franka`` 环境。
-3. 启动 Ray 集群。单节点或多节点步骤与 :doc:`franka` 相同。
-4. 启动 PICO / XRoboToolkit PC Service，并确认头显和手柄已连接。
-5. 启动 VR 数据 publisher。
-6. 首次运行或修改 ZeroMQ 地址后，运行 ``test_pico_data.py`` 确认 PICO 数据可达。
-7. 在 Ray head 节点启动采集脚本，并确认采集脚本已经接入 ``PicoIntervention``。
+1. 在 Franka 控制节点上激活 ``franka`` 环境，并设置 ``PYTHONPATH``。
+2. 启动 Ray 集群。单节点或多节点步骤与 :doc:`franka` 相同。
+3. 启动 PICO / XRoboToolkit PC Service，并确认头显和手柄已连接。
+4. 启动 VR 数据 publisher。
+5. 首次运行或修改 ZeroMQ 地址后，运行 ``test_pico_data.py`` 确认 PICO 数据可达。
+6. 在 Ray head 节点启动采集脚本，并确认采集脚本已设置 ``teleop: pico``。
 
 .. code-block:: bash
 
@@ -316,8 +322,8 @@ VR 操作步骤
 
 **按住 grip 机械臂不动**
 
-- 确认 ``use_spacemouse: False`` 且 ``use_pico: True``。
-- 确认当前代码已经在 ``apply.py`` 中接入 ``PicoIntervention``。
+- 确认 ``teleop: pico``。
+- 确认环境配置中已设置 ``teleop: pico``。
 - 确认 ``grip`` 数值超过 ``control_threshold``。
 - 确认已经完成标定；若 ``calibration.required=True`` 且未标定，PICO 不会接管。
 - 检查是否被 Franka 安全盒或 ``action_scale`` 限制。

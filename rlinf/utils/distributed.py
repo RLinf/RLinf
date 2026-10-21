@@ -19,16 +19,36 @@ from typing import Any, Callable, Optional, Sequence, Union
 import numpy as np
 import torch
 import torch.distributed
-
-try:
-    from megatron.core import parallel_state
-except ImportError:
-    parallel_state = None  # type: ignore
 from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
 from rlinf.scheduler import Tracer, Worker
 from rlinf.utils.timers import NamedTimer
+
+
+class _LazyParallelState:
+    """Resolve ``megatron.core.parallel_state`` on first use.
+
+    Importing ``megatron.core`` initializes CUDA, so importing it here would
+    create a CUDA context in every process that merely imports this module --
+    including CPU-only workers, which afterwards cannot safely fork a child
+    (the child inherits an unusable context and aborts when it frees any
+    ``torch.cuda`` object). Both the embodied and reasoning stacks import this
+    module, so the deferral keeps Megatron out of processes that never train.
+    """
+
+    _module: Optional[Any] = None
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward attribute access to the real module, importing it once."""
+        if _LazyParallelState._module is None:
+            from megatron.core import parallel_state as megatron_parallel_state
+
+            _LazyParallelState._module = megatron_parallel_state
+        return getattr(_LazyParallelState._module, name)
+
+
+parallel_state = _LazyParallelState()
 
 
 def compute_rollout_metrics_dynamic(
@@ -66,7 +86,7 @@ def compute_rollout_metrics_dynamic(
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
     idx_to_traj = rollout_batch["idx_to_traj"]
-    num_trajectories = max(idx_to_traj) + 1
+    num_trajectories = max(idx_to_traj) + 1 if idx_to_traj else 0
     num_seq = prompt_lengths.numel()
 
     dp_world_size = torch.distributed.get_world_size(data_parallel_group)
@@ -136,21 +156,32 @@ def compute_rollout_metrics_dynamic(
         num_trajectories,
     ) = reduce_metrics.tolist()
 
-    # All-reduce advantage min/max
-    adv_max = torch.max(valid_adv).detach().item()
-    adv_min = torch.min(valid_adv).detach().item()
+    # All-reduce advantage min/max. Empty local batches contribute the
+    # neutral value for a MAX reduction and still participate in the collective.
+    if valid_adv.numel() > 0:
+        adv_max = torch.max(valid_adv).detach().item()
+        neg_adv_min = -torch.min(valid_adv).detach().item()
+    else:
+        adv_max = float("-inf")
+        neg_adv_min = float("-inf")
     reduce_tensor = torch.as_tensor(
-        [-adv_min, adv_max], device=device, dtype=torch.float32
+        [neg_adv_min, adv_max], device=device, dtype=torch.float32
     )
     torch.distributed.all_reduce(
         reduce_tensor, torch.distributed.ReduceOp.MAX, group=data_parallel_group
     )
-    adv_min, adv_max = reduce_tensor.tolist()
+    neg_adv_min, adv_max = reduce_tensor.tolist()
+    adv_min = -neg_adv_min
 
-    # All-reduce max lengths
-    local_max_prompt = prompt_lengths.max().item()
-    local_max_response = response_lengths.max().item()
-    local_max_total = (prompt_lengths + response_lengths).max().item()
+    # All-reduce max lengths. Empty local batches contribute zero.
+    # ``num_seq`` holds the reduced global count by this point, so the guard
+    # must use the local tensor size instead.
+    if prompt_lengths.numel() > 0:
+        local_max_prompt = prompt_lengths.max().item()
+        local_max_response = response_lengths.max().item()
+        local_max_total = (prompt_lengths + response_lengths).max().item()
+    else:
+        local_max_prompt = local_max_response = local_max_total = 0
     max_length_metrics = torch.as_tensor(
         [local_max_prompt, local_max_response, local_max_total],
         device=device,
@@ -178,7 +209,7 @@ def compute_rollout_metrics_dynamic(
         "fraction_of_samples_properly_ended": sum_end / num_seq,
         "advantages_mean": sum_adv / n_valid_token,
         "advantages_max": adv_max,
-        "advantages_min": -adv_min,
+        "advantages_min": adv_min,
     }
     return rollout_metrics, total_prompt_lengths, total_decode_lengths
 

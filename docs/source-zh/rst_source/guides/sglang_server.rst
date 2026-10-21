@@ -49,7 +49,7 @@ SGLang Server 与 Router
 组件名（``rollout`` 这个 key）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``cluster.component_placement`` 下的 key（上面的 ``rollout``）**只是一个标签**，
+``cluster.component_placement`` 下的 key（上面的 ``rollout``）\ **只是一个标签**，
 按 runner 的习惯起名即可。Launcher 不会按固定名字去查找这个 key；**驱动脚本**
 负责挑选名字，并在三处使用 *同一字符串*：
 
@@ -152,7 +152,7 @@ SGLang Server 与 Router
    仓库已在
    ``examples/embodiment/config/hybrid_engines/sglang_router_server.yaml``
    中提供了一份默认配置。可通过 Hydra 的 ``defaults`` 列表引用它，然后只覆盖
-   你需要改动的字段——通常是 ``model_path``（以及 ``server`` / ``router`` 里的
+   你需要改动的字段——通常是 ``model_path``\ （以及 ``server`` / ``router`` 里的
    个别项）：
 
    .. code-block:: yaml
@@ -238,8 +238,8 @@ Launcher 如何使用这份配置
        router_url = router_group.get_router_url().wait()[0]
        # ... 使用 router_url（见下文 “后续：调用 router”） ...
 
-       router_group.shutdown().wait()
-       server_group.shutdown().wait()
+       router_group.stop().wait()
+       server_group.stop().wait()
 
 
    if __name__ == "__main__":

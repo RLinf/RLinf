@@ -17,8 +17,21 @@ cluster:
   num_nodes: 1
   component_placement:
     actor: 0-0
-    env: 0-0
+    env:
+      node_group: franka
+      placement: 0
     rollout: 0-0
+
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - node_rank: 0
+            disable_validate: true
+            robot_ip: 0.0.0.0
+            camera_serials: ["0123456789"]
 
 runner:
   task_type: embodied
@@ -81,9 +94,6 @@ env:
     override_cfg:
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
-      # Dummy placeholders for robot and camera
-      robot_ip: 0.0.0.0
-      camera_serials: ["0123456789", ]
   
   eval:
     rollout_epoch: 1
@@ -91,9 +101,6 @@ env:
     override_cfg:
       is_dummy: True
       target_ee_pose: [0, 0, 0, 0, 0, 0]
-      # Dummy placeholders for robot and camera
-      robot_ip: 0.0.0.0
-      camera_serials: ["0123456789", ]
 
 rollout:
   group_name: "RolloutGroup"

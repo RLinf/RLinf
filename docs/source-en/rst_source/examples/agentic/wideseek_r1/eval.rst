@@ -46,11 +46,12 @@ dense model.
 Prerequisites
 -------------
 
-Before evaluation, make sure the following components are ready:
+Before evaluation, complete
+:doc:`Environment and Tool Setup <tools>`:
 
-- The RLinf environment is installed. See :doc:`../../../start/installation`.
-- The judge model server is running. See :doc:`index`.
-- The appropriate tool backend is configured. See :doc:`tools`.
+- The RLinf environment is installed.
+- The judge model is running.
+- The appropriate tool backend is configured.
 
 Download the Model
 ------------------
@@ -60,6 +61,18 @@ The released checkpoint is available at:
 - `WideSeek-R1-4B <https://huggingface.co/RLinf/WideSeek-R1-4b>`__
 
 You may also evaluate your own Qwen3-series dense model.
+
+.. note::
+
+   The released WideSeek-R1-4B checkpoint stores its weights in fp16 while its
+   ``config.json`` declares ``bfloat16``. Serving engines that follow the config
+   dtype by default (vLLM/SGLang/HF Transformers with ``dtype="auto"``) therefore
+   upcast the weights, which costs about 3 points avg@4 on WideSearch
+   (55.9 vs 59.0). When serving this checkpoint outside RLinf, pass an explicit
+   ``--dtype float16``. Inside RLinf no extra step is needed: the shipped eval
+   and train configs set ``rollout.model.precision: fp16``, which is handed to
+   the rollout engine
+   (see `issue #1662 <https://github.com/RLinf/RLinf/issues/1662>`__).
 
 After downloading the model, set the local path in the evaluation config:
 
@@ -141,7 +154,7 @@ Before launching evaluation, verify all of the following:
 - ``rollout.model.model_path`` points to the model you want to evaluate.
 - ``data.val_data_paths`` points to the correct dataset.
 - ``agentloop.llm_ip`` is set correctly.
-- The required tools are configured. See :doc:`tools`.
+- The required tools are configured. See :doc:`Environment and Tool Setup <tools>`.
 
 Then run one of the following commands:
 
@@ -149,6 +162,8 @@ Then run one of the following commands:
 
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_widesearch
    bash examples/agent/wideseek_r1/run_eval.sh eval_qwen3_qa
+
+For multi-node launches, see :ref:`wideseek-r1-multinode`.
 
 Output Files
 ------------

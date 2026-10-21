@@ -20,10 +20,8 @@ from megatron.core.transformer import TransformerConfig
 from rlinf.utils.convertor.utils import get_mg2hf_convertor
 
 from .utils import (
-    get_ep_reshard_fn,
-    get_pp_reshard_fn,
-    get_tp_reshard_fn,
-    get_tpe_reshard_fn,
+    get_tp_gather_fn,
+    get_tpe_gather_fn,
 )
 
 
@@ -58,29 +56,56 @@ class ReshardConfig:
     convert_fn: Callable = None
     """Function to convert the model weights from megatron format to HuggingFace format."""
 
-    tp_reshard_fn: Callable = None
-    """Resharding function to use for resharding the model parallelism from tensor_model_parallel_size to reshard_tp_size."""
+    tp_gather_fn: Callable = None
+    """Gather-half function for the TP reshard: all_gathers each parameter to
+    the full tensor and tags it with a narrow spec (see MegatronCoreWeightReshard
+    .gather_full_model)."""
 
-    pp_reshard_fn: Callable = None
-    """Resharding function to use for resharding the model parallelism from pipeline_model_parallel_size to reshard_pp_size."""
-
-    tpe_reshard_fn: Callable = None
-    """Resharding function to use for resharding the model parallelism from expert_tensor_parallel_size to reshard_tpe_size."""
+    tpe_gather_fn: Callable = None
+    """Gather-half function for the expert-tensor-parallel reshard, from
+    expert_tensor_parallel_size to the full expert weight."""
 
     rollout_ep_size: int = 1
-    """Rollout expert-model-parallel size >1 means the rollout engine shards MoE experts across its TP ranks via EP"""
+    """Rollout expert-model-parallel size >1 means the rollout engine shards MoE
+    experts across its TP ranks via EP. Experts are then tagged with the
+    expert_filter spec and narrowed to each target's subset."""
 
-    ep_reshard_fn: Callable = None
-    """Resharding function to use for resharding the model parallelism from expert_parallel_size to reshard_ep_size."""
+    rollout_moe_dense_tp_size: Optional[int] = None
+    """Rollout dense-MLP TP size (sglang moe_dense_tp_size). Controls how the
+    first N non-MoE FFN layers are parallelized on the rollout side. None =
+    inherit reshard_tp_size (attn_tp, same as attention). 1 = replicated
+    (dense MLP not sharded), requiring a full TP all_gather during reshard."""
+
+    rollout_full_tp_size: int = 1
+    """Rollout engine full TP size (= sglang tensor_parallel_size). Used for
+    shared_experts which are sharded by the full engine TP, not attn_tp. When
+    > moe_dense_merge_factor, shared_experts need gather-to-full + slice."""
+
+    rollout_lm_head_tp_size: int = 1
+    """Rollout lm_head TP size. sglang lm_head uses the full engine TP group when
+    enable_dp_lm_head=False, else the attn_tp group. lm_head is ColumnParallel on
+    the actor (sharded by actor TP) but may be sharded by a different TP on the
+    rollout, so it needs gather-to-full + slice to (dst_lm_head_rank, this)."""
+
+    enable_dp_attention: bool = False
+    """Whether sglang rollout uses DP-attention (enable_dp_attention). When True,
+    attn TP (reshard_tp_size) != full engine TP (rollout_full_tp_size), requiring
+    different gather+slice strategies per weight type (DPA three/four-way split)."""
+
+    @property
+    def split_fc1(self) -> bool:
+        """Whether tp_gather_fn should split fused fc1 into gate_proj/up_proj.
+
+        True for sglang/vllm rollout (HF-format receiver expects gate/up);
+        False for mcore-format inference reshard (mcore receiver expects the
+        fused linear_fc1 key).
+        """
+        return self.reshard_weights_format != "mcore"
 
     def __post_init__(self):
-        if self.model_config.tensor_model_parallel_size < self.reshard_tp_size:
-            raise ValueError(
-                "Model tp size must be greater than or equal to resharding tp size."
-            )
-        if self.model_config.tensor_model_parallel_size % self.reshard_tp_size != 0:
-            raise ValueError("Model tp size must be divisible by resharding tp size.")
-
+        # No TP-ratio assertion: the gather/narrow pair handles any ratio
+        # (actor < rollout via all_gather full + slice; actor > rollout via
+        # subgroup all_gather or slice; actor == rollout via no-op slice).
         if self.model_type is None:
             raise ValueError(
                 "Please specify the model_type, valid options are `qwen2.5` and `llama2`."
@@ -90,24 +115,9 @@ class ReshardConfig:
             self._convertor = get_mg2hf_convertor(self.model_type, self, strict=True)
             self.convert_fn = self._convertor.convert
 
-        if self.tp_reshard_fn is None:
-            self.tp_reshard_fn = get_tp_reshard_fn(self.model_type)
+        if self.tp_gather_fn is None:
+            self.tp_gather_fn = get_tp_gather_fn(self.model_type)
 
-        if self.pp_reshard_fn is None:
-            self.pp_reshard_fn = get_pp_reshard_fn(self.model_type)
-
-        # tpe_reshard_fn only use in moe model parallel
-        if (
-            self.model_config.num_moe_experts is not None
-            and self.tpe_reshard_fn is None
-        ):
-            self.tpe_reshard_fn = get_tpe_reshard_fn(self.model_type)
-
-        # ep_reshard_fn only used when rollout shards experts via EP
-        # otherwise tpe_reshard_fn (TP-slice) is used.
-        if (
-            self.model_config.num_moe_experts is not None
-            and self.rollout_ep_size > 1
-            and self.ep_reshard_fn is None
-        ):
-            self.ep_reshard_fn = get_ep_reshard_fn(self.model_type)
+        # tpe_gather_fn only use in moe model parallel
+        if self.model_config.num_moe_experts is not None and self.tpe_gather_fn is None:
+            self.tpe_gather_fn = get_tpe_gather_fn(self.model_type)

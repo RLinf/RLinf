@@ -143,23 +143,11 @@ class CollocateRankMapper(RankMapper):
         rollout_tp_size: int,
         rollout_world_size: int,
     ) -> dict[int, tuple[int, int]]:
-        """
-        Get the global mapping from actor 1D rank to rollout 2D rank as dict.
-        """
-        # rank -> (dp, tp)
-        if actor_tp_size == 1:
-            return {
-                rank: (rank // rollout_tp_size, rank % rollout_tp_size)
-                for rank in range(actor_world_size)
-            }
-        rank_map = {}
-        for actor_rank in range(actor_world_size):
-            rank_map[actor_rank] = cls._get_actor_rank_to_rollout_rank(
-                actor_rank,
-                actor_tp_size,
-                rollout_tp_size,
-            )
-        return rank_map
+        """Map actor 1D rank to rollout transmission 2D rank."""
+        return {
+            actor_rank: (actor_rank // rollout_tp_size, actor_rank % rollout_tp_size)
+            for actor_rank in range(actor_world_size)
+        }
 
     @classmethod
     def get_rollout_rank_to_actor_rank_map(
@@ -170,9 +158,7 @@ class CollocateRankMapper(RankMapper):
         rollout_tp_size: int,
         rollout_world_size: int,
     ):
-        """
-        Get the global mapping from rollout 2D rank to actor 1D rank as dict.
-        """
+        """Inverse of get_actor_rank_to_rollout_rank_map."""
         rank_map = cls.get_actor_rank_to_rollout_rank_map(
             actor_tp_size,
             actor_pp_size,
@@ -182,42 +168,15 @@ class CollocateRankMapper(RankMapper):
         )
         return {v: k for k, v in rank_map.items()}
 
-    @staticmethod
-    def _get_actor_rank_to_rollout_rank(
-        actor_rank: int,
-        actor_tp_size: int,
-        rollout_tp_size: int,
-    ):
-        """
-        Get the mapping from actor 1D rank to rollout 2D rank.
-        """
-        num_rollout_dp_ranks_per_actor_tp_group = actor_tp_size // rollout_tp_size
-
-        actor_tp_rank = actor_rank % actor_tp_size
-
-        actor_tp_group_id = actor_rank // actor_tp_size
-        rollout_start_dp_rank = (
-            actor_tp_group_id * num_rollout_dp_ranks_per_actor_tp_group
-        )
-
-        weight_dst_dp_rank_in_rollout = (
-            rollout_start_dp_rank
-            + actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
-        )
-
-        weight_dst_tp_rank_in_rollout = (
-            actor_tp_rank // num_rollout_dp_ranks_per_actor_tp_group
-        )
-
-        return (weight_dst_dp_rank_in_rollout, weight_dst_tp_rank_in_rollout)
-
 
 class DisaggRankMapper(RankMapper):
     """
     A mapper for disaggregated ranks.
-    This is used to map the disaggregated ranks to the actor ranks.
+    Used when actor and rollout components use different sets of GPUs.
 
-    Assume that actor_tp_size = n * rollout_tp_size
+    Unlike colocated mode, there is no constraint on actor_tp vs rollout_tp:
+    each actor rank all-gathers across its TP group (producing the full
+    weight) and slices for the target rollout tp rank.
     """
 
     @classmethod
@@ -229,41 +188,40 @@ class DisaggRankMapper(RankMapper):
         rollout_tp_size: int,
         rollout_world_size: int,
     ) -> dict[int, list[tuple[int, int]]]:
+        """Map actor 1D rank to a list of rollout transmission 2D ranks
+        ``(engine_id, rank_in_engine)``. Each rollout rank is assigned to
+        exactly one actor rank; ``rank_in_engine`` (the rollout tp position)
+        drives the weight sharding coords, independent of actor_tp.
         """
-        Only ranks in dp=0 actor dp group will send weights to rollout LLM.
-        """
-        actor_model_parallel_size = actor_tp_size
-        assert rollout_world_size >= actor_model_parallel_size, (
-            f"rollout_world_size ({rollout_world_size}) should more than actor_model_parallel_size ({actor_model_parallel_size})"
-        )
-
-        assert rollout_world_size % actor_model_parallel_size == 0, (
-            f"rollout_world_size ({rollout_world_size}) should be a multiple of actor_model_parallel_size ({actor_model_parallel_size})"
-        )
-
-        actor_dp = actor_world_size // actor_tp_size
-        stride = actor_model_parallel_size // rollout_tp_size
-
         rank_map = {}
         for actor_rank in range(actor_world_size):
-            if actor_rank > rollout_world_size:
-                rank_map[actor_rank] = []
-                continue
-            gen_dp, gen_tp = cls._get_actor_rank_to_rollout_rank(
-                actor_rank,
-                actor_tp_size,
-                rollout_tp_size,
-            )
+            targets = []
             if actor_world_size <= rollout_world_size:
-                rank_map[actor_rank] = [
-                    (gen_dp + i * stride * actor_dp, gen_tp)
-                    for i in range(rollout_world_size // actor_world_size)
-                ]
+                # Distribute rollout ranks among actor ranks.
+                # When not evenly divisible, the first (remainder) actor ranks get one extra.
+                base_targets = rollout_world_size // actor_world_size
+                remainder = rollout_world_size % actor_world_size
+                if actor_rank < remainder:
+                    num_targets = base_targets + 1
+                    start = actor_rank * (base_targets + 1)
+                else:
+                    num_targets = base_targets
+                    start = (
+                        remainder * (base_targets + 1)
+                        + (actor_rank - remainder) * base_targets
+                    )
+                for i in range(num_targets):
+                    rollout_rank = start + i
+                    engine_id = rollout_rank // rollout_tp_size
+                    rank_in_engine = rollout_rank % rollout_tp_size
+                    targets.append((engine_id, rank_in_engine))
             elif actor_rank < rollout_world_size:
-                rank_map[actor_rank] = [(gen_dp, gen_tp)]
-            else:
-                rank_map[actor_rank] = []
-
+                # Each actor rank sends to one rollout rank.
+                engine_id = actor_rank // rollout_tp_size
+                rank_in_engine = actor_rank % rollout_tp_size
+                targets.append((engine_id, rank_in_engine))
+            # else: actor has more ranks than rollout, no target.
+            rank_map[actor_rank] = targets
         return rank_map
 
     @classmethod
@@ -275,6 +233,7 @@ class DisaggRankMapper(RankMapper):
         rollout_tp_size: int,
         rollout_world_size: int,
     ) -> dict[tuple[int, int], int]:
+        """Inverse of get_actor_rank_to_rollout_rank_map."""
         rank_map = cls.get_actor_rank_to_rollout_rank_map(
             actor_tp_size,
             actor_pp_size,
@@ -287,32 +246,6 @@ class DisaggRankMapper(RankMapper):
             for rollout_2d_rank in rollout_2d_ranks:
                 result_map[rollout_2d_rank] = actor_rank
         return result_map
-
-    @staticmethod
-    def _get_actor_rank_to_rollout_rank(
-        actor_rank: int,
-        actor_tp_size: int,
-        rollout_tp_size: int,
-    ) -> tuple[int, int]:
-        assert actor_tp_size % rollout_tp_size == 0, (
-            "actor_tp_size must be a multiple of rollout_tp_size"
-        )
-
-        num_rollout_dp_ranks_per_actor_tp_group = actor_tp_size // rollout_tp_size
-        actor_tp_rank = actor_rank % actor_tp_size
-        actor_tp_group_id = actor_rank // actor_tp_size
-        rollout_start_dp_rank = (
-            actor_tp_group_id * num_rollout_dp_ranks_per_actor_tp_group
-        )
-        weight_dst_dp_rank_in_rollout = (
-            rollout_start_dp_rank
-            + actor_tp_rank % num_rollout_dp_ranks_per_actor_tp_group
-        )
-        weight_dst_tp_rank_in_rollout = (
-            actor_tp_rank // num_rollout_dp_ranks_per_actor_tp_group
-        )
-
-        return (weight_dst_dp_rank_in_rollout, weight_dst_tp_rank_in_rollout)
 
 
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]

@@ -3,7 +3,8 @@ Reward Model 使用指南
 
 在 RLinf 中使用 reward model——包括 ``ResNetRewardModel`` 这类图像分类 reward，
 以及基于 ``VLMRewardModel`` 的 VLM reward。``BufferedVLMRewardModel`` 继承
-``VLMRewardModel``，用于处理 env worker 维护的历史窗口。
+``VLMRewardModel``，用于处理 env worker 维护的历史窗口。``ShapedVLMRewardModel``
+在此基础上叠加 potential shaping 与一次性 success bonus。
 
 仿真场景 Reward Model
 ---------------------
@@ -26,19 +27,28 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 1.1 启用数据采集
 """"""""""""""""
 
-在 YAML 配置文件的 ``env`` 部分开启 ``data_collection``：
+在 YAML 配置文件的 ``env.eval`` 下开启 ``data_collection``；采集训练环境的数据时，改放在 ``env.train`` 下：
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-启动训练或评估后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
-每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
+启动训练或评估后，``export_format: pickle_episode`` 的每个 episode 会写入
+``{save_dir}/pickle_episode/`` 下一个独立的 ``.pkl`` 文件，便于后续离线预处理。
+
+对于 ResNet reward，可以直接使用 ``maniskill_ppo_mlp_collect`` 采集数据。该配置在 ManiSkill
+PickCube 上训练基于状态的 MLP PPO 策略，并在周期性评估（每隔 ``runner.val_check_interval`` 步）时
+以 ``pickle`` 格式采集 RGB episode，只保留成功的 episode（``only_success: True``）：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
 
 对于 VLM Trend reward，RLinf 也提供了可直接运行的数据采集配置：
 
@@ -63,7 +73,7 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 默认会生成：
@@ -96,7 +106,7 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward 使用短时间双视角历史窗口，而不是单张图像。使用
-``examples/reward/preprocess_vlm_trend_reward_dataset.py`` 可以将采集到的
+``examples/reward/vlm_trend/preprocess_reward_dataset.py`` 可以将采集到的
 episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，并给每个
 窗口标注 ``positive``、``negative`` 或 ``unclear``。
 
@@ -104,8 +114,8 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -144,6 +154,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
        "resnet": ResNetRewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
+       "shaped_vlm": ShapedVLMRewardModel,
    }
 
 其中：
@@ -152,7 +163,9 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 - ``vlm``：对当前观测运行 VLM（单步/终止帧等，由 ``reward_mode`` 决定）。
 - ``buffered_vlm``：对 env worker 维护的历史窗口运行 VLM；具体 prompt、视频格式与
   标量映射由 ``input_builder_name`` / ``reward_parser_name`` 决定。
-  VLM Trend reward 即 ``buffered_vlm`` + ``vlm_trend_reward_*`` 插件组合。
+  标准 VLM Trend reward 即 ``buffered_vlm`` + ``vlm_trend_reward_*`` 插件组合。
+- ``shaped_vlm``：加载独立的 Potential 和 Success LoRA adapter，
+  执行 scalar potential head，并维护 episode 内的 shaping 状态。
 
 2.2 微调 ResNet Reward Model
 """"""""""""""""""""""""""""
@@ -203,10 +216,19 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
 训练日志会保存到新建的 ``logs/<timestamp>-reward_training`` 目录下。
 
+训练的 checkpoint 保存在 ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/`` 下：
+每隔 ``runner.save_interval`` 步保存一次 ``global_step_<N>/``，验证集准确率提升时更新
+``best_model/``\ （需要配置 ``runner.early_stop``）。在 RL 中使用训练好的模型时，
+将 ``reward.model.model_path`` 设为权重文件，例如：
+
+.. code-block:: text
+
+   logs/<timestamp>-reward_training/reward_training/checkpoints/best_model/actor/model_state_dict/full_weights.pt
+
 2.3 微调 VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
+使用 ``examples/reward/vlm_trend/preprocess_reward_dataset.py`` 转换数据后，将
 ``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT：
 
 .. code-block:: bash
@@ -236,6 +258,87 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
 训练得到的 LoRA checkpoint 后续可通过 ``reward.model.lora_path`` 传给在线 reward 配置。
 
+2.3.1 训练 Success + Potential 分支
+........................................
+
+当你需要同一个 VLM 同时提供稀疏终止奖励和稠密进度 shaping 时，按以下
+四个阶段训练：
+
+#. 从 rollout state 训练 state-success teacher。
+#. 分别训练 Success LoRA 和 Potential LoRA。
+#. 冻结 Potential LoRA，提取 prompt feature，再训练 scalar head。
+#. 在线组合 one-shot Success bonus 与 potential-difference shaping。
+
+运行各阶段前，先在 YAML 中配置路径：
+
+- 在 ``examples/reward/vlm_trend/config/pipeline.yaml`` 中设置
+  ``paths.raw_data_root``、``paths.pipeline_root``、``paths.model_path``，并在
+  Potential SFT 完成后设置 ``paths.potential_checkpoint``。teacher、feature
+  和 scalar-head 路径都通过 YAML 引用复用这些值。同时将
+  ``auxiliary.teacher.raw_data_paths`` 替换为本次采集得到的真实 checkpoint 目录。
+- 在 ``examples/sft/config/vlm_trend_success_sft.yaml`` 和
+  ``vlm_trend_potential_sft.yaml`` 中设置 ``paths.pipeline_root`` 与
+  ``paths.model_path``；数据和输出路径由 YAML 自动派生。
+
+使用 ``pipeline.yaml`` 中 ``auxiliary.teacher.raw_data_paths`` 列出的
+checkpoint 目录训练 teacher：
+
+.. code-block:: bash
+
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=teacher
+
+生成两套数据。每个采集 checkpoint 目录都重复传入一次
+``--raw-data-path``；下面的简化示例展示参数形式：
+
+.. code-block:: bash
+
+   python examples/reward/vlm_trend/preprocess_terminal_success.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --output-dir /path/to/vlm_trend_success_potential/success_data
+
+   python examples/reward/vlm_trend/preprocess_potential.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --value-checkpoint /path/to/vlm_trend_success_potential/teacher/best.pt \
+     --output-dir /path/to/vlm_trend_success_potential/potential_data
+
+这些命令会保留与在线采样一致的 ``0``/``1`` terminal-success 窗口，不执行
+balanced sampling。两条分支都在首次成功 transition 截断，与在线环境的终止边界一致。
+Potential 预处理使用 teacher 生成绝对 potential 数字，以及
+``up``/``same``/``down`` progress pair。
+
+使用 Success 和 Potential SFT 配置训练两个 adapter：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
+   bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
+
+将 ``pipeline.yaml`` 中的 ``paths.potential_checkpoint`` 指向选中的
+Potential VLM SFT 权重文件（通常是
+``.../global_step_*/actor/model_state_dict/full_weights.pt``）。如果自行导出过
+PEFT adapter，也可以填写包含 ``adapter_config.json`` 的目录。
+
+Feature 提取使用 RLinf placement。如果只使用一张 GPU，在 YAML 中设置：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       feature_extractor: 0  # 使用全部可用 accelerator 时设为 all
+
+RLinf 会从 placement 自动得到每个 shard 的 rank 和 world size。Python 入口会
+处理两个 split 和两种 sample type：
+
+.. code-block:: bash
+
+   python examples/reward/vlm_trend/extract_potential_features.py
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=scalar_head
+
+使用现有 ``eval/eval_accuracy`` 选择 Success adapter，并使用
+``scalar_head/metrics.jsonl`` 中的 ``model_potential`` 选择 scalar head。
+
 3. Reward Model 在 RL 中推理
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -245,6 +348,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` （VLM Trend reward，本地 Hugging Face）
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` （VLM Trend reward，SGLang API）
+- ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml`` （Success + Potential VLM reward，本地 Hugging Face）
 
 这些配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测或 VLM 观测。
@@ -266,7 +370,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
      model:
        model_path: /path/to/reward_model_checkpoint
-       model_type: "resnet"    # 或 "vlm" / "buffered_vlm"
+       model_type: "resnet"    # 或 "vlm" / "buffered_vlm" / "shaped_vlm"
 
 其中：
 
@@ -274,8 +378,12 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 - ``reward_weight`` 和 ``env_reward_weight`` 控制 learned reward 与环境 reward 的加权组合。
 - ``reward_threshold`` 仅对 ``model_type: resnet`` 生效：低于阈值的 sigmoid 概率会被置为 ``0``。
   对 ``buffered_vlm`` / VLM Trend reward，标量 reward 由 ``reward_parser_params`` 定义；
+  对 ``shaped_vlm``，标量来自 potential 差分和一次性 success bonus。
   配置里的 ``reward_threshold`` 当前不会被 VLM 路径读取。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
+  对于 ``model_type: resnet``，它是权重文件本身，例如 2.2.3 节中的
+  ``checkpoints/best_model/actor/model_state_dict/full_weights.pt``。
+  ``maniskill_ppo_mlp_resnet_reward.yaml`` 默认的 ``model_path: null`` 不会加载任何训练好的权重。
 
 3.2 Rollout 阶段的 worker 交互
 """"""""""""""""""""""""""""""
@@ -326,12 +434,31 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-VLM Trend reward 使用 buffered VLM 接口（ ``model_type: buffered_vlm`` ），并通过
-``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
-本地推理会实例化 ``BufferedVLMRewardModel`` ；API 推理则使用
-``EmbodiedAPIRewardWorker`` ，并遵循相同的 input builder 和 reward parser 约定。
+部署下方任一 reward 方法前，先使用 ManiSkill 稠密环境奖励预热 MLP policy，采用 ``maniskill_ppo_mlp`` 并保持 ``reward.use_reward_model: false``。本地 VLM Trend、本地 Success + Potential 和 SGLang API 推理都需要完成这一步。使用同一组 1,024 个固定 reset state、每条 50 步的 episode 评估保存的 checkpoint，选择 ``eval/success_at_end`` 约为 50% 的权重，再开始使用 reward model 的 PPO 训练：
 
-VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终为 ``buffered_vlm`` ）：
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+该命令每 5 个 PPO step 保存并评估一次 checkpoint。如果尚未达到目标，可增大 ``runner.max_steps`` 继续预热；按实测成功率选择权重，而不是按固定训练步数选择。为后续部署命令设置选中的 policy 权重路径：
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+Trend 启动命令通过 ``runner.ckpt_path`` 传入该路径；Success + Potential 则将同一路径填写到 ``vlm_trend_paths.policy_checkpoint``。
+
+标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
+``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
+Success + Potential 配置的本地推理使用 ``model_type: shaped_vlm``。
+API 推理仍只支持 ``buffered_vlm``。
+
+两条本地 VLM Trend 路径都使用历史窗口输入。标准路径使用：
 
 - ``input_builder_name: vlm_trend_reward_input_builder``
 - ``reward_parser_name: vlm_trend_reward_parser``
@@ -347,7 +474,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 3.4.1 本地 Hugging Face 推理
 ............................
 
-不设置 ``reward.worker_type``（默认 ``model``，使用 ``EmbodiedRewardWorker``）。
+不设置 ``reward.worker_type``\ （默认 ``model``，使用 ``EmbodiedRewardWorker``）。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward.yaml``：
 
 .. code-block:: yaml
@@ -393,12 +520,49 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
+
+Success + Potential 使用上方选好的 warmup checkpoint 和三个 reward 产物。该配置基于现有 VLM Trend 配置，使用 1,024 个环境，每 5 个 PPO step 评估一次，关闭环境奖励，默认训练 160 个 step：
+
+在
+``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``
+的 ``vlm_trend_paths`` 中填写五个产物路径。运行字段会直接引用这段 YAML：
+
+.. code-block:: yaml
+
+   vlm_trend_paths:
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
+     model_path: /path/to/Qwen3-VL-4B-Instruct
+     success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+     potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
+     scalar_head: /path/to/scalar_head/best.pt
+
+然后启动此配置：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh \
+     maniskill_ppo_mlp_shaped_vlm
+
+``ShapedVLMRewardModel`` 计算
+``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，
+每个 episode 仅添加一次 ``success_bonus``。两组状态都会在 ``done`` 时重置。
+
+.. warning::
+
+   ``reward.model.lora_path`` 和 ``reward.model.success_lora_path`` 必须是
+   ``full_weights.pt`` 的完整文件路径（VLM SFT 产物通常为
+   ``.../actor/model_state_dict/full_weights.pt``）。如果你自行导出过 PEFT
+   adapter，也可以传包含 ``adapter_config.json`` 的目录。不要只传
+   checkpoint 根目录。
 
 3.4.2 SGLang API 推理
 .....................
 
-设置 ``reward.worker_type: api``（``EmbodiedAPIRewardWorker``）。可指向外部
+设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``）。可指向外部
 OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
 :doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：
@@ -456,7 +620,10 @@ SGLang 路径额外说明：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 4. 总结
 ^^^^^^^^^^^^
@@ -465,7 +632,7 @@ SGLang 路径额外说明：
 
 1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
 2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
-3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
+3. 对于 VLM Trend reward，使用 ``examples/reward/vlm_trend/preprocess_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
 4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
 
 
@@ -558,7 +725,7 @@ SGLang 路径额外说明：
      group_name: "EnvGroup"
      eval:
        no_gripper: False
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        keyboard_reward_wrapper: single_stage
        override_cfg:
@@ -569,8 +736,8 @@ SGLang 路径额外说明：
 - ``runner.num_success_frames`` / ``runner.num_fail_frames`` — 目标采集帧数。两个阈值均达到时停止采集。
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段，失败帧会被下采样，使 ``num_fail = num_success * fail_success_ratio``。设为 ``0`` 可禁用下采样。
-- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 ``stage``）以启用键盘标注界面。
-- ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
+- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``\ （或任务对应的 ``stage``）以启用键盘标注界面。
+- ``env.eval.teleop`` — 由哪种设备接管 policy（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 
 **启动命令：**
@@ -645,7 +812,7 @@ SGLang 路径额外说明：
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
@@ -824,7 +991,7 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
      group_name: "EnvGroup"
      eval:
        no_gripper: True
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        override_cfg:
          target_ee_pose: TARGET_EE_POSE
@@ -889,7 +1056,7 @@ SpaceMouse 控制说明：
 
 ``TeleopWorker`` 内部流程：
 
-1. ``RealWorldEnv`` 以 ``use_spacemouse=True`` 初始化，包装了 ``SpacemouseIntervention``。
+1. ``RealWorldEnv`` 以 ``teleop: spacemouse`` 初始化，并套上 SpaceMouse 遥操作 wrapper。
    当 SpaceMouse 输入非零（或按下按钮）时，用 SpaceMouse 动作覆盖零 dummy 动作，持续 0.5 秒。
 2. ``EmbodiedRewardWorker`` 通过 ``EmbodiedRewardWorker.launch_for_realworld(...)``
    在 GPU 节点上启动，在启动时一次性完成初始化。

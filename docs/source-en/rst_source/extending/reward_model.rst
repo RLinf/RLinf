@@ -4,7 +4,8 @@ Reward Model Guide
 Use reward models in RLinf — both image-classification rewards such as
 ``ResNetRewardModel`` and VLM rewards based on ``VLMRewardModel``.
 ``BufferedVLMRewardModel`` extends ``VLMRewardModel`` to process history windows
-maintained by the env worker.
+maintained by the env worker. ``ShapedVLMRewardModel`` adds potential-based
+shaping and a one-shot success bonus on that history path.
 
 Simulation Reward Model
 -----------------------
@@ -28,19 +29,28 @@ them into processed training splits with the preprocessing script.
 1.1 Enable Data Collection
 """"""""""""""""""""""""""
 
-Enable ``data_collection`` under ``env`` in your YAML config:
+Enable ``data_collection`` under ``env.eval`` in your YAML config (use ``env.train`` for training episodes):
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-After training or evaluation starts, the environment will automatically save episodes into ``save_dir``.
-When ``export_format="pickle"``, each episode is written as an individual ``.pkl`` file for later offline preprocessing.
+After training or evaluation starts, each ``export_format: pickle_episode`` episode is written as an individual ``.pkl`` file under ``{save_dir}/pickle_episode/`` for later offline preprocessing.
+
+For ResNet rewards, ``maniskill_ppo_mlp_collect`` is a ready-to-run collection config. It
+trains a state-based MLP PPO policy on ManiSkill PickCube and, during the periodic evaluation
+(every ``runner.val_check_interval`` steps), collects RGB episodes in ``pickle`` format, keeping
+only successful ones (``only_success: True``):
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
 
 For VLM Trend rewards, RLinf also provides a ready-to-run collection config:
 
@@ -66,7 +76,7 @@ Example:
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 By default, this produces:
@@ -99,7 +109,7 @@ Where:
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward uses short dual-view history windows rather than single images. Use
-``examples/reward/preprocess_vlm_trend_reward_dataset.py`` to slice collected
+``examples/reward/vlm_trend/preprocess_reward_dataset.py`` to slice collected
 episodes into 5-frame windows, extract ``main_images`` and ``extra_view_images``,
 and assign each window one of ``positive``, ``negative``, or ``unclear``.
 
@@ -107,8 +117,8 @@ Example:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -148,6 +158,7 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
        "resnet": ResNetRewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
+       "shaped_vlm": ShapedVLMRewardModel,
    }
 
 Where:
@@ -156,7 +167,10 @@ Where:
 - ``vlm``: runs a VLM on the current observation (step/terminal timing depends on ``reward_mode``).
 - ``buffered_vlm``: runs a VLM on history windows from the env worker; prompt, video
   layout, and scalar mapping come from ``input_builder_name`` / ``reward_parser_name``.
-  VLM Trend reward is ``buffered_vlm`` plus the ``vlm_trend_reward_*`` plugins.
+  Standard VLM Trend reward is ``buffered_vlm`` plus the
+  ``vlm_trend_reward_*`` plugins.
+- ``shaped_vlm``: loads separate Potential and Success LoRA adapters, applies the
+  scalar potential head, and keeps episode-local shaping state.
 
 2.2 Fine-Tune the ResNet Reward Model
 """""""""""""""""""""""""""""""""""""
@@ -206,10 +220,19 @@ Once the dataset and model are configured, run:
 
 Training logs are written to a newly created ``logs/<timestamp>-reward_training`` directory.
 
+Checkpoints are saved under ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/``:
+``global_step_<N>/`` every ``runner.save_interval`` steps, and ``best_model/`` whenever the
+validation accuracy improves (this requires ``runner.early_stop``). To use the trained model in
+RL, set ``reward.model.model_path`` to the weights file, for example:
+
+.. code-block:: text
+
+   logs/<timestamp>-reward_training/reward_training/checkpoints/best_model/actor/model_state_dict/full_weights.pt
+
 2.3 Fine-Tune the VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-After converting collected episodes with ``preprocess_vlm_trend_reward_dataset.py``,
+After converting collected episodes with ``examples/reward/vlm_trend/preprocess_reward_dataset.py``,
 point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT:
 
 .. code-block:: bash
@@ -240,6 +263,89 @@ The corresponding config reads the JSONL manifests and per-sample pickle files:
 The trained LoRA checkpoint can then be passed to the online reward config through
 ``reward.model.lora_path``.
 
+2.3.1 Train the Success + Potential Branch
+.............................................
+
+Train this branch when you need a sparse terminal bonus and dense progress
+shaping from the same VLM. Keep the four stages in order:
+
+#. Train a state-success teacher from rollout states.
+#. Train separate Success and Potential LoRA adapters.
+#. Freeze the Potential adapter, extract its prompt features, and train a scalar head.
+#. Combine one-shot Success bonus with potential-difference shaping online.
+
+Configure the pipeline paths in YAML before running the stages:
+
+- In ``examples/reward/vlm_trend/config/pipeline.yaml``, set
+  ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, and,
+  after Potential SFT, ``paths.potential_checkpoint``. The teacher, feature,
+  and scalar-head paths reuse those values through YAML references.
+  Also replace ``auxiliary.teacher.raw_data_paths`` with the actual collected
+  checkpoint directories for your run.
+- In ``examples/sft/config/vlm_trend_success_sft.yaml`` and
+  ``vlm_trend_potential_sft.yaml``, set ``paths.pipeline_root`` and
+  ``paths.model_path``. Their data and output paths are derived in YAML.
+
+Train the teacher from the checkpoint directories listed under
+``auxiliary.teacher.raw_data_paths`` in ``pipeline.yaml``:
+
+.. code-block:: bash
+
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=teacher
+
+Build the two datasets. Repeat ``--raw-data-path`` for every collected
+checkpoint directory; the abbreviated example below shows the argument shape:
+
+.. code-block:: bash
+
+   python examples/reward/vlm_trend/preprocess_terminal_success.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --output-dir /path/to/vlm_trend_success_potential/success_data
+
+   python examples/reward/vlm_trend/preprocess_potential.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --value-checkpoint /path/to/vlm_trend_success_potential/teacher/best.pt \
+     --output-dir /path/to/vlm_trend_success_potential/potential_data
+
+What this does: terminal-success keeps online-matched ``0``/``1`` windows without
+balanced sampling. Both branches stop at the first successful transition, matching
+the online environment termination boundary. Potential preprocessing uses the
+teacher to emit absolute potential digits and ``up``/``same``/``down`` progress
+pairs.
+
+Train the two adapters with the Success and Potential SFT configs:
+
+.. code-block:: bash
+
+   bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
+   bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
+
+Set ``paths.potential_checkpoint`` in ``pipeline.yaml`` to the selected Potential
+VLM SFT weights file (typically
+``.../global_step_*/actor/model_state_dict/full_weights.pt``). A PEFT adapter
+directory containing ``adapter_config.json`` is also accepted.
+
+Feature extraction uses RLinf placement. To restrict it to one GPU, set:
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       feature_extractor: 0  # use all for every available accelerator
+
+RLinf derives each shard's rank and world size from this placement. The Python
+entrypoint processes both splits and both sample types:
+
+.. code-block:: bash
+
+   python examples/reward/vlm_trend/extract_potential_features.py
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=scalar_head
+
+Use the existing ``eval/eval_accuracy`` to select the Success adapter and
+``model_potential`` from ``scalar_head/metrics.jsonl`` to select the scalar head.
+
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -249,6 +355,7 @@ RLinf provides several example configs for integrating a reward model into RL:
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` (VLM Trend reward, local Hugging Face)
 - ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` (VLM Trend reward, SGLang API)
+- ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml`` (Success + Potential VLM reward, local Hugging Face)
 
 These configs show how to enable a reward worker in RL training while keeping the policy on state observations
 and the reward model on image or VLM observations.
@@ -270,16 +377,21 @@ Reward-model-related settings live under the ``reward`` section:
 
      model:
        model_path: /path/to/reward_model_checkpoint
-       model_type: "resnet"    # or "vlm" / "buffered_vlm"
+       model_type: "resnet"    # or "vlm" / "buffered_vlm" / "shaped_vlm"
 
 Where:
 
 - ``reward_mode`` accepts ``"per_step"``, ``"terminal"``, or ``"history_buffer"``: run inference every step, only on terminal frames, or on history windows.
 - ``reward_weight`` and ``env_reward_weight`` control how learned reward and environment reward are combined.
 - ``reward_threshold`` applies only to ``model_type: resnet``: sigmoid probabilities below the threshold are set to ``0``.
-  For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``;
-  the top-level ``reward_threshold`` is not read by the VLM path today.
+  For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``.
+  For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
+  The top-level ``reward_threshold`` is not read by either VLM path today.
 - ``model_path`` points to the reward model checkpoint used for online inference.
+  For ``model_type: resnet``, it is the weights file itself, such as
+  ``checkpoints/best_model/actor/model_state_dict/full_weights.pt`` from section 2.2.3.
+  With ``model_path: null``, as shipped in ``maniskill_ppo_mlp_resnet_reward.yaml``,
+  no trained weights are loaded.
 
 3.2 Worker Interaction During Rollout
 """""""""""""""""""""""""""""""""""""
@@ -329,12 +441,41 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-VLM Trend reward uses the buffered VLM interface (``model_type: buffered_vlm``) with
-``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. Local inference
-instantiates ``BufferedVLMRewardModel``; API inference uses
-``EmbodiedAPIRewardWorker`` with the same input-builder and reward-parser contract.
+Before deploying any of the reward methods below, warm up the MLP policy with
+ManiSkill's dense environment reward using ``maniskill_ppo_mlp`` with
+``reward.use_reward_model: false``. This is a shared prerequisite for local
+VLM Trend, local Success + Potential, and SGLang API inference. Evaluate saved
+checkpoints on the same 1,024 fixed reset states over 50-step episodes, and
+select one with ``eval/success_at_end`` around 50% before starting reward-model
+PPO:
 
-VLM Trend reward online inference shares these core fields (``model_type`` is always ``buffered_vlm``):
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+This command saves and evaluates checkpoints every 5 PPO steps. Extend
+``runner.max_steps`` if needed to reach the target; select the checkpoint by
+its measured success rate rather than its training step. Set the selected
+policy weights for the deployment commands below:
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+The Trend launch commands pass this path through ``runner.ckpt_path``. For
+Success + Potential, set ``vlm_trend_paths.policy_checkpoint`` to the same path.
+
+Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
+``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
+Potential recipe uses ``model_type: shaped_vlm`` for local inference. API inference
+continues to support only ``buffered_vlm``.
+
+Both local VLM Trend paths use history-window reward inputs. The standard path uses:
 
 - ``input_builder_name: vlm_trend_reward_input_builder``
 - ``reward_parser_name: vlm_trend_reward_parser``
@@ -396,7 +537,48 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
+
+For Success + Potential, use the warmup checkpoint selected above and the three
+reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
+1,024 environments, evaluates every 5 PPO steps, disables environment reward,
+and runs 160 steps by default:
+
+Set the five artifact fields under ``vlm_trend_paths`` in
+``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``.
+The runtime fields reference this YAML section directly:
+
+.. code-block:: yaml
+
+   vlm_trend_paths:
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
+     model_path: /path/to/Qwen3-VL-4B-Instruct
+     success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+     potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
+     scalar_head: /path/to/scalar_head/best.pt
+
+Then launch the configured recipe:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh \
+     maniskill_ppo_mlp_shaped_vlm
+
+``ShapedVLMRewardModel`` computes
+``scale * (gamma * potential_t - potential_{t-1})`` and adds
+``success_bonus`` once per episode after the configured confirmation windows.
+Both state machines reset on ``done``.
+
+.. warning::
+
+   ``reward.model.lora_path`` and ``reward.model.success_lora_path`` must be
+   the full path to ``full_weights.pt`` (typically
+   ``.../actor/model_state_dict/full_weights.pt`` from VLM SFT). A PEFT
+   adapter directory that contains ``adapter_config.json`` is also accepted
+   if you exported one. Do not pass a checkpoint root.
 
 3.4.2 SGLang API Inference
 ............................
@@ -460,7 +642,10 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 4. Summary
 ^^^^^^^^^^
@@ -469,7 +654,7 @@ The full workflow is:
 
 1. Enable ``data_collection`` in the environment config and save raw data in ``pickle`` format.
 2. For ResNet rewards, use ``preprocess_reward_dataset.py`` to build ``train.pt`` / ``val.pt`` and train with ``run_reward_training.sh``.
-3. For VLM Trend rewards, use ``preprocess_vlm_trend_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
+3. For VLM Trend rewards, use ``examples/reward/vlm_trend/preprocess_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
 4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
 
 
@@ -565,7 +750,7 @@ inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
      group_name: "EnvGroup"
      eval:
        no_gripper: False
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        keyboard_reward_wrapper: single_stage
        override_cfg:
@@ -581,7 +766,7 @@ inheriting environment parameters from ``env/realworld_bin_relocation.yaml``:
   disable downsampling.
 - ``env.eval.keyboard_reward_wrapper`` — set to ``single_stage`` (or the appropriate
   stage key for your task) to enable the keyboard labeling interface.
-- ``env.eval.use_spacemouse`` — whether SpaceMouse is used for teleoperation (the
+- ``env.eval.teleop`` — which device takes over from the policy (the
   ``intervene_action`` in step info overrides the zero dummy action).
 - ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
 
@@ -663,7 +848,7 @@ The collected ``.pkl`` episodes are converted into ``train.pt`` / ``val.pt`` usi
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
@@ -845,7 +1030,7 @@ which inherits environment parameters from ``env/realworld_bin_relocation.yaml``
      group_name: "EnvGroup"
      eval:
        no_gripper: True
-       use_spacemouse: True
+       teleop: spacemouse
        max_episode_steps: 10000
        override_cfg:
          target_ee_pose: TARGET_EE_POSE
@@ -910,8 +1095,8 @@ How It Works
 
 Inside ``TeleopWorker``:
 
-1. ``RealWorldEnv`` is initialized with ``use_spacemouse=True``, wrapping the gym env with
-   ``SpacemouseIntervention``. Non-zero SpaceMouse input (or a button press) overrides the
+1. ``RealWorldEnv`` is initialized with ``teleop: spacemouse``, wrapping the gym env with
+   a SpaceMouse teleop intervention. Non-zero SpaceMouse input (or a button press) overrides the
    zero dummy action for 0.5 seconds.
 2. ``EmbodiedRewardWorker`` is launched on the GPU node via
    ``EmbodiedRewardWorker.launch_for_realworld(...)`` and initialized once at startup.

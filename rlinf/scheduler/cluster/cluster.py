@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import atexit
 import logging
 import os
 import re
@@ -20,6 +19,7 @@ import signal
 import sys
 import tempfile
 import time
+from datetime import timedelta
 from enum import Enum
 from importlib.metadata import version
 from pathlib import Path
@@ -117,8 +117,6 @@ class PathEnvMergeMode(str, Enum):
 
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
-
-    _run_failed = False
 
     SYS_NAME = "RLinf"
     NAMESPACE = SYS_NAME
@@ -357,10 +355,7 @@ class Cluster:
             }
             if self._ray_code_sync_fragment is not None:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
-            ray.init(**ray_init_kwargs)
-
-        Cluster._install_failure_hook()
-        atexit.register(Cluster._shutdown_ray_at_exit)
+            self._start_local_ray(ray_init_kwargs)
 
         # Ray log collector
         if distributed_log_dir is not None:
@@ -481,32 +476,25 @@ class Cluster:
                 # Mimic ray's sleep before shutdown to ensure log messages are flushed
                 time.sleep(0.5)
                 ray.shutdown(_exiting_interpreter=True)
-            Cluster._run_failed = True
             print("Exiting main process due to a failure upon worker execution.")
             exit(-1)
 
         signal.signal(signal.SIGUSR1, signal_handler)
 
-    @staticmethod
-    def _install_failure_hook():
-        previous = sys.excepthook
+    def _start_local_ray(self, ray_init_kwargs: dict[str, Any]):
+        """Start a local Ray instance, retrying once if the node fails to come up.
 
-        def hook(exc_type, exc_value, exc_tb):
-            Cluster._run_failed = True
-            previous(exc_type, exc_value, exc_tb)
-
-        sys.excepthook = hook
-
-    @staticmethod
-    def _shutdown_ray_at_exit():
-        if Cluster._run_failed:
-            return
+        Ray kills the raylet when a starting node misses its fixed 15s dashboard
+        agent deadline, which a loaded machine can hit.
+        """
         try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except Exception:
-            pass
-        os._exit(0)
+            ray.init(**ray_init_kwargs)
+        except Exception as first_failure:
+            self._logger.warning(
+                f"{Cluster.SYS_NAME} could not start a local Ray instance ({first_failure}). Starting it again."
+            )
+            ray.shutdown()
+            ray.init(**ray_init_kwargs)
 
     def _init_from_existing_managers(self):
         if not ray.is_initialized():
@@ -552,6 +540,35 @@ class Cluster:
     ) -> Optional[str]:
         """Get the system environment variable for the cluster."""
         return os.environ.get(Cluster.get_full_env_var_name(env_var), default)
+
+    @staticmethod
+    def get_collective_timeout() -> timedelta:
+        """Get the timeout applied to every collective RLinf creates.
+
+        This covers the inter-worker process groups as well as the process group
+        the training backends collect over, so that one setting governs all of
+        them.
+
+        Returns:
+            timedelta: The value of ``RLINF_TIMEOUT`` interpreted as minutes.
+
+        Raises:
+            ValueError: If ``RLINF_TIMEOUT`` is not a positive integer.
+        """
+        timeout = Cluster.get_sys_env_var(
+            ClusterEnvVar.TIMEOUT, Cluster.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.TIMEOUT]
+        )
+        try:
+            minutes = int(timeout)
+        except ValueError:
+            raise ValueError(
+                "Invalid TIMEOUT value. It should be an integer representing minutes."
+            )
+        if minutes <= 0:
+            raise ValueError(
+                f"Invalid TIMEOUT value {minutes}. It should be a positive number of minutes."
+            )
+        return timedelta(minutes=minutes)
 
     @property
     def num_nodes(self):
@@ -832,13 +849,18 @@ class Cluster:
                 merged_env_vars,
                 self._runtime_code_sync_strip_roots,
             )
+        runtime_env_vars = {
+            key: value
+            for key, value in merged_env_vars.items()
+            if node.default_env_vars.get(key) != value
+        }
         runtime_env_worker = Cluster._combine_ray_runtime_env(
             Cluster._job_code_sync_fragment_for_child_runtime_env(
                 self._ray_code_sync_fragment
             ),
             {
                 "py_executable": python_interpreter_path,
-                "env_vars": merged_env_vars,
+                "env_vars": runtime_env_vars,
             },
         )
 

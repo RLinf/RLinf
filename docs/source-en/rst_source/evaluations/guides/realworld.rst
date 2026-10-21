@@ -22,16 +22,17 @@ Install dependencies separately on the control node and the GPU node:
 
 .. code-block:: bash
 
-   # Robot control node (Franka + cameras + ROS)
+   # Robot control node (Franka + cameras)
    bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
-   source <your_catkin_ws>/devel/setup.bash
 
 .. code-block:: bash
 
    # GPU / rollout node (π₀ evaluation)
    bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
+
+The control node uses the default Franky backend. To drive the arm through ROS instead, follow the Legacy ROS Backend (Optional) section in :doc:`../../examples/embodied/franka`.
 
 DreamZero real-robot evaluation also requires DreamZero dependencies on the GPU node; see :doc:`../../examples/embodied/sft_dreamzero`.
 
@@ -80,7 +81,7 @@ The following examples live under ``evaluations/realworld/``:
      - π₀
 
 If ``evaluations/realworld/<config>.yaml`` is missing, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.task_type: embodied_eval`` and ``runner.only_eval: True``). See :doc:`../reference/cli`.
-Dual Franka deployment currently uses this fallback path with ``realworld_eval_dual_franka``.
+Two-node Dual Franka deployment uses this fallback path with ``realworld_eval_dual_franka``. Single-workstation RTC evaluation uses ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``.
 
 Pre-flight Checks
 -----------------
@@ -131,11 +132,11 @@ On **each node**, before ``ray start``, align environment variables (you can use
    # On multi-NIC hosts, pin the reachable interface:
    # export RLINF_COMM_NET_DEVICES=<network_interface>
 
-On the control node, also source the ROS / franka workspace (unless already in the setup script):
+On the control node, also activate the Franka environment (unless the setup script already does):
 
 .. code-block:: bash
 
-   source <your_catkin_ws>/devel/setup.bash
+   source .venv/bin/activate
 
 Then start Ray (let ``<head_ip>`` be the head node IP):
 
@@ -151,7 +152,7 @@ Then start Ray (let ``<head_ip>`` be the head node IP):
 
 .. important::
 
-   ``ray start`` freezes the Python interpreter and environment variables at launch time. Complete venv, ROS, and ``PYTHONPATH`` setup on every node **before** starting Ray.
+   ``ray start`` freezes the Python interpreter and environment variables at launch time. Complete venv and ``PYTHONPATH`` setup on every node **before** starting Ray.
 
 End-to-End Workflow (PnP / π₀)
 --------------------------------
@@ -283,8 +284,8 @@ Key ``env.eval`` fields
      - Steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks`` (default 10 for PnP)
    * - ``total_num_envs``
      - Parallel env count; typically 1 on real hardware
-   * - ``use_spacemouse``
-     - Enable spacemouse intervention; usually ``False`` for eval
+   * - ``teleop``
+     - Device that takes over from the policy; usually ``none`` for eval
 
 ``run_eval.sh`` behavior
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -334,11 +335,28 @@ For data collection, SFT training, and deployment on custom tasks, see :doc:`../
 Dual Franka Deployment
 ----------------------
 
-Dual Franka SFT deployment reuses the unified evaluation launcher with the
-fallback config ``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
-Set ``rollout.model.model_path`` to the staged checkpoint directory and
-``actor.model.openpi_data.repo_id`` to the repo id that contains
+There are two dual-arm evaluation configs.
+
+``examples/embodiment/config/realworld_eval_dual_franka.yaml`` is the two-node
+fallback. ``run_eval.sh`` uses it when ``evaluations/realworld/`` has no file
+of the same name. Set ``rollout.model.model_path`` to the staged checkpoint
+directory and ``actor.model.openpi_data.repo_id`` to the repo id that contains
 ``norm_stats.json``.
+
+``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml`` is the
+single-workstation RTC evaluation: the GPU, both arms, and the three cameras
+are on one machine. Actions are 20-dimensional tcp_rot6d,
+``openpi.config_name`` is ``pi05_dualfranka_tcp_rot6d``, and the main camera is
+``left_wrist_0_rgb``. Replace ``MODEL_PATH``, the ``norm_stats`` path, arm IPs,
+camera serials, gripper ports, ``keyboard_device``, and ``TASK_DESCRIPTION``.
+After the arms home, press ``a`` on that USB keyboard or pedal to start the
+policy; ``c`` marks success and ``b`` marks failure. The script does not read
+the terminal. Press ``a`` on the evdev device named by ``keyboard_device``, or
+by ``RLINF_KEYBOARD_DEVICE`` when that field is null. Typing ``a`` in an SSH
+session does not reach that device. If the device is the keyboard attached to
+this machine, the press counts even while the terminal is focused. Keep
+``enable_camera_player: False`` on a machine without a display.
+``max_steps_per_rollout_epoch`` must be divisible by 20.
 
 .. code-block:: bash
 
@@ -347,8 +365,11 @@ Set ``rollout.model.model_path`` to the staged checkpoint directory and
        actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
        env.eval.override_cfg.task_description="handover the object"
 
-For the full collection, SFT, checkpoint staging, and pedal-control workflow,
-see :doc:`../../examples/embodied/dual_franka`.
+   bash evaluations/run_eval.sh realworld_dual_franka_pi05_RTC
+
+For collection, SFT, checkpoint staging, and the key workflow, see
+:doc:`../../examples/embodied/dual_franka` and
+:doc:`../../examples/embodied/dual_franka_pico_dagger`.
 
 Viewing Results
 ---------------
@@ -363,7 +384,7 @@ FAQ
 ---
 
 - **Safety:** Verify workspace limits and emergency stop before evaluation; use a small ``rollout_epoch`` on the first run.
-- **Node topology:** ``env`` workers must run on nodes with direct Franka access; ``node_ranks`` must match ``RLINF_NODE_RANK``. PnP and Dual Franka use two nodes; custom-task eval uses one.
+- **Node topology:** ``env`` workers must run on nodes with direct Franka access; ``node_ranks`` must match ``RLINF_NODE_RANK``. PnP and ``realworld_eval_dual_franka`` use two nodes. Custom-task eval and ``realworld_dual_franka_pi05_RTC`` use one.
 - **Cameras not found:** Run ``python -m toolkits.realworld_check.test_franka_camera`` on the control node and verify ``camera_serials``.
 - **Abnormal actions:** Check that ``norm_stats.json`` is under ``model_path/<repo_id>/`` and that ``openpi.config_name`` matches training.
 - **Ray shows only one node:** Check firewall rules, ``RLINF_COMM_NET_DEVICES``, and that the head IP is reachable from other nodes.

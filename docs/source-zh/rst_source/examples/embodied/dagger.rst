@@ -42,7 +42,7 @@ DAgger 微调具身策略：学生策略与环境交互，专家对访问到的�
 
       Sync · Async
 
-| **你将完成：** 安装 → 设置学生/专家检查点 → 运行 ``run_embodiment.sh``（或 ``run_async.sh``）→ 观察 ``env/success_once``。
+| **你将完成：** 安装 → 设置学生/专家检查点 → 运行 ``run_embodiment.sh``\ （或 ``run_async.sh``）→ 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 学生与专家检查点（见下文步骤）。
 
 支持的配置
@@ -98,8 +98,8 @@ DAgger 工作原理
 ----------------------------------------
 
 上面三份经典配置将 expert 标注轨迹存入内存 **replay buffer**。
-``libero_spatial_dagger_openpi_lerobot.yaml`` 提供 **在线 LeRobot** 路径：env worker
-以 LeRobot 格式收集完整 episode，经内存发送给 actor，actor 通过
+``libero_spatial_dagger_openpi_lerobot.yaml`` 提供 **在线 LeRobot** 路径：Actor
+channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 actor，actor 通过
 :class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset` 滑动窗口训练。
 
 **经典 replay buffer vs 在线 LeRobot**
@@ -118,8 +118,8 @@ DAgger 工作原理
 
 1. **混合 rollout 与专家重标注** — 与经典 DAgger 相同的 ``beta`` 调度与专家重标注。
 2. **Episode 收集** — 当 ``algorithm.dagger.online_lerobot.enabled`` 为 ``True`` 时，
-   EnvWorker 使用 :class:`~rlinf.data.schema.embodied_trajectory_builder.EmbodiedLerobotTrajectoryBuilder`
-   累积各 env 的帧并导出完整 episode。
+   :class:`~rlinf.data.schema.embodied_trajectory.TrajectoryCollector` 累积各 env
+   的帧并导出完整 episode。
 3. **Actor 接收** — 完成的 episode 经 ``recv_lerobot_rollout_trajectories`` 写入 rolling dataset。
 4. **滑动窗口训练** — actor 从 ``RollingLeRobotDataset`` 采样（可选 decoded cache），
    优化 ``embodied_dagger`` 损失。
@@ -149,7 +149,7 @@ Docker 镜像或等价的本地环境。
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
 

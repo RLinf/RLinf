@@ -45,18 +45,15 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: True
+    teleop: spacemouse
     override_cfg:
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       success_hold_steps: 1
-      camera_type: zed
-      gripper_type: robotiq
-      gripper_connection: "/dev/ttyUSB0"
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "lerobot"
+      save_dir: ${runner.logger.log_path}
+      export_format: [replay_buffer, lerobot_dataset]
       only_success: True
       robot_type: "panda"
       fps: 10

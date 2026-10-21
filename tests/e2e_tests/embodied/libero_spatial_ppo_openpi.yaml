@@ -121,8 +121,8 @@ actor:
     model_path: "/workspace/dataset/pi0_libero"
     num_action_chunks: 5 # interface for the env
     add_value_head: True
-    # openpi specific parameters
     openpi:
+      task: rl
       detach_critic_input: True
 
   optim:
@@ -139,6 +139,11 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
+    # Dual-expert Gemma packs frozen VLM (expert-0) and trainable action
+    # expert (expert-1) in the same Block. FSDP FlatParameter then mixes
+    # requires_grad and rejects wrap unless use_orig_params=True.
+    # validate_fsdp_cfg also forces this flag for openpi.
+    use_orig_params: True
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
       param_dtype: ${actor.model.precision}

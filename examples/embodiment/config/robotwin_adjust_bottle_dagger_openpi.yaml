@@ -48,6 +48,19 @@ algorithm:
     beta_decay: 0.99
     # False enables classic DAgger: student-acted data is re-labeled by expert.
     only_save_expert: False
+    # Store one observation/action pair per environment step. The rolling
+    # LeRobot dataset reconstructs action chunks for OpenPI training.
+    online_lerobot:
+      enabled: True
+      only_success: True
+      robot_type: "aloha"
+      fps: 10
+      finalize_interval: 8
+      data_path: "/path/to/robotwin_lerobot"
+      rolling_lerobot_window_size: 50000
+      lerobot_num_workers: 0
+      # Start training once the rolling dataset contains this many frames.
+      min_frames: 1024
 
   gamma: 0.99
 
@@ -66,6 +79,9 @@ env:
   group_name: "EnvGroup"
   # enable_offload: False
   train:
+    # Online LeRobot stores one observation per action. RoboTwin skips
+    # intermediate renders unless this is false.
+    skip_intermediate_renders: False
     rollout_epoch: 1
     total_num_envs: 64
     reward_coef: ${algorithm.reward_coef}
@@ -73,7 +89,7 @@ env:
     max_steps_per_rollout_epoch: 200
     group_size: 1
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/train_seeds.json
     center_crop: False
     task_config:
       task_name: adjust_bottle
@@ -102,7 +118,7 @@ env:
     use_fixed_reset_state_ids: True
     is_eval: True
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -142,7 +158,7 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
+  micro_batch_size: 8
   global_batch_size: 1024
   seed: 1234
   enable_offload: False
@@ -154,6 +170,7 @@ actor:
     add_value_head: False
     action_dim: 14
     openpi:
+      task: dagger
       config_name: "pi0_aloha_robotwin"
       num_images_in_input: 3
       train_expert_only: False
@@ -178,7 +195,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
+    use_orig_params: True
     gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}

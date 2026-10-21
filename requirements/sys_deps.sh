@@ -20,7 +20,7 @@ detect_pkg_manager() {
 
 PKG_MANAGER=$(detect_pkg_manager)
 
-# Hardware platform (nvidia | amd). Passed by install.sh; defaults to nvidia
+# Hardware platform. Passed by install.sh; defaults to nvidia
 # when this script is invoked directly for backward compatibility.
 PLATFORM="${1:-nvidia}"
 
@@ -105,6 +105,7 @@ install_deps_apt() {
         libibverbs-dev \
         ncurses-term \
         mesa-utils \
+        libosmesa6 \
         libosmesa6-dev \
         freeglut3-dev \
         libglew-dev \
@@ -113,7 +114,12 @@ install_deps_apt() {
         libglvnd-dev \
         libglfw3-dev \
         libgl1-mesa-dev \
+        libgl1 \
         libglib2.0-0 \
+        libgtk2.0-dev \
+        libhidapi-hidraw0 \
+        libusb-1.0-0 \
+        libudev1 \
         libsm6 \
         libxext6 \
         libxrender-dev \
@@ -167,8 +173,10 @@ install_deps_dnf() {
         mesa-libGLES \
         libglvnd-devel \
         glfw-devel \
+        mesa-libGL \
         mesa-libGL-devel \
         glib2 \
+        gtk2-devel \
         libSM \
         libXext \
         libXrender-devel \
@@ -215,8 +223,10 @@ install_deps_yum() {
         mesa-libGLES \
         libglvnd-devel \
         glfw-devel \
+        mesa-libGL \
         mesa-libGL-devel \
         glib2 \
+        gtk2-devel \
         libSM \
         libXext \
         libXrender-devel \
@@ -240,6 +250,7 @@ install_deps_yum() {
 
 install_deps_pacman() {
     # Pacman package names for Arch Linux
+    # gtk2 is AUR-only on Arch, so OpenCV's GTK+ 2 GUI dependency is not installed here.
     sudo pacman -Sy --noconfirm \
         linux-api-headers \
         wget \
@@ -379,13 +390,13 @@ case "$PLATFORM" in
         echo "Installing rendering runtime config for AMD/Radeon"
         install_render_config_amd
         ;;
-    ascend|musa)
+    nvidia)
+        echo "Installing rendering runtime config for NVIDIA"
+        install_render_config_nvidia
+        ;;
+    *)
         # Server-side, with no display GPU. Skip the EGL/Vulkan ICD config;
         # software rendering still gets mesa drivers from the step above.
         echo "Skipping rendering runtime config on ${PLATFORM} platform"
-        ;;
-    nvidia|*)
-        echo "Installing rendering runtime config for NVIDIA"
-        install_render_config_nvidia
         ;;
 esac

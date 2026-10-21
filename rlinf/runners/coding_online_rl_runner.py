@@ -100,6 +100,7 @@ class CodingOnlineRLRunner:
             if (
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
+                and not getattr(self.cfg.actor.megatron, "mbridge", False)
             ):
                 from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                     convert_hf_to_mg,
@@ -304,7 +305,7 @@ class CodingOnlineRLRunner:
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
 
-        self.server_rollout.shutdown()
+        self.server_rollout.stop()
         self.online_router.server_stop()
         self.server_rollout.server_stop()
         # No need to wait for rollout_handle since rollout service runs continuously

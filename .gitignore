@@ -16,9 +16,10 @@ logs_baseline/*
 outputs/*
 *.so
 .venv
+.venv-*
 .docs-venv
 uv.lock
-rlinf/envs/maniskill/assets
+rlinf/envs/sim/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json

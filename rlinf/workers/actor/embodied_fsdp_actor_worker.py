@@ -20,8 +20,9 @@ from torch import nn
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
-from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -35,6 +36,7 @@ from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_KEY,
     append_to_dict,
     compute_critic_explained_variance_from_stats,
+    compute_group_success_metrics,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
@@ -53,8 +55,8 @@ from rlinf.utils.placement import (
 )
 from rlinf.utils.utils import (
     clear_memory,
+    get_loss_agg_func,
     masked_mean,
-    reshape_entropy,
 )
 
 
@@ -72,6 +74,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self._opd_teacher_model = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
+        self.loss_agg_func = get_loss_agg_func(
+            self.cfg.algorithm.get("loss_agg_func", "token-mean")
+        )
+        self._group_success_metrics: dict[str, float] = {}
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
@@ -202,7 +208,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
             recv_list.append(trajectory)
 
-        self.rollout_batch = convert_trajectories_to_batch(recv_list)
+        self.rollout_batch = Trajectory.to_batch(recv_list)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
@@ -231,6 +237,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
+
+        self._group_success_metrics = {}
+        if self.cfg.algorithm.get("log_group_success_metrics", False):
+            self._group_success_metrics = compute_group_success_metrics(
+                rollout_batch["rewards"],
+                group_size=self.cfg.algorithm.group_size,
+                loss_mask=rollout_batch.get("loss_mask", None),
+                rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
+                rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
+            )
 
         # filter data by rewards
         if self.cfg.algorithm.get("filter_rewards", False):
@@ -318,6 +334,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
 
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
+        rollout_metrics.update(self._group_success_metrics)
         return rollout_metrics
 
     @Worker.timer("actor/compute_opd_teacher_logprobs")
@@ -388,6 +405,81 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         teacher_model.to("cpu")
         clear_memory()
 
+    @Worker.timer("actor/recompute_logprobs")
+    def recompute_prev_logprobs(self, batch_size_per_rank: int) -> dict[str, float]:
+        """
+        Recompute ``prev_logprobs`` with the actor's own forward, so both ends of
+        the PPO ratio come from the same path. Runs after the shuffle and reuses
+        the update loop's split, so each sample is scored in the micro-batch it
+        will be trained in.
+
+        Args:
+            batch_size_per_rank: Samples per optimizer step on this rank.
+
+        Returns:
+            Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob difference).
+        """
+        assert "forward_inputs" in self.rollout_batch, (
+            "Recomputing logprobs requires rollout forward_inputs."
+        )
+
+        rollout_logprobs = self.rollout_batch["prev_logprobs"]
+        rollout_size = rollout_logprobs.shape[0]
+        kwargs = {
+            "temperature": self.cfg.rollout.sampling_params.temperature_train,
+            "top_k": self.cfg.rollout.sampling_params.top_k,
+        }
+
+        recomputed_logprobs = []
+        with torch.no_grad():
+            for global_batch in split_dict_to_chunk(
+                self.rollout_batch, rollout_size // batch_size_per_rank
+            ):
+                for micro_batch in split_dict_to_chunk(
+                    global_batch,
+                    batch_size_per_rank // self.cfg.actor.micro_batch_size,
+                ):
+                    micro_batch = put_tensor_device(micro_batch, self.device)
+                    with self.amp_context:
+                        output = self.model(
+                            forward_inputs=micro_batch["forward_inputs"],
+                            compute_logprobs=True,
+                            compute_entropy=False,
+                            compute_values=False,
+                            use_cache=False,
+                            **kwargs,
+                        )
+                    recomputed_logprobs.append(output["logprobs"].detach().cpu())
+
+        recomputed_logprobs = torch.cat(recomputed_logprobs, dim=0).to(
+            rollout_logprobs.dtype
+        )
+        assert recomputed_logprobs.shape == rollout_logprobs.shape, (
+            f"recomputed logprobs shape {recomputed_logprobs.shape} must match "
+            f"rollout logprobs shape {rollout_logprobs.shape}."
+        )
+        clear_memory()
+
+        # Logprobs are per action token, the mask and the advantages per action.
+        action_dim = self.cfg.actor.model.get("action_dim", 7)
+        log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
+            *rollout_logprobs.shape[:-1], -1, action_dim
+        )
+        loss_mask = self.rollout_batch.get("loss_mask", None)
+        mask = (
+            None
+            if loss_mask is None
+            else loss_mask.bool().unsqueeze(-1).expand_as(log_ratio)
+        )
+        metrics = {
+            "actor/rollout_train_logprob_gap": masked_mean(
+                log_ratio.abs(), mask=mask
+            ).item()
+        }
+
+        self.rollout_batch["prev_logprobs"] = recomputed_logprobs
+        return metrics
+
     def _get_opd_teacher_model(self):
         if self._opd_teacher_model is None:
             teacher_model_config = build_expert_model_config(
@@ -406,7 +498,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return self._opd_teacher_model
 
     def _build_sft_data_loader(self):
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
             repo_id = resolve_lerobot_repo_id(self.cfg.actor.get("sft_data_path"))
             if repo_id is None:
                 raise ValueError(
@@ -416,13 +508,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             import openpi.training.data_loader as _data
 
-            from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+            from rlinf.models.embodiment.openpi.dataconfig import (
+                get_openpi_config,
+            )
 
-            if "config_name" not in self.cfg.actor:
+            training_config_name = OmegaConf.select(
+                self.cfg.actor.model, "openpi.config_name", default=None
+            )
+            if not training_config_name:
                 raise ValueError(
-                    "config_name is required when enable_sft_co_train=True"
+                    "enable_sft_co_train=True requires actor.model.openpi.config_name."
                 )
-            training_config_name = self.cfg.actor.config_name
             data_loader_config = get_openpi_config(
                 training_config_name,
                 model_path=self.cfg.actor.model.model_path,
@@ -525,6 +621,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
         metrics = {}
+        if self.cfg.algorithm.get("recompute_logprobs", False):
+            append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(
@@ -609,8 +707,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
+            SupportedModel.PI0_FAST,
         ]:
-            kwargs["temperature"] = self.cfg.rollout.sampling_params.temperature_train
+            temperature = self.cfg.rollout.sampling_params.temperature_train
+            if (
+                SupportedModel(self.cfg.actor.model.model_type)
+                == SupportedModel.PI0_FAST
+                and not self.cfg.rollout.sampling_params.do_sample
+            ):
+                temperature = 1.0
+            kwargs["temperature"] = temperature
             kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
         elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
@@ -621,11 +727,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             kwargs["prev_logprobs"] = prev_logprobs
 
         compute_values = self.cfg.algorithm.adv_type == "gae"
+        compute_entropy = (
+            self.cfg.algorithm.entropy_bonus > 0
+            or self.cfg.algorithm.get("log_entropy_metrics", False)
+        )
         with self.amp_context:
             output_dict = self.model(
                 forward_inputs=forward_inputs,
                 compute_logprobs=True,
-                compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
+                compute_entropy=compute_entropy,
                 compute_values=compute_values,
                 use_cache=False,
                 **kwargs,
@@ -659,11 +769,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "max_episode_steps": self.cfg.env.train.max_episode_steps,
             "task_type": self.cfg.runner.task_type,
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
+            "logprob_mask": output_dict.get("logprob_mask", None),
+            "loss_agg_func": self.loss_agg_func,
+            "log_logprob_diagnostics": self.cfg.algorithm.get(
+                "log_logprob_diagnostics", False
+            ),
         }
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
             SupportedModel.GR00T_N1D7,
+            SupportedModel.PI0_FAST,
         ]:
             loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
             if self.cfg.algorithm.get("clip_log_ratio_min") is not None:
@@ -677,17 +793,39 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
-        if self.cfg.algorithm.entropy_bonus > 0 and not loss_kwargs["critic_warmup"]:
-            entropy = output_dict["entropy"]
-            entropy = reshape_entropy(
-                entropy,
-                entropy_type=self.cfg.algorithm.entropy_type,
-                action_dim=self.cfg.actor.model.get("action_dim", 7),
-                batch_size=output_dict["logprobs"].shape[0],
-            )
-            entropy_loss = masked_mean(entropy, mask=loss_mask)
-            loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
+        if compute_entropy and not loss_kwargs["critic_warmup"]:
+            entropy = output_dict.get("entropy", None)
+            if entropy is not None and self.cfg.algorithm.entropy_bonus <= 0:
+                entropy = entropy.detach()
+            if entropy is not None:
+                entropy_mask = loss_mask
+                logprob_mask = output_dict.get("logprob_mask", None)
+                if logprob_mask is not None:
+                    entropy_mask = logprob_mask.to(dtype=torch.bool)
+                    if loss_mask is not None:
+                        env_mask = loss_mask.to(
+                            device=entropy_mask.device, dtype=torch.bool
+                        )
+                        while env_mask.ndim > 1 and env_mask.shape[-1] == 1:
+                            env_mask = env_mask.squeeze(-1)
+                        while env_mask.ndim < entropy_mask.ndim:
+                            env_mask = env_mask.unsqueeze(-1)
+                        entropy_mask = entropy_mask & env_mask
+                entropy_loss = compute_entropy_loss(
+                    entropy,
+                    entropy_type=self.cfg.algorithm.entropy_type,
+                    loss_mask=entropy_mask,
+                    action_dim=self.cfg.actor.model.get("action_dim", 7),
+                    batch_size=output_dict["logprobs"].shape[0],
+                )
+                if self.cfg.algorithm.entropy_bonus > 0:
+                    loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
+        if compute_entropy:
+            metrics_data["actor/entropy"] = entropy_loss.detach().item()
+            metrics_data["actor/entropy_bonus_term"] = (
+                self.cfg.algorithm.entropy_bonus * entropy_loss.detach().item()
+            )
 
         if self.enable_sft_co_train:
             loss = self._train_sft_epoch(metrics_data, loss)

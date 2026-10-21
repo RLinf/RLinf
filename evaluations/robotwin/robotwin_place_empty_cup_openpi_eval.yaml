@@ -49,7 +49,7 @@ env:
     use_fixed_reset_state_ids: True
     is_eval: True
     assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     center_crop: False
     video_cfg:
       save_video: True
@@ -72,6 +72,7 @@ rollout:
     add_value_head: True
     num_steps: 5
     openpi:
+      task: eval
       config_name: "pi0_aloha_robotwin"
       num_images_in_input: 3
       train_expert_only: True

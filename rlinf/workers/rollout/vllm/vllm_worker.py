@@ -165,8 +165,7 @@ class VLLMWorker(Worker):
                 input_ids=prompt_ids,
                 sampling_params=self._validate_sampling_params,
             )
-        for request_output in vllm_outputs:
-            print_vllm_outputs(request_output, self._tokenizer)
+        print_vllm_outputs(vllm_outputs)
 
     async def offload_engine(self) -> None:
         """
@@ -181,6 +180,10 @@ class VLLMWorker(Worker):
         """
         await self._async_engine.collective_rpc("sync_hf_weight")
         await self._async_engine.reset_prefix_cache()
+
+    async def onload_kv_cudagraph(self) -> None:
+        """Onload KV cache + cuda graph deferred from sync_hf_weight (collocate)."""
+        await self._async_engine.collective_rpc("onload_kv_cudagraph")
 
     async def _get_output_from_async_generator(
         self, async_generator: AsyncGenerator[RequestOutput, None]

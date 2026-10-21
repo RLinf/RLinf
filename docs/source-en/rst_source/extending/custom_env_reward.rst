@@ -11,7 +11,7 @@ How step rewards flow into training
 
 Each embodied environment converts the simulator's raw reward and the
 per-step ``info`` dict into the training reward inside
-``_calc_step_reward`` (e.g. ``rlinf/envs/maniskill/maniskill_env.py``).
+``_calc_step_reward`` (e.g. ``rlinf/envs/sim/maniskill/maniskill_env.py``).
 That reward feeds trajectory returns, which the advantage function
 selected by ``algorithm.adv_type`` (e.g. ``grpo``, ``gae``) consumes.
 

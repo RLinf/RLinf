@@ -33,9 +33,10 @@ from typing import Any, Mapping
 import torch
 
 # Wrapper / FSDP prefixes that may sit in front of the bare ``Pi0`` keys in a
-# trained checkpoint. ``OpenPiPytorchActionModel`` adds ``model.`` (the vendored
-# Pi0 lives at ``wrapper.model``); FSDP/compile may add the others. No bare Pi0
-# key begins with any of these, so stripping them is safe.
+# trained checkpoint. Older ``OpenPiPytorchActionModel`` checkpoints stored Pi0
+# under ``model.`` (``wrapper.model.llm``); after the inherit-Pi0 reorg the keys
+# are already bare (``llm.*``). FSDP/compile may add the other prefixes. No bare
+# Pi0 key begins with any of these, so stripping them is safe.
 _WRAPPER_PREFIXES = (
     "_fsdp_wrapped_module.",
     "_orig_mod.",
@@ -43,7 +44,7 @@ _WRAPPER_PREFIXES = (
     "model.",
 )
 
-# The norm-stats asset tree the OpenPI_RLinf eval loader expects.
+# The norm-stats asset tree the OpenPI eval loader expects.
 NORM_STATS_SUBDIR = pathlib.Path("physical-intelligence") / "behavior"
 
 
@@ -136,7 +137,7 @@ def strip_wrapper_prefix(
 
     Removes any leading combination of the known wrapper/FSDP prefixes from each
     key. When ``cast_dtype`` is given, floating-point tensors are cast to it (the
-    OpenPI_RLinf eval loader validates that every checkpoint tensor is bf16);
+    OpenPI eval loader validates that every checkpoint tensor is bf16);
     integer/bool buffers are passed through. Two distinct source keys must never
     collapse to the same bare key, or a tensor would be silently dropped, so that
     raises instead.

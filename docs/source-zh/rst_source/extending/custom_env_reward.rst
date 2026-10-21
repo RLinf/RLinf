@@ -9,7 +9,7 @@
 --------------------
 
 每个具身环境在 ``_calc_step_reward`` 中（例如
-``rlinf/envs/maniskill/maniskill_env.py``）把仿真器的原始奖励和每步
+``rlinf/envs/sim/maniskill/maniskill_env.py``）把仿真器的原始奖励和每步
 ``info`` 字典转换为训练奖励。该奖励构成轨迹回报，随后由
 ``algorithm.adv_type`` 选择的优势函数（如 ``grpo``、``gae``）消费。
 

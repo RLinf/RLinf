@@ -37,8 +37,9 @@ class Robo2VLMDataset(VLMBaseDataset):
         data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
+        eval_dataset: bool = False,
     ) -> None:
-        super().__init__(data_paths, config, tokenizer)
+        super().__init__(data_paths, config, tokenizer, eval_dataset)
         self.system_prompt = (
             "You are a helpful robotic vision assistant specialized in "
             "answering questions about robotic manipulation tasks. "
@@ -123,9 +124,8 @@ class Robo2VLMSFTDataset(Robo2VLMDataset):
         tokenizer: AutoTokenizer,
         eval_dataset: bool = False,
     ) -> None:
-        super().__init__(data_paths, config, tokenizer)
+        super().__init__(data_paths, config, tokenizer, eval_dataset)
         self.apply_chat_template = config.data.apply_chat_template
-        self.eval_dataset = eval_dataset
 
     def _process_raw_record(self, raw: dict[str, Any], idx: int) -> DatasetItem:
         images = self.get_image_list(raw)

@@ -63,9 +63,9 @@ env:
     no_gripper: False
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: False
-    use_gello: False
-    use_gello_joint: True
+    teleop:
+      - {gello_joint: {drives: left}}
+      - {gello_joint: {drives: right}}
     # Foot-pedal-driven keyboard wrapper for GELLO collection. The 3-key
     # pedal maps to:
     #   a (pre)  → start a new rec episode at the current pose
@@ -93,22 +93,14 @@ env:
       success_hold_steps: 1
       # Keep direct_stream ON so the 1 kHz daemon owns move_joints and
       # env.step only reads state / grippers.  Pair with
-      # use_gello_joint=True above.
+      # the gello_joint entries above.
       teleop_direct_stream: true
 
     data_collection:
       enabled: True
-      # Edit ``save_dir`` here to point successive collect runs at the
-      # same dataset root. Each run's log_path is still per-session
-      # under logs/, so run_embodiment.log stays unique even when
-      # datasets accumulate.
-      save_dir: ${runner.logger.log_path}/collected_data
-      # When true, CollectEpisode seeds its episode counter from shards
-      # already on disk under save_dir and the collector's progress bar
-      # starts from that count. New episodes land in a fresh ``id_{N}``
-      # shard so previously-finalized data is never touched.
+      save_dir: ${runner.logger.log_path}
       resume: false
-      export_format: "lerobot"
+      export_format: [replay_buffer, lerobot_dataset]
       only_success: True
       robot_type: "dual_FR3"
       fps: 10
