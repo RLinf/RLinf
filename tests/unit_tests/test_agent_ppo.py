@@ -428,23 +428,28 @@ def test_async_searchr1_rejects_invalid_execution_contracts(key, value):
 
 @pytest.mark.parametrize("truncate", [True, False])
 @pytest.mark.parametrize("budget", [12, 100])
+@pytest.mark.parametrize("return_logprobs", [True, False])
 @pytest.mark.placement
-def test_searchr1_response_processing_preserves_behavior_tokens(truncate, budget):
+def test_searchr1_response_processing_preserves_behavior_tokens(
+    truncate, budget, return_logprobs
+):
     from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
+    from rlinf.agents.tokenization import get_agentic_tokenizer
 
     class Tokenizer:
         def decode(self, ids):
             return "".join(map(chr, ids))
 
         def encode(self, text):
-            return [999, *map(ord, text)]
+            raise AssertionError("Generated tokens must not be re-encoded.")
 
     worker = object.__new__(Searchr1AgentLoopWorker)
     worker.cfg = SimpleNamespace(agentloop=SimpleNamespace(max_turns=2))
     worker.max_resp_len = budget
     worker.truncate_response = truncate
-    worker.return_logprobs = not truncate
+    worker.return_logprobs = return_logprobs
     worker.tokenizer = Tokenizer()
+    worker.agentic_tokenizer = get_agentic_tokenizer(worker.tokenizer, "default")
     Cluster(num_nodes=1)
     worker.generate_input_channel = Channel.create(f"ResponseInput-{truncate}-{budget}")
     worker.generate_output_channel = Channel.create(
@@ -475,17 +480,14 @@ def test_searchr1_response_processing_preserves_behavior_tokens(truncate, budget
         return output[-1]
 
     output = asyncio.run(run())
-    if truncate:
-        expected = ids[:budget]
-        if budget == 100:
-            expected = [999, *map(ord, "<search>x</search>")]
-        assert output.response_ids == expected
-        assert output.response_logprobs is None
-        assert output.response_weight_versions is None
-    else:
-        assert output.response_ids == ids[:budget]
-        assert output.response_logprobs == logprobs[:budget]
-        assert output.response_weight_versions == versions[:budget]
+    expected = ids[:budget]
+    if truncate and budget == 100:
+        expected = ids[:-1]
+    assert output.response_ids == expected
+    assert output.response_logprobs == (
+        logprobs[: len(expected)] if return_logprobs else None
+    )
+    assert output.response_weight_versions == versions[: len(expected)]
     assert context["all_llm_response_ids"] == output.response_ids
 
 
@@ -563,12 +565,8 @@ def test_searchr1_response_config_defaults_and_raw_logprobs(truncate, recompute)
         cfg.agentloop.truncate_response = truncate
     cfg.algorithm.recompute_logprobs = recompute
     cfg.rollout.return_logprobs = not recompute
-    if not recompute and truncate is not False:
-        with pytest.raises(ValueError, match="truncate_response=False"):
-            validate_searchr1_cfg(cfg)
-    else:
-        validate_searchr1_cfg(cfg)
-        assert cfg.agentloop.truncate_response == (truncate is not False)
+    validate_searchr1_cfg(cfg)
+    assert cfg.agentloop.truncate_response == (truncate is not False)
 
 
 def _prepare_targets(results, gamma, gae_lambda, normalize_advantages):
@@ -1385,6 +1383,7 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
             "reward": {"reward_type": "searchr1"},
             "agentloop": {"is_dynamic_rollout_batch": True},
             "runner": {"synchronous": True},
+            "data": {},
             "rollout": {"rollout_backend": "sglang"},
             "actor": {
                 "enable_dp_load_balance": True,
@@ -1413,7 +1412,7 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
     )
     validate_searchr1_cfg(cfg)
     cfg.algorithm[option] = value
-    with pytest.raises(ValueError, match="SearchR1 PPO requires"):
+    with pytest.raises(ValueError, match="SearchR1 (PPO )?requires"):
         validate_searchr1_cfg(cfg)
 
 

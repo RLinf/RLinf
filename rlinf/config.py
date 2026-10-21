@@ -1576,6 +1576,42 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "SearchR1 with the FSDP multi-agent actor does not support "
             "algorithm.importance_sampling_fix=True."
         )
+    expect_rollout_logprobs = not cfg.algorithm.recompute_logprobs
+    if cfg.rollout.get("return_logprobs", False) != expect_rollout_logprobs:
+        raise ValueError(
+            "SearchR1 requires rollout.return_logprobs == "
+            "not algorithm.recompute_logprobs "
+            f"(algorithm.recompute_logprobs={cfg.algorithm.recompute_logprobs}, "
+            f"rollout.return_logprobs={cfg.rollout.get('return_logprobs', False)}). "
+            "The agent loop slices the rollout logprobs returned by the engine; "
+            "set rollout.return_logprobs: ${not:${algorithm.recompute_logprobs}}."
+        )
+    if cfg.data.get("apply_chat_template_kwargs", {}) and not cfg.data.get(
+        "apply_chat_template", False
+    ):
+        raise ValueError(
+            "data.apply_chat_template_kwargs is set but "
+            "data.apply_chat_template is False: the kwargs only reach the chat "
+            "template through dataset prompt rendering. Set "
+            "data.apply_chat_template: True or remove the kwargs."
+        )
+    agentic_tokenizer = cfg.agentloop.get("agentic_tokenizer", "default")
+    # Imported lazily: a top-level import would be circular, since
+    # rlinf.agents imports rlinf.models, which imports rlinf.config.
+    from rlinf.agents.tokenization.agentic_tokenizer import (
+        agentic_tokenizer_tool_call_parser,
+    )
+
+    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
+    actual_parser = OmegaConf.select(
+        cfg, "rollout.sglang.tool_call_parser", default=None
+    )
+    if expected_parser is not None and actual_parser != expected_parser:
+        raise ValueError(
+            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
+            f"tool_call_parser={expected_parser!r}, but "
+            f"rollout.sglang.tool_call_parser={actual_parser!r}."
+        )
 
     if cfg.critic.get("use_critic_model", False):
         asynchronous = not cfg.runner.get("synchronous", False)
@@ -1594,14 +1630,6 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         ):
             raise ValueError(
                 "SearchR1 PPO requires actor_gae (sync) or sao_gae (async) and zero KL coefficients."
-            )
-        if not cfg.algorithm.recompute_logprobs and (
-            cfg.agentloop.truncate_response
-            or not cfg.rollout.get("return_logprobs", False)
-        ):
-            raise ValueError(
-                "SearchR1 PPO requires truncate_response=False and "
-                "rollout.return_logprobs=True when recompute_logprobs=False."
             )
         if cfg.algorithm.group_size != 1:
             raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")

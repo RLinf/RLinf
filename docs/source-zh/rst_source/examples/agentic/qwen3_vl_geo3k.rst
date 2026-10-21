@@ -117,7 +117,7 @@ RLinf 提供了 ``requirements/install.sh`` 脚本一键完成环境安装：
 算法
 -------
 
-我们采用标准的 GRPO（Group Relative Policy Optimization），并且通过配置项打开了**TIS**（截断重要性采样）以稳定训练：
+我们采用标准的 GRPO（Group Relative Policy Optimization），并且通过配置项打开了\ **TIS**\ （截断重要性采样）以稳定训练：
 
   .. code-block:: yaml
 
