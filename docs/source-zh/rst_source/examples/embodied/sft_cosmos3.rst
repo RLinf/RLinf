@@ -192,6 +192,12 @@ Edge 使用 ``examples/sft/config/libero_sft_cosmos3_edge.yaml``，引入 ``mode
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3_edge
 
+训练完成后，用 ``evaluations/libero/libero_spatial_cosmos3_edge_eval_hf.yaml`` 做 HF 评测。将 ``rollout.model`` 下的基座 DCP、Edge processor、VAE 和动作统计路径设为训练时使用的路径，并将 ``runner.ckpt_path`` 指向目标 step 的 ``actor/model_state_dict/full_weights.pt``。配置使用普通 SFT 权重（``omni.net``），加载时忽略 EMA 副本；推理调用与训练共用的原生 Edge 模型。
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_hf
+
 准备数据
 ----------------------------------------
 
@@ -279,7 +285,26 @@ Cosmos3 内部用 **10 维 rot6d** 表示动作，LIBERO 环境用 **7 维 axis-
 转换 Checkpoint
 ----------------------------------------
 
-SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` 是 FSDP2 分片格式，**不能直接评测**。Cosmos3 评测默认使用 diffusers 组件目录 ``model_diffusers``\ （含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer`` / ``scheduler/``）。四步转换 —— 去掉 ``omni.`` 前缀、存成 DCP、导出 HF、拆成 diffusers 组件并修 ``_class_name`` —— 由 ``toolkits/cosmos3/convert_checkpoint.py`` 完成（依赖 cosmos-framework）：
+SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` 是 RLinf 保存的完整 state dict。SGLang 评测使用 diffusers 组件目录 ``model_diffusers``\ ，其中包含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``，可通过下面两种方式导出。
+
+使用匹配模型直接导出
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Nano 和 Edge 都可以使用 ``--base-model-path``，在 SGLang 环境中用 torch 和 safetensors 完成转换。模板必须是完整的 HF/Diffusers 组件目录，且 transformer 架构和模态开关与 SFT 一致；例如关闭音频头的 ``sound_gen=false`` 权重不能使用 ``sound_gen=true`` 的模板。也可以使用满足这些条件的已导出动作模型作为模板，其 transformer 权重会被全部替换。
+
+.. code-block:: bash
+
+   python -m toolkits.cosmos3.convert_checkpoint \
+     --src /path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
+     --base-model-path /path/to/matching_cosmos3_model \
+     --out /path/to/converted
+
+脚本映射原生参数名并逐项校验 transformer 参数的名称和形状，用 SFT 权重替换全部 transformer 参数，保留模板的 tokenizer、VAE、scheduler 和配置。输出 ``/path/to/converted/model_diffusers`` 必须尚不存在，且位于模板目录之外。默认选择 ``omni.net``；checkpoint 中包含 EMA 时，可加 ``--use-ema-weights`` 选择 ``omni.net_ema``。
+
+通过 cosmos-framework 导出
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+已有 cosmos-framework 导出环境时，也可使用四步转换：去掉 ``omni.`` 前缀、存成 DCP、导出 HF、拆成 diffusers 组件并修 ``_class_name``。不传 ``--base-model-path`` 时，``toolkits/cosmos3/convert_checkpoint.py`` 执行这条路径：
 
 .. code-block:: bash
 
@@ -297,7 +322,7 @@ SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weig
 
 .. warning::
 
-   转换须在 **cosmos-framework 环境** 下进行：``transformers 4.57.x`` + ``diffusers 0.39.0``\ （含 ``Cosmos3OmniTransformer``）。更高版本 transformers 会在 ``save_pretrained`` 处崩溃、且其 diffusers 缺 cosmos3 类。转换还需 Wan2.2 VAE（diffusers 格式）与离线 HF 缓存（``HF_HUB_OFFLINE=1``）。具体路径与版本以你的 cosmos-framework 部署为准。
+   此四步转换须在 **cosmos-framework 环境** 下进行：``transformers 4.57.x`` + ``diffusers 0.39.0``\ ，提供 ``Cosmos3OmniTransformer``。更高版本 transformers 会在 ``save_pretrained`` 处崩溃、且其 diffusers 缺 cosmos3 类。转换还需 Wan2.2 VAE（diffusers 格式）与离线 HF 缓存（``HF_HUB_OFFLINE=1``）。具体路径与版本以你的 cosmos-framework 部署为准。
 
 转换得到的 ``model_diffusers`` 即 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 的 ``rollout.model.model_path``。
 

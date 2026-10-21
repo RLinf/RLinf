@@ -38,7 +38,7 @@ Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. T
 Prepare Checkpoint
 ----------------------------------------
 
-The eval input is a diffusers component directory ``model_diffusers``, produced by converting the SFT checkpoint via cosmos-framework. The full four-step conversion is described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
+The eval input is a diffusers component directory ``model_diffusers``. Both Nano and Edge can export SFT weights directly using ``--base-model-path`` and a matching complete model directory, or use the four-step cosmos-framework conversion. Both methods are described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
 
 .. note::
 
@@ -67,6 +67,30 @@ Then run:
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
 **What this command does:** launches one Cosmos3 SGLang server per GPU, starts the LIBERO environment for evaluation, prints per-episode success/failure, and summarizes the success rate at the end. Logs are written to ``logs/<timestamp>-<config>/eval_embodiment.log``.
+
+Cosmos3-Edge Evaluation
+----------------------------------------
+
+Edge uses ``evaluations/libero/libero_spatial_cosmos3_edge_eval_sglang.yaml``. In a SGLang environment with RLinf and LIBERO installed, export the RLinf SFT weights using a complete Edge HF snapshot with a matching architecture:
+
+.. code-block:: bash
+
+   python -m toolkits.cosmos3.convert_checkpoint \
+     --src /path/to/model_path/actor/model_state_dict/full_weights.pt \
+     --base-model-path /path/to/Cosmos3-Edge \
+     --out /path/to/hf_model_path
+
+The exporter checks every transformer key and shape, replaces all transformer tensors with SFT weights, and retains the snapshot's tokenizer, VAE, and configuration. It selects the online weights (``omni.net``) by default, matching the Edge HF eval config; use ``--use-ema-weights`` to select EMA instead. The output directory must be new.
+
+Set ``rollout.model.model_path`` in the YAML to the exported ``model_diffusers`` directory and set ``action_stats_path`` to the statistics used for training, then run:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_sglang
+
+For a batch smoke test, append ``cluster.component_placement.env=0 cluster.component_placement.rollout=0 env.eval.total_num_envs=4 env.eval.specific_reset_id=0 env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32``. This sends a four-environment batch for the same task on one GPU; 32 steps only check execution. Keep the YAML's episode length and task distribution for normal evaluation.
+
+RLinf uses SGLang's pipeline registration API to preserve explicit sampling parameters, preventing SGLang 0.5.19 from replacing an Edge action request's ``guidance_scale=1.5`` with the video default of ``5.0``. Model computation uses SGLang's native Cosmos3 pipeline; the installed package source requires no changes.
 
 Key Configuration
 ----------------------------------------

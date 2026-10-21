@@ -192,6 +192,12 @@ Launch Edge with its own config name:
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3_edge
 
+After training, evaluate with ``evaluations/libero/libero_spatial_cosmos3_edge_eval_hf.yaml``. Set the base DCP, Edge processor, VAE, and action statistics paths under ``rollout.model`` to the paths used for training. Point ``runner.ckpt_path`` to the target step's ``actor/model_state_dict/full_weights.pt``. This config uses the online SFT weights (``omni.net``), discards the EMA replica during loading, and runs inference through the native Edge model shared with training.
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_hf
+
 Prepare Data
 ----------------------------------------
 
@@ -279,7 +285,26 @@ At training time, the cosmos data loader converts LIBERO's 7-D actions to 10-D r
 Checkpoint Conversion
 ----------------------------------------
 
-The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` is in FSDP2 sharded format and **cannot be used for eval directly**. Cosmos3 eval uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). The four-step conversion — strip the ``omni.`` prefix, save as DCP, export to HF, split into diffusers components and fix ``_class_name`` — is handled by ``toolkits/cosmos3/convert_checkpoint.py`` (requires cosmos-framework):
+The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` contains the full state dict saved by RLinf. SGLang evaluation uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). Export it using either method below.
+
+Export Using a Matching Model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Both Nano and Edge support ``--base-model-path`` to convert weights using torch and safetensors in the SGLang environment. The template must be a complete HF/Diffusers component directory whose transformer architecture and modality settings match SFT. For example, weights trained with audio heads disabled (``sound_gen=false``) require a template with ``sound_gen=false``. An already exported action model that meets these conditions also works as a template; all its transformer weights are replaced.
+
+.. code-block:: bash
+
+   python -m toolkits.cosmos3.convert_checkpoint \
+     --src /path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
+     --base-model-path /path/to/matching_cosmos3_model \
+     --out /path/to/converted
+
+The script maps native parameter names, validates every transformer key and shape, and replaces all transformer tensors with SFT weights while retaining the template's tokenizer, VAE, scheduler, and configuration. The output ``/path/to/converted/model_diffusers`` must not exist and must be outside the template directory. It selects ``omni.net`` by default; add ``--use-ema-weights`` to select ``omni.net_ema`` when the checkpoint contains EMA weights.
+
+Export Through cosmos-framework
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With a cosmos-framework export environment, you can also use the four-step conversion: strip the ``omni.`` prefix, save as DCP, export to HF, split into diffusers components, and fix ``_class_name``. Without ``--base-model-path``, ``toolkits/cosmos3/convert_checkpoint.py`` follows this path:
 
 .. code-block:: bash
 
@@ -297,7 +322,7 @@ The script runs all four steps in order (``--use-ema-weights`` keeps the EMA wei
 
 .. warning::
 
-   The conversion must be run in a **cosmos-framework environment**: ``transformers 4.57.x`` + ``diffusers 0.39.0`` (which has ``Cosmos3OmniTransformer``). Higher transformers versions crash at ``save_pretrained`` and their diffusers lacks the cosmos3 classes. The conversion also needs the Wan2.2 VAE (diffusers format) and an offline HF cache (``HF_HUB_OFFLINE=1``). Specific paths and versions depend on your cosmos-framework deployment.
+   This four-step conversion must be run in a **cosmos-framework environment**: ``transformers 4.57.x`` + ``diffusers 0.39.0`` (which has ``Cosmos3OmniTransformer``). Higher transformers versions crash at ``save_pretrained`` and their diffusers lacks the cosmos3 classes. The conversion also needs the Wan2.2 VAE (diffusers format) and an offline HF cache (``HF_HUB_OFFLINE=1``). Specific paths and versions depend on your cosmos-framework deployment.
 
 The resulting ``model_diffusers`` is the ``rollout.model.model_path`` for :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
 
