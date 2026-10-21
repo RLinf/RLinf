@@ -283,7 +283,7 @@ class ReasoningRunner:
             dataloader_state_dict = torch.load(
                 dataloader_local_path, weights_only=False
             )
-            self.train_dataloader.load_state_dict(dataloader_state_dict)
+            self._load_data_state(dataloader_state_dict)
         else:
             logging.warning(
                 f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch"
@@ -398,7 +398,7 @@ class ReasoningRunner:
         local_mkdir_safe(data_save_path)
         dataloader_local_path = os.path.join(data_save_path, "data.pt")
         dataloader_tmp_path = f"{dataloader_local_path}.tmp"
-        dataloader_state_dict = self.train_dataloader.state_dict()
+        dataloader_state_dict = self._save_data_state()
         # Publish atomically so an interrupted save cannot leave a truncated
         # data.pt behind, which auto resume reads as a complete checkpoint.
         try:
@@ -408,6 +408,12 @@ class ReasoningRunner:
             if os.path.exists(dataloader_tmp_path):
                 os.remove(dataloader_tmp_path)
             raise
+
+    def _save_data_state(self):
+        return self.train_dataloader.state_dict()
+
+    def _load_data_state(self, state):
+        self.train_dataloader.load_state_dict(state)
 
     def _set_max_steps(self):
         self.num_steps_per_epoch = len(self.train_dataloader)
@@ -433,7 +439,9 @@ class ReasoningRunner:
         for request in requests:
             self.dataloader_channel.put(request, async_op=True)
 
-    def _sync_weights(self, do_offload: bool = True) -> None:
+    def _sync_weights(
+        self, do_offload: bool = True, weight_version: int | None = None
+    ) -> None:
         """Sync weights; do_offload=False leaves residency under caller control."""
         if self.has_dedicated_actor_inference:
             self.actor.sync_model_to_inference()
@@ -449,7 +457,10 @@ class ReasoningRunner:
             self.actor.sync_model_to_rollout()
         else:
             self.actor.sync_model_to_rollout(do_offload=False)
-        self.rollout.sync_model_from_actor().wait()
+        if weight_version is None:
+            self.rollout.sync_model_from_actor().wait()
+        else:
+            self.rollout.sync_model_from_actor(weight_version=weight_version).wait()
         self.actor.del_reshard_state_dict().wait()
         # KV cache + cudagraph were deferred (only weights resumed) to avoid OOM;
         # mirrors the offload condition — pure disaggregated never offloads them.

@@ -25,6 +25,7 @@ from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.agent_ppo_runner import AgentPPORunner
 from rlinf.runners.agent_runner import AgentRunner
+from rlinf.runners.async_agent_ppo_runner import AsyncAgentPPORunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
@@ -127,7 +128,12 @@ def main(cfg) -> None:
         ): ToolWorkerInfo(tool_names=["search"], has_session=False),
     }
 
-    runner_cls = AgentPPORunner if critic_group is not None else AgentRunner
+    if critic_group is None:
+        runner_cls = AgentRunner
+    elif cfg.runner.synchronous:
+        runner_cls = AgentPPORunner
+    else:
+        runner_cls = AsyncAgentPPORunner
     runner = runner_cls(
         cfg=cfg,
         placement=component_placement,

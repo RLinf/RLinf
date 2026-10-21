@@ -1,7 +1,7 @@
 Search-R1的强化学习训练
 ========================================
 
-使用本配方复现 `Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning <https://arxiv.org/abs/2503.09516>`__ 的搜索增强推理实验，通过强化学习训练大语言模型调用搜索工具回答问题。
+使用 GRPO、同步 PPO 或完全异步 PPO 训练调用搜索工具回答问题的 Qwen 模型。本页介绍 RLinf 中 `Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning <https://arxiv.org/abs/2503.09516>`__ 的检索服务、训练配置和 checkpoint 评测流程。
 
 概述
 ----------------------------------------
@@ -252,7 +252,7 @@ PPO 配置使用独立的 Megatron actor 和 critic，并复用现有 SearchR1 �
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_split
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_separate
 
-三条命令使用相同初始模型、每批 2048 个 prompt、每个 prompt 一条轨迹（``algorithm.group_size: 1``），以及两个全局 minibatch，仅 placement 与显存驻留方式不同。Critic 的 optimizer state 独立，value head 默认使用均值为 0、标准差为 0.02 的正态初始化。默认配置为 ``critic.value_head_init=normal``，设为 ``critic.value_head_init=zero`` 可使用零初始化；设置 ``critic.model.init_method_std`` 可调整正态分布的标准差。这些配置用于初始化新 head，加载 checkpoint 时恢复已保存的权重。``runner.synchronous: true`` 选择同步调度；``critic.use_critic_model: true`` 和 ``algorithm.adv_type: actor_gae`` 选择 PPO。原有 ``train_qwen2.5`` 命令仍选择 GRPO。
+三条命令使用相同初始模型、每批 1024 个 prompt、每个 prompt 一条轨迹（``algorithm.group_size: 1``），以及一个全局 minibatch，仅 placement 与显存驻留方式不同。Critic 的 optimizer state 独立，value head 默认使用均值为 0、标准差为 0.02 的正态初始化。默认配置为 ``critic.value_head_init=normal``，设为 ``critic.value_head_init=zero`` 可使用零初始化；设置 ``critic.model.init_method_std`` 可调整正态分布的标准差。这些配置用于初始化新 head，加载 checkpoint 时恢复已保存的权重。``runner.synchronous: true`` 选择同步调度；``critic.use_critic_model: true`` 和 ``algorithm.adv_type: actor_gae`` 选择 PPO。原有 ``train_qwen2.5`` 命令仍选择 GRPO。
 
 提供的 PPO 配置运行一个 epoch，每 25 个 global step 及最后一步保存两个模型。设置 ``runner.max_steps=20 runner.save_interval=20`` 可运行 20 步。
 
@@ -260,7 +260,9 @@ PPO 配置使用独立的 Megatron actor 和 critic，并复用现有 SearchR1 �
 
 Runner 负责 rollout 与模型阶段的调度，inference 和 training 复用现有多轮 Megatron actor 与 Megatron critic。各 worker 负责 minibatch 更新、microbatch 调度和 checkpoint 保存。
 
-按上文选择 response 处理方式。启用 logprob 重算时，训练 GPU 共享的两种模式在 actor inference 后保留权重，接着训练。工具 observation 不参与 policy/value loss，最终 reward 每条轨迹只应用一次。SearchR1 在自然终止或轮数/token 预算结束后结算完整 episode，两种边界的 future value 均为零。
+PPO 和 SAO 从 PPO base YAML 继承 ``agentloop.truncate_response: false`` 和 ``algorithm.recompute_logprobs: false``，``rollout.return_logprobs`` 也随之解析为 ``true``。两者都直接使用 rollout behavior logprobs 训练，并保留响应长度上限内的原始 token。Base 同时将 actor 学习率设为 ``1e-6``、无 warmup，critic 学习率设为 ``5e-6``、warmup 10 次 optimizer update。PPO 每批更新一次 critic；异步训练每批更新 ``critic.update_epochs`` 次。每批更新一次时，critic warmup 对应 10 个 batch；每批更新两次时，对应 5 个 batch。
+
+同步 PPO 也可按上文选择 response 处理方式。启用 logprob 重算时，训练 GPU 共享的两种模式在 actor inference 后保留权重，接着训练。工具 observation 不参与 policy/value loss，最终 reward 每条轨迹只应用一次。SearchR1 在自然终止或轮数/token 预算结束后结算完整 episode，两种边界的 future value 均为零。
 
 使用 ``actor.pack_traj: true``，可在 actor 和 critic 训练前合并同一轨迹中可兼容的多轮样本，避免重复计算共享前缀。Old predictions 和全局归一化后的 GAE targets 在打包前固定；打包合并其动作位置，并保持工具 observation 的 mask。两项 loss 均使用全局有效 token 均值，打包保持其权重语义。设置 ``algorithm.loss_agg_func: token-mean`` 和 ``algorithm.use_valid_token_scale: true``，按每次更新的全局有效 token 数补偿 Megatron 的 microbatch 和 DP 平均。Worker 按 GRPO 的执行顺序，先打包整轮 rollout batch，再在 DP 副本间平衡训练行，最后切分 optimizer minibatch。打包保留整轮 batch 的 action token 和 targets，但在多个 minibatch 下可能改变各次更新包含的 token，因此开关两边的训练曲线可能不同。追加 ``actor.pack_traj=false`` 可按独立 turn 行训练。
 
@@ -275,6 +277,102 @@ Runner 负责 rollout 与模型阶段的调度，inference 和 training 复用�
 开启后，inference 与 training 对每个角色每批执行一次 onload/offload。默认的生成训练分离与三者分离配置保持状态常驻，保存 checkpoint 后也保持常驻。保存时临时加载已卸载的状态，写入完成后按各角色的 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer`` 设置处理。``runner.save_interval`` 为正数时，按该间隔及最后一步保存两个模型、optimizer 和 dataloader state。
 
 TensorBoard 使用与 ``AgentRunner`` 相同的 minibatch 步数。第 ``g`` 个 global step 从 ``(g - 1) * algorithm.n_minibatches`` 开始，在该位置记录一次 reward 和耗时，并逐 minibatch 记录 actor、critic 的训练指标。
+
+在 8×A100 上运行完全异步 PPO
+--------------------------------
+
+要让 learner 按轨迹完成顺序训练，使用异步配置。实现采用 `SAO <https://arxiv.org/abs/2607.07508>`__ 第 3.1、3.2 节与附录 A 中的 token-level 方法，持续生成 rollout，并通过有界 buffer 收集完成的轨迹。Runner 扩展同步 PPO runner，复用已有多轮 actor、critic、轨迹打包、token 权重、checkpoint 和权重传输机制；角色切换与请求 retract 参考 `Miles <https://github.com/radixark/miles>`__。
+
+在基础 PPO 配置中设置模型、数据和检索服务路径，然后选择两种支持的布局之一：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao_split
+
+第一条命令让三个模型共享 GPU 0–7。训练前，SGLang retract 未完成请求并释放 rollout 显存；actor 训练后，runner 安装新权重、恢复 KV/graph 显存，再继续这些请求。已生成的 token 前缀及其原始 behavior logprobs 保持不变。第二条命令使用 GPU 0–3 生成，actor 与 critic 共享 GPU 4–7；critic 和 actor 训练期间持续生成，只在发布权重时短暂暂停。训练显存不足时，启用上文列出的六项 actor/critic offload 设置，在角色切换时轮换驻留状态。
+
+两种配置均使用每批 1024 个 prompt、每个 prompt 一条轨迹，并直接使用原始 rollout logprobs。采样配置使用温度 1、无 repetition penalty 的全词表随机采样，模型并行配置为 Megatron TP=PP=CP=1、SGLang TP=PP=1。定向 adapter 支持 ``sglang==0.5.12.post1``：确认 pause/resume 完成、排空重叠 GPU 工作、将等待及部分 prefill 请求移出 cache 管理，再清理旧 KV 状态并恢复请求。每个生成 token 记录其生成时的权重版本，同一请求跨多次权重发布时也保留这些信息。只有全部 rollout worker 确认安装后，published version 才前进；发布失败则停止运行。
+
+恢复的请求重建 KV state，同时保留已记录的输出 logprobs；仅请求输出 logprobs 时，保留的前缀不参与 logprob 重算。
+
+Runner 管理 dataloader，启动时填充 prompt Channel，并在每次消费 batch 后、开始训练前补充 prompt。Agent worker 持续生成轨迹，将完成的结果写入有界 Channel。Runner 直接调用组批函数，按全局完成顺序取数、检查 staleness，再将 targets 发送给各个 critic 训练 rank。Critic 更新并完成 inference 后，runner 通过 Channel 读取新 values，计算全局归一化的 advantages，再将 targets 发送给 actor 训练。以下配置限制待处理工作量，并可选择过滤过旧数据：
+
+.. list-table:: 异步配置
+   :header-rows: 1
+   :widths: 36 14 50
+
+   * - 配置
+     - 默认值
+     - 含义
+   * - ``rollout.max_in_flight_rollouts``
+     - 2048
+     - 轨迹 producer 槽位数，包括工具调用和结果传输。
+   * - ``rollout.rollout_buffer_capacity``
+     - 2048
+     - Channel 缓存的已完成轨迹容量。
+   * - ``rollout.max_weight_staleness``
+     - ``null``
+     - 不过滤过旧数据；启用时设置为非负整数。
+
+两个容量字段设为 ``null`` 或省略时，配置校验会按 ``2 * data.rollout_batch_size`` 计算默认值；显式设置的整数值优先。PPO base 配置统一设置 ``data.rollout_batch_size=1024``，同步与异步运行均继承该值。同时生成相当于两个 learner batch 的轨迹，可在慢轨迹尚未结束时填充下一批数据。Staleness 在取数时根据最新 published rollout version 判断；一条轨迹的年龄由其最旧生成 action token 的版本确定。被拒绝的轨迹使用原 prompt 重新生成。Producer 的有限 prompt 预算为 ``runner.max_steps * data.rollout_batch_size``，因此 benchmark 即使完成顺序不同，也会消耗相同的 prompt 集合。
+
+两个容量之和限制全部尚未消费的 prompt，包括生成中的请求、传输队列和 buffer 中的结果。消费一条轨迹后释放其 prompt 槽位；过旧轨迹在重新生成期间保留原槽位。两个容量均为 2048 时，最多有 4096 条尚未消费的 prompt。当 rollout 先完成这些轨迹时，split 布局的 rollout GPU 会空闲，直到 learner 取数释放空间。将 ``async/buffer_size`` 与 ``async/buffer_capacity`` 对照，并检查 ``async/waiting_for_buffer``。``async/in_flight`` 统计尚未完成的轨迹，包括工具调用，但不包含等待 buffer 空位的已完成轨迹。增大 buffer 会让 rollout 提前生成更多数据，并增加权重 staleness；训练成为瓶颈后，增大 buffer 不会提高稳态吞吐量。
+
+每个 learner batch 按以下顺序执行：
+
+1. 使用 ``gamma=1``、critic lambda 1 计算固定 Monte Carlo targets。默认 critic loss 为不裁剪、按全局 action token 平均的平方误差。
+2. 在同一个完整 batch 上更新 critic ``critic.update_epochs`` 次，再推理最新 token values。
+3. 使用 ``lambda = 1 - 1 / (1.5 * L)`` 计算 policy GAE，其中 ``L`` 是整条 episode 跨轮的生成 action token 数。工具 observation 和 padding 不推进 GAE；advantages 在完整 learner batch 上归一化。
+4. 使用 DIS 更新 actor 一次，再发布成功更新后的权重。
+
+通过 ``critic.loss_type`` 选择 critic loss：``sao`` 使用 SAO loss，``ppo`` 复用同步 PPO 的 clipped Huber loss。使用后者训练：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao critic.loss_type=ppo
+
+首次 critic 训练前向传播的 value 预测经过 detach，作为该 batch 所有更新共用的 clipping reference，无需单独进行 value inference。两种 loss 都使用固定 Monte Carlo targets；actor GAE 使用全部 critic 更新完成后重新推理的 values。Huber 分支沿用同步 loss 的 ``huber_delta=10000`` 和 ``algorithm.value_cliprange``。将命令中的配置名换成 ``train_qwen2.5_sao_split`` 即可使用 split 布局。
+
+DIS 根据记录的 rollout logprobs 计算当前 policy 与 behavior policy 的概率比。只有 ``0.7 < ratio < 6.0`` 的 token 贡献 policy gradient。在 score-function loss ``-mean(mask * ratio * advantage * logprob)`` 中，ratio 做 detach，均值分母仍包含全部 action token。这里将论文中的 importance weight 视为求导时的常量，避免对 ``ratio * logprob`` 额外求导，无需执行 old-policy inference。
+
+``algorithm.n_minibatches=1`` 表示 actor 在全部 1024 条轨迹上执行一次 optimizer step。``critic.update_epochs`` 支持任意正整数，控制 critic 的 optimizer step 数，每次都使用同一个完整 batch。当前示例配置为 ``1``；设置 ``critic.update_epochs=2`` 可复现 SAO 的两次更新安排。设置 ``n_minibatches=2`` 会把 batch 切成两部分，含义不同。Packing 与梯度累积的 microbatch 不增加 optimizer step。Actor 学习率为 ``1e-6``；critic 使用 ``5e-6``，并按 10 个 optimizer step warmup：每批更新一次时对应 10 个 learner batch，每批更新两次时对应 5 个。配置显式关闭按比例 warmup。
+
+Dense Qwen2.5 配置训练全部 value-model 参数，不使用 value pretraining 语料。实现保留附录 A 中优于 turn-level ablation 的 token-level 方法，未实现 step-average 与 last-token ablation。Search-R1 沿用已有的两轮、7096-token 限制及终止 reward，未复制论文的 Python/coding 环境与 128k context。
+
+Checkpoint 保存两个 optimizer、携带 behavior probabilities 的 buffer 轨迹及 prompt 归属。将 ``runner.resume_dir`` 指向完整的 ``checkpoints/global_step_N`` 目录即可恢复。已完成的 buffer 数据精确恢复；进程重启后，未完成请求从原 prompt 重新生成。运行中的 pause/resume 则保留已生成前缀。现有 Megatron worker 在恢复 checkpoint 前先从初始转换缓存初始化，因此需要保留原 actor/critic 转换缓存；更改 experiment name 时，将两个 ``megatron.ckpt_convertor.save_path`` 字段指向原目录。
+
+两个 PPO runner 均在每个 learner batch 完成后推进一次 ``Global Step`` 进度条。同步与异步配置均设置 ``algorithm.n_minibatches=1``，因此共用的 TensorBoard 指标具有一致的 step 编号。每个 SAO learner batch 执行 ``critic.update_epochs`` 次完整 batch 的 critic 更新；这些更新的独立指标在 ``critic_update/`` 下按 critic optimizer 调用次数记录。``async_trace.jsonl`` 记录消费的 sample ID、权重版本、成功 optimizer 更新次数、retract 数量及训练期间生成的 token 数。
+
+验证真实 retract 与前缀保留：
+
+.. code-block:: bash
+
+   PYTHONPATH="$PWD:$PWD/examples:/opt/venv/reason/Megatron-LM" python \
+     tests/e2e_tests/agent/searchr1/verify_async_engine.py \
+     --config-path "$PWD/examples/agent/searchr1/config" \
+     --config-name train_qwen2.5_sao \
+     runner.experiment_name=searchr1-engine-check
+
+测试在生成期间发布三次权重，完成后逐项检查前缀 token ID、logprobs 和 token version。
+
+运行四组受控对比实验：
+
+.. code-block:: bash
+
+   python tests/e2e_tests/agent/searchr1/run_ppo_benchmarks.py \
+     --steps 200 --name searchr1-ppo-bsz1024-200
+
+该命令依次在两种布局下运行同步和异步训练，batch size 为 1024，并统一模型、数据、数据与训练 seed、采样、packing、学习率、角色 offload 及 checkpoint 间隔。SAO 使用不同的 DIS、adaptive GAE、value loss 与 critic 更新频率。启动脚本允许跨多个 dataset epoch 达到指定步数。``benchmark.json`` 计入首次 buffer 填充、训练、权重发布和 checkpoint 耗时，也计入两种 runner 的最后一次权重发布；模型初始化单独记录。两种布局都启用全部六项 actor/critic offload 设置，以预留显存。Reward 保存在各运行的 TensorBoard 目录中。
+
+四组运行完成后，生成 reward 曲线与总耗时对比：
+
+.. code-block:: bash
+
+   python tests/e2e_tests/agent/searchr1/plot_ppo_benchmarks.py \
+     --steps 200 --name searchr1-ppo-bsz1024-200
+
+报告脚本需要 Matplotlib、NumPy 和 TensorBoard，在对比实验的日志目录中写入图表、``report.md`` 和 ``results.json``，并检查 reward 增长、总耗时、optimizer 更新次数及异步样本归属。只比较 split 布局时，给启动命令追加 ``--modes sync-split async-split``，给报告命令追加 ``--layouts split``。报告从每次运行中读取 batch size，并要求参与对比的值一致。
 
 Checkpoint 导出与评测
 ----------------------------------------

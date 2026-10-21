@@ -78,9 +78,10 @@ class MAMegatronActor(MegatronActor):
         self.placement = placement
 
         assert self.placement_mode == PlacementMode.COLLOCATED or (
-            self.cfg.runner.get("synchronous", False)
-            and self.cfg.critic.use_critic_model
-        ), "Multi-agent actor requires collocated placement or synchronous PPO."
+            not self.is_pipeline and self.cfg.critic.use_critic_model
+        ), (
+            "Multi-agent actor requires collocated placement or shared PPO training devices."
+        )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)

@@ -124,11 +124,14 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         )
         llm_response_ids: list[int] = generate_result["output_ids"]
         response_logprobs = generate_result.get("logprobs")
+        response_weight_versions = generate_result.get("weight_versions")
 
         if len(llm_response_ids) > max_resp_len:
             llm_response_ids = llm_response_ids[:max_resp_len]
             if response_logprobs is not None:
                 response_logprobs = response_logprobs[:max_resp_len]
+            if response_weight_versions is not None:
+                response_weight_versions = response_weight_versions[:max_resp_len]
         llm_response_text = self.tokenizer.decode(llm_response_ids)
 
         # split </search> manually
@@ -142,6 +145,9 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             response_logprobs=(
                 response_logprobs if not self.truncate_response else None
             ),
+            response_weight_versions=response_weight_versions
+            if not self.truncate_response
+            else None,
         )
         if self.return_logprobs and (
             llm_output.response_logprobs is None

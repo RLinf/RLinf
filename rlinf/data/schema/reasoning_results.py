@@ -835,6 +835,8 @@ class DynamicRolloutResult:
     # size of belows are num_sequence
     input_ids: list[list[int]]
     rollout_logprobs: Optional[list[list[float]]] = None
+    rollout_weight_versions: Optional[list[list[int]]] = None
+    rollout_ids: Optional[list[int]] = None
     recomputed_logprobs: Optional[torch.Tensor] = None
     ref_logprobs: Optional[torch.Tensor] = None
     prompt_lengths: list[int]
@@ -990,6 +992,18 @@ class DynamicRolloutResult:
             )
             batch["rollout_logprobs"] = logprobs.to(device)
 
+        if self.rollout_weight_versions is not None:
+            batch["rollout_weight_versions"] = batch_pad_to_fixed_len(
+                [
+                    torch.tensor([-1] * p + versions, dtype=torch.long)
+                    for p, versions in zip(
+                        self.prompt_lengths, self.rollout_weight_versions, strict=True
+                    )
+                ],
+                max_batch_len=seq_length,
+                pad_token=-1,
+            ).to(device)
+
         if self.recomputed_logprobs is not None:
             batch["recomputed_logprobs"] = self.recomputed_logprobs.to(device)
         if self.ref_logprobs is not None:
@@ -1041,6 +1055,9 @@ class DynamicRolloutResult:
             ),
             "rollout_logprobs": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "rollout_weight_versions": torch.full(
+                pad_seq_shape, -1, dtype=torch.long, device=Worker.torch_device_type
             ),
             "rewards": torch.zeros(
                 1, dtype=torch.float32, device=torch.cuda.current_device()
@@ -1197,6 +1214,7 @@ class DynamicRolloutResult:
             "response_lengths",
             "recomputed_logprobs",
             "rollout_logprobs",
+            "rollout_weight_versions",
             "ref_logprobs",
             "rewards",
             "advantages",
@@ -1224,6 +1242,7 @@ class DynamicRolloutResult:
             for key in [
                 "recomputed_logprobs",
                 "rollout_logprobs",
+                "rollout_weight_versions",
                 "advantages",
                 "values",
                 "returns",
@@ -1283,6 +1302,10 @@ class DynamicRolloutResult:
             assert k in tensor_keys, k
             packed_batch[k] = torch.cat(v, dim=0)
         packed_batch["idx_to_traj"] = new_idx_to_traj
+        if "rollout_weight_versions" in packed_batch:
+            packed_batch["rollout_weight_versions"].masked_fill_(
+                ~packed_batch["response_mask"], -1
+            )
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context.get("folding_scale", [])
         if "group_level" in folding_scale:
@@ -1333,6 +1356,14 @@ class DynamicRolloutResult:
                 merged_result.rollout_logprobs = (
                     merged_result.rollout_logprobs or []
                 ) + list(res.rollout_logprobs)
+            for name in ("rollout_weight_versions", "rollout_ids"):
+                value = getattr(res, name)
+                if value is not None:
+                    setattr(
+                        merged_result,
+                        name,
+                        (getattr(merged_result, name) or []) + list(value),
+                    )
 
             # Merge tensor fields (size: num_sequence)
             if res.recomputed_logprobs is not None:
@@ -1441,6 +1472,14 @@ class DynamicRolloutResult:
                 idx_to_traj=split_idx_to_traj,
                 input_ids=split_input_ids,
                 rollout_logprobs=split_rollout_logprobs,
+                rollout_weight_versions=rollout_result.rollout_weight_versions[
+                    start_idx:end_idx
+                ]
+                if rollout_result.rollout_weight_versions is not None
+                else None,
+                rollout_ids=rollout_result.rollout_ids[start_idx:end_idx]
+                if rollout_result.rollout_ids is not None
+                else None,
                 recomputed_logprobs=split_recomputed_logprobs,
                 ref_logprobs=split_ref_logprobs,
                 prompt_lengths=split_prompt_lengths,

@@ -1563,6 +1563,8 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
 
     with open_dict(cfg.agentloop):
         cfg.agentloop.setdefault("truncate_response", True)
+    if not isinstance(cfg.agentloop.truncate_response, bool):
+        raise ValueError("agentloop.truncate_response must be a boolean.")
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
     if not cfg.actor.get("enable_dp_load_balance", False):
@@ -1576,8 +1578,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         )
 
     if cfg.critic.get("use_critic_model", False):
-        if not cfg.runner.get("synchronous", False):
-            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
+        asynchronous = not cfg.runner.get("synchronous", False)
         if (
             cfg.actor.training_backend != "megatron"
             or cfg.critic.training_backend != "megatron"
@@ -1587,12 +1588,12 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
             )
         if (
-            cfg.algorithm.adv_type != "actor_gae"
+            cfg.algorithm.adv_type != ("sao_gae" if asynchronous else "actor_gae")
             or cfg.algorithm.kl_beta != 0
             or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
         ):
             raise ValueError(
-                "SearchR1 PPO requires actor_gae and zero KL reward/loss coefficients."
+                "SearchR1 PPO requires actor_gae (sync) or sao_gae (async) and zero KL coefficients."
             )
         if not cfg.algorithm.recompute_logprobs and (
             cfg.agentloop.truncate_response
@@ -1620,13 +1621,62 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 or cfg[role].model.pipeline_model_parallel_size != 1
                 or cfg[role].model.get("context_parallel_size", 1) != 1
             ):
-                raise ValueError(
-                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
-                )
+                raise ValueError("SearchR1 PPO currently requires TP=PP=CP=1.")
         if cfg.algorithm.get("importance_sampling_fix", False):
+            raise ValueError("SearchR1 PPO requires importance_sampling_fix=False.")
+        if cfg.critic.get("loss_type", "ppo") not in ("ppo", "sao"):
+            raise ValueError("SearchR1 PPO requires critic.loss_type=ppo or sao.")
+        update_epochs = cfg.critic.get("update_epochs", 1)
+        if type(update_epochs) is not int or update_epochs < 1:
             raise ValueError(
-                "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
+                "SearchR1 PPO requires a positive integer critic.update_epochs."
             )
+        if not asynchronous and update_epochs != 1:
+            raise ValueError(
+                "Synchronous SearchR1 PPO requires critic.update_epochs=1."
+            )
+        if asynchronous:
+            if (
+                cfg.algorithm.loss_type != "dis"
+                or cfg.algorithm.recompute_logprobs
+                or cfg.agentloop.truncate_response
+                or cfg.algorithm.n_minibatches != 1
+            ):
+                raise ValueError(
+                    "Async SearchR1 requires DIS, untruncated rollout logprobs, "
+                    "and one actor minibatch."
+                )
+            with open_dict(cfg.rollout):
+                cfg.rollout.setdefault("max_weight_staleness", None)
+                for key in ("max_in_flight_rollouts", "rollout_buffer_capacity"):
+                    if cfg.rollout.get(key) is None:
+                        cfg.rollout[key] = 2 * cfg.data.rollout_batch_size
+            with open_dict(cfg.algorithm):
+                cfg.algorithm.setdefault("gae_lambda_alpha", 1.5)
+            if (
+                type(cfg.rollout.max_in_flight_rollouts) is not int
+                or type(cfg.rollout.rollout_buffer_capacity) is not int
+                or cfg.rollout.max_in_flight_rollouts < 1
+                or cfg.rollout.rollout_buffer_capacity < cfg.data.rollout_batch_size
+            ):
+                raise ValueError(
+                    "Async SearchR1 requires integer rollout.max_in_flight_rollouts > 0 "
+                    "and rollout.rollout_buffer_capacity >= data.rollout_batch_size."
+                )
+            if cfg.rollout.max_weight_staleness is not None and (
+                type(cfg.rollout.max_weight_staleness) is not int
+                or cfg.rollout.max_weight_staleness < 0
+            ):
+                raise ValueError(
+                    "rollout.max_weight_staleness must be null or a nonnegative integer."
+                )
+            if cfg.algorithm.get("gae_lambda_alpha", 1.5) < 1:
+                raise ValueError("SAO requires gae_lambda_alpha >= 1.")
+            if (
+                cfg.rollout.tensor_parallel_size != 1
+                or cfg.rollout.pipeline_parallel_size != 1
+            ):
+                raise ValueError("Async SearchR1 currently requires rollout TP=PP=1.")
         return cfg
 
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())

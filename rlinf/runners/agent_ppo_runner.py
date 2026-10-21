@@ -59,12 +59,14 @@ class AgentPPORunner(AgentRunner):
                 self.cfg.critic.megatron.ckpt_convertor,
             )
 
-    def _sync_weights(self, do_offload: bool = True) -> None:
+    def _sync_weights(
+        self, do_offload: bool = True, weight_version: int | None = None
+    ) -> None:
         if self.component_placement.is_collocated:
-            super()._sync_weights(do_offload=do_offload)
+            super()._sync_weights(do_offload=do_offload, weight_version=weight_version)
             return
 
-        super()._sync_weights(do_offload=False)
+        super()._sync_weights(do_offload=False, weight_version=weight_version)
         if not do_offload:
             return
         if self.cfg.actor.offload_weight or self.cfg.actor.offload_grad:

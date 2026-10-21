@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Synchronous agent PPO targets and placement-independent loss scaling."""
+"""Agent PPO targets, async buffering, and placement-independent loss scaling."""
 
 import asyncio
 import copy
+import io
+import math
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,11 +27,16 @@ import torch
 
 from rlinf.algorithms.advantages import compute_gae_advantages_and_returns
 from rlinf.algorithms.losses import (
+    compute_critic_loss,
+    compute_dis_actor_loss,
     compute_ppo_actor_loss,
     compute_ppo_critic_loss,
 )
 from rlinf.algorithms.registry import get_adv_and_returns
-from rlinf.data.schema.agent_trajectory import prepare_agent_ppo_targets
+from rlinf.data.schema.agent_trajectory import (
+    prepare_agent_critic_returns,
+    prepare_agent_ppo_targets,
+)
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel, Cluster
 from rlinf.scheduler.channel.channel_worker import LocalChannel
@@ -38,6 +46,361 @@ def _local_channel():
     channel = Channel()
     channel._initialize("ppo-targets", None, None, None, local_channel=LocalChannel())
     return channel
+
+
+def test_agent_metrics_aggregate_the_consumed_batch_with_weighted_means():
+    from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
+
+    metrics = MultiAgentLoopWorker.aggregate_metrics(
+        [
+            {
+                "__sum__/calls": 3,
+                "__mean__/tokens": (12, 3),
+                "__min__/reward_min": 0.0,
+                "__max__/reward_max": 0.5,
+            },
+            {
+                "__sum__/calls": 1,
+                "__mean__/tokens": (2, 1),
+                "__min__/reward_min": 0.5,
+                "__max__/reward_max": 1.0,
+            },
+        ]
+    )
+    assert metrics == {"calls": 4, "tokens": 3.5, "reward_min": 0.0, "reward_max": 1.0}
+    assert MultiAgentLoopWorker.aggregate_metrics([]) == {}
+
+
+@pytest.mark.parametrize("capacity", [2, 3, 8, 10])
+def test_async_prompt_dispatch_bounds_pending_work_and_preserves_dataset_order(
+    capacity,
+):
+    pytest.importorskip("megatron.training")
+    from omegaconf import OmegaConf
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.runners.async_agent_ppo_runner import AsyncAgentPPORunner
+
+    runner = object.__new__(AsyncAgentPPORunner)
+    runner.cfg = OmegaConf.create(
+        {"data": {"rollout_batch_size": 2}, "runner": {"max_epochs": 2}}
+    )
+    runner.max_steps = 4
+    runner.prompt_capacity = capacity
+    runner._pending = {}
+    runner._prompt_queue = deque()
+    runner._next_sample_id = 0
+    runner._producer_epoch = 0
+    runner._data_iterator = None
+    runner.dataloader_channel = _local_channel()
+    batches = [
+        {
+            "prompt": torch.tensor([[i], [i + 1]]),
+            "length": torch.tensor([1, 1]),
+            "answer": [str(i), str(i + 1)],
+            "image_data": [[], []],
+            "multi_modal_inputs": [None, None],
+        }
+        for i in (0, 2)
+    ]
+    runner.train_dataloader = StatefulDataLoader(batches, batch_size=None)
+    issued, consumed = [], []
+    while len(consumed) < 8:
+        runner._put_prompts()
+        assert len(runner._pending) <= capacity
+        while not runner.dataloader_channel.empty():
+            issued.append(runner.dataloader_channel.get_nowait())
+        runner._put_prompts()
+        assert runner.dataloader_channel.empty()
+        for sample_id in sorted(runner._pending, reverse=True)[:2]:
+            runner._pending.pop(sample_id)
+            consumed.append(sample_id)
+    assert issued == [(i, [i % 4], str(i % 4)) for i in range(8)]
+    assert sorted(consumed) == list(range(8))
+    assert not runner._pending
+
+
+@pytest.mark.parametrize("capacity", [1, 2])
+def test_async_runner_checkpoint_preserves_channel_data_and_prompt_ownership(capacity):
+    pytest.importorskip("megatron.training")
+    from omegaconf import OmegaConf
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.schema.agent_trajectory import BufferedTrajectory
+    from rlinf.runners.async_agent_ppo_runner import AsyncAgentPPORunner
+
+    runner = object.__new__(AsyncAgentPPORunner)
+    runner.cfg = OmegaConf.create({"rollout": {"rollout_buffer_capacity": capacity}})
+    runner.train_dataloader = StatefulDataLoader(range(8), batch_size=2)
+    next(iter(runner.train_dataloader))
+    runner.async_rollout_channel = _local_channel()
+    runner._pending = {i: (i, [i], str(i)) for i in (2, 3, 4)}
+    runner._prompt_queue = deque([([5], "5")])
+    runner._next_sample_id = 5
+    runner._producer_epoch = 0
+    runner.published_version = runner.actor_version = runner.actor_updates = 1
+    runner.critic_updates = 2
+    runner._stale_count = 7
+    for sample_id in (3, 2):
+        result = make_result()
+        result.rollout_logprobs = [
+            [-0.1 * (sample_id + 1)] * n for n in result.response_lengths
+        ]
+        result.rollout_weight_versions = [[0] * n for n in result.response_lengths]
+        runner.async_rollout_channel.put(
+            BufferedTrajectory(sample_id, [sample_id], str(sample_id), result, {})
+        )
+
+    stream = io.BytesIO()
+    torch.save(runner._save_data_state(), stream)
+    stream.seek(0)
+    state = torch.load(stream, weights_only=False)
+    rollout = state["async_rollout"]
+    assert [entry.sample_id for entry in rollout["buffer"]] == [3, 2]
+    assert rollout["pending"] == [(4, [4], "4")]
+    assert runner.async_rollout_channel.qsize() == 2
+
+    restored = object.__new__(AsyncAgentPPORunner)
+    restored.cfg = runner.cfg
+    restored.train_dataloader = StatefulDataLoader(range(8), batch_size=2)
+    restored._prompt_queue = deque()
+    if capacity == 1:
+        with pytest.raises(ValueError, match="rollout_buffer_capacity"):
+            restored._load_data_state(state)
+        return
+    restored._load_data_state(state)
+    assert [entry.sample_id for entry in restored._restored_buffer] == [3, 2]
+    assert restored._restored_pending == [(4, [4], "4")]
+    assert restored._pending == runner._pending
+    assert restored._prompt_queue == runner._prompt_queue
+    assert restored._next_sample_id == 5 and restored._stale_count == 7
+    assert restored.actor_updates == 1 and restored.critic_updates == 2
+    assert next(iter(restored.train_dataloader)).tolist() == [2, 3]
+    for original, recovered in zip(
+        rollout["buffer"], restored._restored_buffer, strict=True
+    ):
+        assert recovered.result.rollout_logprobs == original.result.rollout_logprobs
+        assert (
+            recovered.result.rollout_weight_versions
+            == original.result.rollout_weight_versions
+        )
+
+
+def test_dis_masks_both_sides_and_has_the_importance_weighted_score_gradient():
+    logprobs = torch.tensor(
+        [
+            -1000,
+            math.log(0.7),
+            math.log(0.8),
+            0,
+            math.log(5),
+            math.log(6),
+            1000,
+            float("nan"),
+        ],
+        requires_grad=True,
+    )
+    behavior = torch.zeros_like(logprobs, requires_grad=True)
+    advantages = torch.tensor([1, -1, 2, -3, -1, 4, 5, 0.0], requires_grad=True)
+    mask = torch.tensor([True] * 7 + [False])
+    loss, metrics = compute_dis_actor_loss(
+        logprobs, behavior, advantages, 0.3, 5.0, loss_mask=mask
+    )
+    assert torch.isfinite(loss)
+    loss.backward()
+    torch.testing.assert_close(
+        logprobs.grad, torch.tensor([0, 0, -1.6, 3, 5, 0, 0, 0.0]) / 7
+    )
+    assert behavior.grad is None and advantages.grad is None
+    assert metrics["actor/clip_fraction"] == pytest.approx(4 / 7)
+
+
+def test_dis_all_rejected_batch_has_zero_loss_and_gradient():
+    logprobs = torch.tensor([-1000.0, 1000.0], requires_grad=True)
+    loss, _ = compute_dis_actor_loss(logprobs, torch.zeros(2), torch.ones(2), 0.3, 5.0)
+    loss.backward()
+    assert loss == 0
+    torch.testing.assert_close(logprobs.grad, torch.zeros(2))
+
+
+def test_sao_adaptive_gae_counts_actions_and_uses_independent_mc_returns():
+    values = torch.tensor([[0.2, 0.1], [99, -10], [0.4, 0.2], [0.6, 80]])
+    rewards = torch.zeros_like(values)
+    rewards[3, 0] = 1
+    mask = torch.tensor([[True, True], [False, False], [True, True], [True, False]])
+    advantages, returns = get_adv_and_returns("sao_gae")(
+        rewards, values=values, step_mask=mask, normalize_advantages=False
+    )
+    torch.testing.assert_close(
+        advantages,
+        torch.tensor(
+            [
+                [0.2 + (7 / 9) * (0.2 + (7 / 9) * 0.4), -1 / 30],
+                [0, 0],
+                [0.2 + (7 / 9) * 0.4, -0.2],
+                [0.4, 0],
+            ]
+        ),
+    )
+    torch.testing.assert_close(
+        returns, torch.tensor([[1.0, 0], [0, 0], [1, 0], [1, 0]])
+    )
+
+
+@pytest.mark.parametrize("gamma", [1.0, 0.9])
+def test_sao_critic_returns_do_not_require_initial_value_inference(gamma):
+    result = make_result()
+    result.values = None
+    prepare_agent_critic_returns([result], seq_length=6, gamma=gamma)
+    torch.testing.assert_close(result.returns[0, 1:3], torch.tensor([gamma**2, gamma]))
+    assert result.returns[1, 5] == 1
+    assert result.returns[2].count_nonzero() == 0
+    assert result.values is None
+
+
+def test_sao_value_regression_is_unclipped_and_ignores_observations():
+    values = torch.tensor([3.0, -1.0, float("nan")], requires_grad=True)
+    returns = torch.tensor([1.0, 0, 999])
+    loss, _ = compute_critic_loss(
+        values, returns, torch.tensor([True, True, False]), loss_type="sao"
+    )
+    loss.backward()
+    assert loss == 2.5
+    torch.testing.assert_close(values.grad, torch.tensor([2.0, -1.0, 0]))
+
+
+def test_behavior_provenance_survives_merge_split_and_packing(monkeypatch):
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    result = make_result()
+    result.rollout_logprobs = [[-0.11, -0.23], [-0.35], [-0.47, -0.59]]
+    result.rollout_weight_versions = [[0, 1], [3], [1, 2]]
+    result.rollout_ids = [50, 50, 51]
+    restored = DynamicRolloutResult.merge_result_list(
+        DynamicRolloutResult.split_results(result, [2, 1])
+    )
+    assert restored.rollout_weight_versions == result.rollout_weight_versions
+    assert restored.rollout_ids == result.rollout_ids
+    batch = restored.to_actor_batch(6, 0)
+    packed = DynamicRolloutResult.pack_traj_batch({}, batch)
+    for field in ("rollout_weight_versions", "rollout_logprobs"):
+        torch.testing.assert_close(
+            packed[field][packed["response_mask"]], batch[field][batch["response_mask"]]
+        )
+    assert (packed["rollout_weight_versions"][~packed["response_mask"]] == -1).all()
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    ["train_qwen2.5_ppo", "train_qwen2.5_ppo_shared", "train_qwen2.5_ppo_split"],
+)
+def test_searchr1_ppo_recipes_use_one_minibatch(config_name):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/agent/searchr1/config"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name=config_name)
+    assert cfg.algorithm.n_minibatches == 1
+
+
+@pytest.mark.parametrize("staleness", [None, 0, 2])
+@pytest.mark.parametrize("batch_size", [128, 1024])
+@pytest.mark.parametrize("critic_loss", ["sao", "ppo"])
+@pytest.mark.parametrize("update_epochs", [1, 2, 4])
+@pytest.mark.parametrize(
+    "config_name", ["train_qwen2.5_sao", "train_qwen2.5_sao_split"]
+)
+def test_async_searchr1_config_and_staleness_defaults(
+    staleness, batch_size, config_name, critic_loss, update_epochs
+):
+    from hydra import compose, initialize_config_dir
+    from omegaconf import open_dict
+
+    from rlinf.config import validate_searchr1_cfg
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/agent/searchr1/config"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name=config_name)
+    assert cfg.data.rollout_batch_size == 1024
+    cfg.data.rollout_batch_size = batch_size
+    cfg.critic.loss_type = critic_loss
+    cfg.critic.update_epochs = update_epochs
+    cfg.rollout.return_logprobs = True
+    if staleness is None:
+        with open_dict(cfg.rollout):
+            cfg.rollout.pop("max_weight_staleness")
+            cfg.rollout.pop("max_in_flight_rollouts")
+            cfg.rollout.pop("rollout_buffer_capacity")
+    else:
+        cfg.rollout.max_weight_staleness = staleness
+    validate_searchr1_cfg(cfg)
+    assert cfg.rollout.max_weight_staleness == staleness
+    assert cfg.rollout.max_in_flight_rollouts == 2 * batch_size
+    assert cfg.rollout.rollout_buffer_capacity == 2 * batch_size
+    assert not {
+        "max_weight_staleness",
+        "max_in_flight_rollouts",
+        "rollout_buffer_capacity",
+    }.intersection(cfg.runner)
+    assert cfg.algorithm.n_minibatches == 1
+    assert cfg.critic.update_epochs == update_epochs
+
+
+def test_async_searchr1_preserves_explicit_rollout_limits():
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_searchr1_cfg
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/agent/searchr1/config"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(
+            config_name="train_qwen2.5_sao_split",
+            overrides=[
+                "rollout.max_weight_staleness=0",
+                "rollout.max_in_flight_rollouts=64",
+                "rollout.rollout_buffer_capacity=3072",
+                "rollout.return_logprobs=true",
+            ],
+        )
+    validate_searchr1_cfg(cfg)
+    assert cfg.rollout.max_weight_staleness == 0
+    assert cfg.rollout.max_in_flight_rollouts == 64
+    assert cfg.rollout.rollout_buffer_capacity == 3072
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("rollout.max_weight_staleness", -1),
+        ("rollout.max_weight_staleness", 1.5),
+        ("rollout.max_in_flight_rollouts", 0),
+        ("rollout.max_in_flight_rollouts", 1.5),
+        ("rollout.rollout_buffer_capacity", 1023),
+        ("rollout.rollout_buffer_capacity", 1024.5),
+        ("algorithm.n_minibatches", 2),
+        ("critic.update_epochs", 0),
+        ("critic.update_epochs", -1),
+        ("critic.update_epochs", 1.5),
+        ("critic.update_epochs", True),
+        ("algorithm.recompute_logprobs", True),
+        ("agentloop.truncate_response", True),
+    ],
+)
+def test_async_searchr1_rejects_invalid_execution_contracts(key, value):
+    from omegaconf import OmegaConf
+
+    from rlinf.config import validate_searchr1_cfg
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/agent/searchr1/config"
+    cfg = OmegaConf.merge(
+        OmegaConf.load(config_dir / "train_qwen2.5_ppo.yaml"),
+        OmegaConf.load(config_dir / "train_qwen2.5_sao.yaml"),
+    )
+    cfg.rollout.return_logprobs = True
+    OmegaConf.update(cfg, key, value)
+    with pytest.raises(ValueError):
+        validate_searchr1_cfg(cfg)
 
 
 @pytest.mark.parametrize("truncate", [True, False])
@@ -66,13 +429,18 @@ def test_searchr1_response_processing_preserves_behavior_tokens(truncate, budget
     )
     ids = list(map(ord, "<search>x</search>\n"))
     logprobs = [-0.01 * (i + 1) for i in range(len(ids))]
+    versions = [i // 5 for i in range(len(ids))]
     context = {"turn": 0, "all_llm_response_ids": []}
 
     async def engine():
         request = await worker.generate_input_channel.get(async_op=True).async_wait()
         assert request["sampling_params"]["max_new_tokens"] == budget
         await worker.generate_output_channel.put(
-            {"output_ids": ids.copy(), "logprobs": logprobs.copy()},
+            {
+                "output_ids": ids.copy(),
+                "logprobs": logprobs.copy(),
+                "weight_versions": versions.copy(),
+            },
             key=request["channel_key"],
             async_op=True,
         ).async_wait()
@@ -90,10 +458,70 @@ def test_searchr1_response_processing_preserves_behavior_tokens(truncate, budget
             expected = [999, *map(ord, "<search>x</search>")]
         assert output.response_ids == expected
         assert output.response_logprobs is None
+        assert output.response_weight_versions is None
     else:
         assert output.response_ids == ids[:budget]
         assert output.response_logprobs == logprobs[:budget]
+        assert output.response_weight_versions == versions[:budget]
     assert context["all_llm_response_ids"] == output.response_ids
+
+
+@pytest.mark.placement
+def test_serverless_rollout_sends_behavior_data_and_stops_unfinished_generation():
+    pytest.importorskip("sglang")
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+    class Engine:
+        async def async_generate(self, input_ids, **kwargs):
+            if input_ids == [2]:
+                self.started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    self.cancelled.set()
+            return {
+                "output_ids": [10, 11],
+                "meta_info": {
+                    "finish_reason": {"type": "stop"},
+                    "output_token_logprobs": [(-0.1, 10), (-0.2, 11)],
+                    "rollout_weight_versions": [3, 4],
+                },
+            }
+
+    worker = object.__new__(SGLangWorker)
+    worker._engine = Engine()
+    worker._sampling_params = {"temperature": 1.0}
+    worker._return_logprobs = True
+    Cluster(num_nodes=1)
+    input_channel = Channel.create("ServerlessLifecycleInput")
+    output_channel = Channel.create("ServerlessLifecycleOutput")
+
+    async def run():
+        worker._engine.started = asyncio.Event()
+        worker._engine.cancelled = asyncio.Event()
+        server = asyncio.create_task(
+            worker.rollout_serverless(input_channel, output_channel)
+        )
+        await input_channel.put(
+            {"channel_key": "complete", "prompt_ids": [1]}, async_op=True
+        ).async_wait()
+        result = await output_channel.get("complete", async_op=True).async_wait()
+        assert result == {
+            "output_ids": [10, 11],
+            "finish_reason": "stop",
+            "logprobs": [-0.1, -0.2],
+            "weight_versions": [3, 4],
+        }
+        await input_channel.put(
+            {"channel_key": "pending", "prompt_ids": [2]}, async_op=True
+        ).async_wait()
+        await asyncio.wait_for(worker._engine.started.wait(), timeout=5)
+        await worker.stop_serverless()
+        await asyncio.wait_for(server, timeout=5)
+        assert worker._engine.cancelled.is_set()
+        assert output_channel.empty("pending")
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("truncate", [None, True, False])
@@ -249,8 +677,9 @@ def test_masked_gae_discounts_actions_without_discounting_observations():
 @pytest.mark.parametrize("role", ["actor", "critic"])
 @pytest.mark.parametrize("dp_size", [2, 4, 8])
 @pytest.mark.parametrize("microbatches", [1, 2, 4])
+@pytest.mark.parametrize("sao", [False, True])
 def test_megatron_valid_token_scale_matches_unsplit_gradient(
-    monkeypatch, tmp_path, role, dp_size, microbatches
+    monkeypatch, tmp_path, role, dp_size, microbatches, sao
 ):
     pytest.importorskip("megatron.training")
     from megatron.core import parallel_state
@@ -293,8 +722,9 @@ def test_megatron_valid_token_scale_matches_unsplit_gradient(
         worker.cfg = OmegaConf.create(
             {
                 "runner": {"task_type": "reasoning"},
+                "critic": {"loss_type": "sao" if sao else "ppo"},
                 "algorithm": {
-                    "loss_type": "actor",
+                    "loss_type": "dis" if sao else "actor",
                     "use_valid_token_scale": False,
                     "sampling_params": {"temperature": 1.0},
                     "early_stop_imp_ratio": None,
@@ -321,7 +751,7 @@ def test_megatron_valid_token_scale_matches_unsplit_gradient(
             "response_mask": mask,
             "loss_scales": mask.float(),
             "advantages": input_ids.float() / 7 - 0.5,
-            "recomputed_logprobs": torch.zeros_like(mask, dtype=torch.float32),
+            "recomputed_logprobs": torch.full_like(mask, -2.0, dtype=torch.float32),
             "values": torch.zeros_like(mask, dtype=torch.float32),
             "returns": torch.full_like(mask, 0.7, dtype=torch.float32),
         }
@@ -488,14 +918,37 @@ def test_megatron_batch_input_uses_default_queue(monkeypatch, role, synchronous)
     assert batch["input_ids"].shape == (result.num_sequence, 6)
 
 
+def test_critic_inference_retains_a_detached_clipping_reference():
+    pytest.importorskip("megatron.training")
+    from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
+
+    worker = object.__new__(MAMegatronCritic)
+    result = make_result()
+    inference_output = result.values.clone().requires_grad_()
+    worker.process_inference_output(result, inference_output)
+    old_values = result.values
+    expected = old_values.clone()
+    assert not old_values.requires_grad
+    with torch.no_grad():
+        inference_output.add_(1)
+    torch.testing.assert_close(old_values, expected)
+    worker.process_inference_output(result, inference_output)
+    torch.testing.assert_close(old_values, expected)
+    torch.testing.assert_close(result.values, expected + 1)
+
+
+@pytest.mark.parametrize("precomputed_values", [False, True])
+@pytest.mark.parametrize("split_microbatches", [False, True])
+@pytest.mark.parametrize("shuffle", [False, True])
 def test_multiturn_critic_preserves_values_loss_and_update_with_packing(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, precomputed_values, split_microbatches, shuffle
 ):
     pytest.importorskip("megatron.training")
     from megatron.core import parallel_state
     from omegaconf import OmegaConf
 
     from rlinf.scheduler import Worker
+    from rlinf.utils.data_iter_utils import get_iterator_k_split
     from rlinf.utils.utils import masked_mean
     from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
 
@@ -506,8 +959,10 @@ def test_multiturn_critic_preserves_values_loss_and_update_with_packing(
         def __init__(self):
             super().__init__()
             self.weight = torch.nn.Parameter(torch.tensor(0.01))
+            self.forward_calls = 0
 
         def forward(self, input_ids, attention_mask, position_ids, packed_seq_params):
+            self.forward_calls += 1
             return (input_ids.float() * self.weight).unsqueeze(-1)
 
     monkeypatch.setattr(Worker, "torch_device_type", "cpu")
@@ -536,7 +991,7 @@ def test_multiturn_critic_preserves_values_loss_and_update_with_packing(
         worker.tokenizer = SimpleNamespace(eos_token_id=0)
         worker.transformer_config = SimpleNamespace(sequence_parallel=False)
         worker.num_microbatches = 1
-        worker.value_clip = 0.5
+        worker.value_clip = 0.001
         worker.loss_agg_func = masked_mean
 
         result = make_result()
@@ -565,29 +1020,80 @@ def test_multiturn_critic_preserves_values_loss_and_update_with_packing(
                 minibatch["input_ids"].float()[:, :-1] * model.weight, (1, 0)
             )
             torch.testing.assert_close(values, expected * mask)
+            inference_values = values[mask].detach()
 
+            minibatch["reference_values"] = (
+                minibatch["values"].clone()
+                if precomputed_values
+                else expected.detach().clone()
+            )
+            if not precomputed_values:
+                minibatch["values"] = list(
+                    torch.empty_like(minibatch["returns"]).unbind()
+                )
+            worker.num_microbatches = (
+                minibatch["input_ids"].shape[0] if split_microbatches else 1
+            )
             worker.return_loss = True
-            output, loss_func = forward(iter([minibatch]), model)
-            loss, metrics = loss_func(output)
-            reference_loss, _ = compute_ppo_critic_loss(
-                values=expected,
-                returns=minibatch["returns"],
-                prev_values=minibatch["values"],
-                value_clip=worker.value_clip,
-                huber_delta=10000,
-                loss_mask=mask,
-            )
-            torch.testing.assert_close(loss, reference_loss)
-            torch.testing.assert_close(
-                metrics["critic/final_value_loss"].squeeze(), loss
-            )
-            loss.backward()
-            assert torch.isfinite(model.weight.grad) and model.weight.grad != 0
             optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-            optimizer.step()
+            epoch_losses = []
+            for epoch in range(2):
+                worker._capture_old_values = epoch == 0
+                optimizer.zero_grad()
+                epoch_loss = 0.0
+                clip_ratio = 0.0
+                for microbatch in get_iterator_k_split(
+                    minibatch,
+                    num_splits=worker.num_microbatches,
+                    shuffle=shuffle,
+                    shuffle_seed=epoch,
+                ):
+                    output, loss_func = forward(iter([microbatch]), model)
+                    loss, metrics = loss_func(output)
+                    mask = microbatch["response_mask"]
+                    reference_loss, _ = compute_ppo_critic_loss(
+                        values=torch.nn.functional.pad(
+                            microbatch["input_ids"].float()[:, :-1] * model.weight,
+                            (1, 0),
+                        ),
+                        returns=microbatch["returns"],
+                        prev_values=microbatch["reference_values"],
+                        value_clip=worker.value_clip,
+                        huber_delta=10000,
+                        loss_mask=mask,
+                    )
+                    scale = (
+                        mask.sum() / worker.global_valid_token * worker.num_microbatches
+                    )
+                    torch.testing.assert_close(loss, reference_loss * scale)
+                    old_values = microbatch["values"]
+                    if isinstance(old_values, list):
+                        old_values = torch.stack(old_values)
+                    assert not old_values.requires_grad and old_values.grad_fn is None
+                    torch.testing.assert_close(
+                        old_values, microbatch["reference_values"]
+                    )
+                    torch.testing.assert_close(
+                        metrics["critic/final_value_loss"].squeeze(), loss
+                    )
+                    (loss / worker.num_microbatches).backward()
+                    epoch_loss += loss.detach() / worker.num_microbatches
+                    clip_ratio += metrics["critic/value_clip_ratio"].item()
+                assert torch.isfinite(model.weight.grad)
+                if epoch == 0:
+                    assert model.weight.grad != 0
+                elif not precomputed_values:
+                    assert clip_ratio > 0
+                optimizer.step()
+                epoch_losses.append(epoch_loss)
+            assert model.forward_calls == 1 + 2 * worker.num_microbatches
             assert model.weight.item() != pytest.approx(0.01)
             outcomes.append(
-                (values[mask].detach(), loss.detach(), model.weight.detach())
+                (
+                    inference_values,
+                    torch.stack(epoch_losses),
+                    model.weight.detach(),
+                )
             )
 
         for unpacked, packed in zip(*outcomes):

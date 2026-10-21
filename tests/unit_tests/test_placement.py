@@ -516,10 +516,13 @@ class TestModelParallelComponentPlacement:
         "actor,critic,rollout",
         [("0-7", "0-7", "0-7"), ("4-7", "4-7", "0-3"), ("4-5", "6-7", "0-3")],
     )
-    def test_synchronous_ppo_placement(self, actor, critic, rollout):
+    @pytest.mark.parametrize("synchronous", [True, False])
+    @pytest.mark.parametrize("reward_type", ["searchr1", "math"])
+    def test_ppo_placement(self, actor, critic, rollout, synchronous, reward_type):
         config = DictConfig(
             {
-                "runner": {"synchronous": True},
+                "runner": {"synchronous": synchronous},
+                "reward": {"reward_type": reward_type},
                 "cluster": {
                     "num_nodes": 1,
                     "component_placement": {
@@ -548,7 +551,7 @@ class TestModelParallelComponentPlacement:
             }
         )
         placement = ModelParallelComponentPlacement(config, create_fake_cluster(1, 8))
-        assert not placement.is_pipeline
+        assert placement.is_pipeline == (not synchronous and actor != critic)
         for role in ("actor", "critic", "rollout"):
             assert isinstance(placement.get_strategy(role), PackedPlacementStrategy)
         assert placement.actor_world_size == len(placement.get_hardware_ranks("actor"))

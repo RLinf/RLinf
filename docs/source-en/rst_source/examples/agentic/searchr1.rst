@@ -1,10 +1,11 @@
 Reinforcement Learning Training of Search-R1
 ================================================
 
-Multi-turn RL with tool calls extends the interaction boundary of large language models (LLMs) to the real world.
-Reproduce the experiments from
+Train a search-augmented Qwen model with GRPO, synchronous PPO, or fully asynchronous
+PPO. This page covers the retrieval server, training configurations, and checkpoint
+evaluation for
 `Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning <https://arxiv.org/abs/2503.09516>`__
-in RLinf, training LLMs to answer questions by invoking search tools.
+in RLinf.
 
 Overview
 --------
@@ -286,8 +287,8 @@ Set the existing model, dataset, and search-server paths in
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_split
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_separate
 
-All three commands use the same initial model, 2048 prompts with one trajectory
-each (``algorithm.group_size: 1``), and two global minibatches. Only placement
+All three commands use the same initial model, 1024 prompts with one trajectory
+each (``algorithm.group_size: 1``), and one global minibatch. Only placement
 and memory residency differ. The critic uses independent optimizer state and
 a normally initialized value head by default (mean 0, standard deviation 0.02).
 Set ``critic.value_head_init=zero`` for zero initialization; the default is
@@ -312,7 +313,17 @@ The runner schedules the rollout and model phases. The existing multi-agent
 Megatron actor and Megatron critic execute inference and training; each worker
 owns minibatch updates, microbatch scheduling, and checkpoint saving.
 
-Choose the response-processing mode described above. With recomputation enabled,
+PPO and SAO inherit ``agentloop.truncate_response: false`` and
+``algorithm.recompute_logprobs: false`` from the PPO base YAML, which also resolves
+``rollout.return_logprobs`` to ``true``. Both train directly with rollout behavior
+logprobs and preserve generated tokens within the response-length cap. The base
+also sets the actor learning rate to ``1e-6`` with no warmup and the critic learning
+rate to ``5e-6`` with 10 optimizer updates of warmup. PPO updates its critic once
+per batch; asynchronous training uses ``critic.update_epochs`` updates per batch.
+With one update, critic warmup spans 10 batches; with two, it spans five batches.
+
+For synchronous PPO, you can choose the response-processing mode described above.
+With recomputation enabled,
 both placements with shared training GPUs retain actor weights between inference
 and training. Tool observations stay outside policy/value losses, and
 the final reward is applied once per trajectory. SearchR1 settles a complete
@@ -354,6 +365,205 @@ TensorBoard uses the same minibatch step axis as ``AgentRunner``. Global step
 ``g`` starts at ``(g - 1) * algorithm.n_minibatches``: reward and timings are
 recorded once there, while actor and critic training metrics are recorded for
 each minibatch.
+
+Fully Asynchronous PPO on 8×A100
+--------------------------------
+
+To train as trajectories finish, use the asynchronous configurations. They implement
+the token-level design in `SAO <https://arxiv.org/abs/2607.07508>`__, Sections 3.1,
+3.2 and Appendix A, using continuous rollout production and a bounded completion
+buffer. The runner extends the synchronous PPO runner and reuses its multi-agent
+actor, critic, trajectory packing, token weighting, checkpointing, and weight
+transport. Its role transitions and request retraction follow
+`Miles <https://github.com/radixark/miles>`__.
+
+Set the model, data, and retrieval-server paths in the base PPO configuration, then
+choose one of the two supported layouts:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao_split
+
+The first command shares GPUs 0–7 across all three models. Before training, SGLang
+retracts unfinished requests and releases rollout memory. After actor training,
+the runner installs weights, restores KV/graph memory, and resumes those requests.
+Their generated token prefixes and original behavior logprobs remain unchanged.
+The split command places rollout on GPUs 0–3 and both training models on GPUs 4–7.
+Generation continues during critic and actor training; it pauses briefly for weight
+publication. Enable the six actor/critic offload settings shown above to alternate
+their residency when training memory is limited.
+
+Both configurations use batches of 1024 prompts, one trajectory per prompt, and raw
+rollout logprobs. They use stochastic full-vocabulary sampling at temperature 1,
+without repetition penalties, Megatron TP=PP=CP=1, and SGLang TP=PP=1. The targeted
+adapter supports ``sglang==0.5.12.post1``: it acknowledges pause/resume, drains
+overlapped GPU work, parks waiting and partially prefetched requests outside cache
+ownership, and flushes old KV state before resumption. Every generated token carries
+the weight version that produced it, including tokens in requests resumed after
+multiple publications. The published version advances only after all rollout
+workers acknowledge installation; a failed publication stops the run.
+Resumed requests rebuild their KV state while keeping recorded output logprobs;
+output-only requests skip logprob recomputation for the retained prefix.
+
+The runner owns the dataloader and fills the prompt Channel at startup. After
+consuming each batch, it replenishes that Channel before training. Agent workers
+generate continuously and send completed trajectories to a bounded Channel.
+The runner calls batch construction directly, consuming the global completion
+order, checking staleness, and sending targets to the critic training ranks.
+After critic updates and inference, the runner reads the new values through a
+Channel, computes globally normalized advantages, and sends the targets to actor
+training. These controls bound pending work and optionally filter stale data:
+
+.. list-table:: Async Controls
+   :header-rows: 1
+   :widths: 36 14 50
+
+   * - Configuration
+     - Default
+     - Meaning
+   * - ``rollout.max_in_flight_rollouts``
+     - 2048
+     - Trajectory producer slots, including tool calls and result transfer.
+   * - ``rollout.rollout_buffer_capacity``
+     - 2048
+     - Completed trajectories retained by the Channel.
+   * - ``rollout.max_weight_staleness``
+     - ``null``
+     - No staleness filtering; otherwise require a nonnegative integer.
+
+Leave either capacity as ``null`` or omit it to derive its value as
+``2 * data.rollout_batch_size`` during configuration validation. Explicit integer
+values take precedence. The base PPO configuration sets ``data.rollout_batch_size=1024``
+for both synchronous and asynchronous runs.
+Keeping two learner batches in flight lets generation fill the next batch while
+slower trajectories remain unfinished. Staleness is checked when consuming data,
+against the latest published rollout version. A trajectory's age uses its oldest
+generated action-token version. Rejected
+trajectories are regenerated from their original prompts. The producer's finite
+prompt budget is ``runner.max_steps * data.rollout_batch_size``, so benchmark runs
+consume the same prompt set despite different completion orders.
+
+The sum of the two capacities bounds all outstanding prompts, including generation,
+transfer queues, and buffered results. A consumed trajectory releases its prompt
+slot; a stale trajectory keeps its slot while it is regenerated. With both capacities
+set to 2048, at most 4096 prompts are outstanding. When rollout finishes those
+trajectories before training consumes them, the split rollout GPUs become idle
+until the learner frees space. Check
+``async/buffer_size`` against ``async/buffer_capacity`` and inspect
+``async/waiting_for_buffer``. ``async/in_flight`` counts unfinished trajectories,
+including tool calls, and excludes completed trajectories waiting for buffer space.
+A larger buffer lets rollout run farther ahead and increases weight staleness; it
+does not increase steady-state throughput when training is the bottleneck.
+
+Each learner batch follows this order:
+
+1. Compute fixed Monte Carlo critic targets with ``gamma=1`` and critic lambda 1.
+   The default critic loss is an unclipped, globally token-averaged squared error.
+2. Update the critic ``critic.update_epochs`` times over the same full batch, then
+   infer fresh token values.
+3. Compute policy GAE with ``lambda = 1 - 1 / (1.5 * L)``, where ``L`` counts
+   generated action tokens across the whole episode. Tool observations and padding
+   do not advance GAE. Normalize advantages over the complete learner batch.
+4. Update the actor once with DIS, then publish its successful update.
+
+Select the critic loss with ``critic.loss_type``: ``sao`` uses the SAO loss, while
+``ppo`` reuses synchronous PPO's clipped Huber loss. To train with the latter, run:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao critic.loss_type=ppo
+
+The first critic training forward pass supplies detached value predictions as
+the clipping reference for every update of that batch, without a separate inference
+pass. Both losses use fixed Monte Carlo targets; actor GAE uses values inferred
+after all critic updates. The Huber path keeps the synchronous
+loss's ``huber_delta=10000`` and ``algorithm.value_cliprange``. Use
+``train_qwen2.5_sao_split`` in the command for the split layout.
+
+DIS uses the current-to-behavior ratio from the recorded rollout logprobs. Only
+tokens with ``0.7 < ratio < 6.0`` contribute a policy gradient. The ratio is detached
+in the score-function loss ``-mean(mask * ratio * advantage * logprob)``; the mean's
+denominator includes all action tokens. This interprets the paper's importance
+weight as a constant for differentiation, avoiding an extra derivative of
+``ratio * logprob``. No old-policy inference pass is needed.
+
+``algorithm.n_minibatches=1`` means one actor optimizer step on all 1024 trajectories.
+``critic.update_epochs`` accepts any positive integer and controls the number of
+critic optimizer steps, each using the same full batch. The supplied recipe uses
+``1``; set ``critic.update_epochs=2`` to reproduce SAO's two-update schedule.
+Setting ``n_minibatches=2`` would divide the batch and is a different update schedule.
+Packing and gradient-accumulation microbatches do not add optimizer steps.
+The actor learning rate is ``1e-6``; the critic uses ``5e-6`` and a 10-optimizer-step
+warmup, covering 10 learner batches with one update or five with two updates.
+Fractional warmup is disabled explicitly.
+
+The dense Qwen2.5 recipe trains all value-model parameters and uses no value
+pretraining corpus. It keeps the token-level method that outperforms the turn-level
+ablations in Appendix A; step-average and last-token ablations are not implemented.
+Search-R1 uses its existing two-turn, 7096-token limits and terminal reward, rather
+than the paper's Python/coding environments and 128k context.
+
+Checkpoints include both optimizers, buffered trajectories with their behavior
+probabilities, and prompt ownership. Set ``runner.resume_dir`` to a complete
+``checkpoints/global_step_N`` directory to resume. Completed buffered data is
+restored exactly; unfinished requests restart from their original prompts after a
+process restart. Live pause/resume during weight publication retains their prefixes.
+Keep the original actor/critic conversion caches available: existing Megatron
+workers initialize from them before restoring checkpoints. When changing the
+experiment name, point both ``megatron.ckpt_convertor.save_path`` fields to those
+original directories.
+
+Both PPO runners advance the ``Global Step`` progress bar once per learner batch.
+The synchronous and asynchronous recipes both set ``algorithm.n_minibatches=1``,
+so their common TensorBoard metrics use matching step indices. Each SAO learner
+batch contains ``critic.update_epochs`` full-batch critic updates; their individual
+metrics use the critic optimizer-call index under ``critic_update/``.
+``async_trace.jsonl`` records consumed sample IDs, weight versions, successful
+optimizer counts, retractions, and tokens generated during training.
+
+To verify real retraction and prefix retention, run:
+
+.. code-block:: bash
+
+   PYTHONPATH="$PWD:$PWD/examples:/opt/venv/reason/Megatron-LM" python \
+     tests/e2e_tests/agent/searchr1/verify_async_engine.py \
+     --config-path "$PWD/examples/agent/searchr1/config" \
+     --config-name train_qwen2.5_sao \
+     runner.experiment_name=searchr1-engine-check
+
+The test publishes weights three times during generation and checks exact prefix
+IDs, logprobs, and token versions after completion.
+
+For the controlled four-run comparison, use:
+
+.. code-block:: bash
+
+   python tests/e2e_tests/agent/searchr1/run_ppo_benchmarks.py \
+     --steps 200 --name searchr1-ppo-bsz1024-200
+
+This runs sync/async training in both layouts with batch size 1024, matching model,
+data, data/training seeds, sampling, packing, learning rates, role offloading, and checkpoint cadence. SAO changes
+DIS, adaptive GAE, value loss, and critic update frequency. The launcher allows
+multiple dataset epochs to reach the requested step count. ``benchmark.json``
+measures initial buffer fill, training, publication, and checkpoint time, including
+terminal weight publication for both runners; model initialization is recorded
+separately. All six actor/critic offload flags are enabled in both layouts for memory
+headroom. Rewards remain in each run's TensorBoard directory.
+
+After all four runs finish, generate the reward curves and elapsed-time comparison:
+
+.. code-block:: bash
+
+   python tests/e2e_tests/agent/searchr1/plot_ppo_benchmarks.py \
+     --steps 200 --name searchr1-ppo-bsz1024-200
+
+The reporting script requires Matplotlib, NumPy, and TensorBoard. It writes plots,
+``report.md``, and ``results.json`` under the comparison's log directory, and checks
+reward improvement, elapsed speed, optimizer counts, and async sample ownership.
+To compare only split placement, add ``--modes sync-split async-split`` to the
+launcher and ``--layouts split`` to the reporting command. The report reads the
+batch size from each run and requires matching values across the comparison.
 
 Checkpoint Export and Evaluation
 --------------------------------

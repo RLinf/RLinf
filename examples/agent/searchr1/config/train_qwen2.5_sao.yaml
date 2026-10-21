@@ -1,0 +1,23 @@
+defaults:
+  - train_qwen2.5_ppo
+  - _self_
+
+runner:
+  synchronous: false
+  experiment_name: searchr1-sao-shared-cri-up1
+
+rollout:
+  max_weight_staleness: null
+  max_in_flight_rollouts: null # Defaults to 2 * data.rollout_batch_size.
+  rollout_buffer_capacity: null # Defaults to 2 * data.rollout_batch_size.
+
+algorithm:
+  loss_type: dis
+  clip_ratio_low: 0.3
+  clip_ratio_high: 5.0
+  adv_type: sao_gae
+  gae_lambda_alpha: 1.5
+
+critic:
+  loss_type: sao # sao (squared error) or ppo (clipped Huber).
+  update_epochs: 1

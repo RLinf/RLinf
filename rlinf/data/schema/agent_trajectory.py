@@ -12,14 +12,112 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fixed token targets for complete multi-turn agent episodes."""
+"""Complete agent trajectories, buffered batches, and fixed token targets."""
 
 from collections import defaultdict, deque
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 
 from rlinf.algorithms.registry import get_adv_and_returns
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel
+
+
+@dataclass
+class BufferedTrajectory:
+    """A completed rollout and its prompt, retained for stale-data retries."""
+
+    sample_id: int
+    prompt_ids: list[int]
+    answer: Any
+    result: DynamicRolloutResult
+    metrics: dict[str, Any]
+
+    @property
+    def oldest_version(self) -> int:
+        """Return the oldest version that actually generated an action token."""
+        versions = self.result.rollout_weight_versions
+        if versions is None or len(versions) != self.result.num_sequence:
+            raise ValueError(
+                "Async trajectories require generated-token weight versions."
+            )
+        for length, turn in zip(self.result.response_lengths, versions, strict=True):
+            if turn is None or len(turn) != length or not turn or min(turn) < 0:
+                raise ValueError(
+                    "Each generated token must have a nonnegative weight version."
+                )
+        return min(min(turn) for turn in versions)
+
+
+@torch.no_grad()
+def prepare_agent_critic_returns(
+    results: list[DynamicRolloutResult], seq_length: int, gamma: float
+) -> None:
+    """Attach fixed action-only returns for complete, terminally rewarded episodes."""
+    for result in results:
+        result.returns = torch.zeros(
+            result.num_sequence, seq_length, dtype=torch.float32
+        )
+        for trajectory in range(result.group_size):
+            rows = [
+                i for i, index in enumerate(result.idx_to_traj) if index == trajectory
+            ]
+            if not rows or any(result.response_lengths[i] <= 0 for i in rows):
+                raise ValueError(
+                    "Each agent episode must contain nonempty generated turns."
+                )
+            remaining = sum(result.response_lengths[i] for i in rows)
+            reward = float(result.rewards[rows[-1]])
+            for row in rows:
+                start, length = result.prompt_lengths[row], result.response_lengths[row]
+                discounts = gamma ** torch.arange(
+                    remaining - 1, remaining - length - 1, -1, dtype=torch.float32
+                )
+                result.returns[row, start : start + length] = reward * discounts
+                remaining -= length
+
+
+def construct_rollout_batch(
+    input_channel: Channel,
+    output_channel: Channel,
+    retry_channel: Channel,
+    batch_size: int,
+    seq_length: int,
+    gamma: float,
+    published_version: int,
+    max_weight_staleness: int | None = None,
+) -> dict[str, Any]:
+    """Consume completed trajectories, retry stale ones, and send critic targets."""
+    entries = []
+    oldest_version = published_version
+    stale_count = 0
+    while len(entries) < batch_size:
+        entry: BufferedTrajectory = input_channel.get()
+        version = entry.oldest_version
+        lag = published_version - version
+        if lag < 0:
+            raise ValueError(
+                "A rollout version cannot be newer than the published version."
+            )
+        if max_weight_staleness is not None and lag > max_weight_staleness:
+            retry_channel.put((entry.sample_id, entry.prompt_ids, entry.answer))
+            stale_count += 1
+            continue
+        entries.append(entry)
+        oldest_version = min(oldest_version, version)
+
+    results = [entry.result for entry in entries]
+    prepare_agent_critic_returns(results, seq_length, gamma)
+    for result in results:
+        output_channel.put(result)
+    return {
+        "sample_ids": [entry.sample_id for entry in entries],
+        "oldest_version": oldest_version,
+        "stale_dropped": stale_count,
+        "agent_metrics": [entry.metrics for entry in entries],
+    }
 
 
 @torch.no_grad()
@@ -31,6 +129,8 @@ def prepare_agent_ppo_targets(
     gae_lambda: float,
     normalize_advantages: bool,
     logprob_channel: Channel | None = None,
+    adv_type: str = "actor_gae",
+    gae_lambda_alpha: float = 1.5,
 ) -> None:
     """Read a complete batch, compute global GAE, and send fixed training targets.
 
@@ -94,11 +194,12 @@ def prepare_agent_ppo_targets(
         mask[:length, index] = True
         rewards[length - 1, index] = reward
 
-    advantages, returns = get_adv_and_returns("actor_gae")(
+    advantages, returns = get_adv_and_returns(adv_type)(
         rewards=rewards,
         values=values,
         gamma=gamma,
         gae_lambda=gae_lambda,
+        gae_lambda_alpha=gae_lambda_alpha,
         step_mask=mask,
         normalize_advantages=False,
     )

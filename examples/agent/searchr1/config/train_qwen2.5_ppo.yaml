@@ -44,7 +44,7 @@ runner:
 
 algorithm:
   group_size: 1
-  n_minibatches: 2
+  n_minibatches: 1
   training_batch_size_per_gpu: 1 # micro batch size
   rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
 
@@ -56,7 +56,7 @@ algorithm:
   # val rollout mbs
   val_rollout_batch_size_per_gpu: 1 # ${.rollout_batch_size_per_gpu}
 
-  recompute_logprobs: True
+  recompute_logprobs: false
   shuffle_rollout: False
 
   # PPO loss params
@@ -97,7 +97,7 @@ data:
   type: math
   max_prompt_length: 4096
   filter_prompt_by_length: True
-  rollout_batch_size: 2048
+  rollout_batch_size: 1024
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -110,7 +110,7 @@ data:
 
 
 agentloop:
-  truncate_response: true
+  truncate_response: false
   group_name: "AgentLoopGroup"
   toolcall_parser: "searchr1-qwen"
   max_turns: 2
@@ -266,7 +266,7 @@ actor:
     loss_scale_window:  1000
 
   lr_sched:
-    lr_warmup_fraction: 0.285
+    lr_warmup_fraction: null
     lr_warmup_init: 0.0
     lr_warmup_iters: 0
     max_lr: 1.0e-06
@@ -369,7 +369,7 @@ critic:
 
   optim:
     optimizer: adam
-    lr: 1.0e-05
+    lr: 5.0e-06
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
@@ -387,10 +387,10 @@ critic:
     loss_scale_window: 1000
 
   lr_sched:
-    lr_warmup_fraction: 0.0
+    lr_warmup_fraction: null
     lr_warmup_init: 0.0
-    lr_warmup_iters: 0
-    max_lr: 1.0e-05
+    lr_warmup_iters: 10
+    max_lr: 5.0e-06
     min_lr: 0.0
     lr_decay_style: constant
     lr_decay_iters: 662

@@ -104,7 +104,31 @@ class TokenizerManager(_TokenizerManager):
         if obj is None:
             obj = SyncHFWeightInput()
         self.auto_create_handle_loop()
-        await self.sync_hf_weight_communicator(obj)
+        responses = await self.sync_hf_weight_communicator(obj)
+        if obj.weight_version is not None and any(
+            response.weight_version != obj.weight_version for response in responses
+        ):
+            raise RuntimeError(
+                "Not all rollout schedulers acknowledged the published weight version."
+            )
+
+    async def pause_for_weight_update(self):
+        """Gate new generation calls until scheduler retraction is acknowledged."""
+        async with self.is_pause_cond:
+            self.is_pause = True
+            return await self.run_task_method(
+                TaskMethodInput(method_name="pause_for_weight_update")
+            )
+
+    async def resume_after_weight_update(self):
+        """Acknowledge scheduler resumption before admitting further generation calls."""
+        async with self.is_pause_cond:
+            result = await self.run_task_method(
+                TaskMethodInput(method_name="resume_after_weight_update")
+            )
+            self.is_pause = False
+            self.is_pause_cond.notify_all()
+            return result
 
     async def abort_generation(
         self,
@@ -125,6 +149,16 @@ class TokenizerManager(_TokenizerManager):
 
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:
+            customized_info = getattr(recv_obj, "customized_info", None) or {}
+            versions = customized_info.get("rollout_weight_versions")
+            if versions is not None:
+                for index, rid in enumerate(recv_obj.rids):
+                    state = self.rid_to_state.get(rid)
+                    if state is not None:
+                        accumulated = getattr(state, "rlinf_weight_versions", [])
+                        accumulated.extend(versions[index])
+                        state.rlinf_weight_versions = accumulated
+                        versions[index] = list(accumulated)
             return super()._handle_batch_output(recv_obj)
 
         # sglang renamed Batch*Out -> Batch*Output (moved to io_struct) in 0.5.x;

@@ -20,7 +20,7 @@ from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
-from rlinf.algorithms.losses import compute_ppo_critic_loss
+from rlinf.algorithms.losses import compute_critic_loss
 from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.megatron_worker import MegatronWorker
@@ -40,8 +40,7 @@ class MegatronCritic(MegatronWorker):
         self.value_clip = self.cfg.algorithm.value_cliprange
 
     def process_inference_output(self, rollout_result, infer_out):
-        values = infer_out
-        rollout_result.values = values
+        rollout_result.values = infer_out.detach().clone()
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -96,15 +95,16 @@ class MegatronCritic(MegatronWorker):
         batch: dict[str, torch.Tensor],
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Compute clipped value loss and reduce metrics across data parallel ranks."""
-        loss, metrics_data = compute_ppo_critic_loss(
+        """Compute value loss and reduce metrics across data parallel ranks."""
+        loss, metrics_data = compute_critic_loss(
             values=values,
             returns=batch["returns"],
-            prev_values=batch["values"],
+            prev_values=batch.get("values"),
             value_clip=self.value_clip,
             huber_delta=10000,
             loss_agg_func=self.loss_agg_func,
             loss_mask=mask,
+            loss_type=self.cfg.critic.get("loss_type", "ppo"),
         )
         if self.cfg.algorithm.get("use_valid_token_scale", False):
             loss_scale = (

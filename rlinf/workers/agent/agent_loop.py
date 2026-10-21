@@ -29,6 +29,7 @@ from rlinf.agents.tool_call.schema import (
     ToolResponse,
 )
 from rlinf.algorithms.registry import get_toolcall_parser
+from rlinf.data.schema.agent_trajectory import BufferedTrajectory
 from rlinf.data.schema.reasoning_requests import RolloutRequest
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -53,6 +54,8 @@ class AgentLoopOutput:
     response_mask: Optional[list[int]] = None
     """Log probabilities for the response tokens."""
     response_logprobs: Optional[list[float]] = None
+    """Published rollout version for each generated response token."""
+    response_weight_versions: Optional[list[int]] = None
     """Number of chat turns, including user, assistant, tool."""
     num_turns: int = 0
     """Whether the sequence ends."""
@@ -441,13 +444,68 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         self.extra_keys_turn = None
         self.extra_keys_traj = None
         self.is_eval = self.cfg.runner.task_type == "reasoning_eval"
+        self._async_in_flight = 0
+        self._async_sending = 0
+
+    async def run_async_rollout(
+        self, input_channel: Channel, output_channel: Channel
+    ) -> None:
+        """Continuously generate complete trajectories and send them to the learner."""
+        from anyio import create_task_group
+
+        self._async_rollout_input_channel = input_channel
+        capacity = len(
+            range(
+                self._rank,
+                self.cfg.rollout.max_in_flight_rollouts,
+                self._world_size,
+            )
+        )  # FIXME: Can we better compute this? once a prompt is get, can we send it to the sgl worker that is more "free"?
+        slots = asyncio.Semaphore(capacity)
+
+        async def produce(prompt: tuple[int, list[int], Any]) -> None:
+            sample_id, prompt_ids, answer = prompt
+            self._async_in_flight += 1
+            result, metrics = await self.run_agentloop_rollout_group(
+                input_dict=prompt_ids,
+                answer=answer,
+                group_size=1,
+                output_channel=None,
+            )
+            self._async_in_flight -= 1
+            result.rollout_ids = [sample_id] * result.num_sequence
+            self._async_sending += 1
+            await output_channel.put(
+                BufferedTrajectory(sample_id, prompt_ids, answer, result, metrics),
+                async_op=True,
+            ).async_wait()
+            self._async_sending -= 1
+            slots.release()
+
+        async with create_task_group() as self._async_rollout_group:
+            if capacity == 0:
+                return
+            while True:
+                await slots.acquire()
+                # One reader leaves the Channel wait executor available for results.
+                prompt = await input_channel.get(async_op=True).async_wait()
+                if prompt is None:
+                    break
+                self._async_rollout_group.start_soon(produce, prompt)
+
+    def get_async_rollout_state(self) -> dict[str, int]:
+        """Report active trajectories and completed trajectories awaiting transfer."""
+        return {
+            "in_flight": self._async_in_flight,
+            "waiting_for_buffer": self._async_sending,
+        }
 
     async def run_agentloop_rollout_group(
         self,
         input_dict: dict,
         answer: str,
         group_size: int,
-        output_channel: Channel | list[Channel],
+        output_channel: Channel | list[Channel] | None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -473,12 +531,21 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_result = self.get_rollout_result(task_results, *extra_fields)
         agent_metrics = self.get_rollout_metrics(rollout_result)
 
+        if output_channel is None:
+            return rollout_result, agent_metrics
+
         channels = (
             output_channel if isinstance(output_channel, list) else [output_channel]
         )
         for channel in channels:
             await channel.put(rollout_result, async_op=True).async_wait()
         return agent_metrics
+
+    async def stop_rollouts(self) -> None:
+        """Cancel unfinished queries when the owning runner stops."""
+        self._async_rollout_group.cancel_scope.cancel()
+        # Cancellation alone cannot unblock a Channel wait in its executor thread.
+        await self._async_rollout_input_channel.put(None, async_op=True).async_wait()
 
     async def run_agentloop_rollout(
         self,
@@ -564,6 +631,11 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             else:
                 self.send(agent_metrics_list, self._group_name, 0)
                 return
+        return self.aggregate_metrics(agent_metrics_list)
+
+    @staticmethod
+    def aggregate_metrics(agent_metrics_list: list[dict]) -> dict:
+        """Reduce per-query statistics across a complete learner batch."""
         if len(agent_metrics_list) == 0:
             return {}
 
@@ -632,6 +704,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs = []
         is_end = []
         rewards = []
+        weight_versions = []
 
         # Flatten all retained turns while keeping trajectory mapping.
         for idx, task_result in enumerate(task_results):
@@ -652,6 +725,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                     rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
+                weight_versions.append(single_turn_output.response_weight_versions)
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
@@ -661,6 +735,9 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             response_lengths=response_lengths,
             input_ids=input_ids,
             rollout_logprobs=rollout_logprobs,
+            rollout_weight_versions=weight_versions
+            if any(v is not None for v in weight_versions)
+            else None,
             is_end=is_end,
             rewards=rewards,
             extra_fields_turn=extra_fields_turn,

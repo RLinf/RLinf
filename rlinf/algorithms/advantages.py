@@ -93,7 +93,7 @@ def compute_actor_gae_advantages_and_returns(
     step_mask: torch.Tensor,
     bootstrap_values: Optional[torch.Tensor] = None,
     gamma: float = 1.0,
-    gae_lambda: float = 1.0,
+    gae_lambda: float | torch.Tensor = 1.0,
     normalize_advantages: bool = True,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -119,9 +119,9 @@ def compute_actor_gae_advantages_and_returns(
         torch.zeros_like(values[0])
         if bootstrap_values is None
         else bootstrap_values.float()
-    ) # shape = [batch]
-    advantages = torch.zeros_like(rewards) # shape = [time, batch]
-    gae = torch.zeros_like(next_value) # shape = [batch]
+    )  # shape = [batch]
+    advantages = torch.zeros_like(rewards)  # shape = [time, batch]
+    gae = torch.zeros_like(next_value)  # shape = [batch]
     for step in reversed(range(rewards.shape[0])):
         delta = rewards[step] + gamma * next_value - values[step]
         candidate = delta + gamma * gae_lambda * gae
@@ -131,6 +131,40 @@ def compute_actor_gae_advantages_and_returns(
     returns = torch.where(step_mask, advantages + values, 0.0)
     if normalize_advantages:
         advantages = safe_normalize(advantages, loss_mask=step_mask)
+    return advantages, returns
+
+
+@register_advantage("sao_gae")
+def compute_sao_advantages_and_returns(
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    step_mask: torch.Tensor,
+    gamma: float = 1.0,
+    gae_lambda_alpha: float = 1.5,
+    normalize_advantages: bool = True,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Use an action-length-adaptive policy lambda and independent critic returns."""
+    lengths = step_mask.sum(dim=0)
+    if gae_lambda_alpha < 1 or torch.any(lengths == 0):
+        raise ValueError("SAO requires alpha >= 1 and at least one action per episode.")
+    policy_lambda = 1.0 - 1.0 / (gae_lambda_alpha * lengths.float())
+    advantages, _ = compute_actor_gae_advantages_and_returns(
+        rewards,
+        values,
+        step_mask,
+        gamma=gamma,
+        gae_lambda=policy_lambda,
+        normalize_advantages=normalize_advantages,
+    )
+    _, returns = compute_actor_gae_advantages_and_returns(
+        rewards,
+        torch.zeros_like(values),
+        step_mask,
+        gamma=gamma,
+        gae_lambda=1.0,
+        normalize_advantages=False,
+    )
     return advantages, returns
 
 

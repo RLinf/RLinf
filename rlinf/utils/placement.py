@@ -183,8 +183,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             self._placement_mode = PlacementMode.COLLOCATED
             logging.info("Running in collocated mode")
         elif (
-            self._config.get("runner", {}).get("synchronous", False)
-            and self._critic_gpus == self._actor_gpus
+            self._critic_gpus == self._actor_gpus
             and set(self._actor_gpus).isdisjoint(self._rollout_gpus)
             and self._inference_gpus is None
             and self._critic_inference_gpus is None
