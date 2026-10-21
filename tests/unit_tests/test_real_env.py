@@ -2912,6 +2912,224 @@ def test_piper_env_resizes_camera_frames_to_the_declared_shape():
             env.close()
 
 
+def _yam_env(**overrides):
+    """Build a dual YAM env against the faked i2rt and RealSense SDKs."""
+    from rlinf.envs.real.yam import DualYamJointEnv
+    from rlinf.robotics import DualYamConfig
+
+    settings = {
+        "joint_limit_min": [[-2.61799, 0.0, 0.0, -1.69297, -1.5708, -2.0944]] * 2,
+        "joint_limit_max": [[3.14159, 3.66519, 3.14159, 1.5708, 1.5708, 2.0944]] * 2,
+        "max_joint_delta": 0.05,
+        # Do not pace the test at the real 30 Hz control rate.
+        "step_frequency": 1000.0,
+        # The fake cameras capture 64x48.
+        "image_height": 48,
+        "image_width": 64,
+        "manual_episode_control_only": True,
+    }
+    settings.update(overrides)
+    hardware = DualYamConfig(
+        node_rank=0,
+        left_can_channel="can0",
+        right_can_channel="can1",
+        camera_serials=["MOCK0001", "MOCK0002", "MOCK0003"],
+        disable_validate=True,
+    )
+    return DualYamJointEnv(settings, robot_info=_robot_info(hardware))
+
+
+@pytest.mark.placement
+def test_yam_env_holds_each_command_to_a_step_per_tick():
+    """A far target moves one step a tick; a non-finite one holds both arms."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _yam_env()
+        try:
+            observation, _ = env.reset()
+            assert observation["state"]["joint_position"].shape == (14,)
+            assert set(observation["frames"]) == {"top_rgb", "left_rgb", "right_rgb"}
+
+            target = np.zeros(14, dtype=np.float32)
+            target[[0, 7]] = 0.5
+            target[[6, 13]] = 1.5
+            observation, _, _, _, info = env.step(target)
+            state = observation["state"]["joint_position"]
+            assert info["action_clipped"]
+            assert state[[0, 7]] == pytest.approx([0.05, 0.05])
+            assert state[[6, 13]] == pytest.approx([1.0, 1.0])
+
+            target[2] = np.nan
+            observation, _, _, _, info = env.step(target)
+            assert info["action_rejected"] == "non_finite_action"
+            assert observation["state"]["joint_position"] == pytest.approx(state)
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+def test_yam_env_lets_a_joint_past_its_limit_move_back_but_not_further():
+    """A joint read past a task limit is not locked out of every command.
+
+    The fake arm rests at zero, so a J2 lower limit of 0.05 starts it outside.
+    """
+    from robot_mocks import mocked_sdks
+
+    lower = [[-2.61799, 0.05, 0.0, -1.69297, -1.5708, -2.0944]] * 2
+    with mocked_sdks():
+        env = _yam_env(joint_limit_min=lower)
+        try:
+            env.reset()
+            target = np.zeros(14, dtype=np.float32)
+            target[[1, 8]] = -0.5
+            observation, _, _, _, info = env.step(target)
+            assert info["action_rejected"] is None
+            assert observation["state"]["joint_position"][[1, 8]] == pytest.approx(
+                [0.0, 0.0]
+            )
+
+            target[[1, 8]] = 0.5
+            observation, *_ = env.step(target)
+            assert observation["state"]["joint_position"][[1, 8]] == pytest.approx(
+                [0.05, 0.05]
+            )
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+@pytest.mark.parametrize("broken_side", ["left", "right"])
+def test_a_dropped_pico_holds_both_yam_arms_until_both_grips_release(broken_side):
+    """Either controller dropping out holds both arms, even the one still valid.
+
+    Neither arm drives again until both grips have been let go together.
+    """
+    import time
+
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    with mocked_sdks():
+        from rlinf.envs.real.wrappers import build_stack
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        base = _yam_env()
+        base.arm_kinematics = lambda side: FreeToolKinematics()
+        env = build_stack(
+            base,
+            {
+                "teleop": [{"pico": {"drives": "left"}}, {"pico": {"drives": "right"}}],
+                "no_gripper": False,
+                "pico": {"zmq_addr": "tcp://x:1"},
+                "yam_episode": {"wait_for_record_button": False},
+            },
+        )
+
+        def tick(frame):
+            zmq.frame = frame
+            time.sleep(0.05)
+            return env.step(np.zeros(14, dtype=np.float32))[-1]
+
+        held = {"grip": 1.0}
+        broken = {"orientation": [0.0, 0.0, 0.0, 0.0]}
+        healthy_side = "right" if broken_side == "left" else "left"
+        moved = {**held, "position": [0.0, 0.0, -0.1]}
+        try:
+            zmq.frame = pico_packet()
+            env.reset()
+            assert tick(pico_packet())["pico_fault"] is None
+            assert tick(pico_packet(**{healthy_side: held}))[healthy_side]
+
+            measured = base.get_joint_positions().copy()
+            info = tick(
+                pico_packet(
+                    {"X": True, "A": True},
+                    **{broken_side: broken, healthy_side: moved},
+                )
+            )
+            assert info["pico_fault"]
+            assert not info[healthy_side]
+            assert np.allclose(info["accepted_action"], measured)
+
+            info = tick(pico_packet(**{broken_side: broken, healthy_side: moved}))
+            assert not info[healthy_side]
+            assert np.allclose(info["accepted_action"], measured)
+
+            info = tick(pico_packet(**{healthy_side: moved}))
+            assert info["pico_fault"] is not None and not info[healthy_side]
+
+            assert tick(pico_packet())["pico_fault"] is None
+            assert tick(pico_packet(**{healthy_side: held}))[healthy_side]
+        finally:
+            env.close()
+
+
+@pytest.mark.placement
+@pytest.mark.parametrize("left_slow", [False, True])
+def test_yam_pico_checks_successful_targets_after_both_ik_solves(left_slow):
+    import time
+
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    class SlowKinematics(FreeToolKinematics):
+        max_solve_s = 0.03
+        slow = False
+
+        def solve(self, target, seed, gripper):
+            if self.slow:
+                time.sleep(0.15)
+            return super().solve(target, seed, gripper)
+
+    with mocked_sdks():
+        from rlinf.envs.real.wrappers import build_stack
+        from rlinf.robotics.parts.transports import pico as transport
+
+        solvers = {side: SlowKinematics() for side in ("left", "right")}
+        base = _yam_env()
+        base.arm_kinematics = lambda side: solvers[side]
+        env = build_stack(
+            base,
+            {
+                "teleop": [{"pico": {"drives": "left"}}, {"pico": {"drives": "right"}}],
+                "no_gripper": False,
+                "pico": {"zmq_addr": "tcp://x:1", "max_tick_s": 0.1},
+                "yam_episode": {"wait_for_record_button": False},
+            },
+        )
+
+        def tick(frame):
+            transport.zmq.frame = frame
+            time.sleep(0.05)
+            return env.step(np.zeros(14, dtype=np.float32))[-1]
+
+        held = {"grip": 1.0}
+        moved = {**held, "position": [0.0, 0.0, -0.1]}
+        try:
+            transport.zmq.frame = pico_packet()
+            env.reset()
+            assert tick(pico_packet())["pico_fault"] is None
+            assert tick(pico_packet(left=held, right=held))["left"]
+            measured = base.get_joint_positions().copy()
+            solvers["left"].slow = left_slow
+            solvers["right"].slow = True
+            info = tick(pico_packet(left=moved, right=moved))
+            assert info["right_ik_fault"] == "solve_timeout"
+            if left_slow:
+                assert info["left_ik_fault"] == "solve_timeout"
+                assert info["pico_fault"] is None
+            else:
+                assert info["pico_fault"] == "left:stale_after_ik"
+                assert not info["left"] and not info["right"]
+            assert np.allclose(info["accepted_action"], measured)
+        finally:
+            env.close()
+
+
 def test_so101_leader_reports_radians_and_a_zero_to_one_grip():
     """The leader is the same servos as the follower, so it converts alike."""
     from robot_mocks import mocked_sdks

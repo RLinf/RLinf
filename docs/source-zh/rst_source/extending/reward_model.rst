@@ -27,19 +27,20 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 1.1 启用数据采集
 """"""""""""""""
 
-在 YAML 配置文件的 ``env`` 部分开启 ``data_collection``：
+在 YAML 配置文件的 ``env.eval`` 下开启 ``data_collection``；采集训练环境的数据时，改放在 ``env.train`` 下：
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-启动训练或评估后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
-每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
+启动训练或评估后，``export_format: pickle_episode`` 的每个 episode 会写入
+``{save_dir}/pickle_episode/`` 下一个独立的 ``.pkl`` 文件，便于后续离线预处理。
 
 对于 ResNet reward，可以直接使用 ``maniskill_ppo_mlp_collect`` 采集数据。该配置在 ManiSkill
 PickCube 上训练基于状态的 MLP PPO 策略，并在周期性评估（每隔 ``runner.val_check_interval`` 步）时
@@ -72,7 +73,7 @@ PickCube 上训练基于状态的 MLP PPO 策略，并在周期性评估（每�
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 默认会生成：
@@ -114,7 +115,7 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 .. code-block:: bash
 
    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -802,7 +803,7 @@ SGLang 路径额外说明：
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 

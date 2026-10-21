@@ -445,9 +445,9 @@ PICO operation:
 
 The collection script writes under ``logs/<timestamp>/``:
 
-* replay-buffer trajectories: ``demos/``
-* LeRobot data: ``collected_data/rank_0/id_0/``; later shards are ``id_1``,
-  ``id_2``
+* replay-buffer trajectories: ``demo_buffer/``
+* LeRobot data: ``lerobot_dataset/rank_0/id_0/``; later shards
+  are ``id_1``, ``id_2``
 
 PICO dual-arm collection already uses the ``realworld_dual_franka_tcp_rot6d``
 environment, so the actions are already tcp_rot6d. You do not need to run the
