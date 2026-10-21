@@ -53,6 +53,7 @@ class _BenchmarkRunner:
             "synchronous": cfg.runner.synchronous,
             "steps": self.global_steps,
             "batch_size": cfg.data.rollout_batch_size,
+            "critic_update_epochs": cfg.critic.get("update_epochs", 1),
             "initialization_seconds": self.initialized - self.initialization_started,
             "training_seconds": finished - self.initialized,
             "seconds_per_step": (finished - self.initialized) / self.global_steps,

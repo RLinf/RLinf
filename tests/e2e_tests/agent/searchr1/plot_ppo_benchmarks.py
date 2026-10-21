@@ -65,7 +65,7 @@ def read_run(directory: Path, expected_steps: int) -> tuple[dict, np.ndarray]:
         else "critic_update/critic/update_success"
     )
     critic_updates = events.Scalars(critic_tag)
-    assert len(critic_updates) == expected_steps * (1 if result["synchronous"] else 2)
+    assert len(critic_updates) == expected_steps * result["critic_update_epochs"]
     result["critic_successful_updates"] = sum(point.value for point in critic_updates)
     result["critic_skipped_optimizer_calls"] = [
         index + 1 for index, point in enumerate(critic_updates) if not point.value

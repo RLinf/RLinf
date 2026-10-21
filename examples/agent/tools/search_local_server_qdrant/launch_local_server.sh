@@ -3,16 +3,17 @@
 set -ex
 
 # Launch step 1: set your wiki_dataset pages path
-pages_file=/mnt/public/xzxuan/data/Wiki-2018-Corpus/wiki_webpages.jsonl
+WIKI2018_DIR=/your/wiki_dataset/path
+pages_file=$WIKI2018_DIR/wiki_webpages.jsonl
 
 # Launch step 2: set your retriever model path
 retriever_name=e5
-retriever_path=/mnt/public/xzxuan/model/e5-base-v2
+retriever_path=/your/retriever/model/path
 
 # Qdrant configuration
 qdrant_url=http://localhost:6333
-qdrant_collection_name=wiki_collection_m32_cef512
-qdrant_search_param='{"hnsw_ef":256}'
+qdrant_collection_name=wiki_collection
+qdrant_search_param='{}'
 
 CONFIG_PATH="$( realpath "$( dirname "${BASH_SOURCE[0]}" )"  )"
 python3 -u ${CONFIG_PATH}/local_retrieval_server.py \

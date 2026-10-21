@@ -1,6 +1,6 @@
 defaults:
-- qwen2.5-1.5b-ppo
-- _self_
+  - qwen2.5-1.5b-ppo
+  - _self_
 runner:
   experiment_name: searchr1-ppo-ci-shared
 cluster:

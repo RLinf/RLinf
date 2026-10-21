@@ -448,6 +448,20 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-split
 
+      - name: SearchR1 asynchronous PPO shared
+        timeout-minutes: 30
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-sao-shared
+
+      - name: SearchR1 asynchronous PPO split
+        timeout-minutes: 30
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-sao-split
+
       - name: SearchR1 synchronous PPO separate
         timeout-minutes: 30
         run: |

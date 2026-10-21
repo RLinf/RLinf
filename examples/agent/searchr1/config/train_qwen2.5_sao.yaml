@@ -4,7 +4,7 @@ defaults:
 
 runner:
   synchronous: false
-  experiment_name: searchr1-sao-shared-cri-up1
+  experiment_name: searchr1-sao-shared
 
 rollout:
   max_weight_staleness: null

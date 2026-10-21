@@ -347,6 +347,29 @@ def test_async_searchr1_config_and_staleness_defaults(
     assert cfg.critic.update_epochs == update_epochs
 
 
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "qwen2.5-1.5b-ppo-shared",
+        "qwen2.5-1.5b-ppo-split",
+        "qwen2.5-1.5b-ppo-separate",
+        "qwen2.5-1.5b-sao-shared",
+        "qwen2.5-1.5b-sao-split",
+    ],
+)
+def test_searchr1_ci_recipes_validate(config_name):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_searchr1_cfg
+
+    config_dir = Path(__file__).resolve().parents[1] / "e2e_tests/agent/searchr1"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name=config_name)
+    validate_searchr1_cfg(cfg)
+    assert cfg.algorithm.n_minibatches == 1
+    assert cfg.runner.synchronous == ("-ppo-" in config_name)
+
+
 def test_async_searchr1_preserves_explicit_rollout_limits():
     from hydra import compose, initialize_config_dir
 

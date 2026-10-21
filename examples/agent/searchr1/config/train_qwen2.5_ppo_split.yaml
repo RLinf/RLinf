@@ -1,8 +1,8 @@
 defaults:
-- train_qwen2.5_ppo
-- _self_
+  - train_qwen2.5_ppo
+  - _self_
 runner:
-  experiment_name: searchr1-ppo-split-fixed
+  experiment_name: searchr1-ppo-split
 cluster:
   component_placement:
     actor: 4-7

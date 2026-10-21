@@ -27,6 +27,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default="searchr1-ppo-bsz1024-200")
     parser.add_argument("--steps", type=int, default=200)
+    parser.add_argument("--batch-size", type=int, default=1024)
+    parser.add_argument("--critic-updates", type=int, default=2)
     parser.add_argument("--output-dir", type=Path, default=Path("logs"))
     parser.add_argument(
         "--modes",
@@ -69,7 +71,7 @@ def main() -> None:
         "runner.save_interval=50",
         "runner.val_check_interval=-1",
         f"runner.output_dir={output}",
-        "data.rollout_batch_size=1024",
+        f"data.rollout_batch_size={args.batch_size}",
         "algorithm.group_size=1",
         "algorithm.n_minibatches=1",
         "agentloop.truncate_response=false",
@@ -125,6 +127,7 @@ def main() -> None:
             configs[mode],
             f"runner.experiment_name={args.name}-{mode}",
             *common,
+            f"critic.update_epochs={args.critic_updates if mode.startswith('async') else 1}",
         ]
         record = {"mode": mode, "command": command, "started": time.time()}
         runs.append(record)
