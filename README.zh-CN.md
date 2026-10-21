@@ -9,6 +9,7 @@
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/微信交流群-green?logo=wechat&amp"></a>
+<a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20%E9%A2%91%E9%81%93?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack 频道"></a>
 </div>
 
 <div align="center">
@@ -30,6 +31,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/10] 🔥 RLinf 支持沐曦（MetaX MACA）GPU。PR：[沐曦 GPU 支持（#1656）](https://github.com/RLinf/RLinf/pull/1656)。
 - [2026/09] 🔥 RLinf 重构真机机器人与环境，用统一的 robotics 接口分开管理硬件、任务和 rollout wrapper。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)、[机器人架构](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics_architecture.html)、[真机任务与环境](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/realworld_envs.html)、[添加机器人](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/new_robot.html)、[新增真机任务](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/new_task.html)、[遥操作](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/teleoperation.html)。
 - [2026/09] 🔥 RLinf 支持 π₀-FAST 强化学习。文档：[π₀-FAST](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0_fast.html)。
 - [2026/09] 🔥 RLinf 支持壁仞 GPU。PR：[壁仞 GPU 支持（#1581）](https://github.com/RLinf/RLinf/pull/1581)。
@@ -97,7 +99,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/01] 🔥 基于[OpenSora World Model](https://github.com/hpcaitech/Open-Sora)的强化学习微调已经上线！文档：[RL on OpenSora World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opensora.html)。
 - [2026/01] 🔥 基于[RoboTwin](https://github.com/robotwin-Platform/RoboTwin)的强化学习微调已经上线！文档：[RL on RoboTwin](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robotwin.html)。
 - [2026/01] 🔥 RLinf 支持流匹配策略的 SAC 训练，包含仿真和Franka真机环境。文档：[SAC-Flow](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sac_flow.html)，论文：[SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling](https://arxiv.org/abs/2509.25756)。
-- [2025/12] 🔥 RLinf支持[Search-R1](https://github.com/PeterGriffinJin/Search-R1)的强化学习微调，相比原版实现加速 55%！ 文档: [Search-R1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1.html)。
+- [2025/12] 🔥 RLinf支持[Search-R1](https://github.com/PeterGriffinJin/Search-R1)的强化学习微调，相比原版实现加速 55%！ 文档: [Search-R1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/index.html)。
 - [2025/12] 🔥 RLinf v0.2-pre 发布！真机Franka的强化学习已经上线。 文档：[RL on Franka in the Real World](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka.html)。
 - [2025/12] 🔥 基于[RoboCasa](https://github.com/robocasa/robocasa)的强化学习微调已经上线! 文档：[RL on RoboCasa](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robocasa.html)。
 - [2025/12] 🎉 RLinf正式发布[v0.1](https://github.com/RLinf/RLinf/releases/tag/v0.1)版本。
@@ -310,6 +312,7 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 | [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
+| [DreamZero](docs/source-zh/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — |
 
 ### 智能体强化学习
 
@@ -325,7 +328,7 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
           <li>
-            <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1.html">
+            <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/index.html">
               SearchR1
             </a> ✅
           </li>

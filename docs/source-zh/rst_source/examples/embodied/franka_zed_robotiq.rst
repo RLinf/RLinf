@@ -321,11 +321,11 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
      - ``spacemouse``
      - 采集过程中由哪种设备驱动机械臂。
    * - ``env.eval.data_collection.save_dir``
-     - ``${runner.logger.log_path}/collected_data``
-     - 采集数据的保存目录。
+     - ``${runner.logger.log_path}``
+     - 采集根目录。LeRobot 写到 ``{save_dir}/lerobot_dataset``，replay buffer 写到 ``{save_dir}/demo_buffer``。
    * - ``env.eval.data_collection.export_format``
-     - ``"lerobot"``
-     - 采集数据的导出格式。
+     - ``[replay_buffer, lerobot_dataset]``
+     - 同时写出 replay buffer 与 LeRobot。真机采集只接受 ``replay_buffer``、``pickle_episode``、``lerobot_dataset``。
    * - ``env.eval.data_collection.only_success``
      - ``True``
      - 仅保存成功的 episode。
@@ -379,7 +379,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
    bash examples/embodiment/collect_data.sh <config_name>
 
 采集过程中使用 SpaceMouse 遥操作机器人。脚本会在达到配置的 episode 数量后
-自动终止，数据保存在 ``logs/<时间戳>-<配置名>/collected_data/`` 目录下。
+自动终止，数据保存在 ``logs/<时间戳>-<配置名>/`` 下的 ``demo_buffer/`` 和 ``lerobot_dataset/``。
 
 采集完成后，将数据上传到训练节点，并在训练配置中将
 ``algorithm.demo_buffer.load_path`` 字段设置为数据路径。
