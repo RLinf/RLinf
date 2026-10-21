@@ -160,6 +160,8 @@ Select the data format with ``actor.model.openpi.config_name``:
      - LIBERO
    * - ``pi0_realworld``
      - Real-world Franka
+   * - ``pi05_yam_joint``
+     - Real-world Dual YAM
    * - ``pi0_aloha_robotwin``
      - RoboTwin (ALOHA)
    * - ``pi05_behavior``

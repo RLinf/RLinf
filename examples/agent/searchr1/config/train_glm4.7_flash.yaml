@@ -1,0 +1,318 @@
+# Search-R1 (GRPO) training on GLM-4.7-Flash via the AgenticTokenizer.
+#
+# Data format: GLM needs message-list samples ({"messages": [system, user]})
+# and data.apply_chat_template: True -- the HF `RLinf/Search-R1-Data` release
+# is pre-rendered with the Qwen chat template and cannot be used as-is.
+#
+# Parallelism (8x A100-80G, collocated), validated with megatron + mbridge:
+#   actor  (megatron): TP=4 (20 attn heads / 4 = 5), EP=8, ETP=1, DP=2
+#   rollout (sglang) : tp=8 (engine world size), dp_size=2 (attn_dp),
+#                      ep_size=8, moe_dense_tp_size=1, enable_dp_attention
+#
+# Run: bash examples/agent/searchr1/run_train.sh train_glm4.7_flash
+# (needs a retrieval server at tools.search.server_addr)
+
+defaults:
+  - override hydra/job_logging: stdout
+
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1
+  max_steps: -1
+
+  val_check_interval: 25
+  save_interval: 25
+
+  seq_length: 8192
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 8192
+
+  resume_dir: null
+  experiment_name: searchr1-grpo-glm4.7-flash
+  output_dir: ../results
+
+
+algorithm:
+  group_size: 4
+  n_minibatches: 4
+  training_batch_size_per_gpu: 1 # micro batch size
+  rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_batch_size_per_gpu to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 1
+
+  # val rollout mbs
+  val_rollout_batch_size_per_gpu: 4
+
+  recompute_logprobs: True
+  shuffle_rollout: True
+
+  # GRPO loss params
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: False
+  clip_ratio_c: null
+  clip_ratio_high: 0.28
+  adv_type: grpo_dynamic
+  loss_scales: ["group_level", "agent_level", "turn_level"] # used for implementing our GRPO alg. Details in `rlinf/algorithms/loss_scales.py`
+  advantage_mode: trajectory
+  normalize_advantages: False
+  early_stop_imp_ratio: 1000000000.0
+  use_valid_token_scale: False
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+    stop: ["</search>", "?</search>", "?</search>\n", "?</search>\n\n", "?</search><", "?</search><\n", "</search>\n", "</search>\n\n", "</search><", "</search><\n", "</search><|", "</answer>", "</answer><", "</answer><|", "</answer>\n", "</answer>\n\n"]
+
+
+data:
+  type: math
+  max_prompt_length: 4096
+  filter_prompt_by_length: True
+  rollout_batch_size: 512
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: True
+  apply_chat_template_kwargs:
+    enable_thinking: false   # no-think run: generation prompt ends with the reasoning close marker
+    clear_thinking: false    # keep reasoning blocks of earlier turns in the prompt
+  shuffle: True
+  validation_shuffle: True
+  seed: 42
+  train_data_paths: ["/path/to/data/searchr1_train_glm.jsonl"]
+
+
+agentloop:
+  group_name: "AgentLoopGroup"
+  toolcall_parser: "searchr1-qwen" # text-protocol search parser, model-agnostic
+  agentic_tokenizer: "glm47" # GLMAgenticTokenizer; search-r1 uses its text tool-response path
+  max_turns: 2
+  max_tool_response_length: 500
+  tool_response_truncate_side: "right"
+  print_outputs: False
+  is_dynamic_rollout_batch: True
+
+
+# Tools configuration for AgentLoop
+tools:
+  search:
+    server_addr: 0.0.0.0:8000
+    topk: 3
+
+
+rollout:
+  group_name: "RolloutGroup"
+
+  gpu_memory_utilization: 0.5
+  weight_reload: sync
+
+  model:
+    model_path: /path/to/model/GLM-4.7-Flash  # https://huggingface.co/zai-org/GLM-4.7-Flash
+    model_type: glm4_moe_lite
+    precision: ${actor.model.precision}
+  enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  distributed_executor_backend: mp   # ray or mp
+  disable_log_stats: False
+  detokenize: True              # search-r1 decodes the tool response for parsing
+  padding: null                 # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  eos: null                     # will be tokenizer.eos_token_id if null.
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  rollout_backend: sglang       # here choose which backend to rollout,support [sglang, vllm]
+  sglang:
+    attention_backend: triton   # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False    # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128   # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+    # must match agentloop.agentic_tokenizer=glm47 (validated in config.py)
+    tool_call_parser: glm47
+    # GLM MoE parallelism on A100 (sm80, no deepep): pure EP + dp attention
+    enable_ep_moe: true   # EP on (fallback: ep_size=tp when ep_size unset)
+    ep_size: 8             # expert parallel size (num_experts//ep per rank); moe_tp = tp//ep//moe_dp = 1 (pure EP)
+    moe_dp_size: 1         # MoE data parallel (expert replication); 1 = no replication
+    # DP-attention: decouple attn TP from MoE TP (see sglang_worker.py)
+    dp_size: 2             # attn_dp -> attn_tp_size = 8//2 = 4 (20 heads/4=5)
+    enable_dp_attention: true
+    moe_dense_tp_size: 1   # dense MLP (first N non-MoE FFN) replicated
+    moe_a2a_backend: none  # A100 sm80: FusedMoE (no deepep)
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+    max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
+    torch_profiler_dir: null    # if not null, vllm will enable torch profiler and save the result to the specified directory.
+
+  tensor_parallel_size: 8   # sglang engine world size (1 engine on 8 GPUs)
+  pipeline_parallel_size: 1
+
+  validate_weight_first_sync: True # validate the weight norm between load model and first sync.
+  validate_weight: False        # whether to send all weights at first for weight comparison.
+  validate_save_dir: null       # the directory to save the weights for comparison. if validate_weight is True, this will be used to save the weights for comparison.
+  print_outputs: False          # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+
+  max_running_requests: 512    # the maximum number of running requests in the rollout engine (256 per DP with attn DP=2).
+  cuda_graph_max_bs: 256        # the maximum batch size for cuda graph. if the batch size is larger than this, cuda graph will not be used.
+
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: False
+  reward_type: 'searchr1'
+  reward_scale: 1.0
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: megatron
+  enable_dp_load_balance: True
+  calculate_flops: False
+  seed: 42
+
+  mcore_gpt: True
+  spec_name: decoder_gpt
+
+  offload_optimizer: True
+  offload_weight: True
+  offload_grad: True
+
+  model:
+    model_type: glm4_moe_lite
+    precision: bf16
+
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+
+    megatron_checkpoint: null
+
+    # Decoupled attn/MoE: attention TP=4 (20 heads ok), MoE EP=8 ETP=1.
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 8
+    expert_tensor_parallel_size: 1   # decouple expert fc TP from attn TP
+
+    activation: swiglu
+    normalization: rmsnorm
+    position_embedding_type: rope
+    sequence_parallel: True
+
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+    apply_rope_fusion: False
+    bias_dropout_fusion: False
+    persist_layer_norm: False
+    bias_activation_fusion: False
+    attention_softmax_in_fp32: True
+    batch_p2p_comm: False
+    variable_seq_lengths: True
+    gradient_accumulation_fusion: False
+    moe_token_dispatcher_type: alltoall
+    moe_grouped_gemm: te
+    multi_latent_attention: True   # GLM MLA (dims filled by bridge from HF)
+    moe_aux_loss_coeff: 0
+    moe_router_bias_update_rate: 0
+    use_cpu_initialization: False
+
+  optim:
+    optimizer: adam
+    lr: 1.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.98
+    adam_eps: 1.0e-8
+    min_lr: 0.0
+    weight_decay: 0.1
+    clip_grad: 1.0
+    loss_scale: 65536
+
+    # megatron config
+    use_distributed_optimizer: True
+    overlap_grad_reduce: True
+    overlap_param_gather: True
+    optimizer_enable_pin: False
+    overlap_param_gather_with_optimizer_step: False
+    optimizer_cpu_offload: True
+    optimizer_offload_fraction: 0.5   # balance GPU/CPU (validated at 0.5)
+    use_precision_aware_optimizer: True
+
+    bf16: False
+    fp16: False
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-6
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: False
+    trust_remote_code: True  # injected into rollout.model.trust_remote_code by config.py
+    padding_side: 'right'
+
+  megatron:
+    mbridge: True   # in-process HF weight loading; skips the offline convert_hf_to_mg copy
+    ddp_bucket_size: null
+    distributed_backend: nccl # Support 'nccl' and 'gloo'
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_dist_ckpt: False
+    tp_comm_bootstrap_backend: nccl
+    tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
+    use_hf_ckpt: True # if true, will transfer hf model to generate megatron checkpoint and use it for training.
+    use_profiler: False # if true, will enable torch profiler when training, pay attention that it has influence on performance
+    accumulate_allreduce_grads_in_fp32: True
+
+    ckpt_convertor: # config for ckpt convertor
+      model: GLM-4.7-Flash
+      hf_model_path: ${rollout.model.model_path} # path to the hf model
+      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+
+
+critic:
+  use_critic_model: False
