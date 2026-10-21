@@ -1,5 +1,3 @@
-:orphan:
-
 Diffusion Model Fine-Tuning with ART
 ====================================
 
