@@ -1,6 +1,5 @@
 defaults:
   - env/bwm_robotwin_adjust_bottle@env.train
-  - env/robotwin_adjust_bottle@env.eval
   - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
@@ -77,37 +76,6 @@ env:
     total_num_envs: 48
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
-  eval:
-    rollout_epoch: 1
-    total_num_envs: 48
-    auto_reset: True
-    ignore_terminations: True
-    max_episode_steps: 200
-    reward_coef: ${algorithm.reward_coef}
-    max_steps_per_rollout_epoch: 200
-    group_size: 1
-    use_fixed_reset_state_ids: True
-    is_eval: True
-    assets_path: "/path/to/robotwin_assets"
-    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
-    video_cfg:
-      save_video: True
-      video_base_dir: ${runner.logger.log_path}/video/eval
-    center_crop: False
-    task_config:
-      embodiment: [aloha-agilex]
-      camera:
-        # The 640x480 head view the world model was fine-tuned on, and nothing else.
-        head_camera_type: Large_D435
-        collect_wrist_camera: false
-      domain_randomization:
-        random_background: false
-        cluttered_table: false
-        clean_background_rate: 1
-        random_head_camera_dis: 0
-        random_table_height: 0
-        random_light: false
-        crazy_random_light_rate: 0
 
 rollout:
   group_name: "RolloutGroup"
@@ -133,13 +101,10 @@ actor:
     num_action_chunks: 50
     action_dim: 14
     add_value_head: True
-    use_proprio: True
     num_steps: 4
     openpi:
-      task: rl
       config_name: "pi05_aloha_robotwin"
       num_images_in_input: 1
-      noise_level: 0.5
       value_after_vlm: True
       # The width this recipe was tuned with; the value_after_vlm default is 1024/512/256.
       value_head_hidden_sizes: [512, 256, 128]
@@ -161,13 +126,7 @@ actor:
     critic_warmup_steps: 8
 
   fsdp_config:
-    strategy: "fsdp"
     sharding_strategy: "no_shard" # openpi supports no_shard only
-    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
-    mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
 
 reward:
   use_reward_model: False
