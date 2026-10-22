@@ -421,6 +421,23 @@ amd_gfx_is_cdna() {
     esac
 }
 
+# Whether flash-attn needs its Triton backend on these AMD targets. The ROCm
+# flash-attn wheels install_flash_attn selects carry Composable Kernel code for
+# gfx90a and gfx942 only; on any other ISA the default backend crashes on the
+# first call. $1 is the detected ISA; without a visible GPU (a docker build)
+# the targets come from PYTORCH_ROCM_ARCH. Unknown targets keep the default.
+amd_flash_attn_needs_triton() {
+    local archs="${1:-${PYTORCH_ROCM_ARCH:-}}" arch
+    [ -n "$archs" ] || return 1
+    for arch in ${archs//;/ }; do
+        case "$arch" in
+            gfx90a|gfx942) ;;
+            *) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # Find a torch version on the PyTorch wheel index that has a +rocm<rocm_ver>
 # Linux x86_64 wheel matching PYTHON_VERSION's cpXY tag. Prefers the smallest
 # version >= 2.5; falls back to the highest available wheel if no >= 2.5 wheel
@@ -715,6 +732,11 @@ configure_amd() {
             "export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
             "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
         )
+    fi
+    # flash-attn selects its backend at import time from this variable.
+    if amd_flash_attn_needs_triton "$gfx_arch"; then
+        echo "[install.sh] flash-attn will use its Triton backend on ${gfx_arch:-${PYTORCH_ROCM_ARCH}}."
+        PLATFORM_VENV_EXPORTS+=("export FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE")
     fi
     PLATFORM_FLASH_ATTN_INSTALL=1
     PLATFORM_FLASH_ATTN_PREBUILT=1
