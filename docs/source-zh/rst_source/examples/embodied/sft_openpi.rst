@@ -210,6 +210,23 @@ Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 
 
 BEHAVIOR 不跑上面的脚本，而是用 ``actor.model.openpi_data.norm_stats_path`` 指向已有的 ``{assets}/{asset_id}/norm_stats.json``。
 
+.. note::
+
+   发布的统计量和原始数据集统计量可能差别很大——这是预期行为，不是文件过期。以 LIBERO 为例，``pi0_libero`` 等 config 设置了 ``extra_delta_transform=True``\（见 ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``），会在输入流水线里追加一个 ``DeltaActions`` 变换：前 6 个动作维变成 ``actions - state``\（夹爪保持绝对值）。``calculate_norm_stats.py`` 是在数据变换**之后**统计的，所以存储的 ``actions`` 统计量描述的是变换后的动作，和训练/推理实际使用的归一化一致。同理，RLinf LIBERO π₀ SFT 的 ``norm_stats.json`` 与 ``physical-intelligence/libero`` 数据集自带的 ``meta/stats.json`` 不相等（``state`` 一致，``actions`` 不一致）。推理时务必使用 checkpoint 自带的 ``norm_stats.json``\，不要替换成数据集统计量。可在 CPU 上用单条 episode 校验统计文件：
+
+   .. code:: bash
+
+      # 原始统计 —— 与数据集 meta/stats.json 对比：
+      python toolkits/lerobot/verify_norm_stats.py \
+          --parquet "/path/to/libero/data/chunk-000/episode_*.parquet" \
+          --norm-stats /path/to/dataset/meta/stats.json
+
+      # 流水线统计 —— 与 checkpoint norm_stats.json 对比（加 --extra-delta）：
+      python toolkits/lerobot/verify_norm_stats.py \
+          --parquet "/path/to/libero/data/chunk-000/episode_*.parquet" \
+          --norm-stats /path/to/checkpoint/norm_stats.json --extra-delta
+
+
 安装
 ----------------------------------------
 

@@ -249,6 +249,35 @@ BEHAVIOR does not use that script. Point
 ``actor.model.openpi_data.norm_stats_path`` at an existing
 ``{assets}/{asset_id}/norm_stats.json``.
 
+.. note::
+
+   The released stats can differ a lot from the raw dataset stats — this is
+   expected, not staleness. For LIBERO, configs such as ``pi0_libero`` set
+   ``extra_delta_transform=True`` (``rlinf/models/embodiment/openpi/dataconfig/__init__.py``),
+   which adds an extra ``DeltaActions`` transform to the input pipeline:
+   the first 6 action dims become ``actions - state`` (gripper stays
+   absolute). ``calculate_norm_stats.py`` runs *after* the data transforms,
+   so the stored ``actions`` stats describe the transformed actions, and
+   they match what training and inference actually normalize with. For the
+   same reason, RLinf LIBERO π₀ SFT ``norm_stats.json`` do not equal the
+   raw ``physical-intelligence/libero`` dataset ``meta/stats.json``
+   (``state`` stats match; ``actions`` stats do not). Always use the
+   checkpoint's own ``norm_stats.json`` at inference and do not substitute
+   the dataset stats. To sanity-check a stats file against episodes on CPU:
+
+   .. code:: bash
+
+      # Raw stats — compare against the dataset meta/stats.json:
+      python toolkits/lerobot/verify_norm_stats.py \
+          --parquet "/path/to/libero/data/chunk-000/episode_*.parquet" \
+          --norm-stats /path/to/dataset/meta/stats.json
+
+      # Pipeline stats — compare against the checkpoint norm_stats.json:
+      python toolkits/lerobot/verify_norm_stats.py \
+          --parquet "/path/to/libero/data/chunk-000/episode_*.parquet" \
+          --norm-stats /path/to/checkpoint/norm_stats.json --extra-delta
+
+
 Installation
 ------------
 
