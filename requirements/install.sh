@@ -113,7 +113,11 @@ FA4_KEPT=0
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 USE_MIRRORS=0
-GITHUB_PREFIX=""
+# GitHub proxy prefix for clones and release downloads. Read from the
+# environment so a caller (e.g. the Docker build arg of the same name) can pick
+# a proxy that is fast on its network. It only takes effect with --use-mirror,
+# where it defaults to https://gh-proxy.com/ (see setup_mirror).
+GITHUB_PREFIX="${GITHUB_PREFIX:-}"
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
@@ -175,7 +179,9 @@ Common options:
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
                            or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
-    --use-mirror           Use mirrors for faster downloads.
+    --use-mirror           Use mirrors for faster downloads. GitHub downloads go through
+                           the proxy in the GITHUB_PREFIX environment variable
+                           (default https://gh-proxy.com/).
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support
@@ -1811,6 +1817,8 @@ setup_mirror() {
         export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
         export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
         export GIT_CONFIG_COUNT=$((idx + 1))
+    else
+        GITHUB_PREFIX=""
     fi
 }
 

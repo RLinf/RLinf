@@ -150,6 +150,10 @@ ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
 ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
 ENV HF_ENDPOINT=${HF_ENDPOINT:-"https://hf-mirror.com"}
+# GitHub proxy for install.sh under --use-mirror. Empty keeps its default,
+# https://gh-proxy.com/.
+ARG GITHUB_PREFIX=
+ENV GITHUB_PREFIX=${GITHUB_PREFIX}
 
 RUN pip config set global.index-url ${PIP_INDEX}
 RUN python3 -m pip install -i ${PIP_INDEX} --upgrade pip setuptools wheel uv
