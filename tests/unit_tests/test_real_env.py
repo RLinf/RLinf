@@ -63,6 +63,7 @@ from rlinf.envs.real.wrappers.teleop.intervention import (  # noqa: E402
     TeleopSample,
 )
 from rlinf.envs.real.xsquare.base import Turtle2Env, Turtle2EnvConfig
+from rlinf.envs.sim.robotwin.patch_camera_near import patch_robotwin
 from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.robotics import (
     DualFrankaConfig,
@@ -4962,3 +4963,51 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
 
     assert selected_seed_0 == selected_seed_0_again
     assert selected_seed_0 != selected_seed_1
+
+
+def _fake_robotwin_camera(tmp_path, near_line="        near, far = 0.1, 100\n"):
+    camera = tmp_path / "envs" / "camera" / "camera.py"
+    camera.parent.mkdir(parents=True)
+    camera.write_text(
+        "import sapien.core as sapien\n"
+        "import os\n"
+        "\n"
+        "class Camera:\n"
+        "    def load_camera(self, scene):\n"
+        f"{near_line}"
+        "        return near, far\n"
+    )
+    return camera
+
+
+def test_robotwin_camera_patch_reads_the_near_plane_from_the_environment(
+    tmp_path, monkeypatch
+):
+    camera = _fake_robotwin_camera(tmp_path)
+
+    assert patch_robotwin(str(tmp_path)) is True
+
+    namespace = {}
+    exec(camera.read_text(), namespace)
+    monkeypatch.delenv("ROBOTWIN_CAMERA_NEAR", raising=False)
+    assert namespace["Camera"]().load_camera(None) == (0.01, 100)
+    monkeypatch.setenv("ROBOTWIN_CAMERA_NEAR", "0.1")
+    assert namespace["Camera"]().load_camera(None) == (0.1, 100)
+
+
+def test_robotwin_camera_patch_is_idempotent(tmp_path):
+    camera = _fake_robotwin_camera(tmp_path)
+    patch_robotwin(str(tmp_path))
+    patched = camera.read_text()
+
+    assert patch_robotwin(str(tmp_path)) is False
+    assert camera.read_text() == patched
+
+
+def test_robotwin_camera_patch_refuses_unknown_robotwin_code(tmp_path):
+    camera = _fake_robotwin_camera(tmp_path, near_line="        near, far = 0.05, 50\n")
+    original = camera.read_text()
+
+    with pytest.raises(RuntimeError, match="RoboTwin has changed"):
+        patch_robotwin(str(tmp_path))
+    assert camera.read_text() == original
