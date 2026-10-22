@@ -107,8 +107,10 @@ class _ScriptedRewardModel(torch.nn.Module):
     def __init__(self, scores):
         super().__init__()
         self.scores = list(scores)
+        self.calls = 0
 
     def predict_rew(self, frames):
+        self.calls += 1
         return torch.full((frames.shape[0],), self.scores.pop(0), device=frames.device)
 
 
@@ -124,13 +126,14 @@ def test_world_model_env_episode_reward_pays_the_window_peak_at_the_limit(
     monkeypatch.setitem(
         registry._REGISTRY, "unit_test_scripted", _ScriptedRewardBackend
     )
-    # Episodes are two chunks of two frames; frames 1-2 precede reward_first_frame.
+    # Episodes are two chunks of two frames; frames 1-2 precede reward_first_frame,
+    # so the first chunk of each episode is not scored at all.
     env = _blank_world_model_env(
         tmp_path,
         monkeypatch,
         reward=0.0,
         backend="unit_test_scripted",
-        unit_test_scores=[1.0, 1.0, 1.0, 0.5],
+        unit_test_scores=[1.0, 0.5],
         reward_mode="episode_window_max",
         reward_first_frame=3,
         terminate_at_max_episode_steps=True,
@@ -139,9 +142,10 @@ def test_world_model_env_episode_reward_pays_the_window_peak_at_the_limit(
 
     rewards = [env.chunk_step(actions)[1] for _ in range(4)]
 
+    assert env.reward_model.calls == 2
     assert not rewards[0].any()
     assert rewards[1][:, -1].eq(1).all() and not rewards[1][:, :-1].any()
-    # The next episode's early 1.0 is masked and the previous peak does not carry over.
+    # The previous episode's peak does not carry over.
     assert not rewards[2].any() and not rewards[3].any()
 
 

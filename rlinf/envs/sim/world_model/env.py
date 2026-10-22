@@ -539,6 +539,18 @@ class WorldModelEnv:
         if self.reward_model is None:
             raise ValueError("Reward model is not loaded")
 
+        if self.reward_mode == "episode_window_max":
+            # elapsed_steps already counts this chunk; frames are numbered from 1.
+            frame_idx = (
+                self._elapsed_steps[:, None]
+                - self.chunk
+                + 1
+                + torch.arange(self.chunk, device=self.device)
+            )
+            scored = frame_idx >= self.cfg.reward_first_frame
+            if not scored.any():
+                return torch.zeros((self.num_envs, self.chunk), device=self.device)
+
         num_envs, c, v, t, h, w = self.current_obs.shape
         # [num_envs, T, 3, v, h, w], then the chunk's own frames only
         chunk_obs = self.current_obs.permute(0, 3, 1, 2, 4, 5)[:, -self.chunk :]
@@ -557,16 +569,7 @@ class WorldModelEnv:
         if self.reward_mode == "chunk":
             return rewards
 
-        # elapsed_steps already counts this chunk; frames are numbered from 1.
-        frame_idx = (
-            self._elapsed_steps[:, None]
-            - self.chunk
-            + 1
-            + torch.arange(self.chunk, device=self.device)
-        )
-        rewards = torch.where(
-            frame_idx >= self.cfg.reward_first_frame, rewards, torch.zeros_like(rewards)
-        )
+        rewards = torch.where(scored, rewards, torch.zeros_like(rewards))
         self._episode_peak = torch.maximum(
             self._episode_peak, rewards.max(dim=1).values
         )
