@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pathlib
+
 import numpy as np
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
@@ -106,7 +108,16 @@ def create_rlds_dataloader(
 def main(
     config_name: str,
     repo_id: str,
+    output_dir: str | None = None,
 ):
+    """Compute normalization statistics for one LeRobot dataset.
+
+    Args:
+        config_name: openpi TrainConfig selecting the transform pipeline.
+        repo_id: LeRobot repo id, or a local dataset directory.
+        output_dir: Directory to write ``norm_stats.json`` into. Defaults to the
+            config's assets directory for ``repo_id``.
+    """
     dataset_root = resolve_lerobot_dataset_root(repo_id)
     if not (dataset_root / "meta" / "info.json").is_file():
         raise FileNotFoundError(
@@ -137,13 +148,26 @@ def main(
     keys = ["state", "actions"]
     stats = {key: normalize.RunningStats() for key in keys}
 
+    has_action_states = False
     for batch in tqdm.tqdm(data_loader, total=num_batches, desc="Computing stats"):
+        has_action_states = has_action_states or "action_states" in batch
         for key in keys:
             stats[key].update(np.asarray(batch[key]))
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
+    if has_action_states:
+        # Streaming Flow Policy sums action_states and the action deltas into one
+        # trajectory, so both have to be scaled by the same statistics. Measuring
+        # the cumulative states separately would put them on a different scale and
+        # break that sum.
+        norm_stats["action_states"] = norm_stats["actions"]
+
+    output_path = (
+        pathlib.Path(output_dir).expanduser()
+        if output_dir is not None
+        else config.assets_dirs / data_config.repo_id
+    )
     print(f"Writing stats to: {output_path}")
     normalize.save(output_path, norm_stats)
 
