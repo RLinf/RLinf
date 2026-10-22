@@ -420,7 +420,9 @@ jobs:
           bash tests/e2e_tests/evaluations/run.sh realworld_dual_yam_openpi_pi05_mock_eval
 
       - name: Clean up
+        if: always()
         run: |
+          rm -rf /workspace/results/realworld_dual_yam_collect_data_mock
           rm -rf .venv
           uv cache prune
 
