@@ -877,6 +877,37 @@ def test_empty_history_input_still_resets_shaping_state_on_done():
     assert model._success_streak.tolist() == [0, 1]
 
 
+def test_robotwin_t5_reward_scores_env_observations():
+    from rlinf.models.embodiment.reward import get_reward_model_class
+
+    model_cls = get_reward_model_class("robotwin_t5")
+    model = model_cls.__new__(model_cls)
+    torch.nn.Module.__init__(model)
+    model.batch_size = 2
+    model.register_buffer("_mean", torch.zeros(1, 3, 1, 1), False)
+    seen = []
+
+    def fake_logits(images, instructions):
+        seen.append((images, instructions))
+        return torch.zeros(images.shape[0])
+
+    model._logits = fake_logits
+    images = torch.tensor([0, 255, 51], dtype=torch.uint8).view(3, 1, 1, 1)
+
+    rewards = model.compute_reward(
+        {
+            "main_images": images.expand(3, 4, 4, 3),
+            "task_descriptions": ["a", "b", "c"],
+        }
+    )
+
+    assert rewards.tolist() == pytest.approx([0.5, 0.5, 0.5])
+    assert [batch.shape for batch, _ in seen] == [(2, 3, 4, 4), (1, 3, 4, 4)]
+    frames = torch.cat([batch for batch, _ in seen])
+    assert frames.amax(dim=(1, 2, 3)).tolist() == pytest.approx([0.0, 1.0, 0.2])
+    assert [texts for _, texts in seen] == [["a", "b"], ["c"]]
+
+
 VALUE_CLIP = 0.2
 HUBER_DELTA = 10.0
 

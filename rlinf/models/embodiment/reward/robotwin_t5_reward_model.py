@@ -122,26 +122,18 @@ class RoboTwinT5RewardModel(BaseRewardModel):
         return self.reward_head(tokens.mean(dim=1)).squeeze(-1)
 
     def forward(
-        self,
-        input_data: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
-        instructions: Optional[list[str]] = None,
+        self, input_data: torch.Tensor, instructions: Optional[list[str]] = None
     ) -> dict[str, Any]:
         logits = self._logits(input_data, instructions)
-        probabilities = torch.sigmoid(logits)
-        out = {"logits": logits, "probabilities": probabilities}
-        if labels is not None:
-            labels = labels.float().to(logits.device)
-            out["loss"] = F.binary_cross_entropy_with_logits(logits, labels)
-            out["accuracy"] = ((probabilities > 0.5).float() == labels).float().mean()
-        return out
+        return {"logits": logits, "probabilities": torch.sigmoid(logits)}
 
     @torch.no_grad()
-    def compute_reward(
-        self, images: torch.Tensor, instructions: Optional[list[str]] = None
-    ) -> torch.Tensor:
-        """Success probability per frame; frames are ``[B, 3, H, W]`` in ``[0, 1]``."""
-        return torch.sigmoid(self._logits(images, instructions))
+    def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
+        """Success probability per ``main_images`` frame (``[B, H, W, 3]`` uint8)."""
+        images = torch.as_tensor(observations["main_images"]).permute(0, 3, 1, 2)
+        return self.predict_rew(
+            images.float() / 127.5 - 1.0, observations.get("task_descriptions")
+        )
 
     @torch.no_grad()
     def predict_rew(
@@ -153,5 +145,5 @@ class RoboTwinT5RewardModel(BaseRewardModel):
         for start in range(0, obs.shape[0], self.batch_size):
             stop = start + self.batch_size
             texts = None if instructions is None else instructions[start:stop]
-            probs.append(self.compute_reward(obs[start:stop], texts).float())
+            probs.append(torch.sigmoid(self._logits(obs[start:stop], texts)).float())
         return torch.cat(probs)
