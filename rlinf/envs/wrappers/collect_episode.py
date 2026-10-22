@@ -293,15 +293,35 @@ class CollectEpisode(gym.Wrapper):
     def close(self):
         if self._closed:
             return None
-        self._closed = True
-        self._finalize_lerobot()
-        self._wait_futures()
+        error = None
+        try:
+            self._finalize_lerobot()
+        except BaseException as exc:  # noqa: BLE001 - release resources on failure
+            error = exc
+        try:
+            self._wait_futures()
+        except BaseException as exc:  # noqa: BLE001 - release resources on failure
+            if error is None:
+                error = exc
         if self._executor is not None:
-            self._executor.shutdown(wait=True)
-            self._executor = None
-        if hasattr(self.env, "close"):
-            return self.env.close()
-        return None
+            try:
+                self._executor.shutdown(wait=True)
+            except BaseException as exc:  # noqa: BLE001 - preserve first failure
+                if error is None:
+                    error = exc
+            finally:
+                self._executor = None
+        result = None
+        try:
+            if hasattr(self.env, "close"):
+                result = self.env.close()
+        except BaseException as exc:  # noqa: BLE001 - preserve first failure
+            if error is None:
+                error = exc
+        self._closed = error is None
+        if error is not None:
+            raise error
+        return result
 
     def _new_buffer(self) -> dict[str, list]:
         return {
@@ -651,9 +671,16 @@ class CollectEpisode(gym.Wrapper):
         self._futures = remaining
 
     def _wait_futures(self) -> None:
-        for f in self._futures:
-            f.result()
-        self._futures = []
+        futures, self._futures = self._futures, []
+        first_error = None
+        for future in futures:
+            try:
+                future.result()
+            except BaseException as exc:  # noqa: BLE001 - drain every completed write
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     def _finalize_on_exit(self) -> None:
         self.close()

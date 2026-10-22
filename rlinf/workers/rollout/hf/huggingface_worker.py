@@ -257,6 +257,7 @@ class MultiStepRolloutWorker(Worker):
         infer_batch_size_fn: Optional[Callable[[Any], int]] = None,
         timeout_time: float = 0.02,
         recv_queue_size: int = 0,
+        control_channel: Channel | None = None,
     ):
         """Receive routed batch shards and record their return routes.
 
@@ -285,6 +286,7 @@ class MultiStepRolloutWorker(Worker):
                 results.
             recv_queue_size: Number of receive queue entries used when building the
                 receive plan.
+            control_channel: Optional evaluation stop channel.
 
         Returns:
 
@@ -345,6 +347,17 @@ class MultiStepRolloutWorker(Worker):
         max_item_num = len(plan.entries)
         get_item_num = 0
         received_items = []
+
+        async def _wait_for_pending(work):
+            task = asyncio.create_task(work.async_wait())
+            while not task.done():
+                if self._poll_eval_control(control_channel) is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    return None
+                await asyncio.sleep(0.01)
+            return await task
+
         while get_item_num < max_item_num:
             # get the items
             if get_items is None:
@@ -366,7 +379,10 @@ class MultiStepRolloutWorker(Worker):
             if time.time() >= timeout_time:
                 max_item_num = get_item_num
                 if get_items is not None:
-                    received_items.append(await get_items.async_wait())
+                    item = await _wait_for_pending(get_items)
+                    if item is None:
+                        return None
+                    received_items.append(item)
                     get_items = None
                     get_item_num = get_item_num + 1
 
@@ -986,7 +1002,12 @@ class MultiStepRolloutWorker(Worker):
                     infer_batch_size_fn=self._infer_env_batch_size,
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
+                    control_channel=control_channel,
                 )
+                if env_output is None:
+                    if self.enable_offload:
+                        self.offload_model()
+                    return None
                 actions, _ = self._predict_rollout_actions(
                     env_output["obs"],
                     mode="eval",

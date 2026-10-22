@@ -67,6 +67,7 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -334,20 +335,17 @@ def test_openpi_sft_dispatches_so101_to_registered_loader(monkeypatch):
     assert result is sentinel
 
 
-def test_lerobot_v3_task_metadata_becomes_openpi_task_mapping():
-    """OpenPI receives an id-to-task mapping from LeRobot v3 metadata."""
-    import pandas as pd
+def test_norm_stats_task_transform_uses_lerobot_sample_task():
+    """Norm stats use LeRobot's per-sample task string as the OpenPI prompt."""
+    pytest.importorskip("openpi")
+    from toolkits.lerobot.calculate_norm_stats import TaskToPrompt
 
-    from rlinf.data.datasets.openpi.task_prompt import lerobot_tasks_to_mapping
+    sample = {"task": "pick up duck", "task_index": 3}
 
-    tasks = pd.DataFrame(
-        {"task_index": [3, 8], "task": ["pick up duck", "place duck"]},
-        index=[11, 12],
-    )
-
-    assert lerobot_tasks_to_mapping(tasks) == {
-        3: "pick up duck",
-        8: "place duck",
+    assert TaskToPrompt()(sample) == {
+        "task": "pick up duck",
+        "task_index": 3,
+        "prompt": "pick up duck",
     }
 
 
@@ -403,6 +401,10 @@ def test_so101_norm_stats_match_padded_model_dimension():
         select_so101_norm_stats(
             {"state": {"mean": np.zeros(32)}, "actions": valid["actions"]},
             action_dim=32,
+        )
+    with pytest.raises(ValueError, match="must be NormStats"):
+        select_so101_norm_stats(
+            {"state": {"mean": np.zeros(32)}, "actions": valid["actions"]}
         )
 
 
@@ -536,8 +538,6 @@ def test_so101_loader_uses_canonical_action_feature(tmp_path, monkeypatch):
         data_path=str(root),
         model_path="/tmp/pi05",
         config_name="pi05_so101_joint",
-        assets_dir=str(tmp_path),
-        asset_id="so101",
         raw_action_dim=6,
         action_dim=32,
         action_horizon=20,
@@ -1040,6 +1040,42 @@ def test_data_collector_closes_buffer_after_operator_abort():
 
     assert collector.run() is None
     collector.buffer.close.assert_called_once_with()
+
+
+def test_collect_episode_close_retries_after_finalize_failure():
+    collector = object.__new__(CollectEpisode)
+    collector._closed = False
+    collector._finalize_lerobot = Mock(
+        side_effect=[RuntimeError("finalize failed"), None]
+    )
+    collector._wait_futures = Mock()
+    collector._executor = None
+    collector.env = Mock()
+
+    with pytest.raises(RuntimeError, match="finalize failed"):
+        collector.close()
+
+    assert collector._closed is False
+    assert collector.env.close.call_count == 1
+
+    collector.close()
+    assert collector._closed is True
+    assert collector._finalize_lerobot.call_count == 2
+    assert collector.env.close.call_count == 2
+
+
+def test_lerobot_writer_stops_image_writer_when_wait_fails():
+    writer = LeRobotDatasetWriter()
+    writer.logger = Mock()
+    image_writer = Mock()
+    image_writer.wait_until_done.side_effect = RuntimeError("image write failed")
+    writer.dataset = SimpleNamespace(image_writer=image_writer)
+
+    with pytest.raises(RuntimeError, match="image write failed"):
+        writer.finalize()
+
+    image_writer.stop.assert_called_once()
+    assert writer.dataset.image_writer is None
 
 
 def test_data_collector_preserves_collection_error_when_buffer_close_fails():
@@ -2629,7 +2665,7 @@ def test_decoupled_evaluation_service_is_reused_and_cancelled_on_stop():
         blocker = asyncio.Event()
         calls = 0
 
-        async def serve(_input_channel, _output_channel):
+        async def serve(_input_channel, _output_channel, _control_channel):
             nonlocal calls
             calls += 1
             await blocker.wait()
@@ -2654,6 +2690,7 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
     runner.cfg = OmegaConf.create({"runner": {"enable_decoupled_mode": True}})
     runner.env_channel = Mock()
     runner.rollout_channel = Mock()
+    runner.eval_control_channel = Mock()
     runner.rollout = Mock()
     runner.rollout.ensure_evaluate_service.return_value = Mock(
         wait=Mock(return_value=None)
@@ -2669,7 +2706,42 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
         runner.evaluate()
 
     assert runner.rollout.ensure_evaluate_service.call_count == 2
+    assert (
+        runner.rollout.ensure_evaluate_service.call_args.kwargs["control_channel"]
+        is runner.eval_control_channel
+    )
+    assert (
+        runner.env.evaluate.call_args.kwargs["control_channel"]
+        is runner.eval_control_channel
+    )
     runner.rollout.evaluate.assert_not_called()
+
+
+def test_sync_runner_passes_eval_control_to_env_and_rollout():
+    runner = object.__new__(EmbodiedRunner)
+    runner.cfg = OmegaConf.create({"runner": {"rtc": {"enabled": False}}})
+    runner.env_channel = Mock()
+    runner.rollout_channel = Mock()
+    runner.eval_control_channel = Mock()
+    runner.env = Mock()
+    runner.rollout = Mock()
+    runner.env.evaluate.return_value = Mock(wait=Mock(return_value=[{}]))
+    runner.rollout.evaluate.return_value = Mock(wait=Mock(return_value=[{}]))
+
+    with patch(
+        "rlinf.runners.embodied_runner.compute_evaluate_metrics",
+        return_value={},
+    ):
+        assert runner.evaluate() == {}
+
+    assert (
+        runner.env.evaluate.call_args.kwargs["control_channel"]
+        is runner.eval_control_channel
+    )
+    assert (
+        runner.rollout.evaluate.call_args.kwargs["control_channel"]
+        is runner.eval_control_channel
+    )
 
 
 def test_decoupled_policy_route_round_trip():

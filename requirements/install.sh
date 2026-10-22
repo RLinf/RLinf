@@ -3509,7 +3509,7 @@ install_so101_env() {
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
-        "lerobot[feetech]>=0.4.1,<0.7"
+        "lerobot[feetech]>=0.4.1,<0.7" "numpy<2"
     use_opencv_gui_wheel
 }
 

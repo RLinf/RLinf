@@ -105,8 +105,9 @@ class KeyboardStartEndWrapper(KeyboardSession):
 
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        # The pedal owns episode boundaries; start and abort do not reset the env.
-        terminated = aborted
+        # The pedal owns episode boundaries; abort discards the recording but
+        # leaves the robot in place for the next start.
+        terminated = False
         truncated = False
 
         record_reset = False

@@ -81,9 +81,7 @@ def select_so101_norm_stats(
     if not isinstance(norm_stats, Mapping):
         raise ValueError("SO-101 norm stats must be an OpenPI mapping of NormStats.")
     selected = {
-        key: value
-        for key, value in norm_stats.items()
-        if key in {"state", "actions"}
+        key: value for key, value in norm_stats.items() if key in {"state", "actions"}
     }
     missing = {"state", "actions"} - selected.keys()
     if missing:
@@ -92,13 +90,14 @@ def select_so101_norm_stats(
             "SO-101 norm stats must contain both 'state' and 'actions'; "
             f"missing: {missing_keys}."
         )
+    for key, stats in selected.items():
+        if not isinstance(stats, NormStats):
+            raise ValueError(f"SO-101 norm stats for {key!r} must be NormStats.")
     if action_dim is None:
         return selected
     if action_dim <= 0:
         raise ValueError(f"SO-101 action_dim must be positive, got {action_dim}.")
     for key, stats in selected.items():
-        if not isinstance(stats, NormStats):
-            raise ValueError(f"SO-101 norm stats for {key!r} must be NormStats.")
         for stat_name in ("mean", "std", "q01", "q99"):
             value = getattr(stats, stat_name, None)
             if value is None:

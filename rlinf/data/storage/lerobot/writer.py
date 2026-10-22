@@ -228,18 +228,15 @@ class LeRobotDatasetWriter:
         if self.dataset is None:
             return
 
-        if (
-            hasattr(self.dataset, "image_writer")
-            and self.dataset.image_writer is not None
-        ):
-            self.dataset.image_writer.wait_until_done()
-
-        if (
-            hasattr(self.dataset, "image_writer")
-            and self.dataset.image_writer is not None
-        ):
-            self.dataset.image_writer.stop()
-            self.dataset.image_writer = None
+        image_writer = getattr(self.dataset, "image_writer", None)
+        if image_writer is not None:
+            try:
+                image_writer.wait_until_done()
+            finally:
+                try:
+                    image_writer.stop()
+                finally:
+                    self.dataset.image_writer = None
 
         if hasattr(self.dataset, "episode_buffer"):
             self.dataset.episode_buffer = None

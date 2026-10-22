@@ -103,21 +103,32 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
     def evaluate(self):
         env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        eval_control_channel = None
+        if not self.cfg.runner.get("rtc", {}).get("enabled", False):
+            eval_control_channel = self.eval_control_channel
         if env_decoupled_mode:
             # The rollout-side loop is unbounded by design. Ensure one service
             # exists and reuse it across every validation cycle.
             self.rollout.ensure_evaluate_service(
                 input_channel=self.rollout_channel,
                 output_channel=self.env_channel,
+                control_channel=eval_control_channel,
             ).wait()
+        env_kwargs = {}
+        rollout_kwargs = {}
+        if eval_control_channel is not None:
+            env_kwargs["control_channel"] = eval_control_channel
+            rollout_kwargs["control_channel"] = eval_control_channel
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
+            **env_kwargs,
         )
         if not env_decoupled_mode:
             rollout_handle: Handle = self.rollout.evaluate(
                 input_channel=self.rollout_channel,
                 output_channel=self.env_channel,
+                **rollout_kwargs,
             )
         env_results = env_handle.wait()
         if not env_decoupled_mode:
@@ -289,6 +300,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         self.drain_pending_rollout_weight_sync()
 
         self.env.stop().wait()
+        self.env.cleanup_eval_envs().wait()
         self.rollout.stop().wait()
         self.actor.stop().wait()
         if self.reward is not None:

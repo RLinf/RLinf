@@ -158,6 +158,35 @@ def test_standard_real_eval_cleanup_closes_after_park_failure():
     worker.log_warning.assert_called_once()
 
 
+def test_standard_real_eval_cleanup_retries_failed_close():
+    """A failed close remains eligible for the runner's final cleanup."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker.log_warning = Mock()
+
+    class FakeEnv:
+        def __init__(self):
+            self.close_calls = 0
+
+        def park(self):
+            pass
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise RuntimeError("close failed")
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+
+    worker._cleanup_real_eval_envs()
+    assert worker._eval_cleanup_done is False
+    worker._cleanup_real_eval_envs()
+
+    assert env.close_calls == 2
+    assert worker._eval_cleanup_done is True
+
+
 def test_standard_real_eval_keeps_environment_for_periodic_evaluation():
     """Periodic standard evaluation must leave a real env reusable."""
     worker = object.__new__(EnvWorker)
@@ -177,7 +206,9 @@ def test_standard_real_eval_keeps_environment_for_periodic_evaluation():
     worker._evaluate_standard = Mock(return_value={})
 
     assert worker.evaluate(Mock(), Mock()) == {}
+    assert worker.evaluate(Mock(), Mock()) == {}
     assert env.events == []
+    assert worker._evaluate_standard.call_count == 2
 
     worker.cleanup_eval_envs()
     assert env.events == ["close"]
@@ -238,6 +269,34 @@ def test_standard_real_eval_keyboard_abort_is_clean_shutdown():
     worker.log_info.assert_called_once()
 
 
+def test_periodic_eval_abort_keeps_environment_for_next_validation():
+    """Aborting one periodic validation does not close its reusable env."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"env": {"eval": {"env_type": "real"}}})
+    worker._accelerator_type = None
+    worker._timer_metrics = {}
+    worker.log_info = Mock()
+
+    class FakeEnv:
+        def __init__(self):
+            self.events = []
+
+        def close(self):
+            self.events.append("close")
+
+    env = FakeEnv()
+    worker.eval_env_list = [env]
+    worker._evaluate_standard = Mock(
+        side_effect=KeyboardAbort("operator requested evaluation abort")
+    )
+
+    assert worker.evaluate(Mock(), Mock()) == {}
+    assert env.events == []
+
+    worker.cleanup_eval_envs()
+    assert env.events == ["close"]
+
+
 @pytest.mark.parametrize("abort_at", ["reset", "step"])
 def test_standard_eval_propagates_keyboard_abort_to_cleanup(abort_at):
     """The standard evaluation loop leaves abort handling to its owner."""
@@ -265,15 +324,32 @@ def test_standard_eval_propagates_keyboard_abort_to_cleanup(abort_at):
         worker.eval_env_list[0].reset.side_effect = KeyboardAbort("operator quit")
     else:
         worker.eval_env_list[0].reset.return_value = ({"state": np.zeros((1, 1))}, {})
-        worker.recv_from = Mock(
-            return_value=SimpleNamespace(actions=np.zeros((1, 1)))
-        )
+        worker.recv_from = Mock(return_value=SimpleNamespace(actions=np.zeros((1, 1))))
         worker.env_evaluate_step = Mock(side_effect=KeyboardAbort("operator quit"))
 
     with pytest.raises(KeyboardAbort, match="operator quit"):
         worker._evaluate_standard(Mock(), Mock())
 
     worker._request_eval_stop.assert_not_called()
+
+
+def test_eval_stop_is_queued_for_every_rollout_worker(monkeypatch):
+    """A shared control queue needs one stop item per rollout consumer."""
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"rollout": {"group_name": "RolloutGroup"}})
+    worker._manager_proxy = Mock()
+    control_channel = Mock()
+    monkeypatch.setattr(
+        "rlinf.scheduler.get_group_world_size", lambda _manager, _group: 3
+    )
+
+    worker._request_eval_stop(control_channel)
+
+    assert control_channel.put_nowait.call_count == 3
+    assert all(
+        call.args == ({"kind": "stop"},)
+        for call in control_channel.put_nowait.call_args_list
+    )
 
 
 def _assert_legacy_transition(env) -> None:
@@ -1983,7 +2059,7 @@ def test_so101_start_end_abort_wins_over_simultaneous_success(monkeypatch, press
     _, reward, terminated, truncated, info = wrapper.step(np.zeros(6))
 
     assert reward == 0.0
-    assert terminated is True
+    assert terminated is False
     assert truncated is False
     assert info["keyboard_event"] == "abort"
     assert success_hook.call_count == 0
@@ -3127,9 +3203,6 @@ def test_so101_zero_pose_is_observed_once_before_teleop_context_is_cached():
 
 
 @pytest.mark.placement
-
-
-@pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
     """The env speaks radians; only the driver may speak lerobot's units.
 
@@ -3649,7 +3722,17 @@ def test_so101_leader_accepts_a_valid_zero_pose():
         leader.connect()
         try:
             leader._device.positions.update(
-                {f"{motor}.pos": 0.0 for motor in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")}
+                {
+                    f"{motor}.pos": 0.0
+                    for motor in (
+                        "shoulder_pan",
+                        "shoulder_lift",
+                        "elbow_flex",
+                        "wrist_flex",
+                        "wrist_roll",
+                        "gripper",
+                    )
+                }
             )
             reading = leader.get_observation()
             np.testing.assert_allclose(reading["joint_position"], 0.0)
@@ -3740,7 +3823,10 @@ def test_so101_leader_clips_measured_gripper_before_planning(monkeypatch):
     leader._align_fps = 30.0
     leader._set_torque = Mock()
     leader._device = SimpleNamespace(
-        get_action=lambda: {**{f"{motor}.pos": 0.0 for motor in MOTORS}, f"{GRIPPER}.pos": 110.0},
+        get_action=lambda: {
+            **{f"{motor}.pos": 0.0 for motor in MOTORS},
+            f"{GRIPPER}.pos": 110.0,
+        },
         bus=SimpleNamespace(sync_write=Mock()),
     )
 

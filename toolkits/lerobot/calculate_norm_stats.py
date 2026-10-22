@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
+
 import numpy as np
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
@@ -34,12 +36,24 @@ class RemoveStrings(transforms.DataTransformFn):
         }
 
 
+class TaskToPrompt(transforms.DataTransformFn):
+    """Copy each LeRobot sample's task instruction into OpenPI's prompt field."""
+
+    def __call__(self, x: dict) -> dict:
+        """Return the sample with its canonical task exposed as ``prompt``."""
+        task = x.get("task")
+        if not isinstance(task, str) or not task:
+            raise ValueError("LeRobot sample must contain a non-empty string 'task'.")
+        return {**x, "prompt": task}
+
+
 def create_torch_dataloader(
     data_config: DataConfig,
     action_horizon: int,
     batch_size: int,
     model_config: _model.BaseModelConfig,
     num_workers: int,
+    task_to_prompt: bool,
     max_frames: int | None = None,
 ) -> tuple[_data_loader.TorchDataLoader, int]:
     if data_config.repo_id is None:
@@ -50,6 +64,7 @@ def create_torch_dataloader(
     dataset = _data_loader.TransformedDataset(
         dataset,
         [
+            *([TaskToPrompt()] if task_to_prompt else []),
             *data_config.repack_transforms.inputs,
             *data_config.data_transforms.inputs,
             # Remove strings since they are not supported by JAX and are not needed to compute norm stats.
@@ -126,12 +141,16 @@ def main(
             data_config, config.model.action_horizon, config.batch_size
         )
     else:
+        task_to_prompt = data_config.prompt_from_task
+        if task_to_prompt:
+            data_config = dataclasses.replace(data_config, prompt_from_task=False)
         data_loader, num_batches = create_torch_dataloader(
             data_config,
             config.model.action_horizon,
             config.batch_size,
             config.model,
             config.num_workers,
+            task_to_prompt=task_to_prompt,
         )
 
     keys = ["state", "actions"]

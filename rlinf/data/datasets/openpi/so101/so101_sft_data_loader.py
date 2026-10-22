@@ -227,8 +227,8 @@ def create_so101_sft_data_loader(
     data_path: str,
     model_path: str,
     config_name: str,
-    assets_dir: str,
-    asset_id: str,
+    assets_dir: str | None = None,
+    asset_id: str | None = None,
     raw_action_dim: int,
     action_dim: int,
     action_horizon: int,
@@ -258,6 +258,11 @@ def create_so101_sft_data_loader(
     resolved_data_kwargs = dict(data_kwargs or {})
     configured_stats = resolved_data_kwargs.get("norm_stats_path")
     if configured_stats is None:
+        if assets_dir is None or asset_id is None:
+            raise ValueError(
+                "SO-101 norm stats require either data_kwargs.norm_stats_path "
+                "or both assets_dir and asset_id."
+            )
         norm_stats_path = pathlib.Path(assets_dir) / asset_id / "norm_stats.json"
         resolved_data_kwargs["norm_stats_path"] = str(norm_stats_path)
     else:
@@ -290,9 +295,7 @@ def create_so101_sft_data_loader(
     dataset = LeRobotDataset(
         repo_id=root.name,
         root=root,
-        delta_timestamps={
-            action_key: [step / fps for step in range(action_horizon)]
-        },
+        delta_timestamps={action_key: [step / fps for step in range(action_horizon)]},
         video_backend="pyav",
     )
     input_transforms, _ = build_openpi_transforms(
@@ -363,8 +366,14 @@ def build_so101_sft_dataloader(
         data_path=str(data_path),
         model_path=str(model_cfg.model_path),
         config_name=str(openpi_cfg.config_name),
-        assets_dir=str(openpi_cfg.assets_dir),
-        asset_id=str(openpi_cfg.asset_id),
+        assets_dir=(
+            str(openpi_cfg.assets_dir)
+            if openpi_cfg.get("assets_dir") is not None
+            else None
+        ),
+        asset_id=(
+            str(openpi_cfg.asset_id) if openpi_cfg.get("asset_id") is not None else None
+        ),
         raw_action_dim=int(model_cfg.action_dim),
         action_dim=int(openpi_cfg.model_action_dim),
         action_horizon=int(model_cfg.num_action_chunks),

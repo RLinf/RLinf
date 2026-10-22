@@ -98,6 +98,7 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
+        self.eval_control_channel = Channel.create("EvalControl")
         # Trajectory assembly runs on the channel worker, so neither the env
         # nor the rollout worker has to hold partial trajectory state.
         self.actor_channel = Channel.create(
@@ -204,13 +205,20 @@ class EmbodiedRunner:
         rollout_handle.wait()
 
     def evaluate(self):
+        env_kwargs = {}
+        rollout_kwargs = {}
+        if not self.cfg.runner.get("rtc", {}).get("enabled", False):
+            env_kwargs["control_channel"] = self.eval_control_channel
+            rollout_kwargs["control_channel"] = self.eval_control_channel
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
+            **env_kwargs,
         )
         rollout_handle: Handle = self.rollout.evaluate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
+            **rollout_kwargs,
         )
         env_results = env_handle.wait()
         rollout_handle.wait()

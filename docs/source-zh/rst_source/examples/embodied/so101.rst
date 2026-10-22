@@ -180,7 +180,7 @@ keyboard wrapper 使用 ``a`` 开始或放弃录制，使用 ``b`` 切换 segmen
 
 SO-101 的 state 和 action 在采集、存储、SFT 与评测中统一使用六维数据格式：前 5 维是绝对关节位置，单位为弧度；第 6 维是夹爪开度，``0`` 表示关闭，``1`` 表示张开。norm stats 也必须从这套表示计算。
 
-在 SFT 前，使用同一数据集计算 OpenPI 需要的 padded norm stats。进入 RLinf 仓库并激活 embodied 环境后运行：
+SFT 前，使用同一数据集计算 OpenPI 需要的 padded norm stats。生成器会读取每条 LeRobot sample 的 ``task`` 字符串，并将其作为 ``prompt`` 传给 SO-101 OpenPI transforms。进入 RLinf 仓库并激活 embodied 环境后运行：
 
 .. code-block:: bash
 
@@ -189,7 +189,7 @@ SO-101 的 state 和 action 在采集、存储、SFT 与评测中统一使用六
      --config-name pi05_so101_joint \
      --repo-id so101_dataset
 
-运行前将 ``HF_LEROBOT_HOME`` 设为包含该 dataset 根目录的父目录。命令会把 ``norm_stats.json`` 写入该 data config 对应的 OpenPI asset 目录。将这个文件显式填入 SFT YAML 的 ``actor.model.openpi_data.norm_stats_path``，并在评测模型配置中继续使用同一文件。
+运行前将 ``HF_LEROBOT_HOME`` 设为包含该 dataset 根目录的父目录。命令会通过 ``Writing stats to:`` 输出实际写入目录；将该目录下生成的 ``norm_stats.json`` 填入 SFT YAML 的 ``actor.model.openpi_data.norm_stats_path``，并在评测模型配置中继续使用同一文件。输出目录由所选 OpenPI training config 决定，可能与 SFT YAML 中的 ``assets_dir`` 不同。文件必须同时包含 ``state`` 和 ``actions`` 两组 stats，且每组为 32 维；SO-101 transforms 会先将 canonical 六维向量 padding 到 Pi0.5 model dimension，再计算 stats。
 
 数采与评测都复用 ``SO101ReachEnv-v1`` 提供 SO-101 的关节空间观测、动作和 reset 生命周期。评测配置中的 ``task_description`` 应与 SFT 使用的 instruction 保持一致，使 fixed checkpoint 收到训练时的任务指令；操作者通过 ``b`` 或 ``c`` 记录评测结果。
 

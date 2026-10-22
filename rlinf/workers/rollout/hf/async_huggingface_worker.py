@@ -109,14 +109,21 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         self,
         input_channel: Channel,
         output_channel: Channel,
+        control_channel: Channel | None,
     ) -> None:
         """Serve decoupled evaluation requests until the worker is stopped."""
-        await super().evaluate(input_channel, output_channel)
+        while True:
+            await super().evaluate(
+                input_channel,
+                output_channel,
+                control_channel=control_channel,
+            )
 
     async def ensure_evaluate_service(
         self,
         input_channel: Channel,
         output_channel: Channel,
+        control_channel: Channel | None = None,
     ) -> None:
         """Start one persistent decoupled evaluation consumer if needed.
 
@@ -146,7 +153,11 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 )
 
         self._evaluate_task = asyncio.create_task(
-            self._run_evaluate_service(input_channel, output_channel)
+            self._run_evaluate_service(
+                input_channel,
+                output_channel,
+                control_channel,
+            )
         )
         # Give the service a chance to enter its first channel receive and
         # surface immediate initialization failures to the runner.

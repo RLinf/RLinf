@@ -658,29 +658,37 @@ class EnvWorker(Worker):
                     self.eval_env_list[i].update_reset_state_ids()
 
     def _cleanup_real_eval_envs(self) -> None:
-        """Park and close real evaluation environments exactly once."""
+        """Park and close real evaluation environments before worker shutdown."""
         if getattr(self, "_eval_cleanup_done", False):
             return
-        self._eval_cleanup_done = True
         if not getattr(self, "eval_env_list", None):
+            self._eval_cleanup_done = True
             return
         if SupportedEnvType(self.cfg.env.eval.env_type) is not SupportedEnvType.REAL:
+            self._eval_cleanup_done = True
             return
 
-        for env in self.eval_env_list:
-            try:
-                park = get_env_attr(env, "park")
-                if callable(park):
-                    park()
-            except BaseException as exc:  # noqa: BLE001 - preserve eval result
-                self.log_warning("Failed to park real eval environment: %s", exc)
-            finally:
+        if not hasattr(self, "_eval_env_parked"):
+            self._eval_env_parked = [False] * len(self.eval_env_list)
+            self._eval_env_closed = [False] * len(self.eval_env_list)
+        for index, env in enumerate(self.eval_env_list):
+            if not self._eval_env_parked[index]:
+                try:
+                    park = get_env_attr(env, "park")
+                    if callable(park):
+                        park()
+                    self._eval_env_parked[index] = True
+                except BaseException as exc:  # noqa: BLE001 - preserve eval result
+                    self.log_warning("Failed to park real eval environment: %s", exc)
+            if not self._eval_env_closed[index]:
                 try:
                     close = get_env_attr(env, "close")
                     if callable(close):
                         close()
+                    self._eval_env_closed[index] = True
                 except BaseException as exc:  # noqa: BLE001 - preserve eval result
                     self.log_warning("Failed to close real eval environment: %s", exc)
+        self._eval_cleanup_done = all(self._eval_env_closed)
 
     def cleanup_eval_envs(self) -> None:
         """Park and close real evaluation environments at runner shutdown."""
@@ -1280,32 +1288,35 @@ class EnvWorker(Worker):
     ):
         """Run standard evaluation and handle operator aborts gracefully.
 
-        ``KeyboardAbort`` is an intentional operator shutdown signal from the
-        real-environment episode wrapper, not a failed evaluation.  Convert it
-        into an empty metric result after cleaning up the real environment so
-        the Ray worker does not report a fatal remote exception.  Periodic
+        ``KeyboardAbort`` is an intentional operator signal from the
+        real-environment episode wrapper, not a failed evaluation. Convert it
+        into an empty metric result and stop rollout consumers. Periodic
         training evaluations keep their environment open for the next cycle;
         one-shot callers pass ``cleanup=True`` and the runner shuts down with
         :meth:`cleanup_eval_envs`.
         """
         self._eval_cleanup_done = False
         try:
-            return self._evaluate_standard(
-                input_channel, rollout_channel
-            )
+            return self._evaluate_standard(input_channel, rollout_channel)
         except KeyboardAbort:
             self._request_eval_stop(control_channel)
             self.log_info("Operator requested evaluation abort; shutting down cleanly.")
-            self._cleanup_real_eval_envs()
             return {}
         finally:
             if cleanup:
                 self._cleanup_real_eval_envs()
 
-    @staticmethod
-    def _request_eval_stop(control_channel: Channel | None) -> None:
-        """Tell the rollout worker to stop waiting for the next observation."""
-        if control_channel is not None:
+    def _request_eval_stop(self, control_channel: Channel | None) -> None:
+        """Tell every rollout worker to stop waiting for the next observation."""
+        if control_channel is None:
+            return
+
+        from rlinf.scheduler import get_group_world_size
+
+        rollout_world_size = get_group_world_size(
+            self._manager_proxy, self.cfg.rollout.group_name
+        )
+        for _ in range(rollout_world_size):
             control_channel.put_nowait({"kind": "stop"})
 
     def _evaluate_standard(

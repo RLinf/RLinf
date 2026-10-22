@@ -18,11 +18,8 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Any, SupportsFloat
+from typing import Any
 
-from gymnasium.core import ActType, ObsType
-
-from rlinf.envs.real.wrappers.episode.session import KeyboardAbort
 from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
 
 
@@ -83,88 +80,3 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
     def before_recording_success(self) -> None:
         """Hold the leader before the runner resets the saved episode."""
         self._hold_before_reset()
-
-    def _hold_action(self, action: ActType) -> ActType:
-        """Use the follower pose while the absolute-position leader is idle."""
-        try:
-            hold = self.env.get_wrapper_attr("get_hold_action")
-        except AttributeError:
-            return action
-        try:
-            return hold(action)
-        except AttributeError:
-            return action
-
-    def step(
-        self, action: ActType
-    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
-        """Handle SO-101 handover before the wrapped environment steps."""
-        pressed = list(self.presses())
-        if any(key in {"q", "quit"} for key in pressed):
-            raise KeyboardAbort("Operator requested collection shutdown.")
-
-        started = "a" in pressed and not self._recording
-        aborted = "a" in pressed and self._recording
-        if started:
-            self.before_recording_start()
-        elif aborted:
-            self.before_recording_abort()
-
-        success = "c" in pressed and self._recording
-        if success:
-            # The leader can still be in the operator's hand on the key-down
-            # frame. Hold it before the wrapped environment sees this action.
-            self.before_recording_success()
-            self._recording = False
-            self._last_segment_ts = -math.inf
-
-        if not self._recording or started or aborted or success:
-            action = self._hold_action(action)
-
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        terminated = aborted
-        truncated = False
-        record_reset = False
-        segment_advance = False
-        event: str | None = None
-
-        if started:
-            event = "start"
-            self._recording = True
-            record_reset = True
-            self._last_segment_ts = -math.inf
-        elif aborted:
-            event = "abort"
-            self._recording = False
-            record_reset = True
-            self._last_segment_ts = -math.inf
-
-        for key in pressed:
-            if key == "a":
-                if aborted:
-                    reward = 0.0
-                elif not started:
-                    event = "abort"
-                    self._recording = False
-                    record_reset = True
-                    self._last_segment_ts = -math.inf
-                    terminated = True
-                    reward = 0.0
-            elif key == "b" and self._recording:
-                now = time.monotonic()
-                if now - self._last_segment_ts >= self.SEGMENT_DEBOUNCE_S:
-                    event = "segment"
-                    segment_advance = True
-                    self._last_segment_ts = now
-            elif key == "c" and success:
-                event = "end_success"
-                reward = 1.0
-                terminated = True
-                break
-
-        info["pre_record"] = not self._recording and event != "end_success"
-        info["record_reset"] = record_reset
-        info["keyboard_phase"] = "rec" if self._recording else "pre"
-        info["keyboard_event"] = event
-        info["segment_advance"] = segment_advance
-        return obs, reward, terminated, truncated, info

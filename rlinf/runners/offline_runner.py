@@ -351,6 +351,9 @@ class OfflineRunner:
         self._finish_run()
 
     def _finish_run(self) -> None:
+        if self.env is not None:
+            self.env.cleanup_eval_envs().wait()
+
         self.metric_logger.finish()
 
         self.log_queue.put(None)

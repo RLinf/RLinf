@@ -60,21 +60,12 @@ actor:
 
   model:
     model_path: /path/to/pi05_base_pytorch_new
-    # SO-101 follower action space: five joints plus one continuous gripper.
-    # The leader is an input device, not a second policy action vector.
-    num_action_chunks: 20
-    action_dim: 6
     openpi:
-      # The SO-101 model template supplies the six-dimensional action/state
-      # shape; SFT only changes the task-specific mode and paths.
       task: sft
-      config_name: "pi05_so101_joint"
       # Network prediction horizon (Pi0Config.action_horizon). Matches official
       # TrainConfig for pi05_so101_joint. Distinct from action_chunk /
       # num_action_chunks (env-executed / SFT window).
       action_horizon: 20
-      # Pi05 consumes SO-101 proprioception as discrete prompt tokens.
-      discrete_state_input: true
       assets_dir: /path/to/openpi_assets
       asset_id: "<repo_id>"
     openpi_data:

@@ -113,10 +113,8 @@ class ComposedTeleop(TeleopDevice):
                     f"but this environment provides "
                     f"{sorted(self._reset_context)}."
                 )
-            # The reset may cross a Ray RPC boundary. Use a wall-clock
-            # deadline so separate processes can share the target start time;
-            # participating hosts must have synchronized clocks. A
-            # threading.Barrier cannot be serialized into the remote worker.
+            # The deadline is passed to arm parts over RPC, so participating
+            # nodes must share a synchronized wall clock.
             self._reset_start_at = time.time() + 0.25
             self._reset_context["reset_start_at"] = self._reset_start_at
             options = dict(kwargs.get("options") or {})
