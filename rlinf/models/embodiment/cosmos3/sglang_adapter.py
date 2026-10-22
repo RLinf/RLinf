@@ -15,11 +15,15 @@
 """Cosmos3 embodied sglang adapter for the ``/v1/actions/generations`` endpoint.
 
 Cosmos3's action policy is served synchronously over sglang's action endpoint:
-a single ``msgpack`` ``POST /v1/actions/generations`` carrying all N envs in
-one body returns the N action chunks in one response
+a ``msgpack`` ``POST /v1/actions/generations`` carrying N envs in one body
+returns the N action chunks in one response
 (``data[0].action.values`` shape ``[N, horizon, raw_action_dim]``). The worker
 owns the HTTP round-trip; this adapter only builds the request and parses the
 response.
+
+The server only batches prompts of equal token length, up to
+``--batching-max-size``; :meth:`Cosmos3SGLangAdapter.request_groups` groups
+envs accordingly.
 
 Cosmos3 LIBERO SFT trains with ``action_space=frame_wise_relative``,
 ``rotation_space="6d"`` (rot6d 10-D) and ``action_normalization="quantile_rot"``.
@@ -83,6 +87,32 @@ class Cosmos3SGLangAdapter:
         self._domain_name = str(env_type) if env_type else None
         self._domain_id = c.get("domain_id", None)
         self._num_action_chunks = int(self.model_cfg.num_action_chunks)
+        # sglang's own default for --batching-max-size is 1.
+        server_cfg = cfg.rollout.get("sglang", {}).get("server", {}) or {}
+        self._max_request_batch = max(
+            1, int(server_cfg.get("batching_max_size", 1) or 1)
+        )
+
+    def request_groups(self, env_obs: dict) -> list[list[int]]:
+        """Group env indices by prompt, each group at most the server batch size.
+
+        Args:
+            env_obs: The env observation batch passed to :meth:`build_request`.
+
+        Returns:
+            Lists of env indices that together cover every env once.
+        """
+        tasks = self._extract_tasks(env_obs)
+        n_cam = 2 if env_obs.get("wrist_images") is not None else 1
+        by_prompt: dict[str, list[int]] = {}
+        for index, task in enumerate(tasks):
+            by_prompt.setdefault(self._augment_prompt(task, n_cam), []).append(index)
+        size = self._max_request_batch
+        return [
+            indices[start : start + size]
+            for indices in by_prompt.values()
+            for start in range(0, len(indices), size)
+        ]
 
     @staticmethod
     def _parse_size(size: str) -> tuple[int, int]:
@@ -215,13 +245,11 @@ class Cosmos3SGLangAdapter:
         """/v1/actions/generations response -> [N, num_action_chunks, action_dim]."""
         del state
         values = self._action_data(resp)
-        arr = np.asarray(values, dtype=np.float32)
-        if arr.ndim == 2:  # [horizon, D] — single env (B=1)
-            arr = arr[None]  # -> [1, horizon, D]
+        arr = np.asarray(values, dtype=np.float32)  # [N, horizon, D]
         if arr.ndim != 3:
             raise RuntimeError(
                 f"Cosmos3 action values have unexpected ndim={arr.ndim} "
-                f"(expected [N, horizon, D] or [horizon, D]); shape={arr.shape}"
+                f"(expected one [horizon, D] array per env); shape={arr.shape}"
             )
         chunks = [self._action_to_env(arr[i]) for i in range(arr.shape[0])]
         if not chunks:
@@ -332,14 +360,14 @@ class Cosmos3SGLangAdapter:
         return arr.astype(np.uint8)
 
     @staticmethod
-    def _action_data(resp: dict) -> Any:
-        """Read action values from a ``/v1/actions/generations`` response."""
-        data = resp.get("data") or []
-        action = data[0].get("action") if data and isinstance(data[0], dict) else None
-        values = action.get("values") if isinstance(action, dict) else None
-        if values is None:
+    def _action_data(resp: dict) -> list[Any]:
+        """Return each env's ``[horizon, D]`` action values, in ``input_index`` order."""
+        data = [item for item in resp.get("data") or [] if isinstance(item, dict)]
+        data.sort(key=lambda item: item.get("input_index", item.get("index", 0)))
+        values = [(item.get("action") or {}).get("values") for item in data]
+        if not values or any(v is None for v in values):
             raise RuntimeError(
-                f"Cosmos3 /v1/actions response carried no 'data[0].action.values' "
+                f"Cosmos3 /v1/actions response carried no 'data[i].action.values' "
                 f"— check action_gen=true and action_mode=policy. resp={resp}"
             )
         return values

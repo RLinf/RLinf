@@ -156,6 +156,7 @@ actor:
     action_dim: 7
     add_value_head: False
     openpi:
+      task: dagger
       config_name: "pi0_realworld"
       num_images_in_input: 2
       train_expert_only: False

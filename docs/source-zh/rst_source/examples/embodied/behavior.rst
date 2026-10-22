@@ -87,7 +87,7 @@
 .. include:: _setup_common.rst
 
 **选项 1：Docker 镜像** — BEHAVIOR 提供 **两个独立镜像**，每个对应一个模型：
-``agentic-rlinf0.4-behavior``（OpenVLA-OFT）和 ``agentic-rlinf0.4-behavior-openpi``
+``agentic-rlinf0.4-behavior``\ （OpenVLA-OFT）和 ``agentic-rlinf0.4-behavior-openpi``
 （OpenPI）。每个镜像只内置各自的虚拟环境，因此请根据要训练的模型拉取对应镜像
 （两者之间无法通过 ``switch_env`` 互相切换）：
 
@@ -249,15 +249,12 @@ OpenPI-Comet 作为示例来源：
 
 转换完成后，按如下方式更新 ``behavior_openpi_pi05_eval.yaml``：
 
-1. 将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设置为转换后的模型目录。
-2. 在 ``env.train`` 和 ``env.eval`` 中提高 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
+1. 将 ``rollout.model.model_path`` 设置为转换后的模型目录。
+2. 如需更长轨迹，提高 ``env.eval`` 的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
 
 .. code-block:: yaml
 
    env:
-     train:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
      eval:
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
@@ -268,21 +265,19 @@ OpenPI-Comet 作为示例来源：
 
 --------------
 
-**5. 使用 OpenPI_RLinf (Pi0.5) 代码进行评估**
+**5. 评估 JAX 对齐的 Pi0.5 checkpoint**
 
-BEHAVIOR 评估同样支持自包含的 **OpenPI_RLinf** 代码（模型
-``model_type: openpi_rlinf``；对应的 SFT 流程参见 :doc:`sft_openpi_rlinf`）。
-评估配置为：
+BEHAVIOR 评估使用 ``model_type: openpi``。若权重来自 :doc:`sft_openpi` 或 OpenPI checkpoint 转换器，评估配置为：
 
-- ``evaluations/behavior/behavior_openpi_pi05_rlinf_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``
 
-该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **OpenPI_RLinf**
+该配置以纯评估模式运行（``runner.only_eval: True``），并消费转换后的
 checkpoint，即由 OpenPI checkpoint 转换器
-（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi_rlinf`` /
-``sft_to_openpi_rlinf``）产出的 checkpoint。
+（``ckpt_convertor.openpi`` 的 ``openpi_pytorch_to_openpi`` /
+``sft_to_openpi``）产出的权重。
 将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
 
-- ``rollout.model.model_path``：OpenPI_RLinf 评估 checkpoint。
+- ``rollout.model.model_path``：评估 checkpoint。
 
 归一化统计从转换后 checkpoint 中打包的
 ``physical-intelligence/behavior/norm_stats.json`` 读取。
@@ -291,7 +286,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
 
@@ -319,21 +314,21 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - 显式保留 ``BehaviorTask`` / ``InteractiveTraversableScene``，以确保覆盖后选中预期的上游
        OmniGibson 类。
    * - ``task_idx``
-     - 当前任务 id（0–49）。RLinf 将其映射到 ``task.activity_name``（见 ``behavior_env.py``）。
+     - 当前任务 id（0–49）。RLinf 将其映射到 ``task.activity_name``\ （见 ``behavior_env.py``）。
    * - ``omni_config.task.instance_resample_mode``
-     - reset 时的实例切换：``disabled``（加载固定的 ``activity_instance_id``）、``offline``
+     - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``
        （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——
        ``*_template.json`` 走较重的场景重载路径，``*_template-tro_state.json`` 走较轻的原地路径）、
-       或 ``online``（需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
+       或 ``online``\ （需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
    * - ``omni_config.task.activity_instance_dir``
      - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline``
        模式以及 ``disabled`` 模式下的固定 id 加载使用。
    * - ``omni_config.task.instance_file_format``
-     - 缓存实例格式：``template``（完整重载）或 ``tro_state``（仅任务相关、轻量）。RLinf 接受不含
+     - 缓存实例格式：``template``\ （完整重载）或 ``tro_state``\ （仅任务相关、轻量）。RLinf 接受不含
        ``robot_poses`` 的 ``tro_state`` 文件，此时会清除过期的缓存机器人位姿元数据，reset 回退到
        任务默认机器人位姿。
    * - ``omni_config.scene.partial_scene_load``
-     - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``（减少启动时间与内存），
+     - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``\ （减少启动时间与内存），
        需要 ``activity_name`` 与 ``scene_model``。为 ``false``/省略时需显式设置 ``load_room_types``。
    * - ``camera.head_resolution`` / ``camera.wrist_resolution``
      - 头部 / 腕部相机分辨率（默认 720×720 / 480×480，应用到 R1Pro 传感器）。
@@ -353,7 +348,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - ``True`` 启用基于转移规则的状态变化（如切割、烹饪）。
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` 使用 numpy 控制器后端，在单进程 / 中等并行下通常更快。
-   * - ``skip_intermediate_obs_in_chunk``
+   * - ``skip_intermediate_renders``
      - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示策略在
        chunk 边界观测到的帧。
    * - ``num_env_subprocess``

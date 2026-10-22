@@ -20,7 +20,7 @@ from typing import Any, Callable, Literal, Optional
 
 import numpy as np
 import torch
-from omegaconf import DictConfig, OmegaConf, open_dict
+from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from rlinf.algorithms.expert import build_expert_model_config
@@ -154,10 +154,9 @@ class MultiStepRolloutWorker(Worker):
         return self.collect_transitions and not self.enable_rlt
 
     def init_worker(self):
-        rollout_model_config = copy.deepcopy(self.model_cfg)
-        with open_dict(rollout_model_config):
-            rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.model_path = self.cfg.rollout.model.model_path
+        # Train uses actor.model as the architecture source; overlay rollout.model
+        # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
+        rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
@@ -492,9 +491,10 @@ class MultiStepRolloutWorker(Worker):
             else self._eval_sampling_params
         )
 
-        if SupportedModel(self.model_cfg.model_type) in [
+        model_type = SupportedModel(self.model_cfg.model_type)
+        if model_type in [
             SupportedModel.OPENPI,
-            SupportedModel.OPENPI_RLINF,
+            SupportedModel.PI0_FAST,
             SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
@@ -508,10 +508,13 @@ class MultiStepRolloutWorker(Worker):
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
+            elif model_type == SupportedModel.PI0_FAST:
+                kwargs = dict(kwargs)
+                kwargs["mode"] = mode
             else:
                 kwargs = {"mode": mode}
 
-        if SupportedModel(self.model_cfg.model_type) in [
+        if model_type in [
             SupportedModel.CNN_POLICY,
             SupportedModel.FLOW_POLICY,
             SupportedModel.MLP_POLICY,
@@ -614,7 +617,9 @@ class MultiStepRolloutWorker(Worker):
             forward_inputs=result["forward_inputs"],
             versions=torch.full_like(
                 result["prev_logprobs"], float(self.version), dtype=torch.float32
-            ),
+            )
+            if self.collect_prev_infos
+            else None,
         )
 
     @Worker.timer("sync_model_from_actor")

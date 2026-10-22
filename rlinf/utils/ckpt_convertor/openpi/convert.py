@@ -16,20 +16,20 @@
 
 Dispatches to five modes over a shared core:
 
-    jax_to_openpi_rlinf              JAX Pi0/Pi05 checkpoint -> OpenPI_RLinf layout
-    openpi_pytorch_to_openpi_rlinf   OpenPI PyTorch layout -> OpenPI_RLinf layout
-    sft_to_openpi_rlinf              RLinf SFT full_weights.pt -> OpenPI_RLinf
+    jax_to_openpi              JAX Pi0/Pi05 checkpoint -> OpenPI layout
+    openpi_pytorch_to_openpi   OpenPI PyTorch layout -> OpenPI layout
+    sft_to_openpi              RLinf SFT full_weights.pt -> OpenPI
                                    layout selected by ``--config-name`` and ``--dtype``
-    openpi_rlinf_to_openpi_pytorch   OpenPI_RLinf layout -> OpenPI PyTorch layout
+    openpi_to_openpi_pytorch   OpenPI layout -> OpenPI PyTorch layout
     sft2deploy                     RLinf SFT -> OpenPI PyTorch deploy full_weights.pt
 
 Usage::
 
-    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi_rlinf \\
+    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \\
         --input-model       /path/to/jax_checkpoint \\
         --input-norm-stats  /path/to/norm_stats.json \\
-        --output-model      /path/to/out_openpi_rlinf \\
-        --output-norm-stats /path/to/out_openpi_rlinf/physical-intelligence/behavior/norm_stats.json
+        --output-model      /path/to/out_openpi \\
+        --output-norm-stats /path/to/out_openpi/physical-intelligence/behavior/norm_stats.json
 
 Run ``--mode <mode> --help`` for the per-mode arguments.
 """
@@ -39,21 +39,21 @@ from __future__ import annotations
 import argparse
 
 from rlinf.utils.ckpt_convertor.openpi import (
-    jax_to_openpi_rlinf,
-    openpi_pytorch_to_openpi_rlinf,
-    openpi_rlinf_to_openpi_pytorch,
+    jax_to_openpi,
+    openpi_pytorch_to_openpi,
+    openpi_to_openpi_pytorch,
     pt_to_safetensors,
     sft2deploy,
 )
 
 # Public mode names describe the layouts explicitly. Internally, the conversion
 # kernels retain the original terminology: old = OpenPI PyTorch, new =
-# OpenPI_RLinf.
+# OpenPI.
 _MODES = {
-    "jax_to_openpi_rlinf": jax_to_openpi_rlinf,
-    "openpi_pytorch_to_openpi_rlinf": openpi_pytorch_to_openpi_rlinf,
-    "sft_to_openpi_rlinf": pt_to_safetensors,
-    "openpi_rlinf_to_openpi_pytorch": openpi_rlinf_to_openpi_pytorch,
+    "jax_to_openpi": jax_to_openpi,
+    "openpi_pytorch_to_openpi": openpi_pytorch_to_openpi,
+    "sft_to_openpi": pt_to_safetensors,
+    "openpi_to_openpi_pytorch": openpi_to_openpi_pytorch,
     "sft2deploy": sft2deploy,
 }
 

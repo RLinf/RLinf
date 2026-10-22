@@ -66,6 +66,7 @@ rollout:
     num_action_chunks: 5
     action_dim: 7
     openpi:
+      task: eval
       config_name: "pi05_libero"
       num_images_in_input: 2
       num_steps: 5

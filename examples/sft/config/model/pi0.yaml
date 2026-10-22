@@ -1,32 +1,31 @@
 model_type: "openpi"
 
-# Model path - should be set in specific config files
-model_path: "/path/to/model/openpi"
-
+# Pi0 JAX-aligned PyTorch model-shape template for RoboTwin ALOHA SFT.
+# Filesystem paths are supplied by robotwin_adjust_bottle_sft_openpi.yaml.
+# OpenPI default: Gemma / SigLIP in bf16, action heads stay fp32.
 precision: null
+pi05: False
 
-# Action and chunk settings
-num_action_chunks: 10
-action_dim: 7
-
-# LoRA settings
 is_lora: False
 lora_rank: 32
 
-# Training settings
+# RoboTwin ALOHA uses 14-dimensional actions; the Pi0 backbone pads them to 32.
+# num_action_chunks is the env-executed chunk. Network / official-SFT horizon
+# comes from TrainConfig for config_name (pi0_aloha_robotwin = 50).
+num_action_chunks: 50
+action_dim: 14
 use_proprio: True
-num_steps: 4
+num_steps: 5
 add_value_head: False
 
-# openpi specific parameters
 openpi:
-  config_name: "pi0_libero"
-  num_images_in_input: 2
-  noise_level: 0.5
-  action_chunk: ${actor.model.num_action_chunks}
-  num_steps: ${actor.model.num_steps}
-  train_expert_only: False
-  action_env_dim: ${actor.model.action_dim}
-  noise_method: "flow_sde"
-  add_value_head: ${actor.model.add_value_head}
-  detach_critic_input: False
+  task: sft
+  config_name: "pi0_aloha_robotwin"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 48
+  discrete_state_input: False

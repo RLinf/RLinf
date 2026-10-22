@@ -62,4 +62,5 @@ rollout:
     model_type: "openpi"
     num_action_chunks: 5
     openpi:
+      task: eval
       noise_level: 0.3

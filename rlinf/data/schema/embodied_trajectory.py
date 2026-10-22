@@ -751,7 +751,9 @@ class LeRobotFrameConverter:
         """Yield steps in low-level time order, then environment order."""
         for step_index in range(chunk.step_count):
             for env_index in range(chunk.num_envs):
-                yield chunk.step(step_index, env_index)
+                step = chunk.step(step_index, env_index)
+                if step is not None:
+                    yield step
 
     @staticmethod
     def to_frame(
@@ -763,13 +765,18 @@ class LeRobotFrameConverter:
         action_dim: int,
     ) -> LeRobotFrame | None:
         """Convert one decoded step to the canonical LeRobot frame type."""
-        return LeRobotFrame.from_step(
+        frame = LeRobotFrame.from_step(
             observation=observation,
             action=step.action,
             info=info,
             segment_id=segment_id,
             action_dim=action_dim,
         )
+        if frame is not None and step.completion_info is not None:
+            completion_success = LeRobotFrame.success_from_info(step.completion_info)
+            if completion_success is not None:
+                frame.step_success = bool(frame.step_success) or completion_success
+        return frame
 
 
 @dataclass
@@ -883,6 +890,7 @@ class LeRobotEpisodeAccumulator:
         terminations: Any,
         truncations: Any,
         infos_list: Any,
+        valid_action_mask: Any = None,
     ) -> None:
         """Normalize and append one vectorized action chunk."""
         chunk = LeRobotChunk.from_data(
@@ -895,6 +903,7 @@ class LeRobotEpisodeAccumulator:
             num_envs=self.num_envs,
             num_action_chunks=self.num_action_chunks,
             action_dim=self.action_dim,
+            valid_action_mask=valid_action_mask,
         )
         for step in self._converter.convert(chunk):
             self._append_step(step)
