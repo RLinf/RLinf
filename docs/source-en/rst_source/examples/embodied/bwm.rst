@@ -60,7 +60,7 @@ Assets
      - ``lidavidsh/robotwin-adjust-bottle-t5-success-classifier`` (``reward_model.pt``) and ``google-t5/t5-base``
      - ``env.train.reward_model.from_pretrained``, ``t5_model_name``
    * - pi0.5 SFT policy
-     - ``WorldArena/WorldArena`` (``fulldata``, norm stats in ``assets/robotwin_clean``)
+     - `WorldArena/WorldArena <https://huggingface.co/WorldArena/WorldArena>`__ (model repository, ``fulldata``, norm stats in ``assets/robotwin_clean``)
      - ``actor.model.model_path``, ``actor.model.openpi_data.norm_stats_path``
    * - Initial frames
      - 48 RoboTwin reset observations (640x480), one ``episode_XXXXX.npy`` each; no export script is included yet
