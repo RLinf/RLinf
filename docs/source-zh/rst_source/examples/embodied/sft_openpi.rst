@@ -138,6 +138,8 @@ Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 
      - LIBERO
    * - ``pi0_realworld``
      - 真机 Franka
+   * - ``pi05_yam_joint``
+     - 真机双臂 YAM
    * - ``pi0_aloha_robotwin``
      - RoboTwin（ALOHA）
    * - ``pi05_behavior``
@@ -286,7 +288,7 @@ YAML 中的 ``/path/to/...`` 是占位路径，请替换为服务器上的实际
    gcloud storage cp --recursive \
      gs://openpi-assets/checkpoints/pi05_base /path/to/checkpoints/jax/
 
-先准备当前任务的 ``norm_stats.json``（见上文归一化统计），再转换。以下以 BEHAVIOR 的
+先准备当前任务的 ``norm_stats.json``\ （见上文归一化统计），再转换。以下以 BEHAVIOR 的
 32-step horizon 为例；``--input-model`` 应指向包含 ``params/`` 的父目录：
 
 .. code:: bash
