@@ -18,6 +18,8 @@ settings before launching a run.
      - Config keys specific to agentic and reasoning training.
    * - :doc:`Logging <../logger>`
      - TensorBoard, wandb, and swanlab logger setup.
+   * - :doc:`Interpreting success_once Fluctuations <../eval_success_once_noise>`
+     - Tell statistical noise in embodied eval metrics apart from real instability.
 
 .. toctree::
    :hidden:
@@ -26,3 +28,4 @@ settings before launching a run.
    Embodied Configuration <../embodiment_config>
    Agentic Configuration <../agentic_config>
    Logging <../logger>
+   Interpreting success_once Fluctuations <../eval_success_once_noise>
