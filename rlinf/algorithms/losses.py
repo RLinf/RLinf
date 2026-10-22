@@ -192,6 +192,7 @@ def compute_ppo_actor_loss(
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
     log_logprob_diagnostics: bool = False,
+    kl_beta: Optional[float] = 0.0,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -207,6 +208,10 @@ def compute_ppo_actor_loss(
         clip_ratio_c (Optional[float], optional): Optional clipping coefficient. Defaults to None.
         loss_agg_func (callable, optional): Aggregation function (e.g., masked_mean). Defaults to None.
         max_episode_steps (Optional[int], optional): Max episode length for normalization. Defaults to None.
+        kl_beta (Optional[float], optional): Coefficient of the KL penalty term
+            ``-mean(log_ratio)`` added to the policy loss. ``0.0`` (default)
+            disables the penalty so the behavior matches plain PPO clipping.
+            Can be adapted between updates via :func:`adapt_kl_coefficient`.
 
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
@@ -301,6 +306,18 @@ def compute_ppo_actor_loss(
     clip_fraction = masked_mean(clip_mask.float(), loss_mask_for_metrics)
     approx_kl = -masked_mean(log_ratio.detach(), loss_mask_for_metrics)
 
+    # Optional KL penalty against the behavior policy (issue #1110). Without it,
+    # long-horizon embodied PPO runs (e.g. pi0.5 on ManiSkill) can drift far from
+    # the rollout policy and the KL divergence diverges after enough epochs.
+    # Differentiable term so gradients actually pull the policy back.
+    kl_loss = torch.tensor(0.0, device=policy_loss.device)
+    if kl_beta is not None and kl_beta > 0 and not critic_warmup:
+        kl_term = -masked_mean(
+            torch.where(loss_mask, raw_log_ratio, 0.0), loss_mask_for_metrics
+        )
+        policy_loss = policy_loss + kl_beta * kl_term
+        kl_loss = kl_term.detach()
+
     # Compile metrics for logging
     ratio_for_metrics = ratio.detach()
     ratio_abs_for_metrics = (ratio - 1).abs().detach()
@@ -320,6 +337,8 @@ def compute_ppo_actor_loss(
         ),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
+        "actor/kl_loss": kl_loss.detach(),
+        "actor/kl_beta": torch.tensor(float(kl_beta or 0.0)),
     }
     if log_logprob_diagnostics:
         with torch.no_grad():
@@ -447,6 +466,39 @@ def compute_ppo_critic_loss(
         {key: value.detach() for key, value in explained_variance_stats.items()}
     )
     return value_loss, metrics_data
+
+
+def adapt_kl_coefficient(
+    kl_beta: float,
+    approx_kl: float,
+    target_kl: Optional[float],
+    over_factor: float = 1.5,
+    under_factor: float = 0.5,
+) -> float:
+    """Adapt the KL penalty coefficient toward a target KL (per PPO paper, Schulman et al. 2017).
+
+    Called once per training update with the measured ``actor/approx_kl``:
+    the coefficient is scaled up when the policy drifted too far from the
+    behavior policy and scaled down when the update was more conservative
+    than needed, so ``kl_beta`` tracks ``target_kl`` instead of staying fixed.
+
+    Args:
+        kl_beta: Current KL penalty coefficient.
+        approx_kl: Measured approximate KL of the last update.
+        target_kl: Desired KL per update. ``None`` disables adaptation.
+        over_factor: Multiplier applied when ``approx_kl > 1.5 * target_kl``.
+        under_factor: Multiplier applied when ``approx_kl < target_kl / 1.5``.
+
+    Returns:
+        The updated KL penalty coefficient.
+    """
+    if target_kl is None or approx_kl is None:
+        return kl_beta
+    if approx_kl > 1.5 * target_kl:
+        return kl_beta * over_factor
+    if approx_kl < target_kl / 1.5:
+        return kl_beta * under_factor
+    return kl_beta
 
 
 @register_policy_loss("decoupled_actor_critic")

@@ -19,6 +19,7 @@ from torch import nn
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
+from rlinf.algorithms.losses import adapt_kl_coefficient
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
@@ -100,6 +101,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        # KL penalty against the behavior policy (issue #1110). The embodied PPO
+        # loss previously had no KL term, which let the training policy drift
+        # away from the rollout policy and destabilize (KL divergence) after
+        # enough epochs on long-horizon tasks such as pi0.5 in ppo_maniskill.
+        # With `target_kl` set, kl_beta is adapted after every update to keep
+        # the measured KL near the target.
+        self.kl_beta = self.cfg.algorithm.get("kl_beta", 0.0)
+        self.target_kl = self.cfg.algorithm.get("target_kl", None)
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
@@ -676,6 +685,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        # Adaptive KL control: keep the measured KL near `target_kl` by scaling
+        # the penalty coefficient after each update (issue #1110).
+        if self.target_kl is not None and self.kl_beta > 0:
+            measured_kl = mean_metric_dict.get("actor/approx_kl")
+            if measured_kl is not None:
+                self.kl_beta = adapt_kl_coefficient(
+                    self.kl_beta, float(measured_kl), self.target_kl
+                )
+                mean_metric_dict["actor/kl_beta"] = self.kl_beta
         if explained_variance_stats:
             reduced_stats = all_reduce_dict(
                 explained_variance_stats, op=torch.distributed.ReduceOp.SUM
@@ -774,6 +792,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "log_logprob_diagnostics": self.cfg.algorithm.get(
                 "log_logprob_diagnostics", False
             ),
+            "kl_beta": self.kl_beta,
         }
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
