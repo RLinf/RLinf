@@ -20,6 +20,7 @@ import os
 import shlex
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ray._private.accelerators.amd_gpu import AMDGPUAcceleratorManager
@@ -30,6 +31,105 @@ if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Vulkan render device
+#
+# HIP_VISIBLE_DEVICES does not restrict Vulkan, so simulators that render with
+# Vulkan (SAPIEN in RoboTwin and ManiSkill) all pick the same default GPU. Mesa's
+# device-select layer makes the GPU named by DRI_PRIME=pci-DDDD_BB_DD_F the
+# default instead. The table below comes from the KFD topology, which ROCr also
+# enumerates HIP devices from, so building it never initializes HIP.
+# ---------------------------------------------------------------------------
+
+DRI_PRIME_ENV = "DRI_PRIME"
+_KFD_TOPOLOGY_NODES = "/sys/class/kfd/kfd/topology/nodes"
+_DRI_DEVICE_DIR = "/dev/dri"
+# gfx_target_version of the first RDNA ISA (gfx1010). CDNA parts (gfx9xx) have
+# no rasterization hardware and render on the CPU, so they are not pinned.
+_FIRST_RDNA_GFX_TARGET = 100100
+
+
+def _read_kfd_node_properties(node_dir: str) -> dict[str, int]:
+    """Parse the integer fields of a KFD topology ``properties`` file.
+
+    Args:
+        node_dir: Path of one ``.../topology/nodes/<id>`` directory.
+
+    Returns:
+        Property name to value. Non-integer fields are skipped.
+    """
+    props: dict[str, int] = {}
+    with open(os.path.join(node_dir, "properties")) as handle:
+        for line in handle:
+            name, _, value = line.strip().partition(" ")
+            try:
+                props[name] = int(value)
+            except ValueError:
+                continue
+    return props
+
+
+@cache
+def _dri_prime_by_hip_device() -> dict[int, str]:
+    """Map each HIP device id on this node to the ``DRI_PRIME`` value of its GPU.
+
+    GPUs are numbered as ROCr numbers them: KFD nodes in order, skipping CPU
+    nodes and GPUs whose render node this process cannot open, then filtered by
+    ``ROCR_VISIBLE_DEVICES``. Only RDNA GPUs get a value.
+
+    Returns:
+        HIP device id to ``pci-DDDD_BB_DD_F``. Empty when the KFD topology cannot
+        be read or ``ROCR_VISIBLE_DEVICES`` does not match it.
+    """
+    try:
+        node_ids = sorted(
+            int(name) for name in os.listdir(_KFD_TOPOLOGY_NODES) if name.isdigit()
+        )
+    except OSError as exc:
+        logger.debug("Cannot read the KFD topology (%s).", exc)
+        return {}
+
+    gpus = []
+    for node_id in node_ids:
+        try:
+            props = _read_kfd_node_properties(
+                os.path.join(_KFD_TOPOLOGY_NODES, str(node_id))
+            )
+        except OSError:
+            continue
+        if not props.get("gfx_target_version"):
+            continue
+        render_node = os.path.join(
+            _DRI_DEVICE_DIR, f"renderD{props.get('drm_render_minor', -1)}"
+        )
+        if not os.access(render_node, os.R_OK | os.W_OK):
+            continue
+        location = props.get("location_id", 0)
+        gpus.append(
+            (
+                props["gfx_target_version"],
+                f"pci-{props.get('domain', 0):04x}_{location >> 8:02x}_"
+                f"{(location >> 3) & 0x1F:02x}_{location & 0x7:x}",
+            )
+        )
+
+    rocr_visible = os.environ.get("ROCR_VISIBLE_DEVICES", "")
+    if rocr_visible:
+        try:
+            gpus = [gpus[int(index)] for index in rocr_visible.split(",")]
+        except (ValueError, IndexError):
+            logger.debug(
+                "ROCR_VISIBLE_DEVICES=%s does not match the KFD topology.",
+                rocr_visible,
+            )
+            return {}
+    return {
+        hip_id: dri_prime
+        for hip_id, (gfx_target, dri_prime) in enumerate(gpus)
+        if gfx_target >= _FIRST_RDNA_GFX_TARGET
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +263,30 @@ class AMDGPUManager(AcceleratorManager):
         env_vars["RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES"] = "1"
         # https://github.com/ray-project/ray/blob/5d6c40aba865b2b80ee4dc549e603e89817ad285/python/ray/_private/accelerators/amd_gpu.py#L128
 
+        # Simulator env vars: render on the worker's first GPU.
+        if len(visible_accelerators) > 0:
+            dri_prime = AMDGPUManager.get_dri_prime(visible_accelerators[0])
+            if dri_prime is not None:
+                env_vars[DRI_PRIME_ENV] = dri_prime
+
         return env_vars
+
+    @staticmethod
+    def get_dri_prime(hip_device_id: int | str) -> Optional[str]:
+        """Get the Mesa ``DRI_PRIME`` value that renders on a HIP device.
+
+        Args:
+            hip_device_id (int | str): HIP device id, as in ``HIP_VISIBLE_DEVICES``.
+
+        Returns:
+            Optional[str]: ``pci-DDDD_BB_DD_F``, or ``None`` for a device that is
+            not on this node, is addressed by UUID, or is not an RDNA GPU.
+        """
+        try:
+            hip_device_id = int(hip_device_id)
+        except ValueError:
+            return None
+        return _dri_prime_by_hip_device().get(hip_device_id)
 
     @staticmethod
     def get_visible_devices():
