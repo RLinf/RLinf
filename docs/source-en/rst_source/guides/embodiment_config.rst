@@ -89,6 +89,7 @@ algorithm
 
     bootstrap_type: always
     kl_beta: 0.0
+    target_kl: null
     entropy_bonus: 0.0
     clip_ratio_low: 0.2
     clip_ratio_high: 0.28
@@ -127,7 +128,16 @@ algorithm
      - How to bootstrap Q-values at episode boundaries: ``standard`` bootstraps
        only on truncation; ``always`` bootstraps on truncation or termination.
    * - ``algorithm.kl_beta``
-     - Weight of the KL penalty added to rewards.
+     - Initial weight of the KL penalty against the behavior policy. In the
+       embodied FSDP PPO loss it scales the term ``kl_beta * approx_kl``
+       (added to the policy loss); without it, long PPO runs can drift away
+       from the rollout policy and the KL divergence diverges (issue #1110).
+   * - ``algorithm.target_kl``
+     - Desired approximate KL per update. When set (and ``kl_beta > 0``), the
+       coefficient is adapted after every update: multiplied by 1.5 when the
+       measured ``actor/approx_kl`` exceeds ``1.5 * target_kl``, and by 0.5
+       when it falls below ``target_kl / 1.5``. Leave ``null`` to keep
+       ``kl_beta`` fixed.
    * - ``algorithm.entropy_bonus``
      - Entropy reward coefficient.
    * - ``algorithm.clip_ratio_low`` / ``clip_ratio_high``
