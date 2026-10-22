@@ -53,21 +53,9 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         assert self.toolcall_parser is not None, (
             "toolcall_parser must be set in searchr1"
         )
-<<<<<<< HEAD
-        self.use_native_tool_messages = cfg.agentloop.get(
-            "use_native_tool_messages", False
-        )
-
-        # Inserting tool info requires re-encode token_ids, so the recompute_logprobs must be true.
-        if self.cfg.runner.task_type != "reasoning_eval":
-            assert self.cfg.algorithm.recompute_logprobs, (
-                "search r1 must use recompute_logprobs"
-            )
-=======
         # recompute_logprobs=False is supported: truncation keeps response_ids
         # a prefix of the engine's output_ids, so rollout logprobs are sliced
         # to match instead of being recomputed.
->>>>>>> 44418454146c1d89e428d3d1b2c1ac5928258238
 
     async def pre_process_query(
         self, prompt_ids: list[int], answer: str
@@ -219,10 +207,6 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         for tool_response in tool_responses:
             message = {"role": "tool", "content": tool_response.text}
             tool_messages.append(message)
-<<<<<<< HEAD
-
-        tool_response_ids = self.encode_tool_resp(tool_messages)
-=======
         assert len(tool_messages) == 1, (
             "search-r1 expects exactly one tool response per turn; "
             f"got {len(tool_messages)}. A multi-call toolcall_parser changes "
@@ -231,7 +215,6 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
 
         # Plain-text encode (model-agnostic); returns only the appended ids.
         tool_response_ids = self.agentic_tokenizer.append_tool_response(tool_messages)
->>>>>>> 44418454146c1d89e428d3d1b2c1ac5928258238
         max_tool_resp_len = self.max_resp_len - (
             len(turn_prompt_ids) + len(llm_response_ids) - len(problem_prompt_ids)
         )
