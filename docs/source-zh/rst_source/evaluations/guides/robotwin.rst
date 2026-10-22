@@ -35,7 +35,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。
 下载完成后，请将 ``env.eval.assets_path``
-设置为 ``/path/to/RoboTwin``（即 ``assets/`` 的上一级目录）。
+设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
 **环境变量**
 
@@ -214,6 +214,7 @@ OpenWAM（RoboTwin study checkpoint，demo_randomized 协议）
 - ``task_config.embodiment: [aloha-agilex]``、``center_crop: False``、``task_config.camera.collect_wrist_camera: true``：三相机按 checkpoint 的 ``camera_layout`` 拼成 384×320 画布（头部相机在上，左右腕相机在下）
 - ``env.eval.openwam_action_representation: absolute_eef20``：checkpoint 输出 20 维绝对双臂末端位姿 ``[l_xyz, l_rot6d, l_grip, r_xyz, r_rot6d, r_grip]``，RLinf 转成 16 维 ``xyz+quat_xyzw+gripper`` 并让每个子环境走 RoboTwin 的 ``ee`` 控制器；同时把同一表示的 20 维 ``native_proprio`` 交给模型
 - ``task_config.data_type.endpose: true``，让 RoboTwin 发布末端位姿
+- OpenWAM 在每个动作 chunk 执行结束后返回观测和 ``native_proprio``。``env.eval.skip_intermediate_renders`` 控制关节空间 policy 是否返回逐步观测；OpenWAM 的末端控制器始终返回 chunk 结束时的观测。
 - ``rollout.model.num_action_chunks: 32``、``openwam.inference_horizon: null``：与 OpenWAM 自己的 RoboTwin 客户端一样整块执行 32 步；``max_episode_steps`` 与 ``step_lim`` 取 RoboTwin ``_eval_step_limit.yml`` 的步数向上取到 32 的倍数（如 click_bell 400→416、place_empty_cup 500→512）；共享 preset 为 ``env/robotwin_openwam_aloha.yaml``，没有 RLinf 评测 seeds 的任务用随机 seeds
 - prompt 会自动套上 checkpoint 训练时的固定前缀，无需在配置里写
 - 每个末端目标都经 RoboTwin 的 ``take_action(..., action_type="ee")``\ （mplib）单独规划，一个 32 步 chunk 约 25 到 30 秒；同一 env worker 的子环境共用一把锁，多放环境只会串行执行，所以配方每个 env GPU 上放 2 个环境，要更多轨迹用 ``rollout_epoch`` 或更多 env GPU；每个 chunk 的等待上限由 ``env.eval.robotwin_step_timeout_s``\ （preset 中为 1800 秒）控制；SAPIEN 需要 ``DISPLAY``\ （无头机器先起 ``Xvfb :99``\ ），并按 ``requirements/install.sh`` 的 ``install_robotwin_env`` 给 sapien/mplib 打补丁

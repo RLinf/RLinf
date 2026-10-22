@@ -1,9 +1,9 @@
-RL on PI0-FAST with LeRobot
+RL on π₀-FAST with LeRobot
 ============================
 
 This example integrates LeRobot's ``PI0FastPolicy`` with RLinf for deterministic
 LIBERO-Long evaluation and token-level GRPO fine-tuning. The integration keeps
-PI0-FAST's native autoregressive action sequence and replays the sampled tokens
+π₀-FAST's native autoregressive action sequence and replays the sampled tokens
 with teacher forcing during the actor update.
 
 Overview
@@ -29,7 +29,7 @@ Overview
 Install
 -------
 
-The following command uses the PI0-FAST combination validated by this example.
+The following command uses the π₀-FAST combination validated by this example.
 These versions document the tested runtime rather than hard requirements imposed
 by the installer:
 
@@ -163,7 +163,7 @@ The pinned runtime and artifacts produced the following development result:
 Policy semantics
 ----------------
 
-PI0-FAST generates the complete native action string; RLinf does not inject an
+π₀-FAST generates the complete native action string; RLinf does not inject an
 ``Action:`` prefix. The policy mask includes generated prefix, action body, and
 the first complete ``|`` end marker, while excluding padding and tokens after
 that marker. Every token from one trajectory shares its trajectory-level GRPO

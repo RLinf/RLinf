@@ -114,6 +114,12 @@ Actor worker 从 Channel 接收 `Trajectory`，存入 `TrajectoryReplayBuffer`�
 - `world_size`：总 rank 数（分片数）
 - 维持各分片的 `size`、`total_samples`、`trajectory_counter` 一致性
 
+当 ``auto_save=False`` 时，``save_checkpoint(save_path)`` 保存内存缓存中仍保留的轨迹。checkpoint 索引按插入顺序列出这些轨迹，``size`` 和 ``total_samples`` 也只统计实际保存的数据。例如，``sample_window_size=2`` 的 buffer 添加五条轨迹后，保存的 ID 为 3 和 4。以 ``is_distributed=True``、``world_size=2`` 加载时，rank 0 获得 ID 3，rank 1 获得 ID 4。
+
+保存操作保持运行中的 buffer 不变。完整加载会保留后续轨迹的起始 ID，因此上述示例恢复后，新添加的轨迹从 ID 5 开始编号。``pt`` 和 ``pkl`` 两种格式保存的数据范围相同。
+
+当 ``auto_save=True`` 时，``save_checkpoint(save_path)`` 从自动落盘目录拷贝当前采样窗口。窗口是轨迹列表末尾的 ``sample_window_size`` 条；``sample_window_size`` 为 0，或列表更短时，保存列表中的全部轨迹。checkpoint 索引以及 ``size``、``total_samples`` 只统计这个窗口。窗口之外的轨迹仍留在自动落盘目录中。
+
 使用建议
 ------------
 

@@ -4,7 +4,7 @@ MolmoAct2 评测
 `MolmoAct2 <https://github.com/allenai/molmoact2>`__ 是 AllenAI 开源的
 vision-language-action 模型，通过 LeRobot policy 提供服务，并使用 flow-matching
 action expert 预测连续动作。RLinf 通过其 LIBERO 入口运行官方 MolmoAct2-LIBERO
-checkpoint。当前接入**仅支持评测**：上游 policy 只提供推理，没有训练路径。
+checkpoint。当前接入\ **仅支持评测**：上游 policy 只提供推理，没有训练路径。
 
 概览
 ----

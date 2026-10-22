@@ -27,6 +27,7 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
 )
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.dreamzero.dreamzero_config import DreamZeroConfig
+from rlinf.scheduler import AcceleratorType, Worker
 
 
 class DreamZeroPolicy(VLA, BasePolicy):
@@ -315,12 +316,17 @@ class DreamZeroPolicy(VLA, BasePolicy):
     def sft_forward(self, data=None, **kwargs):
         # Mark the start of each training iteration so PyTorch knows when
         # to reclaim memory held by CUDA graphs from the previous iteration.
-        torch.compiler.cudagraph_mark_step_begin()
+        # NPU skips the compile wrappers, so it has no CUDA graphs to mark.
+        if Worker.accelerator_type != AcceleratorType.NPU:
+            torch.compiler.cudagraph_mark_step_begin()
 
         if data is None:
             data = kwargs.get("data")
         if data is None:
             raise ValueError("sft_forward requires `data` from the SFT dataloader.")
+        # Upstream uses _device for latent transfers, noise and autocast, and
+        # moves the inputs to self.device; keep the two on the same device.
+        self.action_head._device = self.device
         outputs = super().forward(data)
         if hasattr(outputs, "data"):
             outputs = outputs.data
