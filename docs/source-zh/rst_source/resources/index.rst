@@ -1,7 +1,7 @@
 资源
 ====
 
-资源页收录项目理念、更新、论文、发布说明和故障排查内容。
+资源页收录项目理念、更新、论文、发布说明、故障排查和贡献者政策内容。
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -48,6 +48,12 @@
 
       调试、渲染、网络、NCCL/CUDA 与超时问题排查。
 
+   .. grid-item-card:: 贡献者政策
+      :link: maintainer_policy
+      :link-type: doc
+
+      通过持续贡献与同行评审，从贡献者逐步成长为领域负责人。
+
 .. toctree::
    :hidden:
 
@@ -58,3 +64,4 @@
    v0.3 发布说明 <release_v0.3>
    v0.4 发布说明 <release_v0.4>
    FAQ <faq>
+   贡献者政策 <maintainer_policy>
