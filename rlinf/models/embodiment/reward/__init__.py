@@ -21,6 +21,9 @@ from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.models.embodiment.reward.resnet_reward_model import ResNetRewardModel
+    from rlinf.models.embodiment.reward.robotwin_t5_reward_model import (
+        RoboTwinT5RewardModel,
+    )
     from rlinf.models.embodiment.reward.vlm_reward_model import (
         BufferedVLMRewardModel,
         ShapedVLMRewardModel,
@@ -30,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "BaseRewardModel",
     "ResNetRewardModel",
+    "RoboTwinT5RewardModel",
     "VLMRewardModel",
     "BufferedVLMRewardModel",
     "ShapedVLMRewardModel",
@@ -39,6 +43,10 @@ _REWARD_MODEL_IMPORTS = {
     "resnet": (
         "rlinf.models.embodiment.reward.resnet_reward_model",
         "ResNetRewardModel",
+    ),
+    "robotwin_t5": (
+        "rlinf.models.embodiment.reward.robotwin_t5_reward_model",
+        "RoboTwinT5RewardModel",
     ),
     "vlm": ("rlinf.models.embodiment.reward.vlm_reward_model", "VLMRewardModel"),
     "buffered_vlm": (

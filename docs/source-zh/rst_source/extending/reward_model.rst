@@ -152,6 +152,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
    reward_model_registry = {
        "resnet": ResNetRewardModel,
+       "robotwin_t5": RoboTwinT5RewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
        "shaped_vlm": ShapedVLMRewardModel,
@@ -160,6 +161,8 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 其中：
 
 - ``resnet``：单帧图像二分类，输出 sigmoid 概率。
+- ``robotwin_t5``：以任务指令（T5 编码）为条件的单帧成功分类器，
+  用于 :doc:`BWM 示例 <../examples/embodied/bwm>`。
 - ``vlm``：对当前观测运行 VLM（单步/终止帧等，由 ``reward_mode`` 决定）。
 - ``buffered_vlm``：对 env worker 维护的历史窗口运行 VLM；具体 prompt、视频格式与
   标量映射由 ``input_builder_name`` / ``reward_parser_name`` 决定。
