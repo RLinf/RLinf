@@ -471,6 +471,14 @@ API 推理仍只支持 ``buffered_vlm``。
    ``history_input``；窗口未满足 ``min_history_size`` 时，reward worker 会返回
    ``interval_reward``，而不是跳过 RPC。
 
+启用 ``gt_success_bonus`` 后，尚未结束的环境使用当前 success 标记，刚结束的环境使用自动 reset 前有效的 ``final_info``。该奖励仍按成功 step 发放，包括成功后不立即终止的任务。
+
+设置 ``env.eval.use_fixed_reset_state_ids: true`` 后，各轮评估保留选定的 reset ID；ManiSkill 的固定评估在每轮开始时重建场景，清除上一轮的物理和 controller 状态。验证保留训练使用的随机数状态；rollout 的 RNG 切换仅覆盖同步预测调用，避免异步训练在验证结束时被回退。仍可使用独立进程评估检查可重复性。完整 episode 的结果应报告 ``eval/success_at_end``，并与 ``eval/success_once`` 区分。
+
+可设置 ``rollout.seed``，在 Hugging Face policy 初始化后固定动作采样的随机数起点；各 rollout worker 使用该值加自身 rank。
+
+SFT 与 reward 推理共用视频处理和 prompt 构造。应与 checkpoint 的训练设置保持一致，包括 ``subprocessor_kwargs.video_processor.do_sample_frames``、帧顺序、``video_fps``、system prompt 和 chat template。SFT 的 prompt 选项放在 ``data`` 下，推理端放在 ``reward.model.input_builder_params`` 下；独立 success head 使用 ``success_input_builder_params``。启用采样时，五帧输入窗口不一定产生五帧处理结果。SFT 在推理前缀后追加监督答案，不再在答案后附加另一个 assistant 生成前缀。
+
 3.4.1 本地 Hugging Face 推理
 ............................
 
@@ -562,9 +570,10 @@ Success + Potential 使用上方选好的 warmup checkpoint 和三个 reward 产
 3.4.2 SGLang API 推理
 .....................
 
-设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``）。可指向外部
-OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
-:doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
+设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``），留空 ``reward.api.api_base``，由 RLinf 按 :doc:`../guides/sglang_server` 启动 Ray 托管的 SGLang server/router。
+
+对于 Qwen3-VL 视频奖励，worker 将共用 processor 生成的不含 padding 的 token ID 和视频 tensor 无损发送到 ``/generate``。托管服务保留视频分组、采样帧、像素、grid 和时间位置，不再将视频展平成 JPEG 图片列表或重新采样。外部视频 endpoint 必须使用同一套 RLinf SGLang 接入实现；普通 OpenAI-compatible chat endpoint 不足以处理此输入。图像 builder 继续使用 chat API。输入一致不保证不同后端的浮点推理结果完全相同。
+
 参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：
 
 .. code-block:: yaml
