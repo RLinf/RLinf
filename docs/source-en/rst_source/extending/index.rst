@@ -22,6 +22,12 @@ SFT, then use Advanced Integrations for backend integration and weight transport
 
       Add a new RL environment and wire it into the env registry.
 
+   .. grid-item-card:: Custom Environment Rewards
+      :link: custom_env_reward
+      :link-type: doc
+
+      Configure dense, hierarchical, or fully custom step rewards.
+
    .. grid-item-card:: New Real-World Tasks
       :link: new_task
       :link-type: doc
@@ -69,6 +75,7 @@ SFT, then use Advanced Integrations for backend integration and weight transport
 
    Extending Overview <overview>
    New Environment <new_env>
+   Custom Environment Rewards <custom_env_reward>
    New Real-World Tasks <new_task>
    New Robot <new_robot>
    New Model with FSDP <new_model_fsdp>

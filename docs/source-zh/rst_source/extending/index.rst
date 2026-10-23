@@ -18,6 +18,12 @@
 
       实现一个 RL 环境，并加入环境注册表。
 
+   .. grid-item-card:: 自定义环境奖励
+      :link: custom_env_reward
+      :link-type: doc
+
+      配置稠密、分层或完全自定义的步进奖励。
+
    .. grid-item-card:: 新增真机任务
       :link: new_task
       :link-type: doc
@@ -65,6 +71,7 @@
 
    扩展概览 <overview>
    新环境 <new_env>
+   自定义环境奖励 <custom_env_reward>
    新增真机任务 <new_task>
    新机器人 <new_robot>
    FSDP 新模型 <new_model_fsdp>
