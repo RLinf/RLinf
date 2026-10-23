@@ -67,7 +67,9 @@ If scope is unclear, default to checking:
    - No conflicting instructions between related pages.
    - Internal doc links use stable `:doc:`/relative links, not hardcoded ReadTheDocs URLs.
 5. Verify EN-ZH parity:
-   - Same topic coverage and section structure.
+   - Same topic coverage and section structure, except locale-specific network
+     and download notes (mainland-China mirrors, ModelScope, proxy commands),
+     which may exist only on the Chinese page.
    - Same commands, config keys, and model/env identifiers.
    - Translations preserve technical meaning (do not rename code symbols).
    - Corresponding EN/ZH pages use equivalent stable internal links.
@@ -104,9 +106,10 @@ If scope is unclear, default to checking:
      unusual or make the code harder to search.
    - Chinese uses restrained written technical language: neither casual chat nor
      bureaucratic prose.
-   - Chinese prose paragraphs and prose list items stay on one source line.
-     A hard wrap inside prose renders as a visible space between Chinese
-     characters even when the source contains no typed space.
+   - Chinese prose renders without an inserted space between Chinese
+     characters. A hard wrap inside prose renders as a visible space, so either
+     keep the paragraph on one source line or end each wrapped line with `\` to
+     remove the newline. Judge the rendered result, not the source line count.
 7. Report findings with severity and concrete fixes.
 
 ## Severity Rules

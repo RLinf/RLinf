@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1057,6 +1057,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        robodojo) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -2557,6 +2558,13 @@ EOF
             install_flash_attn
             install_robotwin_env
             ;;
+        robodojo)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_robodojo_env
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            ;;
         isaaclab)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3216,6 +3224,10 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        robodojo)
+            install_common_embodied_deps
+            install_robodojo_env
+            ;;
         libero|maniskill_libero)
             install_common_embodied_deps
             install_${ENV_NAME}_env
@@ -3721,6 +3733,130 @@ install_xsquare_turtle2_env() {
 
 install_gim_arm_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/gim_arm.txt"
+}
+
+install_robodojo_env() {
+    # The runtime distribution owns the simulator stack: Isaac Sim 5.1, the
+    # IsaacLab fork RoboDojo tracks, and the Torch family they need. Installing
+    # it here keeps those pins out of the rest of the environment.
+    if [[ "${PLATFORM}" != "nvidia" ]]; then
+        echo "RoboDojo currently requires --platform nvidia and a CUDA GPU." >&2
+        exit 1
+    fi
+    if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+        echo "RoboDojo currently supports Linux x86_64 only." >&2
+        exit 1
+    fi
+
+    local override_file="$SCRIPT_DIR/embodied/envs/robodojo-override.txt"
+    local runtime_ref="${ROBODOJO_RUNTIME_REF:-6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7}"
+    local isaaclab_ref="afca7b09d60d8beb9c1cb28b43066499940b969b"
+    local isaaclab_dir
+    local assets_root="${ROBODOJO_ASSETS_ROOT:-$PWD/data/robodojo}"
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    index_args+=(--extra-index-url https://pypi.nvidia.com)
+
+    if [[ ! -f "${override_file}" ]]; then
+        echo "Missing RoboDojo compatibility overrides: ${override_file}" >&2
+        exit 1
+    fi
+
+    # Isaac Sim needs the EULA flag at import time. Keep it in the venv so
+    # later eval/training shells work without another undocumented setup step.
+    export OMNI_KIT_ACCEPT_EULA=YES
+    export ROBODOJO_ASSETS_ROOT="${assets_root}"
+    if [[ -z "${TERM:-}" || "${TERM}" == "dumb" ]]; then
+        export TERM=xterm-256color
+    fi
+    export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    local escaped_assets_root
+    printf -v escaped_assets_root '%q' "${assets_root}"
+    if grep -q '^export ROBODOJO_ASSETS_ROOT=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i '/^export ROBODOJO_ASSETS_ROOT=/d' "$VENV_DIR/bin/activate"
+    fi
+    echo "export ROBODOJO_ASSETS_ROOT=${escaped_assets_root}" >> "$VENV_DIR/bin/activate"
+
+    # Torch first: the runtime pins torch==2.7.0, and the IsaacLab extensions
+    # build against whichever Torch is already installed. TORCH_CUDA_ARCH_LIST
+    # only affects those builds.
+    #
+    # ``--no-config`` keeps these installs on the runtime's own pins: the
+    # simulator stack must resolve from the upstream compatibility overrides
+    # below, not from the repository's override-dependencies.
+    local cuda_mm cuda_major cuda_minor
+    cuda_mm=$(detect_cuda_major_minor) || {
+        echo "Could not detect CUDA. RoboDojo requires a working NVIDIA CUDA driver." >&2
+        exit 1
+    }
+    cuda_major="${cuda_mm%% *}"
+    cuda_minor="${cuda_mm##* }"
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    else
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+    fi
+
+    local torch_index
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        torch_index="https://download.pytorch.org/whl/cu128"
+    else
+        torch_index="https://download.pytorch.org/whl/cu126"
+    fi
+    uv pip install --no-config --prerelease=allow \
+        --index-url "$torch_index" --overrides "$override_file" \
+        torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
+
+    # The runtime package pulls in the simulator stack and the Torch family it
+    # needs. Bump its ref, the override file, and the IsaacLab ref below
+    # together after revalidating.
+    uv pip install --no-config --prerelease=allow \
+        --overrides "$override_file" "${index_args[@]}" \
+        "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
+    # RLinf and RoboDojo resolve different OpenCV distributions. Keep one GUI
+    # wheel so cv2 cannot be silently replaced by an ABI-incompatible variant.
+    use_opencv_gui_wheel
+
+    # IsaacLab's wheel intentionally contains only isaaclab/__init__.py. The
+    # extension metadata and modules live beside the source package, so the
+    # runtime's three IsaacLab dependencies must be installed editable on top.
+    # The fork is pinned to the revision the runtime was validated with
+    # (yuechen0614/IsaacLab afca7b09d60d8beb9c1cb28b43066499940b969b).
+    isaaclab_dir=$(clone_or_reuse_repo \
+        ROBODOJO_ISAACLAB_PATH \
+        "$VENV_DIR/robodojo-isaaclab" \
+        "https://github.com/yuechen0614/IsaacLab.git")
+    if ! git -C "$isaaclab_dir" cat-file -e "${isaaclab_ref}^{commit}" 2>/dev/null; then
+        git -C "$isaaclab_dir" fetch --depth 1 origin "$isaaclab_ref"
+    fi
+    git -C "$isaaclab_dir" checkout --detach "$isaaclab_ref"
+    uv pip install --no-config --no-deps --no-build-isolation \
+        -e "$isaaclab_dir/source/isaaclab" \
+        -e "$isaaclab_dir/source/isaaclab_assets" \
+        -e "$isaaclab_dir/source/isaaclab_tasks"
+    export ROBODOJO_ISAACLAB_SOURCE="$isaaclab_dir/source"
+
+    python - <<'PY'
+import json
+import os
+from importlib.metadata import distribution
+from pathlib import Path
+
+import torch
+from robodojo_runtime import source_root
+from robodojo_runtime.bridge import VectorEnv  # noqa: F401 - RLinf's entry point
+
+assert torch.cuda.is_available(), "PyTorch cannot see a CUDA GPU."
+assert source_root().is_dir(), "RoboDojo source tree is missing."
+isaaclab = Path(os.environ["ROBODOJO_ISAACLAB_SOURCE"]) / "isaaclab/config/extension.toml"
+assert isaaclab.is_file(), "IsaacLab source tree is missing extension.toml."
+direct_url = json.loads(distribution("isaaclab").read_text("direct_url.json"))
+assert direct_url["url"].startswith("file://"), "isaaclab is not an editable install."
+print("[install.sh] RoboDojo environment verified.")
+PY
 }
 
 install_robotwin_env() {
