@@ -3776,9 +3776,9 @@ install_robotwin_env() {
         echo "[install.sh] Set planner_backend: mplib in the task config; curobo is unavailable."
     fi
 
-    # RoboTwin imports trimesh directly. curobo also depends on it, but curobo
-    # is installed on NVIDIA only.
-    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai trimesh "$SAPIEN_SPEC"
+    # RoboTwin imports trimesh and h5py directly. curobo also depends on trimesh,
+    # but curobo is installed on NVIDIA only.
+    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai trimesh h5py "$SAPIEN_SPEC"
 
     if [ "$build_curobo_stack" -eq 1 ]; then
         uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
