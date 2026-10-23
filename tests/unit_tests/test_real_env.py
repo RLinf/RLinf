@@ -120,6 +120,7 @@ def _assert_legacy_transition(env) -> None:
             {"step_frequency": 10000.0},
         ),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
+        ("rlinf.envs.real.r2", "R2ReachEnv", {}),
     ],
 )
 def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, override):
@@ -4830,3 +4831,104 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
 
     assert selected_seed_0 == selected_seed_0_again
     assert selected_seed_0 != selected_seed_1
+
+
+def test_r2_reach_env_dummy_and_faked_sdk(monkeypatch):
+    """R2ReachEnv supports dummy mode, single/dual arms, hands, mobile base, and faked RFrame SDK."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.r2 import R2ReachEnv
+    from rlinf.robotics import R2Config, R2Robot
+
+    # 1. Dummy mode (no hardware or SDK connection)
+    dummy_env = R2ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "step_frequency": 10000.0,
+        },
+        worker_info=None,
+        robot_info=_robot_info(
+            R2Config(node_rank=0, enable_base=True, cameras=["head", "wrist_left"])
+        ),
+        env_idx=0,
+    )
+    try:
+        # 2*(7 arm + 1 gripper) + 3 base = 19
+        assert dummy_env.action_space.shape == (19,)
+        assert dummy_env.robot is None
+        _assert_legacy_transition(dummy_env)
+    finally:
+        dummy_env.close()
+
+    # 2. Faked RFrame SDK (in-process connection so unit test stays fast and Ray-free)
+    orig_declare = R2Robot.declare_connection
+    monkeypatch.setattr(
+        R2Robot,
+        "declare_connection",
+        classmethod(
+            lambda _cls, **kw: orig_declare(**{**kw, "node_rank": None, "name": None})
+        ),
+    )
+    with mocked_sdks():
+        cfg = R2Config(node_rank=0, enable_base=True)
+        env = R2ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 10000.0,
+                "use_dense_reward": True,
+                "enable_random_reset": True,
+                "max_num_steps": 3,
+            },
+            worker_info=None,
+            robot_info=_robot_info(cfg),
+            env_idx=0,
+        )
+        try:
+            obs, _ = env.reset(seed=42)
+            assert env.observation_space.contains(obs)
+            assert obs["state"]["arm_joint_position"].shape == (14,)
+            assert obs["state"]["tcp_pose"].shape == (12,)
+            assert obs["state"]["gripper_position"].shape == (2,)
+            assert obs["state"]["base_pose"].shape == (3,)
+            assert set(obs["frames"]) == {"head", "wrist_left", "wrist_right"}
+
+            target_action = np.zeros(env.action_space.shape, dtype=np.float32)
+            obs, reward, terminated, truncated, _ = env.step(target_action)
+            assert env.observation_space.contains(obs)
+            assert np.isfinite(reward)
+            assert not truncated
+        finally:
+            env.close()
+
+        # 3. Auto-detecting 20-DoF + 6-DoF dexterous hands when R2Config leaves them unset
+        import rframe
+
+        rframe.Session.default_body_dof = 20
+        rframe.Session.default_end_effector_type = "hand"
+        try:
+            auto_cfg = R2Config(node_rank=0, cameras=[])
+            hand_env = R2ReachEnv(
+                override_cfg={
+                    "is_dummy": False,
+                    "enable_camera_player": False,
+                    "step_frequency": 10000.0,
+                },
+                worker_info=None,
+                robot_info=_robot_info(auto_cfg),
+                env_idx=0,
+            )
+            try:
+                assert hand_env.hardware.body_dof == 20
+                assert hand_env.hardware.end_effector_type == "hand"
+                # 2 * (7 arm + 6 hand) = 26
+                assert hand_env.action_space.shape == (26,)
+                obs, _ = hand_env.reset(seed=7)
+                assert hand_env.observation_space.contains(obs)
+                assert obs["state"]["gripper_position"].shape == (12,)
+            finally:
+                hand_env.close()
+        finally:
+            rframe.Session.default_body_dof = 21
+            rframe.Session.default_end_effector_type = "gripper"

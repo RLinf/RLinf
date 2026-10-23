@@ -4684,6 +4684,10 @@ def test_every_shipped_robot_runs_on_faked_sdks():
             "left_can_channel": "can0",
             "right_can_channel": "can1",
         },
+        "R2": {
+            "node_rank": 0,
+            "enable_base": True,
+        },
     }
     with mocked_sdks():
         import rlinf.robotics.robots  # noqa: F401
@@ -4796,10 +4800,11 @@ def test_an_address_is_checked_by_the_arm_that_dials_it():
 
 def test_a_connection_cannot_be_composed_into_a_robot():
     from rlinf.robotics.parts.arms.dosw1 import DOSW1Connection
+    from rlinf.robotics.parts.arms.r2 import R2Connection
     from rlinf.robotics.parts.arms.turtle2 import Turtle2Connection
     from rlinf.robotics.parts.base import Connection, RobotPart
 
-    for cls in (Turtle2Connection, DOSW1Connection):
+    for cls in (Turtle2Connection, DOSW1Connection, R2Connection):
         assert issubclass(cls, Connection), f"{cls.__name__} must still be placeable"
         assert not issubclass(cls, RobotPart), (
             f"{cls.__name__} backs parts without being one; it must not be "
@@ -4819,6 +4824,7 @@ def test_no_robot_builder_absorbs_a_setting_it_does_not_use():
         DualFrankaRobot,
         FrankaRobot,
         GimArmRobot,
+        R2Robot,
         Turtle2Robot,
     )
 
@@ -4829,6 +4835,7 @@ def test_no_robot_builder_absorbs_a_setting_it_does_not_use():
         GimArmRobot,
         Turtle2Robot,
         DOSW1Robot,
+        R2Robot,
     ):
         # Forwarding catch-alls are valid only when a downstream API validates keys.
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -7124,3 +7131,148 @@ def test_SE3_body_delta_compose_round_trip():
 
         assert np.allclose(T_rec[..., :3, :3], T_abs[..., :3, :3], atol=1e-6)
         assert np.allclose(T_rec[..., :3, 3], T_abs[..., :3, 3], atol=1e-6)
+
+
+def test_r2_connection_and_robot_variants_run_on_faked_rframe():
+    """R2Robot supports 21/20-DoF body, gripper/hand/none end effectors, depth cameras, and chassis."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_HAND_FINGER_ORDER,
+        R2_MODE_GRAVITY_COMP,
+        R2_MODE_SERVOJ,
+        R2Connection,
+    )
+    from rlinf.robotics.robots.r2 import R2Robot
+
+    with mocked_sdks():
+        # 1. Default 21-DoF dual-arm + parallel grippers + mobile base + depth cameras
+        robot = R2Robot.build(
+            body_dof=21,
+            end_effector_type="gripper",
+            enable_base=True,
+            cameras=("head", "wrist_left", "wrist_right"),
+            enable_depth=True,
+        )
+        assert not robot.is_connected
+        robot.connect()
+        try:
+            obs = robot.get_observation()
+            assert obs["left"]["arm"]["joint_position"].shape == (7,)
+            assert obs["right"]["arm"]["joint_position"].shape == (7,)
+            assert obs["left"]["gripper"]["state"].shape == (1,)
+            assert obs["right"]["gripper"]["state"].shape == (1,)
+            assert obs["base"]["base_pose"].shape == (3,)
+            assert obs["base"]["base_velocity"].shape == (3,)
+            assert obs["head"]["frame"].shape == (720, 1280, 3)
+            assert obs["head"]["depth"].shape == (720, 1280)
+            assert obs["wrist_left"]["frame"].shape == (480, 640, 3)
+            assert obs["wrist_right"]["frame"].shape == (480, 640, 3)
+
+            left_q = np.linspace(0.1, 0.7, 7, dtype=np.float32)
+            right_q = np.linspace(-0.1, -0.7, 7, dtype=np.float32)
+            robot.send_action(
+                {
+                    "left": {
+                        "arm": {"joint_position": left_q},
+                        "gripper": {"target": np.array([0.25], dtype=np.float32)},
+                    },
+                    "right": {
+                        "arm": {"joint_position": right_q},
+                        "gripper": {"target": np.array([0.75], dtype=np.float32)},
+                    },
+                    "base": {
+                        "base_velocity": np.array([0.2, -0.1, 0.05], dtype=np.float32)
+                    },
+                }
+            )
+            obs_after = robot.get_observation()
+            assert np.allclose(obs_after["left"]["arm"]["joint_position"], left_q)
+            assert np.allclose(obs_after["right"]["arm"]["joint_position"], right_q)
+            assert np.allclose(obs_after["left"]["gripper"]["state"], [0.25])
+            assert np.allclose(obs_after["right"]["gripper"]["state"], [0.75])
+            assert np.allclose(obs_after["base"]["base_velocity"], [0.2, -0.1, 0.05])
+
+            assert robot.child("left").child("arm").reset_joint(np.zeros(7))
+            assert robot.child("left").child("arm").clear_errors()
+            assert robot.child("base").navigate_to(1.0, 2.0, yaw=0.5)
+            robot.child("base").stop()
+        finally:
+            robot.disconnect()
+
+        # 2. 20-DoF body + 6-DoF dexterous hands + compressed cameras
+        conn = R2Connection(
+            body_dof=20,
+            end_effector_type="hand",
+            enable_base=False,
+            cameras=("wrist_left",),
+            use_compressed_camera=True,
+            controller_mode=R2_MODE_SERVOJ,
+        )
+        hand_robot = R2Robot(
+            **R2Robot.build_arms(conn),
+            **R2Robot.build_cameras(conn),
+        )
+        hand_robot.connect()
+        try:
+            hand_obs = hand_robot.get_observation()
+            assert hand_obs["left"]["hand"]["state"].shape == (
+                len(R2_HAND_FINGER_ORDER),
+            )
+            finger_target = np.linspace(0.1, 0.6, 6, dtype=np.float32)
+            hand_robot.send_action(
+                {
+                    "left": {"hand": {"target": finger_target}},
+                    "right": {"hand": {"target": finger_target}},
+                }
+            )
+            assert np.allclose(
+                hand_robot.get_observation()["left"]["hand"]["state"],
+                finger_target,
+            )
+            assert conn.switch_controller(R2_MODE_GRAVITY_COMP)
+            assert conn.set_payload("left", 1.2, (0.0, 0.0, 0.05))
+            fk = conn.forward_kinematics(np.zeros(14))
+            assert fk["left_tcp_pose"].shape == (6,)
+            ik = conn.inverse_kinematics(left_tcp_pose=fk["left_tcp_pose"])
+            assert ik["left_joint_positions"].shape == (7,)
+            conn.move_waist_joint(np.zeros(4, dtype=np.float32))
+            conn.move_neck_joint(np.array([0.1, -0.1], dtype=np.float32))
+        finally:
+            hand_robot.disconnect()
+
+        # 3. Auto-detection of body_dof and end_effector_type from /Motion/JointState
+        import rframe
+
+        from rlinf.robotics.discovery import RobotDiscovery
+        from rlinf.robotics.parts.arms.r2 import infer_r2_hardware
+        from rlinf.robotics.robots.r2 import R2Config
+
+        assert infer_r2_hardware(positions=[0.0] * 20) == (20, "none")
+        assert infer_r2_hardware(positions=[0.0] * 23) == (21, "gripper")
+        assert infer_r2_hardware(positions=[0.0] * 32) == (20, "hand")
+
+        rframe.Session.default_body_dof = 20
+        rframe.Session.default_end_effector_type = "hand"
+        try:
+            assert R2Connection.probe_hardware() == (20, "hand")
+            cfg = R2Config(node_rank=0)
+            assert cfg.body_dof is None and cfg.end_effector_type is None
+            discovery = RobotDiscovery.registry["R2"].discovery_cls
+            resources = discovery.enumerate(node_rank=0, configs=[cfg])
+            assert resources is not None
+            resolved = resources.infos[0].config
+            assert resolved.body_dof == 20
+            assert resolved.end_effector_type == "hand"
+
+            auto_conn = R2Connection(body_dof=None, end_effector_type="auto")
+            auto_conn.connect()
+            try:
+                assert auto_conn.body_dof == 20
+                assert len(auto_conn.waist_joint_names) == 4
+                assert auto_conn.end_effector_type == "hand"
+            finally:
+                auto_conn.disconnect()
+        finally:
+            rframe.Session.default_body_dof = 21
+            rframe.Session.default_end_effector_type = "gripper"
