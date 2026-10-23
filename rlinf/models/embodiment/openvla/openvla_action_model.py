@@ -676,7 +676,7 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             **kwargs,
         )
         action_tokens = generated_results.sequences
-        action_tokens = action_tokens[:, -self.action_dim :]
+        action_tokens = action_tokens[:, -self.action_dim * self.num_action_chunks :]
 
         token_logits = (
             generated_results.scores
@@ -702,18 +702,25 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             [self.bin_centers[da] for da in discretized_actions]
         )  # [B, dim]
 
-        # Unnormalize actions
+        # Unnormalize actions. The stats are per action dimension; tile them
+        # across the chunk steps so they line up with the flattened
+        # [chunk-step x action-dim] token layout.
         action_norm_stats = self._get_action_stats()
-        mask = action_norm_stats.get(
-            "mask", np.ones_like(action_norm_stats["q01"], dtype=bool)
-        )
-        mask = (
-            np.array(mask).reshape(1, -1).repeat(action_tokens.shape[0], axis=0)
-        )  # [B, dim]
+        mask = np.array(
+            action_norm_stats.get(
+                "mask", np.ones_like(action_norm_stats["q01"], dtype=bool)
+            ),
+            dtype=bool,
+        ).reshape(-1)
         action_high, action_low = (
             np.array(action_norm_stats["q99"]),
             np.array(action_norm_stats["q01"]),
         )
+        repeat_factor = action_tokens.shape[-1] // mask.shape[-1]
+        mask = np.tile(mask, repeat_factor)
+        action_high = np.tile(action_high, repeat_factor)
+        action_low = np.tile(action_low, repeat_factor)
+        mask = mask.reshape(1, -1).repeat(action_tokens.shape[0], axis=0)  # [B, dim]
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8)
@@ -782,7 +789,10 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         action_tokens = data["action_tokens"]
         attention_mask = data["attention_mask"]
 
-        action_tokens = action_tokens.reshape(action_tokens.shape[0], self.action_dim)
+        # action-token: [bsz, chunk-step, action-dim] -> [bsz, chunk-step x action-dim]
+        action_tokens = action_tokens.reshape(
+            action_tokens.shape[0], self.action_dim * self.num_action_chunks
+        )
 
         data["input_ids"] = torch.cat(
             [input_ids, action_tokens], dim=-1
