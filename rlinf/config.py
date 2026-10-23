@@ -1633,6 +1633,9 @@ def validate_embodied_cfg(cfg):
             "art_reward_reduction",
             "art_eps",
             "art_first_chunk_only",
+            "art_branch_chunk_index",
+            "art_branch_state_atol",
+            "art_branch_image_atol",
         }
         unsupported_art_options = sorted(
             option

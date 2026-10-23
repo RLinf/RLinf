@@ -17,6 +17,7 @@
 import inspect
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -24,8 +25,10 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from rlinf.config import validate_openpi_art_cfg
+from rlinf.config import validate_cfg, validate_openpi_art_cfg
 from rlinf.envs.utils import grouped_state_max_error
+from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
+from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
 from rlinf.utils.metric_utils import compute_loss_mask
 from rlinf.utils.nested_dict_process import process_nested_dict_for_train
 from rlinf.workers.actor.fsdp_art_policy_worker import (
@@ -321,17 +324,59 @@ def test_art_trajectory_preparation_preserves_episode_windows_and_cached_velocit
         assert not inputs["art_coordinate_mask"][4, ...].any()
 
 
-def test_openpi_art_recipe_composes_with_matching_batch_budget(monkeypatch):
+@pytest.fixture(params=[2, 4])
+def art_config_cluster(monkeypatch, request):
+    node = NodeInfo(
+        node_labels=[],
+        node_rank=0,
+        ray_id="test-node",
+        node_ip="127.0.0.1",
+        num_cpus=32,
+        python_interpreter_path="/usr/bin/python3",
+        default_env_vars={},
+        env_vars={},
+        hardware_resources=[
+            HardwareResource(
+                type=Accelerator.HW_TYPE,
+                infos=[
+                    HardwareInfo(type=Accelerator.HW_TYPE, model="NV_GPU:Mock")
+                    for _ in range(request.param)
+                ],
+            )
+        ],
+    )
+    group = NodeGroupInfo(
+        label=NodeGroupInfo.DEFAULT_GROUP_LABEL,
+        nodes=[node],
+        hardware_type=Accelerator.HW_TYPE,
+    )
+    cluster = SimpleNamespace(get_node_group=lambda: group)
+    monkeypatch.setattr("rlinf.config.Cluster", lambda **kwargs: cluster)
+
+
+@pytest.mark.parametrize("first_chunk_only", [False, True])
+def test_openpi_art_recipe_composes_with_matching_batch_budget(
+    monkeypatch, art_config_cluster, first_chunk_only
+):
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
-        cfg = compose(config_name="libero_object_0_art_openpi")
-    validate_openpi_art_cfg(cfg)
+        cfg = compose(
+            config_name="libero_object_0_art_openpi",
+            overrides=(
+                ["algorithm.art_first_chunk_only=true", "actor.global_batch_size=32"]
+                if first_chunk_only
+                else []
+            ),
+        )
+    cfg = validate_cfg(cfg)
     assert cfg.actor.global_batch_size == (
         cfg.env.train.total_num_envs
         * cfg.env.train.rollout_epoch
         * (
-            cfg.env.train.max_steps_per_rollout_epoch
+            1
+            if first_chunk_only
+            else cfg.env.train.max_steps_per_rollout_epoch
             // cfg.actor.model.num_action_chunks
         )
         // cfg.algorithm.art_updates_per_rollout
@@ -432,7 +477,9 @@ def test_art_branch_masks_complete_invalid_groups(invalid_reason):
 
 
 @pytest.mark.parametrize("branch_index", [0, 8])
-def test_art_fixed_branch_recipe_composes(monkeypatch, branch_index):
+def test_art_fixed_branch_recipe_composes(
+    monkeypatch, art_config_cluster, branch_index
+):
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
@@ -443,7 +490,7 @@ def test_art_fixed_branch_recipe_composes(monkeypatch, branch_index):
                 "actor.global_batch_size=32",
             ],
         )
-    validate_openpi_art_cfg(cfg)
+    cfg = validate_cfg(cfg)
     assert cfg.env.train.art_branch_chunk_index == branch_index
     cfg.algorithm.art_first_chunk_only = True
     with pytest.raises(AssertionError, match="mutually exclusive"):
