@@ -1,0 +1,37 @@
+env_type: real
+total_num_envs: 1
+auto_reset: True
+ignore_terminations: False
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+teleop: none
+use_relative_frame: False
+no_gripper: False
+main_image_key: base_0_rgb
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: DualARX5TCPEnv-v1
+
+# Reset and cleanup defaults are in DualARX5EnvConfig.
+# Add unlisted CLI settings with +env.eval.override_cfg.<name>=<value>.
+override_cfg:
+  is_dummy: False
+  task_description: "dual ARX X5 manipulation task"
+  step_frequency: 10
+  rotation_repr: rot6d
+  max_num_steps: 300
+  # Match Franka's joint_reset_qpos convention: joint targets use radians.
+  joint_reset_qpos: null
+  # Match Franka's max_step/max_step_rad names and units (m/rad); 0 disables.
+  # ARX limits from actual feedback; Franka limits from its preceding target.
+  max_step: 0.02
+  max_step_rad: 0.15
+  enforce_workspace_bounds: True
