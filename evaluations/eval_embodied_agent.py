@@ -94,22 +94,31 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    # launch the sglang server
+    # Launch the sglang server, or use the servers already running at
+    # rollout.sglang.server_urls.
     if rollout_backend == "sglang":
-        from rlinf.workers.rollout.sglang_server import (
-            launch_sglang_router_and_server,
-        )
+        _server_urls = list(cfg.rollout.sglang.get("server_urls", None) or [])
+        if _server_urls:
+            get_logger().info(
+                f"[eval] using {len(_server_urls)} running server(s): {_server_urls}"
+            )
+        else:
+            from rlinf.workers.rollout.sglang_server import (
+                launch_sglang_router_and_server,
+            )
 
-        server_group, _ = launch_sglang_router_and_server(
-            cfg,
-            cluster,
-            rollout_hardware_ranks=component_placement.get_hardware_ranks("rollout"),
-            router_server_args=cfg.rollout.sglang,
-        )
-        _server_urls = list(server_group.get_server_url().wait())
-        get_logger().info(
-            f"[eval] launched {len(_server_urls)} sglang server(s): {_server_urls}"
-        )
+            server_group, _ = launch_sglang_router_and_server(
+                cfg,
+                cluster,
+                rollout_hardware_ranks=component_placement.get_hardware_ranks(
+                    "rollout"
+                ),
+                router_server_args=cfg.rollout.sglang,
+            )
+            _server_urls = list(server_group.get_server_url().wait())
+            get_logger().info(
+                f"[eval] launched {len(_server_urls)} sglang server(s): {_server_urls}"
+            )
         rollout_group.set_sglang_server_urls(_server_urls).wait()
 
     runner = EmbodiedEvalRunner(
