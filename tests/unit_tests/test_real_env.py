@@ -2609,6 +2609,16 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
         finally:
             env.close()
 
+def test_so101_task_description_comes_from_task_config():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(task_description="pick up an object")
+        try:
+            assert env.task_description == "pick up an object"
+        finally:
+            env.close()
+
 
 @pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
@@ -3434,6 +3444,7 @@ def test_so101_env_is_driven_by_its_leader():
             env_idx=0,
             env_cfg={
                 "teleop": [{"so101_leader": {"port": "/dev/mock-leader"}}],
+                "so101_episode_wrapper": "start_end",
                 "no_gripper": False,
                 "use_relative_frame": False,
             },
@@ -3445,6 +3456,9 @@ def test_so101_env_is_driven_by_its_leader():
         )
         try:
             env.reset()
+            leader = list(env.get_wrapper_attr("device").group.devices)[0]
+            assert leader._device.positions["shoulder_pan.pos"] == pytest.approx(0.0)
+            assert leader._device.torque_enabled
             policy_action = np.zeros(6, dtype=np.float32)
 
             observation, *_ = env.step(policy_action)
@@ -3452,7 +3466,6 @@ def test_so101_env_is_driven_by_its_leader():
                 np.zeros(5)
             )
 
-            leader = list(env.get_wrapper_attr("device").group.devices)[0]
             leader._device.positions.update(
                 {"shoulder_pan.pos": 45.0, "gripper.pos": 80.0}
             )

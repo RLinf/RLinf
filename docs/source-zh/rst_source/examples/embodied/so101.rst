@@ -12,7 +12,7 @@ SO101 配置与控制
 概览
 ----
 
-测试在连接机械臂的 Linux 主机上运行，无需 GPU 或模型 checkpoint。RLinf 目前尚未提供适用于 SO101 的真机任务或训练流程；本指南仅介绍硬件检查。
+测试在连接机械臂的 Linux 主机上运行，无需 GPU 或模型 checkpoint。同一份代码还提供 SO-101 关节空间数采、OpenPI Pi0.5 SFT 和本地评测配置，下面会说明这些流程。
 
 硬件配置
 --------
@@ -161,6 +161,21 @@ follower 标定完成后，使用交互式测试检查关节与夹爪。脚本�
 follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``teleop``。follower 会持续跟随关节和夹爪运动。按一次 Ctrl-C 返回命令提示符，再输入 ``quit`` 断开连接。
 
 ``--fps`` 设置目标控制频率，默认为 30 Hz。相机独立采集图像；环境会复用不超过 ``camera_max_age`` 秒的图像（默认 0.5 秒），无需每步等待新图像。连续夹爪命令不等待运动完成。驱动会监测夹爪停滞，并将目标保持在实测开度以释放压力。每次检测到夹爪向目标进一步移动时，驱动都会重新开始停滞检测，因此缓慢或持续的运动只要仍在前进就可以继续。需要再次向受阻方向运动时，先将 leader 的夹爪向远离该开度的方向移动。驱动的 ``open_gripper()`` 和 ``close_gripper()`` 方法仍会等待运动完成或压力释放。
+
+SO-101 Pi0.5 SFT
+----------------
+
+SFT 配置要求使用 LeRobot v3 数据集根目录，并且该目录下存在 ``meta/info.json``。将 ``data.train_data_paths`` 设置为这个目录，将 ``actor.model.model_path`` 设置为 Pi0.5 checkpoint，并将 ``actor.model.openpi_data.norm_stats_path`` 设置为同一数据集生成的统计文件。配置模板是 ``examples/sft/config/realworld_sft_openpi_so101.yaml``。
+
+训练前，从同一个数据集计算 ``norm_stats.json``：
+
+.. code-block:: bash
+
+   PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
+     --config-name pi05_so101_joint \
+     --repo-id /path/to/so101_dataset
+
+命令会将统计文件写入 OpenPI assets 目录。将实际生成的路径填入 ``actor.model.openpi_data.norm_stats_path``；训练和评测不会从 SFT checkpoint 目录自动推断这份文件。
 
 新增真机任务
 ------------

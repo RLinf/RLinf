@@ -1374,6 +1374,27 @@ def test_apxinf_close_delegates_to_model():
     adapter.close()
     assert model.closed
 
+def test_so101_openpi_transforms_pad_six_joint_contract():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.so101_policy import SO101Inputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = SO101Inputs(action_dim=32, model_type=openpi_model.ModelType.PI05)(
+        {
+            "observation/image": image,
+            "observation/state": np.zeros(6, dtype=np.float32),
+            "actions": np.zeros((20, 6), dtype=np.float32),
+            "prompt": "reach a joint configuration",
+        }
+    )
+    assert result["state"].shape == (32,)
+    assert result["actions"].shape == (20, 32)
+    assert result["image"]["base_0_rgb"].shape == image.shape
+    assert not result["image_mask"]["left_wrist_0_rgb"]
+
 
 def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
     """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
