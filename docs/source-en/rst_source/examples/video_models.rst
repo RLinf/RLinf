@@ -226,7 +226,19 @@ To use a custom virtual environment directory, pass ``--venv <dir>``:
 
 This command creates a Python 3.10 environment and installs the SD3, Wan2.2,
 and OCR reward dependencies, including Diffusers, PEFT, Transformers,
-PaddleOCR, and PaddlePaddle.
+PaddleOCR, and CPU PaddlePaddle. This is sufficient for configurations whose
+OCR reward sets ``use_gpu: False``, including ``sd3_nft_ocr.yaml``.
+
+The checked-in Wan2.2 OCR configurations set ``use_gpu: True``. Install the
+CUDA-enabled PaddlePaddle wheel for those configurations:
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model diffusion --paddle-gpu
+
+The GPU wheel is approximately 760--800 MB, depending on the CUDA version. The
+installer selects the CUDA 11 or CUDA 12 build and skips the download when the
+matching build is already installed.
 
 .. warning::
 
