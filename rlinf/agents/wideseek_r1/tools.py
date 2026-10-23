@@ -32,8 +32,11 @@ from rlinf.workers.agent.tool_worker import ToolWorker
 SERPER_STATS = {"num_requests": 0}
 
 
+SUPPORTED_SEARCH_PROVIDERS = ("serper", "you")
+
+
 class AsyncOnlineSearchClient:
-    """Online search client using Serper API and Jina API for web access."""
+    """Online search client using Serper/You.com API and Jina API for web access."""
 
     # Class-level shared session for connection pooling
     _shared_session = None
@@ -82,20 +85,45 @@ class AsyncOnlineSearchClient:
         self.max_retries = self.cfg.tools.get("max_retries", 15)
         self.retry_delay_base = self.cfg.tools.get("retry_delay_base", 5)
 
+        # Search provider selection: "serper" (default) or "you" (You.com)
+        self.search_provider = self.cfg.tools.get("search_provider", "serper")
+        if self.search_provider not in SUPPORTED_SEARCH_PROVIDERS:
+            raise ValueError(
+                f"Unsupported search provider: '{self.search_provider}'. "
+                f"Supported providers: {', '.join(SUPPORTED_SEARCH_PROVIDERS)}"
+            )
+
         # Serper API
         self.serper_server_addr = "https://google.serper.dev"
         self.serper_api_key = os.environ.get("SERPER_API_KEY", "")
-        if not self.serper_api_key:
-            raise RuntimeError(
-                "Serper API key is not set. Please set the SERPER_API_KEY environment variable."
-            )
         self.serper_headers = {
             "X-API-KEY": self.serper_api_key,
             "Content-Type": "application/json",
         }
-        self.logger.info(
-            f"Initialized Serper API client with key: {self.serper_api_key[:8]}..."
-        )
+        if self.search_provider == "serper":
+            if not self.serper_api_key:
+                raise RuntimeError(
+                    "Serper API key is not set. Please set the SERPER_API_KEY environment variable."
+                )
+            self.logger.info(
+                f"Initialized Serper API client with key: {self.serper_api_key[:8]}..."
+            )
+
+        # You.com API
+        self.you_server_addr = "https://api.ydc-index.io"
+        self.you_api_key = os.environ.get("YDC_API_KEY", "")
+        self.you_headers = {
+            "X-API-Key": self.you_api_key,
+            "Content-Type": "application/json",
+        }
+        if self.search_provider == "you":
+            if not self.you_api_key:
+                raise RuntimeError(
+                    "You.com API key is not set. Please set the YDC_API_KEY environment variable."
+                )
+            self.logger.info(
+                f"Initialized You.com API client with key: {self.you_api_key[:8]}..."
+            )
 
         # Jina API
         self.use_jina = self.cfg.tools.get("use_jina", False)
@@ -156,9 +184,60 @@ class AsyncOnlineSearchClient:
                     response_text = await response.text()
                     raise Exception(f"HTTP {response.status}: {response_text[:100]}")
 
-    async def _single_serper_query(self, session, query: str, topk: int) -> dict:
+    async def _do_you_search(self, session, query: str, topk: int) -> dict:
         """
-        Execute a single Serper API search query with retry logic.
+        Execute a single You.com API search request (low-level network call).
+
+        Args:
+            session: aiohttp session
+            query: Search query string (already truncated)
+            topk: Number of results to return
+
+        Returns:
+            Dict with 'success' bool and 'data' normalized to the Serper-like
+            {'organic': [{'title', 'snippet', 'link'}]} shape (so downstream
+            formatting is identical across providers).
+
+        Raises:
+            Exception: If the request fails (to trigger retry)
+        """
+        async with self._get_search_semaphore():
+            payload = {"query": query, "num_web_results": topk}
+            await asyncio.sleep(0.1)  # Rate limiting
+            SERPER_STATS["num_requests"] += 1
+
+            async with session.post(
+                f"{self.you_server_addr}/search",
+                headers=self.you_headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # Normalize You.com 'hits' to the Serper 'organic' shape.
+                    organic = [
+                        {
+                            "title": hit.get("title", ""),
+                            "snippet": hit.get("description", ""),
+                            "link": hit.get("url", ""),
+                        }
+                        for hit in data.get("hits", [])
+                    ]
+                    return {"success": True, "data": {"organic": organic}}
+                else:
+                    response_text = await response.text()
+                    raise Exception(f"HTTP {response.status}: {response_text[:100]}")
+
+    def _do_search(self, session, query: str, topk: int) -> dict:
+        """Dispatch a low-level search request to the configured provider."""
+        if self.search_provider == "you":
+            return self._do_you_search(session, query, topk)
+        return self._do_serper_search(session, query, topk)
+
+    async def _single_search_query(self, session, query: str, topk: int) -> dict:
+        """
+        Execute a single search query with retry logic via the configured
+        search provider (Serper or You.com).
 
         Args:
             session: aiohttp session
@@ -189,7 +268,7 @@ class AsyncOnlineSearchClient:
                         )
                     await asyncio.sleep(delay)
 
-                return await self._do_serper_search(session, query, topk)
+                return await self._do_search(session, query, topk)
 
             except Exception as e:
                 last_error = e
@@ -201,7 +280,7 @@ class AsyncOnlineSearchClient:
 
     async def query_async(self, req_meta: dict[str, Any]) -> list[dict]:
         """
-        Query using Serper API with retry logic.
+        Query using the configured search provider with retry logic.
 
         Args:
             req_meta: Dict containing 'queries' list and 'topk' int
@@ -216,14 +295,14 @@ class AsyncOnlineSearchClient:
             return []
 
         session = await self.get_session()
-        tasks = [self._single_serper_query(session, query, topk) for query in queries]
-        serper_results = await asyncio.gather(*tasks)
+        tasks = [self._single_search_query(session, query, topk) for query in queries]
+        search_results = await asyncio.gather(*tasks)
 
         # Format results
         formatted_results = []
-        for query, serper_result in zip(queries, serper_results):
-            if serper_result and serper_result.get("success", False):
-                data = serper_result.get("data", {})
+        for query, search_result in zip(queries, search_results):
+            if search_result and search_result.get("success", False):
+                data = search_result.get("data", {})
                 organic_results = data.get("organic", [])[:topk]
 
                 documents = [
@@ -535,7 +614,8 @@ class WideSeekR1ToolWorker(ToolWorker):
         self.use_online_search = self.cfg.tools.get("online", False)
         if self.use_online_search:
             self.log_info(
-                "[INFO] WideSeekR1ToolWorker: Using online search (Serper API)"
+                "[INFO] WideSeekR1ToolWorker: Using online search "
+                f"({self.cfg.tools.get('search_provider', 'serper')} API)"
             )
             self.search_client = AsyncOnlineSearchClient(cfg=self.cfg)
         else:
