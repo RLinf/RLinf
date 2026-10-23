@@ -168,6 +168,7 @@ class AgentRunner(ReasoningRunner):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
+            self._stop_rollouts()
             return
 
         global_pbar = tqdm(
@@ -263,12 +264,14 @@ class AgentRunner(ReasoningRunner):
                             logging.info(
                                 f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
                             )
+                            self._stop_rollouts()
                             return
 
                         if run_time_exceeded:
                             logging.info(
                                 f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
                             )
+                            self._stop_rollouts()
                             return
 
                     time_metrics = self.timer.consume_durations()
@@ -313,6 +316,8 @@ class AgentRunner(ReasoningRunner):
 
                     global_pbar.set_postfix(logging_metrics, refresh=False)
                     global_pbar.update(1)
+
+            self._stop_rollouts()
         finally:
             for tool_worker in self.tool_workers:
                 tool_worker.stop_server()

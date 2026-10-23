@@ -149,9 +149,23 @@ class ReasoningEvalRunner:
     def epoch(self):
         return self.global_steps // self.num_steps_per_epoch
 
+    def _stop_rollouts(self):
+        """Stop rollout engines after evaluation finishes normally.
+
+        Only called on normal completion paths; on failures the rollout
+        group may be broken and a failing ``stop().wait()`` would mask the
+        original error, so this must not go into a ``finally`` block.
+        The ``hasattr`` check is a fallback for rollout workers that do
+        not implement ``stop``.
+        """
+        rollout_groups = [self.rollout, *getattr(self, "solid_rollouts", {}).values()]
+        for rollout_group in rollout_groups:
+            if hasattr(rollout_group, "stop"):
+                rollout_group.stop().wait()
+
     def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         if split_size is None:
-            split_size = self.component_placement.rollout_dp_size
+            split_size = self.component_placement.rollout_num_model_instances
         assert self.total_batch_size % split_size == 0, (
             f"Total batch size {self.total_batch_size} is not divisible by number of splits {split_size}"
         )

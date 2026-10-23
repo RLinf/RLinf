@@ -422,7 +422,7 @@ class ReasoningRunner:
 
     def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         if split_size is None:
-            split_size = self.component_placement.rollout_dp_size
+            split_size = self.component_placement.rollout_num_model_instances
 
         requests = build_rollout_requests_from_batch(
             batch,
@@ -452,10 +452,25 @@ class ReasoningRunner:
         if self.component_placement.is_collocated or self.component_placement.is_auto:
             self.rollout.onload_kv_cudagraph().wait()
 
+    def _stop_rollouts(self):
+        """Stop rollout engines after the training loop finishes normally.
+
+        Only called on normal completion paths; on failures the rollout
+        group may be broken and a failing ``stop().wait()`` would mask the
+        original error, so this must not go into a ``finally`` block.
+        The ``hasattr`` check is a fallback for rollout workers that do
+        not implement ``stop``.
+        """
+        rollout_groups = [self.rollout, *getattr(self, "solid_rollouts", {}).values()]
+        for rollout_group in rollout_groups:
+            if hasattr(rollout_group, "stop"):
+                rollout_group.stop().wait()
+
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
+            self._stop_rollouts()
             return
 
         global_pbar = tqdm(
@@ -595,12 +610,14 @@ class ReasoningRunner:
                         logging.info(
                             f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
                         )
+                        self._stop_rollouts()
                         return
 
                     if run_time_exceeded:
                         logging.info(
                             f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
                         )
+                        self._stop_rollouts()
                         return
 
                 time_metrics = self.timer.consume_durations()
@@ -667,4 +684,5 @@ class ReasoningRunner:
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
 
+        self._stop_rollouts()
         self.metric_logger.finish()
