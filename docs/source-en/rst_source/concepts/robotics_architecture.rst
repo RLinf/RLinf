@@ -706,7 +706,7 @@ device families, remote placement, robot composition, and discovery.
        them: Franky, Franka ROS, GimArm, SO-101, Piper, and the coupled
        controllers.
    * - ``robotics/parts/cameras/``
-     - Camera lifecycle and RealSense, ZED, and Lumos implementations.
+     - Camera lifecycle and RealSense, ZED, Lumos, and Orbbec implementations.
    * - ``robotics/parts/end_effectors/``
      - Grippers and dexterous hands.
    * - ``robotics/parts/mobility/``
