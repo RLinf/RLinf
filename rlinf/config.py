@@ -1636,6 +1636,7 @@ def validate_embodied_cfg(cfg):
             "art_branch_chunk_index",
             "art_branch_state_atol",
             "art_branch_image_atol",
+            "art_replay_diagnostics",
         }
         unsupported_art_options = sorted(
             option
@@ -1883,6 +1884,9 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     )
     assert type(cfg.algorithm.get("art_first_chunk_only", False)) is bool, (
         "algorithm.art_first_chunk_only must be boolean."
+    )
+    assert type(cfg.algorithm.get("art_replay_diagnostics", False)) is bool, (
+        "algorithm.art_replay_diagnostics must be boolean."
     )
     branch_index = cfg.algorithm.get("art_branch_chunk_index", None)
     if branch_index is not None:

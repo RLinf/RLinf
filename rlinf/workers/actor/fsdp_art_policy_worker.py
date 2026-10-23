@@ -94,7 +94,10 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         torch.distributed.all_reduce(active, op=torch.distributed.ReduceOp.MAX)
         has_guidance = bool(active.item())
         preparation_metrics["actor/skipped_zero_guidance"] = float(not has_guidance)
-        if not has_guidance:
+        replay_diagnostics = action_trajectories and self.cfg.algorithm.get(
+            "art_replay_diagnostics", False
+        )
+        if not has_guidance and not replay_diagnostics:
             clear_memory()
             return all_reduce_dict(
                 preparation_metrics,
@@ -103,6 +106,20 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
 
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
+        if replay_diagnostics:
+            replay_metrics = self._art_replay_metrics()
+            max_error = torch.tensor(
+                replay_metrics["actor/replay_max_abs"], device=self.device
+            )
+            torch.distributed.all_reduce(max_error, op=torch.distributed.ReduceOp.MAX)
+            replay_metrics["actor/replay_max_abs"] = max_error.item()
+            preparation_metrics.update(replay_metrics)
+        if not has_guidance:
+            clear_memory()
+            return all_reduce_dict(
+                preparation_metrics,
+                op=torch.distributed.ReduceOp.AVG,
+            )
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
         if "art_old_velocity" not in self.rollout_batch["forward_inputs"]:
@@ -457,6 +474,61 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             1, selected.to(sigmas_next.device)
         )
         del forward_inputs["art_endpoint"]
+
+    @torch.no_grad()
+    def _art_replay_metrics(self) -> dict[str, float]:
+        """Compare eval-mode Actor replay with rollout velocities before updates."""
+        forward_inputs = self.rollout_batch["forward_inputs"]
+        if "art_old_velocity" not in forward_inputs:
+            raise ValueError(
+                "ART replay diagnostics require cached rollout velocities."
+            )
+        states = forward_inputs["art_states"]
+        sigmas = forward_inputs["art_sigmas"]
+        old_velocities = forward_inputs["art_old_velocity"]
+        micro_batch_size = int(self.cfg.actor.micro_batch_size)
+        row_count, timestep_count = states.shape[:2]
+        squared_error = torch.zeros((), device=self.device)
+        max_error = torch.zeros((), device=self.device)
+        coordinate_count = 0
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            for start in range(0, row_count, micro_batch_size):
+                end = min(start + micro_batch_size, row_count)
+                model_inputs = put_tensor_device(
+                    self._model_forward_inputs(
+                        forward_inputs, torch.arange(start, end)
+                    ),
+                    self.device,
+                )
+                for timestep_index in range(timestep_count):
+                    with self.amp_context:
+                        output = self.model(
+                            forward_type=ForwardType.NFT,
+                            forward_inputs=model_inputs,
+                            nft_inputs={
+                                "x_t": states[start:end, timestep_index].to(
+                                    self.device
+                                ),
+                                "timesteps": sigmas[start:end, timestep_index].to(
+                                    self.device
+                                ),
+                            },
+                            compute_values=False,
+                        )
+                    old = old_velocities[start:end, timestep_index].to(self.device)
+                    velocity = output["v_theta"][:, : old.shape[1], : old.shape[2]]
+                    error = velocity.float() - old.float()
+                    squared_error += error.square().sum()
+                    max_error = torch.maximum(max_error, error.abs().max())
+                    coordinate_count += error.numel()
+        finally:
+            self.model.train(was_training)
+        return {
+            "actor/replay_mse": (squared_error / coordinate_count).item(),
+            "actor/replay_max_abs": max_error.item(),
+        }
 
     @torch.no_grad()
     def _precompute_old_velocities(self) -> None:

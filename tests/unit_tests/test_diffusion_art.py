@@ -15,6 +15,7 @@
 """DiffusionART tensor-kernel tests."""
 
 import inspect
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -366,7 +367,11 @@ def test_openpi_art_recipe_composes_with_matching_batch_budget(
         cfg = compose(
             config_name="libero_object_0_art_openpi",
             overrides=(
-                ["algorithm.art_first_chunk_only=true", "actor.global_batch_size=32"]
+                [
+                    "algorithm.art_first_chunk_only=true",
+                    "algorithm.art_replay_diagnostics=true",
+                    "actor.global_batch_size=32",
+                ]
                 if first_chunk_only
                 else []
             ),
@@ -672,6 +677,26 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         torch.testing.assert_close(
             output["v_theta"][..., :2], inputs["art_old_velocity"][:, 1]
         )
+        actor = object.__new__(EmbodiedARTFSDPPolicy)
+        actor.cfg = OmegaConf.create({"actor": {"micro_batch_size": 1}})
+        actor.model = model
+        actor.device = torch.device("cpu")
+        actor.amp_context = nullcontext()
+        actor.rollout_batch = {"forward_inputs": inputs}
+        cached_old = inputs["art_old_velocity"].clone()
+        model.train()
+        replay_metrics = actor._art_replay_metrics()
+        assert model.training
+        assert replay_metrics["actor/replay_mse"] < 1e-10
+        assert replay_metrics["actor/replay_max_abs"] < 1e-5
+        torch.testing.assert_close(inputs["art_old_velocity"], cached_old)
+        inputs["art_old_velocity"] += 0.25
+        model.eval()
+        replay_metrics = actor._art_replay_metrics()
+        assert not model.training
+        assert replay_metrics["actor/replay_mse"] == pytest.approx(0.25**2)
+        assert replay_metrics["actor/replay_max_abs"] == pytest.approx(0.25)
+        inputs["art_old_velocity"].copy_(cached_old)
         guidance = _art_trajectory_guidance(
             inputs["art_endpoint"][None],
             torch.tensor([0.0, 1.0]),

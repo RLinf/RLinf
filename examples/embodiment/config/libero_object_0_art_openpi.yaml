@@ -49,6 +49,7 @@ algorithm:
   art_branch_chunk_index: null
   art_branch_state_atol: 1.0e-5
   art_branch_image_atol: 1.0
+  art_replay_diagnostics: False
   art_reward_reduction: sum
   art_timestep_fraction: 0.25
   art_exclude_final_step: False
