@@ -38,7 +38,7 @@ if typing.TYPE_CHECKING:
     from rlinf.utils.placement import ModelParallelComponentPlacement
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
-    from rlinf.workers.actor.megatron_critic_worker import MegatronCritic
+    from rlinf.workers.critic.megatron_critic_worker import MegatronCritic
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
     from rlinf.workers.inference.megatron_inference_worker import (
         MegatronActorInference,
