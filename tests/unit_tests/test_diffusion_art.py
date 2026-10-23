@@ -26,6 +26,7 @@ from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg, validate_openpi_art_cfg
+from rlinf.data.schema.embodied_types import EnvOutput
 from rlinf.envs.utils import grouped_state_max_error
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
@@ -39,6 +40,7 @@ from rlinf.workers.actor.fsdp_art_policy_worker import (
     _prompt_disjoint_windows,
     _validate_art_rollout,
 )
+from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import (
     MultiStepRolloutWorker,
     _art_branch_observation_stats,
@@ -626,6 +628,9 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
             "task_descriptions": ["pick", "pick"],
             "art_sim_state_error": torch.zeros(2),
         }
+        env_worker = object.__new__(EnvWorker)
+        policy_input = env_worker._build_policy_input(EnvOutput(obs=env_obs))
+        env_obs = worker._merge_policy_inputs(policy_input.split([1, 1])).obs
         model._input_transform_fn = lambda sample: {
             "image": dict.fromkeys(observation.images, sample["observation/image"]),
             "image_mask": dict.fromkeys(observation.images, True),
