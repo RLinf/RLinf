@@ -13,11 +13,110 @@
 # limitations under the License.
 
 import gc
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+
+from rlinf.scheduler import Worker
+
+
+class _GraphBackend:
+    """Platform-resolved graph backend for CUDA and Ascend NPU devices.
+
+    ``torch_npu`` mirrors the CUDA graph API (``NPUGraph``, ``graph`` context
+    manager, ``graph_pool_handle``), while generator state registration is
+    checked dynamically on the platform's graph class.
+    """
+
+    def __init__(self, device: torch.device):
+        platform = getattr(torch, device.type, None)
+        graph_cls = (
+            getattr(platform, "CUDAGraph", None) or getattr(platform, "NPUGraph", None)
+            if platform is not None
+            else None
+        )
+        if platform is None or graph_cls is None:
+            raise ValueError(f"Graph capture requires CUDA or NPU, got {device}.")
+        self.device_type = device.type
+        self.platform = platform
+        self.graph_cls = graph_cls
+        self.supports_generators = hasattr(
+            graph_cls, "register_generator_state"
+        ) and hasattr(platform, "default_generators")
+
+    def new_graph(self):
+        return self.graph_cls()
+
+    def graph_ctx(self, graph, pool):
+        return self.platform.graph(graph, pool=pool)
+
+    def pool_handle(self):
+        return self.platform.graph_pool_handle()
+
+    def synchronize(self):
+        self.platform.synchronize()
+
+    def empty_cache(self):
+        self.platform.empty_cache()
+
+    def current_device(self) -> int:
+        return self.platform.current_device()
+
+    def default_generator(self, index: int):
+        if not self.supports_generators:
+            return None
+        return self.platform.default_generators[index]
+
+    def is_device_tensor(self, tensor: torch.Tensor) -> bool:
+        return tensor.device.type == self.device_type
+
+
+def graph_signature(tree: Any, prefix: str = "") -> tuple | None:
+    """Hashable signature of a nested tree for rollout graph cache keys.
+
+    Handles Mappings (including ``BatchFeature``), lists, tuples, tensors,
+    and scalar leaves. Returns None when the tree contains other objects:
+    their repr may embed values that change per call, so callers must keep
+    such trees on the eager path instead of keying graphs by them.
+    """
+    if torch.is_tensor(tree):
+        return (prefix, str(tree.device), tuple(tree.shape), str(tree.dtype))
+    if isinstance(tree, str) or tree is None or isinstance(tree, (bool, int, float)):
+        return (prefix, type(tree).__name__, tree)
+    if isinstance(tree, Mapping):
+        if not all(isinstance(key, str) for key in tree):
+            return None
+        parts = []
+        for k in sorted(tree.keys(), key=str):
+            sub = graph_signature(tree[k], f"{prefix}.{k}" if prefix else str(k))
+            if sub is None:
+                return None
+            parts.append(sub)
+        return ("mapping", tuple(parts))
+    if isinstance(tree, (list, tuple)):
+        parts = []
+        for i, v in enumerate(tree):
+            sub = graph_signature(v, f"{prefix}[{i}]")
+            if sub is None:
+                return None
+            parts.append(sub)
+        return (type(tree).__name__, tuple(parts))
+    return None
+
+
+def clone_tensor_tree(tree: Any) -> Any:
+    """Clone tensor leaves, passing non-tensor structure through unchanged."""
+    if torch.is_tensor(tree):
+        return tree.detach().clone()
+    if isinstance(tree, Mapping):
+        return {k: clone_tensor_tree(v) for k, v in tree.items()}
+    if isinstance(tree, list):
+        return [clone_tensor_tree(v) for v in tree]
+    if isinstance(tree, tuple):
+        return tuple(clone_tensor_tree(v) for v in tree)
+    return tree
 
 
 def build_kv_cache(
@@ -42,8 +141,12 @@ def build_kv_cache(
     return kv_cache
 
 
-def _copy_tree_(dst: Any, src: Any, *, name: str = "") -> None:
-    """In-place copy src -> dst for nested structures of Tensors/dicts/lists/tuples."""
+def copy_tensor_tree(dst: Any, src: Any, *, name: str = "") -> None:
+    """Update static tensor buffers without changing their shape or dtype.
+
+    Mapping keys absent from ``src`` retain their existing values. Sequence
+    lengths and non-tensor metadata must match the captured structure.
+    """
     if torch.is_tensor(dst):
         if not torch.is_tensor(src):
             raise TypeError(f"{name}: dst is Tensor but src is {type(src)}")
@@ -56,13 +159,13 @@ def _copy_tree_(dst: Any, src: Any, *, name: str = "") -> None:
         dst.copy_(src)
         return
 
-    if isinstance(dst, dict):
-        if not isinstance(src, dict):
+    if isinstance(dst, Mapping):
+        if not isinstance(src, Mapping):
             raise TypeError(f"{name}: dst is dict but src is {type(src)}")
         for k in dst.keys():
             if k not in src:
                 continue
-            _copy_tree_(dst[k], src[k], name=f"{name}.{k}" if name else str(k))
+            copy_tensor_tree(dst[k], src[k], name=f"{name}.{k}" if name else str(k))
         return
 
     if isinstance(dst, (list, tuple)):
@@ -71,27 +174,37 @@ def _copy_tree_(dst: Any, src: Any, *, name: str = "") -> None:
         if len(dst) != len(src):
             raise ValueError(f"{name}: len mismatch dst={len(dst)} src={len(src)}")
         for i in range(len(dst)):
-            _copy_tree_(dst[i], src[i], name=f"{name}[{i}]")
+            copy_tensor_tree(dst[i], src[i], name=f"{name}[{i}]")
         return
 
-    if dst is None:
+    if dst is None or isinstance(dst, (str, bool, int, float)):
+        if type(dst) is not type(src) or dst != src:
+            raise ValueError(f"{name}: static metadata changed from {dst!r} to {src!r}")
         return
 
     raise TypeError(f"{name}: unsupported dst type {type(dst)}")
 
 
-def _assert_on_cuda_tree(tree: Any, *, name: str) -> None:
+def _assert_on_device_tree(
+    tree: Any, *, name: str, is_device_tensor: Callable[[torch.Tensor], bool]
+) -> None:
     if torch.is_tensor(tree):
-        if not tree.is_cuda:
-            raise ValueError(f"{name} must be CUDA tensor, got device={tree.device}")
+        if not is_device_tensor(tree):
+            raise ValueError(
+                f"{name} must be an accelerator tensor, got device={tree.device}"
+            )
         return
     if isinstance(tree, dict):
         for k, v in tree.items():
-            _assert_on_cuda_tree(v, name=f"{name}.{k}")
+            _assert_on_device_tree(
+                v, name=f"{name}.{k}", is_device_tensor=is_device_tensor
+            )
         return
     if isinstance(tree, (list, tuple)):
         for i, v in enumerate(tree):
-            _assert_on_cuda_tree(v, name=f"{name}[{i}]")
+            _assert_on_device_tree(
+                v, name=f"{name}[{i}]", is_device_tensor=is_device_tensor
+            )
         return
     if tree is None:
         return
@@ -113,10 +226,10 @@ class GraphCaptureSpec:
 
 @dataclass
 class GraphSpec:
-    """Specification for a captured CUDA graph."""
+    """Specification for a captured graph."""
 
     name: str
-    graph: torch.cuda.CUDAGraph
+    graph: Any
     inputs: dict[str, Any]
     outputs: dict[str, Any]
     external_inputs: set[str] = field(default_factory=set)
@@ -124,12 +237,12 @@ class GraphSpec:
 
 class CUDAGraphManager:
     """
-    Manager for CUDA graphs with support for:
+    Manager for accelerator graphs (CUDA and Ascend NPU) with support for:
     - Single graph capture and replay
     - Shared memory pool across multiple graphs (graph_pool_handle)
 
-    Note: Buffer offload/onload is NOT supported because CUDA graphs
-    capture memory addresses - buffers must remain at the same GPU addresses.
+    Note: Buffer offload/onload is NOT supported because graphs capture
+    memory addresses - buffers must remain at the same device addresses.
     For model weights offload, handle it separately in the model.
     """
 
@@ -138,7 +251,9 @@ class CUDAGraphManager:
         device: torch.device | None = None,
         create_graph_pool: bool = True,
     ):
-        self.device = device or torch.device("cuda")
+        default_device = Worker.torch_device_type or "cuda"
+        self.device = device or torch.device(default_device)
+        self.backend = _GraphBackend(self.device)
         self.graphs: dict[str, GraphSpec] = {}
         # Shared memory pool for all graphs to optimize memory usage
         self.graph_pool = None
@@ -146,13 +261,21 @@ class CUDAGraphManager:
             self.create_shared_pool()
 
     def create_shared_pool(self) -> None:
-        self.graph_pool = torch.cuda.graph_pool_handle()
+        self.graph_pool = self.backend.pool_handle()
 
     def _register_generators(
         self,
-        graph: torch.cuda.CUDAGraph,
+        graph: Any,
         spec: GraphCaptureSpec,
     ) -> None:
+        if not self.backend.supports_generators:
+            if spec.register_default_cuda_generator or spec.cuda_generators:
+                raise RuntimeError(
+                    f"{self.device.type.upper()} graphs do not support registering generator state; "
+                    "keep sampling outside the captured region."
+                )
+            return
+
         if not hasattr(graph, "register_generator_state"):
             if spec.register_default_cuda_generator or spec.cuda_generators:
                 raise RuntimeError(
@@ -164,12 +287,51 @@ class CUDAGraphManager:
             device_index = (
                 self.device.index
                 if self.device.index is not None
-                else torch.cuda.current_device()
+                else self.backend.current_device()
             )
-            graph.register_generator_state(torch.cuda.default_generators[device_index])
+            graph.register_generator_state(self.backend.default_generator(device_index))
 
         for generator in spec.cuda_generators:
             graph.register_generator_state(generator)
+
+    def _snapshot_generators(
+        self,
+        spec: GraphCaptureSpec,
+    ) -> list[tuple[torch.Generator, torch.Tensor]]:
+        if not self.backend.supports_generators:
+            return []
+        device_index = (
+            self.device.index
+            if self.device.index is not None
+            else self.backend.current_device()
+        )
+        default_gen = self.backend.default_generator(device_index)
+        generators: list[torch.Generator] = []
+        if default_gen is not None:
+            generators.append(default_gen)
+        for gen in spec.cuda_generators:
+            if all(gen is not existing for existing in generators):
+                generators.append(gen)
+        return [(gen, gen.get_state()) for gen in generators]
+
+    def _restore_generators(
+        self,
+        snapshots: list[tuple[torch.Generator, torch.Tensor]],
+    ) -> None:
+        if not snapshots:
+            return
+        try:
+            recovery_graph = self.backend.new_graph()
+            if hasattr(recovery_graph, "register_generator_state"):
+                for gen, _ in snapshots:
+                    recovery_graph.register_generator_state(gen)
+                dummy = torch.empty(1, device=self.device)
+                with self.backend.graph_ctx(recovery_graph, None):
+                    dummy.zero_()
+            for gen, state in snapshots:
+                gen.set_state(state)
+        except Exception:  # noqa: BLE001
+            pass
 
     def capture(
         self,
@@ -177,7 +339,7 @@ class CUDAGraphManager:
         use_shared_pool: bool = True,
     ) -> GraphSpec:
         """
-        Capture a CUDA graph from the given specification.
+        Capture a graph from the given specification.
 
         Args:
             spec: The capture specification containing function, inputs, outputs.
@@ -187,22 +349,35 @@ class CUDAGraphManager:
             The captured GraphSpec.
         """
 
-        _assert_on_cuda_tree(spec.inputs, name=f"{spec.name}.inputs")
+        _assert_on_device_tree(
+            spec.inputs,
+            name=f"{spec.name}.inputs",
+            is_device_tensor=self.backend.is_device_tensor,
+        )
 
         for _ in range(spec.warmup_iters):
             _ = spec.func(spec.inputs)
 
-        torch.cuda.synchronize()
+        self.backend.synchronize()
 
-        graph = torch.cuda.CUDAGraph()
+        graph = self.backend.new_graph()
         self._register_generators(graph, spec)
+        generator_snapshots = self._snapshot_generators(spec)
 
         # Use shared pool if requested for memory optimization
         pool = self.graph_pool if use_shared_pool else None
 
-        with torch.cuda.graph(graph, pool=pool):
-            outputs = spec.func(spec.inputs)
-        _assert_on_cuda_tree(outputs, name=f"{spec.name}.outputs")
+        try:
+            with self.backend.graph_ctx(graph, pool):
+                outputs = spec.func(spec.inputs)
+        except BaseException:
+            self._restore_generators(generator_snapshots)
+            raise
+        _assert_on_device_tree(
+            outputs,
+            name=f"{spec.name}.outputs",
+            is_device_tensor=self.backend.is_device_tensor,
+        )
 
         graph_spec = GraphSpec(
             name=spec.name,
@@ -244,19 +419,19 @@ class CUDAGraphManager:
                 raise KeyError(
                     f"Graph '{name}': external input '{k}' not found in static input buffers."
                 )
-            _copy_tree_(graph_spec.inputs[k], inputs[k], name=f"{name}.inputs.{k}")
+            copy_tensor_tree(graph_spec.inputs[k], inputs[k], name=f"{name}.inputs.{k}")
 
         graph_spec.graph.replay()
         return graph_spec.outputs
 
     def destroy(self, name: str | None = None) -> None:
         """
-        Destroy captured CUDA graphs and shared memory pool, releasing GPU memory.
+        Destroy captured graphs and the shared memory pool, releasing device memory.
 
         Args:
             name: Name of the graph to destroy. If None, destroy all graphs.
         """
-        torch.cuda.synchronize()
+        self.backend.synchronize()
         if name is not None:
             if name in self.graphs:
                 del self.graphs[name]
@@ -265,7 +440,7 @@ class CUDAGraphManager:
         self.graph_pool = None
 
         gc.collect()
-        torch.cuda.empty_cache()
+        self.backend.empty_cache()
 
     def __contains__(self, name: str) -> bool:
         return name in self.graphs

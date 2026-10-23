@@ -247,15 +247,13 @@ PPO 训练可使用 10k-step ABot-M0 LIBERO checkpoint 作为 RL baseline。该�
    qwenvl:
      base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-ABot 当前默认使用 ``VGGT.from_pretrained("facebook/VGGT-1B")`` 初始化 VGGT。如果运行时无法访问
-Hugging Face 或镜像，请将 ``VGGT-1B`` 放入本地 Hugging Face cache，或在 ABot 安装代码中将
-VGGT 加载路径显式改为本地目录。
+安装脚本使 ABot 的 VGGT loader 支持 ``VGGT_MODEL_PATH``。离线运行时，在启动评测或训练之前，将该变量设置为上面下载的权重目录：
 
-本地路径示例：
+.. code-block:: bash
 
-.. code-block:: python
+   export VGGT_MODEL_PATH=/path/to/VGGT-1B
 
-   self.spatial_model = spatial_model = VGGT.from_pretrained('/workspace/models/VGGT-1B')
+未设置时，ABot 继续使用默认的 Hub ID ``facebook/VGGT-1B``。``VGGT_PATH`` 用于安装时选择源码 checkout；``VGGT_MODEL_PATH`` 用于运行时选择权重目录。
 
 配置 ``model_path``
 ----------------------------------------

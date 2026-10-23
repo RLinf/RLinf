@@ -38,6 +38,7 @@ from rlinf.models.embodiment.evo1.utils.normalizer import (
     NormalizationType,
     Normalizer,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -143,6 +144,11 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None):
         # reentrant-checkpoint "no input requires grad" errors during training.
         config_dict["enable_gradient_checkpointing"] = False
 
+    # Evo-1 moves its InternVL3 embedder onto config.device while building it, and
+    # that field defaults to "cuda", which raises "Torch not compiled with CUDA
+    # enabled" on any other accelerator. Name the one this worker runs on.
+    config_dict["device"] = Worker.torch_device_type
+
     evo_config = EvoConfig.from_dict(config_dict)
     logger.info(
         f"Loading Evo-1 from {ckpt_dir} "
@@ -212,6 +218,7 @@ def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None):
         rl_head_config=rl_head_config,
         rl_denoising_steps=rl_denoising_steps,
         valid_action_dim=getattr(cfg, "action_dim", None),
+        vision_attention_batch_size=int(_get("vision_attention_batch_size", 0)),
     )
 
 

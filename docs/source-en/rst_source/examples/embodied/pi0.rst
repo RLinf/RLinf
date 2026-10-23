@@ -468,6 +468,24 @@ LIBERO and ManiSkill through the shared platform installer and scheduler device
 API. ManiSkill uses CPU simulation on the non-CUDA backends; MUSA additionally
 requires vendor simulator packages.
 
+OpenPI can compile activation, rotary embedding, and gated residual kernels
+with ``torch.compile``. When
+``actor.model.openpi.torch_compile`` is omitted, RLinf enables compilation if
+the Python environment contains a ``triton`` module. An explicit setting takes
+precedence; the π₀.₅ template sets it to ``True``. On a backend without a
+compatible Triton/Inductor setup, use eager execution by adding this override
+to the experiment YAML:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       openpi:
+         torch_compile: False
+
+This setting controls those OpenPI kernels within the process; it
+does not compile the entire policy.
+
 AMD ROCm
 ~~~~~~~~
 

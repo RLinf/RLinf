@@ -170,6 +170,27 @@ flow-matching SDE sampling / GRPO parameters under ``actor.model`` and ``algorit
       clip_ratio_low: 0.2
       clip_ratio_high: 0.28          # clip-higher: sustains improvement
 
+When submitting the action-head kernels becomes a rollout bottleneck, enable
+graphs for the deterministic part of the training rollout. Keeping the rollout
+model resident lets later calls reuse captured graphs:
+
+.. code-block:: yaml
+
+    rollout:
+      enable_cuda_graph: True
+      enable_offload: False
+
+Graphs are captured lazily for each observed input shape and dtype on CUDA or
+Ascend. In-place weight updates are visible to replay. Offloading releases the
+graphs, and reloading captures them again from the next rollout inputs.
+
+Large batches on Ascend can exhaust memory in the frozen InternVL vision
+attention. Set ``actor.model.evo1.vision_attention_batch_size: 8`` to compute
+its attention matrices for at most eight camera frames at once. The default is
+``0``, which uses native attention. The setting applies to frozen vision attention
+without dropout on Ascend. It reduces temporary memory and can add kernel launch
+overhead, so measure throughput with the intended rollout batch.
+
 Launch Commands
 ~~~~~~~~~~~~~~~
 

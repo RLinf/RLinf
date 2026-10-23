@@ -45,16 +45,10 @@ def _build_oft_vlm_inputs(
     examples: list[dict[str, Any]],
 ) -> dict[str, torch.Tensor]:
     """Build OFT prompt format by appending action-token placeholders."""
-    batch_images = [to_pil_preserve(example["image"]) for example in examples]
+    from ..utils.vlm_preprocess import build_device_vlm_inputs, get_train_image_size
+
+    device_views = bool(examples) and torch.is_tensor(examples[0]["image"][0])
     instructions = [example["lang"] for example in examples]
-
-    from ..utils.vlm_preprocess import get_train_image_size
-
-    train_obs_image_size = get_train_image_size(starvla_model)
-    if train_obs_image_size:
-        batch_images = starvla_resize_images(
-            batch_images, target_size=train_obs_image_size
-        )
 
     chunk_len = resolve_action_chunk_len(
         starvla_model,
@@ -69,12 +63,18 @@ def _build_oft_vlm_inputs(
     )
     instructions = [instruction + prompt_suffix for instruction in instructions]
 
-    qwen_vl_interface = getattr(starvla_model, "qwen_vl_interface", None)
-    build_inputs = getattr(qwen_vl_interface, "build_qwenvl_inputs", None)
-    # TODO: Whether this fallback is necessary. need further test
-    if not callable(build_inputs):
-        vlm_interface = resolve_vlm_interface(starvla_model)
-        build_inputs = getattr(vlm_interface, "build_qwenvl_inputs", None)
+    vlm_interface = resolve_vlm_interface(starvla_model)
+    if device_views and getattr(vlm_interface, "processor", None) is not None:
+        return build_device_vlm_inputs(
+            starvla_model, examples, vlm_interface, instructions=instructions
+        )
+    batch_images = [to_pil_preserve(example["image"]) for example in examples]
+    train_obs_image_size = get_train_image_size(starvla_model)
+    if train_obs_image_size:
+        batch_images = starvla_resize_images(
+            batch_images, target_size=train_obs_image_size
+        )
+    build_inputs = getattr(vlm_interface, "build_qwenvl_inputs", None)
     if not callable(build_inputs):
         raise RuntimeError("VLM interface does not provide 'build_qwenvl_inputs(...)'.")
     return build_inputs(images=batch_images, instructions=instructions)

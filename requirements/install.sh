@@ -1165,9 +1165,10 @@ EOF
 }
 
 install_ascend_tensorflow_pins() {
-    # TF 2.21 SIGSEGVs against Ray's protobuf 6.x on Ascend. Shared by every
-    # embodied model whose install pulls TensorFlow (GR00T, StarVLA, …).
+    # Pin installed TensorFlow after dependency resolution to avoid the
+    # incompatible TF 2.21/protobuf 6 combination on Ascend.
     [ "$PLATFORM" = "ascend" ] || return 0
+    uv pip show tensorflow >/dev/null 2>&1 || return 0
     echo "[install.sh] Applying Ascend TensorFlow compatibility pins"
     uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/tensorflow.txt"
 }
@@ -2725,7 +2726,6 @@ install_starvla_model() {
     fi
 
     install_flash_attn
-    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2787,7 +2787,6 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
-    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -2798,7 +2797,6 @@ install_gr00t_n1d6_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/RLinf/Isaac-GR00T.git" -b n1.6.1-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -2811,6 +2809,10 @@ install_gr00t_n1d6_model() {
             ;;
     esac
 
+    # Environment installs may resolve a different Transformers version;
+    # apply the Eagle3-compatible model pins last.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
+
     uv pip uninstall pynvml || true
 }
 
@@ -2821,7 +2823,6 @@ install_gr00t_n1d7_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -2833,6 +2834,9 @@ install_gr00t_n1d7_model() {
             exit 1
             ;;
     esac
+
+    # Apply the backbone's version pins after environment dependency resolution.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     uv pip uninstall pynvml || true
 }
@@ -2900,6 +2904,25 @@ install_abot_m0_model() {
     uv pip install -e "$vggt_path"
 
     uv pip install -e "$abot_path" --no-deps
+
+    # Allow local VGGT weights through VGGT_MODEL_PATH, preserving the Hub default.
+    local abot_framework="$abot_path/ABot/model/framework/ABot_M0.py"
+    if [ -f "$abot_framework" ]; then
+        python - "$abot_framework" <<'EOF'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+pinned = "VGGT.from_pretrained('facebook/VGGT-1B')"
+configurable = (
+    "VGGT.from_pretrained(os.environ.get('VGGT_MODEL_PATH', 'facebook/VGGT-1B'))"
+)
+if pinned in source:
+    path.write_text(source.replace(pinned, configurable))
+    print("[install.sh] ABot-M0 VGGT weights now honor VGGT_MODEL_PATH")
+EOF
+    fi
 
     maybe_build_decord_from_source
     uv pip install -r $SCRIPT_DIR/embodied/models/abot.txt
@@ -4274,6 +4297,7 @@ main() {
     esac
 
     install_platform_extras
+    install_ascend_tensorflow_pins
     # Env/model installs may have changed the protobuf runtime or gencode.
     echo "[install.sh] Ensuring ${RAY_COMPAT_DEPS[*]} for Ray dashboard/agent"
     uv pip install "${RAY_COMPAT_DEPS[@]}"
