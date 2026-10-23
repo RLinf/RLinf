@@ -53,11 +53,25 @@ class Pi0RLConfig:
     chunk_critic_input: bool = False
     train_expert_only: bool = False
     is_nft: bool = False
+    rl_mode: str = "default"
     config_name: str = ""
+
+    def __post_init__(self) -> None:
+        if self.rl_mode not in {"default", "art"}:
+            raise ValueError(
+                f"openpi.rl_mode must be 'default' or 'art', got {self.rl_mode!r}"
+            )
+        if self.rl_mode == "art" and (
+            self.is_nft or self.noise_method != "flow_ode" or self.noise_level != 0
+        ):
+            raise ValueError(
+                "OpenPi ART requires is_nft=False, noise_method='flow_ode', "
+                "and noise_level=0.0"
+            )
 
 
 class Pi0RL(EnvIO, Pi0):
-    """On-policy flow RL (PPO / GRPO / NFT) inheriting vendored Pi0."""
+    """Flow RL (PPO / GRPO / NFT / ART) inheriting vendored Pi0."""
 
     def __init__(
         self,
@@ -210,7 +224,8 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         collect_nft = rl_cfg.is_nft
-        if rl_cfg.joint_logprob or collect_nft:
+        collect_art = rl_cfg.rl_mode == "art"
+        if rl_cfg.joint_logprob or collect_nft or collect_art:
             chosen_per_step = torch.arange(num_steps, device=device)
             denoise_inds = chosen_per_step[None].expand(B, -1).contiguous()
         else:
@@ -224,6 +239,7 @@ class Pi0RL(EnvIO, Pi0):
         timesteps = rl_sampler.get_timesteps(num_steps, device)
         idx_step = torch.empty(B, device=device, dtype=torch.long)
         chains = [noise]
+        art_velocities: list[torch.Tensor] = []
         log_probs: list[torch.Tensor] = []
         suffix_values: list[torch.Tensor] = []
         x_t = noise
@@ -247,6 +263,10 @@ class Pi0RL(EnvIO, Pi0):
                 observation, x_t, t_tensor, kv_cache, prefix_mask
             )
             v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
+            if collect_art:
+                art_velocities.append(
+                    v_t[:, : self.action_chunk, : self.action_env_dim].detach()
+                )
             noise_std = None
             if method == "flow_noise":
                 noise_std = self.noise_head(suffix_act).to(torch.float32)
@@ -313,6 +333,16 @@ class Pi0RL(EnvIO, Pi0):
         if nft_state is not None:
             forward_inputs.update(nft_state)
             forward_inputs["nft_x0"] = x_0.detach()
+        if collect_art:
+            forward_inputs.update(
+                art_endpoint=x_0[:, : self.action_chunk, : self.action_env_dim]
+                .detach()
+                .contiguous(),
+                art_states=chains_tensor[:, :-1].detach().contiguous(),
+                art_sigmas=timesteps[:-1][None].expand(B, -1).contiguous(),
+                art_sigmas_next=timesteps[1:][None].expand(B, -1).contiguous(),
+                art_old_velocity=torch.stack(art_velocities, dim=1).contiguous(),
+            )
 
         return actions, {
             "prev_logprobs": log_probs_picked,

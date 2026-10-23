@@ -1,17 +1,11 @@
 Diffusion Model Fine-Tuning with ART
 ====================================
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
-   :align: center
-   :width: 45%
-
-   SD3 and Wan2.2 generation models trained with DiffusionART.
-
-Fine-tune SD3 or Wan2.2 with DiffusionART to improve text rendering using OCR
-rewards. ART combines rewards and clean latent endpoints within each prompt
-group into a shared direction, then trains against frozen velocity targets at
-states visited during generation. Complete the :doc:`shared setup <video_models>`,
-choose an image or video recipe, and inspect the training results below.
+This page describes DiffusionART fine-tuning for SD3.5 Medium image text
+rendering and Wan2.2 TI2V 5B video text rendering. It covers the algorithm
+and its equations, OCR data, training configuration, recorded ART/NFT
+reward and runtime results, and training metrics. An experimental Pi0 recipe
+extends ART to multi-step LIBERO action trajectories.
 
 Overview
 --------
@@ -31,12 +25,12 @@ reference implementation, see the
    .. grid-item-card:: Models
       :text-align: center
 
-      SD3 / Wan2.2
+      SD3.5 Medium / Wan2.2 TI2V 5B / Pi0
 
    .. grid-item-card:: Algorithm
       :text-align: center
 
-      DiffusionART
+      Image OCR / video OCR / LIBERO
 
    .. grid-item-card:: Output
       :text-align: center
@@ -68,13 +62,18 @@ Choose the config for the output you want to generate.
      - Image OCR
    * - Wan2.2 TI2V 5B
      - ``wan22_ti2v_5b_art_video_ocr``
-     - Text-to-video OCR
+     - OCR prompts; ``visual.video_ocr`` with a video-level mean score.
+   * - Robot manipulation
+     - ``libero_object_0_art_openpi`` (``examples/embodiment/config/``)
+     - LIBERO Object task 0; environment episode returns.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The environment scores each completed candidate; video rewards are averaged
-before ART builds guidance for the prompt group.
+Each image/video episode generates one image or video. ART uses one scalar reward for each
+candidate, then compares candidates generated from the same prompt.
+The :ref:`LIBERO action recipe <diffusion-art-libero>` instead groups complete
+robot trajectories and aligns their action chunks by decision index.
 
 .. list-table::
    :header-rows: 1
@@ -156,6 +155,133 @@ Wan records ODE trajectories.
      - Enables the corrective movement mask; both recipes use ``True``.
    * - ``algorithm.art_mask_threshold``
      - Movement threshold for the mask; both recipes use ``1e-5`` with ``art_mask_metric=sde_kl``.
+
+.. _diffusion-art-libero:
+
+LIBERO Action Fine-Tuning
+------------------------------
+
+The ``libero_object_0_art_openpi`` recipe fine-tunes Pi0 on LIBERO Object task 0
+from the same SFT checkpoint as
+``examples/embodiment/config/libero_object_0_nft_openpi.yaml``. It uses the
+existing environment/rollout pipeline, complete episode returns, cached rollout
+velocities, and two ART updates per rollout.
+
+.. warning::
+
+   This is an experimental trajectory-level adaptation. A group shares a task
+   and initial simulator state; its observations diverge after different
+   actions. Aggregation at later decisions therefore differs from the paper's
+   same-condition image/video setting. Success rates, guidance strength, and
+   drift thresholds require LIBERO experiments. ``art_first_chunk_only=True``
+   restricts training to the initial decision as a same-initial-observation
+   control.
+
+Episode Returns and Action Guidance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+One robot episode contains multiple decisions, each generating an action chunk
+through its own denoising process. The recipe sums rewards up to and including
+termination, then uses that episode return at each valid decision. This carries
+terminal success feedback to earlier actions.
+
+For group :math:`g`, decision :math:`h`, and executed action coordinate :math:`j`,
+the valid trajectories form :math:`\mathcal V_{g,h,j}`. The covariance is computed
+only from those trajectories:
+
+.. math::
+
+   C_{g,h,j}=\frac{1}{n_{g,h,j}-1}
+   \sum_{i\in\mathcal V_{g,h,j}}
+   (R_i-\bar R_{g,h,j})(a_{i,h,j}-\bar a_{g,h,j}).
+
+Here :math:`R_i` is the complete episode return, :math:`a_{i,h,j}` is a normalized
+model-space action coordinate, and :math:`n_{g,h,j}=|\mathcal V_{g,h,j}|`.
+Coordinates with fewer than two valid trajectories receive zero guidance.
+The covariance is normalized over supported action coordinates before assigning
+guidance to each trajectory. Constant-return groups have zero guidance.
+
+The transformer still receives its full action horizon and model dimensions.
+The covariance, target loss, and drift proxy use executed actions and real
+environment dimensions. An action after termination is excluded even when it
+shares a chunk with earlier valid actions. Loss normalization accounts for
+valid chunks across actor ranks.
+
+Both updates retain the velocities cached during rollout. Each reset group
+contributes half its trajectories to each window, and every chunk from one
+trajectory stays in the same window. Group guidance is computed before this
+split. Pi0 uses the same velocity sign as the SD3/Wan implementation, so the
+target is :math:`v_{\mathrm{old}}-H_{g,h}`. The existing corrective mask applies
+to the valid action coordinates.
+
+Configuration and Launch
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The OpenPi environment and checkpoint setup follows :doc:`Pi0 <embodied/pi0>`.
+The LIBERO installer selects the simulator assets used by this recipe:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model openpi --env libero \
+      --venv .venv-openpi-libero
+   source .venv-openpi-libero/bin/activate
+
+This creates a separate OpenPi environment. With the Pi0 SFT checkpoint already
+available locally, the following command starts the experiment from the
+repository root:
+
+.. code-block:: bash
+
+   export CUDA_VISIBLE_DEVICES=0,1,2,3
+   export EMBODIED_PATH="$PWD/examples/embodiment"
+   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl OMP_NUM_THREADS=1
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-path "$EMBODIED_PATH/config" \
+      --config-name libero_object_0_art_openpi \
+      actor.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
+      rollout.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+The defaults collect 64 episodes, with 240 environment steps and 5 actions per
+decision. Each rollout contains :math:`64\times(240/5)=3072` action chunks before
+termination masking. Two disjoint updates therefore require
+``actor.global_batch_size=1536``. In general, the required batch size is
+``total_num_envs * rollout_epoch * decisions / art_updates_per_rollout``.
+With ``algorithm.art_first_chunk_only=True``, the decision count is one and
+the matching override is ``actor.global_batch_size=32`` for this recipe.
+
+The model uses ``openpi.rl_mode=art``, ``is_nft=False``, and
+``noise_method=flow_ode`` with zero transition noise. Training requires
+``auto_reset=False``, ``ignore_terminations=False``, and fixed grouped reset
+states. The four-step sampler and ``art_timestep_fraction=0.25`` select one
+rollout denoising state per action chunk. The full recipe is in
+``examples/embodiment/config/libero_object_0_art_openpi.yaml``.
+
+Validation and Metrics
+~~~~~~~~~~~~~~~~~~~~~~
+
+The tensor/config tests exercise termination masks, group alignment, frozen
+targets, and cached-state replay. The model test uses small Gemma/SigLIP
+backbones and generated observations, so it runs without a checkpoint:
+
+.. code-block:: bash
+
+   python -m pytest tests/unit_tests/test_diffusion_art.py
+
+A startup experiment with ``runner.max_steps=2``, ``runner.max_epochs=2``,
+``runner.val_check_interval=1``, and ``runner.save_interval=1`` exercises
+training, evaluation, and checkpoint saving before a full run. GPU LIBERO
+training and checkpoint resume require the actual model and simulator assets.
+
+``actor/art_reward_mean`` and ``actor/art_reward_std`` describe episode returns.
+``actor/valid_chunk_frac`` and ``actor/valid_action_frac`` report the fractions
+remaining after termination and optional reward filtering. The existing
+``active_group_frac``, ``mask_frac``, and ``movement_score`` diagnose guidance
+and drift. ART/NFT comparisons use the same SFT initialization, reset/evaluation
+states, environment interactions, optimizer-update counts, and elapsed time;
+their loss magnitudes are different objectives.
 
 .. _diffusion-art-results:
 

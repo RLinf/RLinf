@@ -1,0 +1,145 @@
+defaults:
+  - env/libero_object@env.train
+  - env/libero_object@env.eval
+  - model/pi0@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_object_0_art_openpi"
+    logger_backends: ["tensorboard"]
+  max_epochs: 200
+  max_steps: 200
+  only_eval: False
+  val_check_interval: 10
+  save_interval: 10
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  group_size: 8
+  reward_coef: 1.0
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  update_epoch: 1
+  adv_type: grpo
+  loss_type: embodied_art
+  filter_rewards: False
+  log_group_success_metrics: True
+  art_updates_per_rollout: 2
+  art_first_chunk_only: False
+  art_reward_reduction: sum
+  art_timestep_fraction: 0.25
+  art_exclude_final_step: False
+  art_covariance_reduction: unbiased
+  art_direction_mode: normalized_aggregate
+  art_scale_mode: unit_normalized_covariance
+  art_guidance_gain: 1.0
+  art_zero_signal_mode: exact
+  art_zero_signal_atol: 0.0
+  art_loss_space: velocity_linear_sigma
+  art_mask_metric: sde_kl
+  art_mask_threshold: 1.0e-5
+  art_reference_noise_level: 0.8
+  art_corrective_mask_enabled: True
+  art_eps: 1.0e-5
+
+env:
+  group_name: "EnvGroup"
+  train:
+    rollout_epoch: 1
+    task_id_filter: [0]
+    total_num_envs: 64
+    group_size: 8
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/train
+  eval:
+    rollout_epoch: 1
+    task_id_filter: [0]
+    total_num_envs: 48
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 480
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: libero_10
+  enable_offload: False
+  pipeline_stage_num: 1
+  model:
+    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  # 64 episodes * (240 / 5) decisions / 2 disjoint updates.
+  global_batch_size: 1536
+  seed: 42
+  enable_offload: False
+  model:
+    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
+    precision: null
+    num_action_chunks: 5
+    add_value_head: False
+    openpi:
+      task: rl
+      rl_mode: art
+      is_nft: False
+      noise_level: 0.0
+      noise_method: flow_ode
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    critic_warmup_steps: 0
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

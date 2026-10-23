@@ -1,13 +1,7 @@
 ART 扩散模型微调
 ================
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
-   :align: center
-   :width: 45%
-
-   使用 DiffusionART 训练的 SD3 与 Wan2.2 生成模型。
-
-使用 DiffusionART 微调 SD3 或 Wan2.2，通过 OCR 奖励改善文字渲染。ART 将同一 prompt 下各候选的奖励与干净 latent 终点聚合为共享方向，再向生成过程中所经状态上的冻结速度目标训练。完成 :doc:`共用准备步骤 <video_models>` 后，选择图像或视频配置，并按下文启动训练、检查结果。
+本页介绍 DiffusionART 在 SD3.5 Medium 图像文字生成和 Wan2.2 TI2V 5B 视频文字生成中的微调，内容涵盖算法与公式、OCR 数据、训练配置、ART/NFT 奖励与耗时实测结果，以及训练指标定义，并给出 Pi0 在 LIBERO 多步动作轨迹上的实验性 ART 配方。
 
 概览
 ----
@@ -20,12 +14,12 @@ ART 扩散模型微调
    .. grid-item-card:: 模型
       :text-align: center
 
-      SD3 / Wan2.2
+      SD3.5 Medium / Wan2.2 TI2V 5B / Pi0
 
    .. grid-item-card:: 算法
       :text-align: center
 
-      DiffusionART
+      图像 OCR / 视频 OCR / LIBERO
 
    .. grid-item-card:: 输出
       :text-align: center
@@ -57,12 +51,15 @@ ART 扩散模型微调
      - 图像 OCR
    * - Wan2.2 TI2V 5B
      - ``wan22_ti2v_5b_art_video_ocr``
-     - 文生视频 OCR
+     - OCR prompt；``visual.video_ocr`` 计算视频级平均分。
+   * - 机器人操作
+     - ``libero_object_0_art_openpi`` （``examples/embodiment/config/``）
+     - LIBERO Object task 0；环境 episode 回报。
 
 观测与动作
 ~~~~~~~~~~
 
-环境对每个完整候选打分；视频奖励先取帧均值，再用于构造 prompt 组的 ART 引导。
+图像、视频任务的每个 episode 生成一张图像或一段视频。ART 为每个候选保留一个标量奖励，再比较同一 prompt 下的候选。:ref:`LIBERO 动作配方 <diffusion-art-libero>` 则对完整机器人轨迹分组，按决策位置对齐动作块。
 
 .. list-table::
    :header-rows: 1
@@ -122,6 +119,80 @@ ART 要求 ``actor.training_backend=fsdp``、``rollout.pipeline_stage_num=1``、
      - 启用偏移修正 mask；两个配置均为 ``True``。
    * - ``algorithm.art_mask_threshold``
      - mask 的偏移阈值；两个配置均为 ``1e-5``，配合 ``art_mask_metric=sde_kl`` 使用。
+
+.. _diffusion-art-libero:
+
+LIBERO 动作微调
+---------------
+
+``libero_object_0_art_openpi`` 使用与 ``examples/embodiment/config/libero_object_0_nft_openpi.yaml`` 相同的 SFT checkpoint，在 LIBERO Object task 0 上微调 Pi0。配方沿用环境交互与 rollout 流程，使用完整 episode 回报、rollout 缓存速度，以及每轮两次 ART 更新。
+
+.. warning::
+
+   这是一种实验性的轨迹级适配。同组轨迹共享任务与模拟器初始状态，执行不同动作之后，观测会逐渐分化。因此，后续决策的聚合条件与论文的同条件图像、视频设置存在差异。成功率、指导强度和漂移阈值需要通过 LIBERO 实验验证。``art_first_chunk_only=True`` 仅训练初始决策，可作为同初始观测对照。
+
+轨迹回报与动作指导
+~~~~~~~~~~~~~~~~~~
+
+一个机器人 episode 包含多次决策，每次决策分别通过去噪生成一个动作块。配方先累加终止之前及终止动作上的奖励，再把完整 episode 回报分配给有效决策，让终局成功反馈参与早期动作训练。
+
+对于组 :math:`g`、第 :math:`h` 次决策和实际执行的动作坐标 :math:`j`，有效轨迹集合记为 :math:`\mathcal V_{g,h,j}`。协方差仅在该集合内计算：
+
+.. math::
+
+   C_{g,h,j}=\frac{1}{n_{g,h,j}-1}
+   \sum_{i\in\mathcal V_{g,h,j}}
+   (R_i-\bar R_{g,h,j})(a_{i,h,j}-\bar a_{g,h,j}).
+
+其中 :math:`R_i` 是完整 episode 回报，:math:`a_{i,h,j}` 是模型内部的归一化动作坐标，:math:`n_{g,h,j}=|\mathcal V_{g,h,j}|`。有效轨迹少于两条的坐标，其指导信号为零。协方差在有效动作坐标上归一化，再分配给各轨迹；回报完全相同的组产生零指导信号。
+
+Transformer 仍接收完整动作生成长度和模型维度；协方差、目标损失和漂移代理只使用实际执行的动作与真实环境维度。同一个动作块中，终止之后的动作也会被排除。损失归一化统计所有 actor rank 上的有效动作块。
+
+两次更新始终使用 rollout 时缓存的速度。每个初始状态组分别向两个窗口分配一半轨迹，同一条轨迹的全部动作块归入同一窗口。组指导在划分窗口前计算。Pi0 与 SD3/Wan 实现使用相同的速度符号，目标为 :math:`v_{\mathrm{old}}-H_{g,h}`，现有 corrective mask 在有效动作坐标上计算。
+
+配置与启动
+~~~~~~~~~~
+
+OpenPi 环境和 checkpoint 设置沿用 :doc:`Pi0 <embodied/pi0>`。LIBERO 安装选项准备该配方使用的模拟器素材：
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model openpi --env libero \
+      --venv .venv-openpi-libero
+   source .venv-openpi-libero/bin/activate
+
+这会创建独立的 OpenPi 环境。Pi0 SFT checkpoint 已位于本地时，以下命令从仓库根目录启动实验：
+
+.. code-block:: bash
+
+   export CUDA_VISIBLE_DEVICES=0,1,2,3
+   export EMBODIED_PATH="$PWD/examples/embodiment"
+   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl OMP_NUM_THREADS=1
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-path "$EMBODIED_PATH/config" \
+      --config-name libero_object_0_art_openpi \
+      actor.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
+      rollout.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+默认每轮采集 64 条 episode，每条最多 240 个环境步，每次决策执行 5 个动作。终止掩码生效前，每轮共有 :math:`64\times(240/5)=3072` 个动作块，分成两次不重叠更新，因此 ``actor.global_batch_size=1536``。通用关系为 ``total_num_envs * rollout_epoch * decisions / art_updates_per_rollout``。设置 ``algorithm.art_first_chunk_only=True`` 时，决策数为一，该配方对应的 batch 覆盖值为 ``actor.global_batch_size=32``。
+
+模型使用 ``openpi.rl_mode=art``、``is_nft=False``，以及零转移噪声的 ``noise_method=flow_ode``。训练要求 ``auto_reset=False``、``ignore_terminations=False`` 和固定的分组初始状态。四步采样器结合 ``art_timestep_fraction=0.25``，为每个动作块选择一个实际 rollout 去噪状态。完整配置位于 ``examples/embodiment/config/libero_object_0_art_openpi.yaml``。
+
+验证与指标
+~~~~~~~~~~
+
+张量与配置测试覆盖终止掩码、分组对齐、冻结目标和缓存状态回放。模型测试使用小型 Gemma/SigLIP 与构造的观测，可以在本地直接运行：
+
+.. code-block:: bash
+
+   python -m pytest tests/unit_tests/test_diffusion_art.py
+
+启动实验附加 ``runner.max_steps=2``、``runner.max_epochs=2``、``runner.val_check_interval=1`` 和 ``runner.save_interval=1``，会先执行两轮训练、评估与 checkpoint 保存。GPU LIBERO 训练和 checkpoint 恢复需要真实模型与模拟器素材。
+
+``actor/art_reward_mean`` 和 ``actor/art_reward_std`` 描述 episode 回报；``actor/valid_chunk_frac`` 和 ``actor/valid_action_frac`` 描述终止掩码与可选奖励过滤后保留的比例。现有 ``active_group_frac``、``mask_frac`` 和 ``movement_score`` 反映指导信号与漂移。ART/NFT 对照使用相同 SFT 初始化、初始状态和评估状态，同时记录环境交互量、optimizer 更新次数与耗时；两种损失的数值尺度对应不同目标。
 
 .. _diffusion-art-results:
 
