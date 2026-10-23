@@ -1,0 +1,31 @@
+env_type: dexjoco
+task_name: water_plant
+camera_names: [front, wrist]
+
+seed: 0
+total_num_envs: null
+group_size: 1
+
+auto_reset: True
+ignore_terminations: False
+use_fixed_reset_state_ids: False
+
+max_steps_per_rollout_epoch: 1000
+max_episode_steps: 1000
+
+use_rel_reward: False
+reward_coef: 1.0
+is_eval: False
+
+assets_path: ${oc.env:DEXJOCO_ASSET_DIR}
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  camera_heights: 640
+  camera_widths: 640
+  randomize: False
+  randomize_dynamics: False

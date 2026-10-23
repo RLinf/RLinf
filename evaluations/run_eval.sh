@@ -49,6 +49,7 @@ infer_benchmark() {
         robocasa_*|robocasa-* ) echo "robocasa" ;;
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
+        dexjoco_*|dexjoco-* ) echo "dexjoco" ;;
         * )
             echo "unknown"
             ;;
