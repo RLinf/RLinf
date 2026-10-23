@@ -16,6 +16,8 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 
 .. include:: _setup_common.rst
 
+华为昇腾请参阅 :ref:`sft-fastwam-hardware`；下面的命令用于安装 NVIDIA 环境。
+
 进行 SFT 时安装 FastWAM：
 
 .. code-block:: bash
@@ -109,6 +111,50 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+.. _sft-fastwam-hardware:
+
+在不同硬件后端上运行
+----------------------------------------
+
+NVIDIA 使用上面的安装与启动步骤。华为昇腾 CANN 支持 FastWAM SFT 和 LIBERO 评测，沿用相同的模型权重、归一化统计、数据集和文本 embedding 缓存。
+
+华为昇腾 CANN
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用昇腾 LIBERO 容器，或已安装 CANN 与 NPU 驱动的宿主机：
+
+.. include:: _ascend_libero.rst
+
+在容器内使用 RLinf 代码创建 FastWAM 环境，也可以直接在昇腾宿主机上运行相同命令：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
+   source .venv/bin/activate
+
+仅运行 SFT 时可省略 ``--env libero``。国内下载可添加 ``--use-mirror``。安装器会选择昇腾 PyTorch 环境，并跳过 CUDA flash-attention。
+
+按上文准备 Wan 组件、ActionDiT backbone、数据集和 T5 embedding 缓存。在昇腾主机上预处理 ActionDiT 时，将 ``--device cuda`` 改为 ``--device cpu``。CUDA 不可用时，文本 embedding 脚本也会使用 CPU。保持 ``DIFFSYNTH_MODEL_BASE_PATH`` 指向包含 ``Wan-AI`` 的目录。使用原始 Wan ``.pth`` 文件时，在上游模型 overrides 和文本 embedding 命令中设置 ``model.redirect_common_files=false``。
+
+按上文在 ``examples/sft/config/libero_sft_fastwam.yaml`` 和 ``examples/sft/config/model/fastwam.yaml`` 中填写数据与模型路径。使用八张 NPU 时，可先设置 ``actor.micro_batch_size: 1`` 和 ``actor.global_batch_size: 8``，并启用 ``actor.fsdp_config.gradient_checkpointing`` 以降低显存占用。根据可用设备调整 ``cluster.component_placement.actor``，同时保证 global batch size 能被 micro batch size 与 NPU 数量之积整除。然后在仓库根目录使用相同配置启动 SFT：
+
+.. code-block:: bash
+
+   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
+   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+评测时，按下文设置 checkpoint 和归一化统计路径，将 MuJoCo 与 PyOpenGL 设为通过 OSMesa 使用 CPU 渲染，再运行相同的 LIBERO 评测入口：
+
+.. code-block:: bash
+
+   export MUJOCO_GL=osmesa
+   export PYOPENGL_PLATFORM=osmesa
+   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+在运行评测的容器或宿主机中安装 OSMesa 运行库。将 ``libero_spatial_fastwam_eval`` 替换为下表中的其他 suite 配置即可评测对应任务。这些配置默认将 rollout worker 放在四张设备上，可通过 ``cluster.component_placement`` 调整使用的 NPU。
+
+RLinf 构建 FastWAM 时会选择 worker 所在的设备。在 NPU worker 上，昇腾适配自动生效，并为视频与动作 DiT expert 启用融合 RoPE 和 RMSNorm。
 
 评测
 ----
