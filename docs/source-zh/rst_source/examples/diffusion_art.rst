@@ -181,6 +181,27 @@ OpenPi 环境和 checkpoint 设置沿用 :doc:`Pi0 <embodied/pi0>`。LIBERO 安�
 
 模型使用 ``openpi.rl_mode=art``、``is_nft=False``，以及零转移噪声的 ``noise_method=flow_ode``。训练要求 ``auto_reset=False``、``ignore_terminations=False`` 和固定的分组初始状态。四步采样器结合 ``art_timestep_fraction=0.25``，为每个动作块选择一个实际 rollout 去噪状态。完整配置位于 ``examples/embodiment/config/libero_object_0_art_openpi.yaml``。
 
+固定位置分叉采样
+~~~~~~~~~~~~~~~~
+
+共享动作前缀将同条件比较扩展到任务中途。``algorithm.art_branch_chunk_index`` 为所有组指定一个从零开始的决策索引。到达该位置之前，同组环境执行首个成员采样的动作块；从分叉处开始，各成员使用冻结的 rollout policy 独立采样并继续完成任务。Actor 只训练分叉动作块，同时读取该位置的观测、去噪状态和缓存旧速度。回报累加范围为分叉处至终止：
+
+.. math::
+
+   R_i^{(b)}=\sum_{t=t_b}^{T_i}r_{i,t}.
+
+分叉模式在现有启动命令上附加以下覆盖值：
+
+.. code-block:: bash
+
+   algorithm.art_first_chunk_only=False \
+   algorithm.art_branch_chunk_index=8 \
+   actor.global_batch_size=32
+
+每个动作块执行 5 个动作时，索引 8 对应先执行 40 个环境步再分叉；索引 0 用于初始决策对照。每条 episode 提供一个训练动作块，因此 64 条 episode、两次互斥更新对应全局 batch 32。``art_first_chunk_only`` 与非空分叉索引互斥。分叉模式要求同步批次，且每个 environment、rollout 和 actor rank 均包含完整组。评估保持标准的完整任务 rollout。
+
+Rollout 在前缀和分叉处检查同组任务、机器人观测、可获取的模拟器状态及两路相机图像。状态最大差异默认容差为 ``art_branch_state_atol=1e-5``，各相机平均绝对像素差默认容差为 ``art_branch_image_atol=1.0``。任一前缀决策不满足一致性要求，或任一组员在分叉前终止，该组整体退出训练，批次形状保持不变。检查范围为可获取的状态和观测，不包含控制器快照恢复。
+
 验证与指标
 ~~~~~~~~~~
 
@@ -193,6 +214,8 @@ OpenPi 环境和 checkpoint 设置沿用 :doc:`Pi0 <embodied/pi0>`。LIBERO 安�
 启动实验附加 ``runner.max_steps=2``、``runner.max_epochs=2``、``runner.val_check_interval=1`` 和 ``runner.save_interval=1``，会先执行两轮训练、评估与 checkpoint 保存。GPU LIBERO 训练和 checkpoint 恢复需要真实模型与模拟器素材。
 
 ``actor/art_reward_mean`` 和 ``actor/art_reward_std`` 描述 episode 回报；``actor/valid_chunk_frac`` 和 ``actor/valid_action_frac`` 描述终止掩码与可选奖励过滤后保留的比例。现有 ``active_group_frac``、``mask_frac`` 和 ``movement_score`` 反映指导信号与漂移。ART/NFT 对照使用相同 SFT 初始化、初始状态和评估状态，同时记录环境交互量、optimizer 更新次数与耗时；两种损失的数值尺度对应不同目标。
+
+分叉实验额外记录 ``actor/branch_chunk_index``、``actor/branch_valid_group_frac``、``actor/branch_state_error_max`` 和 ``actor/branch_image_error_max``。误差汇总前缀检查结果，有效组比例还排除分叉前终止的组。先运行索引 0 和索引 8 的短实验，分别检查初始决策行为与中途分叉，再增加训练预算。这些实验需要 GPU LIBERO 验证；单元测试覆盖采样、缓存对齐、回报截取和无效组屏蔽。
 
 .. _diffusion-art-results:
 

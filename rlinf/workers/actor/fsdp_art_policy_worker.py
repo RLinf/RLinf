@@ -56,14 +56,22 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         endpoints = self.rollout_batch["forward_inputs"]["art_endpoint"]
         rollout_size = endpoints.shape[0] * endpoints.shape[1]
         action_trajectories = self.cfg.actor.model.model_type == "openpi"
+        training_indices = None
         if action_trajectories:
             preparation_metrics, has_guidance, windows = (
                 self._prepare_art_trajectory_training_inputs(generator)
             )
             rollout_size = sum(rows.numel() for rows in windows)
+            branch_index = self.cfg.algorithm.get("art_branch_chunk_index", None)
+            if branch_index is not None:
+                training_indices = branch_index * endpoints.shape[1] + torch.arange(
+                    rollout_size
+                )
         self.rollout_batch = process_nested_dict_for_train(
             self.rollout_batch,
-            torch.arange(rollout_size),
+            torch.arange(rollout_size)
+            if training_indices is None
+            else training_indices,
         )
 
         if action_trajectories:
@@ -72,6 +80,16 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             preparation_metrics, has_guidance = self._prepare_art_training_inputs(
                 generator
             )
+        if action_trajectories and branch_index is not None:
+            error_keys = (
+                "actor/branch_state_error_max",
+                "actor/branch_image_error_max",
+            )
+            errors = torch.tensor(
+                [preparation_metrics[key] for key in error_keys], device=self.device
+            )
+            torch.distributed.all_reduce(errors, op=torch.distributed.ReduceOp.MAX)
+            preparation_metrics.update(zip(error_keys, errors.tolist()))
         active = torch.tensor(float(has_guidance), device=self.device)
         torch.distributed.all_reduce(active, op=torch.distributed.ReduceOp.MAX)
         has_guidance = bool(active.item())
@@ -229,26 +247,72 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         episode_returns = torch.where(action_mask, batch["rewards"], 0.0).sum((0, 2))
         if batch.get("loss_mask") is not None:
             action_mask = action_mask & batch["loss_mask"]
-        decisions = (
-            1
-            if self.cfg.algorithm.get("art_first_chunk_only", False)
-            else endpoints.shape[0]
-        )
+        branch_index = self.cfg.algorithm.get("art_branch_chunk_index", None)
+        preparation_metrics = {}
+        if branch_index is not None:
+            episode_returns = torch.where(
+                action_mask[branch_index:], batch["rewards"][branch_index:], 0.0
+            ).sum((0, 2))
+            group_size = int(self.cfg.algorithm.group_size)
+            group_valid = (
+                (
+                    forward_inputs["art_branch_valid"][branch_index]
+                    & action_mask[branch_index, :, 0]
+                )
+                .reshape(-1, group_size)
+                .all(1)
+            )
+            selected_mask = (
+                action_mask[branch_index : branch_index + 1]
+                & (group_valid.repeat_interleave(group_size)[None, :, None])
+            )
+            selected_endpoints = endpoints[branch_index : branch_index + 1]
+            preparation_metrics = {
+                "actor/branch_chunk_index": float(branch_index),
+                "actor/branch_valid_group_frac": group_valid.float().mean().item(),
+                "actor/branch_state_error_max": forward_inputs[
+                    "art_branch_state_error"
+                ][branch_index]
+                .max()
+                .item(),
+                "actor/branch_image_error_max": forward_inputs[
+                    "art_branch_image_error"
+                ][branch_index]
+                .max()
+                .item(),
+            }
+            decisions = 1
+        else:
+            decisions = (
+                1
+                if self.cfg.algorithm.get("art_first_chunk_only", False)
+                else endpoints.shape[0]
+            )
+            selected_endpoints = endpoints[:decisions]
+            selected_mask = action_mask[:decisions]
         guidance = _art_trajectory_guidance(
-            endpoints[:decisions],
+            selected_endpoints,
             episode_returns,
-            action_mask[:decisions],
+            selected_mask,
             int(self.cfg.algorithm.group_size),
             **self._art_covariance_options(),
         )
-        forward_inputs.update(
-            art_guidance_direction=guidance["directions"],
-            art_guidance_magnitude=guidance["magnitudes"],
-            art_coordinate_mask=guidance["coordinate_mask"],
-            art_group_ids=guidance["group_ids"],
-            art_episode_ids=guidance["episode_ids"],
-            art_decision_ids=guidance["decision_ids"],
-        )
+        if branch_index is not None:
+            guidance["decision_ids"] = guidance["decision_ids"] + branch_index
+        for key, source in (
+            ("art_guidance_direction", "directions"),
+            ("art_guidance_magnitude", "magnitudes"),
+            ("art_coordinate_mask", "coordinate_mask"),
+            ("art_group_ids", "group_ids"),
+            ("art_episode_ids", "episode_ids"),
+            ("art_decision_ids", "decision_ids"),
+        ):
+            value = guidance[source]
+            if branch_index is not None:
+                padded = value.new_zeros((endpoints.shape[0], *value.shape[1:]))
+                padded[branch_index : branch_index + 1] = value
+                value = padded
+            forward_inputs[key] = value
         episodes = endpoints.shape[1]
         episode_windows = _prompt_disjoint_windows(
             torch.arange(episodes) // int(self.cfg.algorithm.group_size),
@@ -270,6 +334,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         ).sqrt()
         return (
             {
+                **preparation_metrics,
                 "actor/active_group_frac": active.float().mean().item(),
                 "actor/covariance_rms": covariance.mean().item()
                 if covariance.numel()
@@ -279,15 +344,8 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 .item(),
                 "actor/art_reward_mean": episode_returns.mean().item(),
                 "actor/art_reward_std": episode_returns.std(correction=0).item(),
-                "actor/valid_chunk_frac": action_mask[:decisions]
-                .any(-1)
-                .float()
-                .mean()
-                .item(),
-                "actor/valid_action_frac": action_mask[:decisions]
-                .float()
-                .mean()
-                .item(),
+                "actor/valid_chunk_frac": selected_mask.any(-1).float().mean().item(),
+                "actor/valid_action_frac": selected_mask.float().mean().item(),
             },
             bool(active.any()),
             tuple(windows),

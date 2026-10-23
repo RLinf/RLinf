@@ -46,6 +46,9 @@ algorithm:
   log_group_success_metrics: True
   art_updates_per_rollout: 2
   art_first_chunk_only: False
+  art_branch_chunk_index: null
+  art_branch_state_atol: 1.0e-5
+  art_branch_image_atol: 1.0
   art_reward_reduction: sum
   art_timestep_fraction: 0.25
   art_exclude_final_step: False
@@ -69,6 +72,7 @@ env:
     task_id_filter: [0]
     total_num_envs: 64
     group_size: 8
+    art_branch_chunk_index: ${algorithm.art_branch_chunk_index}
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
     video_cfg:

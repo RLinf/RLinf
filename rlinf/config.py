@@ -1546,8 +1546,15 @@ def validate_embodied_cfg(cfg):
             "DiffusionART requires env.train.group_size to match algorithm.group_size."
         )
         decisions = 1
+        branch_index = algorithm_cfg.get("art_branch_chunk_index", None)
+        assert branch_index is None or action_art, (
+            "algorithm.art_branch_chunk_index requires OpenPi ART."
+        )
         if action_art:
-            if not algorithm_cfg.get("art_first_chunk_only", False):
+            if (
+                not algorithm_cfg.get("art_first_chunk_only", False)
+                and branch_index is None
+            ):
                 decisions = (
                     cfg.env.train.max_steps_per_rollout_epoch
                     // model_cfg.num_action_chunks
@@ -1573,6 +1580,10 @@ def validate_embodied_cfg(cfg):
         )
         actor_world_size = component_placement.get_world_size("actor")
         shard_count = math.lcm(env_world_size, actor_world_size)
+        if branch_index is not None:
+            shard_count = math.lcm(
+                shard_count, component_placement.get_world_size("rollout")
+            )
         assert (
             cfg.env.train.total_num_envs % (shard_count * algorithm_cfg.group_size) == 0
         ), (
@@ -1870,6 +1881,30 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     assert type(cfg.algorithm.get("art_first_chunk_only", False)) is bool, (
         "algorithm.art_first_chunk_only must be boolean."
     )
+    branch_index = cfg.algorithm.get("art_branch_chunk_index", None)
+    if branch_index is not None:
+        assert type(branch_index) is int and (
+            0 <= branch_index * model.num_action_chunks < train.max_episode_steps
+        ), (
+            "algorithm.art_branch_chunk_index must index a chunk before the episode limit."
+        )
+        assert not cfg.algorithm.get("art_first_chunk_only", False), (
+            "art_branch_chunk_index and art_first_chunk_only are mutually exclusive."
+        )
+        assert train.get("art_branch_chunk_index", None) == branch_index, (
+            "env.train.art_branch_chunk_index must match algorithm.art_branch_chunk_index."
+        )
+        assert not cfg.runner.get("enable_decoupled_mode", False), (
+            "OpenPi ART branching requires synchronous environment batches."
+        )
+        assert not cfg.env.get("delay_sampler", None), (
+            "OpenPi ART branching requires environment actions without delay sampling."
+        )
+        for key in ("art_branch_state_atol", "art_branch_image_atol"):
+            tolerance = float(cfg.algorithm.get(key, 1e-5 if "state" in key else 1.0))
+            assert math.isfinite(tolerance) and tolerance >= 0, (
+                f"algorithm.{key} must be finite and nonnegative."
+            )
     assert model.num_action_chunks > 0 and model.num_steps > 0, (
         "OpenPi ART requires positive num_action_chunks and num_steps."
     )

@@ -42,6 +42,7 @@ from rlinf.envs.sim.libero.utils import (
 )
 from rlinf.envs.sim.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
+    grouped_state_max_error,
     list_of_dict_to_dict_of_list,
     to_tensor,
     valid_action_mask_from_counts,
@@ -161,6 +162,7 @@ class LiberoEnv(gym.Env):
         self._is_start = True
         self.num_envs = num_envs
         self.group_size = self.cfg.group_size
+        self.art_branch_chunk_index = cfg.get("art_branch_chunk_index", None)
         self.num_group = self.num_envs // self.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.specific_reset_id = cfg.get("specific_reset_id", None)
@@ -975,16 +977,15 @@ class LiberoEnv(gym.Env):
             self.current_raw_obs[idx] = raw_obs[i]
 
         self._reset_metrics(env_idx)
-        if self.is_libero_mem:
-            self.env.reset_memory_progress(id=env_idx)
-        obs = self._wrap_obs(self.current_raw_obs)
-        if self.short_memory is not None:
-            for index in env_idx:
-                self._observation_history[index].clear()
-            self._append_history(obs, env_idx)
-            obs["history"] = self._get_history_obs()
+        if self.art_branch_chunk_index is not None:
+            self._add_art_sim_state_error(obs)
         infos = {}
         return obs, infos
+
+    def _add_art_sim_state_error(self, obs: dict) -> None:
+        obs["art_sim_state_error"] = torch.from_numpy(
+            grouped_state_max_error(self.env.get_sim_state(), self.group_size)
+        )
 
     def get_camera_meta(
         self, camera_name: str = "agentview", height: int = 256, width: int = 256
@@ -1180,6 +1181,11 @@ class LiberoEnv(gym.Env):
             chunk_truncations = raw_chunk_truncations.clone()
         if not self.is_eval:
             infos_list[-1]["valid_action_mask"] = valid_action_mask
+        if (
+            self.art_branch_chunk_index is not None
+            and self.elapsed_steps[0] <= self.art_branch_chunk_index * chunk_size
+        ):
+            self._add_art_sim_state_error(obs_list[-1])
         return (
             obs_list,
             chunk_rewards,

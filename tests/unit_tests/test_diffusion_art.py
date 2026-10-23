@@ -18,12 +18,14 @@ import inspect
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from rlinf.config import validate_openpi_art_cfg
+from rlinf.envs.utils import grouped_state_max_error
 from rlinf.utils.metric_utils import compute_loss_mask
 from rlinf.utils.nested_dict_process import process_nested_dict_for_train
 from rlinf.workers.actor.fsdp_art_policy_worker import (
@@ -33,6 +35,11 @@ from rlinf.workers.actor.fsdp_art_policy_worker import (
     _art_trajectory_guidance,
     _prompt_disjoint_windows,
     _validate_art_rollout,
+)
+from rlinf.workers.rollout.hf.huggingface_worker import (
+    MultiStepRolloutWorker,
+    _art_branch_observation_stats,
+    _repeat_art_group_leaders,
 )
 
 
@@ -333,6 +340,120 @@ def test_openpi_art_recipe_composes_with_matching_batch_budget(monkeypatch):
     assert cfg.actor.model.num_steps == 4
 
 
+def test_art_branch_conditioning_checks_simulator_images_and_tasks():
+    obs = {
+        "states": torch.zeros(4, 3),
+        "main_images": torch.zeros(4, 2, 2, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(4, 2, 2, 3, dtype=torch.uint8),
+        "task_descriptions": ["pick", "pick", "place", "place"],
+        "art_sim_state_error": torch.zeros(4),
+    }
+    valid, _, _ = _art_branch_observation_stats(obs, 2, 1e-5, 1.0)
+    assert valid.all()
+    obs["art_sim_state_error"][:2] = 1e-3
+    obs["wrist_images"][3] = 3
+    valid, state_error, image_error = _art_branch_observation_stats(obs, 2, 1e-5, 1.0)
+    assert not valid.any()
+    torch.testing.assert_close(
+        state_error[:2], torch.full((2,), 1e-3, dtype=torch.float64)
+    )
+    assert image_error[2:].eq(3).all()
+    obs["art_sim_state_error"].zero_()
+    obs["wrist_images"].zero_()
+    obs["task_descriptions"][1] = "different"
+    valid, _, _ = _art_branch_observation_stats(obs, 2, 1e-5, 1.0)
+    assert valid.tolist() == [False, False, True, True]
+    del obs["art_sim_state_error"]
+    with pytest.raises(ValueError, match="simulator state diagnostics"):
+        _art_branch_observation_stats(obs, 2, 1e-5, 1.0)
+    errors = grouped_state_max_error(
+        [np.zeros(3), np.array([0.0, 0.2, 0.0]), np.ones(3), np.ones(3)], 2
+    )
+    np.testing.assert_allclose(errors, [0.2, 0.2, 0.0, 0.0])
+
+
+@pytest.mark.parametrize("branch_index", [0, 1, 2])
+def test_art_branch_selects_matching_observations_states_and_returns(branch_index):
+    worker = _art_trajectory_worker()
+    worker.cfg.algorithm.art_branch_chunk_index = branch_index
+    batch = worker.rollout_batch
+    batch["dones"].zero_()
+    batch["loss_mask"].fill_(True)
+    batch["rewards"].zero_()
+    batch["rewards"][-1, 1::2, -1] = 1.0
+    batch["rewards"][:branch_index, :, 0] = 9.0
+    inputs = batch["forward_inputs"]
+    inputs["art_branch_valid"] = torch.ones(3, 4, dtype=torch.bool)
+    inputs["art_branch_state_error"] = torch.zeros(3, 4)
+    inputs["art_branch_image_error"] = torch.zeros(3, 4)
+    for index in range(3):
+        inputs["art_states"][index] += index * 100
+        inputs["art_old_velocity"][index] += index * 100
+    inputs["observation/state"] = torch.arange(12).reshape(3, 4, 1)
+    expected_states = inputs["art_states"][branch_index].clone()
+    expected_old = inputs["art_old_velocity"][branch_index].clone()
+    metrics, active, windows = worker._prepare_art_trajectory_training_inputs(
+        torch.Generator().manual_seed(7)
+    )
+    assert active and metrics["actor/branch_valid_group_frac"] == 1
+    assert metrics["actor/art_reward_mean"] == 0.5
+    selected = process_nested_dict_for_train(batch, branch_index * 4 + torch.arange(4))
+    replay = selected["forward_inputs"]
+    torch.testing.assert_close(replay["art_states"], expected_states)
+    torch.testing.assert_close(replay["art_old_velocity"], expected_old)
+    assert replay["art_decision_ids"].eq(branch_index).all()
+    assert replay["observation/state"][:, 0].tolist() == list(
+        range(branch_index * 4, branch_index * 4 + 4)
+    )
+    assert set(windows[0].tolist()).isdisjoint(windows[1].tolist())
+    assert sum(rows.numel() for rows in windows) == 4
+
+
+@pytest.mark.parametrize("invalid_reason", ["terminated", "state_mismatch"])
+def test_art_branch_masks_complete_invalid_groups(invalid_reason):
+    worker = _art_trajectory_worker()
+    worker.cfg.algorithm.art_branch_chunk_index = 1
+    batch = worker.rollout_batch
+    inputs = batch["forward_inputs"]
+    inputs["art_branch_valid"] = torch.ones(3, 4, dtype=torch.bool)
+    inputs["art_branch_state_error"] = torch.zeros(3, 4)
+    inputs["art_branch_image_error"] = torch.zeros(3, 4)
+    if invalid_reason == "state_mismatch":
+        batch["dones"].zero_()
+        inputs["art_branch_valid"][1, 0] = False
+    batch["loss_mask"] = compute_loss_mask(batch["dones"])[0].any(-1, keepdim=True)
+    metrics, _, _ = worker._prepare_art_trajectory_training_inputs(
+        torch.Generator().manual_seed(7)
+    )
+    assert metrics["actor/branch_valid_group_frac"] == 0.5
+    assert not inputs["art_coordinate_mask"][1, :2].any()
+    assert inputs["art_guidance_magnitude"][1, :2].eq(0).all()
+    assert inputs["art_coordinate_mask"][1, 2:].any()
+
+
+@pytest.mark.parametrize("branch_index", [0, 8])
+def test_art_fixed_branch_recipe_composes(monkeypatch, branch_index):
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(
+            config_name="libero_object_0_art_openpi",
+            overrides=[
+                f"algorithm.art_branch_chunk_index={branch_index}",
+                "actor.global_batch_size=32",
+            ],
+        )
+    validate_openpi_art_cfg(cfg)
+    assert cfg.env.train.art_branch_chunk_index == branch_index
+    cfg.algorithm.art_first_chunk_only = True
+    with pytest.raises(AssertionError, match="mutually exclusive"):
+        validate_openpi_art_cfg(cfg)
+    cfg.algorithm.art_first_chunk_only = False
+    cfg.algorithm.art_branch_chunk_index = 48
+    with pytest.raises(AssertionError, match="before the episode limit"):
+        validate_openpi_art_cfg(cfg)
+
+
 @pytest.mark.parametrize(
     ("key", "value", "message"),
     [
@@ -410,6 +531,13 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
                 observation, noise=noise, rng=None, compute_values=False
             )
         inputs = result["forward_inputs"]
+        shared = _repeat_art_group_leaders(result, 2)
+        shared_actions = _repeat_art_group_leaders(actions, 2)
+        torch.testing.assert_close(shared_actions[0], shared_actions[1])
+        torch.testing.assert_close(
+            shared["forward_inputs"]["art_endpoint"], shared_actions / 10
+        )
+        assert not torch.equal(inputs["art_endpoint"][0], inputs["art_endpoint"][1])
         assert inputs["art_states"].shape == (2, 4, 4, 4)
         assert inputs["art_old_velocity"].shape == (2, 4, 2, 2)
         torch.testing.assert_close(inputs["art_endpoint"], actions / 10)
@@ -431,6 +559,51 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         assert "nft_x0" in nft_result["forward_inputs"]
         assert "art_endpoint" not in nft_result["forward_inputs"]
         model.rl_cfg = replace(model.rl_cfg, rl_mode="art", is_nft=False)
+        from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
+
+        worker = object.__new__(MultiStepRolloutWorker)
+        worker.algorithm_cfg = OmegaConf.create({"group_size": 2})
+        worker.model_cfg = OmegaConf.create({"model_type": "openpi"})
+        worker.art_branch_chunk_index = 1
+        worker.hf_model = model
+        worker.expert_model = None
+        worker.enable_dagger = False
+        worker._train_sampling_params = {}
+        worker._eval_sampling_params = {}
+        worker._timer_metrics = {}
+        worker._accelerator_type = AcceleratorType.NO_ACCEL
+        env_obs = {
+            "states": observation.state,
+            "main_images": observation.images["base_0_rgb"],
+            "wrist_images": observation.images["left_wrist_0_rgb"],
+            "task_descriptions": ["pick", "pick"],
+            "art_sim_state_error": torch.zeros(2),
+        }
+        model._input_transform_fn = lambda sample: {
+            "image": dict.fromkeys(observation.images, sample["observation/image"]),
+            "image_mask": dict.fromkeys(observation.images, True),
+            "state": sample["observation/state"],
+            "tokenized_prompt": np.ones(4, dtype=np.int64),
+            "tokenized_prompt_mask": np.ones(4, dtype=bool),
+        }
+        prefix_actions, prefix_result = worker._predict_art_branch_actions(env_obs, 0)
+        torch.testing.assert_close(prefix_actions[0], prefix_actions[1])
+        assert prefix_result["forward_inputs"]["art_branch_valid"].all()
+        branch_actions, branch_result = worker._predict_art_branch_actions(env_obs, 1)
+        assert not torch.equal(branch_actions[0], branch_actions[1])
+        assert branch_result["forward_inputs"]["art_branch_valid"].all()
+        torch.testing.assert_close(
+            branch_result["forward_inputs"]["art_endpoint"], branch_actions / 10
+        )
+        env_obs["states"] = observation.state.clone()
+        env_obs["states"][1] += 1
+        _, tail_result = worker._predict_art_branch_actions(env_obs, 2)
+        assert tail_result["forward_inputs"]["art_branch_valid"].all()
+        worker._predict_art_branch_actions(env_obs, 0)
+        env_obs["states"] = observation.state
+        _, invalid_result = worker._predict_art_branch_actions(env_obs, 1)
+        assert not invalid_result["forward_inputs"]["art_branch_valid"].any()
+        model._input_transform_fn = lambda data: data
         for name, value in observation.images.items():
             inputs[f"obs_image__{name}"] = value
             inputs[f"obs_image_mask__{name}"] = observation.image_masks[name]

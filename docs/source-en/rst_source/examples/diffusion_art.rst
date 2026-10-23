@@ -259,6 +259,45 @@ states. The four-step sampler and ``art_timestep_fraction=0.25`` select one
 rollout denoising state per action chunk. The full recipe is in
 ``examples/embodiment/config/libero_object_0_art_openpi.yaml``.
 
+Fixed Branch Sampling
+~~~~~~~~~~~~~~~~~~~~~
+
+A shared action prefix extends the same-condition comparison to a later robot
+decision. ``algorithm.art_branch_chunk_index`` selects one zero-based decision
+for every group. Before that decision, each group executes its first member's
+sampled action chunk. At the branch and throughout the continuation, each member
+samples independently with the frozen rollout policy. The actor trains only the
+branch chunk, using its observations, denoising states, and cached old velocities.
+The return includes rewards from the branch through termination:
+
+.. math::
+
+   R_i^{(b)}=\sum_{t=t_b}^{T_i}r_{i,t}.
+
+The branch mode uses the existing launch command with these overrides:
+
+.. code-block:: bash
+
+   algorithm.art_first_chunk_only=False \
+   algorithm.art_branch_chunk_index=8 \
+   actor.global_batch_size=32
+
+With five actions per chunk, index 8 branches after 40 environment steps. Index 0
+provides an initial-decision control. Each episode contributes one training chunk,
+so 64 episodes and two disjoint updates require a global batch size of 32.
+``art_first_chunk_only`` and a non-null branch index are mutually exclusive.
+The branch mode requires synchronous batches containing complete groups on every
+environment, rollout, and actor rank. Evaluation retains the standard full-task
+rollout.
+
+During the prefix and at the branch, the rollout checks task identity, robot
+observations, exposed simulator state, and both camera images. The default maximum
+state difference is ``art_branch_state_atol=1e-5``; the maximum per-camera mean
+absolute pixel difference is ``art_branch_image_atol=1.0``. A mismatch at any
+prefix decision, or any group member terminating before the branch, masks the
+entire group for training while preserving batch shapes. These checks compare
+the exposed state and observations; they do not restore controller snapshots.
+
 Validation and Metrics
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -282,6 +321,15 @@ remaining after termination and optional reward filtering. The existing
 and drift. ART/NFT comparisons use the same SFT initialization, reset/evaluation
 states, environment interactions, optimizer-update counts, and elapsed time;
 their loss magnitudes are different objectives.
+
+Branch experiments also report ``actor/branch_chunk_index``,
+``actor/branch_valid_group_frac``, ``actor/branch_state_error_max``, and
+``actor/branch_image_error_max``. The errors summarize prefix checks, and the
+valid-group fraction excludes groups that terminated before the branch. A short
+index-0 run followed by an index-8 run checks initial-decision behavior and later
+branching before increasing the training budget. These experiments require GPU
+LIBERO validation; the unit tests cover sampling, cache alignment, return slicing,
+and invalid-group masking.
 
 .. _diffusion-art-results:
 
