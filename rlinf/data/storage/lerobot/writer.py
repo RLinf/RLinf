@@ -337,6 +337,25 @@ class LeRobotDatasetWriter:
             add_frame_to_dataset(self.dataset, frame_data)
         self._wait_images()
 
+        # LeRobot 0.3 validates shape-(1,) numpy inputs, then maps those same
+        # features to scalar HF Values at save time. Flatten only its buffer,
+        # after frame validation and before the parquet encoder runs.
+        buffer = getattr(self.dataset, "episode_buffer", None)
+        hf_features = getattr(self.dataset, "hf_features", None)
+        if isinstance(buffer, dict) and hf_features is not None:
+            for name in ("done", "is_success", "intervene_flag", "segment_id"):
+                values = buffer.get(name)
+                feature = hf_features.get(name)
+                if (
+                    isinstance(values, list)
+                    and getattr(feature, "dtype", None) is not None
+                    and all(
+                        isinstance(value, np.ndarray) and value.shape == (1,)
+                        for value in values
+                    )
+                ):
+                    buffer[name] = [value.item() for value in values]
+
         self.dataset.save_episode()
         self.logger.info(
             f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'"
