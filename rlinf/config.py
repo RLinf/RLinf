@@ -93,6 +93,7 @@ SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
@@ -140,6 +141,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
+        SupportedModel.PSI0,
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
@@ -963,6 +965,117 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate Psi0 + SIMPLE standalone evaluation settings."""
+    assert only_eval, "Psi0 evaluation config requires an evaluation runner."
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 Eval does not support decoupled mode."
+    )
+    assert not (
+        cfg.rollout.get("recompute_logprobs", False)
+        or cfg.rollout.get("collect_prev_infos", False)
+    ), "Psi0 evaluation requires collect_prev_infos=false and recompute_logprobs=false."
+
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SIZE, SIMPLE_ACTION_DIM
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert (
+        execution_horizon == SIMPLE_ACTION_CHUNK_SIZE
+        and int(model_cfg.action_dim) == SIMPLE_ACTION_DIM
+    ), (
+        "Psi0 SIMPLE Eval requires actions shaped "
+        f"[B, {SIMPLE_ACTION_CHUNK_SIZE}, {SIMPLE_ACTION_DIM}]."
+    )
+    assert psi0_cfg.get("sampler", "deterministic_euler") == "deterministic_euler", (
+        "Psi0 Eval requires sampler='deterministic_euler'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE Eval requires psi0.rtc.enabled=true."
+    )
+
+    eval_cfg = cfg.env.get("eval", None)
+    assert eval_cfg is not None and eval_cfg.env_type == "simple", (
+        "Psi0 Eval requires env.eval.env_type='simple'."
+    )
+
+
+def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate Psi0 + SIMPLE PPO training settings."""
+    assert not only_eval, "Psi0 training config cannot use an Eval runner."
+    assert cfg.runner.get("val_check_interval", -1) <= 0, (
+        "Psi0 SIMPLE requires runner.val_check_interval <= 0: evaluation "
+        "during training is not supported. "
+        "Use standalone evaluation for saved checkpoints."
+    )
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 SIMPLE training does not support decoupled mode."
+    )
+    assert cfg.rollout.get("collect_prev_infos", False), (
+        "Psi0 training requires rollout.collect_prev_infos=true."
+    )
+    assert not cfg.rollout.get("recompute_logprobs", False), (
+        "Psi0 recomputes logprobs in the actor; rollout.recompute_logprobs must be false."
+    )
+
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SIZE, SIMPLE_ACTION_DIM
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert (
+        execution_horizon == SIMPLE_ACTION_CHUNK_SIZE
+        and int(model_cfg.action_dim) == SIMPLE_ACTION_DIM
+    ), (
+        "Psi0 SIMPLE training requires actions shaped "
+        f"[B, {SIMPLE_ACTION_CHUNK_SIZE}, {SIMPLE_ACTION_DIM}]."
+    )
+    assert psi0_cfg.get("sampler") == "stochastic_transition", (
+        "Psi0 training requires sampler='stochastic_transition'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE training requires psi0.rtc.enabled=true."
+    )
+    assert cfg.env.train.env_type == "simple", (
+        "Psi0 training requires env.train.env_type='simple'."
+    )
+    assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
+        "actor_critic"
+    ), "Psi0 supports PPO with GAE and actor_critic loss only."
+    assert model_cfg.get("add_value_head", False), (
+        "Psi0 PPO requires actor.model.add_value_head=true."
+    )
+    assert not cfg.critic.get("use_critic_model", False), (
+        "Psi0 PPO uses its model-local value head, not a separate critic model."
+    )
+    assert cfg.actor.fsdp_config.get("use_orig_params", False), (
+        "Psi0 partial freezing requires actor.fsdp_config.use_orig_params=true."
+    )
+
+
 def validate_only_eval_rollout_model(model_cfg) -> None:
     """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
 
@@ -1067,6 +1180,16 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.PSI0:
+        assert cfg.rollout.pipeline_stage_num == 1, (
+            "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
+            "each rollout worker supports one environment and RTC stream."
+        )
+        if only_eval:
+            _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
+        else:
+            _validate_psi0_train_cfg(cfg, model_cfg, only_eval)
+
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
         # gap per action, which assumes the OpenVLA family's tokenized action layout.
@@ -1090,6 +1213,9 @@ def validate_embodied_cfg(cfg):
                 "runner.only_eval=True, or runner.task_type=embodied_eval."
             )
             cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
+            cfg.env.eval.early_stop_on_done = bool(
+                cfg.env.eval.get("early_stop_on_done", False)
+            )
         if algorithm_cfg.get("rollout_epoch", None) is not None:
             logging.warning(
                 "algorithm.rollout_epoch is deprecated; use env.train.rollout_epoch instead."
@@ -1188,6 +1314,17 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    if model_type == SupportedModel.PSI0:
+        assert component_placement.get_world_size("rollout") == env_world_size, (
+            "Psi0 SIMPLE requires equal env and rollout worker counts: "
+            "each rollout worker maintains RTC state for one environment."
+        )
+        psi0_env_cfg = cfg.env.eval if only_eval else cfg.env.train
+        assert psi0_env_cfg.total_num_envs == env_world_size, (
+            "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
+            f"total_num_envs must equal the environment worker count ({env_world_size}), "
+            f"got {psi0_env_cfg.total_num_envs}."
+        )
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
@@ -1256,6 +1393,28 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
+        if cfg.env.eval.get("early_stop_on_done", False):
+            eval_num_envs_per_stage = (
+                cfg.env.eval.total_num_envs // env_world_size // stage_num
+            )
+            assert not cfg.env.eval.auto_reset, (
+                "env.eval.early_stop_on_done requires env.eval.auto_reset=false: "
+                "each eval rollout epoch is one episode."
+            )
+            assert stage_num == 1, (
+                "env.eval.early_stop_on_done requires rollout.pipeline_stage_num=1."
+            )
+            assert eval_num_envs_per_stage == 1, (
+                "env.eval.early_stop_on_done requires one eval env per worker "
+                f"(got {eval_num_envs_per_stage})."
+            )
+            assert component_placement.get_world_size("rollout") == env_world_size, (
+                "env.eval.early_stop_on_done requires equal env and rollout "
+                "worker counts."
+            )
+            assert not cfg.runner.get("enable_decoupled_mode", False), (
+                "env.eval.early_stop_on_done does not support decoupled mode."
+            )
 
     if not only_eval:
         assert cfg.env.train.total_num_envs > 0, (

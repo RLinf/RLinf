@@ -2144,3 +2144,73 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-psi0-simple-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        timeout-minutes: 90
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=${UV_PATH:-/workspace/dataset/.uv}
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/dataset/.uv_cache}
+          export UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR:-/workspace/dataset/.uv_python}
+          export SIMPLE_ASSETS_PATH=${SIMPLE_ASSETS_PATH:-/workspace/dataset/simple_assets}
+          bash requirements/install.sh embodied --model psi0 --env simple
+
+      - name: Download Qwen3-VL processor metadata
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+          export HF_HOME=${HF_HOME:-/workspace/dataset/.cache/huggingface}
+          mkdir -p "${HF_HOME}"
+          hf download Qwen/Qwen3-VL-2B-Instruct \
+            chat_template.json config.json generation_config.json merges.txt \
+            preprocessor_config.json tokenizer.json tokenizer_config.json \
+            video_preprocessor_config.json vocab.json
+
+      - name: SIMPLE OpenOven Psi0 PPO test
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export HF_HOME=${HF_HOME:-/workspace/dataset/.cache/huggingface}
+          export PSI0_RUN_DIR=${PSI0_RUN_DIR:-/workspace/dataset/psi0-simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604}
+          export SIMPLE_RESET_DIR=${SIMPLE_RESET_DIR:-/workspace/dataset/psi0-simple/reset-states/G1WholebodyOpenOvenTeleop-v0}
+          export PSI0_TEST_ROOT=${PSI0_TEST_ROOT:-${RUNNER_TEMP:-/tmp}/psi0-simple-e2e-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}
+          export PSI0_TEST_LOG_DIR=${PSI0_TEST_ROOT}/train
+          mkdir -p "${PSI0_TEST_ROOT}"
+          # Refuse stale outputs so an old checkpoint cannot pass this run.
+          mkdir "${PSI0_TEST_LOG_DIR}"
+
+          bash tests/e2e_tests/embodied/run.sh simple_openoven_ppo_psi0
+
+      - name: SIMPLE OpenOven Psi0 checkpoint evaluation test
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export HF_HOME=${HF_HOME:-/workspace/dataset/.cache/huggingface}
+          export PSI0_RUN_DIR=${PSI0_RUN_DIR:-/workspace/dataset/psi0-simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604}
+          export SIMPLE_RESET_DIR=${SIMPLE_RESET_DIR:-/workspace/dataset/psi0-simple/reset-states/G1WholebodyOpenOvenTeleop-v0}
+          export PSI0_TEST_ROOT=${PSI0_TEST_ROOT:-${RUNNER_TEMP:-/tmp}/psi0-simple-e2e-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}}
+          export PSI0_TEST_LOG_DIR=${PSI0_TEST_ROOT}/eval
+          export PSI0_PPO_CHECKPOINT=${PSI0_TEST_ROOT}/train/ci-test/checkpoints/global_step_2/actor/model_state_dict/full_weights.pt
+          test -s "${PSI0_PPO_CHECKPOINT}"
+          mkdir "${PSI0_TEST_LOG_DIR}"
+          bash tests/e2e_tests/evaluations/run.sh simple_openoven_psi0_eval
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune

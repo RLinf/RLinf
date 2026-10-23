@@ -3178,6 +3178,7 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3232,6 +3233,7 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(

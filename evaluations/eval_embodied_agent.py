@@ -15,6 +15,7 @@
 import json
 
 import hydra
+import ray
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
@@ -49,6 +50,7 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
+
     if rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
@@ -118,8 +120,13 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        if cfg.env.eval.env_type == "simple" and ray.is_initialized():
+            # Rollout has flushed videos; killing the owner releases its native child.
+            env_group._close()
 
 
 if __name__ == "__main__":

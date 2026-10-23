@@ -1,0 +1,70 @@
+defaults:
+  - model/psi0@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  ckpt_path: ${oc.env:PSI0_PPO_CHECKPOINT}
+  rtc:
+    enabled: false
+  logger:
+    log_path: ${oc.env:PSI0_TEST_LOG_DIR}
+    project_name: rlinf
+    experiment_name: ci-test
+    logger_backends: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    env_type: simple
+    total_num_envs: 1
+    auto_reset: false
+    early_stop_on_done: true
+    ignore_terminations: false
+    seed: 0
+    group_size: 1
+    max_episode_steps: 47
+    max_steps_per_rollout_epoch: 48
+    rollout_epoch: 1
+    reset_dataset:
+      path: ${oc.env:SIMPLE_RESET_DIR}
+      format: lerobot
+      dr_level: 0
+      episode_start: 0
+      num_episodes: 1
+    init_params:
+      task_id: simple/G1WholebodyOpenOvenTeleop-v0
+      sim_mode: mujoco_isaac
+      headless: true
+      render_hz: 50
+      stabilization_steps: 300
+    video_cfg:
+      save_video: false
+      info_on_video: false
+      fps: 3
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  recompute_logprobs: false
+  collect_prev_infos: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_path: ${oc.env:PSI0_RUN_DIR}
+    add_value_head: true

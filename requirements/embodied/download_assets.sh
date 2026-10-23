@@ -3,7 +3,7 @@
 set -euo pipefail
 
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
-SUPPORT_LIST=("maniskill" "openpi")
+SUPPORT_LIST=("maniskill" "openpi" "simple")
 GITHUB_PREFIX=${GITHUB_PREFIX:-""}
 USE_MIRRORS=${USE_MIRRORS:-0}
 ASSETS=()
@@ -26,6 +26,8 @@ Examples:
   bash requirements/embodied/download_assets.sh --assets maniskill
   bash requirements/embodied/download_assets.sh --dir /opt/.assets --assets maniskill,openpi
   bash requirements/embodied/download_assets.sh --use-mirror --assets maniskill,openpi
+  # --dir is the SIMPLE checkout; zips are unpacked into <dir>/data.
+  bash requirements/embodied/download_assets.sh --assets simple --dir .venv/SIMPLE
 EOF
 }
 
@@ -133,6 +135,62 @@ download_openpi_assets() {
 	fi
 }
 
+# Open Oven reads these from <SIMPLE checkout>/data and otherwise downloads them
+# on the first rollout. Unpack into data/ the same way resolve_data_path does,
+# so a later run sees the extracted paths and skips Hugging Face.
+download_simple_assets() {
+	local root_dir=$1
+	local data_dir="${root_dir}/data"
+	local entry zip_name marker
+
+	mkdir -p "$data_dir"
+	# vMaterials_2.zip is large; the default hub read timeout stalls on it.
+	export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
+	# zip|relative path that resolve_data_path checks before downloading.
+	local -a assets=(
+		"robots_g1.zip|robots/g1"
+		"assets_graspnet.zip|assets/graspnet"
+		"assets_articulated.zip|assets/articulated"
+		"scenes_hssd_102344280.zip|scenes/hssd/102344280"
+		"vMaterials_2.zip|vMaterials_2"
+	)
+	for entry in "${assets[@]}"; do
+		zip_name="${entry%%|*}"
+		marker="${entry#*|}"
+		if [ -e "${data_dir}/${marker}" ]; then
+			echo "[download_assets] SIMPLE ${zip_name} already unpacked at ${data_dir}/${marker}, skipping."
+			continue
+		fi
+		retry_cmd python -c '
+import sys
+import zipfile
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+data_dir = Path(sys.argv[1])
+zip_name = sys.argv[2]
+marker = data_dir / sys.argv[3]
+print(f"[download_assets] Downloading {zip_name} into {data_dir}")
+snapshot_download(
+    repo_id="USC-PSI-Lab/SIMPLE",
+    allow_patterns=[zip_name],
+    local_dir=data_dir,
+    repo_type="dataset",
+)
+zip_path = data_dir / zip_name
+if not zip_path.is_file():
+    raise SystemExit(f"[download_assets] Download did not materialize {zip_path}")
+with zipfile.ZipFile(zip_path) as archive:
+    archive.extractall(data_dir)
+zip_path.unlink()
+if not marker.exists():
+    raise SystemExit(f"[download_assets] Extracted {zip_name} but {marker} is missing")
+print(f"[download_assets] Extracted {zip_name}")
+' "$data_dir" "$zip_name" "$marker"
+	done
+}
+
 parse_args() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
@@ -193,6 +251,9 @@ main() {
 				;;
 			openpi)
 				download_openpi_assets "$DOWNLOAD_DIR"
+				;;
+			simple)
+				download_simple_assets "$DOWNLOAD_DIR"
 				;;
 			*)
 				echo "Unknown asset group: $asset. Supported: ${SUPPORT_LIST[*]}" >&2

@@ -37,9 +37,15 @@ export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibs
 export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
 export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
 # Base path to Isaac Sim, only required when running the behavior experiment.
-export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
-export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
-export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
+if [[ "${CONFIG}" == simple_* || "${CONFIG}" == simple-* ]]; then
+    # Pip-installed Isaac Sim discovers its own package paths.
+    export ACCEPT_EULA="${ACCEPT_EULA:-Y}"
+    export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"
+else
+    export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
+    export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
+    export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
+fi
 
 # Libero variant: standard, pro, plus
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}

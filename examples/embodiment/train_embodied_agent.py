@@ -15,6 +15,7 @@
 import json
 
 import hydra
+import ray
 import torch.multiprocessing as mp
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
@@ -168,8 +169,13 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        if cfg.env.train.env_type == "simple" and ray.is_initialized():
+            # Rollout has flushed videos; killing the owner releases its native child.
+            env_group._close()
 
     if reward_group is not None:
         reward_group.stop().wait()
