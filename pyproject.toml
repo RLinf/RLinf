@@ -63,7 +63,7 @@ dependencies = [
     "zstandard",
 
     # Logging
-    "wandb<0.25.1",
+    "wandb>=0.19.10,<0.25.1",
     "swanlab>=0.6.11",
     "tensorboard",
 
