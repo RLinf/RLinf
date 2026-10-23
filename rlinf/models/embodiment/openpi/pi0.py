@@ -828,8 +828,6 @@ class Pi0(model.BaseModel):
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Flow-matching SFT loss. Shared by SFT, DAgger, and PPO co-train."""
         del kwargs
-        if hasattr(self, "gradient_checkpointing_disable"):
-            self.gradient_checkpointing_disable()
         observation, actions = self._unpack_sft_batch(data)
         observation = self._observation_to_device(observation)
         actions = self._actions_to_device(actions)
