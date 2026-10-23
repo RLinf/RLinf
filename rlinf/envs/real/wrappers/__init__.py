@@ -26,6 +26,7 @@ from rlinf.envs.real.wrappers.episode import (
     KeyboardRewardDoneWrapper,
     KeyboardRLTPolicySwitchWrapper,
     KeyboardStartEndWrapper,
+    PicoEpisodeControlWrapper,
 )
 from rlinf.envs.real.wrappers.teleop.builder import build_teleop
 from rlinf.envs.real.wrappers.teleop.config import NO_DEVICE, resolve_teleop_devices
@@ -52,6 +53,12 @@ KEYBOARD_MODES: dict[str, type] = {
     "rlt_policy_switch": KeyboardRLTPolicySwitchWrapper,
 }
 
+#: Pico modes, by the ``pico_reward_wrapper`` value that selects them.
+#: ``default`` is the shared B=start, A=failure, X=success lifecycle.
+PICO_REWARD_MODES: dict[str, type] = {
+    "default": PicoEpisodeControlWrapper,
+}
+
 
 class WrapperStack:
     """Apply declared wrappers in the required execution order.
@@ -71,6 +78,7 @@ class WrapperStack:
         self._apply(getattr(self.inner, "ACTION_WRAPPERS", ()))
         self._apply_teleop()
         self._apply_keyboard_reward()
+        self._apply_pico_reward()
         self._apply_episode()
         self._apply(getattr(self.inner, "TRANSFORMS", ()))
         return self.env
@@ -135,6 +143,18 @@ class WrapperStack:
         """Apply environment-specific episode-control wrappers."""
         for extra in getattr(self.inner, "episode_wrappers", lambda cfg: ())(self.cfg):
             self.env = extra(self.env)
+
+    def _apply_pico_reward(self) -> None:
+        """Use Pico buttons to control episode boundaries and outcomes."""
+        mode = self.cfg.get("pico_reward_wrapper", None)
+        if not mode or getattr(self.inner.config, "is_dummy", False):
+            return
+        if mode not in PICO_REWARD_MODES:
+            raise ValueError(
+                f"Unknown pico_reward_wrapper mode {mode}; "
+                f"available: {sorted(PICO_REWARD_MODES)}."
+            )
+        self.env = PICO_REWARD_MODES[mode](self.env)
 
 
 def build_stack(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from typing import Any, Mapping, Optional
 
 import numpy as np
@@ -104,7 +105,6 @@ class PicoExpert:
         gripper_close_threshold: float = 0.5,
         gripper_close_button: str = "A",
         gripper_open_button: str = "B",
-        gripper_invert: bool = False,
         position_scale: float = 1.0,
         rotation_scale: float = 1.0,
         rotation_delta_frame: str = "controller_local",
@@ -134,7 +134,6 @@ class PicoExpert:
         self.gripper_close_threshold = float(gripper_close_threshold)
         self.gripper_close_button = gripper_close_button
         self.gripper_open_button = gripper_open_button
-        self.gripper_invert = bool(gripper_invert)
         self.position_scale = float(position_scale)
         self.rotation_scale = float(rotation_scale)
         if rotation_delta_frame not in ("controller_local", "operator"):
@@ -179,6 +178,8 @@ class PicoExpert:
         self._lock = threading.Lock()
         self._latest_data: Optional[dict[str, Any]] = None
         self._last_update_time = 0.0
+        self._button_events: deque[str] = deque(maxlen=64)
+        self._previous_buttons: dict[str, bool] = {}
 
         self._context = None
         self._socket = None
@@ -302,15 +303,12 @@ class PicoExpert:
         if not held:
             return reading
 
+        # The rear control trigger is the dead-man switch for the complete
+        # teleoperation command, including the gripper. In particular, a
+        # front-trigger release after handing control back to the policy must
+        # not turn into a delayed open command.
+        close_pressed, open_pressed = self._gripper_state(data)
         moved, turned = self._motion_since_hold(position, rotation)
-        close_pressed = self._control_pressed(
-            data, self.hand, self.gripper_close_button, self.gripper_close_threshold
-        )
-        open_pressed = self._control_pressed(
-            data, self.hand, self.gripper_open_button, self.gripper_close_threshold
-        )
-        if self.gripper_invert:
-            close_pressed, open_pressed = open_pressed, close_pressed
 
         return {
             **reading,
@@ -338,7 +336,17 @@ class PicoExpert:
             try:
                 msg_bytes = self._socket.recv()
                 data = json.loads(msg_bytes.decode("utf-8"))
+                buttons = data.get("buttons", {})
+                if not isinstance(buttons, Mapping):
+                    buttons = {}
+                current_buttons = {
+                    str(name): bool(pressed) for name, pressed in buttons.items()
+                }
                 with self._lock:
+                    for name, pressed in current_buttons.items():
+                        if pressed and not self._previous_buttons.get(name, False):
+                            self._button_events.append(name)
+                    self._previous_buttons = current_buttons
                     self._latest_data = data
                     self._last_update_time = time.time()
             except zmq.error.Again:
@@ -348,6 +356,17 @@ class PicoExpert:
                     break
                 logger.warning("Error receiving PICO data: %s", exc)
                 time.sleep(self.reconnect_interval_s)
+
+    def pop_button_presses(self) -> list[str]:
+        """Return rising-edge button presses since the previous poll.
+
+        The receiver runs faster than the environment loop, so short Pico
+        button taps are retained instead of being lost between ``env.step`` calls.
+        """
+        with self._lock:
+            presses = list(self._button_events)
+            self._button_events.clear()
+        return presses
 
     def _snapshot(self) -> Optional[dict[str, Any]]:
         with self._lock:
@@ -494,6 +513,21 @@ class PicoExpert:
         if not name:
             return False
         return self._control_value(data, side, str(name)) >= float(threshold)
+
+    def _gripper_state(self, data: Mapping[str, Any]) -> tuple[bool, bool]:
+        """Return the B/A/X profile command."""
+        if not self.gripper_trigger:
+            return False, False
+        close_pressed = self._control_pressed(
+            data,
+            self.hand,
+            self.gripper_trigger,
+            self.gripper_close_threshold,
+        )
+        # Franky's Robotiq integration is binary. In this explicit mode,
+        # releasing the front trigger therefore commands the open state.
+        open_pressed = not close_pressed
+        return close_pressed, open_pressed
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
         try:
