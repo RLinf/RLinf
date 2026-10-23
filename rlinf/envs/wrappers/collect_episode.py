@@ -241,6 +241,12 @@ class CollectEpisode(gym.Wrapper):
                     self._preexisting_episode_count,
                     self._next_shard_id,
                 ) = _scan_existing_lerobot_shards(self.save_dir, rank)
+            else:
+                # Start a fresh dataset shard without overwriting artifacts
+                # left by a prior run that used the same save directory.
+                _, self._next_shard_id = _scan_existing_lerobot_shards(
+                    self.save_dir, rank
+                )
             self._episodes_written = (
                 self._preexisting_episode_count
             )  # guarded by _save_futures_lock
