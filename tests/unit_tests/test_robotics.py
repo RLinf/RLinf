@@ -1419,7 +1419,7 @@ def test_declaring_cameras_needs_no_config_class():
     assert not declared["scene"].is_connected, "declaring a camera must not open it"
     assert Camera.declare(None) == {}
     # Backend resolution uses the category registry.
-    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos"}
+    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos", "uvc"}
     with pytest.raises(ValueError, match="Unsupported BaseCamera backend"):
         BaseCamera.backend("no-such-camera")
 
@@ -5676,6 +5676,21 @@ def test_so101_commands_are_converted_back_to_degrees():
         assert wire["shoulder_pan.pos"] == pytest.approx(90.0)
         # send_action reports what actually reached the arm, in radians.
         assert sent["joint_position"][0] == pytest.approx(np.pi / 2)
+
+        arm.disconnect()
+
+
+def test_so101_clips_out_of_range_gripper_feedback_to_the_public_contract():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        arm._robot.positions["gripper.pos"] = 125.0
+
+        assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
 
         arm.disconnect()
 

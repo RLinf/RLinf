@@ -14,8 +14,8 @@ Overview
 --------
 
 The test runs on the Linux machine connected to the arm. It requires no GPU or
-model checkpoint. RLinf does not yet provide a supported real-world task or
-training workflow for SO101; this guide covers hardware checks only.
+model checkpoint. The same checkout also provides the SO-101 joint-space
+collection, OpenPI Pi0.5 SFT, and local evaluation templates described below.
 
 Hardware Setup
 --------------
@@ -214,6 +214,28 @@ so slow or sustained movement can continue while it makes progress.
 Move the leader's gripper away from that opening before retrying
 motion into the obstruction. The driver's ``open_gripper()`` and
 ``close_gripper()`` methods still wait for travel or stall relief.
+
+SO-101 Pi0.5 SFT
+----------------
+
+The SFT template expects a local LeRobot v3 dataset root whose ``meta/info.json``
+is present. Set ``data.train_data_paths`` to that root, set
+``actor.model.model_path`` to the Pi0.5 checkpoint, and set
+``actor.model.openpi_data.norm_stats_path`` to the statistics file used for
+the same dataset. The template is
+``examples/sft/config/realworld_sft_openpi_so101.yaml``.
+
+Compute the statistics from the same dataset before training:
+
+.. code-block:: bash
+
+   PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
+     --config-name pi05_so101_joint \
+     --repo-id /path/to/so101_dataset
+
+The command writes ``norm_stats.json`` under the OpenPI assets directory. Copy
+that path into ``actor.model.openpi_data.norm_stats_path``; training and
+evaluation do not infer it from the SFT checkpoint directory.
 
 New Real-World Tasks
 --------------------

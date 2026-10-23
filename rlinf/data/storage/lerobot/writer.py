@@ -337,10 +337,32 @@ class LeRobotDatasetWriter:
             add_frame_to_dataset(self.dataset, frame_data)
         self._wait_images()
 
+        self._normalize_scalar_episode_fields()
         self.dataset.save_episode()
         self.logger.info(
             f"Saved episode with {len(episode_data)} frames, task: '{episode_data[0].get('task', 'N/A')}'"
         )
+
+    def _normalize_scalar_episode_fields(self) -> None:
+        """Convert one-element arrays to Python scalars for HF ``Value`` fields."""
+        if self.dataset is None:
+            return
+        from datasets.features import Value
+
+        features = getattr(self.dataset, "hf_features", {})
+        episode_buffer = getattr(self.dataset, "episode_buffer", {})
+        for name, feature in features.items():
+            if not isinstance(feature, Value) or name not in episode_buffer:
+                continue
+            values = episode_buffer[name]
+            if not isinstance(values, list):
+                continue
+            episode_buffer[name] = [
+                value.item()
+                if isinstance(value, np.ndarray) and value.size == 1
+                else value
+                for value in values
+            ]
 
     def finalize(self) -> None:
         """Finalize the dataset and properly clean up all resources."""
