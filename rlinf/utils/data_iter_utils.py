@@ -134,14 +134,17 @@ def get_iterator_k_split(
     shuffle_seed: Optional[int] = None,
 ) -> Iterator:
     """
-    Split a batch into k microbatches, where the batch size is divisible by k. Batch could be
+    Split a batch into k microbatches. Batch could be
     a dictionary of tensors or a list of tensors. A dictionary batch could also have items of List type,
     as long as the length of that list is the same as the batch size.
 
     Args:
         batch: Input batch data (dict or list of tensors).
         num_splits: Number of microbatches to split into.
-        enforce_divisible_batch: Whether to enforce batch size being divisible by k.
+        enforce_divisible_batch: Whether to require the dictionary batch size to
+            be divisible by k. If False, keep all samples in k chunks whose sizes
+            differ by at most one, with larger chunks first. Chunks may be empty
+            when k exceeds the batch size.
         shuffle: Whether to shuffle the batch before splitting.
         shuffle_seed: Seed for reproducible shuffling.
     """
@@ -227,12 +230,6 @@ def get_iterator_k_split(
             tensor_items = {
                 k: torch.tensor_split(v, num_splits) for k, v in tensor_items.items()
             }
-            # handle the case where the batch size from dynamic bucketting is not divisible
-            if batch_size % num_splits != 0:
-                chunk_size = batch_size // num_splits
-                tensor_items = {
-                    k: v[:chunk_size] for i, (k, v) in enumerate(tensor_items.items())
-                }
 
         list_items = {
             k: split_list(
