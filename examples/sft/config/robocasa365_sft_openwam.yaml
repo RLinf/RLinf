@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on RoboCasa365.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=robocasa365, cameras, action mode) drives the
+# native OpenWAM reader, so a robocasa365 checkpoint must be paired with robocasa365 data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "robocasa365_sft_openwam"
+
+data:
+  train_data_paths: /path/to/robocasa365_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-robocasa365-checkpoint

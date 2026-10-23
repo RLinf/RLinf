@@ -4,6 +4,56 @@ on:
   workflow_call:
 
 jobs:
+
+  # OpenWAM has no checkpoint or dataset mount on the CI runners, so this job
+  # only proves that the OpenWAM venv installs and that every SFT recipe
+  # composes; the unit tests in tests/unit_tests/test_models.py cover the
+  # recipe validation. A full SFT e2e needs an OpenWAM checkpoint mount.
+  sft-openwam-install-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create OpenWAM SFT environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openwam --env libero
+
+      - name: Import OpenWAM and compose the SFT recipes
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          python - <<'PY'
+          from pathlib import Path
+
+          import openwam.deploy  # noqa: F401  the adapter's import surface
+          from hydra import compose, initialize_config_dir
+
+          import rlinf.models.embodiment.openwam  # noqa: F401
+
+          config_dir = Path.cwd() / "examples" / "sft" / "config"
+          recipes = sorted(config_dir.glob("*_sft_openwam.yaml"))
+          assert recipes, "No OpenWAM SFT recipes found"
+          for recipe in recipes:
+              with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+                  cfg = compose(config_name=recipe.stem)
+              assert cfg.actor.model.model_type == "openwam", recipe.name
+              assert cfg.runner.task_type == "sft", recipe.name
+          print(f"Installed OpenWAM and composed {len(recipes)} SFT recipes.")
+          PY
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
   sft-dreamzero-droid-wan22-test:
     runs-on: embodied
     steps:

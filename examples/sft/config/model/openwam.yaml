@@ -1,0 +1,15 @@
+model_type: "openwam"
+# fp32 master weights for the optimizer; FSDP mixed_precision.param_dtype (bf16)
+# handles compute. bf16 master weights round away almost every update at lr=1e-6.
+precision: "fp32"
+is_lora: false
+model_path: /path/to/openwam-libero-sft
+device: "cuda" # where rollout/eval recipes load the model (load_to_device: true)
+load_to_device: false # SFT: build on the CPU, FSDP moves each rank's shard to its GPU
+ckpt_name: null
+num_frames: 33
+height: 384
+width: 320
+denoise_steps: 10
+lambda_video: 1.0
+lambda_action: 1.0

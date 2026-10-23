@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on AgibotWorld.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=agibotworld, cameras, action mode) drives the
+# native OpenWAM reader, so a agibotworld checkpoint must be paired with agibotworld data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "agibotworld_sft_openwam"
+
+data:
+  train_data_paths: /path/to/agibotworld_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-agibotworld-checkpoint

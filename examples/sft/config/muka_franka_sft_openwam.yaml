@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on Muka Franka.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=muka_franka, cameras, action mode) drives the
+# native OpenWAM reader, so a muka_franka checkpoint must be paired with muka_franka data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "muka_franka_sft_openwam"
+
+data:
+  train_data_paths: /path/to/muka_franka_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-muka_franka-checkpoint
