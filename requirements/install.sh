@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "arx5" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -3207,6 +3207,9 @@ install_env_only() {
         piper)
             install_piper_env
             ;;
+        arx5)
+            install_arx5_env
+            ;;
         dosw1)
             install_dosw1_env
             ;;
@@ -3691,6 +3694,17 @@ install_franka_franky_env() {
     install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     # Ruiyan dexterous-hand and data-glove drivers.
     uv pip install "RLinf-dexterous-hands[glove]"
+    use_opencv_gui_wheel
+}
+
+install_arx5_env() {
+    local requirements="$SCRIPT_DIR/embodied/envs/arx5.txt"
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$requirements"
+    install_lerobot -r "$requirements"
+    # Resolve Diffusers/Hub against the Transformers pin from the embodied extra.
+    uv pip install "diffusers>=0.27.2,<0.40" "huggingface-hub>=0.34.0,<1.0"
+    uv pip check
     use_opencv_gui_wheel
 }
 

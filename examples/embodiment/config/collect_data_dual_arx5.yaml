@@ -1,0 +1,90 @@
+# Run from the repository root on the CAN host:
+# bash examples/embodiment/collect_data.sh collect_data_dual_arx5
+# Install ARX5_beta on Ubuntu 24.04 and start can1/can3 before running.
+defaults:
+  - env/realworld_dual_arx5_tcp_rot6d@env.eval
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: arx5
+      placement: 0
+  node_groups:
+    - label: arx5
+      node_ranks: 0
+      hardware:
+        type: DualARX5
+        configs:
+          - node_rank: 0
+            left_can_port: can1
+            right_can_port: can3
+            arm_type: 0  # X5-2023; use 2 only for X5-2025 hardware.
+            camera_type: v4l2
+            camera_fps: 30
+            # These three USB cameras share one reported serial. by-path links
+            # distinguish their physical ports; update them if cabling changes.
+            # video8 is overhead, video0 is left wrist, video4 is right wrist.
+            base_camera_serials:
+              - /dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.4:1.0-video-index0
+            left_camera_serials:
+              - /dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0
+            right_camera_serials:
+              - /dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.3:1.0-video-index0
+            # Clockwise rotation per RLinf frame name; use 0/90/180/270.
+            camera_rotations:
+              base_0_rgb: 180
+              left_wrist_0_rgb: 180
+              right_wrist_0_rgb: 180
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ${oc.env:EMBODIED_PATH}/../../logs/collect-data-dual-arx5
+    project_name: rlinf
+    experiment_name: collect-data-dual-arx5
+    logger_backends: [tensorboard]
+  num_data_episodes: 20
+  record_task_description: False
+
+env:
+  group_name: EnvGroup
+  eval:
+    auto_reset: False
+    max_episode_steps: 1000
+    teleop:
+      - {pico: {drives: left}}
+      - {pico: {drives: right}}
+    # B starts an episode; X saves success; A discards failure. No pedal needed.
+    pico_reward_wrapper: default
+    pico:
+      zmq_addr: "tcp://127.0.0.1:5555"  # Local pico-services.service publishes on port 5555.
+      hold_current_when_inactive: True
+      control_threshold: 0.85
+      max_stale_s: 0.2
+      calibration:
+        button: null  # Front trigger is reserved for the gripper.
+    override_cfg:
+      task_description: TASK_DESCRIPTION  # Replace with your task prompt.
+      max_num_steps: 1000
+      step_frequency: 30
+      # Keep the current teleoperation limit; generic env default is 0.15 rad.
+      max_step_rad: 0.5
+      enforce_workspace_bounds: False
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: lerobot_dataset
+      only_success: True
+      robot_type: dual_arx5
+      fps: 30
+      finalize_interval: 4
