@@ -1,0 +1,8 @@
+# ARX X5 SDK, RealSense, keyboard episode control, and PICO data collection.
+numpy
+python-can>=4.0
+pin
+ruckig
+pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'
+evdev; sys_platform == 'linux'
+pyzmq

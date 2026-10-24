@@ -2717,6 +2717,51 @@ def test_the_pico_transport_links_calibrates_and_tracks_motion():
         assert socket.closed, "the subscriber socket outlived the device"
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_pico_can_stop_and_restart_with_a_real_zmq_socket(streaming):
+    pytest.importorskip("zmq")
+    # A libzmq assertion aborts the interpreter, so isolate the real socket test.
+    script = """
+import resource
+import sys
+import time
+
+import zmq
+
+from rlinf.robotics.parts.transports.pico import PicoExpert
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+context = zmq.Context()
+publisher = context.socket(zmq.PUB)
+port = publisher.bind_to_random_port("tcp://127.0.0.1")
+expert = PicoExpert(zmq_addr=f"tcp://127.0.0.1:{port}", timeout_ms=100)
+try:
+    for _ in range(3):
+        expert.start()
+        if sys.argv[1] == "streaming":
+            deadline = time.monotonic() + 3
+            while not expert.ready and time.monotonic() < deadline:
+                publisher.send_json({"buttons": {}})
+                time.sleep(0.01)
+            assert expert.ready, "subscriber did not receive the test stream"
+        else:
+            time.sleep(0.05)
+        expert.stop()
+        expert.stop()
+finally:
+    expert.stop()
+    publisher.close(linger=0)
+    context.term()
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script, "streaming" if streaming else "idle"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_a_stale_pico_link_stops_driving_the_robot():
     """No frames means no motion, not the last motion repeated forever."""
     import time
@@ -3248,6 +3293,49 @@ def _pico_reader(**overrides):
     return PicoExpert(**config)
 
 
+def test_pico_bax_reward_profile_uses_the_front_trigger_for_gripper(monkeypatch):
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import Pico
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    entry = Pico.from_config(
+        {
+            "no_gripper": False,
+            "pico_reward_wrapper": "default",
+            "pico": {
+                "hand": "right",
+                "control_trigger": "grip",
+                "control_threshold": 0.85,
+                "calibration": {"enabled": False, "required": False},
+            },
+        },
+        {},
+        SimpleNamespace(kinds={"arm": ActionKind.CARTESIAN_POSE}),
+    )
+    reader = entry.device._open()
+    packet = _pico_packet(0.1, 0.2, 0.3, 0.4, grip=0.95, close=True, open_=True)
+    reader._snapshot = lambda: packet
+
+    reading = reader.get_reading()
+    assert (reading["grip_close"], reading["grip_open"]) == (False, True)
+
+    packet["right_controller"]["trigger"] = 0.8
+    reading = reader.get_reading()
+    assert (reading["grip_close"], reading["grip_open"]) == (True, False)
+
+
+@pytest.mark.parametrize("arm_type,opened,closed", [(0, 5.0, 0.0), (2, 0.1, -3.14)])
+def test_arx5_gripper_motor_positions_match_physical_open_and_closed_states(
+    arm_type, opened, closed
+):
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+
+    arm = ARX5Arm("can1", arm_type=arm_type)
+    assert arm.gripper_open == opened
+    assert arm.gripper_closed == closed
+
+
 def test_a_reading_is_empty_until_the_operator_takes_hold():
     import numpy as np
 
@@ -3290,16 +3378,6 @@ def test_letting_go_and_grabbing_again_re_anchors():
     # Retaking control resets the anchor without applying motion.
     assert reading["held"] is True
     assert np.allclose(reading["position_delta"], 0.0, atol=1e-9)
-
-
-def test_the_gripper_buttons_are_reported_separately():
-    reader = _pico_reader()
-    reader._snapshot = lambda: _pico_packet(0, 0, 0, 0, grip=0.95, close=True)
-
-    reading = reader.get_reading()
-
-    assert reading["grip_close"] is True
-    assert reading["grip_open"] is False
 
 
 def test_a_dropped_link_reports_stale_rather_than_stale_motion():

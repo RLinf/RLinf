@@ -4830,3 +4830,119 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
 
     assert selected_seed_0 == selected_seed_0_again
     assert selected_seed_0 != selected_seed_1
+
+
+def test_arx5_joint_reset_qpos_uses_radians():
+    from rlinf.envs.real.arx5 import DualARX5Env, DualARX5EnvConfig
+
+    target = np.array([[0.1, 0.2, 0.3, -0.1, 0.1, 0.1]] * 2)
+    config = DualARX5EnvConfig(joint_reset_qpos=target.tolist())
+    np.testing.assert_array_equal(config.joint_reset_qpos, target)
+    override = {
+        "is_dummy": True,
+        "joint_reset_qpos": target.tolist(),
+        "max_step": 0.03,
+        "max_step_rad": 0.4,
+    }
+    env = DualARX5Env(override)
+    try:
+        np.testing.assert_allclose(env.config.joint_reset_qpos, target)
+        assert env.config.max_step == 0.03
+        assert env.config.max_step_rad == 0.4
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"joint_reset_qpos": [[0] * 5] * 2},
+        {"joint_reset_qpos": [[0, 5, 5, 0, 0, 0]] * 2},
+        {"joint_reset_qpos": [[float("nan")] * 6] * 2},
+        {"max_step": -0.01},
+        {"max_step_rad": float("inf")},
+        {"rotation_repr": "euler"},
+    ],
+)
+def test_arx5_rejects_invalid_shared_control_settings(override):
+    from rlinf.envs.real.arx5 import DualARX5EnvConfig
+
+    with pytest.raises(ValueError):
+        DualARX5EnvConfig(**override)
+
+
+def test_arx5_collection_composes_shared_names_and_preserves_run_settings(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.envs.real.arx5 import DualARX5EnvConfig
+    from rlinf.robotics import DualARX5Config
+
+    root = Path(__file__).resolve().parents[2]
+    config_dir = root / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        arx = compose(config_name="collect_data_dual_arx5")
+    base = OmegaConf.load(config_dir / "env/realworld_dual_arx5_tcp_rot6d.yaml")
+    base_cfg = DualARX5EnvConfig(**OmegaConf.to_container(base.override_cfg))
+    assert base_cfg.enforce_workspace_bounds is True
+    assert base_cfg.max_step_rad == 0.15
+    assert base_cfg.step_frequency == 10
+    assert base_cfg.joint_return_speed_deg_s == 10
+    assert base_cfg.joint_return_acceleration_deg_s2 == 30
+    assert base_cfg.joint_return_slowdown_deg == 3
+    assert base_cfg.joint_return_stall_timeout_s == 2
+    assert arx.env.eval.auto_reset is False
+    assert arx.env.eval.max_episode_steps == 1000
+    assert arx.env.eval.ignore_terminations is False
+    assert arx.env.eval.no_gripper is False
+    cfg = DualARX5EnvConfig(
+        **OmegaConf.to_container(arx.env.eval.override_cfg, resolve=True)
+    )
+    assert cfg.step_frequency == arx.env.eval.data_collection.fps == 30
+    assert cfg.enforce_workspace_bounds is False
+    assert cfg.max_step == 0.02
+    assert cfg.max_step_rad == 0.5
+    assert cfg.reset_joint_timeout_s == 10
+    assert cfg.close_joint_timeout_s == 30
+    assert cfg.close_park_max_deg == 0.5
+    hardware = arx.cluster.node_groups[0].hardware.configs[0]
+    hardware_cfg = DualARX5Config(**OmegaConf.to_container(hardware))
+    assert hardware_cfg.left_urdf_path is None
+    assert hardware_cfg.right_urdf_path is None
+    assert arx.env.eval.data_collection.get("resume", False) is False
+    assert arx.env.eval.data_collection.export_format == "lerobot_dataset"
+    for name in ("joint_reset_qpos", "rotation_repr"):
+        assert name in arx.env.eval.override_cfg
+    disabled = DualARX5EnvConfig(max_step=0, max_step_rad=0)
+    assert disabled.max_step == 0
+    assert disabled.max_step_rad == 0
+
+
+def test_arx5_collection_preserves_pico_control_and_calibration_defaults(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.envs.real.wrappers.teleop.pico_config import split_dual_config
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name="collect_data_dual_arx5")
+    pico_cfg = OmegaConf.to_container(cfg.env.eval.pico, resolve=True)
+    assert pico_cfg.pop("hold_current_when_inactive") is True
+    for side_cfg in split_dual_config(pico_cfg):
+        reader = PicoExpert(**side_cfg)
+        assert reader.zmq_addr == "tcp://127.0.0.1:5555"
+        assert reader.control_trigger == "grip"
+        assert reader.control_threshold == 0.85
+        assert reader.gripper_close_threshold == 0.5
+        assert reader.position_scale == reader.rotation_scale == 1.0
+        assert reader.max_stale_s == 0.2
+        assert reader.calibration_enabled is True
+        assert reader.require_calibration is True
+        assert reader.auto_calibrate_on_start is True
+        assert reader.calibration_button is None
+        assert reader.calibration_threshold == 0.5
+        np.testing.assert_array_equal(reader.head_forward_axis, [0, 0, -1])
+        np.testing.assert_array_equal(reader.base_position, [0, 0, 0])
