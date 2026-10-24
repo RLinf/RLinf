@@ -90,6 +90,14 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
 
         actor_worker_cls = EmbodiedNFTFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_art":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for embodied_art."
+            )
+        from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
+
+        actor_worker_cls = EmbodiedARTFSDPPolicy
     else:
         if use_training_pipeline:
             from rlinf.workers.actor.fsdp_actor_worker_pipeline import (

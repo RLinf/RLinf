@@ -60,6 +60,7 @@ class Wan22T2VModel(Wan22Model):
         num_steps: int,
         generator=None,
         latents=None,
+        return_art_trajectory: bool = False,
     ):
         del conditions
         device = prompt_embeds.device
@@ -83,7 +84,10 @@ class Wan22T2VModel(Wan22Model):
             latents=latents,
         )
         self.pipeline._num_timesteps = len(timesteps)
+        art_states = []
         for t in timesteps:
+            if return_art_trajectory:
+                art_states.append(latents.detach())
             model_latents = latents.to(dtype=model_dtype)
             timestep = self._scheduler_to_model_timesteps(
                 t.expand(latents.shape[0]),
@@ -110,7 +114,7 @@ class Wan22T2VModel(Wan22Model):
         if self.config.offload_auxiliary_modules:
             self.pipeline.vae.to(device="cpu")
             torch.cuda.empty_cache()
-        return images, latents, {}
+        return images, latents, self._art_trajectory_info(art_states, timesteps)
 
     def _transformer_forward(
         self,

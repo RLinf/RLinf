@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         AsyncEmbodiedSACFSDPPolicy,
     )
     from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
     from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
@@ -60,6 +61,7 @@ class EmbodiedRunner:
         cfg: DictConfig,
         actor: Union[
             "EmbodiedFSDPActor",
+            "EmbodiedARTFSDPPolicy",
             "EmbodiedNFTFSDPPolicy",
             "EmbodiedSACFSDPPolicy",
             "AsyncEmbodiedSACFSDPPolicy",
