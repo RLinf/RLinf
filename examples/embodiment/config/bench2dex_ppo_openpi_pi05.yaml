@@ -1,0 +1,161 @@
+defaults:
+  - env/bench2dex@env.train
+  - env/bench2dex@env.eval
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override /hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-3
+    rollout: 4-7
+    env: 0-7
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "bench2dex_ppo_openpi_pi05"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: 10
+  save_interval: 100
+
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+
+algorithm:
+  normalize_advantages: True
+  kl_penalty: kl # how to estimate kl divergence: kl or kl_penalty
+  group_size: 1
+  reward_coef: 1.0
+
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+
+  update_epoch: 3
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  filter_rewards: False
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+env:
+  group_name: "EnvGroup"
+
+  train:
+    auto_reset: True
+    rollout_epoch: 1
+    total_num_envs: 8
+    max_episode_steps: 1080
+    max_steps_per_rollout_epoch: 1080
+    seed: 42
+    init_params:
+      robot_key: multi_xarm7_with_ability
+      action_dim: 26
+
+  eval:
+    rollout_epoch: 4
+    total_num_envs: 8
+    max_episode_steps: 1080
+    max_steps_per_rollout_epoch: 1080
+    init_params:
+      robot_key: multi_xarm7_with_ability
+      action_dim: 26
+    video_cfg:
+      save_video: True
+      info_on_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    seed: 42
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: True
+  pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/bench2dex_sft/checkpoints/global_step_5000"
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 6
+  global_batch_size: 216
+  seed: 42
+  enable_offload: False
+
+  model:
+    model_path: "/path/to/bench2dex_sft/checkpoints/global_step_5000"
+    model_type: "openpi"
+    action_dim: 26
+    num_action_chunks: 20
+    num_steps: 10
+    add_value_head: True
+    openpi:
+      torch_compile: False
+      task: rl
+      config_name: "pi05_bench2dex_base"
+      num_images_in_input: 4
+      image_keys: [base_0_rgb, base_1_rgb, left_wrist_0_rgb, right_wrist_0_rgb]
+      discrete_state_input: True
+      max_token_len: 280
+      noise_level: 0.5
+      joint_logprob: False
+      num_steps: ${actor.model.num_steps}
+      value_after_vlm: True
+      value_vlm_mode: "mean_token"
+      detach_critic_input: True
+    openpi_data:
+      norm_stats_path: "/path/to/bench2dex_lerobot/03_ability/norm_stats.json"
+
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    clip_grad: 1.0
+    weight_decay: 0.01
+    critic_warmup_steps: 0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

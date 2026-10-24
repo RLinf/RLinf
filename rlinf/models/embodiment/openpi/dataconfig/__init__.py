@@ -31,6 +31,9 @@ from openpi.training.config import (
 from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
     LeRobotBehaviorDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.bench2dex_dataconfig import (
+    LeRobotBench2DexDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
@@ -78,6 +81,38 @@ from rlinf.models.embodiment.openpi.dataconfig.yam_dataconfig import (
 )
 
 _CONFIGS = [
+    TrainConfig(
+        name="pi05_bench2dex",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=26,
+            action_horizon=20,
+            max_token_len=280,
+            discrete_state_input=True,
+        ),
+        data=LeRobotBench2DexDataConfig(
+            repo_id="bench2dex/03_ability",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="assets/bench2dex-openpi/03_ability/assets"),
+        ),
+        pytorch_weight_path="assets/bench2dex-openpi/03_ability",
+    ),
+    TrainConfig(
+        name="pi05_bench2dex_base",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=20,
+            max_token_len=280,
+            discrete_state_input=True,
+        ),
+        data=LeRobotBench2DexDataConfig(
+            repo_id="bench2dex/03_ability",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="assets/bench2dex-openpi/pi05_base/assets"),
+        ),
+        pytorch_weight_path="assets/bench2dex-openpi/pi05_base",
+    ),
     TrainConfig(
         name="pi0_libero",
         model=pi0_config.Pi0Config(),

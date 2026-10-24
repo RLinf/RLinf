@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "bench2dex")
 
 #=======================Utility Functions=======================
 
@@ -2586,6 +2586,13 @@ EOF
             install_polaris_env
             uv pip install "rlinf-openpi==0.1.1"
             ;;
+        bench2dex)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            install_bench2dex_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -3219,6 +3226,10 @@ install_env_only() {
         libero|maniskill_libero)
             install_common_embodied_deps
             install_${ENV_NAME}_env
+            ;;
+        bench2dex)
+            install_common_embodied_deps
+            install_bench2dex_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -3942,6 +3953,25 @@ install_roboverse_env() {
     uv pip install -e "$pyroki_dir"
     uv pip install "numpy==1.26.4" --force-reinstall
     uv pip install "mujoco==3.3.7" "dm-control==1.0.34" --force-reinstall
+}
+
+install_bench2dex_env() {
+    local isaaclab_dir bench2dex_dir
+    isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/isaac-sim/IsaacLab.git -b v2.3.2 --depth 1)
+    pushd ~ >/dev/null
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    # The Isaac Lab app also loads isaaclab_tasks, which imports h5py.
+    uv pip install -e "$isaaclab_dir/source/isaaclab" h5py
+    popd >/dev/null
+
+    bench2dex_dir=$(clone_or_reuse_repo BENCH2DEX_PATH "$VENV_DIR/bench2dex" https://github.com/Bench2Dex/Bench2Dex.git)
+    if [ -z "${BENCH2DEX_PATH:-}" ]; then
+        # Revision the in-tree scene builder and success evaluators are ported from.
+        git -C "$bench2dex_dir" checkout "${BENCH2DEX_GIT_REF:-fd90dcc625b66c2e535a8b25bcf75bc81c7b080d}" >&2
+    fi
+    if ! grep -q '^export BENCH2DEX_REPO_PATH=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export BENCH2DEX_REPO_PATH=\"$bench2dex_dir\"" >> "$VENV_DIR/bin/activate"
+    fi
 }
 
 #=======================AGENTIC INSTALLER=======================
