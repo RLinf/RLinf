@@ -1,0 +1,54 @@
+defaults:
+  - /examples/embodiment/config/bench2dex_ppo_openpi_pi05@_global_
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  component_placement:
+    actor: 0
+    rollout: 1
+    env: 0-1
+
+runner:
+  logger:
+    log_path: /workspace/results/bench2dex_ppo_openpi_pi05
+    experiment_name: ci-test
+  max_epochs: 1
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: -1
+
+algorithm:
+  update_epoch: 1
+
+env:
+  train:
+    total_num_envs: 2
+    max_episode_steps: 40
+    max_steps_per_rollout_epoch: 40
+    video_cfg:
+      save_video: False
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 2
+    max_episode_steps: 40
+    max_steps_per_rollout_epoch: 40
+    video_cfg:
+      save_video: False
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 4
+  model:
+    model_path: /workspace/dataset/pi05_base_openpi
+    openpi_data:
+      norm_stats_path: /workspace/dataset/bench2dex/03_ability/norm_stats.json
+
+rollout:
+  enable_offload: False
+  model:
+    model_path: /workspace/dataset/pi05_base_openpi

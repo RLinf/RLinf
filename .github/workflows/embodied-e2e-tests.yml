@@ -1283,7 +1283,76 @@ jobs:
           rm -rf .venv
           uv cache prune
           rm -rf /tmp/tmp*
+
+  embodied-cnn-ppo-bench2dex-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab-v2.3.2
+          bash requirements/install.sh embodied --env bench2dex
+
+      - name: Bench2Dex PPO CNN test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export BENCH2DEX_ASSETS_PATH=/workspace/dataset/dex2bench_dataset
+          source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          bash tests/e2e_tests/embodied/run.sh bench2dex_ppo_cnn
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+          rm -rf /tmp/tmp*
           
+  embodied-openpi-ppo-bench2dex-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab-v2.3.2
+          bash requirements/install.sh embodied --model openpi --env bench2dex
+
+      # Runner assets: Isaac Sim 5.1, Bench2Dex USDs, pi05_base_openpi,
+      # and the converted 03_ability dataset's 26-joint norm_stats.json.
+      - name: Bench2Dex OpenPI PPO Pi05 test
+        timeout-minutes: 40
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export BENCH2DEX_ASSETS_PATH=/workspace/dataset/dex2bench_dataset
+          source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          site=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+          export PYTHONPATH="$REPO_PATH:$site:${PYTHONPATH:-}"
+          export LD_LIBRARY_PATH="$site/nvidia/cu13/lib:${LD_LIBRARY_PATH:-}"
+          bash tests/e2e_tests/embodied/run.sh bench2dex_ppo_openpi_pi05
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openpi-maniskill-libero-test:
     runs-on: embodied
     steps:
