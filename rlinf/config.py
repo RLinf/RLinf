@@ -1547,6 +1547,10 @@ def validate_embodied_cfg(cfg):
         )
         decisions = 1
         branch_index = algorithm_cfg.get("art_branch_chunk_index", None)
+        state_sampling = algorithm_cfg.get("art_state_sampling", False)
+        assert not state_sampling or action_art, (
+            "algorithm.art_state_sampling requires OpenPi ART."
+        )
         assert branch_index is None or action_art, (
             "algorithm.art_branch_chunk_index requires OpenPi ART."
         )
@@ -1554,6 +1558,7 @@ def validate_embodied_cfg(cfg):
             if (
                 not algorithm_cfg.get("art_first_chunk_only", False)
                 and branch_index is None
+                and not state_sampling
             ):
                 decisions = (
                     cfg.env.train.max_steps_per_rollout_epoch
@@ -1580,7 +1585,7 @@ def validate_embodied_cfg(cfg):
         )
         actor_world_size = component_placement.get_world_size("actor")
         shard_count = math.lcm(env_world_size, actor_world_size)
-        if branch_index is not None:
+        if branch_index is not None or state_sampling:
             shard_count = math.lcm(
                 shard_count, component_placement.get_world_size("rollout")
             )
@@ -1633,6 +1638,7 @@ def validate_embodied_cfg(cfg):
             "art_reward_reduction",
             "art_eps",
             "art_first_chunk_only",
+            "art_state_sampling",
             "art_branch_chunk_index",
             "art_branch_state_atol",
             "art_branch_image_atol",
@@ -1889,6 +1895,25 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
         "algorithm.art_replay_diagnostics must be boolean."
     )
     branch_index = cfg.algorithm.get("art_branch_chunk_index", None)
+    if cfg.algorithm.get("art_state_sampling", False):
+        assert branch_index is None and not cfg.algorithm.get(
+            "art_first_chunk_only", False
+        ), "ART state sampling replaces fixed-branch and first-chunk sampling."
+        assert train.get("art_state_sampling", False), (
+            "ART state sampling requires env.train.art_state_sampling=True."
+        )
+        assert train.rollout_epoch == 1, (
+            "ART state sampling requires one state bank per rollout: rollout_epoch=1."
+        )
+        assert not cfg.runner.get("enable_decoupled_mode", False), (
+            "ART state sampling requires synchronous environment batches."
+        )
+        assert not cfg.runner.get("overlap_env_bootstrap", False), (
+            "ART state sampling requires collection after the policy weight sync."
+        )
+        assert not cfg.env.get("delay_sampler", None), (
+            "ART state sampling requires environment actions without delay sampling."
+        )
     if branch_index is not None:
         assert type(branch_index) is int and (
             0 <= branch_index * model.num_action_chunks < train.max_episode_steps

@@ -208,6 +208,7 @@ jobs:
               - 'rlinf/runners/async_agent_runner.py'
               - 'rlinf/models/embodiment/openpi/**'
               - 'examples/embodiment/config/libero_object_0_art_openpi.yaml'
+              - 'examples/embodiment/config/libero_object_0_art_states_openpi.yaml'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'

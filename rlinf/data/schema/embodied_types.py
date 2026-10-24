@@ -1722,6 +1722,9 @@ class EnvOutput:
         }
         if "art_sim_state_error" in obs:
             prepared["art_sim_state_error"] = obs["art_sim_state_error"]
+        for key in ("art_state_id", "art_state_steps"):
+            if key in obs:
+                prepared[key] = obs[key]
         return prepared
 
     def to_dict(self) -> dict[str, Any]:

@@ -63,6 +63,8 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             )
             rollout_size = sum(rows.numel() for rows in windows)
             branch_index = self.cfg.algorithm.get("art_branch_chunk_index", None)
+            if self.cfg.algorithm.get("art_state_sampling", False):
+                branch_index = 0
             if branch_index is not None:
                 training_indices = branch_index * endpoints.shape[1] + torch.arange(
                     rollout_size
@@ -265,6 +267,9 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         if batch.get("loss_mask") is not None:
             action_mask = action_mask & batch["loss_mask"]
         branch_index = self.cfg.algorithm.get("art_branch_chunk_index", None)
+        state_sampling = self.cfg.algorithm.get("art_state_sampling", False)
+        if state_sampling:
+            branch_index = 0
         preparation_metrics = {}
         if branch_index is not None:
             episode_returns = torch.where(
@@ -312,6 +317,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             episode_returns,
             selected_mask,
             int(self.cfg.algorithm.group_size),
+            condition_ids=forward_inputs["art_state_id"][0] if state_sampling else None,
             **self._art_covariance_options(),
         )
         if branch_index is not None:
@@ -332,7 +338,9 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             forward_inputs[key] = value
         episodes = endpoints.shape[1]
         episode_windows = _prompt_disjoint_windows(
-            torch.arange(episodes) // int(self.cfg.algorithm.group_size),
+            forward_inputs["art_state_id"][0].cpu()
+            if state_sampling
+            else torch.arange(episodes) // int(self.cfg.algorithm.group_size),
             updates=int(self.cfg.algorithm.get("art_updates_per_rollout", 2)),
             order=torch.randperm(episodes, generator=generator).tolist(),
         )
@@ -1044,6 +1052,8 @@ def _art_trajectory_guidance(
     episode_returns: torch.Tensor,
     action_mask: torch.Tensor,
     group_size: int,
+    *,
+    condition_ids: torch.Tensor | None = None,
     **covariance_options,
 ) -> dict:
     """Aggregate same-reset trajectories at each decision, before flattening."""
@@ -1063,7 +1073,13 @@ def _art_trajectory_guidance(
     device = endpoints.device
     episode_ids = torch.arange(episodes, device=device)[None].expand(decisions, -1)
     decision_ids = torch.arange(decisions, device=device)[:, None].expand(-1, episodes)
-    groups = decision_ids * (episodes // group_size) + episode_ids // group_size
+    if condition_ids is None:
+        condition_groups = torch.arange(episodes, device=device) // group_size
+    else:
+        _, condition_groups = torch.unique(
+            condition_ids.to(device), sorted=True, return_inverse=True
+        )
+    groups = decision_ids * (episodes // group_size) + condition_groups[None]
     stats = _art_scalar_covariance(
         endpoints.flatten(0, 1),
         episode_returns[None].expand(decisions, -1).reshape(-1),

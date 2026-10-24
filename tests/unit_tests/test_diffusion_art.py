@@ -483,6 +483,59 @@ def test_art_branch_masks_complete_invalid_groups(invalid_reason):
     assert inputs["art_coordinate_mask"][1, 2:].any()
 
 
+def test_art_state_sampling_preserves_conditions_and_candidate_cache():
+    worker = _art_trajectory_worker()
+    worker.cfg.algorithm.art_state_sampling = True
+    batch = worker.rollout_batch
+    batch["dones"].zero_()
+    batch["loss_mask"].fill_(True)
+    inputs = batch["forward_inputs"]
+    inputs["art_state_id"] = torch.tensor([[31, 31, 12, 12]]).expand(3, -1)
+    inputs["art_branch_valid"] = torch.ones(3, 4, dtype=torch.bool)
+    inputs["art_branch_state_error"] = torch.zeros(3, 4)
+    inputs["art_branch_image_error"] = torch.zeros(3, 4)
+    cached_old = inputs["art_old_velocity"].clone()
+    _, active, windows = worker._prepare_art_trajectory_training_inputs(
+        torch.Generator().manual_seed(7)
+    )
+    assert active
+    assert inputs["art_group_ids"][0].tolist() == [1, 1, 0, 0]
+    assert not inputs["art_coordinate_mask"][1:].any()
+    assert sum(len(window) for window in windows) == 4
+    assert set(windows[0].tolist()).isdisjoint(windows[1].tolist())
+    for window in windows:
+        assert set(inputs["art_state_id"][0, window].tolist()) == {12, 31}
+    torch.testing.assert_close(inputs["art_old_velocity"], cached_old)
+
+
+def test_art_covariance_groups_by_snapshot_identity():
+    endpoints = torch.tensor([[[[0.0]], [[100.0]], [[2.0]], [[96.0]]]])
+    guidance = _art_trajectory_guidance(
+        endpoints,
+        torch.tensor([0.0, 0.0, 1.0, 1.0]),
+        torch.ones(1, 4, 1, dtype=torch.bool),
+        2,
+        condition_ids=torch.tensor([9, 4, 9, 4]),
+    )
+    assert guidance["directions"].flatten().tolist() == [1.0, -1.0, 1.0, -1.0]
+
+
+def test_art_state_sampling_recipe_composes(monkeypatch, art_config_cluster):
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name="libero_object_0_art_states_openpi")
+    cfg = validate_cfg(cfg)
+    assert cfg.env.train.art_state_sampling
+    assert cfg.env.train.total_num_envs == 64 and cfg.env.eval.total_num_envs == 48
+    assert cfg.actor.global_batch_size == 32 and cfg.actor.micro_batch_size == 2
+    assert cfg.actor.optim.lr == 5e-7
+    assert cfg.runner.val_check_interval == 5
+    cfg.runner.overlap_env_bootstrap = True
+    with pytest.raises(AssertionError, match="after the policy weight sync"):
+        validate_openpi_art_cfg(cfg)
+
+
 @pytest.mark.parametrize("branch_index", [0, 8])
 def test_art_fixed_branch_recipe_composes(
     monkeypatch, art_config_cluster, branch_index
@@ -616,6 +669,7 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
 
         worker = object.__new__(MultiStepRolloutWorker)
+        worker.art_state_sampling = False
         worker.algorithm_cfg = OmegaConf.create({"group_size": 2})
         worker.model_cfg = OmegaConf.create({"model_type": "openpi"})
         worker.art_branch_chunk_index = 1
@@ -660,6 +714,18 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         env_obs["states"] = observation.state
         _, invalid_result = worker._predict_art_branch_actions(env_obs, 1)
         assert not invalid_result["forward_inputs"]["art_branch_valid"].any()
+        worker.art_state_sampling = True
+        worker.art_branch_chunk_index = 0
+        worker.version = 7
+        env_obs["art_state_id"] = torch.tensor([19, 19])
+        env_obs["art_state_steps"] = torch.tensor([40, 40])
+        _, state_result = worker._predict_art_branch_actions(env_obs, 0)
+        state_inputs = state_result["forward_inputs"]
+        assert state_inputs["art_branch_valid"].all()
+        assert state_inputs["art_state_id"].tolist() == [19, 19]
+        assert state_inputs["art_state_steps"].tolist() == [40, 40]
+        assert state_inputs["art_candidate_id"].tolist() == [0, 1]
+        assert state_inputs["art_policy_version"].tolist() == [7, 7]
         model._input_transform_fn = lambda data: data
         for name, value in observation.images.items():
             inputs[f"obs_image__{name}"] = value

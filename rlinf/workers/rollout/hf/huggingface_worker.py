@@ -154,6 +154,9 @@ class MultiStepRolloutWorker(Worker):
             and self.model_cfg.model_type == SupportedModel.OPENPI.value
             else None
         )
+        self.art_state_sampling = self.algorithm_cfg.get("art_state_sampling", False)
+        if self.art_state_sampling:
+            self.art_branch_chunk_index = 0
         self.expert_model = None
         self.rlt_feature_model = None
         self.rlt_route = None
@@ -746,6 +749,14 @@ class MultiStepRolloutWorker(Worker):
             art_branch_state_error=self._art_branch_state_error.clone(),
             art_branch_image_error=self._art_branch_image_error.clone(),
         )
+        if self.art_state_sampling:
+            batch_size = actions.shape[0]
+            result["forward_inputs"].update(
+                art_state_id=env_obs["art_state_id"],
+                art_state_steps=env_obs["art_state_steps"],
+                art_candidate_id=torch.arange(batch_size) % group_size,
+                art_policy_version=torch.full((batch_size,), self.version),
+            )
         return actions, result
 
     @Worker.timer("sync_model_from_actor")
@@ -976,6 +987,14 @@ class MultiStepRolloutWorker(Worker):
         actor_channel: Channel,
     ) -> None:
         self.update_dagger_beta()
+        if self.art_state_sampling:
+            for _ in range(self.n_train_chunk_steps):
+                for stage_id in range(self.num_pipeline_stages):
+                    policy_input, split_sizes = await self._receive_policy_input(
+                        input_channel, "art_collect", stage_id
+                    )
+                    actions, _ = self.predict(policy_input.obs, mode="train")
+                    self._send_actions(output_channel, actions, stage_id, split_sizes)
         for chunk_index in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 policy_input, split_sizes = await self._receive_policy_input(
