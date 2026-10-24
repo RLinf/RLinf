@@ -1,3 +1,6 @@
+# Downloaded RoboDojo scene assets can exceed 39 GB.
+data/robodojo/
+
 __pycache__
 .vscode
 *.log

@@ -1,0 +1,296 @@
+基于 RoboDojo 的强化学习训练
+========================================
+
+`RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂
+操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf
+将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 rollout、训练和评估。
+
+概览
+----------------------------------------
+
+在 Isaac Sim 上运行 RoboDojo，并通过 RLinf 的统一步态接口驱动双臂机器人。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 仿真器
+      :text-align: center
+
+      RoboDojo · Isaac Sim 5.1
+
+   .. grid-item-card:: 机器人
+      :text-align: center
+
+      ARX-X5 双臂
+
+   .. grid-item-card:: 示例任务
+      :text-align: center
+
+      Put Bottles Into Dustbin
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      NVIDIA GPU · Linux x86_64
+
+| **你将完成：** 安装环境 → 准备场景资产 → 验证安装 → 启动单环境任务。
+| **前置条件：** :doc:`基础安装 </rst_source/start/installation>` · NVIDIA CUDA GPU ·
+  至少 80 GB 可用磁盘空间。
+
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 当前提供 ``put_bottles_into_dustbin`` 的环境配置，用作接入和验证示例。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 任务
+     - 描述
+   * - ``put_bottles_into_dustbin``
+     - 使用双臂抓取桌上的瓶子并放入垃圾桶。
+
+对应配置位于：
+
+.. code-block:: text
+
+   examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml
+
+RoboDojo 的其他任务使用相同的环境接口，只需修改 ``task_config.task_name``
+和对应的任务参数。
+
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - 字段
+     - 规格
+   * - ``main_images``
+     - 头部相机 RGB，``[B, H, W, 3]`` uint8。
+   * - ``wrist_images``
+     - 可选左右腕部相机 RGB，``[B, n, H, W, 3]`` uint8，或 ``None``。
+   * - ``states``
+     - 左右机械臂关节、左右夹爪状态，默认 ``[B, 14]`` float32。
+   * - ``task_descriptions``
+     - RoboDojo 根据当前场景生成的自然语言指令。
+   * - ``actions``
+     - 默认 14 维连续动作，顺序为左臂 6 维、右臂 6 维、左夹爪 1 维、右夹爪 1 维。
+   * - 奖励
+     - 默认根据任务成功状态生成稀疏奖励。
+
+版本锁定
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 使用
+``requirements/embodied/envs/robodojo-override.txt`` 统一锁定 RoboDojo 的
+模拟器、PyTorch 和兼容性依赖。当前组合如下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 组件
+     - 固定版本
+   * - Python
+     - 3.11
+   * - RoboDojo runtime
+     - 0.3.0 · 提交 ``6d76a0c``
+   * - PyTorch
+     - 2.7.0 · CUDA 12.6 wheel
+   * - TorchVision / TorchAudio
+     - 0.22.0 / 2.7.0 · CUDA 12.6 wheel
+   * - Isaac Sim
+     - 5.1.0
+   * - IsaacLab
+     - 0.54.3 · 提交 ``afca7b09``
+   * - cuRobo
+     - 提交 ``895c651``
+
+安装
+----------------------------------------
+
+RoboDojo 当前支持 Linux x86_64 和 NVIDIA CUDA GPU，暂不支持纯 CPU、macOS
+或 AMD ROCm。安装前先确认驱动和磁盘空间：
+
+.. code-block:: bash
+
+   nvidia-smi
+   uname -m
+   df -h .
+
+**自定义环境**
+
+在 RLinf 仓库根目录安装 RoboDojo 和所需模拟器依赖：
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --env robodojo
+   source .venv/bin/activate
+
+国内网络可以添加 ``--use-mirror``。需要 OpenPI 时使用：
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model openpi --env robodojo
+
+安装器会自动安装 PyTorch 2.7、Isaac Sim 5.1、固定版本的 IsaacLab 和 cuRobo，
+并对齐 Isaac Sim 与 IsaacLab 的依赖版本。不要单独执行
+``pip install rlinf-robodojo-runtime``，否则可能得到无法启动的依赖组合。
+
+.. note::
+
+   安装器会设置 ``OMNI_KIT_ACCEPT_EULA=YES``。继续执行安装即表示接受
+   NVIDIA Omniverse 的相关许可条款。
+
+下载场景资产
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+依赖安装不会自动下载场景资产。先将资产根目录配置为持久目录，再下载约 39 GB
+的 ``Assets/``：
+
+.. code-block:: bash
+
+   export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
+   ROBODOJO_DOWNLOAD_ASSETS=1 \
+     bash requirements/install.sh embodied --env robodojo
+   source .venv/bin/activate
+
+也可以把已有资产放到该目录。正确结构是：
+
+.. code-block:: text
+
+   /path/to/robodojo/
+   └── Assets/
+       ├── Robots/
+       ├── Object/
+       ├── Material/
+       └── Eval_Layout/
+
+.. note::
+
+   ``ROBODOJO_ASSETS_ROOT`` 应指向包含 ``Assets/`` 的父目录，而不是
+   ``Assets/`` 本身。使用 Hugging Face 镜像时，可在安装前设置
+   ``HF_ENDPOINT``。
+
+验证安装
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+以下命令检查 Python 包和 CUDA，不会启动仿真器：
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import torch
+   from robodojo_runtime import assets_root, source_root
+   from robodojo_runtime.bridge import VectorEnv
+
+   print("torch:", torch.__version__)
+   print("cuda:", torch.cuda.is_available())
+   print("source:", source_root())
+   print("assets:", assets_root())
+   PY
+
+运行
+----------------------------------------
+
+**单环境启动**
+
+第一次运行建议使用一个环境，确认 Isaac Sim、相机和资产都正常：
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import numpy as np
+   from robodojo_runtime.bridge import VectorEnv
+
+   env = VectorEnv(
+       {
+           "task_name": "put_bottles_into_dustbin",
+           "env_cfg_type": "arx_x5",
+           "headless": True,
+           "cuda_device": 0,
+           "max_episode_steps": 700,
+       },
+       n_envs=1,
+       env_seeds=[0],
+   )
+   try:
+       env.reset()
+       obs = env.get_obs()[0]
+       print(obs["full_image"].shape, obs["state"].shape)
+       env.step(np.zeros((1, 1, 14), dtype=np.float32))
+   finally:
+       env.close()
+   PY
+
+首次启动时不要同时运行策略服务、视频录制和多个环境。确认单环境能够完成 reset、
+step 和 close 后，再提高 ``env.train.total_num_envs``。
+
+**接入训练配置**
+
+训练配置可以直接引用：
+
+.. code-block:: text
+
+   examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml
+
+策略的 ``action_dim`` 应与 ``action_dims`` 的总和一致。示例配置使用
+``[6, 6, 1, 1]``，即 14 维动作。
+
+可视化与结果
+----------------------------------------
+
+训练启动方式与 RLinf 的其他 embodied 环境一致。关键指标为
+``env/success_once``，完整指标说明见
+:doc:`训练指标 <../../reference/metrics>`。
+
+如需保存 rollout 视频，可在环境配置中启用：
+
+.. code-block:: yaml
+
+   video_cfg:
+     save_video: True
+     info_on_video: True
+     video_base_dir: ${runner.logger.log_path}/video/train
+
+常见问题
+----------------------------------------
+
+**安装后找不到 ``robodojo_runtime``**
+
+确认已经执行 ``source .venv/bin/activate``。如果安装时使用了 ``--venv``，
+请激活对应的虚拟环境。
+
+**依赖解析失败**
+
+不要手工安装 Isaac Sim、IsaacLab、cuRobo 或 RoboDojo runtime。删除失败的安装结果，
+重新执行本文的安装命令，让安装器应用固定版本和兼容性覆盖。
+
+**``pip check`` 报告 Isaac Sim 与 IsaacLab 版本不一致**
+
+这些包使用互相覆盖的精确版本 pin。安装器选择的是已经过运行验证的组合；
+不要手工升级 ``starlette``、``uvicorn``、``typing-extensions`` 等包。
+
+**``torch.cuda.is_available()`` 为 ``False``**
+
+先运行 ``nvidia-smi`` 检查驱动和 GPU 是否可见。RoboDojo 当前不支持纯 CPU、
+macOS 或 AMD ROCm。
+
+**找不到 ``Assets``、``cam_head`` 或任务布局**
+
+检查 ``ROBODOJO_ASSETS_ROOT`` 是否指向 ``Assets/`` 的父目录，并确认四个必需子目录
+都存在。资产下载不完整时，删除未完成的目录后重新下载。
+
+**启动后显存不足**
+
+先把环境数降为 1，并关闭其他训练或推理进程。RoboDojo 会为每个并行环境启动独立的
+Isaac Sim 进程，多环境配置需要根据单环境的实际显存占用调整。
+
+**进程结束后显存未释放**
+
+在代码中使用 ``try/finally`` 调用 ``env.close()``。RoboDojo 适配器只支持完整关闭，
+不支持挂起后恢复。
