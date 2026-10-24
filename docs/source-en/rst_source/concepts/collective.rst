@@ -26,7 +26,7 @@ P2P Communication
 A ``CollectiveGroup`` is the core abstraction in RLinf for managing point-to-point communication between two workers.
 It determines the local rank (0 or 1) from ``group_info`` and **lazily initializes** communication process groups on first use.
 Internally, separate **send** and **receive** process groups are created for both GPU (NCCL) and CPU (Gloo), forming dedicated one-way channels; in a two-worker setup, a carefully configured broadcast is equivalent to a send/receive.
-Initialization uses a TCP rendezvous to coordinate port allocation and synchronization, ensuring both sides are ready.
+The first rank starts a ``TCPStore`` listener on port ``0`` and publishes the port assigned by the operating system. It retains and reuses this store while the other ranks connect, so the listener stays bound throughout rendezvous and process-group initialization.
 Each direction maintains a work queue backed by a dedicated CUDA stream, strictly preserving the order of send/recv operations and preventing message interleaving.
 
 With the process groups in place, ``CollectiveGroup`` can perform communications. The main APIs are:

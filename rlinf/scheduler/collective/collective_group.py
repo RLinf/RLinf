@@ -15,6 +15,7 @@
 import io
 import itertools
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager, nullcontext
@@ -1319,8 +1320,19 @@ class CollectiveGroup:
 
             from ..cluster import Cluster
 
+            master_store = None
             if self._rank == 0:
-                master_port = self._worker.acquire_free_port()
+                # Keep the listener bound while its port is published to peers.
+                master_store = dist.TCPStore(
+                    host_name=self._group_info.master_addr,
+                    port=0,
+                    world_size=self._group_info.world_size,
+                    is_master=True,
+                    timeout=Cluster.get_collective_timeout(),
+                    wait_for_workers=False,
+                    use_libuv=os.environ.get("USE_LIBUV", "1") == "1",
+                )
+                master_port = master_store.port
                 self._coll_manager.set_master_port_info(
                     self._group_info.group_name, master_port
                 )
@@ -1343,11 +1355,16 @@ class CollectiveGroup:
             )
 
             self._mc_group.init(
-                init_method=f"tcp://{self._group_info.master_addr}:{master_port}",
+                init_method=(
+                    f"tcp://{self._group_info.master_addr}:{master_port}"
+                    if master_store is None
+                    else None
+                ),
                 world_size=self._group_info.world_size,
                 rank=self._rank,
                 group_name=self._group_info.group_name,
                 options=options,
+                store=master_store,
             )
 
             self._logger.debug(
