@@ -119,21 +119,19 @@ class Pi0Eval(EnvIO, Pi0):
         }
 
     @torch.no_grad()
-    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+    def extract_prefix_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""
-        self._require_rlt()
+        if self._stage2_requires_rlt():
+            self._require_rlt()
         observation = self.env_obs_to_observation(env_obs)
 
         prepared_observation = preprocess_observation(observation, train=False)
         prefix_output, prefix_mask, kv_cache = self.build_prefix_cache(
             prepared_observation
         )
-        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
+        z_rl = self._encode_stage2_z(
             prefix_output, prefix_mask, prepared_observation.tokenized_prompt
-        )
-        z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
-            dtype=torch.float32
-        )
+        ).to(dtype=torch.float32)
 
         model_actions = self._sample_actions_from_prefix_cache(
             prepared_observation,

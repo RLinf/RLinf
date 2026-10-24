@@ -26,8 +26,10 @@ from tqdm import tqdm
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.rlt import (
     build_rlt_route,
-    predict_rlt_actions,
+    build_routing_gate,
+    predict_prefix_actions,
 )
+from rlinf.algorithms.rlt.routing_gate import RLT_GATE_INFO_KEYS
 from rlinf.algorithms.rlt.transition import extract_rlt_obs_from_forward_inputs
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import (
@@ -40,6 +42,11 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.prefix.config import (
+    build_state_history_buffer,
+    get_prefix_feature_model_config,
+    is_prefix_off_policy_loss,
+)
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
@@ -84,10 +91,12 @@ class MultiStepRolloutWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
-        self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self.enable_rlt = is_prefix_off_policy_loss(self.algorithm_cfg.get("loss_type"))
         self.expert_model = None
-        self.rlt_feature_model = None
+        self.prefix_feature_model = None
+        self.prefix_histories = []
         self.rlt_route = None
+        self.routing_gate = None
 
         self.total_num_train_envs = (
             cfg.env.train.total_num_envs if self.enable_train else 0
@@ -155,8 +164,13 @@ class MultiStepRolloutWorker(Worker):
 
     def init_worker(self):
         # Train uses actor.model as the architecture source; overlay rollout.model
-        # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
-        rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
+        # (path, precision, and nested inference knobs). Resolve both while they
+        # still belong to the root config, then merge ordinary mappings so
+        # rollout-only fields do not leak into actor.model.
+        rollout_model_config = OmegaConf.merge(
+            OmegaConf.to_container(self.model_cfg, resolve=True),
+            OmegaConf.to_container(self.cfg.rollout.model, resolve=True),
+        )
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
@@ -164,20 +178,37 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
-        rlt_feature_model_config = OmegaConf.select(
-            self.cfg, "rollout.rlt_feature_model", default=None
-        )
-        if rlt_feature_model_config is not None:
-            self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
-            self.rlt_feature_model.eval()
-            self.rlt_feature_model.requires_grad_(False)
+        prefix_feature_model_config = get_prefix_feature_model_config(self.cfg)
+        if prefix_feature_model_config is not None:
+            self.prefix_feature_model = get_model(
+                copy.deepcopy(prefix_feature_model_config)
+            )
+            self.prefix_feature_model.eval()
+            self.prefix_feature_model.requires_grad_(False)
             self.rlt_route = build_rlt_route(self.cfg)
+            self.prefix_histories = [
+                build_state_history_buffer(self.model_cfg)
+                for _ in range(self.num_pipeline_stages)
+            ]
+
+        gate_cfg = OmegaConf.select(self.cfg, "rollout.routing_gate", default=None)
+        if gate_cfg is not None and bool(gate_cfg.get("enable", False)):
+            if self.prefix_feature_model is None:
+                raise ValueError(
+                    "rollout.routing_gate requires rollout.prefix_feature_model."
+                )
+            self.routing_gate = build_routing_gate(
+                gate_cfg,
+                device=f"{self.torch_device_type}:{self.device}",
+                num_action_chunks=self.model_cfg.num_action_chunks,
+                env_decoupled_mode=self.env_decoupled_mode,
+            )
 
         if self.cfg.rollout.get("expert_model", None) and not self.enable_opd:
             expert_model_config = build_expert_model_config(
                 self.cfg,
                 self.model_cfg,
-                rlt_feature_model_config=rlt_feature_model_config,
+                prefix_feature_model_config=prefix_feature_model_config,
             )
             self.expert_model = get_model(expert_model_config)
 
@@ -188,8 +219,8 @@ class MultiStepRolloutWorker(Worker):
         self.hf_model.eval()
         if self.expert_model is not None:
             self.expert_model.eval()
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.eval()
+        if self.prefix_feature_model is not None:
+            self.prefix_feature_model.eval()
 
         if self.cfg.rollout.get("enable_torch_compile", False):
             mode = self.cfg.rollout.get(
@@ -598,11 +629,15 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
         rlt_switch_flags: torch.Tensor | None = None,
         intervene_requested: torch.Tensor | None = None,
+        dones: torch.Tensor | None = None,
+        update_history: bool = True,
+        stage_id: int = 0,
+        update_gate: bool = True,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        if self.rlt_feature_model is not None:
-            return predict_rlt_actions(
+        if self.prefix_feature_model is not None:
+            return predict_prefix_actions(
                 policy_model=self.hf_model,
-                feature_model=self.rlt_feature_model,
+                feature_model=self.prefix_feature_model,
                 rlt_route=self.rlt_route,
                 env_obs=env_obs,
                 final_obs=final_obs,
@@ -611,6 +646,13 @@ class MultiStepRolloutWorker(Worker):
                 rlt_switch_flags=rlt_switch_flags,
                 intervene_requested=intervene_requested,
                 expert_model=self.expert_model,
+                history=self.prefix_histories[stage_id],
+                dones=dones,
+                update_history=update_history,
+                routing_gate=self.routing_gate,
+                stage_id=stage_id,
+                reset_mask=dones,
+                update_gate=update_gate,
             )
         return self.predict(env_obs, mode=mode)
 
@@ -758,7 +800,13 @@ class MultiStepRolloutWorker(Worker):
                 raise ValueError(
                     "Terminal inference requires a post-action observation."
                 )
-            _, result = self._predict_rollout_actions(next_obs)
+            stage_id = env_part.sources[0].key.stage_id
+            _, result = self._predict_rollout_actions(
+                next_obs,
+                update_history=False,
+                stage_id=stage_id,
+                update_gate=False,
+            )
             values = result.get("prev_values")
             if values is not None:
                 final_prev_values = values.cpu().contiguous()
@@ -831,32 +879,53 @@ class MultiStepRolloutWorker(Worker):
         actions: torch.Tensor,
         stage_id: int,
         split_sizes: list[int] | None,
+        forward_inputs: dict[str, Any] | None = None,
     ) -> None:
         # Send by value on CPU: a device-resident tensor reaches a same-device env
         # as a CUDA IPC handle aliasing the buffer the next forward pass reuses.
-        actions = actions.detach().cpu().contiguous()
+        payload = self._build_action_payload(actions, forward_inputs)
+        split_fn = self._split_actions
+        if isinstance(payload, dict):
+            split_fn = self._split_action_payload
         if self.env_decoupled_mode:
             if split_sizes is None:
                 raise ValueError("Decoupled policy output requires recorded routes.")
             self.send_to_recorded_batch_routes(
                 group_name=self.cfg.env.group_name,
                 channel=channel,
-                data=actions,
+                data=payload,
                 tag="policy",
-                split_fn=self._split_actions,
+                split_fn=split_fn,
                 split_sizes=split_sizes,
             )
             return
         self.send_to(
             group_name=self.cfg.env.group_name,
             channel=channel,
-            data=actions,
+            data=payload,
             tag="policy",
             route_key=stage_id,
             async_op=True,
             batch_size=self.train_batch_size,
-            split_fn=self._split_actions,
+            split_fn=split_fn,
         )
+
+    def _build_action_payload(
+        self,
+        actions: torch.Tensor,
+        forward_inputs: dict[str, Any] | None,
+    ) -> torch.Tensor | dict[str, Any]:
+        """Return actions with the minimal STEAM feedback required by the env."""
+        actions = actions.detach().cpu().contiguous()
+        if self.routing_gate is None:
+            return actions
+        rollout_infos = {
+            key: value.detach().cpu().contiguous()
+            for key in RLT_GATE_INFO_KEYS
+            if forward_inputs is not None
+            and isinstance((value := forward_inputs.get(key)), torch.Tensor)
+        }
+        return {"actions": actions, "rollout_infos": rollout_infos}
 
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(
@@ -866,6 +935,11 @@ class MultiStepRolloutWorker(Worker):
         actor_channel: Channel,
     ) -> None:
         self.update_dagger_beta()
+        if not bool(self.cfg.env.train.get("auto_reset", False)):
+            if self.routing_gate is not None:
+                self.routing_gate.reset(mode="train")
+            for history in self.prefix_histories:
+                history.reset()
         for _ in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 policy_input, split_sizes = await self._receive_policy_input(
@@ -882,6 +956,8 @@ class MultiStepRolloutWorker(Worker):
                         policy_input.obs,
                         rlt_switch_flags=policy_input.rlt_switch_flags,
                         intervene_requested=policy_input.intervene_flags,
+                        dones=policy_input.dones,
+                        stage_id=stage_id,
                     )
                     forward_inputs = result.get("forward_inputs")
                     policy_output = self._build_policy_output(actions, result)
@@ -890,6 +966,7 @@ class MultiStepRolloutWorker(Worker):
                     actions.contiguous(),
                     stage_id,
                     split_sizes,
+                    forward_inputs,
                 )
                 # Omit raw observations when the collector does not consume them.
                 transition_obs = (
@@ -973,6 +1050,7 @@ class MultiStepRolloutWorker(Worker):
                     final_obs=env_output.get("final_obs", None),
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                     intervene_requested=env_output.get("intervene_flags", None),
+                    dones=env_output.get("dones", None),
                 )
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
@@ -984,11 +1062,19 @@ class MultiStepRolloutWorker(Worker):
                     split_sizes=split_sizes,
                 )
         else:
-            for _ in tqdm(
+            for rollout_epoch_id in tqdm(
                 range(self.eval_rollout_epoch),
                 desc="Evaluating Rollout Epochs",
                 disable=(self._rank != 0),
             ):
+                if (
+                    not bool(self.cfg.env.eval.get("auto_reset", False))
+                    or rollout_epoch_id == 0
+                ):
+                    if self.routing_gate is not None:
+                        self.routing_gate.reset(mode="eval")
+                    for history in self.prefix_histories:
+                        history.reset()
                 for _ in range(self.n_eval_chunk_steps):
                     for stage_id in range(self.num_pipeline_stages):
                         env_output = await self.recv_from(
@@ -1001,23 +1087,32 @@ class MultiStepRolloutWorker(Worker):
                             merge_fn=self._merge_obs_batches,
                             infer_batch_size_fn=self._infer_env_batch_size,
                         ).async_wait()
-                        actions, _ = self._predict_rollout_actions(
+                        actions, result = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",
                             final_obs=env_output.get("final_obs", None),
                             rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                             intervene_requested=env_output.get("intervene_flags", None),
+                            dones=env_output.get("dones", None),
+                            stage_id=stage_id,
                         )
-                        if isinstance(actions, torch.Tensor):
-                            actions = actions.detach().cpu().contiguous()
+                        payload = self._build_action_payload(
+                            actions,
+                            result.get("forward_inputs"),
+                        )
                         self.send_to(
                             group_name=self.cfg.env.group_name,
                             channel=output_channel,
-                            data=actions,
+                            data=payload,
                             tag="eval_rollout_results",
                             route_key=stage_id,
                             async_op=True,
                             batch_size=self.eval_batch_size,
+                            split_fn=(
+                                self._split_action_payload
+                                if isinstance(payload, dict)
+                                else self._split_actions
+                            ),
                         )
 
             if self.enable_offload:
@@ -1027,16 +1122,20 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
         self.hf_model.to("cpu")
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to("cpu")
+        if self.prefix_feature_model is not None:
+            self.prefix_feature_model.to("cpu")
+        if self.routing_gate is not None:
+            self.routing_gate.to("cpu")
         if self.expert_model is not None:
             self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
         self.hf_model.to(self.device)
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to(self.device)
+        if self.prefix_feature_model is not None:
+            self.prefix_feature_model.to(self.device)
+        if self.routing_gate is not None:
+            self.routing_gate.to(self.device)
         if self.expert_model is not None:
             self.expert_model.to(self.device)
         if self.enable_cuda_graph:
@@ -1086,6 +1185,7 @@ class MultiStepRolloutWorker(Worker):
         intervene_flags_list = [
             obs_batch.get("intervene_flags", None) for obs_batch in obs_batches
         ]
+        dones_list = [obs_batch.get("dones", None) for obs_batch in obs_batches]
 
         def _merge_obs_dicts(dicts: list[dict[str, Any]]) -> dict[str, Any]:
             merged: dict[str, Any] = {}
@@ -1122,12 +1222,20 @@ class MultiStepRolloutWorker(Worker):
             "intervene_flags": self._merge_optional_flag_tensors(
                 obs_dicts, intervene_flags_list
             ),
+            "dones": self._merge_optional_flag_tensors(obs_dicts, dones_list),
         }
 
     @staticmethod
     def _split_actions(actions: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
         """Split policy actions for the environment workers that requested them."""
         return [shard.contiguous() for shard in torch.split(actions, sizes, dim=0)]
+
+    @staticmethod
+    def _split_action_payload(
+        payload: dict[str, Any], sizes: list[int]
+    ) -> list[dict[str, Any]]:
+        """Split actions and their STEAM diagnostics on the batch dimension."""
+        return split_batch_value(payload, sizes)
 
     def set_global_step(self, global_step: int):
         self.global_step = global_step

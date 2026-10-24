@@ -610,6 +610,15 @@ class Pi0(model.BaseModel):
         self._mark_fsdp_wrap_names()
 
     @property
+    def z_dim(self) -> int:
+        """Width of the frozen Prefix-FT feature exposed to Stage 2."""
+        return int(
+            self.rlt_cfg.rlt_embed_dim
+            if self._resolved_prefix_pool() == "rlt_token"
+            else self.rlt_cfg.rlt_input_dim
+        )
+
+    @property
     def device(self) -> torch.device:
         return next(self.parameters()).device
 
@@ -662,6 +671,19 @@ class Pi0(model.BaseModel):
         if not self.rlt_cfg.use_rlt or not hasattr(self, "rlt_module"):
             raise ValueError("RLT operation requires actor.model.openpi.use_rlt=True.")
 
+    def _resolved_prefix_pool(self) -> str:
+        from rlinf.models.embodiment.prefix.config import resolve_prefix_pool
+
+        return resolve_prefix_pool(
+            use_rlt=self.rlt_cfg.use_rlt,
+            prefix_pool=self.rlt_cfg.prefix_pool,
+            stage2_z_source=self.rlt_cfg.stage2_z_source,
+            rlt_use_mask=self.rlt_cfg.rlt_use_mask,
+        )
+
+    def _stage2_requires_rlt(self) -> bool:
+        return self._resolved_prefix_pool() == "rlt_token"
+
     def _select_rlt_prefix_embeddings(
         self,
         prefix_output: torch.Tensor,
@@ -695,6 +717,30 @@ class Pi0(model.BaseModel):
         prefix_output = prefix_output.to(device=rlt_param.device, dtype=rlt_param.dtype)
         rlt_mask = prefix_mask if self.rlt_cfg.rlt_use_mask else None
         return self.rlt_module.encode_flat(prefix_output, rlt_mask)
+
+    def _encode_vlm_prefix_flat(
+        self, prefix_output: torch.Tensor, prefix_mask: torch.Tensor
+    ) -> torch.Tensor:
+        from rlinf.models.embodiment.prefix.pool import pool_prefix
+
+        pool = self._resolved_prefix_pool()
+        if pool not in ("masked_mean", "mean", "last"):
+            pool = "masked_mean" if self.rlt_cfg.rlt_use_mask else "mean"
+        mask = prefix_mask if pool in ("masked_mean", "last") else None
+        return pool_prefix(prefix_output, mask, mode=pool)
+
+    def _encode_stage2_z(
+        self,
+        prefix_output: torch.Tensor,
+        prefix_mask: torch.Tensor,
+        lang_tokens: torch.Tensor | None,
+    ) -> torch.Tensor:
+        selected_prefix, selected_mask = self._select_rlt_prefix_embeddings(
+            prefix_output, prefix_mask, lang_tokens
+        )
+        if self._stage2_requires_rlt():
+            return self._encode_rlt_flat(selected_prefix, selected_mask)
+        return self._encode_vlm_prefix_flat(selected_prefix, selected_mask)
 
     @staticmethod
     def _unpack_sft_batch(data: Any) -> tuple[Any, Any]:

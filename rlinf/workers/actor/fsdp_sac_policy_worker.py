@@ -606,6 +606,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         if self.update_step % self.critic_actor_ratio == 0 and train_actor:
             self.optimizer.zero_grad()
+            self.before_actor_update()
             gbs_actor_loss = []
             gbs_entropy = []
             all_actor_metrics = {}
@@ -669,6 +670,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.soft_update_target_model()
 
         return metrics_data
+
+    def before_actor_update(self) -> None:
+        """Prepare optimizer-owned state before actor gradient accumulation."""
 
     def process_train_metrics(self, metrics):
         replay_buffer_stats = self.replay_buffer.get_stats()
