@@ -49,6 +49,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
         max_total_len = int(self.cfg.runner.seq_length)
         self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
+        self.truncate_response = self.cfg.agentloop.get("truncate_response", True)
 
         assert self.toolcall_parser is not None, (
             "toolcall_parser must be set in searchr1"
@@ -120,6 +121,9 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             len(turn_prompt_ids) - len(problem_prompt_ids)
         )
 
+        if max_resp_len <= 0:
+            return False, None, None, llm_output
+
         generate_result = await self.generate(
             turn_prompt_ids, sampling_params={"max_new_tokens": max_resp_len}
         )
@@ -128,23 +132,31 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             generate_result["logprobs"] if self.return_logprobs else None
         )
 
+        response_weight_versions = generate_result.get("weight_versions")
+
         if len(llm_response_ids) > max_resp_len:
             llm_response_ids = llm_response_ids[:max_resp_len]
             if llm_response_logprobs is not None:
                 llm_response_logprobs = llm_response_logprobs[:max_resp_len]
+            if response_weight_versions is not None:
+                response_weight_versions = response_weight_versions[:max_resp_len]
 
         # Truncate at </search> in token space (no re-encode, keeps logprobs
         # aligned), skipping this turn's reasoning block.
         content_start = self.agentic_tokenizer.content_start_offset(
             llm_response_ids, prompt_ids=turn_prompt_ids
         )
-        llm_response_ids, _ = self.agentic_tokenizer.truncate_after_stop(
-            response_ids=llm_response_ids,
-            stop_str="</search>",
-            start=content_start,
-        )
+        # split </search> manually
+        if self.truncate_response:
+            llm_response_ids, _ = self.agentic_tokenizer.truncate_after_stop(
+                response_ids=llm_response_ids,
+                stop_str="</search>",
+                start=content_start,
+            )
         if llm_response_logprobs is not None:
             llm_response_logprobs = llm_response_logprobs[: len(llm_response_ids)]
+        if response_weight_versions is not None:
+            response_weight_versions = response_weight_versions[: len(llm_response_ids)]
         # Used by generate_tool_response to parse only the content region.
         generate_context["content_start"] = content_start
         llm_response_text = self.tokenizer.decode(llm_response_ids)
@@ -153,10 +165,18 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             prompt_ids=copy.deepcopy(turn_prompt_ids),
             response_ids=llm_response_ids,
             response_logprobs=llm_response_logprobs,
+            response_weight_versions=response_weight_versions,
         )
+        if self.return_logprobs and (
+            llm_output.response_logprobs is None
+            or len(llm_output.response_logprobs) != len(llm_response_ids)
+        ):
+            raise ValueError(
+                "SearchR1 requires one rollout logprob per generated token."
+            )
         generate_context["all_llm_response_ids"] += llm_response_ids
 
-        if len(llm_response_ids) == max_resp_len:
+        if len(llm_response_ids) >= max_resp_len:
             return False, None, llm_response_text, llm_output
 
         return True, llm_response_ids, llm_response_text, llm_output
@@ -170,6 +190,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         llm_response_ids,
         llm_response_text,
     ):
+        # Extract tool calls from response
         # Parse only the content region: a <search> inside the reasoning block
         # was only thought about and must not be dispatched.
         content_text = self.tokenizer.decode(
@@ -196,6 +217,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             "what the next turn sees and needs its own evaluation."
         )
 
+        # Tokenize tool responses
         # Plain-text encode (model-agnostic); returns only the appended ids.
         tool_response_ids = self.agentic_tokenizer.append_tool_response(tool_messages)
         max_tool_resp_len = self.max_resp_len - (

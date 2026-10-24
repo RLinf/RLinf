@@ -917,8 +917,28 @@ class TestChannel:
         for item in test_items:
             channel.put(item)
 
+        assert channel.peek_all() == test_items
+        assert channel.qsize() == len(test_items)
         item_str = str(channel)
         assert all(item in item_str for item in test_items)
+
+    @pytest.mark.placement
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_bounded_channel_snapshot_excludes_pending_puts(
+        self, cluster, channel_type
+    ):
+        channel_cls = DistributedChannel if channel_type == "distributed" else Channel
+        channel = channel_cls.create(f"snapshot-{uuid.uuid4().hex}", maxsize=1)
+        channel.put({"sample_id": 3, "logprobs": [-0.2, -0.3]}, key="completed")
+        pending = channel.put({"sample_id": 4}, key="completed", async_op=True)
+        snapshot = channel.peek_all("completed")
+        assert snapshot == [{"sample_id": 3, "logprobs": [-0.2, -0.3]}]
+        assert channel.full("completed")
+        assert channel.get("completed") == snapshot[0]
+        pending.wait()
+        assert channel.peek_all("completed") == [{"sample_id": 4}]
+        assert channel.get("completed") == {"sample_id": 4}
+        assert channel.peek_all("completed") == []
 
     def _assert_equal(self, received: Any, expected: Any):
         """Helper to compare various data types."""

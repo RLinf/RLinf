@@ -44,9 +44,9 @@ class TaskMethodOutput:
 
 @dataclass
 class SyncHFWeightInput:
-    pass
+    weight_version: Optional[int] = None
 
 
 @dataclass
 class SyncHFWeightOutput:
-    pass
+    weight_version: Optional[int] = None

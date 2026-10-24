@@ -3,6 +3,8 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
 
 训练 Qwen2.5-3B-Instruct 通过调用搜索工具回答问题。请先按 :doc:`index` 搭建 RLinf 环境和本地 wiki 检索服务。
 
+同步 PPO 和采用 SAO 的异步 PPO 配置见 :doc:`ppo`，两者均支持 rollout 与训练共享 GPU 或分开使用 GPU。
+
 概述
 ----------------------------------------
 

@@ -143,11 +143,24 @@ class LinearForLastLayer(torch.nn.Linear):
         *,
         sequence_parallel,
         bias=False,  # TODO changed bias to False for temporary convenience
+        weight_init: str = "normal",
+        init_std: float = 0.02,
     ):
+        """Initialize a critic projection with normal or zero weights."""
+        if weight_init not in ("normal", "zero"):
+            raise ValueError(
+                f"Expected value head initialization to be 'normal' or 'zero', got {weight_init!r}."
+            )
         super().__init__(in_features=input_size, out_features=output_size, bias=bias)
         self.sequence_parallel = sequence_parallel
         if self.sequence_parallel:
             self.weight.sequence_parallel = True
+        if weight_init == "normal":
+            torch.nn.init.normal_(self.weight, mean=0.0, std=init_std)
+        else:
+            torch.nn.init.zeros_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
 
     def forward(
         self,
@@ -449,6 +462,8 @@ class MegatronModelManager:
                 input_size=self._cfg.model.hidden_size,
                 output_size=1,
                 sequence_parallel=self._cfg.model.sequence_parallel,
+                weight_init=self._cfg.get("value_head_init", "normal"),
+                init_std=self._cfg.model.get("init_method_std", 0.02),
             )
 
         return model
@@ -554,8 +569,9 @@ class MegatronModelManager:
 
     @contextmanager
     def ensure_onloaded_and_then_offload(self):
+        """Onload checkpoint state, then apply the configured residency policy."""
         # if weights and opt states are offloaded, recover them first
-        if self.is_weight_offloaded:
+        if self.is_weight_offloaded or self.is_grad_offloaded:
             self.onload_model_weights_and_grad()
         if self.is_optimizer_offloaded:
             self.onload_megatron_optimizer()
@@ -566,8 +582,14 @@ class MegatronModelManager:
         if hasattr(self, "megatron_type") and self.megatron_type == "sft":
             return
 
-        self.offload_model_weights_and_grad()
-        self.offload_megatron_optimizer()
+        offload_weight = self._cfg.get("offload_weight", True)
+        offload_grad = self._cfg.get("offload_grad", True)
+        if offload_weight or offload_grad:
+            self.offload_model_weights_and_grad(
+                offload_weight=offload_weight, offload_grad=offload_grad
+            )
+        if self._cfg.get("offload_optimizer", True):
+            self.offload_megatron_optimizer()
 
     def save_checkpoint(
         self,

@@ -3,7 +3,7 @@ Search-R1的强化学习训练
 
 使用本配方复现 `Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning <https://arxiv.org/abs/2503.09516>`__ 的搜索增强推理实验，通过强化学习训练大语言模型调用搜索工具回答问题。
 
-本页介绍所有模型共用的环境和本地 wiki 检索服务。请在下方选择模型，查看对应的训练配方与结果。
+本页介绍所有模型共用的环境和本地 wiki 检索服务。请在下方选择模型，查看对应的 GRPO 配方与结果；Qwen2.5-3B-Instruct 的同步与异步 PPO 配置见 :doc:`ppo`。
 
 .. raw:: html
 
@@ -77,7 +77,7 @@ Wiki配置文件
 
    bash examples/agent/tools/search_local_server_faiss/build_index.sh
 
-将之前下载好的wiki文件路径和index路径等写入examples/agent/searchr1/launch_local_server.sh
+使用下载的语料、索引和检索模型路径启动 FAISS server：
 
 .. code-block:: bash
 
@@ -93,7 +93,7 @@ Wiki配置文件
    retriever_name=e5
    retriever_path=path/to/intfloat/e5-base-v2
 
-   python3  ./local_retrieval_server.py --index_path $index_file \
+   python3 examples/agent/tools/search_local_server_faiss/local_retrieval_server.py --index_path $index_file \
                                                --corpus_path $corpus_file \
                                                --pages_path $pages_file \
                                                --topk 3 \
@@ -101,7 +101,7 @@ Wiki配置文件
                                                --retriever_model $retriever_path \
                                                --faiss_gpu --port 8000
 
-运行launch_local_server.sh启动Local Wiki Server，等待直至输出server ip等信息，代表server启动完成
+等待 server 输出监听地址后，将训练配置中的 ``tools.search.server_addr`` 设置为该地址。
 
 (Optional) 使用Qdrant作为Wiki Server
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -160,3 +160,4 @@ Asearcher: https://github.com/inclusionAI/ASearcher
 
    Qwen2.5-3B Search-R1 <qwen2.5>
    GLM-4.7-Flash Search-R1 <glm4.7_flash>
+   同步与异步 PPO <ppo>

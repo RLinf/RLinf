@@ -20,7 +20,7 @@ from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
-from rlinf.algorithms.losses import compute_ppo_critic_loss
+from rlinf.algorithms.losses import compute_critic_loss
 from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.megatron_worker import MegatronWorker
@@ -40,8 +40,7 @@ class MegatronCritic(MegatronWorker):
         self.value_clip = self.cfg.algorithm.value_cliprange
 
     def process_inference_output(self, rollout_result, infer_out):
-        values = infer_out
-        rollout_result.values = values
+        rollout_result.values = infer_out.detach().clone()
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -82,44 +81,53 @@ class MegatronCritic(MegatronWorker):
                 return output, id_func
 
             def loss_func(output):
-                returns = batch["returns"]
-                prev_values = batch["values"]
-                vpreds = output[:, -response_len - 1 : -1].contiguous().squeeze(-1)
-
+                values = output[:, -response_len - 1 : -1].contiguous().squeeze(-1)
                 mask = batch["response_mask"][:, -response_len:]
-
-                loss, metrics_data = compute_ppo_critic_loss(
-                    values=vpreds,
-                    returns=returns,
-                    prev_values=prev_values,
-                    value_clip=self.value_clip,
-                    huber_delta=10000,
-                    loss_agg_func=self.loss_agg_func,
-                    loss_mask=mask,
-                )
-
-                metrics_data.update(
-                    {
-                        "critic/final_value_loss": loss.detach(),
-                    }
-                )
-
-                for k, v in metrics_data.items():
-                    if v is None:
-                        continue
-                    if k in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
-                        v = v.detach().clone()
-                        torch.distributed.all_reduce(
-                            v,
-                            op=torch.distributed.ReduceOp.SUM,
-                            group=parallel_state.get_data_parallel_group(),
-                        )
-                        metrics_data[k] = v
-                    else:
-                        metrics_data[k] = average_losses_across_data_parallel_group([v])
-
-                return loss, metrics_data
+                return self._compute_value_loss(values, batch, mask)
 
             return output, loss_func
 
         return forward_output_and_loss_func
+
+    def _compute_value_loss(
+        self,
+        values: torch.Tensor,
+        batch: dict[str, torch.Tensor],
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Compute value loss and reduce metrics across data parallel ranks."""
+        loss, metrics_data = compute_critic_loss(
+            values=values,
+            returns=batch["returns"],
+            prev_values=batch.get("values"),
+            value_clip=self.value_clip,
+            huber_delta=10000,
+            loss_agg_func=self.loss_agg_func,
+            loss_mask=mask,
+            loss_type=self.cfg.critic.get("loss_type", "ppo"),
+        )
+        if self.cfg.algorithm.get("use_valid_token_scale", False):
+            loss_scale = (
+                mask.sum()
+                / self.global_valid_token
+                * parallel_state.get_data_parallel_world_size()
+                * self.num_microbatches
+            )
+            loss *= loss_scale.item()
+        metrics_data["critic/final_value_loss"] = loss.detach()
+
+        for k, v in metrics_data.items():
+            if v is None:
+                continue
+            if k in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+                v = v.detach().clone()
+                torch.distributed.all_reduce(
+                    v,
+                    op=torch.distributed.ReduceOp.SUM,
+                    group=parallel_state.get_data_parallel_group(),
+                )
+                metrics_data[k] = v
+            else:
+                metrics_data[k] = average_losses_across_data_parallel_group([v])
+
+        return loss, metrics_data
