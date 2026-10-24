@@ -1540,3 +1540,179 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+@pytest.fixture
+def four_camera_pi0_config(monkeypatch):
+    from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    monkeypatch.setattr(gemma, "PALIGEMMA_VOCAB_SIZE", 32)
+    monkeypatch.setattr(utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(
+        siglip,
+        "_decode_variant",
+        lambda variant: {
+            "width": 16,
+            "depth": 1,
+            "num_heads": 4,
+            "mlp_dim": 32,
+            "patch_size": (56, 56),
+        },
+    )
+    return Pi0Config(
+        pi05=True,
+        dtype="float32",
+        paligemma_variant="dummy",
+        action_expert_variant="dummy",
+        action_dim=32,
+        action_horizon=2,
+        max_token_len=4,
+        image_keys=(
+            "base_0_rgb",
+            "base_1_rgb",
+            "left_wrist_0_rgb",
+            "right_wrist_0_rgb",
+        ),
+    )
+
+
+@pytest.mark.parametrize("operation", ["sft", "eval", "rtc"])
+def test_openpi_four_camera_paths_keep_configured_order(
+    four_camera_pi0_config, operation
+):
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.sampling.rtc_guidance import (
+        RTCGuidanceContext,
+        sample_actions_with_rtc_guidance,
+    )
+
+    cfg = four_camera_pi0_config
+    model = Pi0(cfg).eval()
+    observation = cfg.fake_obs()
+    # Reverse insertion order so the camera contract is independent of dict order.
+    observation.images = {
+        key: torch.full((1, 224, 224, 3), index / 4, requires_grad=True)
+        for index, key in reversed(list(enumerate(cfg.image_keys)))
+    }
+    seen = []
+    handle = model.img.register_forward_pre_hook(
+        lambda module, args: seen.append(float(args[0].detach().mean()))
+    )
+    noise = torch.zeros(1, 2, 32)
+    try:
+        if operation == "sft":
+            result = model.compute_loss(
+                observation,
+                cfg.fake_act(),
+                train=False,
+                noise=noise,
+                time=torch.tensor([0.5]),
+            )
+            result.mean().backward()
+            assert observation.images["base_1_rgb"].grad is not None
+            assert torch.isfinite(observation.images["base_1_rgb"].grad).all()
+        elif operation == "eval":
+            result = model.sample_actions(observation, num_steps=2, noise=noise)
+        else:
+            result = sample_actions_with_rtc_guidance(
+                model, observation, RTCGuidanceContext(), num_steps=2, noise=noise
+            )
+    finally:
+        handle.remove()
+    assert result.shape == (1, 2, 32)
+    assert torch.isfinite(result).all()
+    assert seen == [0.0, 0.25, 0.5, 0.75]
+
+
+def test_bench2dex_transforms_preserve_joint_order_through_padding():
+    transforms = pytest.importorskip("openpi.transforms")
+    from rlinf.models.embodiment.openpi.policies.bench2dex_policy import (
+        IMAGE_KEYS,
+        Bench2DexInputs,
+        Bench2DexOutputs,
+    )
+
+    images = [np.full((6, 8, 3), index * 40, np.uint8) for index in range(4)]
+    joints = np.arange(26, dtype=np.float32) / 10
+    actions = np.stack([joints, joints + 0.1])
+    raw = {
+        "observation/image": images[0],
+        "observation/extra_view_image": images[1:],
+        "observation/state": joints,
+        "actions": actions,
+        "prompt": "move the bread",
+    }
+    lower = np.linspace(-2, -1, 26, dtype=np.float32)
+    upper = np.linspace(3, 5, 26, dtype=np.float32)
+    stats = {
+        key: transforms.NormStats(
+            mean=np.zeros(26), std=np.ones(26), q01=lower, q99=upper
+        )
+        for key in ("state", "actions")
+    }
+    inputs = transforms.compose(
+        [
+            Bench2DexInputs(),
+            transforms.Normalize(stats, use_quantiles=True),
+            transforms.PadStatesAndActions(32),
+        ]
+    )(raw)
+    assert list(inputs["image"]) == list(IMAGE_KEYS)
+    for image, original in zip(inputs["image"].values(), images, strict=True):
+        np.testing.assert_array_equal(image, original)
+    assert all(inputs["image_mask"].values())
+    assert inputs["state"].shape == (32,)
+    assert inputs["actions"].shape == (2, 32)
+    np.testing.assert_array_equal(inputs["state"][26:], 0)
+    np.testing.assert_array_equal(inputs["actions"][:, 26:], 0)
+    output = transforms.compose(
+        [transforms.Unnormalize(stats, use_quantiles=True), Bench2DexOutputs()]
+    )({"state": inputs["state"], "actions": inputs["actions"]})
+    np.testing.assert_allclose(output["actions"], actions, rtol=1e-6, atol=1e-6)
+
+
+def test_bench2dex_rl_four_camera_replay_matches_rollout(four_camera_pi0_config):
+    pytest.importorskip("openpi.transforms")
+    from rlinf.models.embodiment.openpi.policies.bench2dex_policy import (
+        Bench2DexOutputs,
+    )
+    from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
+
+    cfg = four_camera_pi0_config
+    model = Pi0RL(
+        cfg,
+        num_steps=2,
+        action_env_dim=26,
+        action_chunk=2,
+        rl_cfg=Pi0RLConfig(noise_method="flow_sde", noise_level=0.5),
+    ).eval()
+    model.setup_transforms([], [Bench2DexOutputs()])
+    observation = cfg.fake_obs()
+    observation.images = {
+        key: torch.full((1, 224, 224, 3), index / 4)
+        for index, key in enumerate(cfg.image_keys)
+    }
+    seen = []
+    handle = model.img.register_forward_pre_hook(
+        lambda module, args: seen.append(float(args[0].detach().mean()))
+    )
+    try:
+        with torch.no_grad():
+            actions, result = model._predict_train(
+                observation,
+                noise=torch.zeros(1, 2, 32),
+                rng=torch.Generator().manual_seed(7),
+                compute_values=False,
+            )
+            replay = dict(result["forward_inputs"], obs_state=observation.state)
+            for key in reversed(cfg.image_keys):
+                replay[f"obs_image__{key}"] = observation.images[key]
+                replay[f"obs_image_mask__{key}"] = observation.image_masks[key]
+            recomputed = model.default_forward(replay, compute_values=False)
+    finally:
+        handle.remove()
+    assert actions.shape == (1, 2, 26)
+    assert result["model_actions"].shape == (1, 2, 32)
+    assert seen == [0.0, 0.25, 0.5, 0.75] * 2
+    torch.testing.assert_close(recomputed["logprobs"], result["prev_logprobs"])

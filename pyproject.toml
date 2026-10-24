@@ -134,7 +134,7 @@ include = ["rlinf*"]
 exclude = ["tests*", "docs*", "examples*", "docker*", "toolkits*"]
 
 [tool.setuptools.package-data]
-rlinf = ["**/*.yaml", "**/*.yml"]
+rlinf = ["**/*.yaml", "**/*.yml", "envs/sim/bench2dex/LICENSE"]
 
 [tool.ruff]
 line-length = 88

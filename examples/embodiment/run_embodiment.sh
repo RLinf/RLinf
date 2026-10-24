@@ -26,6 +26,9 @@ export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 # POLARIS dataset
 export POLARIS_DATA_PATH=${POLARIS_DATA_PATH:-"/path/to/dataset/PolaRiS-Hub"}
 
+# Bench2Dex assets
+export BENCH2DEX_ASSETS_PATH=${BENCH2DEX_ASSETS_PATH:-"/path/to/dex2bench_dataset"}
+
 if [ -z "$1" ]; then
     CONFIG_NAME=${CONFIG_NAME:-"maniskill_ppo_openvlaoft"}
 else
