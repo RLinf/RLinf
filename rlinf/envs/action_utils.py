@@ -426,6 +426,11 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.GENIESIM:
+        # GenieSim consumes the policy's chunk unchanged: the model-side
+        # transforms live in its OpenPI policy and the joint-layout mapping
+        # happens on the simulator server.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.DIFFUSION:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:

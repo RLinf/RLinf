@@ -84,6 +84,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
@@ -514,6 +515,27 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: GenieSim client (simulator server runs separately)
+##################################################################################################
+FROM embodied-common-image AS embodied-geniesim-image
+
+ENV UV_TORCH_BACKEND=cu128
+# The named context is the GenieSim client package directory.
+COPY --from=geniesim / /tmp/rlinf_geniesim/
+RUN test "${RLINF_PLATFORM}" = nvidia && \
+    GENIESIM_CLIENT_PATH=/tmp/rlinf_geniesim bash requirements/install.sh ${INSTALL_MIRROR_OPTION} \
+        --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi \
+        --env geniesim && \
+    rm -rf /tmp/rlinf_geniesim
+
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
+RUN link_assets
+
+ENV OPENPI_DATA_HOME=/root/.cache/openpi
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

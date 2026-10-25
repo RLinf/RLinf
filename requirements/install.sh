@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -2463,6 +2463,18 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        geniesim)
+            create_and_sync_venv
+            install_common_embodied_deps
+            local index_args=()
+            mapfile -t index_args < <(platform_index_args)
+            # uv pip does not use uv sync's named sources. Keep OpenPI's
+            # transitive Torch pins on the platform versions selected above.
+            uv pip install "rlinf-openpi==0.1.1" "${index_args[@]}" \
+                --overrides <(sed -nE 's/^[[:space:]]*"(torch(vision|audio)?==[^"]+)".*/\1/p' "$PYPROJECT_FILE")
+            install_flash_attn
+            install_geniesim_env
+            ;;
         yam)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3474,6 +3486,15 @@ install_behavior_env() {
     # Re-assert the pin after OmniGibson's setup, which otherwise leaves a torch
     # tree mixing two versions (inductor then fails in _pad_mm_init).
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+}
+
+install_geniesim_env() {
+    local client_path="${GENIESIM_CLIENT_PATH:-}"
+    if [ -z "$client_path" ] || [ ! -f "$client_path/pyproject.toml" ]; then
+        echo "Set GENIESIM_CLIENT_PATH to the GenieSim source/rlinf_geniesim package directory." >&2
+        return 1
+    fi
+    uv pip install "$client_path"
 }
 
 install_metaworld_env() {

@@ -1,0 +1,66 @@
+env_type: geniesim
+
+total_num_envs: null
+
+# The adapter owns reset seeds and cursors and resets only at chunk boundaries.
+auto_reset: True
+ignore_terminations: False
+# Seeds the task's generalization draw. Training uses 0; evaluation sets -1,
+# which turns generalization off so a score is comparable across runs.
+seed: 0
+group_size: 1
+# Sampling budget for one rollout epoch, in simulator steps; it must divide
+# evenly by actor.model.num_action_chunks. Unlike max_episode_steps, which
+# truncates an episode, this only bounds how much one rollout collects.
+max_steps_per_rollout_epoch: 20
+max_episode_steps: 200
+
+main_image_key: main
+extra_image_keys: [wrist_left, wrist_right]
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+enable_offload: False
+
+override_cfg:
+  comm_backend: zmq
+  address: ${oc.env:GENIESIM_SERVER_ADDR,tcp://127.0.0.1:5601}
+  addresses: null
+  # Allow time for a cold simulator to initialize.
+  client_timeout_s: 900.0
+  task_name: table_task_0_g2_op
+  sub_task_name: pick_block_shape
+  # Optional task overrides for each logical environment slot.
+  slots: null
+  # Set both fields to override automatic work-item sharding.
+  work_item_shard_rank: null
+  work_item_shard_world_size: null
+  eval_interval: 1
+  # Null uses the simulator's native camera width. A smaller width cuts the
+  # render memory each env needs, so more envs fit on one GPU.
+  render_width: null
+  # Null keeps simulator randomization defaults.
+  randomization: null
+  need_images: true
+  # Render only the last substep of each action chunk. This is also what lets
+  # the adapter hand the whole chunk to the simulator in one call.
+  images_at_chunk_end_only: true
+  venv_to_torch: true
+  # Device for simulator observations.
+  venv_device: cpu
+  geniesim_env_seed: ${..seed}
+  num_episodes: 1
+  # 0 takes every work item of the sub-task.
+  work_item_budget: 0
+  cycle_work_items: true
+  # Retry non-finite state only during reset. Step failures always propagate.
+  nonfinite_state_recovery: true
+  nonfinite_state_reset_retries: 3
+  # The server locks backend settings after the first successful init.
+  # Select the simulator GPU through the server launcher's --devices option.
+  backend_cfg:
+    physics: isaac_fused
+    render: isaac_fused

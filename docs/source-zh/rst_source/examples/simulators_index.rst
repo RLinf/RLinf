@@ -180,6 +180,19 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/geniesim.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: contain; background: #000; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+         <source src="../../_static/videos/geniesim_post_train.mp4" type="video/mp4">
+         您的浏览器不支持视频播放。
+       </video></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/geniesim.html" style="text-decoration: underline; color: blue;">
+           <b>基于 GenieSim 的强化学习</b>
+         </a><br>
+         支持 GenieSim+π₀.₅+PPO/GRPO 训练
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -201,4 +214,5 @@
    PolaRiS <embodied/polaris>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
+   GenieSim <embodied/geniesim>
    真机仿真器 <embodied/real_simulator>
