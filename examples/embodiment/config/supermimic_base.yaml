@@ -1,0 +1,80 @@
+# Shared SuperMimic hyperparameters. Not launched by itself.
+# 320000 counts update iterations (Algorithm A.1). That reading is not
+# author-confirmed. With updates_per_env_step=0.4 it is 800000 vectorized
+# sim steps. Reset-bin numbers are CuboiLeo's, not the paper's.
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  # Replay and simulation stay in the one worker. Ray's default object
+  # store is about 30% of host RAM and is what pushed an 8 GB machine
+  # over the memory monitor. This does not disable that monitor.
+  object_store_memory_mb: 512
+  component_placement:
+    supermimic: 0
+
+runner:
+  task_type: supermimic
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: supermimic
+    logger_backends: []
+  only_eval: false
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  per_worker_log: false
+
+algorithm:
+  k: 8
+  H: 32
+  gamma: 0.99
+  lam: 0.95
+  updates_per_env_step: 0.4
+  total_updates: 320000
+  lr_decay_updates: 250000
+  lr: 2.0e-4
+  wm_batches: 10
+  wm_window_batch: 2048
+  imagine_batch: 4096
+  critic_epochs: 5
+  critic_minibatches: 4
+  warmup_sim_steps: 40
+  wm_only_updates: 0
+  action_noise_std: 0.1
+  goal_anchor: false
+  goal_encoding: paper
+  velocity_tracking: false
+  obs_dim: 93
+  goal_frame_dim: 68
+  goal_frames: 10
+  history_len: 10
+  state_dim: 71
+  residual_dim: 70
+  xi_dim: 33
+  action_dim: 29
+  latent_dim: 32
+  termination_body: pelvis
+  dt: 0.02
+  max_episode_seconds: 10.0
+  G_max: 10.0
+  bce_weight: 1.0
+
+env:
+  backend: mjlab
+  num_envs: 4096
+  num_clips: 40
+  replay_length: 1000
+  motion_path: ""
+  motion_format: lafan1
+  device: cuda
+
+worker:
+  group_name: SuperMimicGroup

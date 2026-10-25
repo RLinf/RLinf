@@ -1,0 +1,13 @@
+defaults:
+  - supermimic_lafan1
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_velocity
+
+algorithm:
+  goal_encoding: paper
+  goal_anchor: false
+  obs_dim: 93
+  velocity_tracking: true

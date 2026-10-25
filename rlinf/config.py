@@ -176,6 +176,7 @@ SUPPORTED_TASK_TYPE = [
     "coding_online_rl",
     "sft",
     "offline",
+    "supermimic",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -1688,6 +1689,9 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+from rlinf.workers.supermimic.validate import validate_supermimic_cfg
+
+
 def adv_requires_group_baseline(
     adv_type: Optional[str], use_reinpp_baseline: bool = False
 ) -> bool:
@@ -1777,6 +1781,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_sft_cfg(cfg)
     elif cfg.runner.task_type == "offline":
         cfg = validate_offline_cfg(cfg)
+    elif cfg.runner.task_type == "supermimic":
+        # Single-process world-model training: no actor/rollout backends to check.
+        return validate_supermimic_cfg(cfg)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
         if adv_requires_group_baseline(

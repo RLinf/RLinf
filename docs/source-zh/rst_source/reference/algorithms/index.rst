@@ -27,6 +27,8 @@
      - 面向离线 RL 的 Implicit Q-Learning。
    * - :doc:`Async PPO <async_ppo>`
      - 异步流水线化的 PPO。
+   * - :doc:`SuperMimic <supermimic>`
+     - 可微世界模型上的人形全身跟踪。
 
 .. toctree::
    :hidden:
@@ -40,3 +42,4 @@
    RLPD <rlpd>
    IQL <iql>
    Async PPO <async_ppo>
+   SuperMimic <supermimic>

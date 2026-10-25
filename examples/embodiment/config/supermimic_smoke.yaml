@@ -1,0 +1,27 @@
+defaults:
+  - supermimic_lafan1
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_smoke
+    logger_backends: []
+
+algorithm:
+  goal_anchor: false
+  # Three updates check the chain. k, H, widths, reward, and warmup stay
+  # on the paper / base values. Batch sizes are the 8GB memory cap.
+  total_updates: 3
+  wm_window_batch: 64
+  imagine_batch: 8
+
+env:
+  # Real MuJoCo Warp. An empty motion path is an error, not a synthetic clip.
+  # 8 environments is the 8 GB cap; k, H, and network widths stay on the
+  # paper values.
+  backend: mjlab
+  num_envs: 8
+  num_clips: 1
+  replay_length: 64
+  motion_path: ${oc.env:SUPERMIMIC_MOTION_PATH,""}
+  device: cuda

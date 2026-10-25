@@ -329,6 +329,18 @@ class Cluster:
         self._ray_code_sync_fragment, self._runtime_code_sync_strip_roots = (
             Cluster._prepare_ray_code_sync_runtime_env_fragment()
         )
+        # Optional. SuperMimic keeps the replay inside one worker and does not
+        # ship trajectories through Ray, so the default store (about 30% of
+        # host RAM) only competes with the simulator on a small machine.
+        # The memory monitor stays on.
+        object_store_memory = None
+        if cluster_cfg is not None and cluster_cfg.get("object_store_memory_mb", None) is not None:
+            object_store_memory = int(cluster_cfg.object_store_memory_mb) * 1024 * 1024
+            if object_store_memory < 64 * 1024 * 1024:
+                raise ValueError(
+                    "cluster.object_store_memory_mb must be at least 64, "
+                    f"got {cluster_cfg.object_store_memory_mb}"
+                )
 
         try:
             # First try to connect to an existing Ray cluster
@@ -353,6 +365,13 @@ class Cluster:
                 "logging_level": Cluster.LOGGING_LEVEL,
                 "namespace": Cluster.NAMESPACE,
             }
+            if object_store_memory is not None:
+                ray_init_kwargs["object_store_memory"] = object_store_memory
+                self._logger.info(
+                    "Limiting the Ray object store to "
+                    f"{object_store_memory // (1024 * 1024)} MiB. "
+                    "The Ray memory monitor stays enabled."
+                )
             if self._ray_code_sync_fragment is not None:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
             self._start_local_ray(ray_init_kwargs)
