@@ -54,7 +54,7 @@ actor:
   seed: 42
 
   model:
-    model_type: "qwen2.5_vl"
+    model_type: "qwen3_vl"
     precision: fp32
     model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct-Robo2vlm-sft/"
     is_lora: False

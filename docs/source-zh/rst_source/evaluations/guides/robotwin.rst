@@ -35,7 +35,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。
 下载完成后，请将 ``env.eval.assets_path``
-设置为 ``/path/to/RoboTwin``（即 ``assets/`` 的上一级目录）。
+设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
 **环境变量**
 
@@ -286,4 +286,4 @@ LingBotVLA
 - **机器人平台：** 通过 ``ROBOT_PLATFORM=ALOHA`` 选择平台变体。
 - **GPU 显存不足：** 在 YAML 中设置 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``；或减小 ``env.eval.total_num_envs``。
 - **评测覆盖范围：** 见上文 :ref:`robotwin-eval-config`；默认 128 并行 + ``use_fixed_reset_state_ids: True`` 只覆盖部分 seeds。
-- **渲染问题：** 若 headless 环境报错，可尝试 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa`` （``run_eval.sh`` 默认已设置）。
+- **渲染问题：** ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，可 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。

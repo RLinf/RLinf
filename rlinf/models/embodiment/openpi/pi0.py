@@ -408,6 +408,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            return_prefix=False,
         )[0]
 
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
@@ -511,6 +512,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            return_prefix=False,
         )[0]
 
         v_t = self.velocity_from_suffix(suffix_out[:, -1:])
@@ -994,6 +996,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            prefix_requires_grad=False,
         )[0]
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
         loss = torch.square(v_t - u_t)
@@ -1016,8 +1019,6 @@ class Pi0(model.BaseModel):
         rng = kwargs.pop("rng", None)
         micro_batch_index = kwargs.pop("micro_batch_index", None)
         gradient_accumulation = kwargs.pop("gradient_accumulation", None)
-        if hasattr(self, "gradient_checkpointing_disable"):
-            self.gradient_checkpointing_disable()
         observation, actions = self._unpack_sft_batch(data)
         observation = self._observation_to_device(observation)
         actions = self._actions_to_device(actions)

@@ -40,10 +40,10 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="searchr1.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
+       <a href="searchr1/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="searchr1.html" style="text-decoration: underline; color: blue;">
+        <a href="searchr1/index.html" style="text-decoration: underline; color: blue;">
           <b>Search-R1强化学习</b>
          </a><br>
          训练LLM调用搜索工具回答问题，RLinf加速训练过程55%
@@ -101,7 +101,7 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    WideSeek-R1 <wideseek_r1/index>
    AgentLightning <agentlightning_calc_x>
    Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1>
+   Search-R1 <searchr1/index>
    rStar2 <rstar2>
    数学推理 <math_reasoning/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>

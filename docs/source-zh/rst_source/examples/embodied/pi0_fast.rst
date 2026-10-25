@@ -1,8 +1,8 @@
-基于 LeRobot 的 PI0-FAST 强化学习
+基于 LeRobot 的 π₀-FAST 强化学习
 ============================================================
 
 本示例将 LeRobot 的 ``PI0FastPolicy`` 接入 RLinf，用于 LIBERO-Long 的确定性
-评测和 token-level GRPO 微调。接入层保留 PI0-FAST 原生的自回归动作序列，并在
+评测和 token-level GRPO 微调。接入层保留 π₀-FAST 原生的自回归动作序列，并在
 actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
 
 概览
@@ -28,7 +28,7 @@ actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
 安装
 --------------------
 
-下面的命令使用本示例验证过的 PI0-FAST 运行时组合。这些版本表示已测试配置，安装脚本
+下面的命令使用本示例验证过的 π₀-FAST 运行时组合。这些版本表示已测试配置，安装脚本
 不会强制覆盖用户传入的版本：
 
 .. code:: bash
@@ -159,7 +159,7 @@ log-probability。
 策略语义
 --------------------
 
-PI0-FAST 原生生成完整动作字符串，RLinf 不预先注入 ``Action:`` 前缀。policy mask
+π₀-FAST 原生生成完整动作字符串，RLinf 不预先注入 ``Action:`` 前缀。policy mask
 包含模型生成的前缀、动作正文和第一个完整的 ``|`` 结束标记，不包含 padding 和结束
 标记之后的 token。同一条轨迹的所有 token 共享轨迹级 GRPO advantage；PPO 对每个
 token 独立 clipping，之后再按 mask 聚合 token loss。

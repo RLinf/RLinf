@@ -241,6 +241,16 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
         action_env_dim: 14
 
 
+.. note::
+
+   为缓解 RoboTwin 长时间运行时 glibc 保留已释放主机内存的问题，LingbotVLA GRPO 示例默认启用 ``env.train.malloc_trim_reset_interval: 8``，仅适用于 Linux/glibc：每个 RoboTwin 环境实例每 8 次 reset 尝试回收空闲堆内存。设为 ``0`` 可关闭；未配置时默认仍为 ``0``。自动 reset 参与计数，评估环境未配置时保持关闭；此选项仅针对主机 RSS，不回收显存。
+
+   .. code-block:: yaml
+
+      env:
+        train:
+          malloc_trim_reset_interval: 8
+
 启动命令
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

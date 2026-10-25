@@ -14,46 +14,33 @@ Megatron-Bridge 相关仓库：
 
 - `Megatron-Bridge 原仓库 <https://github.com/NVIDIA/Megatron-Bridge>`__
 
-- `当前 RLinf 使用的 Megatron-Bridge 版本 0.3.0 <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.3.0>`__
+- `当前 RLinf 使用的 Megatron-Bridge 版本 0.5.0 <https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/v0.5.0>`__
 
-- `对应 Megatron-LM 版本 b0cc2706ddc60d2aefd5fff346445b5c013036a8 <https://github.com/NVIDIA/Megatron-LM/tree/b0cc2706ddc60d2aefd5fff346445b5c013036a8>`__
+- `对应 Megatron-LM 分支 core_r0.18.0 <https://github.com/NVIDIA/Megatron-LM/tree/core_r0.18.0>`__
 
 安装环境
 --------
 
-MBridge 当前使用 RLinf 的 agentic 运行环境。先安装基础环境：
+MBridge 使用 RLinf 的 agentic 运行环境。``install.sh`` 会一并安装 Megatron-Bridge 和
+匹配的 Megatron-LM，不需要另外下载源码或设置 ``PYTHONPATH``：
 
 .. code:: bash
 
    bash requirements/install.sh agentic
    source .venv/bin/activate
-
-安装 MBridge 路径所需的额外 Python 包：
-
-.. code:: bash
-
-   uv pip install transformers==4.57.1 bitsandbytes
-
-Reasoning 镜像不包含 ``megatron.bridge`` 包。请下载
-Megatron-Bridge 和匹配版本的 Megatron-LM，并把两个源码目录加入
-``PYTHONPATH``：
-
-.. code:: bash
-
-   export MBRIDGE_ROOT=/path/to/Megatron-Bridge-0.3.0
-   export MEGATRON_LM_ROOT=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8
-
-   mkdir -p "$(dirname "${MBRIDGE_ROOT}")" "$(dirname "${MEGATRON_LM_ROOT}")"
-   git clone --branch v0.3.0 https://github.com/NVIDIA-NeMo/Megatron-Bridge.git "${MBRIDGE_ROOT}"
-   git clone https://github.com/NVIDIA/Megatron-LM.git "${MEGATRON_LM_ROOT}"
-   git -C "${MEGATRON_LM_ROOT}" checkout b0cc2706ddc60d2aefd5fff346445b5c013036a8
-
-   export PYTHONPATH="${MBRIDGE_ROOT}/src:${MEGATRON_LM_ROOT}:${PYTHONPATH}"
-   export CUDA_DEVICE_MAX_CONNECTIONS=1
    python -c "from megatron.bridge import AutoBridge; print('Megatron-Bridge OK')"
 
-如果集群镜像已经挂载了这两个仓库，保留相同的 ``PYTHONPATH`` 设置，
-并跳过两个 ``git clone`` 命令。
+该命令会创建 Python 3.12 虚拟环境，安装 ``megatron-bridge`` 0.5.0 与 ``nvidia-modelopt`` 0.45.0，
+并把 Megatron-LM ``core_r0.18.0`` 克隆到虚拟环境目录下，由 ``.venv/bin/activate`` 加入 ``PYTHONPATH``。
+如需复用已有的 Megatron-LM 目录，可在安装前设置 ``MEGATRON_PATH=/path/to/Megatron-LM``；
+``install.sh`` 会直接复用该目录、不会切换分支，请自行确认它位于 ``core_r0.18.0``。
+
+.. note::
+
+   Megatron-Bridge 需要 Python 3.12。如果通过 ``--python`` 指定了更低的版本，
+   ``install.sh`` 会跳过 Megatron-Bridge 并打印 WARNING，上面的导入检查会失败。
+   当前 Reasoning 镜像中的虚拟环境是 Python 3.11，不包含 ``megatron.bridge``；
+   使用 MBridge 时请按上面的命令安装环境。
 
 下载 Reasoning 示例使用的模型和数据集：
 
@@ -133,12 +120,11 @@ RLinf 会读取 ``actor.model.model_path`` 设定的模型路径，并交由 MBr
 快速开始
 --------
 
-1. 启动训练前导出 MBridge 路径：
+1. 启动训练前激活环境并设置环境变量：
 
 .. code:: bash
 
-   export PYTHONPATH=/path/to/Megatron-Bridge-0.3.0/src:$PYTHONPATH
-   export PYTHONPATH=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8:$PYTHONPATH
+   source .venv/bin/activate
    export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 2. 准备 HuggingFace 模型和数据目录：
