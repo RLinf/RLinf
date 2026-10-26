@@ -3477,7 +3477,8 @@ install_behavior_env() {
 }
 
 install_metaworld_env() {
-    uv pip install metaworld==3.0.0
+    # Meta-World 3.0.0 writes an 11-wide weld row. MuJoCo 3.17.0 widened eq_data to 12.
+    uv pip install metaworld==3.0.0 "mujoco==3.16.0"
 }
 
 install_calvin_env() {

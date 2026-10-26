@@ -97,8 +97,12 @@ BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配方设置 ``precision: 
 使用 FP32。该配方保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
 RLT Stage 1 配方还让 ``rlt_module`` 使用 FP32。
 
-OpenPI 使用 ``no_shard`` 和 ``use_orig_params: true``，每个 rank 持有完整参数、
-梯度和优化器状态。BEHAVIOR / RoboTwin 配方使用 ``openpi_cosine`` 学习率调度。
+OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
+均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
+``shard_grad_op`` 对梯度和优化器状态分片；``full_shard`` 还在模块执行之间对参数分片。
+选择分片模式可降低每个 rank 的显存占用。设置 ``gradient_checkpointing: true`` 和
+``gradient_checkpointing_use_reentrant: false`` 可进一步降低激活显存。
+BEHAVIOR / RoboTwin 配方使用 ``openpi_cosine`` 学习率调度。
 
 .. code:: yaml
 
