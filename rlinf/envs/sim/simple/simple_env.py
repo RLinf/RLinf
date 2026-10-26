@@ -395,11 +395,16 @@ class SimpleEnv(gym.Env):
         self.ignore_terminations = bool(cfg.ignore_terminations)
         self.is_start = True
         self._process = None
+        self._seed_offset = int(seed_offset)
+        self._total_num_processes = int(total_num_processes)
         self.action_space = gym.spaces.Box(
             -np.inf, np.inf, shape=(SIMPLE_ACTION_DIM,), dtype=np.float32
         )
         self.observation_space = gym.spaces.Dict({})
+        self._start_process()
 
+    def _start_process(self) -> None:
+        """Start the simulator actor in the worker's Ray namespace."""
         # RLinf assigns GPU visibility independently of Ray GPU resources.
         env_vars = {
             key: os.environ[key]
@@ -415,14 +420,12 @@ class SimpleEnv(gym.Env):
         }
         env_vars["RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"] = "1"
         self._process = SimpleProcess.options(
-            # Native children follow their owner, outside Cluster's named-worker cleanup.
-            namespace=f"{ray.get_runtime_context().namespace}.simple",
             scheduling_strategy=NodeAffinitySchedulingStrategy(
                 node_id=ray.get_runtime_context().get_node_id(), soft=False
             ),
             # Ray inherits the parent's Python/runtime environment and merges env_vars.
             runtime_env={"env_vars": env_vars},
-        ).remote(cfg, num_envs, seed_offset, total_num_processes)
+        ).remote(self.cfg, self.num_envs, self._seed_offset, self._total_num_processes)
         try:
             ray.get(self._process.ready.remote())
         except BaseException:
@@ -438,9 +441,9 @@ class SimpleEnv(gym.Env):
             except ray.exceptions.RayActorError:
                 pass
 
-    def _require_process(self) -> Any:
+    def _ensure_process(self) -> Any:
         if self._process is None:
-            raise RuntimeError("SIMPLE environment is closed.")
+            self._start_process()
         return self._process
 
     def reset(
@@ -448,7 +451,7 @@ class SimpleEnv(gym.Env):
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Reset once in the simulator process."""
         observation, info = ray.get(
-            self._require_process().reset.remote(seed=seed, options=options)
+            self._ensure_process().reset.remote(seed=seed, options=options)
         )
         if seed is not None:
             self.seed = int(seed)
@@ -467,7 +470,7 @@ class SimpleEnv(gym.Env):
         """Execute a whole chunk in one RPC, including any terminal padding."""
         if isinstance(chunk_actions, torch.Tensor):
             chunk_actions = chunk_actions.detach().cpu().numpy()
-        result = ray.get(self._require_process().chunk_step.remote(chunk_actions))
+        result = ray.get(self._ensure_process().chunk_step.remote(chunk_actions))
         _, _, _, _, infos = result
         executed_mask = infos[-1].get("executed_mask")
         if (
@@ -484,8 +487,15 @@ class SimpleEnv(gym.Env):
     def update_reset_state_ids(self) -> None:
         """Leave reset cursor advancement to the process's next reset call."""
 
+    def offload(self) -> None:
+        """Release the simulator actor so the worker can free its GPU."""
+        self.close()
+
     def close(self) -> None:
-        """Release the child once; Isaac requires process termination for teardown."""
+        """Close the simulator, then kill its actor.
+
+        Isaac ignores a graceful close, so that mode is torn down by process kill.
+        """
         if self._process is None:
             return
         try:

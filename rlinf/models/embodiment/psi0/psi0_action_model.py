@@ -18,11 +18,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Literal
 
 import torch
-from omegaconf import DictConfig
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
@@ -110,49 +108,6 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
             )
         self._set_trainable_boundary()
         self.train(False)
-
-    @classmethod
-    def from_config(cls, cfg: DictConfig, torch_dtype=None) -> "Psi0Policy":
-        """Load the joint S2+S1 checkpoint and checkpoint-owned transforms."""
-        run_dir = Path(str(cfg.model_path)).expanduser()
-        checkpoint_step = cfg.get("checkpoint_step", 40000)
-        if not run_dir.exists():
-            raise ValueError(f"Psi0 run directory does not exist: {run_dir}.")
-
-        from psi.config.config import LaunchConfig
-        from psi.models.psi0 import Psi0Model
-        from psi.utils import parse_args_to_tyro_config, seed_everything
-
-        config_template: LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt")
-        launch_config = config_template.model_validate_json(
-            (run_dir / "run_config.json").read_text()
-        )
-        seed_everything(launch_config.seed or 42)
-        model = Psi0Model.from_pretrained(
-            run_dir,
-            checkpoint_step,
-            launch_config,
-            device="cpu",
-        )
-        processor = Psi0ProcessorAdapter.from_upstream_transform(
-            launch_config.data.transform.field,
-            launch_config.data.transform.model,
-        )
-        psi0_cfg = cfg.psi0
-        policy = cls(
-            model=model,
-            processor=processor,
-            num_inference_steps=int(psi0_cfg.num_inference_steps),
-            plan_horizon=int(psi0_cfg.plan_horizon),
-            execution_horizon=int(cfg.num_action_chunks),
-            overlap_horizon=int(psi0_cfg.overlap_horizon),
-            rtc_max_delay=int(launch_config.model.max_delay),
-            stochastic_noise_scale=float(psi0_cfg.get("stochastic_noise_scale", 1.0)),
-            add_value_head=bool(cfg.get("add_value_head", False)),
-        )
-        if hasattr(policy, "value_head") and torch_dtype is not None:
-            policy.to(dtype=torch_dtype)
-        return policy
 
     @property
     def _no_split_modules(self) -> list[str]:

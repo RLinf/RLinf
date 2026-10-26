@@ -15,7 +15,6 @@
 import json
 
 import hydra
-import ray
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
@@ -120,13 +119,8 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    try:
-        runner.init_workers()
-        runner.run()
-    finally:
-        if cfg.env.eval.env_type == "simple" and ray.is_initialized():
-            # Rollout has flushed videos; killing the owner releases its native child.
-            env_group._close()
+    runner.init_workers()
+    runner.run()
 
 
 if __name__ == "__main__":
