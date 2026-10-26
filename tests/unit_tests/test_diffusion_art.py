@@ -241,6 +241,64 @@ def test_art_loss_masks_padding_and_keeps_inward_restoration():
     assert not old.requires_grad
 
 
+@pytest.mark.parametrize("loss_space", ["velocity_linear_sigma", "velocity_uniform"])
+def test_art_output_gradient_statistics_match_autograd(loss_space):
+    old = torch.zeros(5, 2)
+    current = torch.tensor(
+        [[-0.5, 999.0], [-2.0, -2.0], [1.0, 999.0], [2.0, 999.0], [0.5, 0.25]],
+        requires_grad=True,
+    )
+    mask = torch.tensor(
+        [[True, False], [True, True], [True, False], [True, False], [True, True]]
+    )
+    sigma = torch.tensor([1.0, 0.5, 0.25, 0.0, 0.75])
+    magnitude = torch.tensor([1.0, 1.0, 0.0, 1.0, 1.0])
+    direction = torch.ones_like(old)
+    terms = _art_loss(
+        current,
+        old,
+        sigma,
+        sigma / 2,
+        direction,
+        magnitude,
+        loss_space=loss_space,
+        mask_metric="fixed_mse",
+        mask_threshold=0.1,
+        coordinate_mask=mask,
+    )
+    assert terms["keep_mask"].tolist() == [False, True, False, False, True]
+    weight = sigma if loss_space == "velocity_linear_sigma" else torch.ones_like(sigma)
+    scale = 2 * weight * terms["keep_mask"] / (len(current) * mask.sum(1))
+    guidance_gradient = scale[:, None] * torch.where(
+        mask, magnitude[:, None] * direction, 0.0
+    )
+    restoration_gradient = scale[:, None] * torch.where(
+        mask, current.detach() - old, 0.0
+    )
+    total_gradient = torch.autograd.grad(terms["per_item_loss"].mean(), current)[0]
+    torch.testing.assert_close(total_gradient, guidance_gradient + restoration_gradient)
+    expected = {
+        "output_guidance_grad_sq": guidance_gradient.square().sum(),
+        "output_restoration_grad_sq": restoration_gradient.square().sum(),
+        "output_grad_inner": (guidance_gradient * restoration_gradient).sum(),
+    }
+    for key, value in expected.items():
+        torch.testing.assert_close(terms[key], value)
+        assert not terms[key].requires_grad
+
+    on_policy = _art_loss(
+        old,
+        old,
+        sigma,
+        sigma / 2,
+        direction,
+        magnitude,
+        coordinate_mask=mask,
+    )
+    assert on_policy["output_restoration_grad_sq"] == 0
+    assert on_policy["output_grad_inner"] == 0
+
+
 def _art_trajectory_worker(first_chunk_only=False):
     worker = object.__new__(EmbodiedARTFSDPPolicy)
     worker.cfg = OmegaConf.create(
