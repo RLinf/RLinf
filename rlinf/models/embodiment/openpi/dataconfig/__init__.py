@@ -585,6 +585,20 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
     ),
     TrainConfig(
+        name="pi05_droid_robolab",
+        model=pi0_config.Pi0Config(
+            action_horizon=15,
+            pi05=True,
+            max_token_len=200,
+        ),
+        data=LeRobotPolarisDroidDataConfig(
+            repo_id="physical-intelligence/droid",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="assets/droid"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_droid_robolab",
+    ),
+    TrainConfig(
         name="pi05_yam_joint",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=30, discrete_state_input=True

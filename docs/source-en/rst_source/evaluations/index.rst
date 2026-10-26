@@ -29,6 +29,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - PolaRiS
      - ``polaris_droid_tapeintocontainer``, ``polaris_droid_movelattecup``, etc.
      - ``polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml``, ``polaris/polaris_movelattecup_openpi_eval.yaml``
+   * - RoboLab
+     - 120 DROID joint-position manipulation tasks
+     - ``robolab/pi05_droid_jointpos.yaml``
    * - RoboTwin
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml``, etc.
@@ -77,6 +80,8 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - ManiSkill out-of-distribution evaluation.
    * - :doc:`PolaRiS <guides/polaris>`
      - PolaRiS tabletop manipulation.
+   * - :doc:`RoboLab <guides/robolab>`
+     - RoboLab evaluation through RLinf environment workers and the evaluation runner.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
 

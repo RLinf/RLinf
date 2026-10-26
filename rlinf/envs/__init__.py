@@ -43,6 +43,7 @@ class SupportedEnvType(Enum):
     D4RL = "d4rl"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
+    ROBOLAB = "robolab"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -185,5 +186,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.polaris.polaris_env import PolarisEnv
 
         return PolarisEnv
+    elif env_type == SupportedEnvType.ROBOLAB:
+        from rlinf.envs.sim.robolab.robolab_env import RoboLabEnv
+
+        return RoboLabEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")
