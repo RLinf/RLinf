@@ -55,6 +55,12 @@
 
       使用 ZED 相机与 Robotiq 夹爪。
 
+   .. grid-item-card:: Orbbec 相机
+      :link: franka_orbbec
+      :link-type: doc
+
+      读取 Orbbec USB 相机的彩色图像及对齐深度。
+
    .. grid-item-card:: 灵巧手
       :link: franka_dexhand
       :link-type: doc
@@ -72,4 +78,5 @@
    HG-DAgger <hg-dagger>
    奖励模型 <franka_reward_model>
    ZED + Robotiq <franka_zed_robotiq>
+   Orbbec 相机 <franka_orbbec>
    灵巧手 <franka_dexhand>
