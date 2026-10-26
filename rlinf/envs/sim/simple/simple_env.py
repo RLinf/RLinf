@@ -22,6 +22,7 @@ import sys
 import tempfile
 from contextlib import nullcontext
 from typing import Any
+from uuid import uuid4
 
 import gymnasium as gym
 import numpy as np
@@ -420,6 +421,7 @@ class SimpleEnv(gym.Env):
         }
         env_vars["RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"] = "1"
         self._process = SimpleProcess.options(
+            name=f"SimpleProcess-{uuid4().hex}",
             scheduling_strategy=NodeAffinitySchedulingStrategy(
                 node_id=ray.get_runtime_context().get_node_id(), soft=False
             ),
