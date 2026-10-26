@@ -530,10 +530,14 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             sharding = (
                 str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
             )
-            assert sharding == "no_shard", (
-                "openpi only supports actor.fsdp_config.sharding_strategy="
-                f"'no_shard' (got {cfg.fsdp_config.sharding_strategy!r}). "
-                "Nested FSDP flattening (full_shard / shard_grad_op) is not supported."
+            assert sharding == "no_shard" or (
+                cfg.fsdp_config.strategy == "fsdp"
+                and sharding in ("shard_grad_op", "full_shard")
+            ), (
+                "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
+                "and sharding_strategy in ['shard_grad_op', 'full_shard']; "
+                f"got strategy={cfg.fsdp_config.strategy!r}, "
+                f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
             )
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
@@ -1569,6 +1573,42 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         raise ValueError(
             "SearchR1 with the FSDP multi-agent actor does not support "
             "algorithm.importance_sampling_fix=True."
+        )
+    expect_rollout_logprobs = not cfg.algorithm.recompute_logprobs
+    if cfg.rollout.get("return_logprobs", False) != expect_rollout_logprobs:
+        raise ValueError(
+            "SearchR1 requires rollout.return_logprobs == "
+            "not algorithm.recompute_logprobs "
+            f"(algorithm.recompute_logprobs={cfg.algorithm.recompute_logprobs}, "
+            f"rollout.return_logprobs={cfg.rollout.get('return_logprobs', False)}). "
+            "The agent loop slices the rollout logprobs returned by the engine; "
+            "set rollout.return_logprobs: ${not:${algorithm.recompute_logprobs}}."
+        )
+    if cfg.data.get("apply_chat_template_kwargs", {}) and not cfg.data.get(
+        "apply_chat_template", False
+    ):
+        raise ValueError(
+            "data.apply_chat_template_kwargs is set but "
+            "data.apply_chat_template is False: the kwargs only reach the chat "
+            "template through dataset prompt rendering. Set "
+            "data.apply_chat_template: True or remove the kwargs."
+        )
+    agentic_tokenizer = cfg.agentloop.get("agentic_tokenizer", "default")
+    # Imported lazily: a top-level import would be circular, since
+    # rlinf.agents imports rlinf.models, which imports rlinf.config.
+    from rlinf.agents.tokenization.agentic_tokenizer import (
+        agentic_tokenizer_tool_call_parser,
+    )
+
+    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
+    actual_parser = OmegaConf.select(
+        cfg, "rollout.sglang.tool_call_parser", default=None
+    )
+    if expected_parser is not None and actual_parser != expected_parser:
+        raise ValueError(
+            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
+            f"tool_call_parser={expected_parser!r}, but "
+            f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
 
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())

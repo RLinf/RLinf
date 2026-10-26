@@ -117,9 +117,13 @@ and vision embeddings in FP32. The profile preserves FP32 action/time inputs
 and adaptive-norm conditioning while the backbone computes in BF16.
 RLT Stage 1 recipes also keep ``rlt_module`` in FP32.
 
-Use ``no_shard`` and ``use_orig_params: true`` for OpenPI. Each rank holds
-complete parameters, gradients, and optimizer states. BEHAVIOR / RoboTwin
-recipes use the ``openpi_cosine`` learning rate schedule.
+OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
+``use_orig_params: true``. ``no_shard`` replicates all training state;
+``shard_grad_op`` shards gradients and optimizer state; ``full_shard`` also
+shards parameters between module executions. Select either sharded mode to
+reduce per-rank memory. Enable ``gradient_checkpointing: true`` with
+``gradient_checkpointing_use_reentrant: false`` to reduce activation memory.
+BEHAVIOR / RoboTwin recipes use the ``openpi_cosine`` learning rate schedule.
 
 .. code:: yaml
 
@@ -160,6 +164,8 @@ Select the data format with ``actor.model.openpi.config_name``:
      - LIBERO
    * - ``pi0_realworld``
      - Real-world Franka
+   * - ``pi05_yam_joint``
+     - Real-world Dual YAM
    * - ``pi0_aloha_robotwin``
      - RoboTwin (ALOHA)
    * - ``pi05_behavior``

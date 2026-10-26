@@ -388,6 +388,47 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-realworld-dual-yam-collect-data-mock-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openpi --env yam
+
+      - name: Dual-YAM data collection mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          # resume is off, so LeRobot always creates rank_0/id_0. This runner
+          # keeps /workspace/results across jobs. Delete before create(); a
+          # cleanup step after this one never runs if create() raises here.
+          rm -rf /workspace/results/realworld_dual_yam_collect_data_mock
+          bash tests/e2e_tests/embodied/run.sh realworld_dual_yam_collect_data_mock
+
+      - name: Dual-YAM OpenPI Pi05 mock-robot evaluation test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh realworld_dual_yam_openpi_pi05_mock_eval
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-realworld-collect-dataset-mock-test:
     runs-on: embodied
     steps:
@@ -1950,7 +1991,7 @@ jobs:
           rm -rf .venv
           uv cache prune
 
-  embodied-gr00t_n1d6-maniskill-libero-test:
+  embodied-gr00t_n1d6-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -1979,7 +2020,7 @@ jobs:
           rm -rf .venv
           uv cache prune
 
-  embodied-gr00t_n1d7-maniskill-libero-test:
+  embodied-gr00t_n1d7-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code

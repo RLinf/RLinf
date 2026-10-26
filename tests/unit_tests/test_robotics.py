@@ -2469,6 +2469,155 @@ def test_holding_the_current_pose_leaves_the_gripper_to_the_policy():
     assert set(parts) == {"arm"}
 
 
+def test_releasing_grip_holds_the_measured_pose():
+    import numpy as np
+
+    from rlinf.robotics.parts.teleop import PicoTcp
+
+    binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=True)
+    device = _ScriptedController(
+        [
+            ((0.025, 0.0, 0.0), (0.0, 0.0, 0.0), True, 0),
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), False, 0),
+        ]
+    )
+    context = _pico_context()
+
+    driven = binding.action(device.get_observation(), context).parts["arm"].copy()
+    held = binding.action(device.get_observation(), context)
+    measured = PicoTcp._pose_to_command(context["tcp_pose"])[:-1]
+
+    assert held.driving
+    assert held.info.get("pico_holding") is True
+    # The lead target is still ahead; release must not keep chasing it.
+    assert not np.allclose(held.parts["arm"][:3], driven[:3])
+    assert np.allclose(held.parts["arm"], measured)
+    assert "end_effector" not in held.parts
+
+
+def test_dagger_pico_does_not_apply_arm_commands_while_idle():
+    import gymnasium as gym
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-np.inf, np.inf, shape=(10,))
+            self.observation_space = spaces.Box(-1, 1, shape=(1,))
+            self.stepped: list[np.ndarray] = []
+
+        def get_tcp_pose(self):
+            return np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        def get_action_scale(self):
+            return np.array([0.05, 0.3, 1.0])
+
+        def step(self, action):
+            self.stepped.append(np.asarray(action, dtype=np.float64))
+            return {}, 0.0, False, False, {}
+
+        def reset(self, *, seed=None, options=None):
+            return {}, {}
+
+    class Reader:
+        def get_reading(self):
+            return {
+                "held": False,
+                "position_delta": np.zeros(3),
+                "rotation_delta": np.zeros(3),
+                "grip_close": False,
+                "grip_open": False,
+            }
+
+    binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=False)
+    binding._device = Reader()
+    group = TeleopGroup(
+        [TeleopEntry(binding)],
+        available={
+            "arm": ActionKind.CARTESIAN_POSE,
+            "end_effector": ActionKind.GRIPPER,
+        },
+    )
+    device = ComposedTeleop(group, {"arm": slice(0, 9), "end_effector": slice(9, 10)})
+    env = Env()
+    policy = np.full(10, 0.7)
+    _, _, _, _, info = TeleopIntervention(env, device).step(policy)
+
+    assert np.allclose(env.stepped[0], policy)
+    assert "intervene_action" not in info
+
+
+def test_idle_pico_tcp_overrides_zero_collection_action():
+    """Collection zeros must not reach DualFranka after the operator lets go."""
+    import gymnasium as gym
+    import numpy as np
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
+
+    pose = np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-2.0, 2.0, shape=(10,), dtype=np.float64)
+            self.observation_space = spaces.Box(-1.0, 1.0, shape=(1,))
+            self.stepped: list[np.ndarray] = []
+
+        def get_tcp_pose(self):
+            return pose.copy()
+
+        def get_action_scale(self):
+            return np.array([0.05, 0.3, 1.0])
+
+        def step(self, action):
+            self.stepped.append(np.asarray(action, dtype=np.float64).copy())
+            return {}, 0.0, False, False, {}
+
+        def reset(self, *, seed=None, options=None):
+            return {}, {}
+
+    class Replay(_ScriptedController):
+        get_reading = _ScriptedController.get_observation
+
+    replay = Replay(
+        [
+            ((0.025, 0.0, 0.0), (0.0, 0.0, 0.0), True, 0),
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), False, 0),
+        ]
+    )
+    pico = PicoTcp(gripper=True, side=0, hold_current_when_inactive=True)
+    pico._device = replay
+    group = TeleopGroup(
+        [TeleopEntry(pico, drives="left")],
+        available={
+            "left.arm": ActionKind.CARTESIAN_POSE,
+            "left.end_effector": ActionKind.GRIPPER,
+        },
+    )
+    env = Env()
+    wrapper = TeleopIntervention(
+        env,
+        ComposedTeleop(
+            group,
+            {"left.arm": slice(0, 9), "left.end_effector": slice(9, 10)},
+        ),
+    )
+    zeros = np.zeros(10, dtype=np.float64)
+    wrapper.step(zeros)
+    _, _, _, _, info = wrapper.step(zeros)
+
+    assert not np.allclose(env.stepped[-1][:3], 0.0)
+    assert np.isclose(env.stepped[-1][0], 0.3)
+    assert "intervene_action" in info
+
+
 def _pico_frame(position, grip=0.0, buttons=None, headset=None):
     """One publisher frame, in the schema the shipped PICO configs describe."""
     import json
@@ -2595,6 +2744,155 @@ def test_a_stale_pico_link_stops_driving_the_robot():
             pico.disconnect()
 
 
+def _settle(zmq, device, frame, wanted, tries=200):
+    """Publish ``frame`` until the controller reading reflects it."""
+    import time
+
+    zmq.frame = frame
+    for _ in range(tries):
+        time.sleep(0.003)
+        reading = device.get_observation()
+        if wanted(reading):
+            return reading
+    raise AssertionError(f"The PICO reading never reflected {frame}.")
+
+
+def _pico_joint(tool):
+    from rlinf.robotics.parts.teleop import PicoJoint
+
+    return PicoJoint(
+        kinematics=lambda: tool,
+        joints=slice(0, 6),
+        grip=slice(6, 7),
+        joint_step_limits=[0.05] * 6,
+        hand="right",
+        zmq_addr="tcp://x:1",
+    )
+
+
+def test_a_pico_moves_joints_toward_its_ik_solution_a_step_a_tick():
+    """The grip anchors the arm; motion solves through IK, one step a tick.
+
+    Released, the arm holds the joints it was let go at, not the measured
+    ones that sag under gravity.
+    """
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        tool = FreeToolKinematics()
+        pico = _pico_joint(tool)
+        context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+        pico.connect()
+        try:
+            released = _settle(zmq, pico, pico_packet(), lambda r: r["calibrated"])
+            idle = pico.action(released, context)
+            assert not idle.driving and pico.fault is None
+            assert np.allclose(idle.parts["arm"], [0.3, 0.0, 0.2, 0, 0, 0])
+
+            held = _settle(
+                zmq, pico, pico_packet(right={"grip": 1.0}), lambda r: r["held"]
+            )
+            anchored = pico.action(held, context)
+            assert anchored.driving
+            assert np.allclose(anchored.parts["arm"], [0.3, 0.0, 0.2, 0, 0, 0])
+
+            # 20 cm along the controller's -Z is 20 cm along the robot's +X:
+            # four ticks' worth, so this tick moves a quarter of the way.
+            moved = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0, "position": [0, 0, -0.2]}),
+                lambda r: r["position_delta"][0] > 0.19,
+            )
+            step = pico.action(moved, context)
+            assert np.allclose(step.parts["arm"], [0.35, 0.0, 0.2, 0, 0, 0], atol=1e-6)
+            assert step.info["joint_step_fraction"] == pytest.approx(0.25, abs=1e-4)
+
+            closed = _settle(
+                zmq,
+                pico,
+                pico_packet({"A": True}, right={"grip": 1.0}),
+                lambda r: r["grip_close"],
+            )
+            assert pico.action(closed, context).parts["end_effector"][0] == 0.0
+            let_go = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0}),
+                lambda r: r["held"] and not r["grip_close"],
+            )
+            assert pico.action(let_go, context).parts["end_effector"][0] == 0.0
+
+            # A pose IK cannot reach holds the joints this frame; the gripper
+            # stays where the operator put it.
+            tool.unreachable = True
+            missed = pico.action(let_go, context)
+            assert missed.info["ik_fault"] == "residual"
+            assert np.allclose(missed.parts["arm"], context["joint_positions"][:6])
+            assert missed.parts["end_effector"][0] == 0.0
+            tool.unreachable = False
+
+            gone = _settle(zmq, pico, pico_packet(), lambda r: not r["held"])
+            pico.action(gone, context)
+            sagged = {"joint_positions": np.array([0.29, 0, 0.19, 0, 0, 0, 1.0])}
+            assert np.allclose(
+                pico.action(gone, sagged).parts["arm"], [0.3, 0.0, 0.2, 0, 0, 0]
+            )
+        finally:
+            pico.disconnect()
+
+
+def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
+    """A controller that drops out must not drive again while still squeezed."""
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        pico = _pico_joint(FreeToolKinematics())
+        context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+        pico.connect()
+        try:
+            # Squeezed at startup: held until let go once.
+            held = pico_packet(right={"grip": 1.0})
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert not pico.action(reading, context).driving
+            reading = _settle(zmq, pico, pico_packet(), lambda r: not r["held"])
+            pico.action(reading, context)
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert pico.action(reading, context).driving
+
+            broken = pico_packet(
+                right={"grip": 1.0, "orientation": [0.0, 0.0, 0.0, 0.0]}
+            )
+            reading = _settle(zmq, pico, broken, lambda r: r.get("invalid_pose"))
+            faulted = pico.action(reading, context)
+            assert pico.fault == "right:unavailable" and not faulted.driving
+            assert np.allclose(faulted.parts["arm"], context["joint_positions"][:6])
+
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert not pico.action(reading, context).driving
+            assert pico.fault is not None
+
+            reading = _settle(zmq, pico, pico_packet(), lambda r: not r["held"])
+            pico.action(reading, context)
+            assert pico.fault is None
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert pico.action(reading, context).driving
+        finally:
+            pico.disconnect()
+
+
 def test_pico_builds_the_variant_the_arm_can_accept():
     """One config name, two meanings; the arm's declared kind picks which.
 
@@ -2605,33 +2903,53 @@ def test_pico_builds_the_variant_the_arm_can_accept():
     from types import SimpleNamespace
 
     from rlinf.robotics.actions import ActionKind
-    from rlinf.robotics.parts.teleop import Pico, PicoDelta, PicoTcp, TeleopDevice
+    from rlinf.robotics.parts.teleop import (
+        Pico,
+        PicoDelta,
+        PicoJoint,
+        PicoTcp,
+        TeleopDevice,
+    )
 
     def built_for(kind):
-        facts = SimpleNamespace(kinds={"arm": kind})
+        facts = SimpleNamespace(
+            kinds={"arm": kind},
+            layout={"arm": slice(0, 6), "end_effector": slice(6, 7)},
+            arm_kinematics=lambda side: None,
+            joint_step_limits=(0.05,) * 6,
+        )
         return TeleopDevice.named("pico").from_config({}, {}, facts).device
 
     delta = built_for(ActionKind.CARTESIAN_DELTA)
     pose = built_for(ActionKind.CARTESIAN_POSE)
+    joints = built_for(ActionKind.JOINT_POSITION)
 
     assert type(delta) is PicoDelta
     assert type(pose) is PicoTcp
-    # The config name resolves to the family, so either one is a Pico.
-    assert isinstance(delta, Pico) and isinstance(pose, Pico)
+    assert type(joints) is PicoJoint
+    # The config name resolves to the family, so each one is a Pico.
+    assert all(isinstance(device, Pico) for device in (delta, pose, joints))
 
 
 def test_the_pico_name_resolves_to_the_family_not_a_variant():
     """Whatever from_config returns must be an instance of what was named."""
     import inspect
 
-    from rlinf.robotics.parts.teleop import Pico, PicoDelta, PicoTcp, TeleopDevice
+    from rlinf.robotics.parts.teleop import (
+        Pico,
+        PicoDelta,
+        PicoJoint,
+        PicoTcp,
+        TeleopDevice,
+    )
 
     assert TeleopDevice.named("pico") is Pico
     # Abstract, so the family cannot be mistaken for one of its variants.
     assert inspect.isabstract(Pico)
-    # Siblings: neither variant is a kind of the other.
+    # Siblings: no variant is a kind of another.
     assert not issubclass(PicoTcp, PicoDelta)
     assert not issubclass(PicoDelta, PicoTcp)
+    assert not issubclass(PicoJoint, (PicoTcp, PicoDelta))
 
 
 def test_no_device_shadows_a_method_of_the_contract():
@@ -3658,6 +3976,319 @@ def test_a_real_camera_runs_against_a_faked_sdk():
         assert not camera.is_connected
 
 
+def _orbbec_camera(**settings: Any) -> Camera:
+    from rlinf.robotics.parts.cameras import CameraInfo
+
+    info = CameraInfo(
+        **{
+            "name": "scene",
+            "serial_number": "MOCK0002",
+            "camera_type": "orbbec",
+            "resolution": (64, 48),
+            "fps": 30,
+            **settings,
+        }
+    )
+    return Camera.of(info)
+
+
+@pytest.fixture
+def orbbec_sdk(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    from robot_mocks.cameras import orbbec
+
+    sdk = orbbec()
+    monkeypatch.setitem(sys.modules, "pyorbbecsdk", sdk)
+    return sdk
+
+
+def test_orbbec_declaration_does_not_import_sdk(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pyorbbecsdk", None)
+    camera = _orbbec_camera()
+    assert not camera.is_connected
+    assert camera.observation_features["frame"]["shape"] == (48, 64, 3)
+    with pytest.raises(ImportError, match="pyorbbecsdk"):
+        camera.connect()
+    assert not camera.is_connected
+    with pytest.raises(ModuleNotFoundError, match="--no-deps pyorbbecsdk2"):
+        type(camera).require_sdk()
+
+
+def test_orbbec_opens_only_selected_serial_and_rgb_needs_no_depth(orbbec_sdk):
+    orbbec_sdk.distortion_model = "unsupported"
+    camera = _orbbec_camera(resolution=(53, 39))
+    assert orbbec_sdk.opened == []
+    try:
+        camera.connect()
+        observation = camera.get_observation(timeout=1)
+        assert set(observation) == {"frame"}
+        assert observation["frame"].shape == (39, 53, 3)
+        assert observation["frame"].dtype == np.uint8
+        np.testing.assert_array_equal(observation["frame"][20, 20], [32, 96, 192])
+        assert orbbec_sdk.opened == ["MOCK0002"]
+        streams = orbbec_sdk.pipelines[0].config.streams
+        assert set(streams) == {"color"}
+        assert streams["color"].size == (64, 48)
+    finally:
+        camera.disconnect()
+    assert not camera.is_connected
+    assert orbbec_sdk.pipelines[0].stops == 1
+
+
+def test_orbbec_unknown_serial_does_not_open_another_device(orbbec_sdk):
+    camera = _orbbec_camera(serial_number="not-attached")
+    with pytest.raises(ValueError, match="not-attached"):
+        camera.connect()
+    assert not camera.is_connected
+    assert orbbec_sdk.opened == []
+    assert orbbec_sdk.pipelines == []
+
+
+def test_orbbec_requires_an_explicit_serial(orbbec_sdk):
+    with pytest.raises(ValueError, match="serial"):
+        _orbbec_camera(serial_number="")
+    assert orbbec_sdk.opened == []
+
+
+def test_orbbec_discovery_reads_serials_without_opening_devices(orbbec_sdk):
+    from robot_mocks.cameras import SERIALS
+
+    assert _orbbec_camera().discover() == set(SERIALS)
+    assert orbbec_sdk.opened == []
+    assert orbbec_sdk.pipelines == []
+
+
+@pytest.mark.parametrize("color_format", ["BGR", "RGB", "MJPG", "YUYV"])
+def test_orbbec_decodes_color_formats_to_bgr(monkeypatch, color_format):
+    from robot_mocks.cameras import orbbec
+
+    sdk = orbbec(color_format=color_format)
+    monkeypatch.setitem(sys.modules, "pyorbbecsdk", sdk)
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        frame = camera.get_observation(timeout=1)["frame"]
+        assert frame.shape == (48, 64, 3)
+        assert frame.dtype == np.uint8
+        expected = [130, 130, 130] if color_format == "YUYV" else [32, 96, 192]
+        np.testing.assert_allclose(frame[20, 20], expected, atol=2)
+    finally:
+        camera.disconnect()
+
+
+def test_orbbec_aligned_depth_is_metres_and_resize_preserves_samples(orbbec_sdk):
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
+    camera = _orbbec_camera(enable_depth=True, resolution=(53, 39))
+    try:
+        camera.connect()
+        # The depth mode is the device default, not the one nearest the output.
+        streams = orbbec_sdk.pipelines[0].config.streams
+        assert streams["color"].size == (64, 48)
+        assert streams["depth"].size == (128, 96)
+
+        observation = camera.get_observation(timeout=1)
+        assert observation["frame"].shape == (39, 53, 3)
+        assert observation["frame"].dtype == np.uint8
+        depth = observation["depth"]
+        assert depth.shape == (39, 53)
+        assert depth.dtype == np.float32
+        near, far = DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE
+        np.testing.assert_allclose(np.unique(depth), [near, far])
+        assert depth[20, 0] == pytest.approx(near)
+        assert depth[20, -1] == pytest.approx(far)
+
+        # Units belong to each frame, so changing the device's depth precision
+        # must not reuse a startup scale for later observations.
+        orbbec_sdk.depth_scale_mm *= 2
+        for _ in range(5):
+            depth = camera.get_observation(timeout=1)["depth"]
+            if depth[20, -1] == pytest.approx(2 * far):
+                break
+        np.testing.assert_allclose(np.unique(depth), [2 * near, 2 * far])
+    finally:
+        camera.disconnect()
+
+
+def test_orbbec_rejects_unsupported_color_distortion_before_streaming(orbbec_sdk):
+    orbbec_sdk.distortion_model = "unsupported"
+    camera = _orbbec_camera(enable_depth=True)
+    with pytest.raises(ValueError, match="distortion model unsupported"):
+        camera.connect()
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+    assert all(pipeline.stops == 0 for pipeline in orbbec_sdk.pipelines)
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, float("nan")])
+def test_orbbec_rejects_invalid_depth_units(orbbec_sdk, scale):
+    orbbec_sdk.depth_scale_mm = scale
+    camera = _orbbec_camera(enable_depth=True)
+    with pytest.raises(RuntimeError, match="depth scale"):
+        camera.connect()
+    assert not camera.is_connected
+    assert orbbec_sdk.pipelines[0].stops == 1
+
+
+@pytest.mark.parametrize("fault", ["no_frames", "missing_depth"])
+def test_orbbec_incomplete_startup_fails_and_can_be_retried(orbbec_sdk, fault):
+    setattr(orbbec_sdk, fault, True)
+    camera = _orbbec_camera(enable_depth=True)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="(?i)(frame|depth|timeout)"):
+        camera.connect()
+    assert time.monotonic() - started < 7.0
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+    assert orbbec_sdk.pipelines[0].stops == 1
+    camera.disconnect()
+
+    setattr(orbbec_sdk, fault, False)
+    try:
+        camera.connect()
+        assert "depth" in camera.get_observation(timeout=1)
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.parametrize("fault", ["fail_profiles", "fail_start"])
+def test_orbbec_partial_open_failure_releases_stream_and_allows_retry(
+    orbbec_sdk, fault
+):
+    setattr(orbbec_sdk, fault, True)
+    camera = _orbbec_camera()
+    with pytest.raises(RuntimeError, match="(?i)(profile|start)"):
+        camera.connect()
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+    if fault == "fail_start":
+        assert orbbec_sdk.pipelines[0].stops == 1
+
+    setattr(orbbec_sdk, fault, False)
+    try:
+        camera.connect()
+        assert camera.get_observation(timeout=1)["frame"].shape == (48, 64, 3)
+    finally:
+        camera.disconnect()
+
+
+def test_orbbec_refuses_unsupported_fps_before_starting(orbbec_sdk):
+    camera = _orbbec_camera(fps=25)
+    with pytest.raises(ValueError, match="25"):
+        camera.connect()
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+
+
+def test_orbbec_disconnect_is_idempotent_and_reconnect_discards_old_frames(orbbec_sdk):
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        camera.disconnect()
+        camera.disconnect()
+        assert orbbec_sdk.pipelines[0].stops == 1
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        camera.connect()
+        frame = camera.get_observation(timeout=1)["frame"]
+        np.testing.assert_array_equal(frame[20, 20], [9, 21, 43])
+        assert orbbec_sdk.opened == ["MOCK0002", "MOCK0002"]
+    finally:
+        camera.disconnect()
+    assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
+
+
+def test_orbbec_rides_out_a_stall_shorter_than_the_read_timeout(orbbec_sdk):
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        orbbec_sdk.no_frames = True
+        time.sleep(1.0)
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        orbbec_sdk.no_frames = False
+        frame = camera.get_observation(timeout=2, max_age=0.1)["frame"]
+        np.testing.assert_array_equal(frame[20, 20], [9, 21, 43])
+        assert orbbec_sdk.opened == ["MOCK0002"]
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("enable_depth", "fault"), [(False, "no_frames"), (True, "missing_depth")]
+)
+def test_orbbec_reopens_a_stalled_stream_and_stops_its_reader(
+    orbbec_sdk, enable_depth, fault
+):
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
+    camera = _orbbec_camera(enable_depth=enable_depth)
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        stalled = orbbec_sdk.pipelines[0]
+        stalled.fault = fault
+        assert stalled.fault_observed.wait(timeout=2), "Capture never saw the fault"
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        orbbec_sdk.depth_scale_mm *= 2
+        # Age the last frame captured before the stall past max_age below.
+        time.sleep(0.2)
+
+        # The first attempt times out and reopens; the second reads the new
+        # session, so nothing captured before the stall may be returned.
+        recovered = camera.get_observation(timeout=0.5, attempts=2, max_age=0.1)
+        assert orbbec_sdk.opened == ["MOCK0002", "MOCK0002"]
+        assert stalled.stops == 1
+        assert not stalled.fault_reader.is_alive()
+        np.testing.assert_array_equal(recovered["frame"][20, 20], [9, 21, 43])
+        if enable_depth:
+            np.testing.assert_allclose(
+                np.unique(recovered["depth"]),
+                [2 * DEPTH_NEAR * DEPTH_SCALE, 2 * DEPTH_FAR * DEPTH_SCALE],
+            )
+        else:
+            assert set(recovered) == {"frame"}
+    finally:
+        camera.disconnect()
+    assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
+
+
+@pytest.mark.placement
+@pytest.mark.parametrize("node_rank", [None, 0])
+def test_orbbec_camera_has_local_remote_observation_parity(node_rank):
+    from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
+    from rlinf.robotics.parts.cameras import CameraInfo
+
+    with mocked_sdks():
+        camera = Camera.of(
+            CameraInfo(
+                name="scene",
+                serial_number="MOCK0002",
+                camera_type="orbbec",
+                resolution=(53, 39),
+                fps=30,
+                enable_depth=True,
+            ),
+            node_rank=node_rank,
+        )
+        try:
+            camera.connect()
+            observation = camera.get_observation(timeout=2)
+            assert observation["frame"].shape == (39, 53, 3)
+            assert observation["frame"].dtype == np.uint8
+            assert observation["depth"].shape == (39, 53)
+            assert observation["depth"].dtype == np.float32
+            np.testing.assert_array_equal(observation["frame"][20, 20], [32, 96, 192])
+            np.testing.assert_allclose(
+                np.unique(observation["depth"]),
+                [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE],
+            )
+        finally:
+            camera.disconnect()
+        assert not camera.is_connected
+
+
 def test_a_real_arm_runs_against_a_faked_sdk():
     from robot_mocks import mocked_sdks
 
@@ -3932,6 +4563,57 @@ def test_franky_healthy_tracking_can_switch_reset_and_rebuild_compliance(
     assert arm.get_observation()["tcp_pose"].shape == (7,)
 
 
+def test_franky_reset_skips_joint_motion_when_already_there(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    from robot_mocks.arms import HOME_JOINTS
+
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+    arm.reset_joint(list(HOME_JOINTS))
+    assert robot.moved == []
+
+
+def test_franky_reset_retries_after_acceleration_discontinuity(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+    original_move = robot.move
+    attempts = {"n": 0}
+
+    def move(motion):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError(
+                "libfranka: Move command aborted: motion aborted by reflex! "
+                '["joint_motion_generator_acceleration_discontinuity"]'
+            )
+        original_move(motion)
+
+    robot.move = move
+    recovery_count = robot.recovery_count
+    arm.reset_joint(_FRANKY_TEST_JOINTS)
+    assert attempts["n"] == 2
+    assert len(robot.moved) == 1
+    assert robot.recovery_count > recovery_count
+
+
+def test_franky_reset_does_not_retry_unrelated_motion_errors(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+
+    def move(_motion):
+        raise RuntimeError("libfranka: Move command aborted: cartesian_reflex")
+
+    robot.move = move
+    with pytest.raises(RuntimeError, match="cartesian_reflex"):
+        arm.reset_joint(_FRANKY_TEST_JOINTS)
+    assert robot.moved == []
+
+
 @pytest.mark.placement
 def test_the_bench_check_runs_a_whole_robot_on_fakes():
     from robot_mocks import mocked_sdks
@@ -3996,6 +4678,11 @@ def test_every_shipped_robot_runs_on_faked_sdks():
             "enable_human_in_loop": False,
             "is_dummy": False,
             "gripper_width_max": 0.08,
+        },
+        "DualYam": {
+            "node_rank": 0,
+            "left_can_channel": "can0",
+            "right_can_channel": "can1",
         },
     }
     with mocked_sdks():
@@ -5757,6 +6444,75 @@ def test_so101_takes_no_separately_wired_end_effector():
 
     with pytest.raises(TypeError, match="gripper_connection"):
         SO101Arm.declare("/dev/mock-so101", gripper_connection="/dev/ttyUSB0")
+
+
+def test_yam_sends_joints_and_gripper_as_one_target():
+    """i2rt takes the six joints and the gripper together, so each carries both."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.arms.yam import YamArm
+
+        arm = YamArm.declare("can0")
+        arm.connect()
+        try:
+            robot = made["i2rt.robots.get_robot"].robots[-1]
+            # A follower holds position and starts at the pose it stands at.
+            assert robot.settings["zero_gravity_mode"] is False
+            assert robot.commands[-1] == pytest.approx(robot.rest)
+
+            station = PartGroup(arm=arm)
+            station.send_action(
+                {
+                    "arm": {
+                        "joint_position": [0.1, 0.2, 0.3, 0.0, 0.0, 0.0],
+                        "end_effector": {"target": [0.25]},
+                    }
+                }
+            )
+            assert robot.commands[-1] == pytest.approx([0.1, 0.2, 0.3, 0, 0, 0, 0.25])
+
+            reading = station.get_observation()["arm"]
+            assert reading["arm_joint_position"] == pytest.approx(
+                [0.1, 0.2, 0.3, 0, 0, 0]
+            )
+            assert reading["end_effector"]["state"] == pytest.approx([0.25])
+        finally:
+            arm.disconnect()
+        assert robot.closed
+
+
+def test_yam_refuses_stale_feedback_but_still_holds():
+    """A read reports its feedback time and fails past the timeout; a hold still
+    reaches the arm."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.arms.yam import YamArm
+
+        arm = YamArm.declare("can0", feedback_timeout_s=0.05)
+        arm.connect()
+        robot = made["i2rt.robots.get_robot"].robots[-1]
+        server = robot._server_thread
+        try:
+            # The server is up but has stopped stamping feedback.
+            robot._stop_event.set()
+            server.join()
+            robot._server_thread = SimpleNamespace(
+                is_alive=lambda: True, join=lambda timeout=None: None
+            )
+            robot._joint_state.timestamp = stamp = time.time()
+            assert arm.get_state().timestamp == stamp
+            time.sleep(0.1)
+            with pytest.raises(RuntimeError, match="old"):
+                arm.get_observation()
+
+            sent = len(robot.commands)
+            arm.hold()
+            assert len(robot.commands) == sent + 1
+        finally:
+            robot._server_thread = server
+            arm.disconnect()
 
 
 def test_franky_preserves_a_complete_compliance_object(franky_arm):

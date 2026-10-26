@@ -77,6 +77,9 @@ class ReasoningDataset(Dataset):
         self.prompt_key = config.data.prompt_key
         self.answer_key = config.data.answer_key
         self.is_apply_chat_template = config.data.apply_chat_template
+        self.apply_chat_template_kwargs = config.data.get(
+            "apply_chat_template_kwargs", {}
+        )
         self.filter_prompt_by_length = config.data.get("filter_prompt_by_length", False)
         self.data_size = config.data.get("data_size", None)
         self.process_workers = config.data.get("process_workers", 1)
@@ -195,6 +198,7 @@ class ReasoningDataset(Dataset):
             texts,
             add_generation_prompt=True,
             tokenize=False,
+            **self.apply_chat_template_kwargs,
         )
         return prompts
 

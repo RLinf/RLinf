@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -937,20 +937,18 @@ configure_kunlun() {
         echo "[install.sh] kunlun: environment clone script not found at '$clone_script'." >&2
         exit 1
     fi
-    if [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ] || [ ! -x "/opt/venvs/$VENV_DIR/bin/python" ]; then
+    if [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -x "$VENV_DIR/bin/python" ]; then
         echo "[install.sh] kunlun: cloning the base environment into '$VENV_DIR'."
         bash "$clone_script" "$VENV_DIR"
     else
         echo "[install.sh] kunlun: reusing existing environment at '$VENV_DIR'."
     fi
 
-    local base_python="/opt/venvs/$VENV_DIR/bin/python"
-    if [ ! -x "$base_python" ] || [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ]; then
+    local base_python="$VENV_DIR/bin/python"
+    if [ ! -x "$base_python" ] || [ ! -f "$VENV_DIR/bin/activate" ]; then
         echo "[install.sh] kunlun: cloned environment at '$VENV_DIR' is missing python/activate." >&2
         exit 1
     fi
-    VENV_DIR="/opt/venvs/$VENV_DIR"
-
 
     local image_python_mm image_torch image_torch_public
     image_python_mm=$("$base_python" - <<'EOF'
@@ -1579,6 +1577,12 @@ apply_model_default_torch() {
     [ -z "$TORCH_VERSION" ] || return 0
     local model_torch="-"
     case "$MODEL" in
+        openpi)
+            if [ "$ENV_NAME" = "yam" ]; then
+                # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
+                model_torch="2.7.1"
+            fi
+            ;;
         sglang) model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}") ;;
     esac
     [ "$model_torch" != "-" ] || return 0
@@ -2457,6 +2461,43 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        yam)
+            create_and_sync_venv
+            install_common_embodied_deps
+            local yam_openpi_deps=(
+                "numpy<2" "transformers==4.53.2" "gym-aloha==0.1.3"
+                "mujoco==3.12.0" "dm-control==1.0.40"
+            )
+            (
+                local i2rt_spec i2rt_repo i2rt_build
+                i2rt_spec=$(sed -n 's/^i2rt @ git+//p' "$SCRIPT_DIR/embodied/envs/yam.txt")
+                i2rt_repo=$(clone_or_reuse_repo I2RT_PATH "$VENV_DIR/i2rt" "${i2rt_spec%@*}")
+                i2rt_build=$(mktemp -d)
+                trap 'rm -rf -- "$i2rt_build"' EXIT
+                git -C "$i2rt_repo" archive "${i2rt_spec##*@}" | tar -x -C "$i2rt_build"
+                # TODO(guozhen): relax these pinned OpenPI dependencies once rlinf-openpi-lite is adopted.
+                # OpenPI needs NumPy 1; Rerun is only used by SDK visualization examples.
+                python - "$i2rt_build" <<'EOF'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+project = root / "pyproject.toml"
+text = project.read_text()
+text = text.replace('"numpy==2.2.6"', '"numpy>=1.26.4,<=2.2.6"')
+text = text.replace('    "rerun-sdk>=0.32.2",\n', '')
+text = text.replace(
+    "[project.optional-dependencies]\n",
+    '[project.optional-dependencies]\nvisualization = ["rerun-sdk>=0.32.2"]\n',
+)
+project.write_text(text)
+(root / "override.txt").write_text(f"i2rt @ {root.as_uri()}\n")
+EOF
+                install_yam_env --override "$i2rt_build/override.txt" "${yam_openpi_deps[@]}"
+            )
+            uv pip install "rlinf-openpi==0.1.1" "${yam_openpi_deps[@]}"
+            install_flash_attn
+            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
@@ -3123,7 +3164,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
+        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
@@ -3166,6 +3207,9 @@ install_env_only() {
             ;;
         dosw1)
             install_dosw1_env
+            ;;
+        yam)
+            install_yam_env
             ;;
         polaris)
             install_polaris_env
@@ -3431,7 +3475,8 @@ install_behavior_env() {
 }
 
 install_metaworld_env() {
-    uv pip install metaworld==3.0.0
+    # Meta-World 3.0.0 writes an 11-wide weld row. MuJoCo 3.17.0 widened eq_data to 12.
+    uv pip install metaworld==3.0.0 "mujoco==3.16.0"
 }
 
 install_calvin_env() {
@@ -3753,12 +3798,12 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
-    # build_env into embodichain.lab.gym.utils.registration.
-    # <0.3 keeps CartPole at
-    # embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json.
-    # 0.3.0 moves that file and changes the gym/sim APIs this env uses.
-    uv pip install "embodichain>=0.2.4,<0.3" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # Only dexsim-engine needs wheels from the vendor package server.
+    # TensorDict 0.15 rejects get_proprioception()[:, active_joint_ids]: the
+    # joint axis is a feature dim, and CartPole init fails with IndexError.
+    uv pip install "embodichain==0.3.0" "tensordict>=0.6,<0.15" \
+        --find-links http://pyp.open3dv.site:2345/simple/dexsim-engine/ \
+        --trusted-host pyp.open3dv.site
 }
 
 install_dosw1_env() {
@@ -3792,6 +3837,14 @@ install_dosw1_env() {
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"
     uv pip install -e "$repo_root" --no-deps
+}
+
+install_yam_env() {
+    uv pip install \
+        --build-constraint "$SCRIPT_DIR/embodied/envs/yam-build-constraints.txt" \
+        -r "$SCRIPT_DIR/embodied/envs/yam.txt" "$@"
+    install_lerobot "$@"
+    use_opencv_gui_wheel
 }
 
 install_habitat_env() {
