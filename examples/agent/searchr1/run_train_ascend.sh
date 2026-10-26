@@ -16,7 +16,7 @@ export HCCL_NPU_SOCKET_PORT_RANGE=61000-61050
 # Let Ray preserve the Ascend visible-device environment.
 export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1
 
-CONFIG_NAME="${1:-train_deepseek_r1_ascend}"
+CONFIG_NAME="${1:-train_qwen2.5_ascend}"
 
 python "${REPO_PATH}/examples/agent/searchr1/train.py" \
     --config-path "${CONFIG_PATH}/config/" \
