@@ -1,0 +1,39 @@
+defaults:
+  - libero_object_0_art_openpi
+  - _self_
+
+algorithm:
+  art_branch_chunk_index: 8
+
+env:
+  train:
+    task_suite_name: libero_10
+    task_id_filter: [0]
+    reward_coef: 1.0
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 520
+  eval:
+    task_suite_name: libero_10
+    task_id_filter: [0]
+    reward_coef: 1.0
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 1040
+
+actor:
+  global_batch_size: 32
+  model:
+    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Long-SFT"
+  optim:
+    lr: 5.0e-7
+
+rollout:
+  model:
+    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Long-SFT"
+
+runner:
+  max_steps: 70
+  max_epochs: 70
+  val_check_interval: 5
+  save_interval: -1
+  logger:
+    experiment_name: libero_10_0_art_openpi

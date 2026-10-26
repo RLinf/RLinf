@@ -536,27 +536,37 @@ def test_art_state_sampling_recipe_composes(monkeypatch, art_config_cluster):
         validate_openpi_art_cfg(cfg)
 
 
+@pytest.mark.parametrize(
+    ("config_name", "task_suite"),
+    [
+        ("libero_object_0_art_openpi", "libero_object"),
+        ("libero_10_0_art_openpi", "libero_10"),
+    ],
+)
 @pytest.mark.parametrize("branch_index", [0, 8])
 def test_art_fixed_branch_recipe_composes(
-    monkeypatch, art_config_cluster, branch_index
+    monkeypatch, art_config_cluster, config_name, task_suite, branch_index
 ):
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
         cfg = compose(
-            config_name="libero_object_0_art_openpi",
+            config_name=config_name,
             overrides=[
                 f"algorithm.art_branch_chunk_index={branch_index}",
                 "actor.global_batch_size=32",
             ],
         )
     cfg = validate_cfg(cfg)
+    assert cfg.env.train.task_suite_name == cfg.env.eval.task_suite_name == task_suite
     assert cfg.env.train.art_branch_chunk_index == branch_index
     cfg.algorithm.art_first_chunk_only = True
     with pytest.raises(AssertionError, match="mutually exclusive"):
         validate_openpi_art_cfg(cfg)
     cfg.algorithm.art_first_chunk_only = False
-    cfg.algorithm.art_branch_chunk_index = 48
+    cfg.algorithm.art_branch_chunk_index = (
+        cfg.env.train.max_episode_steps // cfg.actor.model.num_action_chunks
+    )
     with pytest.raises(AssertionError, match="before the episode limit"):
         validate_openpi_art_cfg(cfg)
 
