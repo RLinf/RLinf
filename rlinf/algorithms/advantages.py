@@ -119,9 +119,9 @@ def compute_actor_gae_advantages_and_returns(
         torch.zeros_like(values[0])
         if bootstrap_values is None
         else bootstrap_values.float()
-    ) # shape = [batch]
-    advantages = torch.zeros_like(rewards) # shape = [time, batch]
-    gae = torch.zeros_like(next_value) # shape = [batch]
+    )  # shape = [batch]
+    advantages = torch.zeros_like(rewards)  # shape = [time, batch]
+    gae = torch.zeros_like(next_value)  # shape = [batch]
     for step in reversed(range(rewards.shape[0])):
         delta = rewards[step] + gamma * next_value - values[step]
         candidate = delta + gamma * gae_lambda * gae

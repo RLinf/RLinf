@@ -65,9 +65,11 @@ def test_searchr1_response_processing_preserves_behavior_tokens(
     worker.tokenizer = Tokenizer()
     worker.agentic_tokenizer = get_agentic_tokenizer(worker.tokenizer, "default")
     Cluster(num_nodes=1)
-    worker.generate_input_channel = Channel.create(f"ResponseInput-{truncate}-{budget}")
+    worker.generate_input_channel = Channel.create(
+        f"ResponseInput-{truncate}-{budget}-{return_logprobs}"
+    )
     worker.generate_output_channel = Channel.create(
-        f"ResponseOutput-{truncate}-{budget}"
+        f"ResponseOutput-{truncate}-{budget}-{return_logprobs}"
     )
     ids = list(map(ord, "<search>x</search>\n"))
     logprobs = [-0.01 * (i + 1) for i in range(len(ids))]
@@ -855,6 +857,7 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
             "reward": {"reward_type": "searchr1"},
             "agentloop": {"is_dynamic_rollout_batch": True},
             "runner": {"synchronous": True},
+            "data": {},
             "rollout": {"rollout_backend": "sglang"},
             "actor": {
                 "enable_dp_load_balance": True,
@@ -883,7 +886,7 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
     )
     validate_searchr1_cfg(cfg)
     cfg.algorithm[option] = value
-    with pytest.raises(ValueError, match="SearchR1 PPO requires"):
+    with pytest.raises(ValueError, match="SearchR1 (PPO )?requires"):
         validate_searchr1_cfg(cfg)
 
 
@@ -905,3 +908,24 @@ def test_rollout_config_needs_only_the_selected_backend(backend):
     assert validated[backend].attention_backend
     unused_backend = "vllm" if backend == "sglang" else "sglang"
     assert unused_backend not in validated
+
+
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "qwen2.5-1.5b-ppo-shared",
+        "qwen2.5-1.5b-ppo-split",
+        "qwen2.5-1.5b-ppo-separate",
+    ],
+)
+def test_searchr1_ci_recipes_validate(config_name):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_searchr1_cfg
+
+    config_dir = Path(__file__).resolve().parents[1] / "e2e_tests/agent/searchr1"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name=config_name)
+    validate_searchr1_cfg(cfg)
+    assert cfg.algorithm.n_minibatches == 1
+    assert cfg.runner.synchronous

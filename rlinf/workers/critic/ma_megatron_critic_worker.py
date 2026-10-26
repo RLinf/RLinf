@@ -169,7 +169,7 @@ class MAMegatronCritic(MegatronCritic):
 
         self._load_weight_and_optimizer()
         self._training_setup()
-        
+
         if self.enable_dp_load_balance:
             batch = self._dp_load_balance(batch)
         if self.use_profiler:

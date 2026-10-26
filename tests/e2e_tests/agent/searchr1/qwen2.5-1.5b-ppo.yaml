@@ -1,5 +1,5 @@
 defaults:
-- override hydra/job_logging: stdout
+  - override hydra/job_logging: stdout
 hydra:
   run:
     dir: .
@@ -32,7 +32,7 @@ runner:
   synchronous: true
 algorithm:
   group_size: 1
-  n_minibatches: 2
+  n_minibatches: 1
   training_batch_size_per_gpu: 1
   logprob_forward_micro_batch_size: 16
   recompute_logprobs: true

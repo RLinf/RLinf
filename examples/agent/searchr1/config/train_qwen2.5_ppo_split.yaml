@@ -1,6 +1,6 @@
 defaults:
-- train_qwen2.5_ppo
-- _self_
+  - train_qwen2.5_ppo
+  - _self_
 runner:
   experiment_name: searchr1-ppo-split
 cluster:
