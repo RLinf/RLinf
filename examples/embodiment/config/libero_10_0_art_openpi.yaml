@@ -12,12 +12,17 @@ env:
     reward_coef: 1.0
     max_episode_steps: 520
     max_steps_per_rollout_epoch: 520
+    init_params:
+      ignore_done: True
   eval:
     task_suite_name: libero_10
     task_id_filter: [0]
     reward_coef: 1.0
     max_episode_steps: 520
     max_steps_per_rollout_epoch: 1040
+    # RLinf owns the episode limit; exhausted eval slots keep stepping.
+    init_params:
+      ignore_done: True
 
 actor:
   global_batch_size: 32
