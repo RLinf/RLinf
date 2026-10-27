@@ -43,6 +43,8 @@ from typing import Any
 from fastapi import Request
 from pydantic import BaseModel
 
+from rlinf.utils.logging import get_logger
+
 
 class RlinfPayload(BaseModel):
     """Body of every /rlinf/* route: a pickled request object, b64-wrapped."""
@@ -93,8 +95,7 @@ def add_rlinf_routes(app) -> None:
     app.add_api_route(
         "/rlinf/abort_generation", rlinf_abort_generation, methods=["POST"]
     )
-    print(
+    get_logger().info(
         "RLinf control routes mounted: /rlinf/run_task_method, "
-        "/rlinf/sync_hf_weight, /rlinf/abort_generation",
-        flush=True,
+        "/rlinf/sync_hf_weight, /rlinf/abort_generation"
     )

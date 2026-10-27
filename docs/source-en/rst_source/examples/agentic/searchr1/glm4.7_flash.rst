@@ -120,6 +120,37 @@ Run the training with:
 
    bash examples/agent/searchr1/run_train.sh train_glm4.7_flash
 
+Multi-Node Training
+-------------------
+
+`examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml` runs the
+same recipe on two 8-GPU nodes, with one SGLang model instance (tensor parallel
+16, 8 GPUs per node) spanning both. Set up the Ray cluster as described in the
+:doc:`multi-node guide </rst_source/guides/multi_node>`: export a unique
+`RLINF_NODE_RANK` on every node (0 on the head) and activate the RLinf
+environment before `ray start`, so the Ray workers also find its tools on
+`PATH`. Then start the training from any node of the cluster:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_server
+
+The search tool worker runs on node 0 (`RLINF_NODE_RANK=0`), so
+`tools.search.server_addr` only needs to be reachable from that node.
+
+Cross-node rollout instances have these requirements:
+
+- `rollout.sglang.backend_type: server`; other backends reject a cross-node
+  layout at startup.
+- Every node carries the same number of rollout GPUs, and tp×pp is divisible
+  by that per-node count (16 and 8 here).
+- With SGLang `dp_size` greater than 1 across nodes, DP attention
+  (`enable_dp_attention: True`) is required.
+
+If NCCL stalls on cross-node transfers over RoCE/IB, make sure the GPUs on both
+nodes use NICs in the same subnet, for example by restricting `NCCL_IB_HCA`.
+Two full 8-GPU nodes with matching local GPU indices need no such setting.
+
 Visualization and Results
 -------------------------
 

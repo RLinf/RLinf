@@ -19,11 +19,10 @@ with an identical ``dist_init_addr`` pointing at a free port on the entry
 (node_rank 0) node. Everything except that host:port pair is locally
 derivable, so the only inter-process exchange is a single broadcast.
 
-The same instance-internal communication group is reused for a second
-broadcast phase: the entry signals "ready" once its
-``/health`` wait (and worker registration) passed, or "failed" with a brief
-reason when its own startup raised - so non-entry ranks stop waiting within
-seconds instead of idling until their timeout.
+The same instance group carries two more signals from the entry: "ready"
+or "failed" after startup, so non-entry ranks fail fast instead of timing
+out; and "rollout finished" after each step's offload, which non-entry
+ranks wait for while holding their device lock.
 """
 
 import asyncio
@@ -58,6 +57,7 @@ first.
 
 _READY = "ready"
 _FAILED = "failed"
+_ROLLOUT_DONE = "rollout_done"
 _REASON_TRUNCATE = 500
 
 
@@ -167,6 +167,83 @@ async def broadcast_instance_readiness(
         ) from e
 
 
+async def _wait_for_entry_signal(
+    worker: Worker,
+    placement: _Placement,
+    *,
+    child_alive: Callable[[], bool],
+    poll_child_failure: Callable[[], Optional[tuple[Optional[int], Optional[str]]]],
+    handle_payload: Callable[[object], None],
+    timeout_s: Optional[float],
+    timeout_error: Callable[[], RuntimeError],
+) -> None:
+    """Wait for the entry's broadcast while watching this rank's subprocess.
+
+    Shared by the readiness wait and the per-step rollout wait: the
+    broadcast from the entry rank of this model instance races a liveness
+    poll of this rank's own sglang server subprocess. Whichever completes
+    first wins:
+
+    - broadcast arrives -> ``handle_payload(payload)`` decides the outcome;
+    - own subprocess exits first -> raise, naming the instance, node rank,
+      exit code and whatever ``launch_server`` wrote to the ready pipe
+      (may be empty; the full traceback lives in this rank's worker log).
+
+    Args:
+        worker: This (non-entry) rollout worker process.
+        placement: The rollout component placement (layout source).
+        child_alive: Liveness probe for this rank's sglang server
+            subprocess (see ``SGLangServerProcess.is_child_alive``).
+        poll_child_failure: Dead-child probe returning
+            ``(exitcode, pipe_error)`` or ``None`` while alive.
+        handle_payload: Validates the broadcast payload; raises on
+            unexpected payloads, returns for accepted ones.
+        timeout_s: Total budget or ``None`` to wait indefinitely (the
+            per-step rollout wait has no reliable upper bound).
+        timeout_error: Builds the error raised when ``timeout_s`` elapses
+            with neither the broadcast nor a subprocess exit observed;
+            must be non-``None`` whenever ``timeout_s`` is not ``None``.
+    """
+    assert (timeout_s is None) == (timeout_error is None), (
+        f"timeout_s and timeout_error must be set together (timeout_s={timeout_s!r})."
+    )
+    groups, src, model_instance_id = _instance_comm_group(worker, placement)
+    node_rank = placement.rollout_node_rank_in_model_instance(worker._rank)
+    nnodes = placement.rollout_nnodes_per_model_instance
+    work = worker.broadcast(object=None, groups=groups, src=src, async_op=True)
+
+    async def _poll_child() -> Optional[tuple[Optional[int], Optional[str]]]:
+        while True:
+            if not child_alive():
+                return poll_child_failure()
+            await asyncio.sleep(1.0)
+
+    waiter = asyncio.ensure_future(work.async_wait())
+    poller = asyncio.ensure_future(_poll_child())
+    try:
+        done, _ = await asyncio.wait(
+            {waiter, poller}, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED
+        )
+        if poller in done:
+            # Do NOT cancel the broadcast work (AsyncFuncWork has no
+            # cancel; the run is expected to stop after this error).
+            failure = poller.result()
+            exitcode, child_error = failure if failure else (None, None)
+            raise RuntimeError(
+                f"sglang server subprocess of model instance "
+                f"{model_instance_id} exited on node_rank {node_rank} of "
+                f"{nnodes} (exitcode {exitcode}): "
+                f"{child_error or '<no exception captured>'}. See this "
+                f"rank's worker log for the full traceback."
+            )
+        if waiter in done:
+            handle_payload(waiter.result())
+            return
+        raise timeout_error()
+    finally:
+        poller.cancel()
+
+
 async def wait_for_instance_readiness(
     worker: Worker,
     placement: _Placement,
@@ -200,50 +277,85 @@ async def wait_for_instance_readiness(
     groups, src, model_instance_id = _instance_comm_group(worker, placement)
     node_rank = placement.rollout_node_rank_in_model_instance(worker._rank)
     nnodes = placement.rollout_nnodes_per_model_instance
-    work = worker.broadcast(object=None, groups=groups, src=src, async_op=True)
 
-    async def _poll_child() -> Optional[tuple[Optional[int], Optional[str]]]:
-        while True:
-            if not child_alive():
-                return poll_child_failure()
-            await asyncio.sleep(1.0)
-
-    waiter = asyncio.ensure_future(work.async_wait())
-    poller = asyncio.ensure_future(_poll_child())
-    try:
-        done, _ = await asyncio.wait(
-            {waiter, poller}, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED
-        )
-        if poller in done:
-            # Do NOT cancel the broadcast work (AsyncFuncWork has no
-            # cancel; the run is expected to stop after this error).
-            failure = poller.result()
-            exitcode, child_error = failure if failure else (None, None)
+    def _handle_readiness(payload: object) -> None:
+        if isinstance(payload, tuple) and payload[:1] == (_READY,):
+            return
+        if isinstance(payload, tuple) and payload[:1] == (_FAILED,):
             raise RuntimeError(
-                f"sglang server subprocess of model instance "
-                f"{model_instance_id} exited on node_rank {node_rank} of "
-                f"{nnodes} (exitcode {exitcode}): "
-                f"{child_error or '<no exception captured>'}. See this "
-                f"rank's worker log for the full traceback."
-            )
-        if waiter in done:
-            payload = waiter.result()
-            if isinstance(payload, tuple) and payload[:1] == (_READY,):
-                return
-            if isinstance(payload, tuple) and payload[:1] == (_FAILED,):
-                raise RuntimeError(
-                    f"Entry node of model instance {model_instance_id} "
-                    f"failed to start: {payload[1]}"
-                )
-            raise RuntimeError(
-                f"Unexpected readiness payload {payload!r} from the entry "
-                f"of model instance {model_instance_id}."
+                f"Entry node of model instance {model_instance_id} "
+                f"failed to start: {payload[1]}"
             )
         raise RuntimeError(
+            f"Unexpected readiness payload {payload!r} from the entry "
+            f"of model instance {model_instance_id}."
+        )
+
+    def _timeout_error() -> RuntimeError:
+        return RuntimeError(
             f"Readiness wait for model instance {model_instance_id} timed "
             f"out after {timeout_s}s (node_rank {node_rank} of {nnodes}): "
             f"the entry node's /health neither passed nor reported "
             f"failure, and the local sglang subprocess is still alive."
         )
-    finally:
-        poller.cancel()
+
+    await _wait_for_entry_signal(
+        worker,
+        placement,
+        child_alive=child_alive,
+        poll_child_failure=poll_child_failure,
+        handle_payload=_handle_readiness,
+        timeout_s=timeout_s,
+        timeout_error=_timeout_error,
+    )
+
+
+async def signal_rollout_finished(
+    worker: Worker,
+    placement: _Placement,
+) -> None:
+    """Entry side: tell the non-entry ranks this step's rollout is done.
+
+    Sent on every step after offload, or without it when nothing is
+    offloaded. No timeout: every rank of the instance enters ``rollout()``
+    on every step.
+    """
+    groups, src, _ = _instance_comm_group(worker, placement)
+    work = worker.broadcast(
+        object=(_ROLLOUT_DONE,), groups=groups, src=src, async_op=True
+    )
+    await work.async_wait()
+
+
+async def wait_for_rollout_finished(
+    worker: Worker,
+    placement: _Placement,
+    *,
+    child_alive: Callable[[], bool],
+    poll_child_failure: Callable[[], Optional[tuple[Optional[int], Optional[str]]]],
+) -> None:
+    """Non-entry side: wait for the entry's rollout-finished signal.
+
+    No timeout, since a step's rollout has no reliable upper bound; a
+    failing entry surfaces through Ray. Watching this rank's own sglang
+    subprocess reports a local server death within seconds, which the
+    entry would only see later as a stuck collective.
+    """
+    _, _, model_instance_id = _instance_comm_group(worker, placement)
+
+    def _handle_payload(payload: object) -> None:
+        if not (isinstance(payload, tuple) and payload[:1] == (_ROLLOUT_DONE,)):
+            raise RuntimeError(
+                f"Unexpected rollout-finished payload {payload!r} from the "
+                f"entry of model instance {model_instance_id}."
+            )
+
+    await _wait_for_entry_signal(
+        worker,
+        placement,
+        child_alive=child_alive,
+        poll_child_failure=poll_child_failure,
+        handle_payload=_handle_payload,
+        timeout_s=None,
+        timeout_error=None,
+    )

@@ -24,9 +24,7 @@ types appear in the signatures. Backend-specific imports belong in the
 backend implementations.
 
 `SGLangWorker` and `VLLMWorker` intentionally keep separate orchestration;
-this ABC is the shared contract, not shared implementation. Unifying the
-two worker classes would be an explicit follow-up, not a consequence of
-this interface.
+this ABC is the shared contract, not shared implementation.
 """
 
 from abc import ABC, abstractmethod
@@ -46,8 +44,8 @@ class RlinfContext:
 
     Fields mirror the real signature of the sglang-side entry point
     (`init_rlinf_worker(parent_address, weight_reload, placement, config,
-    model_instance_id)`) but are all RLinf-neutral types, so future backends
-    (e.g. vLLM) can consume the same data.
+    model_instance_id)`) but are all RLinf-neutral types, so other backends
+    can consume the same data.
     """
 
     parent_address: WorkerAddress
@@ -102,8 +100,7 @@ class RolloutBackend(ABC):
         """Release backend-held GPU memory regions.
 
         Tag values are defined by each backend (sglang: weights / kv_cache /
-        cuda_graph); cross-backend alignment of tag semantics is deferred to
-        the vLLM round.
+        cuda_graph).
         """
 
     @abstractmethod

@@ -32,11 +32,13 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
-from rlinf.workers.rollout.sglang.backends import SGLangEngineBackend, make_backend
+from rlinf.workers.rollout.sglang.backends import make_backend
 from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
     negotiate_model_instance_dist_addr,
+    signal_rollout_finished,
     wait_for_instance_readiness,
+    wait_for_rollout_finished,
 )
 from rlinf.workers.rollout.utils import (
     MetaInfoStatsCollector,
@@ -257,22 +259,6 @@ class SGLangWorker(Worker):
         self.log_on_first_rank(f"{server_args=}")
         return dataclasses.asdict(server_args)
 
-    @property
-    def _engine(self):
-        """Compat property: only available with the Engine backend.
-
-        Kept for `SGLangAgentWorkerWithHTTPServer` (the serving_mode=
-        worker_http path). TODO: remove this compat property once the
-        worker_http path has test coverage.
-        """
-        if not isinstance(self._backend, SGLangEngineBackend):
-            raise RuntimeError(
-                "self._engine is only available with "
-                "rollout.sglang.backend_type=engine; serving_mode=worker_http "
-                "does not support backend_type=server"
-            )
-        return self._backend.engine
-
     def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
         # Finalize meta_info statistics collectors if they exist
@@ -350,11 +336,9 @@ class SGLangWorker(Worker):
         )
         backend_type = self._cfg_rollout.sglang.get("backend_type", "engine")
         model_instance_id = self._placement.rollout_model_instance_id(self._rank)
-        # Multi-node server mode: every rank of a model instance must launch
-        # its sglang subprocess with an identical dist_init_addr pointing at
-        # the entry node, so the ranks rendezvous (one broadcast) before the
-        # backend spawns anything. Single-node layouts inject nothing:
-        # no rendezvous, no multi-node kwargs.
+        # A cross-node instance needs the same dist_init_addr (on the entry
+        # node) on every rank, agreed on before the backend spawns anything.
+        # Single-node layouts skip this.
         server_multi_node_kwargs = {}
         multi_node_server = False
         if backend_type == "server":
@@ -419,7 +403,9 @@ class SGLangWorker(Worker):
         signal mask the original error) and re-raise; on success, broadcast
         ``("ready",)``. Non-entry: spawn + 2s check (inside
         ``initialize()``), then wait for the entry's signal while polling
-        own subprocess liveness.
+        own subprocess liveness. Any failure after the subprocess is up
+        shuts the backend down first - never rely on the actor teardown
+        path to reap the sglang process tree.
         """
         if self._is_model_instance_entry:
             try:
@@ -440,17 +426,35 @@ class SGLangWorker(Worker):
                         "timeout instead."
                     )
                 raise
-            await broadcast_instance_readiness(
-                self, self._placement, ready=True, timeout_s=300.0
-            )
+            try:
+                await broadcast_instance_readiness(
+                    self, self._placement, ready=True, timeout_s=300.0
+                )
+            except BaseException:
+                self._shutdown_backend_quietly()
+                raise
             return
         await self._backend.initialize()
-        await wait_for_instance_readiness(
-            self,
-            self._placement,
-            child_alive=self._backend.is_server_process_alive,
-            poll_child_failure=self._backend.poll_server_process_failure,
-        )
+        try:
+            await wait_for_instance_readiness(
+                self,
+                self._placement,
+                child_alive=self._backend.is_server_process_alive,
+                poll_child_failure=self._backend.poll_server_process_failure,
+            )
+        except BaseException:
+            self._shutdown_backend_quietly()
+            raise
+
+    def _shutdown_backend_quietly(self) -> None:
+        """Shut the backend down without masking the in-flight error."""
+        try:
+            self._backend.shutdown()
+        except Exception:
+            self.log_warning(
+                "Backend shutdown after an initialization failure raised; "
+                "the original error is kept."
+            )
 
     async def offload_engine(self):
         """
@@ -575,12 +579,22 @@ class SGLangWorker(Worker):
         return seq_group_info
 
     async def rollout(self, input_channel: Channel, output_channel: Channel):
-        # Non-entry: no channel I/O, but still record the "rollout" timer
-        # under the entry's key: the runner pops it on every rank
-        # (max-reduced, so ~0 is harmless).
+        # The device lock only covers this process's GPUs, so non-entry
+        # ranks of a cross-node instance hold theirs until the entry signals
+        # that the instance's offload is done. They do no channel I/O; their
+        # "rollout" timer spans the wait and the runner max-reduces it.
         if not self._is_model_instance_entry:
-            with self.worker_timer("rollout"):
-                return
+            if self._placement.rollout_nnodes_per_model_instance == 1:
+                with self.worker_timer("rollout"):
+                    return
+            with self.device_lock, self.worker_timer("rollout"):
+                await wait_for_rollout_finished(
+                    self,
+                    self._placement,
+                    child_alive=self._backend.is_server_process_alive,
+                    poll_child_failure=self._backend.poll_server_process_failure,
+                )
+            return
         self.log_on_first_rank("Start generation...")
         request: RolloutRequest = input_channel.get()
         groups = request.to_seq_group_infos()
@@ -641,6 +655,11 @@ class SGLangWorker(Worker):
                 if self._use_auto_scheduler:
                     await self._scheduler.report_offloaded()
 
+            # Cross-node: release the non-entry ranks' device locks. Sent on
+            # every step, even when nothing was offloaded.
+            if self._placement.rollout_nnodes_per_model_instance > 1:
+                await signal_rollout_finished(self, self._placement)
+
     async def generate_and_send(
         self,
         output_channel: Channel,
@@ -648,9 +667,8 @@ class SGLangWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
     ):
-        # Second line of defense behind rollout_serverless' entry gate:
-        # this is a fire-and-forget task, so an
-        # exception here would be swallowed - return instead.
+        # Backs up rollout_serverless' entry gate: an exception in this
+        # unawaited task would be lost, so return instead of raising.
         if not self._is_model_instance_entry:
             return
         final_sampling_params = self._sampling_params
@@ -659,11 +677,9 @@ class SGLangWorker(Worker):
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        # This is a fire-and-forget task: nobody awaits it, so an exception
-        # would be swallowed and the requesting agent loop would wait on its
-        # channel key forever. Put an error payload on the same key instead,
-        # so the consumer raises. The try covers generation AND response
-        # parsing: a malformed result dict would hang the loop the same way.
+        # Nobody awaits this task: on any failure (generation or result
+        # parsing), put an error payload on the same channel key so the
+        # requesting agent loop raises instead of waiting forever.
         try:
             result = await self._backend.async_generate(
                 input_ids=prompt_ids,

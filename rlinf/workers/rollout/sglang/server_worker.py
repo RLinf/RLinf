@@ -15,37 +15,32 @@
 
 from __future__ import annotations
 
-import multiprocessing as mp
-import os
-import signal
 from typing import Optional
 
-import ray.util
-import requests
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.scheduler import Worker
 
-from .process import (
-    MAX_SGLANG_HTTP_PORT,
-    _run_sglang_server,
-    _wait_for_http_health,
-)
+from .process import SGLangServerProcess
 
 
 class SGLangServerWorker(Worker):
     """Worker that owns one sglang HTTP server process.
+
+    Thin delegation to :class:`SGLangServerProcess`: this Worker exists so
+    the server fits the scheduler's worker-group lifecycle (Ray actor,
+    placement, channels); the spawn/monitor/terminate orchestration lives
+    in the process class, shared with the server-mode rollout backend.
 
     Args:
         config: Full RLinf ``DictConfig``. Kept for parity with other
             workers / future use; the sglang server itself is configured
             entirely from ``sglang_cfg``.
         sglang_cfg: The sub-config block whose keys are forwarded verbatim
-            as ``ServerArgs(**)`` kwargs — except ``host`` / ``port`` /
-            ``dist_init_addr``, which are filled in at runtime here.
-            Typically ``config.rollout.server`` when used inside a rollout,
-            but any compatible block works (the server isn't tied to the
-            rollout pipeline).
+            as ``ServerArgs(**)`` kwargs — except ``host`` / ``port``, which
+            are filled in at runtime here. Typically ``config.rollout.server``
+            when used inside a rollout, but any compatible block works
+            (the server isn't tied to the rollout pipeline).
         bind_host: Optional explicit bind host. If ``None``, we bind to
             ``0.0.0.0`` so the router worker on another node can reach us.
         advertise_host: Optional explicit advertise host (the URL we
@@ -62,142 +57,48 @@ class SGLangServerWorker(Worker):
         server_type: str = "srt",
     ):
         Worker.__init__(self)
-        if server_type not in ("srt", "embodied"):
-            raise ValueError(
-                f"Unsupported server_type {server_type!r}; "
-                "expected 'srt' (language model) or 'embodied' (VLA/diffusion)."
-            )
         self._cfg = config
         self._sglang_cfg = sglang_cfg
         self._bind_host = bind_host
         self._advertise_host = advertise_host
         self._server_type = server_type
 
-        self._server_proc: Optional[mp.Process] = None
-        self._server_port: Optional[int] = None
-        self._ready_pipe = None
+        self._process: Optional[SGLangServerProcess] = None
 
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
-        On failure the subprocess is torn down via ``stop`` before
-        ``RuntimeError`` is re-raised, so the caller can retry or fail fast
-        without leaking a zombie sglang process.
+        A failed spawn is cleaned up by ``SGLangServerProcess.start``
+        itself, so the caller never sees a leaked zombie sglang process.
 
         Raises:
             RuntimeError: if the server fails to become healthy.
         """
-        assert self._server_proc is None, "sglang server already initialized."
-
-        # Acquire two distinct free ports: one for HTTP, one for the
-        # internal torch.distributed bootstrap. ``acquire_free_port``
-        # uses the worker's PortLock so neither port collides with any
-        # other worker on this node.
-        http_port = self.acquire_free_port(max_port_num=MAX_SGLANG_HTTP_PORT)
-        dist_port = self.acquire_free_port()
+        assert self._process is None, "sglang server already initialized."
 
         server_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True) or {}
-        server_kwargs["host"] = self._bind_host
-        server_kwargs["port"] = http_port
-
-        self.log_info(
-            f"Launching sglang server (server_type={self._server_type}): "
-            f"http=:{http_port}, dist_port={dist_port}, "
-            f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
+        self._process = SGLangServerProcess(
+            server_args_kwargs=server_kwargs,
+            acquire_free_port=self.acquire_free_port,
+            server_type=self._server_type,
+            bind_host=self._bind_host,
+            advertise_host=self._advertise_host,
+            log_info=self.log_info,
+            log_error=self.log_error,
         )
-
-        # Pin the spawned server to torch's bundled CUDA runtime. With
-        # `enable_memory_saver`, sglang LD_PRELOADs a torch_memory_saver hook
-        # that has no RUNPATH, so it would otherwise resolve libcudart via
-        # ld.so.cache to the (older) system CUDA and crash torch with
-        # "undefined symbol: cudaGetDriverEntryPointByVersion". LD_LIBRARY_PATH
-        # is searched before ld.so.cache; the spawned child inherits it.
-        try:
-            import nvidia.cuda_runtime
-
-            _cudart_lib = os.path.join(
-                os.path.dirname(nvidia.cuda_runtime.__file__), "lib"
-            )
-            existing_paths = [
-                path
-                for path in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-                if path and path != _cudart_lib
-            ]
-            os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
-                [_cudart_lib, *existing_paths]
-            )
-        except ImportError:
-            # torch built against system/conda CUDA (no bundled runtime).
-            pass
-
-        ctx = mp.get_context("spawn")
-        parent_pipe, child_pipe = ctx.Pipe(duplex=False)
-        self._ready_pipe = parent_pipe
-        proc = ctx.Process(
-            target=_run_sglang_server,
-            args=(self._server_type, server_kwargs, dist_port, child_pipe),
-            daemon=False,
-        )
-        proc.start()
-        # We hand the write end to the child; close ours so the read end
-        # signals EOF if the child dies before sending anything.
-        child_pipe.close()
-
-        self._server_proc = proc
-        self._server_port = http_port
-        # Resolve the host we want to advertise to the router *before*
-        # we block on /health so a slow server doesn't gate URL lookup.
-        if self._advertise_host is None:
-            self._advertise_host = ray.util.get_node_ip_address()
-
-        try:
-            _wait_for_http_health(
-                host=self._advertise_host,
-                port=http_port,
-                is_alive=lambda: self._server_proc.is_alive(),
-            )
-        except RuntimeError as e:
-            self.log_error(f"sglang server failed to become healthy: {e!r}")
-            self.stop()
-            raise
-        self.log_info(f"sglang server ready at {self.get_server_url()}")
+        self._process.start()
 
     def get_server_url(self) -> str:
         """Return the advertised ``http://host:port`` URL for this server."""
-        assert self._server_port is not None, "init_server() has not been called."
-        host = self._advertise_host or "0.0.0.0"
-        return f"http://{host}:{self._server_port}"
+        assert self._process is not None, "init_server() has not been called."
+        return self._process.get_server_url()
 
     def is_healthy(self) -> bool:
-        if self._server_proc is None or not self._server_proc.is_alive():
-            return False
-        try:
-            url = f"http://{self._advertise_host}:{self._server_port}/health"
-            return (
-                requests.get(
-                    url, timeout=2, proxies={"http": None, "https": None}
-                ).status_code
-                == 200
-            )
-        except requests.exceptions.RequestException:
-            return False
+        return self._process is not None and self._process.is_healthy()
 
     def stop(self) -> None:
         """Terminate the sglang server subprocess (and its process group)."""
-        proc = self._server_proc
-        if proc is None:
+        if self._process is None:
             return
-        self.log_info(f"Stopping sglang server pid={proc.pid}.")
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            proc.terminate()
-        proc.join(timeout=10)
-        if proc.is_alive():  # pragma: no cover — best-effort kill
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
-            proc.join(timeout=5)
-        self._server_proc = None
-        self._server_port = None
+        self._process.terminate()
+        self._process = None

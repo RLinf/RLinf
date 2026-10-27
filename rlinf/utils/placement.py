@@ -25,7 +25,6 @@ from rlinf.scheduler import (
     FlexiblePlacementStrategy,
     PackedPlacementStrategy,
 )
-from rlinf.scheduler.cluster.cluster import ClusterEnvVar
 
 
 class PlacementMode(Enum):
@@ -158,12 +157,9 @@ def rollout_backend_supports_cross_node_instances(rollout_cfg: DictConfig) -> bo
     """Whether the configured rollout backend can host cross-node instances.
 
     Single definition site of the backend whitelist for rollout model
-    instances spanning multiple nodes. This is the
-    CURRENT-VERSION capability boundary, not a design verdict: only the
-    sglang server backend implements the multi-node path (rendezvous /
-    ``dist_init_addr`` / entry-process RPC gating). vLLM cross-node is a
-    planned extension - when it lands, extend only this function and drop
-    the matching rejection in one place.
+    instances spanning multiple nodes. Only the sglang server backend
+    implements the multi-node path (rendezvous, ``dist_init_addr``,
+    entry-process RPC gating).
     """
     backend = rollout_cfg.get("rollout_backend", None)
     if backend != "sglang":
@@ -190,17 +186,17 @@ def _assert_cross_node_backend_supported(
     assert rollout_backend_supports_cross_node_instances(rollout_cfg), (
         f"Cross-node rollout model instances "
         f"(nnodes_per_model_instance={layout.nnodes_per_model_instance}) are "
-        f"only supported by the sglang server backend in the current version "
+        f"only supported by the sglang server backend "
         f"(configured: rollout_backend={backend!r}"
         + (f", sglang.backend_type={backend_type!r}" if backend == "sglang" else "")
-        + "). vLLM cross-node support is a planned extension."
+        + ")."
     )
 
 
 def _rollout_gpu_groups_by_node(
     rollout_gpus: list[int], node_accelerator_ranks: list[list[int]]
 ) -> list[list[int]]:
-    """Group the rollout hardware ranks by (pseudo-)physical node.
+    """Group the rollout hardware ranks by physical node.
 
     Takes the per-node accelerator ranks as plain data (captured at
     placement construction), not a live ``Cluster``, so the
@@ -211,31 +207,14 @@ def _rollout_gpu_groups_by_node(
     heterogeneous clusters and clusters with accelerator-less nodes). Nodes
     carrying no rollout GPUs are skipped.
 
-    Test hook: `RLINF_SIMULATED_GPUS_PER_NODE` chunks each physical node's
-    accelerators into pseudo-nodes of that size, so one machine can simulate
-    a multi-node layout. The hook fakes a node-size (cluster-layer) fact only;
-    the rollout layer always derives.
-
-    Returns one list of rollout ranks per (pseudo-)node, in node order. The
+    Returns one list of rollout ranks per node, in node order. The
     shares may be UNEQUAL: whether that is legal is decided downstream by
     `_derive_rollout_node_layout` (equal shares are only required when a
     model instance spans nodes).
     """
-    node_accel_ranks = node_accelerator_ranks
-    simulated = Cluster.get_sys_env_var(ClusterEnvVar.SIMULATED_GPUS_PER_NODE)
-    if simulated is not None:
-        node_size = int(simulated)
-        assert node_size > 0, (
-            f"{ClusterEnvVar.SIMULATED_GPUS_PER_NODE} must be a positive "
-            f"integer, got '{simulated}'."
-        )
-        flat_ranks = [rank for ranks in node_accel_ranks for rank in ranks]
-        node_accel_ranks = [
-            flat_ranks[i : i + node_size] for i in range(0, len(flat_ranks), node_size)
-        ]
     rollout_set = set(rollout_gpus)
     groups = []
-    for ranks in node_accel_ranks:
+    for ranks in node_accelerator_ranks:
         share = [rank for rank in ranks if rank in rollout_set]
         if share:
             groups.append(share)
@@ -768,8 +747,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     @property
     def rollout_gpus_per_node(self) -> int:
         # Rollout GPUs per node, derived from component_placement; only
-        # defined for cross-node layouts. RLINF_SIMULATED_GPUS_PER_NODE
-        # (tests only) overrides the node size.
+        # defined for cross-node layouts.
         if not self._rollout_layout.cross_node:
             raise RuntimeError(
                 "rollout_gpus_per_node is only defined when one rollout "

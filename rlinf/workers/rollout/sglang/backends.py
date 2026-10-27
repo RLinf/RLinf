@@ -14,13 +14,9 @@
 
 """sglang implementations of :class:`RolloutBackend`.
 
-`SGLangEngineBackend` wraps the in-process sglang :class:`Engine`. Every
-method body is a verbatim move of the corresponding `self._engine.*` call
-from `SGLangWorker`; that equivalence is a hard constraint so Engine/Server
-comparison stays attributable.
-
+`SGLangEngineBackend` wraps the in-process sglang :class:`Engine`.
 `SGLangServerBackend` runs the same rollout contract against a spawned
-sglang HTTP server subprocess (plan: server mode).
+sglang HTTP server subprocess.
 """
 
 import asyncio
@@ -60,10 +56,10 @@ class SGLangEngineBackend(RolloutBackend):
     def tokenizer_manager(self):
         """The sglang TokenizerManager of the wrapped Engine.
 
-        sglang-specific accessor: consumers that need the
-        real sglang object (e.g. `SGLangAgentWorkerWithHTTPServer`) go through
-        here instead of reaching into backend internals. Currently reached
-        indirectly via `SGLangWorker._engine`.
+        sglang-specific accessor for consumers that need the real sglang
+        object: `SGLangAgentWorkerWithHTTPServer` (the serving_mode=
+        worker_http path) drives its OpenAI-compatible chat endpoints
+        through here.
         """
         return self.engine.tokenizer_manager
 
@@ -217,6 +213,15 @@ class SGLangServerBackend(RolloutBackend):
             log_error=self._log_error,
         )
         self._process.start()
+        try:
+            await self._initialize_entry_frontend()
+        except BaseException:
+            # start() already succeeded: without this the sglang process
+            # tree would linger until the actor teardown path reaps it.
+            self.shutdown()
+            raise
+
+    async def _initialize_entry_frontend(self) -> None:
         if self._node_rank != 0:
             # Non-entry nodes have no HTTP frontend. The entry's
             # init_rlinf_worker still reaches every scheduler: sglang
@@ -251,12 +256,10 @@ class SGLangServerBackend(RolloutBackend):
         image_data: Optional[list],
         return_logprob: list[bool] | bool,
     ) -> dict:
-        # The client's keep-alive is now shorter than the server's (uvicorn
-        # closes idle keep-alive connections after 5s), but a request can
-        # still race a closing connection or hit a transient disconnect and
-        # get ECONNRESET. Resending is safe for RL sampling (equivalent to
-        # drawing another sample), so retry connection-level errors a few
-        # times. HTTP status errors are not retried.
+        # A request can still race the server closing an idle keep-alive
+        # connection, or hit a transient disconnect. Resending only draws
+        # another sample, so retry connection errors; HTTP status errors
+        # are not retried.
         max_retries = 3
         for attempt in range(max_retries):
             try:

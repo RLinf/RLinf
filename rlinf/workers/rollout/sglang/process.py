@@ -26,6 +26,7 @@ from typing import Callable, Optional
 import requests
 
 from rlinf.utils.http_client import no_proxy_env
+from rlinf.utils.logging import get_logger
 
 # How often the parent-death watchdog in the spawned server child checks
 # whether the spawning actor is still alive (seconds).
@@ -81,7 +82,8 @@ def _run_sglang_server(
     ready_pipe,
     apply_rlinf_patch: bool = False,
     dist_init_addr: Optional[str] = None,
-    parent_pid: Optional[int] = None,
+    *,
+    parent_pid: int,
 ) -> None:
     """Child-process entrypoint: launches a single sglang HTTP server.
 
@@ -94,8 +96,7 @@ def _run_sglang_server(
     ``parent_pid`` is the pid of the spawning process (the Ray actor). The
     child watches it from a daemon thread (see ``_watch_parent``) so the
     whole server tree dies even when the actor is SIGKILLed and no cleanup
-    callback ever runs. When ``None`` (the legacy
-    ``SGLangServerWorker.init_server`` call site) no watchdog is started.
+    callback ever runs.
 
     With ``apply_rlinf_patch`` the child first imports the RLinf sglang
     patch module (so the Patcher rewrites the module-level bindings loaded
@@ -112,14 +113,13 @@ def _run_sglang_server(
     except OSError:
         pass
 
-    if parent_pid is not None:
-        watchdog = threading.Thread(
-            target=_watch_parent,
-            args=(parent_pid,),
-            name="sglang-server-parent-watchdog",
-            daemon=True,
-        )
-        watchdog.start()
+    watchdog = threading.Thread(
+        target=_watch_parent,
+        args=(parent_pid,),
+        name="sglang-server-parent-watchdog",
+        daemon=True,
+    )
+    watchdog.start()
 
     _ensure_no_proxy_for_localhost()
     os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
@@ -173,7 +173,7 @@ def _run_sglang_server(
                 launch_kwargs["run_scheduler_process_func"] = (
                     sgl_scheduler.run_scheduler_process
                 )
-                print("RLinf patch applied to sglang server subprocess", flush=True)
+                get_logger().info("RLinf patch applied to sglang server subprocess")
             try:
                 launch_server(server_args, **launch_kwargs)
             except Exception as e:  # pragma: no cover — surface to parent
@@ -222,14 +222,11 @@ MAX_SGLANG_HTTP_PORT = 65535 - SGLANG_GRPC_PORT_OFFSET
 class SGLangServerProcess:
     """Owns one sglang HTTP server subprocess: spawn, health-wait, kill.
 
-    Standalone counterpart of the ``SGLangServerWorker.init_server`` /
-    ``shutdown`` orchestration, for callers that are not a ``Worker``
-    (the server backend layer). ``acquire_free_port`` is
-    injected so port allocation still goes through the caller's port lock.
-
-    TODO: this orchestration is duplicated in ``SGLangServerWorker``;
-    consolidate the two once ``SGLangServerWorker`` has test coverage
-    or is retired.
+    Single implementation of the spawn/monitor/terminate orchestration:
+    callers that are a ``Worker`` wrap it in a thin delegation
+    (``SGLangServerWorker``), the server backend layer uses it directly.
+    ``acquire_free_port`` is injected so port allocation still goes
+    through the caller's port lock.
     """
 
     def __init__(
@@ -491,10 +488,8 @@ def _assert_sglang_supports_rlinf_patch() -> None:
 def _pin_bundled_cudart() -> None:
     """Prepend torch's bundled CUDA runtime to ``LD_LIBRARY_PATH``.
 
-    Same pinning as ``SGLangServerWorker.init_server`` (kept in sync by
-    hand until the two orchestrations are consolidated). With
-    ``enable_memory_saver``, sglang LD_PRELOADs a torch_memory_saver hook
-    that has no RUNPATH, so it would otherwise resolve libcudart via
+    With ``enable_memory_saver``, sglang LD_PRELOADs a torch_memory_saver
+    hook that has no RUNPATH, so it would otherwise resolve libcudart via
     ld.so.cache to the (older) system CUDA and crash torch with
     "undefined symbol: cudaGetDriverEntryPointByVersion". LD_LIBRARY_PATH
     is searched before ld.so.cache; the spawned child inherits it.
