@@ -33,6 +33,7 @@ from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
@@ -124,6 +125,17 @@ def main(cfg) -> None:
     runner_cls = (
         AsyncAgentRunner if cfg.runner.get("async_mode", False) else AgentRunner
     )
+    rollout_buffer = None
+    if cfg.runner.get("async_mode", False):
+        # The buffer worker owns the dataloader and the admission budget;
+        # one instance on the head node, like the search tool worker.
+        rollout_buffer = RolloutBufferWorker.create_group(
+            cfg, train_ds
+        ).launch(
+            cluster,
+            name="RolloutBuffer",
+            placement_strategy=singleton_tool_placement,
+        )
     runner = runner_cls(
         cfg=cfg,
         placement=component_placement,
@@ -134,6 +146,7 @@ def main(cfg) -> None:
         actor=actor_group,
         reward=None,
         agent_loop=agentloop_group,
+        rollout_buffer=rollout_buffer,
         tool_workers=tool_workers,
     )
 

@@ -55,6 +55,9 @@ class RolloutRequest:
     image_data: Union[list[list[bytes]], list[list[str]]]
     answers: list[Union[list[str], dict]]
     multi_modal_inputs: list[Optional[dict]]
+    # One id per entry of input_ids, assigned by whoever issues the request
+    # when rollout runs asynchronously; None in synchronous training.
+    group_ids: Optional[list[int]] = None
 
     def to_seq_group_infos(self) -> list["SeqGroupInfo"]:
         return [
