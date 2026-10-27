@@ -447,6 +447,17 @@ class AsyncAgentRunner(AgentRunner):
                 rollout_metrics["rollout/buffer/admission_wait_ratio"] = buffer_metrics[
                     "admission_wait_ratio"
                 ]
+                rollout_metrics["rollout/buffer/dropped_groups"] = buffer_metrics[
+                    "dropped_groups"
+                ]
+                for key, value in buffer_metrics.items():
+                    # Per-reason drop counts arrive as dropped_{reason};
+                    # the aggregate above already covered dropped_groups.
+                    if key.startswith("dropped_") and key != "dropped_groups":
+                        rollout_metrics[f"rollout/buffer/{key}"] = value
+                rollout_metrics["rollout/buffer/repeatedly_dropped_prompts"] = (
+                    buffer_metrics["repeatedly_dropped_prompts"]
+                )
                 loaded_versions = list(self._rollout_loaded_versions.values())
                 rollout_metrics["rollout/loaded_version_min"] = min(loaded_versions)
                 rollout_metrics["rollout/loaded_version_max"] = max(loaded_versions)

@@ -1050,6 +1050,133 @@ class TestSearchr1AsyncBatchDivisibility:
         assert cfg.data.rollout_batch_size == 8
 
 
+class TestSearchr1AsyncDiscardConfig:
+    """validate_searchr1_cfg: discard-related validation of async runs."""
+
+    @staticmethod
+    def _make_cfg(rollout_batch_size=8, algorithm_extra=None, runner_extra=None):
+        algorithm = {"recompute_logprobs": False}
+        if algorithm_extra:
+            algorithm.update(algorithm_extra)
+        runner = {"task_type": "reasoning", "async_mode": True}
+        if runner_extra:
+            runner.update(runner_extra)
+        return DictConfig(
+            {
+                "runner": runner,
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-7",
+                        "reward": "4-7",
+                    },
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": algorithm,
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {"rollout_batch_size": rollout_batch_size},
+            }
+        )
+
+    def _validate(self, cfg, actor_dp_size=4):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        placement.actor_dp_size = actor_dp_size
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_drop_limit_defaults_to_ten_batches(self):
+        cfg = self._validate(self._make_cfg(rollout_batch_size=8))
+        assert cfg.algorithm.max_dropped_groups_per_step == 80
+
+    def test_drop_limit_below_one_is_rejected(self):
+        cfg = self._make_cfg(algorithm_extra={"max_dropped_groups_per_step": 0})
+        with pytest.raises(ValueError, match="max_dropped_groups_per_step"):
+            self._validate(cfg)
+
+    def test_accept_staleness_below_threshold_is_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "staleness_threshold": 3,
+                "max_actor_accept_staleness": 2,
+            }
+        )
+        with pytest.raises(ValueError, match="max_actor_accept_staleness"):
+            self._validate(cfg)
+
+    def test_within_group_down_sampling_is_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {
+                        "reject_equal_reward": False,
+                        "down_sample_to_n": 4,
+                    },
+                }
+            }
+        )
+        with pytest.raises(ValueError, match="reject_equal_reward"):
+            self._validate(cfg)
+
+    def test_extra_down_sampling_options_are_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {
+                        "reject_equal_reward": True,
+                        "roc_error_ratio": True,
+                    },
+                }
+            },
+            runner_extra={"max_steps": 100},
+        )
+        with pytest.raises(ValueError, match="roc_error_ratio"):
+            self._validate(cfg)
+
+    def test_reject_equal_reward_without_max_steps_is_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {"reject_equal_reward": True},
+                }
+            }
+        )
+        with pytest.raises(ValueError, match="runner.max_steps"):
+            self._validate(cfg)
+
+    def test_reject_equal_reward_with_max_steps_passes(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {"reject_equal_reward": True},
+                }
+            },
+            runner_extra={"max_steps": 100},
+        )
+        cfg = self._validate(cfg)
+        assert cfg.algorithm.max_dropped_groups_per_step == 80
+
+
 class TestRolloutModelInstanceLayout:
     """Cross-node rollout layout.
 

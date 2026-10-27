@@ -820,6 +820,40 @@ class RolloutResult:
 
 
 @dataclass(kw_only=True)
+class GroupMetadata:
+    """Decision-relevant view of one finished query group.
+
+    A rollout receiver can route, filter and order groups on this view
+    alone and forward the result itself untouched. Producers that want
+    the same treatment (a remote rollout client, a control/data-plane
+    split) only need to emit an object with these fields.
+    """
+
+    group_id: Optional[int]
+    # One reward per trajectory, in trajectory order.
+    rewards: Optional[list[float]]
+    # Weight version the group's earliest generate call started under and
+    # the one its last call ended under; None when the rollout stamped no
+    # versions.
+    earliest_version: Optional[int]
+    completion_version: Optional[int]
+    # Total generated tokens across the group's sequences.
+    num_gen_tokens: int
+    # Number of generate calls the group took; one call per sequence,
+    # since each turn of a multi-turn rollout is its own sequence.
+    num_generate_calls: int
+
+
+@dataclass(kw_only=True)
+class DiscardedGroup:
+    """Record of one group dropped before training; reasons are free-form
+    task strings or "equal_reward" / "stale" from the rollout buffer."""
+
+    group_id: int
+    reason: str
+
+
+@dataclass(kw_only=True)
 class DynamicRolloutResult:
     """
     Dynamic Rollout Result
@@ -865,6 +899,32 @@ class DynamicRolloutResult:
     extra_fields_turn: Optional[dict] = None  # [num_sequence]
     extra_fields_traj: Optional[dict] = None  # [group_size]
     extra_fields_group: Optional[dict] = None  # [1]
+
+    def group_metadata(self) -> GroupMetadata:
+        """Summarize this group for routing and filtering decisions.
+
+        Trajectory rewards are read per trajectory (one value per
+        trajectory, first sequence's reward of each); a trajectory with no
+        retained sequence contributes None.
+        """
+        rewards: list[Optional[float]] = [None] * self.group_size
+        for seq_idx, traj_idx in enumerate(self.idx_to_traj):
+            if self.rewards is not None and rewards[traj_idx] is None:
+                rewards[traj_idx] = float(self.rewards[seq_idx])
+
+        versions = (
+            self.version_start + self.version_end
+            if self.version_start is not None and self.version_end is not None
+            else None
+        )
+        return GroupMetadata(
+            group_id=self.group_id,
+            rewards=rewards,
+            earliest_version=min(versions) if versions else None,
+            completion_version=max(versions) if versions else None,
+            num_gen_tokens=sum(self.response_lengths),
+            num_generate_calls=self.num_sequence,
+        )
 
     @staticmethod
     def _get_attention_masks_and_position_ids(

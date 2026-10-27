@@ -1648,11 +1648,68 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 cfg.algorithm.staleness_threshold = 0
             if cfg.rollout.get("pause_mode", None) is None:
                 cfg.rollout.pause_mode = "retract"
+            if cfg.algorithm.get("max_dropped_groups_per_step", None) is None:
+                rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+                if rollout_batch_size is not None:
+                    cfg.algorithm.max_dropped_groups_per_step = 10 * rollout_batch_size
         if cfg.algorithm.staleness_threshold < 0:
             raise ValueError(
                 f"algorithm.staleness_threshold must be >= 0, found "
                 f"{cfg.algorithm.staleness_threshold}."
             )
+        if (
+            cfg.algorithm.get("max_dropped_groups_per_step", None) is not None
+            and cfg.algorithm.max_dropped_groups_per_step < 1
+        ):
+            raise ValueError(
+                f"algorithm.max_dropped_groups_per_step must be >= 1, found "
+                f"{cfg.algorithm.max_dropped_groups_per_step}."
+            )
+        max_accept_staleness = cfg.algorithm.get("max_actor_accept_staleness", None)
+        if max_accept_staleness is not None and (
+            max_accept_staleness < cfg.algorithm.staleness_threshold
+        ):
+            raise ValueError(
+                f"algorithm.max_actor_accept_staleness "
+                f"({max_accept_staleness}) must be >= "
+                f"algorithm.staleness_threshold "
+                f"({cfg.algorithm.staleness_threshold}): admitting groups "
+                "staler than the actor accepts would drop every backfilled "
+                "group."
+            )
+        down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
+        if down_sampling_cfg.get("do_down_sampling", False):
+            down_sampling_config = (
+                down_sampling_cfg.get("down_sampling_config", None) or {}
+            )
+            if not down_sampling_config.get("reject_equal_reward", False):
+                raise ValueError(
+                    "Async runs support only reject_equal_reward under "
+                    "algorithm.down_sampling.down_sampling_config: group "
+                    "filtering runs in the RolloutBufferWorker and "
+                    "within-group down sampling is not implemented there."
+                )
+            unsupported = {
+                key: value
+                for key, value in down_sampling_config.items()
+                if key != "reject_equal_reward" and value
+            }
+            if unsupported:
+                raise ValueError(
+                    f"Async runs support only reject_equal_reward under "
+                    f"algorithm.down_sampling.down_sampling_config; found "
+                    f"enabled options {sorted(unsupported.keys())}. Group "
+                    "filtering runs in the RolloutBufferWorker and "
+                    "within-group down sampling is not implemented there."
+                )
+            if cfg.runner.get("max_steps", -1) < 0:
+                raise ValueError(
+                    "algorithm.down_sampling.down_sampling_config."
+                    "reject_equal_reward requires an explicit "
+                    "runner.max_steps: dropped groups consume prompts "
+                    "faster than steps, so the epoch-derived step count "
+                    "is wrong."
+                )
         if cfg.rollout.pause_mode not in ("in_place", "retract", "drain"):
             raise ValueError(
                 f"rollout.pause_mode must be one of in_place/retract/drain, "

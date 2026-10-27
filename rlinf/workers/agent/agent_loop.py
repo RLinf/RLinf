@@ -30,7 +30,11 @@ from rlinf.agents.tool_call.schema import (
 )
 from rlinf.algorithms.registry import get_toolcall_parser
 from rlinf.data.schema.reasoning_requests import RolloutRequest
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
+from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
+    DynamicRolloutResult,
+    RolloutResult,
+)
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
@@ -84,6 +88,20 @@ class MultiAgentLoopOutput:
     trace_prints: list[Any] = field(default_factory=list)
     """Extra fields for dynamic addition."""
     extra_fields: dict[str, Any] = field(default_factory=dict)
+
+
+class GroupDiscarded(RuntimeError):
+    """A group's data is unusable, affecting only that group.
+
+    Raise this only when the task code is certain the failure spoils this
+    one group and nothing else; the continuous loop turns it into a
+    discard record and moves on. Every other exception terminates
+    training.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class AgentLoopWorker(Worker):
@@ -267,11 +285,26 @@ class AgentLoopWorker(Worker):
             task = asyncio.create_task(self.run_one_query(copy.deepcopy(input_ids)))
             rollout_tasks.append(task)
 
-        task_results = await asyncio.gather(*rollout_tasks)
-        rollout_result = self.get_rollout_result(task_results, answer)
-        if group_id is not None:
-            rollout_result.group_id = group_id
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+        try:
+            task_results = await asyncio.gather(*rollout_tasks)
+            rollout_result = self.get_rollout_result(task_results, answer)
+            if group_id is not None:
+                rollout_result.group_id = group_id
+            await output_channel.put(rollout_result, async_op=True).async_wait()
+        except GroupDiscarded as e:
+            # Only this failure mode is per-group: record the discard and
+            # let the group end normally. The remaining trajectories of
+            # this group are pointless now; cancel them instead of
+            # letting them finish generating and throwing the data away.
+            if group_id is None:
+                raise
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            await output_channel.put(
+                DiscardedGroup(group_id=group_id, reason=e.reason),
+                async_op=True,
+            ).async_wait()
 
     async def run_agentloop_rollout(
         self, input_channel: Channel, output_channel: Channel
@@ -625,16 +658,32 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             )
             rollout_tasks.append(task)
 
-        task_results = await asyncio.gather(*rollout_tasks)
+        try:
+            task_results = await asyncio.gather(*rollout_tasks)
 
-        # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
-        extra_fields = self.gen_extra_fields(task_results, answer)
-        rollout_result = self.get_rollout_result(task_results, *extra_fields)
-        if group_id is not None:
-            rollout_result.group_id = group_id
-        agent_metrics = self.get_rollout_metrics(rollout_result)
+            # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
+            extra_fields = self.gen_extra_fields(task_results, answer)
+            rollout_result = self.get_rollout_result(task_results, *extra_fields)
+            if group_id is not None:
+                rollout_result.group_id = group_id
+            agent_metrics = self.get_rollout_metrics(rollout_result)
 
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+            await output_channel.put(rollout_result, async_op=True).async_wait()
+        except GroupDiscarded as e:
+            # Only this failure mode is per-group: record the discard and
+            # let the group end normally. The remaining trajectories of
+            # this group are pointless now; cancel them instead of
+            # letting them finish generating and throwing the data away.
+            if group_id is None:
+                raise
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            agent_metrics = {}
+            await output_channel.put(
+                DiscardedGroup(group_id=group_id, reason=e.reason),
+                async_op=True,
+            ).async_wait()
         return agent_metrics
 
     async def run_agentloop_rollout(
