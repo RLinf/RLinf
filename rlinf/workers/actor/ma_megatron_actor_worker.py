@@ -77,8 +77,12 @@ class MAMegatronActor(MegatronActor):
         )
         self.placement = placement
 
-        assert self.placement_mode == PlacementMode.COLLOCATED, (
-            "Only collocated placement is supported for multi-agent actor"
+        assert self.placement_mode in [
+            PlacementMode.COLLOCATED,
+            PlacementMode.DISAGGREGATED,
+        ], (
+            "Multi-agent actor supports only collocated or disaggregated "
+            f"placement, got {self.placement_mode}"
         )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
@@ -389,7 +393,6 @@ class MAMegatronActor(MegatronActor):
 
     def run_training(self, input_channel: Channel):
         """Run the training loop for the actor."""
-        assert not self.is_pipeline
 
         # Get all batches for this DP
         batches = []

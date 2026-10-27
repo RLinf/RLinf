@@ -1632,9 +1632,14 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
 
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
     if not component_placement.is_collocated:
-        raise ValueError(
-            "SearchR1 multi-agent actors support only collocated component placement."
-        )
+        # The Megatron MA actor gathers the full rollout batch before
+        # training, so it also runs under disaggregated placement. The FSDP
+        # MA actor still asserts collocated placement internally.
+        if cfg.actor.training_backend != "megatron":
+            raise ValueError(
+                "SearchR1 multi-agent actors support only collocated component "
+                "placement unless actor.training_backend is megatron."
+            )
     return cfg
 
 
