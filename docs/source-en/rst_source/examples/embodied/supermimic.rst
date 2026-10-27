@@ -5,38 +5,111 @@ This guide trains and evaluates a Unitree G1 whole-body motion-tracking policy
 with SuperMimic in MuJoCo Warp: install the environment, prepare reference
 motion, pick a config, train on one or more GPUs, resume, and evaluate. The
 algorithm, its equations, and where the implementation departs from the paper
-are in :doc:`../../reference/algorithms/supermimic`.
+are in :doc:`../../reference/algorithms/supermimic`. On a first run, follow
+`Run It`_.
+
+Unless stated otherwise, every command on this page runs from the RLinf
+repository root with the SuperMimic environment below activated.
 
 Overview
 --------
 
-* **Simulator:** MuJoCo Warp through `mjlab <https://github.com/mujocolab/mjlab>`_
-  (commit ``8bb2bc9``), G1 29-dof, 50 Hz control with four 5 ms physics steps.
-* **Task:** track reference motion clips (LAFAN1 or BONES-SEED retargeted to
-  the G1); optionally track velocity commands with a second goal encoder.
-* **Observation:** the last 10 frames of joint positions relative to the
-  default pose, joint velocities, base angular velocity, projected gravity,
-  and the previous action (93 values per frame), with uniform sensor noise.
-* **Action:** 29 joint setpoints :math:`q_{sp} = \alpha a + q_0` for low-gain
-  PD control.
-* **Goal:** 10 reference frames of 68 values (680-d), or one of the variants
-  in `Configurations`_.
-* **Training:** world-model fitting, 32-step backpropagation through the world
-  model, and a GAE critic, all in one process per GPU.
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      SuperMimic: 32-step backpropagation through a differentiable world
+      model + GAE critic
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      World model (dynamics + termination head), encoder-decoder actor, critic
+
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      MuJoCo Warp G1 (mjlab); LAFAN1, BONES-SEED
+
+   .. grid-item-card:: Training
+      :text-align: center
+
+      One process per GPU; NCCL data parallel; Slurm multi-node
+      (experimental)
+
+| **You'll do:** install a dedicated environment -> prepare the LAFAN1 clips
+  -> train, resume, and evaluate with the smoke config -> train the paper
+  config on one or more GPUs.
+| **Prerequisites:** an NVIDIA GPU; the RLinf repository
+  (:doc:`installation <../../start/installation>`); LAFAN1 G1 clips (see
+  `Prepare Reference Motion`_).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
+
+   * - Item
+     - Description
+   * - Simulator
+     - MuJoCo Warp through `mjlab <https://github.com/mujocolab/mjlab>`_
+       (commit ``8bb2bc9``), G1 29-dof, 50 Hz control with four 5 ms physics
+       steps.
+   * - Task
+     - Track reference motion clips (LAFAN1 or BONES-SEED retargeted to the
+       G1); optionally track velocity commands with a second goal encoder.
+   * - Observation
+     - The last 10 frames of joint positions relative to the default pose,
+       joint velocities, base angular velocity, projected gravity, and the
+       previous action (93 values per frame), with uniform sensor noise.
+   * - Action
+     - 29 joint setpoints :math:`q_{sp} = \alpha a + q_0` for low-gain PD
+       control.
+   * - Goal
+     - 10 reference frames of 68 values (680-d), or one of the variants in
+       `Configurations`_.
+   * - Entry points
+     - Training uses ``examples/embodiment/run_supermimic.sh`` (not the generic
+       ``run_embodiment.sh``); evaluation uses
+       ``evaluations/run_eval.sh supermimic_*``, which runs
+       ``evaluations/eval_supermimic.py``.
+
+How SuperMimic Works
+--------------------
+
+One process per GPU repeats three steps. It steps every environment once in
+MuJoCo Warp and writes the transitions to the replay. At the update-to-data
+ratio, it fits the world model's dynamics and termination head on ``k``-step
+windows from the replay. It then starts 32-step imagined rollouts from replay
+states inside the world model, backpropagates the return through the
+differentiable world model to update the actor, and fits the critic to GAE
+targets. When an environment ends, the returns of bins along the motion
+timeline decide where it restarts, so low-return segments are drawn more
+often. Equations, network structure, and differences from the paper and the
+community implementations are on the
+:doc:`algorithm page <../../reference/algorithms/supermimic>`.
 
 Installation
 ------------
 
-SuperMimic needs an NVIDIA GPU (MuJoCo Warp). Create a dedicated virtual
-environment with RLinf's installer:
+SuperMimic needs an NVIDIA GPU (MuJoCo Warp). From the RLinf repository root,
+create a dedicated virtual environment with RLinf's installer:
 
 .. code-block:: bash
 
+   cd /path/to/RLinf
    bash requirements/install.sh embodied --env supermimic --venv .venv-supermimic
    source .venv-supermimic/bin/activate
 
+In every new shell, return to the repository root and run
+``source .venv-supermimic/bin/activate`` first.
+
 The installer selects torch 2.14.0 for this environment only, because mjlab
-requires ``torch>=2.14.0``; RLinf's project-wide torch pin is unchanged. When
+requires ``torch>=2.14.0``; RLinf's project-wide torch pin is unchanged. torch
+2.14.0 requires ``setuptools>=77.0.3``, so for this environment the installer
+also replaces the project-wide ``setuptools<75.9`` override with
+``setuptools>=77.0.3,<82`` (setuptools 82 removes ``pkg_resources``). When
 the installed torch is a CUDA 12 build, it also installs the CUDA 12 build of
 ``warp-lang`` 1.18.0 (the PyPI wheel is a CUDA 13 build). The SuperMimic
 packages are listed in ``requirements/embodied/envs/supermimic.txt``.
@@ -50,23 +123,22 @@ with, and the simulator refuses clips whose ``q0`` differs from mjlab's
 default joint pose, because the goal and observation subtract ``q0`` while the
 PD target adds mjlab's.
 
-Prepare reference motion
+Prepare Reference Motion
 ------------------------
 
-Motion data is not part of the repository. Each ``clip_*.pt`` holds ``fps``
-(50, or 30 to be resampled), the 29 G1 joint names, ``q0``, and a
-``[T, 71]`` state: root position, root quaternion (wxyz), joint positions,
-world-frame root linear velocity, root-frame angular velocity, and joint
-velocities. A 30 Hz clip is resampled onto the 50 Hz control grid, and its
-velocities are recomputed with central differences.
+Motion data is not part of the repository. A clip folder holds ``clip_*.pt``
+files (loaded in file-name order) and optionally a ``manifest.json``. The
+format is in `Clip File Format`_.
 
 **LAFAN1 (the paper's 40 clips).** The clips are the ``g1/`` folder of the
-Hugging Face dataset ``lvhaidong/LAFAN1_Retargeting_Dataset``. The script pins
-revision ``ce1572906efe6157840e8474d5a0d7aa87481e74``, checks every CSV's size
-and SHA-256 against it, and writes ``manifest.json``. The dataset card declares no license; the retargets
-derive from Ubisoft La Forge LAFAN1, released under CC BY-NC-ND 4.0
-(non-commercial, no derivatives). Read those terms before passing
-``--accept-license``.
+Hugging Face dataset
+`lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_.
+The script pins revision ``ce1572906efe6157840e8474d5a0d7aa87481e74``, checks
+every CSV's size and SHA-256 against it, and writes ``manifest.json``. The
+dataset card declares no license; the retargets derive from Ubisoft La Forge
+`LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_,
+released under CC BY-NC-ND 4.0 (non-commercial, no derivatives). Read those
+terms before passing ``--accept-license``.
 
 .. code-block:: bash
 
@@ -74,10 +146,11 @@ derive from Ubisoft La Forge LAFAN1, released under CC BY-NC-ND 4.0
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
 
 The 40 clips are 2.45 h of motion. With ``manifest.json`` present, the loader
-refuses a clip whose SHA-256 differs or that the manifest does not list.
+refuses a clip whose SHA-256 differs or that the manifest does not list, so do
+not rename, add, remove, or edit the prepared files.
 
 **BONES-SEED (experimental).** The loader expects clips that are already G1
-retargets in the format above, plus a ``name`` used by the Appendix E name
+retargets in the format below, plus a ``name`` used by the Appendix E name
 filter. RLinf does not ship a converter from the BONES-SEED release, because
 that format has not been checked against real data. The feasibility filter
 needs per-frame geometry, which this tool computes with ``mj_geomDistance``
@@ -94,11 +167,152 @@ The BONES-SEED configs load every clip that passes the filters
 142,220 / 129,667 / 129,514 counts belong to its release; no full BONES-SEED
 dump has been run through this pipeline.
 
+Clip File Format
+~~~~~~~~~~~~~~~~
+
+Each ``clip_*.pt`` is a dictionary saved with ``torch.save``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
+
+   * - Key
+     - Content
+   * - ``fps``
+     - 50, or 30. A 30 Hz clip is resampled onto the 50 Hz control grid and
+       its velocities are recomputed with central differences; a 50 Hz clip
+       is used as is, so **its velocity columns must be correct**. Other rates
+       are refused.
+   * - ``joint_names``
+     - The 29 joint names, in exactly the order of
+       ``rlinf.envs.sim.g1_mimic.constants.G1_JOINT_NAMES`` (mjlab's G1 joint
+       order).
+   * - ``q0``
+     - The 29-d default joint pose (rad). It must equal mjlab's default joint
+       pose, ``asset_default_state()[7:36]``.
+   * - ``state``
+     - A ``[T, 71]`` float tensor laid out as below, with no NaN or Inf and a
+       normalized root quaternion.
+   * - ``name``
+     - Optional; read only by the BONES-SEED name filter.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 52 30
+
+   * - Columns
+     - Content
+     - Unit
+   * - ``0:3``
+     - Root (pelvis) position, world frame
+     - m
+   * - ``3:7``
+     - Root quaternion, wxyz
+     - —
+   * - ``7:36``
+     - Joint positions, in ``joint_names`` order
+     - rad
+   * - ``36:39``
+     - Root linear velocity, world frame
+     - m/s
+   * - ``39:42``
+     - Root angular velocity, root frame
+     - rad/s
+   * - ``42:71``
+     - Joint velocities
+     - rad/s
+
+This minimal example writes a 5 s clip of standing still and runs the
+loader's own checks on it:
+
+.. code-block:: python
+
+   from pathlib import Path
+
+   import torch
+
+   from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES
+   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+   from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
+
+   default = asset_default_state().float()  # mjlab standing keyframe, [71]
+   T = 250                                  # 5 s at 50 Hz
+   state = torch.zeros(T, 71)
+   state[:, :36] = default[:36]             # root pose and joints; velocities stay 0
+   payload = {
+       "fps": 50,
+       "joint_names": list(G1_JOINT_NAMES),
+       "q0": default[7:36],
+       "state": state,
+   }
+   decode_motion_payload(payload, "clip_000.pt")  # raises ValueError if invalid
+   out = Path("/data/my_clips")
+   out.mkdir(parents=True, exist_ok=True)
+   torch.save(payload, out / "clip_000.pt")
+
+Without ``manifest.json`` the loader checks the format only, not the file
+contents.
+
+Run It
+------
+
+This walks through training, saving, resuming, evaluating, and viewing curves
+with ``supermimic_smoke`` (8 environments, 3 updates; fits one 8 GB GPU).
+Checkpoints, curves, and evaluation results go under one ``RUN_DIR``, which is
+how each step finds the previous one's output (``run_eval.sh`` still writes its
+own run log to the repository's ``logs/``; see `Evaluate`_).
+
+.. code-block:: bash
+
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+   export RUN_DIR=/data/runs/smoke
+
+   # 1. Train 3 updates, saving a checkpoint each update and writing TensorBoard
+   bash examples/embodiment/run_supermimic.sh supermimic_smoke env.num_clips=40 \
+       runner.logger.log_path=$RUN_DIR runner.save_interval=1 \
+       'runner.logger.logger_backends=[tensorboard]'
+
+   # 2. Resume from the newest checkpoint and train to update 5
+   bash examples/embodiment/run_supermimic.sh supermimic_smoke env.num_clips=40 \
+       runner.logger.log_path=$RUN_DIR runner.save_interval=1 \
+       'runner.logger.logger_backends=[tensorboard]' \
+       runner.resume_dir=auto algorithm.total_updates=5
+
+   # 3. Evaluate the newest checkpoint (smoke has the supermimic_lafan1
+   #    networks, so it uses that eval config)
+   bash evaluations/run_eval.sh supermimic_lafan1_eval \
+       eval.checkpoint=$RUN_DIR/supermimic_smoke eval.output_dir=$RUN_DIR/eval
+
+   # 4. View the training curves
+   tensorboard --logdir $RUN_DIR/tensorboard
+
+Step 2's log should show ``Resuming SuperMimic networks, ... from
+.../global_step_3``. If it shows ``resume_dir=auto: no complete checkpoint
+under ..., starting from scratch`` instead, its ``log_path`` differs from step
+1 or step 1 wrote no checkpoint, and the run started over rather than resumed.
+
+Afterwards ``RUN_DIR`` contains:
+
+.. code-block:: text
+
+   /data/runs/smoke/
+   ├── supermimic_smoke/              # log_path/<experiment_name>
+   │   ├── global_step_1/ ... global_step_5/
+   │   │   ├── supermimic.pt          # networks, optimizers, schedules, counters
+   │   │   ├── rank_0.pt              # per-rank RNG state
+   │   │   └── checkpoint_meta.json   # sizes, SHA-256, world size, dimensions, goal window
+   ├── tensorboard/                   # events.out.tfevents.* and config.yaml
+   └── eval/                          # summary.json, per_clip.csv, config.yaml
+
+The smoke run only shows that the pipeline works. A policy after 3 to 5
+updates does not track motion, and an ``eval/fail_rate`` near 1 is expected.
+
 Configurations
 --------------
 
-All configs are in ``examples/embodiment/config/``. Batch sizes are global:
-with several GPUs each rank takes an equal share.
+All configs are in ``examples/embodiment/config/``, with the shared
+hyperparameters in ``supermimic_base.yaml``. Batch sizes are global: with
+several GPUs each rank takes an equal share.
 
 .. list-table::
    :header-rows: 1
@@ -133,17 +347,129 @@ Two experimental options change the termination head and are off by default:
 ``algorithm.termination_bias_init``. The algorithm page explains when they
 matter. The default ``algorithm.seed`` is 0; rank ``r`` uses ``seed + r``.
 
-Train on one GPU
+Common Keys
+~~~~~~~~~~~
+
+These are the keys most often changed to set the scale and length of a run.
+Defaults come from ``supermimic_base.yaml`` (``supermimic_smoke`` and other
+configs override some of them). Each can be passed as a Hydra override after
+``run_supermimic.sh <config>``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 27 12 61
+
+   * - Key
+     - Default
+     - Meaning and effect
+   * - ``algorithm.k``
+     - 8
+     - World-model multi-step training window. Fixed at 8; validation refuses
+       other values.
+   * - ``algorithm.H``
+     - 32
+     - Imagination horizon, the number of steps backpropagated through the
+       world model. Fixed at 32.
+   * - ``algorithm.gamma``, ``algorithm.lam``
+     - 0.99, 0.95
+     - GAE discount and :math:`\lambda` for the critic and actor targets.
+   * - ``algorithm.total_updates``
+     - 320000
+     - Number of training **updates**, not simulator steps (see below).
+   * - ``algorithm.updates_per_env_step``
+     - 0.4
+     - Global updates owed per vectorized simulator step (update-to-data
+       ratio). Larger values train more on each sample.
+   * - ``algorithm.lr``, ``algorithm.lr_decay_updates``
+     - 2.0e-4, 250000
+     - Learning rate shared by the world model, actor, and critic; cosine
+       decay to 0.03 x ``lr`` over the first ``lr_decay_updates`` updates,
+       then constant.
+   * - ``algorithm.wm_batches``
+     - 10
+     - World-model minibatches per update.
+   * - ``algorithm.wm_window_batch``
+     - 2048
+     - ``k``-step windows per world-model minibatch, global.
+   * - ``algorithm.imagine_batch``
+     - 4096
+     - Imagined rollouts per update, global. A main driver of GPU memory.
+   * - ``algorithm.critic_epochs``, ``algorithm.critic_minibatches``
+     - 5, 4
+     - Passes of the critic over the imagined data per update, and
+       minibatches per pass.
+   * - ``algorithm.warmup_sim_steps``
+     - 40
+     - Vectorized simulator steps collected after each start or resume,
+       before the first update, to warm the replay; they owe no updates.
+   * - ``env.num_envs``
+     - 4096
+     - Parallel simulator environments, global. Collection throughput and
+       memory grow with it.
+   * - ``env.replay_length``
+     - 1000
+     - Ring-buffer replay capacity per environment, in control steps (20 s at
+       50 Hz). Replay memory is proportional to ``num_envs x replay_length``.
+   * - ``env.num_clips``
+     - 40
+     - Load the first N clips in file-name order; ``null`` loads all.
+   * - ``runner.save_interval``
+     - -1
+     - Save a checkpoint every N updates. The default -1 saves only after the
+       last update, so an interrupted long run has nothing to resume from.
+   * - ``runner.logger.logger_backends``
+     - ``[]``
+     - The default writes no TensorBoard, WandB, or SwanLab, only console
+       logs. Set ``[tensorboard]`` for curves.
+   * - ``runner.val_check_interval``
+     - -1
+     - Evaluate every N updates during training; off by default.
+   * - ``runner.logger.log_path``
+     - see text
+     - Root of checkpoints and logs. Without it, ``run_supermimic.sh`` uses
+       ``logs/<time>-<config>``, a new folder on every launch.
+
+**Updates versus simulator steps.** Each loop iteration collects one
+vectorized simulator step (every environment steps once) and adds
+``updates_per_env_step`` to the updates owed; each whole update owed is then
+run. So ``total_updates=320000`` is about 320000 / 0.4 = 800,000 vectorized
+simulator steps plus the warmup, and environment transitions are that times
+``env.num_envs``. In the logs, ``train/global_update`` counts updates, and
+``sim_vector_steps`` and ``env_transitions`` count simulator steps and
+transitions.
+
+**Global sizes.** ``env.num_envs``, ``algorithm.wm_window_batch``, and
+``algorithm.imagine_batch`` are totals over all ranks, split evenly;
+``updates_per_env_step`` and ``total_updates`` also count global updates.
+Adding GPUs without changing them keeps the same training mathematics; see
+`Multiple GPUs`_.
+
+Train on One GPU
 ----------------
 
 .. code-block:: bash
 
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-   bash examples/embodiment/run_supermimic.sh supermimic_lafan1
+   bash examples/embodiment/run_supermimic.sh supermimic_lafan1 \
+       runner.logger.log_path=/data/runs/lafan1 \
+       runner.save_interval=1000 \
+       'runner.logger.logger_backends=[tensorboard]'
 
 ``run_supermimic.sh <config> [hydra overrides...]`` passes everything after
-the config name to Hydra and, unless ``runner.logger.log_path`` is given,
-writes to ``logs/<time>-<config>``. For a quick check on a small GPU:
+the config name to Hydra. The command sets three keys explicitly because
+their defaults do not suit a long run:
+
+* ``runner.logger.log_path``: without it, the run goes to
+  ``logs/<time>-<config>``, a new folder on every launch, which a resume must
+  then find. With a fixed folder, resume and evaluation use it directly.
+* ``runner.save_interval``: the default -1 saves only at the end. Choose an
+  interval from the measured seconds per update (see
+  `Performance and Hardware`_).
+* ``runner.logger.logger_backends``: the default ``[]`` writes no curves.
+  With ``[tensorboard]``, view them with
+  ``tensorboard --logdir /data/runs/lafan1/tensorboard``.
+
+For a quick check on a small GPU:
 
 .. code-block:: bash
 
@@ -195,25 +521,35 @@ Collectives use NCCL on GPU with the timeout ``RLINF_TIMEOUT`` (minutes). If a
 rank fails, RLinf's worker group stops the driver and the other ranks at once
 instead of waiting for that timeout.
 
-Multiple nodes with Slurm (experimental)
+Multiple Nodes with Slurm (Experimental)
 ----------------------------------------
 
 ``examples/embodiment/slurm_supermimic.sh`` starts one Ray node per Slurm
 node, exports a unique ``RLINF_NODE_RANK`` before each ``ray start``, and runs
 the driver on the first node with a placement over every GPU. Partition,
-account, and GPU count come from your ``sbatch`` options; ``log_path`` and the
-data must be on storage every node can read and write.
+account, and GPU count come from your ``sbatch`` options.
+
+Before submitting:
+
+* Run ``sbatch`` from the RLinf repository root with the SuperMimic
+  environment activated. ``sbatch`` exports the current environment to the
+  job, so every node uses that environment's ``python`` and ``ray``.
+* Put the code, the virtual environment, the data, and ``log_path`` on storage
+  every node can read and write; each rank writes its own checkpoint shard.
+* Export site network settings such as ``NCCL_SOCKET_IFNAME`` before
+  ``sbatch`` when your network needs them.
 
 .. code-block:: bash
 
    sbatch --nodes=2 --gpus-per-node=8 --partition=<partition> \
        examples/embodiment/slurm_supermimic.sh supermimic_lafan1 \
-       env.motion_path=/shared/lafan1_g1 runner.logger.log_path=/shared/runs/lafan1
+       env.motion_path=/shared/lafan1_g1 runner.logger.log_path=/shared/runs/lafan1 \
+       runner.save_interval=1000 'runner.logger.logger_backends=[tensorboard]'
 
 This script has been checked with stubbed ``srun`` and ``ray`` only; it has not
 run on a Slurm cluster.
 
-Checkpoints and resume
+Checkpoints and Resume
 ----------------------
 
 ``runner.save_interval`` writes ``log_path/<experiment_name>/global_step_<N>``
@@ -225,36 +561,109 @@ dimensions, goal window, format version). Files are written to a ``.tmp``
 directory and renamed when every rank is done, so an interrupted save leaves
 no partial checkpoint.
 
+To resume, launch with the **same** config name and ``log_path`` as the
+original run, for example after the command in `Train on One GPU`_:
+
 .. code-block:: bash
 
    bash examples/embodiment/run_supermimic.sh supermimic_lafan1 \
-       runner.logger.log_path=/data/runs/lafan1 runner.resume_dir=auto
+       runner.logger.log_path=/data/runs/lafan1 \
+       runner.save_interval=1000 \
+       'runner.logger.logger_backends=[tensorboard]' \
+       runner.resume_dir=auto
 
-``runner.resume_dir=auto`` picks the newest complete checkpoint of that run; a
-path picks that checkpoint. A checkpoint of another format, dimension, or goal
-window is refused. A different number of ranks loads the weights and
-optimizers and restarts the RNG streams. The replay and simulator are not
-saved, so a resumed run warms up a new replay and is a continuation, not an
-exact restore.
+``runner.resume_dir=auto`` picks the newest complete checkpoint under
+``log_path/<experiment_name>/`` and trains on to ``algorithm.total_updates``;
+a ``global_step_<N>`` path picks that checkpoint. When ``auto`` finds no
+complete checkpoint it does **not** fail: it logs ``resume_dir=auto: no
+complete checkpoint under ..., starting from scratch`` and trains from the
+beginning, so check the log for ``Resuming SuperMimic ... from
+.../global_step_<N>``.
+
+A checkpoint of another format, dimension, or goal window is refused. A
+different number of ranks loads the weights and optimizers and restarts the
+RNG streams. The replay and simulator are not saved, so a resumed run warms up
+a new replay and is a continuation, not an exact restore.
 
 Evaluate
 --------
 
 ``evaluations/eval_supermimic.py`` loads the networks from a checkpoint and
-evaluates on one GPU without Ray. Each training config has an eval config in
-``evaluations/supermimic/``; a folder of checkpoints picks the newest one.
+evaluates on one GPU without Ray. ``evaluations/run_eval.sh`` runs it for any
+config name that starts with ``supermimic_``, so
+``run_eval.sh supermimic_lafan1_eval`` and
+``run_eval.sh supermimic supermimic_lafan1_eval`` are the same. Fields of
+RLinf's generic eval configs such as ``rollout.model.model_path`` and
+``runner.task_type: embodied_eval`` do not apply; SuperMimic takes the
+checkpoint from ``eval.checkpoint``.
+
+``eval.checkpoint`` is a ``global_step_<N>`` folder or a folder of
+checkpoints such as ``log_path/<experiment_name>``, in which case the newest
+complete one is used. Eval configs per training config:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Training config
+     - Eval config (``evaluations/supermimic/``)
+   * - ``supermimic_lafan1``, ``supermimic_smoke``
+     - ``supermimic_lafan1_eval`` (smoke has the networks and goal of
+       ``supermimic_lafan1``)
+   * - ``supermimic_lafan1_anchor``
+     - ``supermimic_lafan1_anchor_eval``
+   * - ``supermimic_lafan1_goal730``
+     - ``supermimic_lafan1_goal730_eval``
+   * - ``supermimic_lafan1_obs99``
+     - ``supermimic_lafan1_obs99_eval``
+   * - ``supermimic_velocity``
+     - ``supermimic_velocity_eval``
+   * - ``supermimic_bones_seed``, ``supermimic_bones_seed_2gpu``
+     - ``supermimic_bones_seed_eval`` (the two-GPU recipe changes only sizes
+       and the learning rate)
+
+A checkpoint that does not match the eval config (dimensions or goal window)
+is refused.
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1
+       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1 \
+       eval.output_dir=/data/runs/lafan1/eval
    bash evaluations/run_eval.sh supermimic_velocity_eval \
-       eval.checkpoint=/data/runs/velocity/supermimic_velocity
+       eval.checkpoint=/data/runs/velocity/supermimic_velocity \
+       eval.output_dir=/data/runs/velocity/eval
+
+**Where results go.** ``run_eval.sh`` writes its run log to
+``logs/<time>-<eval config>/eval_embodiment.log`` in the repository. Results go
+to ``eval.output_dir``, or, when it is not set, to ``eval_global_step_<N>/``
+in that log folder. The results folder holds:
+
+* ``summary.json``: ``meta`` (checkpoint path, ``global_step``, seed, device,
+  clip count, data path, the checkpoint's world size) and ``metrics`` (the
+  aggregates below; a value that does not exist is ``null``).
+* ``per_clip.csv``: one row per clip.
+* ``velocity_g2.csv`` or ``velocity_smoke.csv``: one row per command in a
+  velocity evaluation.
+* ``config.yaml``: the full config the evaluation used.
+
+``eval/*``, ``eval_velocity_g2/*``, and ``eval_velocity_smoke/*`` are metric
+name prefixes in ``summary.json`` and the logs, not folders.
 
 **Motion tracking** plays every clip once from frame 0 with sensor and action
-noise off and writes ``per_clip.csv``. Normalized return divides the reward
-sum by 0.1 times the clip's scheduled length, so an early failure keeps the
-unplayed part in the denominator.
+noise off and writes ``per_clip.csv``. The normalized return of clip :math:`i`
+is
+
+.. math::
+
+   \mathrm{NR}_i = \frac{\sum_{t} r_t}{0.1 \times T_i},
+
+where :math:`r_t` is the reward of each control step that ran, 0.1 is the
+largest reward of one step, and :math:`T_i` is the clip's frame count on the
+50 Hz control grid (its scheduled control steps). The denominator uses the
+scheduled length, not the steps that ran, so an early failure keeps the
+unplayed part in the denominator and :math:`\mathrm{NR}_i \le 1`.
+``eval/normalized_return`` is the unweighted mean over clips.
 
 **Velocity tracking** is chosen with ``eval.velocity``:
 
@@ -266,25 +675,37 @@ unplayed part in the denominator.
   median over the trials that did not fall. A command whose trials all fell
   has no value (NaN in the CSV, ``null`` in ``summary.json``) and is counted
   in ``eval_velocity_g2/commands_all_trials_fell``. Trials differ in the sim
-  context and the initial joint noise, which the paper does not specify. Results go
-  to ``velocity_g2.csv`` and ``eval_velocity_g2/*``.
-* ``smoke`` holds seven fixed commands from a reference start and writes
-  ``velocity_smoke.csv`` and ``eval_velocity_smoke/*``. It checks that the
-  velocity encoder runs; it is not a paper metric.
+  context and the initial joint noise, which the paper does not specify.
+  Results go to ``velocity_g2.csv``, with aggregates under the
+  ``eval_velocity_g2/`` prefix.
+* ``smoke`` holds seven fixed commands from a reference start, writes
+  ``velocity_smoke.csv``, and reports aggregates under the
+  ``eval_velocity_smoke/`` prefix. It checks that the velocity encoder runs;
+  it is not a paper metric.
 
-``runner.only_eval=true`` evaluates through the training entry instead, using
-the training config's environment count. With ``runner.val_check_interval``
-set, training evaluates every that many updates and after the last one.
+``runner.only_eval=true runner.resume_dir=<checkpoint>`` evaluates through
+the training entry instead, using the training config's environment count;
+the results go to the logs only. With ``runner.val_check_interval`` set,
+training evaluates every that many updates and after the last one.
 
-Metrics and logs
-----------------
+Visualization and Results
+-------------------------
 
-Logging goes through RLinf's ``MetricLogger`` (TensorBoard, WandB, SwanLab
-under ``log_path``). With several ranks, counts are summed, timers and memory
-take the largest rank, shared counters come from rank 0, and losses are
-averaged; ``runner.log_per_rank_metrics=true`` adds ``rank_<r>/`` copies.
-Useful keys:
+Logging goes through RLinf's ``MetricLogger`` (TensorBoard, WandB, SwanLab).
+The default ``runner.logger.logger_backends: []`` writes no backend. With
+``[tensorboard]``, the event files and the run's ``config.yaml`` go to
+``log_path/tensorboard/``:
 
+.. code-block:: bash
+
+   tensorboard --logdir /data/runs/lafan1/tensorboard
+
+With several ranks, counts are summed, timers and memory take the largest
+rank, shared counters come from rank 0, and losses are averaged;
+``runner.log_per_rank_metrics=true`` adds ``rank_<r>/`` copies. Useful keys:
+
+* ``train/global_update``, ``sim_vector_steps``, ``env_transitions``: updates,
+  vectorized simulator steps, and environment transitions.
 * ``wm/one_step_loss`` and ``wm/k_step_loss``: world-model error after one and
   eight steps.
 * ``imagination/survival`` and ``imagination/termination_prob``: the 32-step
@@ -299,6 +720,10 @@ Useful keys:
   (PyTorch's allocator), ``memory/warp_mempool_peak`` (Warp's pool), and
   ``memory/device_used`` (the whole GPU as the driver sees it). These counters
   overlap; do not add them.
+
+The console also prints a ``supermimic metrics {...}`` line per update and a
+``supermimic eval {...}`` line per evaluation, so values are visible even with
+no backend enabled.
 
 Troubleshooting
 ---------------
@@ -316,12 +741,18 @@ Troubleshooting
   ``env.motion_path`` does not point at prepared clips.
 * **"reference clip q0 differs from the mjlab G1 default joint pose".** The
   clips were converted with another default pose; reconvert them.
+* **A resumed run starts at update 0.** The log shows ``resume_dir=auto: no
+  complete checkpoint under ...``: the ``log_path`` or config name differs
+  from the original run, or the original run never wrote a checkpoint
+  (``save_interval`` was -1 and it did not finish).
 * **Checkpoint format or goal window refused.** The checkpoint was written by
-  another version or config; it cannot be resumed with this one.
+  another version or config; it cannot be resumed or evaluated with this one.
+* **No TensorBoard files.** ``runner.logger.logger_backends`` is still the
+  default ``[]``.
 * **"linesearch iterations limit reached".** A MuJoCo Warp solver warning that
   untrained policies trigger; it does not stop training.
 
-Performance and hardware
+Performance and Hardware
 ------------------------
 
 ``toolkits/supermimic/profile_sim.py`` measures collection throughput, update
@@ -342,7 +773,7 @@ than that card has. These numbers come from a launch-bound laptop setup and
 do not predict datacenter GPUs; measure seconds per update on your hardware
 before planning a full run.
 
-What has been run
+What Has Been Run
 -----------------
 
 On one 8 GB GPU with MuJoCo Warp and the LAFAN1 clips: short training runs of
@@ -351,4 +782,6 @@ sizes, resume including after a killed driver, motion and velocity
 evaluation, and the G.2 step test. The multi-GPU
 arithmetic is tested with two CPU (Gloo) processes. Not yet run: paper-scale
 training, NCCL on real GPUs, multiple nodes, Slurm, BONES-SEED data, and a
-training run long enough to show that the policy learns to track.
+training run long enough to show that the policy learns to track. This page
+therefore has no learning curves or comparison with the paper's metrics yet;
+they will be added after a long run.

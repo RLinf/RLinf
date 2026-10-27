@@ -35,6 +35,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - RoboCasa365
      - ``robocasa365`` pretrain 任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - SuperMimic（G1 动作 / 速度跟踪）
+     - LAFAN1、BONES-SEED 参考动作；附录 G.2 速度阶跃测试
+     - ``supermimic/supermimic_lafan1_eval.yaml``、``supermimic/supermimic_velocity_eval.yaml`` 等
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 
@@ -79,6 +82,8 @@ Benchmark 指南
      - PolaRiS 桌面操作。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
+   * - :doc:`SuperMimic <../examples/embodied/supermimic>`
+     - G1 动作与速度跟踪。使用专用入口 ``evaluations/eval_supermimic.py``\ （``run_eval.sh supermimic_*`` 自动调用），单卡、不需要 Ray，用 ``eval.checkpoint`` 指定检查点；流程见该页的“评测”一节。
 
 参考
 ----

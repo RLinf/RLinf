@@ -159,7 +159,7 @@ Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根�
      - --
      - G.2；试验之间仿真上下文和关节噪声不同
 
-CuboiLeo 和 zita-ch 是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。
+CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_）和 zita-ch（`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_）是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。上表描述的是开发时查阅的 ``main`` 分支，当时没有记录具体 commit；这两个仓库之后若有改动，以仓库当前代码为准。
 
 已知限制
 --------

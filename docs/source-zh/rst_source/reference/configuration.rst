@@ -17,6 +17,9 @@ RLinf 示例使用 Hydra YAML 配置。这个页面作为共享配置参考；�
    * - 具身 RL
      - ``examples/embodiment/config/*.yaml``
      - ``bash examples/embodiment/run_embodiment.sh <config_name>``
+   * - SuperMimic（G1 动作跟踪）
+     - ``examples/embodiment/config/supermimic_*.yaml``
+     - ``bash examples/embodiment/run_supermimic.sh <config_name>``，见 :doc:`../examples/embodied/supermimic`
    * - 推理 RL
      - ``examples/reasoning/config/**.yaml``
      - ``bash examples/reasoning/run_main_grpo_math.sh <config_name>``

@@ -98,6 +98,16 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/supermimic.html" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #eef2f7; color: #333; text-decoration: none; font-size: 22px;"><b>SuperMimic</b></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/supermimic.html" style="text-decoration: underline; color: blue;">
+           <b>SuperMimic: G1 Motion Tracking</b>
+         </a><br>
+         Train a G1 whole-body tracking policy through a differentiable world model in MuJoCo Warp
+       </p>
+     </div>
+
    </div>
 
 .. toctree::

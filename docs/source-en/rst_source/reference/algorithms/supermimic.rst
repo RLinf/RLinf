@@ -240,8 +240,12 @@ Paper, community, and implementation choices
      - --
      - G.2; trials differ by sim context and joint noise
 
-CuboiLeo and zita-ch are community reproductions used as design references;
-no code was copied from them.
+CuboiLeo (`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_)
+and zita-ch (`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_)
+are community reproductions used as design references; no code was copied
+from them. The table describes their ``main`` branches as consulted during
+development; no commit was recorded, so later changes in those repositories
+take precedence over this table.
 
 Known limitations
 -----------------

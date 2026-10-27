@@ -74,6 +74,9 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Override entries an environment needs in place of the project-wide pin for
+# the same package (that pin is removed first). Set by apply_env_default_torch.
+ENV_OVERRIDE_REPLACEMENTS=()
 # Package names inserted into the pyproject.toml `exclude-dependencies` array
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
@@ -1053,6 +1056,11 @@ configure_metax() {
 # UV_TORCH_BACKEND together instead of a mid-install `uv pip install torch==...`
 # that leaves a mixed torch tree. An explicit --torch always wins.
 apply_env_default_torch() {
+    case "$ENV_NAME" in
+        # torch 2.14 requires setuptools>=77.0.3, above the project-wide
+        # setuptools<75.9 override; setuptools 82 removes pkg_resources.
+        supermimic) ENV_OVERRIDE_REPLACEMENTS=("setuptools>=77.0.3,<82") ;;
+    esac
     [ -n "$TORCH_VERSION" ] && return 0
     local env_torch=""
     case "$ENV_NAME" in
@@ -1629,6 +1637,7 @@ apply_torch_override() {
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
         && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#ENV_OVERRIDE_REPLACEMENTS[@]} -eq 0 ] \
         && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
@@ -1650,7 +1659,11 @@ apply_torch_override() {
     # Replace the default protobuf override rather than adding a conflicting
     # second pin. The same policy is enforced after all model/env installs.
     sed -i -E '/^override-dependencies = \[/,/^\]/ { /"protobuf[<>=!]/d; }' "$PYPROJECT_FILE"
-    local extra_overrides=("${RAY_COMPAT_DEPS[@]}" "${PLATFORM_EXTRA_OVERRIDES[@]}")
+    local replacement
+    for replacement in "${ENV_OVERRIDE_REPLACEMENTS[@]}"; do
+        sed -i -E "/^override-dependencies = \\[/,/^\\]/ { /\"${replacement%%[<>=!~;]*}[<>=!~]/d; }" "$PYPROJECT_FILE"
+    done
+    local extra_overrides=("${RAY_COMPAT_DEPS[@]}" "${PLATFORM_EXTRA_OVERRIDES[@]}" "${ENV_OVERRIDE_REPLACEMENTS[@]}")
     if [ ${#extra_overrides[@]} -gt 0 ]; then
         # Insert each extra override right after the opening bracket of the
         # override-dependencies array. Done in reverse so the final order

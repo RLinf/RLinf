@@ -23,7 +23,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 评测架构
 --------
 
-评测流程由 ``EmbodiedEvalRunner`` 驱动：Env Worker 与 Rollout Worker 通过 Channel 交互，在 ``env.eval`` 配置下完成并行评测。终端与日志中会输出 ``eval/success_once``、``eval/return`` 等指标。
+评测流程由 ``EmbodiedEvalRunner`` 驱动：Env Worker 与 Rollout Worker 通过 Channel 交互，在 ``env.eval`` 配置下完成并行评测。终端与日志中会输出 ``eval/success_once``、``eval/return`` 等指标。SuperMimic 不走这套流程，它使用独立的单卡评测入口 ``eval_supermimic.py``，见 :doc:`../../examples/embodied/supermimic` 的“评测”一节。
 
 典型数据流：
 

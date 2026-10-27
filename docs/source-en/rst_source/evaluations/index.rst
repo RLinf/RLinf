@@ -35,6 +35,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - RoboCasa365
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - SuperMimic (G1 motion / velocity tracking)
+     - LAFAN1 and BONES-SEED reference motion; Appendix G.2 velocity step test
+     - ``supermimic/supermimic_lafan1_eval.yaml``, ``supermimic/supermimic_velocity_eval.yaml``, etc.
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 
@@ -79,6 +82,11 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - PolaRiS tabletop manipulation.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
+   * - :doc:`SuperMimic <../examples/embodied/supermimic>`
+     - G1 motion and velocity tracking. Uses its own entry,
+       ``evaluations/eval_supermimic.py`` (run by ``run_eval.sh supermimic_*``),
+       on one GPU without Ray, with the checkpoint given by
+       ``eval.checkpoint``; see the Evaluate section of that page.
 
 Reference
 ---------
