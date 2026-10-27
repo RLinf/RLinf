@@ -38,7 +38,11 @@ from rlinf.hybrid_engines.fsdp.mixed_precision import (
     build_mixed_precision,
     get_mixed_precision_wrap_policy,
 )
-from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
+from rlinf.hybrid_engines.fsdp.utils import (
+    apply_fsdp2_to_model,
+    clip_grad_by_total_norm_,
+    create_device_mesh,
+)
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
 
@@ -250,6 +254,51 @@ def test_gradients_reduce_over_the_sharding_dimension(single_rank_env):
         gradient_reduction_group(replicated_only)
 
 
+@pytest.mark.parametrize("grad_dtype", [torch.bfloat16, torch.float32])
+def test_clip_grad_scales_gradients_in_place_in_their_own_dtype(grad_dtype):
+    """The clip scales ``p.grad`` itself, not a cast of it.
+
+    Megatron clips fp32 main grads, so its pre-clip cast was free; here grads
+    stay in the mixed-precision reduce dtype, and casting before ``mul_`` would
+    scale a temporary and leave every gradient unclipped.
+    """
+    # Keep the parameter in the grad dtype: torch requires ``p.grad`` to match
+    # ``p.dtype``, and under FSDP2 mixed precision both carry the low dtype.
+    weight = nn.Linear(2, 2, dtype=grad_dtype).weight
+    weight.grad = torch.full((2, 2), 2.0, dtype=grad_dtype)
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=1.0, total_norm=4.0)
+
+    assert weight.grad.dtype is grad_dtype
+    torch.testing.assert_close(weight.grad, torch.full((2, 2), 0.5, dtype=grad_dtype))
+
+
+def test_clip_grad_leaves_gradients_untouched_below_the_max_norm():
+    weight = nn.Linear(2, 2).weight
+    weight.grad = torch.full((2, 2), 2.0)
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=4.0, total_norm=3.0)
+
+    torch.testing.assert_close(weight.grad, torch.full((2, 2), 2.0))
+
+
+def test_clip_grad_scales_dtensor_shards_in_place(single_rank_env):
+    """FSDP2 gradients are DTensors, so scaling the local shard must reach ``p.grad``."""
+    from torch.distributed.tensor import DTensor, Shard
+
+    mesh = create_device_mesh(1)
+    weight = nn.Linear(2, 2, dtype=torch.bfloat16).weight
+    weight.grad = DTensor.from_local(
+        torch.full((2, 2), 2.0, dtype=torch.bfloat16), mesh, [Shard(0)]
+    )
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=1.0, total_norm=4.0)
+
+    torch.testing.assert_close(
+        weight.grad.to_local(), torch.full((2, 2), 0.5, dtype=torch.bfloat16)
+    )
+
+
 class _DomainTable(torch.nn.Module):
     """Reads its embedding weights directly, like cosmos ``DomainAwareLinear``."""
 
@@ -308,8 +357,9 @@ def test_a_model_can_keep_its_embeddings_in_the_enclosing_unit(single_rank_env):
 
 @pytest.mark.parametrize("model_type", ["qwen2.5", "openpi"])
 @pytest.mark.parametrize("root_cast", [True, False])
+@pytest.mark.parametrize("sharding", ["no_shard", "shard_grad_op", "full_shard"])
 def test_strategy_passes_wrapper_overrides_and_root_cast_options(
-    monkeypatch, root_cast, model_type
+    monkeypatch, root_cast, model_type, sharding
 ):
     from rlinf.hybrid_engines.fsdp.strategy import fsdp as strategy_module
 
@@ -321,7 +371,7 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
             "cast_root_forward_inputs": root_cast,
         },
         wrap_policy={"module_classes_to_wrap": ["Linear"]},
-        sharding_strategy="no_shard",
+        sharding_strategy=sharding,
         use_orig_params=True,
     )
     actor = validate_fsdp_cfg(
@@ -343,6 +393,7 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
     model = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
     kwargs = strategy_module.FSDPStrategy(actor, 1).wrap_model(model, object())
     assert compatibility_targets == [kwargs]
+    assert kwargs["sharding_strategy"].name.lower() == sharding
     assert kwargs["mixed_precision"].cast_root_forward_inputs is root_cast
     assert kwargs["mixed_precision"].cast_forward_inputs
     plan = kwargs["auto_wrap_policy"]._run_policy(model, set(), kwargs)
@@ -368,6 +419,18 @@ def config(selector="module_names", targets=None, wrap_mode="individual", **kwar
             **kwargs,
         }
     )
+
+
+@pytest.mark.parametrize("sharding", ["shard_grad_op", "full_shard"])
+def test_openpi_sharded_training_requires_fsdp1(sharding):
+    actor = OmegaConf.create(
+        {
+            "model": {"model_type": "openpi"},
+            "fsdp_config": {"strategy": "fsdp2", "sharding_strategy": sharding},
+        }
+    )
+    with pytest.raises(AssertionError, match="openpi sharded training requires"):
+        validate_fsdp_cfg(actor)
 
 
 @pytest.mark.parametrize(
@@ -1050,3 +1113,49 @@ def test_openpi_factory_separates_parameter_and_activation_dtypes(
     assert model.embed_dtype == model.llm.embed_dtype == model.img.dtype_mm == expected
     assert {param.dtype for param in model.parameters()} == {torch.float32}
     torch.testing.assert_close(model.img.stem.weight, source.img.stem.weight)
+
+
+def test_openpi_sft_uses_activation_checkpointing(monkeypatch):
+    from rlinf.models.embodiment.base_policy import ForwardType
+    from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    monkeypatch.setattr(gemma, "PALIGEMMA_VOCAB_SIZE", 32)
+    monkeypatch.setattr(utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(
+        siglip,
+        "_decode_variant",
+        lambda variant: {
+            "width": 32,
+            "depth": 1,
+            "num_heads": 4,
+            "mlp_dim": 64,
+            "patch_size": (14, 14),
+        },
+    )
+    cfg = Pi0Config(
+        dtype="float32",
+        paligemma_variant="dummy",
+        action_expert_variant="dummy",
+        action_horizon=2,
+        max_token_len=4,
+    )
+    model = Pi0(cfg).train()
+    model.gradient_checkpointing_enable({"use_reentrant": False})
+    observation = cfg.fake_obs()
+    checkpoint = torch.utils.checkpoint.checkpoint
+    calls = []
+
+    def record_checkpoint(function, *args, **kwargs):
+        calls.append(function)
+        return checkpoint(function, *args, **kwargs)
+
+    monkeypatch.setattr(torch.utils.checkpoint, "checkpoint", record_checkpoint)
+    loss = model(forward_type=ForwardType.SFT, data=(observation, cfg.fake_act()))
+    loss.backward()
+
+    assert calls
+    assert model.img.stem.weight.grad is not None
+    assert model.llm.layers[0].attn.q_proj[0].weight.grad is not None
+    assert model.action_out_proj.weight.grad is not None
