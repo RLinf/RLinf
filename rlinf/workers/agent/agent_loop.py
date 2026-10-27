@@ -15,6 +15,7 @@
 import asyncio
 import copy
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -65,6 +66,12 @@ class AgentLoopOutput:
     extra_fields: dict[str, Any] = field(default_factory=dict)
     """Tool call information for this turn."""
     tool_call_info: Optional[dict[str, int]] = None
+    """Weight version the rollout instance had loaded when the generate
+    call producing this turn's response started, and when it ended.
+    None when the rollout did not stamp versions (synchronous training).
+    """
+    version_start: Optional[int] = None
+    version_end: Optional[int] = None
 
 
 @dataclass
@@ -119,6 +126,12 @@ class AgentLoopWorker(Worker):
         self._agent_metric_channel = None
         self._producer_error = None
         self._inflight_groups = set()
+        # Idle-time accounting for the continuous loop: seconds with no
+        # in-flight group, accumulated over the window since the last
+        # pop_idle_stats call.
+        self._idle_seconds = 0.0
+        self._idle_window_start = None
+        self._idle_since = None
 
     def init_worker(
         self,
@@ -318,6 +331,9 @@ class AgentLoopWorker(Worker):
     ):
         self._agent_metric_channel = agent_metric_channel
         self._inflight_groups: set[asyncio.Task] = set()
+        self._idle_seconds = 0.0
+        self._idle_window_start = time.monotonic()
+        self._idle_since = self._idle_window_start
         try:
             while True:
                 request = await input_channel.get(async_op=True).async_wait()
@@ -328,6 +344,7 @@ class AgentLoopWorker(Worker):
                         )
                     )
                     task.add_done_callback(self._on_group_done)
+                    self._mark_inflight_transition(False)
                     self._inflight_groups.add(task)
         finally:
             # In-flight groups are dropped on any exit: the loop only stops
@@ -339,6 +356,8 @@ class AgentLoopWorker(Worker):
 
     def _on_group_done(self, task: asyncio.Task):
         self._inflight_groups.discard(task)
+        if not self._inflight_groups:
+            self._mark_inflight_transition(True)
         if task.cancelled():
             return
         exc = task.exception()
@@ -365,6 +384,38 @@ class AgentLoopWorker(Worker):
     def num_inflight_groups(self) -> int:
         """In-flight group count."""
         return len(self._inflight_groups)
+
+    def _mark_inflight_transition(self, now_idle: bool):
+        """Update idle accounting at an empty <-> non-empty transition.
+
+        A transition to non-empty closes the idle segment that started at
+        `_idle_since`; a transition to idle opens a new one. Transitions to
+        the state we are already in are ignored, so callers need not check.
+        """
+        if now_idle:
+            if self._idle_since is None:
+                self._idle_since = time.monotonic()
+        else:
+            if self._idle_since is not None:
+                self._idle_seconds += time.monotonic() - self._idle_since
+                self._idle_since = None
+
+    def pop_idle_stats(self) -> tuple[float, float]:
+        """Idle seconds and window seconds since the last call; resets both.
+
+        An ongoing idle segment counts up to the call time and continues
+        from there in the next window. Called between training steps, so
+        the window covers one full step.
+        """
+        now = time.monotonic()
+        window = now - self._idle_window_start if self._idle_window_start else 0.0
+        idle = self._idle_seconds
+        if self._idle_since is not None:
+            idle += now - self._idle_since
+            self._idle_since = now
+        self._idle_seconds = 0.0
+        self._idle_window_start = now
+        return idle, window
 
     def get_rollout_result(
         self, task_results: list[AgentLoopOutput], answer: str
@@ -726,6 +777,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs = []
         is_end = []
         rewards = []
+        version_start = []
+        version_end = []
 
         # Flatten all retained turns while keeping trajectory mapping.
         for idx, task_result in enumerate(task_results):
@@ -746,6 +799,21 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                     rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
+                version_start.append(single_turn_output.version_start)
+                version_end.append(single_turn_output.version_end)
+
+        # Weight versions are either stamped on every turn or on none: mixing
+        # would silently drop the version-less turns from staleness statistics.
+        if any(v is not None for v in version_start + version_end):
+            assert all(v is not None for v in version_start) and all(
+                v is not None for v in version_end
+            ), (
+                "agent loop outputs mix turns with weight versions and turns "
+                "without (version_start/version_end)"
+            )
+        else:
+            version_start = None
+            version_end = None
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
@@ -757,6 +825,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs=rollout_logprobs,
             is_end=is_end,
             rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
             extra_fields_turn=extra_fields_turn,
             extra_fields_traj=extra_fields_traj,
             extra_fields_group=extra_fields_group,

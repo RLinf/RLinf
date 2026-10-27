@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+from dataclasses import replace
 from typing import Optional
 
 import torch
@@ -46,7 +47,11 @@ from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
-from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
+from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_STAT_KEYS,
+    VersionedTrajectoryRecord,
+    compute_staleness_metrics,
+)
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
     PlacementMode,
@@ -391,11 +396,19 @@ class MAMegatronActor(MegatronActor):
         )
         return batch
 
-    def run_training(self, input_channel: Channel):
-        """Run the training loop for the actor."""
+    def run_training(self, input_channel: Channel, version: Optional[int] = None):
+        """Run the training loop for the actor.
+
+        Args:
+            input_channel: The channel to read rollout results from.
+            version: Weight version the actor had loaded at step start, used
+                for staleness statistics; None skips them (synchronous
+                training passes no version).
+        """
 
         # Get all batches for this DP
         batches = []
+        rollout_results = []
         total_result_size_per_dp: int = (
             self.cfg.data.rollout_batch_size
             // parallel_state.get_data_parallel_world_size()
@@ -403,6 +416,7 @@ class MAMegatronActor(MegatronActor):
         for _ in range(total_result_size_per_dp):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
+            rollout_results.append(rollout_result)
         batch = DynamicRolloutResult.merge_batches(
             batches, self.cfg.algorithm.group_size
         )
@@ -423,7 +437,15 @@ class MAMegatronActor(MegatronActor):
             )
 
         # metrics
-        rollout_metrics = self._compute_rollout_metrics(batch)
+        rollout_metrics_group = self.get_rollout_metrics_group(batch)
+        rollout_metrics = self._compute_rollout_metrics(batch, rollout_metrics_group)
+        staleness_metrics = self._compute_staleness_metrics(
+            rollout_results, version, rollout_metrics_group
+        )
+        if staleness_metrics is not None:
+            if rollout_metrics is None:
+                rollout_metrics = {}
+            rollout_metrics.update(staleness_metrics)
 
         # pack traj
         scale_context = {
@@ -492,8 +514,7 @@ class MAMegatronActor(MegatronActor):
 
         return rollout_metrics, training_metrics_list
 
-    def _compute_rollout_metrics(self, batch):
-        rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
+    def _compute_rollout_metrics(self, batch, rollout_metrics_compute_data_group):
         if rollout_metrics_compute_data_group is None:
             return None
 
@@ -526,6 +547,118 @@ class MAMegatronActor(MegatronActor):
                 }
             )
         return rollout_metrics
+
+    def _extract_versioned_trajectory_records(
+        self, rollout_results: list[DynamicRolloutResult]
+    ) -> Optional[list[VersionedTrajectoryRecord]]:
+        """Extract per-trajectory weight-version records from rollout results.
+
+        Returns None when any result lacks versions (synchronous training).
+        Group indices are the position of each result in the local list, so
+        they are unique within a rank; `_compute_staleness_metrics` offsets
+        them per rank after gathering.
+        """
+        records = []
+        for result_index, rollout_result in enumerate(rollout_results):
+            if (
+                rollout_result is None
+                or rollout_result.version_start is None
+                or rollout_result.version_end is None
+            ):
+                return None
+            num_trajectories = (
+                max(rollout_result.idx_to_traj) + 1 if rollout_result.idx_to_traj else 0
+            )
+            earliest_versions = [None] * num_trajectories
+            completion_versions = [None] * num_trajectories
+            generated_tokens = [0] * num_trajectories
+            call_counts = [0] * num_trajectories
+            cross_version_calls = [0] * num_trajectories
+            turn_rewards = [0.0] * num_trajectories
+            turn_counts = [0] * num_trajectories
+            token_weighted_version_start_sums = [0] * num_trajectories
+            for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
+                turn_tokens = rollout_result.response_lengths[turn_index]
+                version_start = rollout_result.version_start[turn_index]
+                version_end = rollout_result.version_end[turn_index]
+                earliest_versions[traj_index] = (
+                    version_start
+                    if earliest_versions[traj_index] is None
+                    else min(earliest_versions[traj_index], version_start)
+                )
+                completion_versions[traj_index] = (
+                    version_end
+                    if completion_versions[traj_index] is None
+                    else max(completion_versions[traj_index], version_end)
+                )
+                generated_tokens[traj_index] += turn_tokens
+                call_counts[traj_index] += 1
+                cross_version_calls[traj_index] += int(version_start != version_end)
+                turn_rewards[traj_index] += rollout_result.rewards[turn_index]
+                turn_counts[traj_index] += 1
+                token_weighted_version_start_sums[traj_index] += (
+                    version_start * turn_tokens
+                )
+            for traj_index in range(num_trajectories):
+                records.append(
+                    VersionedTrajectoryRecord(
+                        group_index=result_index,
+                        earliest_version=earliest_versions[traj_index],
+                        completion_version=completion_versions[traj_index],
+                        generated_tokens=generated_tokens[traj_index],
+                        call_count=call_counts[traj_index],
+                        cross_version_calls=cross_version_calls[traj_index],
+                        reward=turn_rewards[traj_index]
+                        / max(turn_counts[traj_index], 1),
+                        token_weighted_version_start_sum=(
+                            token_weighted_version_start_sums[traj_index]
+                        ),
+                    )
+                )
+        return records
+
+    def _compute_staleness_metrics(
+        self,
+        rollout_results: list[DynamicRolloutResult],
+        version: Optional[int],
+        dp_group,
+    ) -> Optional[dict[str, float]]:
+        """Compute staleness metrics over all DP ranks, or None to skip.
+
+        MP ranks hold broadcast copies of the same results, so records are
+        gathered only across the DP group and group indices are offset by
+        rank to stay unique. If any DP rank lacks versions, all ranks skip
+        (the has-version flag is gathered first).
+        """
+        if version is None or dp_group is None:
+            return None
+
+        local_records = self._extract_versioned_trajectory_records(rollout_results)
+        dp_world_size = torch.distributed.get_world_size(dp_group)
+        has_version_list = [None] * dp_world_size
+        torch.distributed.all_gather_object(
+            has_version_list, local_records is not None, group=dp_group
+        )
+        if not all(flag is True for flag in has_version_list):
+            return None
+
+        local_records = local_records or []
+        records_by_rank = [None] * dp_world_size
+        torch.distributed.all_gather_object(
+            records_by_rank, local_records, group=dp_group
+        )
+        # Offset group indices by the number of records on preceding ranks
+        # (deterministic on every rank) so groups from different DP ranks
+        # stay distinct.
+        all_records = []
+        group_index_offset = 0
+        for rank_records in records_by_rank:
+            for record in rank_records:
+                all_records.append(
+                    replace(record, group_index=group_index_offset + record.group_index)
+                )
+            group_index_offset += len(rank_records)
+        return compute_staleness_metrics(all_records, version)
 
     def run_inference(
         self,

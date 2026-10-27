@@ -843,6 +843,13 @@ class DynamicRolloutResult:
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
 
+    # Weight versions of the generate call that produced each sequence
+    # (one entry per sequence, aligned with input_ids): the version the
+    # rollout instance had loaded when the call started and when it ended.
+    # None when the rollout did not stamp versions (synchronous training).
+    version_start: Optional[list[int]] = None
+    version_end: Optional[list[int]] = None
+
     # extra fields used in training for custom process
     extra_fields_train: dict[str, list] = field(default_factory=dict)
 
@@ -1266,6 +1273,29 @@ class DynamicRolloutResult:
         return packed_batch
 
     @staticmethod
+    def _merge_version_fields(
+        rollout_results: list["DynamicRolloutResult"],
+    ) -> tuple[Optional[list[int]], Optional[list[int]]]:
+        """Concatenate version_start/version_end across results, or None if absent.
+
+        Results with versions and results without cannot be mixed: downstream
+        staleness statistics would silently drop the version-less part.
+        """
+        has_version = [
+            res.version_start is not None and res.version_end is not None
+            for res in rollout_results
+        ]
+        if not any(has_version):
+            return None, None
+        assert all(has_version), (
+            "cannot merge rollout results that mix results with weight "
+            "versions and results without (version_start/version_end)"
+        )
+        version_start = sum((list(res.version_start) for res in rollout_results), [])
+        version_end = sum((list(res.version_end) for res in rollout_results), [])
+        return version_start, version_end
+
+    @staticmethod
     def merge_result_list(
         rollout_results: list["DynamicRolloutResult"],
     ) -> "DynamicRolloutResult":
@@ -1283,6 +1313,10 @@ class DynamicRolloutResult:
         if len(rollout_results) == 1:
             return rollout_results[0]
 
+        version_start, version_end = DynamicRolloutResult._merge_version_fields(
+            rollout_results
+        )
+
         merged_result = DynamicRolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
             group_size=rollout_results[0].group_size,
@@ -1292,6 +1326,8 @@ class DynamicRolloutResult:
             prompt_lengths=[],
             response_lengths=[],
             is_end=[],
+            version_start=version_start,
+            version_end=version_end,
             extra_fields_train=dict.fromkeys(
                 rollout_results[0].extra_fields_train.keys()
             ),
@@ -1374,6 +1410,16 @@ class DynamicRolloutResult:
             end_idx = start_idx + split_size
 
             split_idx_to_traj = rollout_result.idx_to_traj[start_idx:end_idx]
+            split_version_start = (
+                None
+                if rollout_result.version_start is None
+                else rollout_result.version_start[start_idx:end_idx]
+            )
+            split_version_end = (
+                None
+                if rollout_result.version_end is None
+                else rollout_result.version_end[start_idx:end_idx]
+            )
             split_input_ids = rollout_result.input_ids[start_idx:end_idx]
             split_prompt_lengths = rollout_result.prompt_lengths[start_idx:end_idx]
             split_response_lengths = rollout_result.response_lengths[start_idx:end_idx]
@@ -1413,6 +1459,8 @@ class DynamicRolloutResult:
                 response_lengths=split_response_lengths,
                 is_end=split_is_end,
                 rewards=split_rewards,
+                version_start=split_version_start,
+                version_end=split_version_end,
                 extra_fields_train=split_extra_fields_train,
             )
 
