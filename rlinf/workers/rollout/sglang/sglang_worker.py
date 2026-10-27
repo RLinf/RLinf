@@ -76,6 +76,17 @@ class SGLangWorker(Worker):
         )
         # Set in init_worker(); declared here so RPC methods can check it.
         self._backend = None
+        # Weight version of this instance (advanced training step count).
+        self._weight_version: int = 0
+        # Pause mode of the current pause, None when not paused. Remembered
+        # so continue_generation knows what to resume.
+        self._pause_mode: Optional[str] = None
+        # Drain gate for rollout_serverless: closed (cleared) while paused,
+        # so no new generate task is dispatched. Open (set) otherwise.
+        self._dispatch_gate: asyncio.Event = asyncio.Event()
+        self._dispatch_gate.set()
+        # In-flight generate_and_send tasks of rollout_serverless.
+        self._inflight_generates: set[asyncio.Task] = set()
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._cfg_rollout.model.model_path,
@@ -259,11 +270,32 @@ class SGLangWorker(Worker):
         self.log_on_first_rank(f"{server_args=}")
         return dataclasses.asdict(server_args)
 
-    def stop(self):
+    async def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
         # Finalize meta_info statistics collectors if they exist
         if self._collect_meta_stats:
             self.async_meta_stats_collector.finalize()
+
+        # Close the dispatch gate first: the rollout_serverless loop is
+        # still running, and requests that reached the input channel before
+        # the agent loop stopped would be picked up and dispatched into new
+        # generate tasks while the cancellation below awaits. The gate (the
+        # same one drain pauses use) parks the loop instead of dispatching.
+        self._dispatch_gate.clear()
+
+        # Cancel in-flight generate_and_send tasks before shutting the
+        # backend down: they are fire-and-forget, so nobody else cancels
+        # them, and a generate that hits the torn-down server would be
+        # logged as an ERROR (ServerDisconnected, then "http_client is not
+        # available"). CancelledError is a BaseException, so it skips the
+        # failure reporting in generate_and_send and no error payload is
+        # written to any channel. The synchronous path has no in-flight
+        # tasks and is unaffected.
+        for task in self._inflight_generates:
+            task.cancel()
+        if self._inflight_generates:
+            await asyncio.gather(*self._inflight_generates, return_exceptions=True)
+        self._inflight_generates.clear()
 
         self.log_info(f"Stopping SGLang worker {self._rank} ...")
         if self._backend is not None:
@@ -497,11 +529,54 @@ class SGLangWorker(Worker):
             return
         await self._backend.abort_generation()
 
-    async def sync_model_from_actor(self):
-        """Update the weights of the SGLang engine."""
+    async def sync_model_from_actor(self, version: Optional[int] = None):
+        """Update the weights of the SGLang engine.
+
+        Args:
+            version: Weight version to record once the sync completes. None
+                keeps the version unchanged (the synchronous training path).
+        """
         if not self._is_model_instance_entry:
             return
-        await self._backend.sync_weights()
+        await self._backend.sync_weights(pause_mode=self._pause_mode)
+        if version is not None:
+            self._weight_version = version
+
+    async def pause_generation(self, mode: str):
+        """Pause this instance's generation for an async weight sync.
+
+        "in_place" / "retract" go to the backend (sglang-native). "drain" is
+        implemented here: close the rollout_serverless dispatch gate, then
+        wait for all in-flight generate calls to finish. Never touches other
+        instances - no collective calls anywhere in this method.
+        """
+        if not self._is_model_instance_entry:
+            return
+        self._pause_mode = mode
+        if mode in ("in_place", "retract"):
+            await self._backend.pause_generation(mode)
+        elif mode == "drain":
+            self._dispatch_gate.clear()
+            if self._inflight_generates:
+                await asyncio.wait(self._inflight_generates)
+        else:
+            raise ValueError(f"Unsupported pause mode: {mode!r}")
+
+    async def continue_generation(self):
+        """Resume generation after a pause (see `pause_generation`)."""
+        if not self._is_model_instance_entry:
+            return
+        mode = self._pause_mode
+        if mode in ("in_place", "retract"):
+            await self._backend.continue_generation()
+        elif mode == "drain":
+            self._dispatch_gate.set()
+        else:
+            raise RuntimeError(
+                f"continue_generation called without a preceding pause "
+                f"(current pause mode: {mode!r})"
+            )
+        self._pause_mode = None
 
     async def check_running_state(self):
         if not self._is_model_instance_entry:
@@ -681,6 +756,7 @@ class SGLangWorker(Worker):
         # parsing), put an error payload on the same channel key so the
         # requesting agent loop raises instead of waiting forever.
         try:
+            version_start = self._weight_version
             result = await self._backend.async_generate(
                 input_ids=prompt_ids,
                 sampling_params=final_sampling_params,
@@ -691,6 +767,11 @@ class SGLangWorker(Worker):
             result_dict = {
                 "output_ids": result["output_ids"],
                 "finish_reason": result["meta_info"]["finish_reason"]["type"],
+                # Weight versions this call spanned: a call queued inside
+                # sglang across a sync starts on the old version and its
+                # tokens come from the new one (start != end).
+                "version_start": version_start,
+                "version_end": self._weight_version,
             }
             if self._return_logprobs:
                 result_dict["logprobs"] = [
@@ -723,7 +804,11 @@ class SGLangWorker(Worker):
             return
         while True:
             rollout_request = await input_channel.get(async_op=True).async_wait()
-            asyncio.create_task(
+            # Drain gate: while paused in "drain" mode, hold the request here
+            # instead of dispatching it; the sync happens without the engine
+            # having in-flight requests.
+            await self._dispatch_gate.wait()
+            task = asyncio.create_task(
                 self.generate_and_send(
                     output_channel=output_channel,
                     channel_key=rollout_request["channel_key"],
@@ -731,3 +816,5 @@ class SGLangWorker(Worker):
                     sampling_params=rollout_request.get("sampling_params", None),
                 )
             )
+            self._inflight_generates.add(task)
+            task.add_done_callback(self._inflight_generates.discard)

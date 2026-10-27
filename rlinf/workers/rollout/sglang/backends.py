@@ -95,9 +95,9 @@ class SGLangEngineBackend(RolloutBackend):
             return_logprob=return_logprob,
         )
 
-    async def sync_weights(self) -> None:
+    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
         await self.engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput()
+            obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
         )
 
     async def offload(self, tags: Optional[list[str]] = None) -> None:
@@ -113,6 +113,22 @@ class SGLangEngineBackend(RolloutBackend):
     async def abort_generation(self) -> None:
         await self.engine.tokenizer_manager.abort_generation(
             obj=io_struct.AbortGenerationInput()
+        )
+
+    async def pause_generation(self, mode: str) -> None:
+        raise NotImplementedError(
+            "Pausing generation for a weight sync requires the sglang HTTP "
+            f"server routes (/pause_generation), i.e. rollout.sglang.backend_type: "
+            f"server; the in-process engine backend does not support it (got "
+            f"mode={mode!r})"
+        )
+
+    async def continue_generation(self) -> None:
+        raise NotImplementedError(
+            "Continuing generation after a pause requires the sglang HTTP "
+            "server routes (/continue_generation), i.e. rollout.sglang."
+            "backend_type: server; the in-process engine backend does not "
+            "support it"
         )
 
     async def get_running_state(self) -> RolloutEngineStats:
@@ -284,8 +300,10 @@ class SGLangServerBackend(RolloutBackend):
             image_data=image_data,
         )
 
-    async def sync_weights(self) -> None:
-        await self.http_client.async_sync_hf_weight(obj=io_struct.SyncHFWeightInput())
+    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+        await self.http_client.async_sync_hf_weight(
+            obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
+        )
 
     async def offload(self, tags: Optional[list[str]] = None) -> None:
         await self.http_client.async_release_memory_occupation(tags=tags)
@@ -297,6 +315,13 @@ class SGLangServerBackend(RolloutBackend):
         await self.http_client.async_abort_generation(
             obj=io_struct.AbortGenerationInput()
         )
+
+    async def pause_generation(self, mode: str) -> None:
+        # Native sglang routes, JSON body: no pickled payload involved.
+        await self.http_client.async_pause_generation(mode)
+
+    async def continue_generation(self) -> None:
+        await self.http_client.async_continue_generation()
 
     async def get_running_state(self) -> RolloutEngineStats:
         state = await self.http_client.async_run_task_method(
