@@ -138,6 +138,7 @@ class SO101Arm(BaseArm):
         self._gripper_requested: Optional[float] = None
         self._gripper_limit: Optional[tuple[float, float]] = None
         self._gripper_error: Optional[Exception] = None
+        self._gripper_generation = 0
 
     @classmethod
     def declare(
@@ -434,9 +435,14 @@ class SO101Arm(BaseArm):
         direction = 0.0
         still = 0
         deadline = 0.0
+        generation = -1
         try:
             while not self._gripper_stop.wait(self.SETTLE_POLL_INTERVAL):
                 with self._gripper_condition:
+                    if generation != self._gripper_generation:
+                        previous = None
+                        still = 0
+                        generation = self._gripper_generation
                     target = self._gripper_target
                     if target is None:
                         previous = None
@@ -469,6 +475,12 @@ class SO101Arm(BaseArm):
                         or time.monotonic() >= deadline
                     ):
                         self._robot.send_action({f"{self.GRIPPER}.pos": current})
+                        self._logger.warning(
+                            "SO-101 gripper stall relief: target=%.1f current=%.1f "
+                            "(0..100); holding current opening.",
+                            target,
+                            current,
+                        )
                         self._gripper_limit = (direction, current)
                         self._gripper_target = None
                         previous = None
@@ -579,16 +591,25 @@ class SO101Arm(BaseArm):
         period = 1.0 / 30.0
         steps = max(2, int(np.ceil(travel_time / period)))
 
-        # A moving gripper advances only a little per frame. Running the stall
-        # monitor between trajectory frames can mistake that motion for a stall.
         with self._gripper_condition:
             self._check_gripper_monitor()
+            # Discard progress history from an earlier gripper command.
+            self._gripper_generation += 1
             self._gripper_target = None
-            for index in range(1, steps + 1):
-                phase = index / steps
-                blend = phase**3 * (10 + phase * (-15 + 6 * phase))
-                frame = start + blend * delta
-                time.sleep(period)
+        for index in range(1, steps + 1):
+            phase = index / steps
+            blend = phase**3 * (10 + phase * (-15 + 6 * phase))
+            frame = start + blend * delta
+            time.sleep(period)
+            with self._gripper_condition:
+                self._check_gripper_monitor()
+                gripper_goal = float(frame[-1] * self.GRIPPER_SCALE)
+                if self._gripper_limit is not None:
+                    direction, held = self._gripper_limit
+                    if (gripper_goal - held) * direction >= -self.GRIPPER_TOLERANCE:
+                        gripper_goal = held
+                    else:
+                        self._gripper_limit = None
                 sent = self._robot.send_action(
                     {
                         **{
@@ -599,12 +620,17 @@ class SO101Arm(BaseArm):
                                 strict=True,
                             )
                         },
-                        f"{self.GRIPPER}.pos": float(frame[-1] * self.GRIPPER_SCALE),
+                        f"{self.GRIPPER}.pos": gripper_goal,
                     }
                 )
-                if index == steps:
-                    self._gripper_requested = float(sent[f"{self.GRIPPER}.pos"])
-                    self._gripper_target = self._gripper_requested
+                self._gripper_requested = gripper_goal
+                # The final pose is still moving; monitor the command sent in
+                # this frame rather than treating the final goal as due now.
+                self._gripper_target = (
+                    float(sent[f"{self.GRIPPER}.pos"])
+                    if self._gripper_limit is None
+                    else None
+                )
         self.wait_for_gripper()
         self.wait_until_still()
 

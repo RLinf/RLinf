@@ -5697,6 +5697,72 @@ def test_so101_pose_waits_until_joints_are_still(monkeypatch):
             arm.disconnect()
 
 
+def test_so101_pose_monitors_the_commanded_gripper_position(monkeypatch, caplog):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        SO101Follower.jaw_step = 5.0
+        SO101Follower.jaw_lag = 0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        device.positions["gripper.pos"] = 100.0
+        original_read = device.get_observation
+        reads = 0
+
+        def read_after_startup_lag():
+            nonlocal reads
+            reads += 1
+            return dict(device.positions) if reads <= 5 else original_read()
+
+        monkeypatch.setattr(device, "get_observation", read_after_startup_lag)
+        try:
+            arm.move_to_pose(np.zeros(6), duration=0.8, max_velocity=100.0)
+            assert arm.get_state().gripper_position[0] == pytest.approx(0.0)
+            assert all(len(command) == 6 for command in device.sent)
+            assert "SO-101 gripper stall relief" not in caplog.text
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_step = None
+            SO101Follower.jaw_lag = 1
+
+
+def test_so101_pose_relieves_a_blocked_gripper_during_trajectory(caplog):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        SO101Follower.jaw_limit = 30.0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        device.positions["gripper.pos"] = 100.0
+        try:
+            arm.move_to_pose(
+                np.r_[np.ones(5) * 0.1, 0.0], duration=0.8, max_velocity=100.0
+            )
+            hold_indices = [
+                index
+                for index, command in enumerate(device.sent)
+                if set(command) == {"gripper.pos"}
+            ]
+            assert hold_indices
+            assert hold_indices[0] < len(device.sent) - 1
+            assert device.sent[-1]["gripper.pos"] == pytest.approx(30.0)
+            assert device.sent[-1]["shoulder_pan.pos"] == pytest.approx(np.rad2deg(0.1))
+            assert "SO-101 gripper stall relief" in caplog.text
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_limit = None
+
+
 def test_so101_leader_ignores_follower_gripper_mismatch_when_idle():
     from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
 
