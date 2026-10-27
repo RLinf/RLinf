@@ -32,7 +32,6 @@ from rlinf.envs.utils import grouped_state_max_error
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
 from rlinf.utils.metric_utils import compute_loss_mask
-from rlinf.utils.nested_dict_process import process_nested_dict_for_train
 from rlinf.workers.actor.fsdp_art_policy_worker import (
     EmbodiedARTFSDPPolicy,
     _art_loss,
@@ -65,6 +64,7 @@ def test_art_velocity_target_validation_and_prompt_windows(monkeypatch):
         "reference_noise_level",
         "corrective_mask_enabled",
         "coordinate_mask",
+        "output_gradient_stats",
     )
     states = torch.zeros(4, 2, 2)
     sigmas = torch.tensor([[1.0, 0.5]]).expand(4, -1)
@@ -203,13 +203,10 @@ def test_art_trajectory_groups_keep_decisions_and_reset_groups_separate():
         2,
         zero_signal_mode="exact",
     )
-    torch.testing.assert_close(
-        guidance["group_ids"], torch.tensor([[0, 0, 1, 1], [2, 2, 3, 3]])
-    )
+    assert guidance["stats"]["group_active"].tolist() == [True, False, True, False]
     torch.testing.assert_close(guidance["directions"][0, :2], torch.ones(2, 1, 1))
     torch.testing.assert_close(guidance["directions"][1, :2], -torch.ones(2, 1, 1))
     assert guidance["magnitudes"][:, 2:].eq(0).all()
-    assert guidance["episode_ids"][0].equal(guidance["episode_ids"][1])
 
 
 def test_art_loss_masks_padding_and_keeps_inward_restoration():
@@ -266,6 +263,7 @@ def test_art_output_gradient_statistics_match_autograd(loss_space):
         mask_metric="fixed_mse",
         mask_threshold=0.1,
         coordinate_mask=mask,
+        output_gradient_stats=True,
     )
     assert terms["keep_mask"].tolist() == [False, True, False, False, True]
     weight = sigma if loss_space == "velocity_linear_sigma" else torch.ones_like(sigma)
@@ -295,9 +293,14 @@ def test_art_output_gradient_statistics_match_autograd(loss_space):
         direction,
         magnitude,
         coordinate_mask=mask,
+        output_gradient_stats=True,
     )
     assert on_policy["output_restoration_grad_sq"] == 0
     assert on_policy["output_grad_inner"] == 0
+    default = _art_loss(
+        old, old, sigma, sigma / 2, direction, magnitude, coordinate_mask=mask
+    )
+    assert not set(expected).intersection(default)
 
 
 def test_art_velocity_drift_pools_valid_coordinates_across_microbatches():
@@ -406,9 +409,6 @@ def test_art_trajectory_preparation_preserves_episode_windows_and_cached_velocit
     assert all(len(set((window % 4 // 2).tolist())) == 2 for window in windows)
     rows = sum(len(window) for window in windows)
     assert rows == (4 if first_chunk_only else 12)
-    worker.rollout_batch = process_nested_dict_for_train(
-        worker.rollout_batch, torch.arange(rows)
-    )
     worker._select_art_training_timesteps(generator)
     inputs = worker.rollout_batch["forward_inputs"]
     selected = inputs["art_states"][..., 0, 0]
@@ -419,10 +419,8 @@ def test_art_trajectory_preparation_preserves_episode_windows_and_cached_velocit
     for window in windows:
         batch = worker._index_nested(worker.rollout_batch, window)
         replay = worker._model_forward_inputs(batch["forward_inputs"])
-        torch.testing.assert_close(
-            replay["observation/state"][:, 0],
-            batch["forward_inputs"]["art_episode_ids"],
-        )
+        # Flattened rows are decision-major, so the episode is the row modulo 4.
+        assert replay["observation/state"][:, 0].tolist() == (window % 4).tolist()
         assert not any(key.startswith("art_") for key in replay)
     if not first_chunk_only:
         assert not inputs["art_coordinate_mask"][4, ...].any()
@@ -550,11 +548,10 @@ def test_art_branch_selects_matching_observations_states_and_returns(branch_inde
     )
     assert active and metrics["actor/branch_valid_group_frac"] == 1
     assert metrics["actor/art_reward_mean"] == 0.5
-    selected = process_nested_dict_for_train(batch, branch_index * 4 + torch.arange(4))
-    replay = selected["forward_inputs"]
+    replay = worker.rollout_batch["forward_inputs"]
     torch.testing.assert_close(replay["art_states"], expected_states)
     torch.testing.assert_close(replay["art_old_velocity"], expected_old)
-    assert replay["art_decision_ids"].eq(branch_index).all()
+    assert replay["art_guidance_direction"].shape[0] == 4
     assert replay["observation/state"][:, 0].tolist() == list(
         range(branch_index * 4, branch_index * 4 + 4)
     )
@@ -579,9 +576,10 @@ def test_art_branch_masks_complete_invalid_groups(invalid_reason):
         torch.Generator().manual_seed(7)
     )
     assert metrics["actor/branch_valid_group_frac"] == 0.5
-    assert not inputs["art_coordinate_mask"][1, :2].any()
-    assert inputs["art_guidance_magnitude"][1, :2].eq(0).all()
-    assert inputs["art_coordinate_mask"][1, 2:].any()
+    inputs = worker.rollout_batch["forward_inputs"]
+    assert not inputs["art_coordinate_mask"][:2].any()
+    assert inputs["art_guidance_magnitude"][:2].eq(0).all()
+    assert inputs["art_coordinate_mask"][2:].any()
 
 
 def test_art_state_sampling_preserves_conditions_and_candidate_cache():
@@ -600,13 +598,12 @@ def test_art_state_sampling_preserves_conditions_and_candidate_cache():
         torch.Generator().manual_seed(7)
     )
     assert active
-    assert inputs["art_group_ids"][0].tolist() == [1, 1, 0, 0]
-    assert not inputs["art_coordinate_mask"][1:].any()
     assert sum(len(window) for window in windows) == 4
     assert set(windows[0].tolist()).isdisjoint(windows[1].tolist())
+    selected = worker.rollout_batch["forward_inputs"]
     for window in windows:
-        assert set(inputs["art_state_id"][0, window].tolist()) == {12, 31}
-    torch.testing.assert_close(inputs["art_old_velocity"], cached_old)
+        assert set(selected["art_state_id"][window].tolist()) == {12, 31}
+    torch.testing.assert_close(selected["art_old_velocity"], cached_old[0])
 
 
 def test_art_covariance_groups_by_snapshot_identity():
@@ -661,6 +658,10 @@ def test_art_fixed_branch_recipe_composes(
     cfg = validate_cfg(cfg)
     assert cfg.env.train.task_suite_name == cfg.env.eval.task_suite_name == task_suite
     assert cfg.env.train.art_branch_chunk_index == branch_index
+    cfg.env.train.art_branch_chunk_index = branch_index + 1
+    with pytest.raises(AssertionError, match="derived from algorithm"):
+        validate_openpi_art_cfg(cfg)
+    cfg.env.train.art_branch_chunk_index = branch_index
     cfg.algorithm.art_first_chunk_only = True
     with pytest.raises(AssertionError, match="mutually exclusive"):
         validate_openpi_art_cfg(cfg)
@@ -825,16 +826,11 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         assert not invalid_result["forward_inputs"]["art_branch_valid"].any()
         worker.art_state_sampling = True
         worker.art_branch_chunk_index = 0
-        worker.version = 7
         env_obs["art_state_id"] = torch.tensor([19, 19])
-        env_obs["art_state_steps"] = torch.tensor([40, 40])
         _, state_result = worker._predict_art_branch_actions(env_obs, 0)
         state_inputs = state_result["forward_inputs"]
         assert state_inputs["art_branch_valid"].all()
         assert state_inputs["art_state_id"].tolist() == [19, 19]
-        assert state_inputs["art_state_steps"].tolist() == [40, 40]
-        assert state_inputs["art_candidate_id"].tolist() == [0, 1]
-        assert state_inputs["art_policy_version"].tolist() == [7, 7]
         model._input_transform_fn = lambda data: data
         for name, value in observation.images.items():
             inputs[f"obs_image__{name}"] = value

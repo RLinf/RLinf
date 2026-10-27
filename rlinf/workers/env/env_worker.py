@@ -1076,8 +1076,6 @@ class EnvWorker(Worker):
     ) -> list[EnvOutput]:
         """Collect states before opening any candidate trajectory in the collector."""
         initial_transitions = [output.transition for output in env_outputs]
-        for env in self.env_list:
-            get_env_attr(env, "begin_art_state_collection")()
         for _ in range(self.n_train_chunk_steps):
             for stage_id, env in enumerate(self.env_list):
                 get_env_attr(env, "capture_art_states")()
@@ -1173,12 +1171,6 @@ class EnvWorker(Worker):
                     self._trajectory_step,
                     epoch,
                     final_env_parts,
-                )
-                env_metrics["art_collection_steps"].append(
-                    torch.full(
-                        (self.train_num_envs_per_stage,),
-                        self.n_train_chunk_steps * self.model_cfg.num_action_chunks,
-                    )
                 )
                 env_metrics["art_state_steps"].append(
                     env_outputs[0].obs["art_state_steps"].clone()

@@ -1720,9 +1720,7 @@ class EnvOutput:
             "states": states,
             "task_descriptions": task_descriptions,
         }
-        if "art_sim_state_error" in obs:
-            prepared["art_sim_state_error"] = obs["art_sim_state_error"]
-        for key in ("art_state_id", "art_state_steps"):
+        for key in ("art_sim_state_error", "art_state_id"):
             if key in obs:
                 prepared[key] = obs[key]
         return prepared

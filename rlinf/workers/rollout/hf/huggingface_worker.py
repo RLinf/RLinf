@@ -750,13 +750,7 @@ class MultiStepRolloutWorker(Worker):
             art_branch_image_error=self._art_branch_image_error.clone(),
         )
         if self.art_state_sampling:
-            batch_size = actions.shape[0]
-            result["forward_inputs"].update(
-                art_state_id=env_obs["art_state_id"],
-                art_state_steps=env_obs["art_state_steps"],
-                art_candidate_id=torch.arange(batch_size) % group_size,
-                art_policy_version=torch.full((batch_size,), self.version),
-            )
+            result["forward_inputs"]["art_state_id"] = env_obs["art_state_id"]
         return actions, result
 
     @Worker.timer("sync_model_from_actor")

@@ -72,8 +72,6 @@ env:
     task_id_filter: [0]
     total_num_envs: 64
     group_size: 8
-    art_branch_chunk_index: ${algorithm.art_branch_chunk_index}
-    art_state_sampling: ${algorithm.art_state_sampling}
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
     video_cfg:

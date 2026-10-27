@@ -171,6 +171,7 @@ class LiberoEnv(gym.Env):
                 + self.seed_offset * self.num_envs
             )
             self._art_state_steps = torch.zeros(self.num_envs, dtype=torch.int64)
+            self._art_states = []
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.specific_reset_id = cfg.get("specific_reset_id", None)
         self.task_id_filter = cfg.get("task_id_filter", None)
@@ -997,12 +998,12 @@ class LiberoEnv(gym.Env):
             grouped_state_max_error(self.env.get_sim_state(), self.group_size)
         )
 
-    def begin_art_state_collection(self) -> None:
-        """Start a state bank owned by this rollout's frozen policy."""
-        self._art_states = []
-
     def capture_art_states(self) -> None:
-        """Save live group leaders at policy decision boundaries."""
+        """Save live group leaders at policy decision boundaries.
+
+        ``restore_art_states`` consumes and clears the bank, so each rollout's
+        frozen policy owns the states it collects.
+        """
         leaders = np.arange(0, self.num_envs, self.group_size)
         leaders = leaders[
             ~self.success_once[leaders]
@@ -1046,10 +1047,6 @@ class LiberoEnv(gym.Env):
             self.reset_state_ids[rows] = state["reset_state_id"]
         self._init_task_and_trial_ids()
         self._art_states.clear()
-        self._art_state_ids = (
-            torch.arange(self.num_group).repeat_interleave(self.group_size)
-            + self.seed_offset * self.num_envs
-        )
         self._art_state_steps = torch.from_numpy(self._elapsed_steps.copy())
         obs = self._wrap_obs(self.current_raw_obs)
         self._add_art_sim_state_error(obs)

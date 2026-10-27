@@ -1234,7 +1234,6 @@ def test_env_output_preserves_optional_art_diagnostics_through_policy_transport(
     if with_diagnostics:
         obs["art_sim_state_error"] = torch.tensor([0.0, 0.0, 0.01, 0.01])
         obs["art_state_id"] = torch.tensor([13, 13, 21, 21])
-        obs["art_state_steps"] = torch.tensor([0, 0, 40, 40])
     output = EnvOutput(obs=obs, final_obs=obs)
     env_worker = object.__new__(EnvWorker)
     policy_input = env_worker._build_policy_input(output)
@@ -1251,7 +1250,7 @@ def test_env_output_preserves_optional_art_diagnostics_through_policy_transport(
     ):
         assert ("art_sim_state_error" in prepared) == with_diagnostics
         if with_diagnostics:
-            for key in ("art_sim_state_error", "art_state_id", "art_state_steps"):
+            for key in ("art_sim_state_error", "art_state_id"):
                 torch.testing.assert_close(prepared[key], obs[key])
 
 

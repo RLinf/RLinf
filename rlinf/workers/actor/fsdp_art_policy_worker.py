@@ -62,40 +62,23 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         generator = torch.Generator().manual_seed(
             self.cfg.actor.seed + self.version + self._rank
         )
-        endpoints = self.rollout_batch["forward_inputs"]["art_endpoint"]
-        rollout_size = endpoints.shape[0] * endpoints.shape[1]
         action_trajectories = self.cfg.actor.model.model_type == "openpi"
-        training_indices = None
         if action_trajectories:
             preparation_metrics, has_guidance, windows = (
                 self._prepare_art_trajectory_training_inputs(generator)
             )
-            rollout_size = sum(rows.numel() for rows in windows)
-            branch_index = self.cfg.algorithm.get("art_branch_chunk_index", None)
-            if self.cfg.algorithm.get("art_state_sampling", False):
-                branch_index = 0
-            if branch_index is not None:
-                training_indices = branch_index * endpoints.shape[1] + torch.arange(
-                    rollout_size
-                )
-        self.rollout_batch = process_nested_dict_for_train(
-            self.rollout_batch,
-            torch.arange(rollout_size)
-            if training_indices is None
-            else training_indices,
-        )
-
-        if action_trajectories:
             self._select_art_training_timesteps(generator)
         else:
+            endpoints = self.rollout_batch["forward_inputs"]["art_endpoint"]
+            rollout_size = endpoints.shape[0] * endpoints.shape[1]
+            self.rollout_batch = process_nested_dict_for_train(
+                self.rollout_batch, torch.arange(rollout_size)
+            )
             preparation_metrics, has_guidance = self._prepare_art_training_inputs(
                 generator
             )
-        if action_trajectories and branch_index is not None:
-            error_keys = (
-                "actor/branch_state_error_max",
-                "actor/branch_image_error_max",
-            )
+        error_keys = ("actor/branch_state_error_max", "actor/branch_image_error_max")
+        if error_keys[0] in preparation_metrics:
             errors = torch.tensor(
                 [preparation_metrics[key] for key in error_keys], device=self.device
             )
@@ -108,14 +91,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         replay_diagnostics = action_trajectories and self.cfg.algorithm.get(
             "art_replay_diagnostics", False
         )
-        if not has_guidance and not replay_diagnostics:
-            clear_memory()
-            return all_reduce_dict(
-                preparation_metrics,
-                op=torch.distributed.ReduceOp.AVG,
-            )
-
-        if self.is_weight_offloaded:
+        if self.is_weight_offloaded and (has_guidance or replay_diagnostics):
             self.load_param_and_grad(self.device)
         if replay_diagnostics:
             preparation_metrics.update(self._art_replay_metrics())
@@ -130,15 +106,11 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         if "art_old_velocity" not in self.rollout_batch["forward_inputs"]:
             self._precompute_old_velocities()
 
-        group_size = int(self.cfg.algorithm.group_size)
-        updates = int(self.cfg.algorithm.get("art_updates_per_rollout", 2))
         if not action_trajectories:
-            groups = torch.arange(rollout_size) // group_size
-            order = torch.randperm(rollout_size, generator=generator).tolist()
             row_windows = _prompt_disjoint_windows(
-                groups,
-                updates=updates,
-                order=order,
+                torch.arange(rollout_size) // int(self.cfg.algorithm.group_size),
+                updates=int(self.cfg.algorithm.get("art_updates_per_rollout", 2)),
+                order=torch.randperm(rollout_size, generator=generator).tolist(),
             )
             windows = tuple(
                 torch.tensor(rows, dtype=torch.long) for rows in row_windows
@@ -215,6 +187,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                     if action_trajectories:
                         step_metrics["actor/art_loss"] *= loss_scale
                         step_metrics["actor/total_loss"] *= loss_scale
+                    if replay_diagnostics:
                         for key in _ART_OUTPUT_GRADIENT_STATS:
                             step_metrics[f"actor/art_{key}"] *= (
                                 loss_scale / self.gradient_accumulation
@@ -245,7 +218,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         clear_memory()
         mean_metrics = {key: np.mean(value) for key, value in metrics.items()}
         mean_metrics = all_reduce_dict(mean_metrics, op=torch.distributed.ReduceOp.AVG)
-        if action_trajectories:
+        if replay_diagnostics:
             guidance_sq, restoration_sq, inner = (
                 mean_metrics.pop(f"actor/art_{key}")
                 for key in _ART_OUTPUT_GRADIENT_STATS
@@ -281,9 +254,14 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
     def _prepare_art_trajectory_training_inputs(
         self, generator: torch.Generator
     ) -> tuple[dict[str, float], bool, tuple[torch.Tensor, ...]]:
+        """Flatten the trained decisions and attach their frozen guidance.
+
+        Returned windows index rows of the flattened ``self.rollout_batch``.
+        """
         batch = self.rollout_batch
         forward_inputs = batch["forward_inputs"]
         endpoints = forward_inputs["art_endpoint"]
+        group_size = int(self.cfg.algorithm.group_size)
         action_mask, _ = compute_loss_mask(batch["dones"])
         if action_mask.shape != endpoints.shape[:3]:
             raise ValueError(
@@ -292,16 +270,18 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         episode_returns = torch.where(action_mask, batch["rewards"], 0.0).sum((0, 2))
         if batch.get("loss_mask") is not None:
             action_mask = action_mask & batch["loss_mask"]
-        branch_index = self.cfg.algorithm.get("art_branch_chunk_index", None)
         state_sampling = self.cfg.algorithm.get("art_state_sampling", False)
-        if state_sampling:
-            branch_index = 0
+        branch_index = (
+            0
+            if state_sampling
+            else self.cfg.algorithm.get("art_branch_chunk_index", None)
+        )
         preparation_metrics = {}
         if branch_index is not None:
+            first_decision, decisions = branch_index, 1
             episode_returns = torch.where(
                 action_mask[branch_index:], batch["rewards"][branch_index:], 0.0
             ).sum((0, 2))
-            group_size = int(self.cfg.algorithm.group_size)
             group_valid = (
                 (
                     forward_inputs["art_branch_valid"][branch_index]
@@ -314,7 +294,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 action_mask[branch_index : branch_index + 1]
                 & (group_valid.repeat_interleave(group_size)[None, :, None])
             )
-            selected_endpoints = endpoints[branch_index : branch_index + 1]
             preparation_metrics = {
                 "actor/branch_chunk_index": float(branch_index),
                 "actor/branch_valid_group_frac": group_valid.float().mean().item(),
@@ -329,44 +308,28 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 .max()
                 .item(),
             }
-            decisions = 1
         else:
+            first_decision = 0
             decisions = (
                 1
                 if self.cfg.algorithm.get("art_first_chunk_only", False)
                 else endpoints.shape[0]
             )
-            selected_endpoints = endpoints[:decisions]
             selected_mask = action_mask[:decisions]
+        condition_ids = forward_inputs["art_state_id"][0] if state_sampling else None
         guidance = _art_trajectory_guidance(
-            selected_endpoints,
+            endpoints[first_decision : first_decision + decisions],
             episode_returns,
             selected_mask,
-            int(self.cfg.algorithm.group_size),
-            condition_ids=forward_inputs["art_state_id"][0] if state_sampling else None,
+            group_size,
+            condition_ids=condition_ids,
             **self._art_covariance_options(),
         )
-        if branch_index is not None:
-            guidance["decision_ids"] = guidance["decision_ids"] + branch_index
-        for key, source in (
-            ("art_guidance_direction", "directions"),
-            ("art_guidance_magnitude", "magnitudes"),
-            ("art_coordinate_mask", "coordinate_mask"),
-            ("art_group_ids", "group_ids"),
-            ("art_episode_ids", "episode_ids"),
-            ("art_decision_ids", "decision_ids"),
-        ):
-            value = guidance[source]
-            if branch_index is not None:
-                padded = value.new_zeros((endpoints.shape[0], *value.shape[1:]))
-                padded[branch_index : branch_index + 1] = value
-                value = padded
-            forward_inputs[key] = value
         episodes = endpoints.shape[1]
         episode_windows = _prompt_disjoint_windows(
-            forward_inputs["art_state_id"][0].cpu()
-            if state_sampling
-            else torch.arange(episodes) // int(self.cfg.algorithm.group_size),
+            torch.arange(episodes) // group_size
+            if condition_ids is None
+            else condition_ids.cpu(),
             updates=int(self.cfg.algorithm.get("art_updates_per_rollout", 2)),
             order=torch.randperm(episodes, generator=generator).tolist(),
         )
@@ -376,29 +339,29 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 torch.arange(decisions)[:, None] * episodes + torch.tensor(rows)[None]
             ).reshape(-1)
             windows.append(indices[torch.randperm(len(indices), generator=generator)])
-        stats = guidance["stats"]
-        active = stats["group_active"]
-        covariance = stats["group_covariance_rms"][active]
-        row_rms = _art_coordinate_mean(
-            guidance["directions"].flatten(0, 1).square(),
-            guidance["coordinate_mask"].flatten(0, 1),
-        ).sqrt()
+
+        self.rollout_batch = process_nested_dict_for_train(
+            batch, first_decision * episodes + torch.arange(decisions * episodes)
+        )
+        self.rollout_batch["forward_inputs"].update(
+            art_guidance_direction=guidance["directions"].flatten(0, 1),
+            art_guidance_magnitude=guidance["magnitudes"].flatten(0, 1),
+            art_coordinate_mask=guidance["coordinate_mask"].flatten(0, 1),
+        )
         return (
             {
                 **preparation_metrics,
-                "actor/active_group_frac": active.float().mean().item(),
-                "actor/covariance_rms": covariance.mean().item()
-                if covariance.numel()
-                else 0.0,
-                "actor/guidance_rms": (row_rms * guidance["magnitudes"].reshape(-1))
-                .mean()
-                .item(),
-                "actor/art_reward_mean": episode_returns.mean().item(),
-                "actor/art_reward_std": episode_returns.std(correction=0).item(),
+                **_art_guidance_metrics(
+                    guidance["stats"],
+                    guidance["directions"].flatten(0, 1),
+                    guidance["magnitudes"].flatten(0, 1),
+                    episode_returns,
+                    guidance["coordinate_mask"].flatten(0, 1),
+                ),
                 "actor/valid_chunk_frac": selected_mask.any(-1).float().mean().item(),
                 "actor/valid_action_frac": selected_mask.float().mean().item(),
             },
-            bool(active.any()),
+            bool(guidance["stats"]["group_active"].any()),
             tuple(windows),
         )
 
@@ -437,31 +400,14 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
 
         self._select_art_training_timesteps(generator)
 
-        active = guidance_stats["group_active"]
-        covariance_rms = guidance_stats["group_covariance_rms"]
-        active_covariance = covariance_rms[active]
-        direction_rms = (
-            forward_inputs["art_guidance_direction"]
-            .float()
-            .flatten(1)
-            .square()
-            .mean(1)
-            .sqrt()
-        )
-        guidance_rms = direction_rms * forward_inputs["art_guidance_magnitude"].float()
         return (
-            {
-                "actor/active_group_frac": active.float().mean().item(),
-                "actor/covariance_rms": (
-                    active_covariance.mean().item()
-                    if active_covariance.numel()
-                    else 0.0
-                ),
-                "actor/guidance_rms": guidance_rms.mean().item(),
-                "actor/art_reward_mean": rewards.mean().item(),
-                "actor/art_reward_std": rewards.std(correction=0).item(),
-            },
-            bool(active.any()),
+            _art_guidance_metrics(
+                guidance_stats,
+                forward_inputs["art_guidance_direction"],
+                forward_inputs["art_guidance_magnitude"],
+                rewards,
+            ),
+            bool(guidance_stats["group_active"].any()),
         )
 
     @torch.no_grad()
@@ -522,55 +468,24 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             raise ValueError(
                 "ART replay diagnostics require cached rollout velocities."
             )
-        states = forward_inputs["art_states"]
-        sigmas = forward_inputs["art_sigmas"]
         old_velocities = forward_inputs["art_old_velocity"]
-        micro_batch_size = int(self.cfg.actor.micro_batch_size)
         action_chunk = int(self.cfg.actor.model.num_action_chunks)
         action_dim = int(self.cfg.actor.model.action_dim)
         coordinate_mask = forward_inputs.get("art_coordinate_mask")
-        row_count, timestep_count = states.shape[:2]
         stats = torch.zeros(len(_ART_DRIFT_REGIONS), 2, device=self.device)
         max_error = torch.zeros((), device=self.device)
-        was_training = self.model.training
-        self.model.eval()
-        try:
-            for start in range(0, row_count, micro_batch_size):
-                end = min(start + micro_batch_size, row_count)
-                model_inputs = put_tensor_device(
-                    self._model_forward_inputs(
-                        forward_inputs, torch.arange(start, end)
-                    ),
-                    self.device,
-                )
-                mask = (
-                    coordinate_mask[start:end].to(self.device)
-                    if coordinate_mask is not None
-                    else None
-                )
-                for timestep_index in range(timestep_count):
-                    with self.amp_context:
-                        output = self.model(
-                            forward_type=ForwardType.NFT,
-                            forward_inputs=model_inputs,
-                            nft_inputs={
-                                "x_t": states[start:end, timestep_index].to(
-                                    self.device
-                                ),
-                                "timesteps": sigmas[start:end, timestep_index].to(
-                                    self.device
-                                ),
-                            },
-                            compute_values=False,
-                        )
-                    old = old_velocities[start:end, timestep_index].to(self.device)
-                    batch_stats, batch_max = _art_velocity_drift_stats(
-                        output["v_theta"], old, action_chunk, action_dim, mask
-                    )
-                    stats += batch_stats
-                    max_error = torch.maximum(max_error, batch_max)
-        finally:
-            self.model.train(was_training)
+        for rows, timestep_index, velocity in self._replay_velocities(forward_inputs):
+            batch_stats, batch_max = _art_velocity_drift_stats(
+                velocity,
+                old_velocities[rows, timestep_index].to(self.device),
+                action_chunk,
+                action_dim,
+                None
+                if coordinate_mask is None
+                else coordinate_mask[rows].to(self.device),
+            )
+            stats += batch_stats
+            max_error = torch.maximum(max_error, batch_max)
         if torch.distributed.is_initialized():
             torch.distributed.all_reduce(stats)
             torch.distributed.all_reduce(max_error, op=torch.distributed.ReduceOp.MAX)
@@ -587,38 +502,50 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
     @torch.no_grad()
     def _precompute_old_velocities(self) -> None:
         forward_inputs = self.rollout_batch["forward_inputs"]
-        states = forward_inputs["art_states"]
-        sigmas = forward_inputs["art_sigmas"]
-        old_velocities = torch.empty_like(states)
-        micro_batch_size = int(self.cfg.actor.micro_batch_size)
-        row_count, timestep_count = states.shape[:2]
-
-        self.model.eval()
-        for start in range(0, row_count, micro_batch_size):
-            end = min(start + micro_batch_size, row_count)
-            rows = torch.arange(start, end)
-            model_inputs = put_tensor_device(
-                self._model_forward_inputs(forward_inputs, rows),
-                self.device,
-            )
-            for timestep_index in range(timestep_count):
-                with self.amp_context:
-                    output = self.model(
-                        forward_type=ForwardType.NFT,
-                        forward_inputs=model_inputs,
-                        nft_inputs={
-                            "x_t": states[start:end, timestep_index].to(self.device),
-                            "timesteps": sigmas[start:end, timestep_index].to(
-                                self.device
-                            ),
-                        },
-                        compute_values=False,
-                    )
-                old_velocities[start:end, timestep_index] = (
-                    output["v_theta"].detach().to(old_velocities.device)
-                )
+        old_velocities = torch.empty_like(forward_inputs["art_states"])
+        for rows, timestep_index, velocity in self._replay_velocities(forward_inputs):
+            old_velocities[rows, timestep_index] = velocity.to(old_velocities.device)
         forward_inputs["art_old_velocity"] = old_velocities
         self.torch_platform.empty_cache()
+
+    @torch.no_grad()
+    def _replay_velocities(self, forward_inputs: dict):
+        """Yield eval-mode velocities at cached states per microbatch and timestep.
+
+        Yields ``(rows, timestep_index, velocity)`` with ``rows`` a slice into
+        ``forward_inputs``; the model's training mode is restored afterwards.
+        """
+        states = forward_inputs["art_states"]
+        sigmas = forward_inputs["art_sigmas"]
+        micro_batch_size = int(self.cfg.actor.micro_batch_size)
+        row_count, timestep_count = states.shape[:2]
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            for start in range(0, row_count, micro_batch_size):
+                rows = slice(start, min(start + micro_batch_size, row_count))
+                model_inputs = put_tensor_device(
+                    self._model_forward_inputs(
+                        forward_inputs, torch.arange(rows.start, rows.stop)
+                    ),
+                    self.device,
+                )
+                for timestep_index in range(timestep_count):
+                    with self.amp_context:
+                        output = self.model(
+                            forward_type=ForwardType.NFT,
+                            forward_inputs=model_inputs,
+                            nft_inputs={
+                                "x_t": states[rows, timestep_index].to(self.device),
+                                "timesteps": sigmas[rows, timestep_index].to(
+                                    self.device
+                                ),
+                            },
+                            compute_values=False,
+                        )
+                    yield rows, timestep_index, output["v_theta"].detach()
+        finally:
+            self.model.train(was_training)
 
     def _art_forward_and_loss(
         self,
@@ -651,6 +578,9 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             chunk, dims = guidance_direction.shape[1:]
             velocity = velocity[:, :chunk, :dims]
             old_velocity = old_velocity[:, :chunk, :dims]
+        output_gradient_stats = coordinate_mask is not None and bool(
+            self.cfg.algorithm.get("art_replay_diagnostics", False)
+        )
         terms = _art_loss(
             velocity,
             old_velocity,
@@ -670,6 +600,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 self.cfg.algorithm.get("art_corrective_mask_enabled", True)
             ),
             coordinate_mask=coordinate_mask,
+            output_gradient_stats=output_gradient_stats,
         )
         loss = terms["per_item_loss"].mean()
         active = terms["active"]
@@ -687,7 +618,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             "actor/old_deviate": terms["movement_energy"].mean().item(),
             "actor/movement_score": terms["movement_score"].mean().item(),
         }
-        if coordinate_mask is not None:
+        if output_gradient_stats:
             metrics.update(
                 {
                     f"actor/art_{key}": terms[key].item()
@@ -839,8 +770,13 @@ def _art_loss(
     reference_noise_level: float = 0.8,
     corrective_mask_enabled: bool = True,
     coordinate_mask: torch.Tensor | None = None,
+    output_gradient_stats: bool = False,
 ) -> dict[str, torch.Tensor]:
-    """Return the paper's masked, frozen-target velocity loss per item."""
+    """Return the paper's masked, frozen-target velocity loss per item.
+
+    ``output_gradient_stats`` requires ``coordinate_mask`` and adds the
+    guidance/restoration split of the mean loss's output gradient.
+    """
     _validate_art_batch(current_velocity, "current_velocity")
     _validate_art_same_shape(
         current_velocity,
@@ -928,7 +864,7 @@ def _art_loss(
         "movement_score": movement_score.detach(),
         "outward_alignment": outward_alignment.detach(),
     }
-    if coordinate_mask is not None:
+    if output_gradient_stats:
         # These are gradients of the mean loss with respect to velocity outputs.
         with torch.no_grad():
             coordinate_count = coordinate_mask.flatten(1).sum(1).clamp_min(1)
@@ -1200,14 +1136,13 @@ def _art_trajectory_guidance(
             f"ART episode returns must have shape {(episodes,)}, got {tuple(episode_returns.shape)}"
         )
     device = endpoints.device
-    episode_ids = torch.arange(episodes, device=device)[None].expand(decisions, -1)
-    decision_ids = torch.arange(decisions, device=device)[:, None].expand(-1, episodes)
     if condition_ids is None:
         condition_groups = torch.arange(episodes, device=device) // group_size
     else:
         _, condition_groups = torch.unique(
             condition_ids.to(device), sorted=True, return_inverse=True
         )
+    decision_ids = torch.arange(decisions, device=device)[:, None]
     groups = decision_ids * (episodes // group_size) + condition_groups[None]
     stats = _art_scalar_covariance(
         endpoints.flatten(0, 1),
@@ -1225,10 +1160,29 @@ def _art_trajectory_guidance(
         "directions": directions,
         "magnitudes": stats["group_guidance_magnitudes"][groups],
         "coordinate_mask": coordinate_mask,
-        "group_ids": groups,
-        "episode_ids": episode_ids,
-        "decision_ids": decision_ids,
         "stats": stats,
+    }
+
+
+def _art_guidance_metrics(
+    stats: dict[str, torch.Tensor],
+    directions: torch.Tensor,
+    magnitudes: torch.Tensor,
+    rewards: torch.Tensor,
+    coordinate_mask: torch.Tensor | None = None,
+) -> dict[str, float]:
+    """Summarize per-row guidance and the group statistics it came from."""
+    active = stats["group_active"]
+    covariance = stats["group_covariance_rms"][active]
+    direction_rms = _art_coordinate_mean(
+        directions.float().square(), coordinate_mask
+    ).sqrt()
+    return {
+        "actor/active_group_frac": active.float().mean().item(),
+        "actor/covariance_rms": covariance.mean().item() if covariance.numel() else 0.0,
+        "actor/guidance_rms": (direction_rms * magnitudes.float()).mean().item(),
+        "actor/art_reward_mean": rewards.mean().item(),
+        "actor/art_reward_std": rewards.std(correction=0).item(),
     }
 
 

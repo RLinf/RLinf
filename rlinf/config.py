@@ -1888,20 +1888,15 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     assert cfg.algorithm.get("art_reward_reduction", "sum") == "sum", (
         "OpenPi ART uses episode returns and requires art_reward_reduction='sum'."
     )
-    assert type(cfg.algorithm.get("art_first_chunk_only", False)) is bool, (
-        "algorithm.art_first_chunk_only must be boolean."
-    )
-    assert type(cfg.algorithm.get("art_replay_diagnostics", False)) is bool, (
-        "algorithm.art_replay_diagnostics must be boolean."
-    )
+    for key in ("art_first_chunk_only", "art_replay_diagnostics"):
+        value = cfg.algorithm.get(key, False)
+        assert type(value) is bool, f"algorithm.{key} must be boolean, got {value!r}."
     branch_index = cfg.algorithm.get("art_branch_chunk_index", None)
-    if cfg.algorithm.get("art_state_sampling", False):
+    state_sampling = cfg.algorithm.get("art_state_sampling", False)
+    if state_sampling:
         assert branch_index is None and not cfg.algorithm.get(
             "art_first_chunk_only", False
         ), "ART state sampling replaces fixed-branch and first-chunk sampling."
-        assert train.get("art_state_sampling", False), (
-            "ART state sampling requires env.train.art_state_sampling=True."
-        )
         assert train.rollout_epoch == 1, (
             "ART state sampling requires one state bank per rollout: rollout_epoch=1."
         )
@@ -1922,9 +1917,6 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
         )
         assert not cfg.algorithm.get("art_first_chunk_only", False), (
             "art_branch_chunk_index and art_first_chunk_only are mutually exclusive."
-        )
-        assert train.get("art_branch_chunk_index", None) == branch_index, (
-            "env.train.art_branch_chunk_index must match algorithm.art_branch_chunk_index."
         )
         assert not cfg.runner.get("enable_decoupled_mode", False), (
             "OpenPi ART branching requires synchronous environment batches."
@@ -1960,6 +1952,17 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     assert not cfg.actor.get("enable_sft_co_train", False), (
         "OpenPi ART currently requires actor.enable_sft_co_train=False."
     )
+    # LiberoEnv only sees env.train, so it receives the sampling mode from here.
+    with open_dict(cfg):
+        for key, value in (
+            ("art_branch_chunk_index", branch_index),
+            ("art_state_sampling", state_sampling),
+        ):
+            assert train.get(key, value) == value, (
+                f"env.train.{key} is derived from algorithm.{key}; expected "
+                f"{value!r}, got {train.get(key)!r}."
+            )
+            train[key] = value
 
 
 def validate_offline_cfg(cfg: DictConfig) -> DictConfig:

@@ -344,6 +344,10 @@ fixed cached states and the selected denoising timesteps, not regenerated action
 chains. The training loss and trust-region mask still cover executed coordinates.
 Full velocity caching increases rollout storage and transport; enabling these
 diagnostics adds eval-mode forward passes before and after the updates.
+The same option also reports ``actor/art_output_restore_ratio`` and
+``actor/art_output_restore_cosine``, which compare the restoration and guidance
+parts of the loss gradient with respect to the executed velocity outputs, after
+loss scaling, accumulation, and rank averaging.
 
 .. _diffusion-art-results:
 

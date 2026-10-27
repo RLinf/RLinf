@@ -224,6 +224,7 @@ Rollout 在前缀和分叉处检查同组任务、机器人观测、可获取的
 完全无效的行不参与统计；平方误差与坐标数先跨 microbatch、rank 求和，再计算 RMS。
 探针使用固定缓存状态和已选取的去噪时间步，不重新生成动作链。训练 loss 和 trust-region mask 仍只覆盖执行坐标。
 完整速度缓存增加 rollout 存储与传输量；开启诊断会在更新前及每次更新后增加 eval 模式前向计算。
+同一开关还会记录 ``actor/art_output_restore_ratio`` 和 ``actor/art_output_restore_cosine``，比较 loss 对执行坐标速度输出的梯度中 restoration 与 guidance 两部分，统计已计入 loss 缩放、梯度累积和跨 rank 平均。
 
 .. _diffusion-art-results:
 
