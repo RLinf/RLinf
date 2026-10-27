@@ -14,7 +14,7 @@
 
 import logging
 from importlib.metadata import version
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Optional
 
 import torch
 from omegaconf import DictConfig
@@ -245,6 +245,10 @@ class Scheduler(_Scheduler):
         use_cudagraph = not self.cfg.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
+        # Under overlap scheduling an already-launched batch may still be on
+        # the GPU when a pause leaves it unprocessed; wait before load_weights.
+        torch.cuda.synchronize()
+
         state_dict = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name,
             src_rank=self.actor_weight_rank,
@@ -309,8 +313,68 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
-        self.flush_cache()
+        self._handle_cache_after_sync(recv_req.pause_mode)
         return SyncHFWeightOutput()
+
+    def _handle_cache_after_sync(self, pause_mode: Optional[str]):
+        """Handle prefix tree / KV caches at the end of `sync_hf_weight`.
+
+        Not paused (synchronous training) or "drain": the engine is fully
+        idle, a normal flush must succeed. "in_place": in-flight requests
+        still need their KV, skip the flush. "retract": retracted requests
+        sit in the waiting queue holding no KV, so a forced flush is safe -
+        take the queue out so the idle check passes, flush, put it back.
+        """
+        if pause_mode in (None, "drain"):
+            success = self.flush_cache()
+            if success is False:
+                logger.warning(
+                    f"flush_cache after weight sync did not fully flush "
+                    f"(running={len(self.running_batch.reqs)}, "
+                    f"waiting={len(self.waiting_queue)}); "
+                    f"pause_mode={pause_mode!r}"
+                )
+            return
+
+        if pause_mode == "in_place":
+            return
+
+        # pause_mode == "retract": forced flush only when safe to do so.
+        preconditions = (
+            self.running_batch.is_empty(),
+            self.chunked_req is None,
+            not self.enable_overlap or len(self.result_queue) == 0,
+        )
+        if not all(preconditions):
+            reason = (
+                "running_batch not empty"
+                if not preconditions[0]
+                else "chunked_req pending"
+                if not preconditions[1]
+                else "overlap result queue not empty"
+            )
+            logger.warning(
+                f"retract forced flush skipped: {reason}; "
+                f"running={len(self.running_batch.reqs)}, "
+                f"waiting={len(self.waiting_queue)}"
+            )
+            return
+
+        saved_queue = self.waiting_queue
+        self.waiting_queue = []
+        try:
+            # Reuse sglang's own flush so the prefix tree and the KV
+            # allocator are cleared together; resetting only the tree would
+            # leak KV slots.
+            success = self.flush_cache()
+        finally:
+            self.waiting_queue = saved_queue
+        if success is False:
+            logger.warning(
+                f"retract forced flush after weight sync did not fully flush; "
+                f"running={len(self.running_batch.reqs)}, "
+                f"waiting={len(self.waiting_queue)}"
+            )
 
     def run_task_method(self, obj: TaskMethodInput):
         """
