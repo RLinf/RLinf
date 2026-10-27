@@ -70,7 +70,6 @@ env:
     max_episode_steps: 30
     max_steps_per_rollout_epoch: 30
     use_fixed_reset_state_ids: True
-
   eval:
     rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
     total_num_envs: 1

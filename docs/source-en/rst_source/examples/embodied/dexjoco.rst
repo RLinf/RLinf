@@ -112,7 +112,7 @@ Observation and Action
    * - Field
      - Specification
    * - Observation
-     - RGB images from ``camera_names`` at 640×640 (downscaled to 128×128 in the CNN recipe), plus 23-dim proprioception ``[pose7, hand16]`` for single-arm tasks or 46-dim ``[right_pose7, left_pose7, right_hand16, left_hand16]`` for dual-arm tasks; each pose is a position and a scalar-first quaternion. Single-arm tasks use ``[front, wrist]`` (``[ego_right, wrist]`` for ``click_mouse``); dual-arm tasks use ``[ego, wrist_left, wrist_right]``.
+     - RGB from ``camera_names`` at 640×640 (128×128 in the CNN recipe) plus 23-dim proprioception per arm (7-dim end-effector pose and 16 Allegro joints).
    * - Action
      - 22-dim continuous action per arm: absolute 3D end-effector position, 3D rotation vector, and 16 Allegro joint targets; the 44-dim dual-arm action lists the right arm first.
    * - Reward
@@ -123,12 +123,12 @@ Observation and Action
 Installation
 ------------
 
-Clone RLinf and install the environment for the model you want to run:
+.. include:: _setup_common.rst
+   :end-before: Then set up the dependencies
+
+Install the environment for the model you want to run:
 
 .. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
 
    # Mainland China users can add --use-mirror.
 
@@ -139,21 +139,6 @@ Clone RLinf and install the environment for the model you want to run:
    # OpenPI π₀.₅
    # bash requirements/install.sh embodied --model openpi --env dexjoco
    # source .venv/bin/activate
-
-DexJoCo has no PyPI release, so ``--env dexjoco`` clones the
-`DexJoCo repository <https://github.com/brave-eai/dexjoco>`__ into
-``.venv/dexjoco`` at commit ``8d23b0f`` and installs its ``dexjoco`` package
-with ``uv pip install -e``. Set ``DEXJOCO_PATH`` before installing to clone into,
-or reuse, a checkout at that path instead. The package holds the task
-environments together with their scene XMLs, meshes, textures, and camera
-presets, and ``env_type: dexjoco`` builds every environment from it. To add
-DexJoCo to an environment that already has RLinf's dependencies:
-
-.. code:: bash
-
-   git clone https://github.com/brave-eai/dexjoco.git
-   git -C dexjoco checkout 8d23b0fab23b17a58c4b55f3942e17013aaf8267
-   uv pip install -e dexjoco/dexjoco
 
 Download the Datasets
 ---------------------
@@ -166,7 +151,7 @@ Download one task and compute its normalization statistics:
 
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download DexJoCo/DexJoCo-Datasets-LeRobot --repo-type dataset \
-     --include 'dexjoco_lerobot_datasets/water_plant/**' \
+     --include "dexjoco_lerobot_datasets/water_plant/**" \
      --local-dir /path/to/dexjoco
    PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
      --config-name pi05_dexjoco \
@@ -175,7 +160,7 @@ Download one task and compute its normalization statistics:
 What this does:
 
 1. Downloads the ``water_plant`` episodes with front and wrist videos, robot state, actions, and task text.
-2. Writes ``norm_stats.json`` into the dataset directory. Use the same file for SFT, PPO, and evaluation.
+2. Writes ``norm_stats.json`` into the dataset directory for SFT, PPO, and evaluation.
 
 For dual-arm tasks, pass ``--config-name pi05_dexjoco_dual_arm``; for
 ``click_mouse``, whose base camera is ``ego_right``, pass
@@ -187,8 +172,6 @@ Download the Model
 Download the checkpoint for the model you plan to train.
 
 **CNN**
-
-For the CNN + PPO recipe, download the ResNet checkpoint:
 
 .. code-block:: bash
 
@@ -223,7 +206,7 @@ convert it to the RLinf OpenPI layout, as described in :doc:`sft_openpi`:
 .. code-block:: bash
 
    # export HF_ENDPOINT=https://hf-mirror.com
-   hf download DexJoCo/DexJoCo-Pi05 --include 'pi05_base/params/**' \
+   hf download DexJoCo/DexJoCo-Pi05 --include "pi05_base/params/**" \
      --local-dir /path/to/jax
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
      --input-model /path/to/jax/pi05_base \
@@ -262,15 +245,29 @@ Pick one recipe and launch training:
      - ``run_embodiment.sh``
      - ``dexjoco_ppo_openpi_pi05``
 
-The recipes train ``water_plant``. For another task, override ``task_name``
-and ``camera_names`` in both ``env.train`` and ``env.eval``, and set
-``max_episode_steps`` to the task's time limit. For the CNN recipe, also set
-``env.eval.max_steps_per_rollout_epoch`` to that limit; for the π₀.₅ recipes,
-set ``max_steps_per_rollout_epoch`` in both ``env.train`` and ``env.eval`` to
-that limit rounded up to a multiple of 30.
-Dual-arm tasks use 46-dim state and 44-dim actions: for the CNN, set
-``actor.model.state_dim: 46`` and ``actor.model.action_dim: 44``; for π₀.₅,
-apply the dual-arm settings in the SFT section.
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
+
+What this does:
+
+1. Starts the embodied training entrypoint with the selected Hydra config.
+2. Creates Ray workers for the actor, rollout, and DexJoCo env components.
+3. Runs PPO rollouts, computes sparse success rewards, and updates the CNN policy.
+
+.. note::
+
+   The recipes train ``water_plant``. For another task, override ``task_name``
+   and ``camera_names`` in both ``env.train`` and ``env.eval`` (``[front, wrist]``
+   for single-arm tasks, ``[ego_right, wrist]`` for ``click_mouse``, and
+   ``[ego, wrist_left, wrist_right]`` for dual-arm tasks), and set
+   ``max_episode_steps`` to the task's time limit. For the CNN recipe, also set
+   ``env.eval.max_steps_per_rollout_epoch`` to that limit; for the π₀.₅ recipes,
+   set ``max_steps_per_rollout_epoch`` in both ``env.train`` and ``env.eval`` to
+   that limit rounded up to a multiple of 30. Dual-arm tasks use 46-dim state
+   and 44-dim actions: for the CNN, set ``actor.model.state_dim: 46`` and
+   ``actor.model.action_dim: 44``; for π₀.₅, apply the dual-arm settings in the
+   SFT section.
 
 These ``init_params`` fields control randomization and task options:
 
@@ -286,26 +283,6 @@ These ``init_params`` fields control randomization and task options:
      - ``True`` randomizes object dynamics.
    * - ``init_params.password``
      - Digits ``bimanual_unlock_ipad`` expects, default ``[1, 2, 3]``; the π₀.₅ prompt always names 123.
-
-Launch a config with ``run_embodiment.sh``:
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
-
-What this does:
-
-1. Loads ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` and places the actor, rollout, and env workers on GPU ``0``.
-2. Starts 8 training environments that return 128×128 images.
-3. Runs PPO on the base camera image and proprioception.
-
-.. admonition:: Configure further
-   :class: note
-
-   - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
-   - All config keys → :doc:`Configuration <../../guides/index>`
-   - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
-   - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
 
 π₀.₅ + SFT
 ~~~~~~~~~~
@@ -359,18 +336,22 @@ In ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``, set
 
 What this does:
 
-1. Loads the SFT weights and adds a value head for PPO.
-2. Collects rollouts from 16 parallel environments with 30-action chunks.
-3. Updates the policy with PPO.
+1. Starts the embodied training entrypoint with the selected Hydra config.
+2. Creates Ray workers for the actor, rollout, and DexJoCo env components.
+3. Runs PPO rollouts, computes sparse success rewards, and updates the OpenPI policy.
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
-<../../evaluations/reference/cli>` with ``dexjoco_openpi_pi05_eval``, which
-evaluates 50 episodes as in the official DexJoCo protocol and divides them
-across 1, 2, or 5 GPUs. Set
+<../../evaluations/reference/cli>` with ``dexjoco_openpi_pi05_eval``. Set
 ``rollout.model.model_path`` to the SFT or PPO checkpoint and
 ``rollout.model.openpi_data.norm_stats_path`` to the statistics used for
 training; for a dual-arm checkpoint, apply the dual-arm settings under
 ``rollout.model``.
+
+.. note::
+
+   ``dexjoco_ppo_cnn`` runs on GPU ``0`` by default, and the π₀.₅ configs
+   colocate ``actor,env,rollout: all``. Tune ``cluster.component_placement``,
+   ``env.train.total_num_envs``, and batch sizes for your hardware.
 
 Visualization and Results
 -------------------------
@@ -379,7 +360,7 @@ Launch TensorBoard from the RLinf repo root:
 
 .. code:: bash
 
-   tensorboard --logdir logs --port 6006
+   tensorboard --logdir ./logs --port 6006
 
 The key signal is ``env/success_once``. For every logged metric, see
 :doc:`Training metrics <../../reference/metrics>`.

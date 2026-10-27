@@ -29,7 +29,7 @@ runner:
   save_interval: 1000
 
 data:
-  train_data_paths: "/path/to/dexjoco_lerobot_datasets/water_plant"
+  train_data_paths: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant"
   num_workers: 4
 
 actor:
@@ -41,6 +41,10 @@ actor:
 
   model:
     precision: fp32
+    # Download JAX base: https://huggingface.co/DexJoCo/DexJoCo-Pi05/tree/main/pi05_base
+    # Convert with jax_to_openpi; model_path must point to the local output
+    # directory containing RLinf OpenPI model.safetensors.
+    # Download/conversion steps: docs/source-en/rst_source/examples/embodied/dexjoco.rst
     model_path: "/path/to/pi05_base_openpi"
     num_action_chunks: 30
     action_dim: 22
@@ -50,7 +54,7 @@ actor:
       config_name: "pi05_dexjoco"
       num_images_in_input: 2
     openpi_data:
-      norm_stats_path: "/path/to/dexjoco_lerobot_datasets/water_plant/norm_stats.json"
+      norm_stats_path: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json"
 
   optim:
     lr: 2.5e-5

@@ -43,7 +43,7 @@
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-训练和评测各运行一个任务。在 ``env.train`` 和 ``env.eval`` 中设置 ``task_name``，描述即该任务的官方提示词：
+训练和评测各运行一个任务。在 ``env.train`` 和 ``env.eval`` 中设置 ``task_name``，描述译自该任务的官方提示词：
 
 .. list-table::
    :header-rows: 1
@@ -56,47 +56,47 @@
    * - 单臂
      - ``water_plant``
      - 1000
-     - Grasp the watering can and apply water to the plant.
+     - 抓取浇水壶并给植物浇水。
    * - 单臂
      - ``hammer_nail``
      - 1000
-     - Use the hammer to drive the nail into the wooden board.
+     - 用锤子将钉子钉入木板。
    * - 单臂
      - ``fold_glasses``
      - 1200
-     - Fold the glasses and place them into the case.
+     - 折叠眼镜并放入眼镜盒。
    * - 单臂
      - ``pinch_tongs``
      - 1000
-     - Grasp the tongs and perform three consecutive open-close motions.
+     - 抓取夹子并连续开合三次。
    * - 单臂
      - ``pick_bucket``
      - 1200
-     - Place the boxed food into the bucket and then lift the bucket.
+     - 将盒装食物放入桶中，再提起桶。
    * - 单臂
      - ``click_mouse``
      - 1200
-     - Move the mouse to the purple mouse pad and click the left mouse button.
+     - 将鼠标移动到紫色鼠标垫上，再点击鼠标左键。
    * - 双臂
      - ``bimanual_assembly``
      - 1500
-     - Grasp the tray with the left hand and the peg with the right hand, then insert the peg into the hole.
+     - 左手抓取托盘、右手抓取插销，再将插销插入孔中。
    * - 双臂
      - ``bimanual_hanoi``
      - 1500
-     - Execute the final two moves of the three-level Tower of Hanoi: move the medium disk from the middle peg to the right peg with the right hand, then move the small disk from the left peg to the right peg with the left hand.
+     - 完成三层汉诺塔的最后两步：右手将中盘从中间柱移到右柱，再用左手将小盘从左柱移到右柱。
    * - 双臂
      - ``bimanual_microwave_cook``
      - 1100
-     - Open the microwave door, place the food inside the microwave, close the door, and press the start button.
+     - 打开微波炉门，将食物放入微波炉，关上门并按下启动键。
    * - 双臂
      - ``bimanual_photograph``
      - 1000
-     - Grasp the camera with the left hand, align it with the logo, and press the shutter button with the right hand.
+     - 左手抓取相机并对准标志，再用右手按下快门。
    * - 双臂
      - ``bimanual_unlock_ipad``
      - 1200
-     - Grasp the iPad and enter the password 123 to unlock the device.
+     - 抓取 iPad 并输入密码 123 解锁设备。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -108,7 +108,7 @@
    * - 字段
      - 规格
    * - 观测
-     - ``camera_names`` 中各相机的 640×640 RGB 图像（CNN 配方中缩小为 128×128），以及单臂任务 23 维 ``[pose7, hand16]``、双臂任务 46 维 ``[right_pose7, left_pose7, right_hand16, left_hand16]`` 的本体状态；每个 pose 由位置和标量在前的四元数组成。单臂任务使用 ``[front, wrist]``\ （``click_mouse`` 使用 ``[ego_right, wrist]``），双臂任务使用 ``[ego, wrist_left, wrist_right]``。
+     - ``camera_names`` 中各相机的 640×640 RGB 图像（CNN 配方中为 128×128），以及每条机械臂 23 维本体状态（7 维末端位姿和 16 个 Allegro 关节）。
    * - 动作
      - 每条机械臂 22 维连续动作：3D 末端执行器绝对位置、3D 旋转向量和 16 个 Allegro 关节目标；44 维双臂动作中右臂在前。
    * - 奖励
@@ -119,12 +119,12 @@
 安装
 ----------------------------------------
 
-克隆 RLinf 仓库，并为你要运行的模型安装环境：
+.. include:: _setup_common.rst
+   :end-before: 然后，使用
+
+为你要运行的模型安装环境：
 
 .. code:: bash
-
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
 
    # 国内用户可添加 --use-mirror。
 
@@ -136,14 +136,6 @@
    # bash requirements/install.sh embodied --model openpi --env dexjoco
    # source .venv/bin/activate
 
-DexJoCo 没有发布到 PyPI，因此 ``--env dexjoco`` 会把 `DexJoCo 仓库 <https://github.com/brave-eai/dexjoco>`__ 克隆到 ``.venv/dexjoco``、检出 commit ``8d23b0f``，再用 ``uv pip install -e`` 安装其中的 ``dexjoco`` 包。安装前设置 ``DEXJOCO_PATH`` 时，会改为克隆到该路径，或复用该路径下已有的检出。该包包含各任务环境及其场景 XML、网格、纹理和相机预设，``env_type: dexjoco`` 的所有环境都由它创建。若要把 DexJoCo 装进一个已有 RLinf 依赖的环境，可手动执行：
-
-.. code:: bash
-
-   git clone https://github.com/brave-eai/dexjoco.git
-   git -C dexjoco checkout 8d23b0fab23b17a58c4b55f3942e17013aaf8267
-   uv pip install -e dexjoco/dexjoco
-
 下载数据集
 ----------------------------------------
 
@@ -153,7 +145,7 @@ DexJoCo 没有发布到 PyPI，因此 ``--env dexjoco`` 会把 `DexJoCo 仓库 <
 
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download DexJoCo/DexJoCo-Datasets-LeRobot --repo-type dataset \
-     --include 'dexjoco_lerobot_datasets/water_plant/**' \
+     --include "dexjoco_lerobot_datasets/water_plant/**" \
      --local-dir /path/to/dexjoco
    PYTHONPATH=$(pwd) python toolkits/lerobot/calculate_norm_stats.py \
      --config-name pi05_dexjoco \
@@ -162,7 +154,7 @@ DexJoCo 没有发布到 PyPI，因此 ``--env dexjoco`` 会把 `DexJoCo 仓库 <
 这些命令会：
 
 1. 下载 ``water_plant`` 回合，包括前视和腕部视频、机器人状态、动作和任务文本。
-2. 在数据集目录中写入 ``norm_stats.json``。SFT、PPO 和评测使用同一份统计量文件。
+2. 在数据集目录中写入 ``norm_stats.json``，供 SFT、PPO 和评测使用。
 
 双臂任务传入 ``--config-name pi05_dexjoco_dual_arm``；``click_mouse`` 的主视角相机是 ``ego_right``，传入 ``--config-name pi05_dexjoco_click_mouse``。
 
@@ -172,8 +164,6 @@ DexJoCo 没有发布到 PyPI，因此 ``--env dexjoco`` 会把 `DexJoCo 仓库 <
 下载你要训练的模型检查点。
 
 **CNN**
-
-CNN + PPO 配方需要下载 ResNet 检查点：
 
 .. code-block:: bash
 
@@ -205,7 +195,7 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 .. code-block:: bash
 
    # export HF_ENDPOINT=https://hf-mirror.com
-   hf download DexJoCo/DexJoCo-Pi05 --include 'pi05_base/params/**' \
+   hf download DexJoCo/DexJoCo-Pi05 --include "pi05_base/params/**" \
      --local-dir /path/to/jax
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
      --input-model /path/to/jax/pi05_base \
@@ -242,7 +232,19 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
      - ``run_embodiment.sh``
      - ``dexjoco_ppo_openpi_pi05``
 
-这些配方默认训练 ``water_plant``。换成其他任务时，在 ``env.train`` 和 ``env.eval`` 中覆盖 ``task_name`` 和 ``camera_names``，并把 ``max_episode_steps`` 设为该任务的时间上限。CNN 配方还需要把 ``env.eval.max_steps_per_rollout_epoch`` 设为该上限；π₀.₅ 配方则把 ``env.train`` 和 ``env.eval`` 中的 ``max_steps_per_rollout_epoch`` 都设为该上限向上取整到 30 的倍数。双臂任务使用 46 维状态和 44 维动作：CNN 需设置 ``actor.model.state_dim: 46`` 和 ``actor.model.action_dim: 44``；π₀.₅ 使用 SFT 一节中的双臂设置。
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
+
+这条命令会：
+
+1. 使用选定的 Hydra 配置启动 embodied 训练入口。
+2. 为 actor、rollout 和 DexJoCo env 组件创建 Ray worker。
+3. 运行 PPO rollout，计算稀疏成功奖励，并更新 CNN 策略。
+
+.. note::
+
+   这些配方默认训练 ``water_plant``。换成其他任务时，在 ``env.train`` 和 ``env.eval`` 中覆盖 ``task_name`` 和 ``camera_names``\ （单臂任务为 ``[front, wrist]``，``click_mouse`` 为 ``[ego_right, wrist]``，双臂任务为 ``[ego, wrist_left, wrist_right]``），并把 ``max_episode_steps`` 设为该任务的时间上限。CNN 配方还需要把 ``env.eval.max_steps_per_rollout_epoch`` 设为该上限；π₀.₅ 配方则把 ``env.train`` 和 ``env.eval`` 中的 ``max_steps_per_rollout_epoch`` 都设为该上限向上取整到 30 的倍数。双臂任务使用 46 维状态和 44 维动作：CNN 需设置 ``actor.model.state_dim: 46`` 和 ``actor.model.action_dim: 44``；π₀.₅ 使用 SFT 一节中的双臂设置。
 
 以下 ``init_params`` 字段控制随机化和任务选项：
 
@@ -258,26 +260,6 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
      - 为 ``True`` 时随机化物体动力学。
    * - ``init_params.password``
      - ``bimanual_unlock_ipad`` 的解锁数字序列，默认 ``[1, 2, 3]``；π₀.₅ 的提示词始终写 123。
-
-使用 ``run_embodiment.sh`` 启动一个配置：
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
-
-这条命令会：
-
-1. 加载 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``，并把 actor、rollout 和 env worker 放在 GPU ``0`` 上。
-2. 启动 8 个返回 128×128 图像的训练环境。
-3. 基于主视角图像和本体状态运行 PPO。
-
-.. admonition:: 进一步配置
-   :class: note
-
-   - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
-   - 全量配置项 → :doc:`配置 <../../guides/index>`
-   - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
-   - 从检查点恢复 → :doc:`恢复训练 <../../guides/resume>`
 
 π₀.₅ + SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -316,11 +298,15 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
 这条命令会：
 
-1. 加载 SFT 权重，并为 PPO 添加价值头。
-2. 使用 16 个并行环境和 30 步动作块采集 rollout。
-3. 用 PPO 更新 policy。
+1. 使用选定的 Hydra 配置启动 embodied 训练入口。
+2. 为 actor、rollout 和 DexJoCo env 组件创建 Ray worker。
+3. 运行 PPO rollout，计算稀疏成功奖励，并更新 OpenPI 策略。
 
-独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_openpi_pi05_eval``，该配置按 DexJoCo 官方协议评测 50 个回合，可在 1、2 或 5 张 GPU 上均分。把 ``rollout.model.model_path`` 设为 SFT 或 PPO 检查点，把 ``rollout.model.openpi_data.norm_stats_path`` 设为训练时使用的统计量文件；评测双臂检查点时，在 ``rollout.model`` 下使用同样的双臂设置。
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_openpi_pi05_eval``。把 ``rollout.model.model_path`` 设为 SFT 或 PPO 检查点，把 ``rollout.model.openpi_data.norm_stats_path`` 设为训练时使用的统计量文件；评测双臂检查点时，在 ``rollout.model`` 下使用同样的双臂设置。
+
+.. note::
+
+   ``dexjoco_ppo_cnn`` 默认运行在 GPU ``0`` 上，π₀.₅ 配置把 ``actor,env,rollout: all`` 放在同一组 GPU 上。请根据硬件调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和批量大小。
 
 可视化与结果
 ----------------------------------------
@@ -329,7 +315,7 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
 .. code:: bash
 
-   tensorboard --logdir logs --port 6006
+   tensorboard --logdir ./logs --port 6006
 
 关键指标是 ``env/success_once``。完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
 

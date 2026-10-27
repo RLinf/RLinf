@@ -57,7 +57,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/path/to/dexjoco_sft_openpi_pi05/checkpoints/global_step_<N>"
     num_action_chunks: 30
     action_dim: 22
     num_steps: 10
@@ -65,4 +65,4 @@ rollout:
       task: eval
       config_name: "pi05_dexjoco"
     openpi_data:
-      norm_stats_path: "/path/to/dexjoco_lerobot_datasets/water_plant/norm_stats.json"
+      norm_stats_path: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json"

@@ -24,7 +24,7 @@ from rlinf.models.embodiment.openpi.policies import dexjoco_policy
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotDexJoCoDataConfig(DataConfigFactory):
-    """Use the official DexJoCo LeRobot observation and action layout."""
+    """Data configuration for DexJoCo LeRobot datasets."""
 
     dual_arm: bool = False
     image_key: str = "observation.images.front"
@@ -56,7 +56,8 @@ class LeRobotDexJoCoDataConfig(DataConfigFactory):
         data_transforms = _transforms.Group(
             inputs=[
                 dexjoco_policy.DexJoCoInputs(
-                    model_type=model_config.model_type, dual_arm=self.dual_arm
+                    model_type=model_config.model_type,
+                    dual_arm=self.dual_arm,
                 )
             ],
             outputs=[dexjoco_policy.DexJoCoOutputs(dual_arm=self.dual_arm)],

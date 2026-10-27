@@ -28,6 +28,7 @@ runner:
 
   max_epochs: 1
   max_steps: -1
+
   only_eval: False
   val_check_interval: -1
   save_interval: -1
@@ -148,27 +149,10 @@ actor:
   fsdp_config:
     strategy: fsdp
     sharding_strategy: no_shard
-    gradient_checkpointing: False
-    cpu_offload: False
-    offload_pin_memory: False
-    reshard_after_forward: True
-    enable_gradient_accumulation: True
-    forward_prefetch: False
-    limit_all_gathers: False
-    backward_prefetch: null
-    use_orig_params: False
-    use_liger_kernel: False
-    fsdp_size: -1
-
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-    amp:
-      enabled: False
-      precision: bf16
-      use_grad_scaler: False
 
 reward:
   use_reward_model: False

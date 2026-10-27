@@ -602,7 +602,10 @@ _CONFIGS = [
     TrainConfig(
         name="pi05_dexjoco",
         model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=30, max_token_len=250, discrete_state_input=True
+            pi05=True,
+            action_horizon=30,
+            max_token_len=250,
+            discrete_state_input=True,
         ),
         data=LeRobotDexJoCoDataConfig(
             repo_id="dexjoco",
@@ -632,7 +635,10 @@ _CONFIGS = [
     TrainConfig(
         name="pi05_dexjoco_click_mouse",
         model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=30, max_token_len=250, discrete_state_input=True
+            pi05=True,
+            action_horizon=30,
+            max_token_len=250,
+            discrete_state_input=True,
         ),
         data=LeRobotDexJoCoDataConfig(
             repo_id="dexjoco",

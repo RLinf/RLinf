@@ -61,7 +61,7 @@ class DexJoCoInputs(transforms.DataTransformFn):
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
                 "right_wrist_0_rgb": np.True_
-                if self.dual_arm or self.model_type == _model.ModelType.PI0_FAST
+                if self.model_type == _model.ModelType.PI0_FAST or self.dual_arm
                 else np.False_,
             },
         }
