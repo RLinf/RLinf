@@ -43,6 +43,7 @@ _ART_OUTPUT_GRADIENT_STATS = (
     "output_restoration_grad_sq",
     "output_grad_inner",
 )
+_ART_DRIFT_REGIONS = ("full", "exec", "unexec", "future", "padding")
 
 
 class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
@@ -117,13 +118,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
         if replay_diagnostics:
-            replay_metrics = self._art_replay_metrics()
-            max_error = torch.tensor(
-                replay_metrics["actor/replay_max_abs"], device=self.device
-            )
-            torch.distributed.all_reduce(max_error, op=torch.distributed.ReduceOp.MAX)
-            replay_metrics["actor/replay_max_abs"] = max_error.item()
-            preparation_metrics.update(replay_metrics)
+            preparation_metrics.update(self._art_replay_metrics())
         if not has_guidance:
             clear_memory()
             return all_reduce_dict(
@@ -154,7 +149,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         for key, value in preparation_metrics.items():
             append_to_dict(metrics, {key: value})
 
-        for window_rows in windows:
+        for update_index, window_rows in enumerate(windows, start=1):
             window_batch = self._index_nested(self.rollout_batch, window_rows)
             window_size = window_rows.numel()
             micro_batch_size = int(self.cfg.actor.micro_batch_size)
@@ -231,6 +226,12 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
 
             self.torch_platform.empty_cache()
             grad_norm, lr_list = self.optimizer_step()
+            self.lr_scheduler.step()
+            if replay_diagnostics:
+                append_to_dict(
+                    metrics,
+                    self._art_replay_metrics(f"actor/drift_u{update_index}"),
+                )
             append_to_dict(
                 metrics,
                 {
@@ -509,8 +510,13 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         del forward_inputs["art_endpoint"]
 
     @torch.no_grad()
-    def _art_replay_metrics(self) -> dict[str, float]:
-        """Compare eval-mode Actor replay with rollout velocities before updates."""
+    def _art_replay_metrics(self, prefix: str = "actor/replay") -> dict[str, float]:
+        """Measure full-output drift on fixed rollout states, pooled across ranks.
+
+        The default prefix reports pre-update replay error. Post-update probes
+        reuse the same rows and denoising timesteps, including zero-guidance and
+        corrective-masked samples. Rows without valid executed actions are omitted.
+        """
         forward_inputs = self.rollout_batch["forward_inputs"]
         if "art_old_velocity" not in forward_inputs:
             raise ValueError(
@@ -520,10 +526,12 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         sigmas = forward_inputs["art_sigmas"]
         old_velocities = forward_inputs["art_old_velocity"]
         micro_batch_size = int(self.cfg.actor.micro_batch_size)
+        action_chunk = int(self.cfg.actor.model.num_action_chunks)
+        action_dim = int(self.cfg.actor.model.action_dim)
+        coordinate_mask = forward_inputs.get("art_coordinate_mask")
         row_count, timestep_count = states.shape[:2]
-        squared_error = torch.zeros((), device=self.device)
+        stats = torch.zeros(len(_ART_DRIFT_REGIONS), 2, device=self.device)
         max_error = torch.zeros((), device=self.device)
-        coordinate_count = 0
         was_training = self.model.training
         self.model.eval()
         try:
@@ -534,6 +542,11 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                         forward_inputs, torch.arange(start, end)
                     ),
                     self.device,
+                )
+                mask = (
+                    coordinate_mask[start:end].to(self.device)
+                    if coordinate_mask is not None
+                    else None
                 )
                 for timestep_index in range(timestep_count):
                     with self.amp_context:
@@ -551,16 +564,24 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                             compute_values=False,
                         )
                     old = old_velocities[start:end, timestep_index].to(self.device)
-                    velocity = output["v_theta"][:, : old.shape[1], : old.shape[2]]
-                    error = velocity.float() - old.float()
-                    squared_error += error.square().sum()
-                    max_error = torch.maximum(max_error, error.abs().max())
-                    coordinate_count += error.numel()
+                    batch_stats, batch_max = _art_velocity_drift_stats(
+                        output["v_theta"], old, action_chunk, action_dim, mask
+                    )
+                    stats += batch_stats
+                    max_error = torch.maximum(max_error, batch_max)
         finally:
             self.model.train(was_training)
+        if torch.distributed.is_initialized():
+            torch.distributed.all_reduce(stats)
+            torch.distributed.all_reduce(max_error, op=torch.distributed.ReduceOp.MAX)
+        mean_square = stats[:, 0] / stats[:, 1].clamp_min(1)
         return {
-            "actor/replay_mse": (squared_error / coordinate_count).item(),
-            "actor/replay_max_abs": max_error.item(),
+            f"{prefix}_mse": mean_square[1].item(),
+            f"{prefix}_max_abs": max_error.item(),
+            **{
+                f"{prefix}_{region}_rms": rms
+                for region, rms in zip(_ART_DRIFT_REGIONS, mean_square.sqrt().tolist())
+            },
         }
 
     @torch.no_grad()
@@ -627,7 +648,9 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         velocity = output["v_theta"]
         if coordinate_mask is not None:
             coordinate_mask = coordinate_mask.to(self.device)
-            velocity = velocity[:, : old_velocity.shape[1], : old_velocity.shape[2]]
+            chunk, dims = guidance_direction.shape[1:]
+            velocity = velocity[:, :chunk, :dims]
+            old_velocity = old_velocity[:, :chunk, :dims]
         terms = _art_loss(
             velocity,
             old_velocity,
@@ -708,6 +731,48 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             or key.startswith(("observation/", "obs_image__", "obs_image_mask__"))
         }
         return inputs if indices is None else cls._index_nested(inputs, indices)
+
+
+@torch.no_grad()
+def _art_velocity_drift_stats(
+    velocity: torch.Tensor,
+    old_velocity: torch.Tensor,
+    action_chunk: int,
+    action_dim: int,
+    coordinate_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return squared-error sums/counts per output region and executed max error.
+
+    Unexecuted coordinates include future action tokens, padding dimensions and
+    any unexecuted tail of a terminated chunk. Entirely invalid rows are omitted.
+    """
+    _validate_art_same_shape(velocity, old_velocity=old_velocity)
+    error = velocity.detach().float() - old_velocity.detach().float()
+    executed = torch.zeros_like(error, dtype=torch.bool)
+    executed[:, :action_chunk, :action_dim] = (
+        True if coordinate_mask is None else coordinate_mask
+    )
+    valid_rows = executed.flatten(1).any(1)[:, None, None]
+    full = valid_rows.expand_as(error)
+    future = torch.zeros_like(executed)
+    future[:, action_chunk:, :action_dim] = True
+    padding = torch.zeros_like(executed)
+    padding[:, :, action_dim:] = True
+    masks = (full, executed, full & ~executed, future & full, padding & full)
+    squared_error = error.square()
+    stats = torch.stack(
+        [
+            torch.stack(
+                (
+                    torch.where(mask, squared_error, 0.0).sum(),
+                    mask.sum().to(error.dtype),
+                )
+            )
+            for mask in masks
+        ]
+    )
+    max_error = torch.where(executed, error.abs(), 0.0).amax()
+    return stats, max_error
 
 
 @torch.no_grad()

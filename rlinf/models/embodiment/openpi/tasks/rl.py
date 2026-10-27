@@ -264,9 +264,7 @@ class Pi0RL(EnvIO, Pi0):
             )
             v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
             if collect_art:
-                art_velocities.append(
-                    v_t[:, : self.action_chunk, : self.action_env_dim].detach()
-                )
+                art_velocities.append(v_t.detach())
             noise_std = None
             if method == "flow_noise":
                 noise_std = self.noise_head(suffix_act).to(torch.float32)
@@ -554,7 +552,7 @@ class Pi0RL(EnvIO, Pi0):
         }
 
     def nft_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
-        """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""
+        """Compute explicit-state velocity; ART retains the full output horizon."""
         nft_inputs = kwargs["nft_inputs"]
         observation = self._observation_from_forward_inputs(forward_inputs)
         device = self.device
@@ -567,7 +565,8 @@ class Pi0RL(EnvIO, Pi0):
         )
         suffix_act = self.run_suffix(observation, x_t, t, kv_cache, prefix_mask)
         v_theta = self.velocity_from_suffix(suffix_act)
-        v_theta = v_theta[:, : self.action_chunk, :]
+        if self.rl_cfg.rl_mode != "art":
+            v_theta = v_theta[:, : self.action_chunk, :]
         result: dict[str, Any] = {"v_theta": v_theta, "x_t": x_t, "timesteps": t}
         if kwargs.get("compute_values") and self.rl_cfg.add_value_head:
             if self.rl_cfg.value_after_vlm:

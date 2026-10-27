@@ -331,6 +331,20 @@ branching before increasing the training budget. These experiments require GPU
 LIBERO validation; the unit tests cover sampling, cache alignment, return slicing,
 and invalid-group masking.
 
+Full-output velocity diagnostics use ``algorithm.art_replay_diagnostics=true``.
+``actor/replay_{region}_rms`` measures pre-update replay error;
+``actor/drift_u1_{region}_rms`` and ``actor/drift_u2_{region}_rms`` measure drift
+from the same frozen rollout velocities after each optimizer update. The
+``region`` suffix is ``exec`` for valid executed coordinates, ``future`` for
+later action tokens in environment dimensions, ``padding`` for remaining model
+dimensions, ``unexec`` for all unexecuted coordinates, or ``full`` for the whole
+output. Entirely invalid rows are excluded; squared errors and coordinate counts
+are summed across microbatches and ranks before computing RMS. These probes use
+fixed cached states and the selected denoising timesteps, not regenerated action
+chains. The training loss and trust-region mask still cover executed coordinates.
+Full velocity caching increases rollout storage and transport; enabling these
+diagnostics adds eval-mode forward passes before and after the updates.
+
 .. _diffusion-art-results:
 
 Expected Results

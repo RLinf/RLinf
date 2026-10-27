@@ -217,6 +217,14 @@ Rollout 在前缀和分叉处检查同组任务、机器人观测、可获取的
 
 分叉实验额外记录 ``actor/branch_chunk_index``、``actor/branch_valid_group_frac``、``actor/branch_state_error_max`` 和 ``actor/branch_image_error_max``。误差汇总前缀检查结果，有效组比例还排除分叉前终止的组。先运行索引 0 和索引 8 的短实验，分别检查初始决策行为与中途分叉，再增加训练预算。这些实验需要 GPU LIBERO 验证；单元测试覆盖采样、缓存对齐、回报截取和无效组屏蔽。
 
+完整输出速度诊断通过 ``algorithm.art_replay_diagnostics=true`` 开启。
+``actor/replay_{region}_rms`` 记录更新前的回放误差；
+``actor/drift_u1_{region}_rms`` 和 ``actor/drift_u2_{region}_rms`` 分别记录两次 optimizer 更新后相对同一份冻结 rollout 速度的漂移。
+``region`` 为 ``exec`` 时统计有效执行坐标，``future`` 统计后续 action token 的环境动作维度，``padding`` 统计其余模型维度，``unexec`` 统计全部未执行坐标，``full`` 统计完整输出。
+完全无效的行不参与统计；平方误差与坐标数先跨 microbatch、rank 求和，再计算 RMS。
+探针使用固定缓存状态和已选取的去噪时间步，不重新生成动作链。训练 loss 和 trust-region mask 仍只覆盖执行坐标。
+完整速度缓存增加 rollout 存储与传输量；开启诊断会在更新前及每次更新后增加 eval 模式前向计算。
+
 .. _diffusion-art-results:
 
 预期实验结果

@@ -38,6 +38,7 @@ from rlinf.workers.actor.fsdp_art_policy_worker import (
     _art_loss,
     _art_scalar_covariance,
     _art_trajectory_guidance,
+    _art_velocity_drift_stats,
     _prompt_disjoint_windows,
     _validate_art_rollout,
 )
@@ -299,6 +300,48 @@ def test_art_output_gradient_statistics_match_autograd(loss_space):
     assert on_policy["output_grad_inner"] == 0
 
 
+def test_art_velocity_drift_pools_valid_coordinates_across_microbatches():
+    old = torch.zeros(3, 4, 4)
+    velocity = torch.ones_like(old)
+    velocity[:, 2:, :2] = 3
+    velocity[:, :, 2:] = 4
+    velocity[2] = 999
+    mask = torch.ones(3, 2, 2, dtype=torch.bool)
+    mask[1, 1] = False
+    mask[2] = False
+    stats, max_error = _art_velocity_drift_stats(velocity, old, 2, 2, mask)
+    expected = torch.tensor(
+        [[336, 32], [6, 6], [330, 26], [72, 8], [256, 16]],
+        dtype=torch.float32,
+    )
+    torch.testing.assert_close(stats, expected)
+    assert max_error == 1
+    assert not stats.requires_grad
+    assert not max_error.requires_grad
+    parts = [
+        _art_velocity_drift_stats(velocity[rows], old[rows], 2, 2, mask[rows])
+        for rows in (slice(0, 1), slice(1, 3))
+    ]
+    torch.testing.assert_close(parts[0][0] + parts[1][0], stats)
+    assert max(parts[0][1], parts[1][1]) == max_error
+
+
+@pytest.mark.parametrize("valid", [False, True])
+def test_art_velocity_drift_handles_empty_regions(valid):
+    old = torch.zeros(2, 2, 2)
+    velocity = torch.full_like(old, 0.25, requires_grad=True)
+    mask = torch.full_like(old, valid, dtype=torch.bool)
+    stats, max_error = _art_velocity_drift_stats(velocity, old, 2, 2, mask)
+    if valid:
+        torch.testing.assert_close(stats[:2], torch.tensor([[0.5, 8], [0.5, 8]]))
+        assert max_error == 0.25
+    else:
+        assert not stats.any()
+        assert max_error == 0
+    assert not stats[2:].any()
+    assert not stats.requires_grad
+
+
 def _art_trajectory_worker(first_chunk_only=False):
     worker = object.__new__(EmbodiedARTFSDPPolicy)
     worker.cfg = OmegaConf.create(
@@ -333,7 +376,7 @@ def _art_trajectory_worker(first_chunk_only=False):
         "forward_inputs": {
             "art_endpoint": endpoints,
             "art_states": states,
-            "art_old_velocity": (states[..., :actions, :dims] + 10).clone(),
+            "art_old_velocity": (states + 10).clone(),
             "art_sigmas": torch.tensor([1.0, 0.75, 0.5, 0.25])
             .expand(decisions, episodes, -1)
             .clone(),
@@ -714,17 +757,15 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         )
         assert not torch.equal(inputs["art_endpoint"][0], inputs["art_endpoint"][1])
         assert inputs["art_states"].shape == (2, 4, 4, 4)
-        assert inputs["art_old_velocity"].shape == (2, 4, 2, 2)
+        assert inputs["art_old_velocity"].shape == inputs["art_states"].shape
         torch.testing.assert_close(inputs["art_endpoint"], actions / 10)
         torch.testing.assert_close(inputs["art_states"][:, 0], noise)
         for index in range(3):
             expected = (
-                inputs["art_states"][:, index, :2, :2]
+                inputs["art_states"][:, index]
                 - 0.25 * inputs["art_old_velocity"][:, index]
             )
-            torch.testing.assert_close(
-                inputs["art_states"][:, index + 1, :2, :2], expected
-            )
+            torch.testing.assert_close(inputs["art_states"][:, index + 1], expected)
         model.rl_cfg = replace(model.rl_cfg, rl_mode="default", is_nft=True)
         with torch.no_grad():
             nft_actions, nft_result = model._predict_train(
@@ -808,18 +849,40 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
                     "timesteps": inputs["art_sigmas"][:, 1],
                 },
             )
-        torch.testing.assert_close(
-            output["v_theta"][..., :2], inputs["art_old_velocity"][:, 1]
-        )
+        torch.testing.assert_close(output["v_theta"], inputs["art_old_velocity"][:, 1])
         actor = object.__new__(EmbodiedARTFSDPPolicy)
-        actor.cfg = OmegaConf.create({"actor": {"micro_batch_size": 1}})
+        actor.cfg = OmegaConf.create(
+            {
+                "actor": {
+                    "micro_batch_size": 1,
+                    "model": {"num_action_chunks": 2, "action_dim": 2},
+                },
+                "algorithm": {},
+            }
+        )
         actor.model = model
         actor.device = torch.device("cpu")
         actor.amp_context = nullcontext()
         actor.rollout_batch = {"forward_inputs": inputs}
         cached_old = inputs["art_old_velocity"].clone()
+        model.rl_cfg = replace(model.rl_cfg, rl_mode="default", is_nft=True)
+        with torch.no_grad():
+            nft_output = model.nft_forward(
+                replay,
+                nft_inputs={
+                    "x_t": inputs["art_states"][:, 1],
+                    "timesteps": inputs["art_sigmas"][:, 1],
+                },
+            )
+        assert nft_output["v_theta"].shape == (2, 2, 4)
+        torch.testing.assert_close(nft_output["v_theta"], output["v_theta"][:, :2])
+        model.rl_cfg = replace(model.rl_cfg, rl_mode="art", is_nft=False)
         model.train()
+        rng_state = torch.get_rng_state().clone()
         replay_metrics = actor._art_replay_metrics()
+        torch.testing.assert_close(torch.get_rng_state(), rng_state)
+        for region in ("full", "exec", "unexec", "future", "padding"):
+            assert replay_metrics[f"actor/replay_{region}_rms"] < 1e-5
         assert model.training
         assert replay_metrics["actor/replay_mse"] < 1e-10
         assert replay_metrics["actor/replay_max_abs"] < 1e-5
@@ -830,6 +893,16 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         assert not model.training
         assert replay_metrics["actor/replay_mse"] == pytest.approx(0.25**2)
         assert replay_metrics["actor/replay_max_abs"] == pytest.approx(0.25)
+        for region in ("full", "exec", "unexec", "future", "padding"):
+            assert replay_metrics[f"actor/replay_{region}_rms"] == pytest.approx(0.25)
+        inputs["art_old_velocity"].copy_(cached_old)
+        inputs["art_old_velocity"][:, :, 2:, :2] += 0.5
+        inputs["art_old_velocity"][:, :, :, 2:] += 1.0
+        replay_metrics = actor._art_replay_metrics()
+        assert replay_metrics["actor/replay_exec_rms"] < 1e-5
+        assert replay_metrics["actor/replay_future_rms"] == pytest.approx(0.5)
+        assert replay_metrics["actor/replay_padding_rms"] == pytest.approx(1.0)
+        assert replay_metrics["actor/replay_unexec_rms"] == pytest.approx(0.75**0.5)
         inputs["art_old_velocity"].copy_(cached_old)
         guidance = _art_trajectory_guidance(
             inputs["art_endpoint"][None],
@@ -838,7 +911,41 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
             2,
             zero_signal_mode="exact",
         )
+        inputs["art_coordinate_mask"] = guidance["coordinate_mask"][0]
         old = inputs["art_old_velocity"].clone()
+        loss, _ = actor._art_forward_and_loss(
+            inputs, replay, guidance["directions"][0], guidance["magnitudes"][0], 1
+        )
+        with torch.no_grad():
+            reference = model.nft_forward(
+                replay,
+                nft_inputs={
+                    "x_t": inputs["art_states"][:, 1],
+                    "timesteps": inputs["art_sigmas"][:, 1],
+                },
+            )["v_theta"]
+        expected_loss = _art_loss(
+            reference[:, :2, :2],
+            old[:, 1, :2, :2],
+            inputs["art_sigmas"][:, 1],
+            inputs["art_sigmas_next"][:, 1],
+            guidance["directions"][0],
+            guidance["magnitudes"][0],
+            coordinate_mask=inputs["art_coordinate_mask"],
+        )["per_item_loss"].mean()
+        torch.testing.assert_close(loss, expected_loss)
+        gradient = torch.autograd.grad(loss, model.action_out_proj.weight)[0]
+        inputs["art_old_velocity"][:, :, 2:] += 100
+        inputs["art_old_velocity"][:, :, :, 2:] -= 100
+        unchanged_loss, _ = actor._art_forward_and_loss(
+            inputs, replay, guidance["directions"][0], guidance["magnitudes"][0], 1
+        )
+        unchanged_gradient = torch.autograd.grad(
+            unchanged_loss, model.action_out_proj.weight
+        )[0]
+        torch.testing.assert_close(unchanged_loss, loss)
+        torch.testing.assert_close(unchanged_gradient, gradient)
+        inputs["art_old_velocity"].copy_(old)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
         model.train()
         for row in (0, 1):
@@ -853,8 +960,8 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
                 },
             )
             terms = _art_loss(
-                output["v_theta"][..., :2],
-                old[row : row + 1, 1],
+                output["v_theta"][:, :2, :2],
+                old[row : row + 1, 1, :2, :2],
                 inputs["art_sigmas"][row : row + 1, 1],
                 inputs["art_sigmas_next"][row : row + 1, 1],
                 guidance["directions"][0, row : row + 1],
@@ -869,6 +976,14 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
             previous_weight = model.action_out_proj.weight.detach().clone()
             optimizer.step()
             assert not torch.equal(model.action_out_proj.weight, previous_weight)
+            torch.testing.assert_close(inputs["art_old_velocity"], old)
+            gradient = model.action_out_proj.weight.grad.clone()
+            rng_state = torch.get_rng_state().clone()
+            drift = actor._art_replay_metrics(f"actor/drift_u{row + 1}")
+            assert drift[f"actor/drift_u{row + 1}_full_rms"] > 0
+            assert model.training
+            torch.testing.assert_close(torch.get_rng_state(), rng_state)
+            torch.testing.assert_close(model.action_out_proj.weight.grad, gradient)
             torch.testing.assert_close(inputs["art_old_velocity"], old)
     finally:
         set_torch_compile(compiled)
