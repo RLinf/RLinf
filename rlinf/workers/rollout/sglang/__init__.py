@@ -14,7 +14,7 @@
 
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from packaging.version import parse
 
@@ -40,6 +40,17 @@ else:
         f"sglang version {package_version} is not supported "
         "(supported range: >=0.4.4, <=0.5.19)."
     )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from rlinf.hybrid_engines.sglang.common import io_struct
+    from rlinf.hybrid_engines.sglang.common.sgl_engine import Engine
+    from rlinf.workers.rollout.sglang.launcher import (
+        get_sglang_api_url,
+        launch_sglang_api,
+        launch_sglang_router_and_server,
+    )
+    from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
+    from rlinf.workers.rollout.sglang.server_worker import SGLangServerWorker
 
 # The patched Engine and io_struct are imported lazily: callers that only
 # need the standalone server/router helpers below must not pay for loading

@@ -68,11 +68,9 @@ class SGLangServerWorker(Worker):
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
-        A failed spawn is cleaned up by ``SGLangServerProcess.start``
-        itself, so the caller never sees a leaked zombie sglang process.
-
-        Raises:
-            RuntimeError: if the server fails to become healthy.
+        If the server fails to become healthy, ``SGLangServerProcess.start``
+        tears the subprocess down and re-raises, so the caller never sees a
+        leaked sglang process.
         """
         assert self._process is None, "sglang server already initialized."
 
