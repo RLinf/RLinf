@@ -66,7 +66,7 @@ SGLang Server 与 Router
    from omegaconf import DictConfig
 
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
    placement = ComponentPlacement(cfg, cluster)
 
@@ -182,7 +182,7 @@ server 的 ``host``/``port``/``dist_init_addr``，以及 router 的 ``port``，�
 Launcher 如何使用这份配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:func:`rlinf.workers.rollout.sglang_server.launch_sglang_router_and_server`
+:func:`rlinf.workers.rollout.sglang.launch_sglang_router_and_server`
 顺序做了以下事情：
 
 1. 将扁平的 ``rollout_hardware_ranks`` 重新打包成
@@ -211,7 +211,7 @@ Launcher 如何使用这份配置
 
    from rlinf.scheduler import Cluster
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
 
    @hydra.main(version_base="1.1", config_path="config", config_name="my_config")
@@ -303,7 +303,7 @@ group；launcher 会原样把列表交给 placement strategy。
 .. code-block:: python
 
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
    placement = ComponentPlacement(cfg, cluster)
    component_name = "rollout"

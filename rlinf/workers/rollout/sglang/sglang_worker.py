@@ -33,7 +33,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
 from rlinf.workers.rollout.sglang.backends import SGLangEngineBackend, make_backend
-from rlinf.workers.rollout.sglang_server.rendezvous import (
+from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
     negotiate_model_instance_dist_addr,
     wait_for_instance_readiness,

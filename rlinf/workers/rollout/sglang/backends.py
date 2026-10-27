@@ -34,7 +34,7 @@ from sglang.srt.managers.io_struct import (
 
 from rlinf.utils.http_client import InferenceHTTPClient
 from rlinf.workers.rollout.backend import RlinfContext, RolloutBackend
-from rlinf.workers.rollout.sglang_server.process import SGLangServerProcess
+from rlinf.workers.rollout.sglang.process import SGLangServerProcess
 from rlinf.workers.rollout.utils import RolloutEngineStats
 
 from . import Engine, io_struct
