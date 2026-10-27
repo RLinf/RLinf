@@ -112,3 +112,4 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RL Token <embodied/rlt>
+   SuperMimic <embodied/supermimic>

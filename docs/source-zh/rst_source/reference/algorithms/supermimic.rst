@@ -1,112 +1,171 @@
 SuperMimic
 ==========
 
-SuperMimic 用可微世界模型做人形全身跟踪。策略梯度沿 32 步想象轨迹反传，不使用 PPO 的似然比。
+SuperMimic 训练人形机器人全身动作跟踪 policy 的方式，是让想象出来的回报沿着一个可微的学习型世界模型反向传播，而不是像 PPO 那样给似然比加权。RLinf 在 MuJoCo Warp 上为 Unitree G1 实现了论文 *SuperMimic: Scaling Humanoid Whole-Body Control with One Differentiable World Model*\ （Liao 等，arXiv:2610.28480，`项目主页 <https://supermimic.github.io>`_）中的方法。本页讲算法本身，以及实现和论文不同的地方；安装、数据、训练和评测命令见 :doc:`../../examples/embodied/supermimic`。
 
-启动
-----
+代码分三处：``rlinf/algorithms/supermimic/``\ （目标函数、网络、replay、按回报重置采样），``rlinf/envs/sim/g1_mimic/``\ （参考动作、运动学、奖励、观测、MuJoCo Warp 适配），``rlinf/workers/supermimic/``\ （训练循环、评测、检查点）。
 
-唯一入口是 ``examples/embodiment/train_supermimic.py``。
-
-.. code-block:: bash
-
-   cd examples/embodiment
-   # 4060 8GB 本机冒烟
-   bash run_supermimic.sh supermimic_smoke
-   # 论文对照：观测 93 维，目标 680 维。需要更大的显卡和 mjlab。
-   export SUPERMIMIC_MOTION_PATH=/path/to/lafan1_g1_clips
-   bash run_supermimic.sh supermimic_lafan1
-   # 目标改为 689 维（整段目标末尾追加 9 维锚点误差）
-   bash run_supermimic.sh supermimic_lafan1_anchor
-   # 730 维目标，观测仍是 93 维
-   bash run_supermimic.sh supermimic_lafan1_goal730
-   # 99 维观测，目标仍是 680 维
-   bash run_supermimic.sh supermimic_lafan1_obs99
-   # 动作跟踪和速度跟踪各一半环境
-   bash run_supermimic.sh supermimic_velocity
-   # G1 重定向的 BONES-SEED。没有数据时会报错
-   export SUPERMIMIC_BONES_PATH=/path/to/bones_seed
-   bash run_supermimic.sh supermimic_bones_seed
-
-依赖
-----
-
-``supermimic_smoke`` 只缩小环境数和批量。它使用和正式配置相同的 mjlab /
-MuJoCo Warp 后端、``k=8``、``H=32`` 和网络宽度。``SUPERMIMIC_MOTION_PATH``
-为空会报错。解析积分只留给 CPU 单测，不能代替这次 smoke。
-Ray 的对象存储在这份配置里限制为 512 MiB，因为回放不经过对象存储。
-内存监测保持 Ray 自己的阈值。只有 ``run_supermimic.sh supermimic_smoke``
-会在用户没有设置时把 ``RAY_memory_usage_threshold`` 设为 0.99。
-其它配置不会改这个值。本机验证过的栈是 PyTorch ``2.14.0+cu126``、
-Warp ``1.18.0+cu12``、mjlab commit ``8bb2bc9``。这些钉在
-``requirements/embodied/envs/supermimic.txt``，不改其它算法的 PyTorch 版本。
-LAFAN1 和 BONES-SEED 都不进仓库。每条 ``clip_*.pt`` 要带 50 Hz（或可重采样的
-30 Hz）、29 个 G1 关节名、默认姿态 ``q0`` 和 ``[T, 71]`` 状态；缺文件或
-格式不对就报错，不用合成动作代替。
-动力学网络隐藏层是论文表 A.4 的 2048, 2048, 2048。
-重置按 1 秒分箱做 50% / 40% / 10% 混合采样。短回合在累计回报前按有效长度
-掩掉奖励缓存，结束时清掉这段缓存。
-``only_eval`` 按批从第 0 帧评完全部指定片段，每条一次。归一化回报的分母是
-该片段完整预定步数乘每步最大正奖励 0.1，提前失败不会把没走到的部分从分母里拿掉。
-``fail_step`` 是从 0 开始的步号，``fail_time_s`` 和 ``episode_length_s`` 是秒。
-奖励根是 ``torso_link``，失败看骨盆，评测另记自由根（G1 上就是骨盆）的位置和朝向。
-锚点的 9 维每一步用当前状态和参考重算。
-每次更新用 CUDA 同步后记录仿真、回放采样、世界模型、32 步 BPTT、critic、
-峰值显存和主机 RSS。这些数字来自 8 个环境，不是 4096 的性能结论。
-恢复后重新预热采集，不用旧的 ``sim_vector_steps`` 判断新回放已经热好。
-
-同一次想象生成 ``s_0..s_H``、``g_0..g_H``、奖励和终止概率。
-critic 用这条轨迹回归 ``V(s_t, g_t)`` 到 ``R_t``，``t = 0..H-1``。
-
-检查点
-------
-
-``save_interval <= 0`` 时不做周期性保存，但最后一次更新一定会写检查点。
-同一次更新只保存一次。检查点含世界模型、策略、critic、优化器、学习率调度和计数。
-速度跟踪打开时再加它自己的编码器和 critic。不保存回放、仿真状态和重置分箱。
-恢复会新建训练器，重新预热，不恢复这些运行时状态。
-
-观测噪声
+训练循环
 --------
 
-表 A.1 是均匀噪声，不是高斯噪声。关节位置 ``U[-0.01, 0.01]``，关节速度
-``U[-0.5, 0.5]``，基座角速度 ``U[-0.2, 0.2]``，投影重力 ``U[-0.05, 0.05]``。
-上一动作不加传感器噪声。执行器上的高斯动作噪声是另一回事。
-每个控制步只给新的一帧采样一次。历史里已经写下的帧不再抽样。
-重置时用这一帧重复填满 10 帧，所以补上的前缀共用同一次噪声。这是本实现的约定，
-论文没有规定唯一的历史噪声做法。评测关闭传感器噪声。想象里新噪声是外生的，
-加在观测上，不切断状态到策略的梯度。
+算法 A.1 的每次迭代分三步，每张 GPU 上一个进程完成全部工作：
 
-世界模型把根旋转的误差写成相对旋转的 ``Log(R_pred R_target^T)``，
-不再把两个绝对旋转向量相减。其它状态分量的尺度和原来一样。
+1. **采集。** Policy 在仿真里执行带高斯噪声 :math:`\epsilon_t \sim \mathcal{N}(0, 0.1^2)` 的动作，replay 存的是实际执行的带噪动作。每个 episode 从按回报采样的重置点开始。
+2. **拟合世界模型**，用从 replay 里采的 ``k = 8`` 步窗口。
+3. **改进 policy**：在冻结的世界模型里想象 ``H = 32`` 步做反向传播，然后用想象轨迹上的 GAE 目标拟合 critic。
 
-730 维目标、99 维观测、速度和 BONES-SEED
-------------------------------------------
+``algorithm.updates_per_env_step = 0.4`` 决定更新与数据之比：每 2.5 个向量步做一次更新（一次 10 个批次的世界模型拟合、一次 actor 更新、5 个 epoch 各 4 个小批的 critic 更新）。
 
-730 维目标按 zita-ch 的实现：未来第 ``t+1`` 到 ``t+10`` 帧，末帧保持。
-每一帧是航向系相对根位置 3 维、相对旋转 6 维、该帧根系线速度 3 维、
-根系角速度 3 维、原始关节角 29 维、关节速度乘 0.1 的 29 维。
-它不接在 680 维后面。99 维观测是 93 维后面加上
-``Rot6D(R_robot^T R_reference)``，这 6 维默认无噪声。
-速度接口是论文附录 G 的 RL，不是蒸馏。环境数和想象批量各一半给动作跟踪、
-一半给速度跟踪。共享解码器在速度更新时冻结权重，梯度仍回到速度编码器。
-对齐损失 ``0.1 ||z_vel - stopgrad(z_motion)||^2`` 只加在参考命令上。
-BONES-SEED 按附录 E 做名字过滤和可行性过滤。动作库留在 CPU，
-查询时只拷贝取到的那些帧，初始化不会把全部片段搬上 GPU。
-没有真实数据包时，加载会报错，不能把合成样本说成数据集已经验收。
-附录 E 写明的词已经实现；SONIC 的完整私有词表没有，也不把公开规则说成原作者的完整列表。
+世界模型
+--------
 
-T 帧参考从第 0 帧评到时间变成 T 的那一步，所以预定控制步数是 T，不是 T-1。
-提前失败时分母仍用这 T 步。``fail_step`` 是从 0 开始的步号，
-``fail_time_s`` 和 ``episode_length_s`` 是秒。
+动力学网络的输入是 71 维状态 :math:`s` 的朝向无关特征（根高度、去掉偏航后的根朝向 Rot6D、朝向坐标系下的线速度、根坐标系下的角速度、关节角和关节速度）、实际执行的动作 :math:`a`，以及每个 episode 的仿真上下文 :math:`\xi`\ （脚底摩擦、关节零位偏差、躯干质心偏移），输出 70 维残差：
 
-本机 ``jrwsdjango`` 里还有和 SuperMimic 无关的依赖冲突，例如 TaH 希望
-``torch==2.6.0``，而这里是 ``2.14.0+cu126``。requirements 把 numpy 限制在
-``<2.4``，当前环境装的是 ``2.4.6``。这些不通过改其它项目的锁来处理。
+.. math::
 
-终止与截断
+   \hat s_{t+1} = \hat s_t \oplus f_\omega(\phi(\hat s_t), a_t, \xi)
+
+其中 :math:`\oplus` 在朝向坐标系里叠加位置和速度残差，旋转残差按旋转向量复合。最后一层初始化为零，所以初始模型预测"状态不变"。训练时窗口从记录的状态出发，按记录的动作自回归展开（Eq.1）：
+
+.. math::
+
+   \mathcal{L}_{WM}(\omega) = \mathbb{E}_{\mathcal{B}} \sum_{j=1}^{k}
+   \Big[ \| \hat s_j - s_j \|^2_{\Sigma} + \mathrm{BCE}(\hat d_j, d_j) \Big]
+
+状态误差按分块缩放，旋转用相对旋转 :math:`\log(R_{pred} R_{target}^\top)`。奖励头和观测头是解析的：奖励由预测状态经 G1 运动学树的可微正运动学算出，观测由状态、上一动作和 :math:`\xi` 算出。终止头是一个学习型 MLP，输入是相对参考的高度误差、倾斜误差及其绝对值；BCE 标签只有跟踪失败才是 1。
+
+Actor 目标
 ----------
 
-失败终止（骨盆高度或倾斜超阈值）是世界模型的正样本，评测记为失败。
-10 秒超时和参考片段结束不是失败；前者在真实回合回报上用 critic 补全，后者不补全。
-8 步窗口不跨越任何回合边界。
+Policy :math:`a_t = \pi_\theta(o_{t-9..t} + \eta_t, g_t)` 以带噪声的观测历史和 Goal 为输入。用软存活权重 :math:`c_0 = 1`、:math:`c_{t+1} = c_t (1 - \hat d_{t+1})`，想象目标为（Eq.2）
+
+.. math::
+
+   \hat J(\theta) = \mathbb{E}\Big[ \sum_{t=0}^{H-1} \gamma^t \hat c_t \hat r_{t+1}
+   + \gamma^H \hat c_H V_\psi(\hat s_H, g_H, \xi) \Big]
+
+梯度通过时间反向传播求得，有三条路径：经过奖励、经过 :math:`\hat c_t`\ （终止头可微）、经过 bootstrap 价值。这一步里世界模型和 critic 都冻结。梯度先按全局范数裁剪到 1.0，再逐元素裁剪到 0.1。
+
+Critic 与 GAE
+-------------
+
+Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根误差）拟合在同一条想象轨迹上从后往前算出的 GAE 回报（Eq.3），起点 :math:`\hat R_H = V_H`：
+
+.. math::
+
+   \hat R_t = \hat r_{t+1} + \gamma (1 - \hat d_{t+1})
+   \big[ (1 - \lambda) V_{t+1} + \lambda \hat R_{t+1} \big],
+   \qquad \mathcal{L}_V = \mathbb{E} \sum_{t=0}^{H-1} (V_t - \hat R_t)^2
+
+其中 :math:`\gamma = 0.99`、:math:`\lambda = 0.95`。拟合 critic 时目标保持不变。
+
+终止、超时与片段结束
+--------------------
+
+动作任务在骨盆高度误差超过 0.25 m，或倾斜误差（机器人骨盆系与参考骨盆系下重力方向 z 分量之差）超过 0.8 时判为失败。只有失败才是世界模型的正样本，也只有失败算评测失败。10 s 的训练时长上限和参考片段结束都会结束 episode，但不算失败；想象过程不处理这两种情况，片段结束后保持最后一帧参考。重置采样用的回报在超时处用动作 critic 做 bootstrap，失败和片段结束不做 bootstrap。
+
+时间对齐
+--------
+
+在机器人时间 :math:`t` 构造的所有条件量都从参考帧 :math:`m_t` 读起，转移 :math:`s_t \to s_{t+1}` 用 :math:`m_{t+1}` 打分：
+
+* 680 维 Goal :math:`g_t` 包含 :math:`m_t .. m_{t+9}`；
+* 9 维锚点、critic 根误差、99 维观测里的相对朝向，比较的都是 :math:`s_t` 和 :math:`m_t`；
+* 奖励 :math:`r_{t+1}` 和终止 :math:`d_{t+1}` 比较 :math:`s_{t+1}` 和 :math:`m_{t+1}`；
+* 想象的第 :math:`t` 步用 :math:`\tau_0 + t` 时刻的 Goal，用 :math:`m_{\tau_0 + t + 1}` 给 :math:`\hat s_{t+1}` 打分。
+
+论文把 Goal 描述为"10 个未来帧"，CuboiLeo 的实现用 :math:`m_{t+1} .. m_{t+10}`，锚点和 critic 误差也对 :math:`m_{t+1}`。680 维窗口从当前帧开始是本实现的选择：两种约定各自自洽，只是 policy 少看一帧未来。730 维 Goal 沿用 zita-ch 的 :math:`m_{t+1} .. m_{t+10}`。检查点在 ``checkpoint_meta.json`` 里记录窗口，加载到窗口不同的配置时会被拒绝。
+
+奖励
+----
+
+动作奖励是 BeyondMimic 的跟踪奖励，去掉自碰撞惩罚，关节限位权重降到 -2，全部乘以 :math:`\Delta t = 0.02` s（表 A.2）：14 个跟踪身体的位置、朝向、线速度、角速度，根位置和根朝向，动作平滑，关节限位。和 BeyondMimic 一样，根项在世界系里比较 ``torso_link``；身体位姿项先把参考平移、旋转到机器人躯干的水平位置和偏航上（``update_relative_body_poses``），所以整体漂移只体现在根项里。身体速度在世界系里比较。
+
+按回报重置采样
+--------------
+
+附录 D.1：动作时间轴切成 1 s 的分箱，每个分箱维护从该箱出发的折扣回报的 EMA :math:`G_b`；重置时 50% 在分箱上均匀抽，40% 按 :math:`\mathrm{softmax}_b(-25\, G_b / G_{max})` 抽，10% 按这个 softmax 的慢速 EMA 抽。:math:`G_{max} = 0.1 / (1 - \gamma) = 10` 是动作任务能拿到的最大回报。温度 25、EMA 系数 0.05 和 0.01 是社区取值，论文没有给出。只有动作跟踪 episode 会更新 :math:`G_b`；速度 episode 的回报取决于它的命令而不是参考点，所以速度环境在分箱上均匀重置。
+
+多目标接口与速度跟踪
+--------------------
+
+附录 B 让多个目标接口共用一个世界模型和一个解码器 :math:`a = \mathrm{dec}_\theta(\mathrm{enc}_{\theta,i}(g), o)`。速度接口（附录 G 的 RL 编码器）把命令 :math:`(v_x, v_y, \omega_z)` 和观测历史映射到 32 维潜变量。一半环境、每个想象批次的一半用这个接口，使用表 A.6 的奖励、软跌倒终止和自己的 critic。速度更新时解码器权重冻结；在用参考命令的 rollout 上，一个权重 0.1 的 MSE 把速度潜变量拉向（停止梯度的）动作潜变量。附录 G 的蒸馏版编码器没有实现。
+
+论文、社区实现与本实现的选择
+----------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 20 20 18 20
+
+   * - 项
+     - 论文
+     - CuboiLeo
+     - zita-ch
+     - 本实现
+   * - 状态与残差
+     - 未规定
+     - 71 维状态，缩放残差，显式积分
+     - 71 维，坐标系不同
+     - 71 维状态，未缩放的朝向系残差
+   * - 世界模型状态误差
+     - :math:`\|\hat s - s\|^2`
+     - 分块缩放
+     - --
+     - 沿用 CuboiLeo 的缩放，旋转用 SO(3) 误差
+   * - 680 维 Goal 窗口
+     - 10 个未来帧
+     - :math:`m_{t+1}..m_{t+10}`
+     - --
+     - :math:`m_t..m_{t+9}`
+   * - 730 维 Goal
+     - --
+     - --
+     - :math:`m_{t+1}..m_{t+10}`
+     - 同 zita-ch
+   * - 9 维锚点的身体
+     - --
+     - torso
+     - --
+     - torso
+   * - 身体重锚
+     - BeyondMimic
+     - torso
+     - pelvis
+     - torso
+   * - 终止头
+     - 学习或解析均可
+     - 学习
+     - 解析 sigmoid
+     - 学习；``termination_head: analytic`` 为实验选项
+   * - 输入归一化
+     - 未规定
+     - 固定尺度
+     - 滑动归一化
+     - 无
+   * - 参考速度
+     - 未规定
+     - 中心差分
+     - 中心差分
+     - 中心差分
+   * - 重置采样常数
+     - 分箱、50/40/10
+     - 温度 25，EMA 0.05/0.01
+     - --
+     - 同 CuboiLeo
+   * - 速度阶跃测试
+     - G.2，672 条命令 × 4 次试验
+     - --
+     - --
+     - G.2；试验之间仿真上下文和关节噪声不同
+
+CuboiLeo 和 zita-ch 是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。
+
+已知限制
+--------
+
+* **终止头冷启动。** 用 PyTorch 默认初始化时终止头输出约 0.5，32 步存活权重从 :math:`10^{-9}` 量级开始，在终止头经过几百个世界模型更新步之前，actor 只能从最前面几步想象拿到梯度。失败只占记录转移的约 0.3%；在短时间训练里，终止头先学到基础率，并且给大误差的概率反而比小误差低。``algorithm.termination_bias_init``\ （例如 -4.6，对应 1% 先验）和 ``algorithm.termination_head: analytic`` 都能消除冷启动，在本机短时间训练里也得到了方向正确的终止头。两者都是实验选项，默认值是论文设定。
+* **网络没有输入归一化。** 观测里关节速度可达 20 左右，:math:`\xi` 里的零位偏差只有 0.01 左右；论文没有规定归一化，本实现也没有加。
+* **BPTT 梯度尖峰。** 裁剪前的 actor 梯度范数会突然升高两个数量级；论文的裁剪方式限制了每一步的幅度。
+* **没有实现：** 附录 G 的蒸馏编码器、推力恢复实验、BONES-SEED 发布格式的转换器。
+* **尚未证明：** 论文规模下学会跟踪的 policy、多卡 NCCL 训练、多节点运行。哪些已经跑过、哪些没有，见使用指南。

@@ -6,11 +6,5 @@ runner:
   logger:
     experiment_name: supermimic_lafan1
 
-algorithm:
-  goal_anchor: false
-
 env:
-  backend: mjlab
-  num_envs: 4096
-  num_clips: 40
   motion_path: ${oc.env:SUPERMIMIC_MOTION_PATH,""}

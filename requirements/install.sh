@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "supermimic")
 
 #=======================Utility Functions=======================
 
@@ -1057,6 +1057,8 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        # mjlab 8bb2bc9 requires torch>=2.14.0.
+        supermimic) env_torch="2.14.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -3216,6 +3218,9 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        supermimic)
+            install_supermimic_env
+            ;;
         libero|maniskill_libero)
             install_common_embodied_deps
             install_${ENV_NAME}_env
@@ -3701,6 +3706,26 @@ install_piper_env() {
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "pyAgxArm @ git+${GITHUB_PREFIX}https://github.com/agilexrobotics/pyAgxArm.git@4b0f06585db3324222616999afeda9037df2e8bd"
+}
+
+# PyPI's warp-lang 1.18.0 is a CUDA 13 build and is invisible to an older
+# driver; warp's GitHub release also ships the +cu12 build of that version.
+install_supermimic_env() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "[install.sh] supermimic needs CUDA (MuJoCo Warp); platform=${PLATFORM} is not supported." >&2
+        exit 1
+    fi
+    install_common_embodied_deps
+    local cuda_mm cuda_major
+    cuda_mm=$(detect_cuda_major_minor) || {
+        echo "Could not detect the CUDA version of the installed torch." >&2
+        exit 1
+    }
+    cuda_major="${cuda_mm%% *}"
+    if [ "$cuda_major" -lt 13 ]; then
+        uv pip install "warp-lang @ ${GITHUB_PREFIX}https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl"
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/supermimic.txt"
 }
 
 install_so101_env() {

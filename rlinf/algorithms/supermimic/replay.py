@@ -54,11 +54,15 @@ class SuperMimicReplay:
         self.obs_dim = int(obs_dim)
         self.cursor = torch.zeros(num_envs, dtype=torch.long, device=device)
         self.count = torch.zeros(num_envs, dtype=torch.long, device=device)
-        self.episode_id = torch.zeros(num_envs, capacity, dtype=torch.long, device=device)
+        self.episode_id = torch.zeros(
+            num_envs, capacity, dtype=torch.long, device=device
+        )
         self.time_in_episode = torch.zeros(
             num_envs, capacity, dtype=torch.long, device=device
         )
-        self.state = torch.zeros(num_envs, capacity, STATE_DIM, device=device, dtype=dtype)
+        self.state = torch.zeros(
+            num_envs, capacity, STATE_DIM, device=device, dtype=dtype
+        )
         self.next_state = torch.zeros(
             num_envs, capacity, STATE_DIM, device=device, dtype=dtype
         )
@@ -84,8 +88,12 @@ class SuperMimicReplay:
         self.reward = torch.zeros(num_envs, capacity, device=device, dtype=dtype)
         self.end_kind = torch.zeros(num_envs, capacity, dtype=torch.long, device=device)
         self.xi = torch.zeros(num_envs, capacity, XI_DIM, device=device, dtype=dtype)
-        self.motion_id = torch.zeros(num_envs, capacity, dtype=torch.long, device=device)
-        self.motion_time = torch.zeros(num_envs, capacity, dtype=torch.long, device=device)
+        self.motion_id = torch.zeros(
+            num_envs, capacity, dtype=torch.long, device=device
+        )
+        self.motion_time = torch.zeros(
+            num_envs, capacity, dtype=torch.long, device=device
+        )
         self.next_episode_id = torch.zeros(num_envs, dtype=torch.long, device=device)
 
     def add(
@@ -107,6 +115,11 @@ class SuperMimicReplay:
         command: torch.Tensor | None = None,
         command_from_ref: torch.Tensor | None = None,
     ) -> None:
+        """Append one vector step for ``env_ids`` at each env's cursor.
+
+        ``prev_action`` defaults to zeros and ``obs_noisy`` to the noiseless
+        observation; the remaining optional fields default to the motion task.
+        """
         idx = self.cursor[env_ids]
         if prev_action is None:
             prev_action = torch.zeros_like(action_policy)
@@ -119,9 +132,13 @@ class SuperMimicReplay:
         self.prev_action[env_ids, idx] = prev_action
         self.obs_noisy[env_ids, idx] = obs_noisy
         if task_id is None:
-            task_id = torch.zeros(env_ids.shape[0], dtype=torch.long, device=self.device)
+            task_id = torch.zeros(
+                env_ids.shape[0], dtype=torch.long, device=self.device
+            )
         if command is None:
-            command = torch.zeros(env_ids.shape[0], 3, device=self.device, dtype=self.dtype)
+            command = torch.zeros(
+                env_ids.shape[0], 3, device=self.device, dtype=self.dtype
+            )
         if command_from_ref is None:
             command_from_ref = torch.zeros(
                 env_ids.shape[0], dtype=torch.bool, device=self.device
@@ -147,7 +164,9 @@ class SuperMimicReplay:
     def _live_physical(self) -> torch.Tensor:
         """Physical index of each logical slot. Shape ``[num_envs, capacity]``."""
         logical = torch.arange(self.capacity, device=self.device).view(1, -1)
-        return (self.cursor.unsqueeze(1) - self.count.unsqueeze(1) + logical) % self.capacity
+        return (
+            self.cursor.unsqueeze(1) - self.count.unsqueeze(1) + logical
+        ) % self.capacity
 
     def _window_env_phys(self, k: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Env id and physical start of every legal ``k``-step window."""
@@ -170,10 +189,12 @@ class SuperMimicReplay:
         return env_i, phys[env_i, logical_i]
 
     def num_valid_windows(self, k: int) -> int:
+        """Number of ``k``-step windows that stay inside one episode."""
         env_i, _ = self._window_env_phys(k)
         return int(env_i.shape[0])
 
     def valid_window_starts(self, k: int) -> list[tuple[int, int]]:
+        """``(env, slot)`` of every valid ``k``-step window start."""
         env_i, phys_i = self._window_env_phys(k)
         return list(zip(env_i.tolist(), phys_i.tolist(), strict=True))
 
@@ -182,9 +203,10 @@ class SuperMimicReplay:
         if t == 0:
             return False
         prev = (physical - 1) % self.capacity
-        return int(self.episode_id[env, prev]) == int(
-            self.episode_id[env, physical]
-        ) and int(self.time_in_episode[env, prev]) == t - 1
+        return (
+            int(self.episode_id[env, prev]) == int(self.episode_id[env, physical])
+            and int(self.time_in_episode[env, prev]) == t - 1
+        )
 
     def prev_action_at(self, env: int, physical: int) -> torch.Tensor:
         """Clean previous action. Overwritten ring slots are not predecessors."""
@@ -248,6 +270,7 @@ class SuperMimicReplay:
         return env_i, phys[env_i, logical_i]
 
     def sample_windows(self, k: int, batch: int) -> dict[str, torch.Tensor] | None:
+        """Up to ``batch`` random ``k``-step windows, or ``None`` before any exist."""
         env_all, phys_all = self._window_env_phys(k)
         if env_all.numel() == 0:
             return None
@@ -289,6 +312,10 @@ class SuperMimicReplay:
     def sample_starts(
         self, batch: int, q0: torch.Tensor, task: int | None = None
     ) -> dict[str, torch.Tensor] | None:
+        """Up to ``batch`` imagination starts with their history, or ``None``.
+
+        ``task`` keeps only motion (0) or velocity (1) rows.
+        """
         env_all, phys_all = self._consistent_starts()
         if task is not None and env_all.numel():
             keep = self.task_id[env_all, phys_all] == int(task)

@@ -22,7 +22,6 @@ from rlinf.envs.sim.g1_mimic.constants import (
     HISTORY_LEN,
     JOINT_POS,
     JOINT_VEL,
-    OBS_DIM,
     ROOT_ANG_VEL,
     SENSOR_NOISE_STD,
     XI_ENCODER,
@@ -34,7 +33,9 @@ from rlinf.envs.sim.g1_mimic.features import (
 )
 
 
-def relative_root_ori_6d(robot_quat: torch.Tensor, ref_quat: torch.Tensor) -> torch.Tensor:
+def relative_root_ori_6d(
+    robot_quat: torch.Tensor, ref_quat: torch.Tensor
+) -> torch.Tensor:
     """``Rot6D(R_robot^T R_reference)`` at the same time index.
 
     zita-ch appends this 6-d heading to the 93-d proprioception. It is a
@@ -116,7 +117,7 @@ def pad_history(frames: list[torch.Tensor]) -> torch.Tensor:
     and do not redraw noise on the frames already stored.
     """
     if not frames:
-        raise ValueError("history needs at least one observation")
+        raise ValueError("history needs at least one observation, got an empty list")
     first = frames[0]
     missing = HISTORY_LEN - len(frames)
     if missing > 0:

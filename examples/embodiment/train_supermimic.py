@@ -27,9 +27,7 @@ from rlinf.workers.supermimic.worker import SuperMimicWorker
 mp.set_start_method("spawn", force=True)
 
 
-@hydra.main(
-    version_base="1.1", config_path="config", config_name="supermimic_lafan1"
-)
+@hydra.main(version_base="1.1", config_path="config", config_name="supermimic_lafan1")
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))

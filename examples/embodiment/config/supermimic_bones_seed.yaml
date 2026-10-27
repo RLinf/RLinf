@@ -6,11 +6,8 @@ runner:
   logger:
     experiment_name: supermimic_bones_seed
 
-algorithm:
-  goal_encoding: paper
-  goal_anchor: false
-  obs_dim: 93
-
 env:
   motion_format: bones_seed
+  # Every clip that passes the name and feasibility filters. A count caps it.
+  num_clips: null
   motion_path: ${oc.env:SUPERMIMIC_BONES_PATH,""}

@@ -85,6 +85,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-supermimic
 
 
 ##################################################################################################
@@ -514,6 +515,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: SuperMimic
+##################################################################################################
+FROM embodied-common-image AS embodied-supermimic-image
+
+# Install the SuperMimic env (MuJoCo Warp G1, no VLA model)
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv supermimic --env supermimic
+
+# Set default env
+RUN echo "source ${UV_PATH}/supermimic/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

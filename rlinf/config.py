@@ -37,6 +37,7 @@ from rlinf.utils.placement import (
 from rlinf.utils.precision import (
     torch_dtype_from_precision as torch_dtype_from_precision,
 )
+from rlinf.workers.supermimic.validate import validate_supermimic_cfg
 
 if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig
@@ -1689,9 +1690,6 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
-from rlinf.workers.supermimic.validate import validate_supermimic_cfg
-
-
 def adv_requires_group_baseline(
     adv_type: Optional[str], use_reinpp_baseline: bool = False
 ) -> bool:
@@ -1782,8 +1780,11 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "offline":
         cfg = validate_offline_cfg(cfg)
     elif cfg.runner.task_type == "supermimic":
-        # Single-process world-model training: no actor/rollout backends to check.
-        return validate_supermimic_cfg(cfg)
+        # No actor/rollout backends to check. Batch sizes split over ranks.
+        world_size = HybridComponentPlacement(cfg, Cluster()).get_world_size(
+            "supermimic"
+        )
+        return validate_supermimic_cfg(cfg, world_size=world_size)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
         if adv_requires_group_baseline(

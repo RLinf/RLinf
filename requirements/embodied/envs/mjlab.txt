@@ -1,6 +1,0 @@
-# Optional SuperMimic physics stack. Pin matches CuboiLeo's mjlab commit.
-# pip install -r requirements/embodied/envs/mjlab.txt
-mjlab @ git+https://github.com/mujocolab/mjlab.git@8bb2bc9e187797689ec82c78c35019afd2fd0376
-mujoco~=3.16
-mujoco-warp~=3.16
-warp-lang>=1.15

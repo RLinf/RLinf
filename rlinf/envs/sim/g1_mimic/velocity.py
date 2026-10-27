@@ -43,6 +43,7 @@ ALIGN_WEIGHT = 0.1
 
 
 def normalize_command(command: torch.Tensor) -> torch.Tensor:
+    """Command scaled to roughly unit range for the velocity encoder."""
     scale = command.new_tensor(COMMAND_SCALE)
     return command / scale
 
@@ -77,6 +78,41 @@ def sample_velocity_command(
     command = torch.where(stand.unsqueeze(-1), torch.zeros_like(command), command)
     command = torch.where(from_ref.unsqueeze(-1), torch.zeros_like(command), command)
     return command, from_ref
+
+
+STEP_TEST_PLANES = (("vx-vy", 0, 1), ("vx-wz", 0, 2), ("vy-wz", 1, 2))
+
+
+def step_test_commands(points: int = 15) -> tuple[torch.Tensor, list[str], list[str]]:
+    """Appendix G.2 commands: commands, names, and the plane of each.
+
+    A ``points x points`` grid over the uniform command range on each of the
+    planes (vx, vy), (vx, wz) and (vy, wz), with the standing command left
+    out: 3 * (15 * 15 - 1) = 672 step responses. A command on an axis shared
+    by two planes appears once per plane, as in the paper's count.
+    """
+    axes = [
+        torch.linspace(low, high, points, dtype=torch.float64)
+        for low, high in zip(COMMAND_LOW, COMMAND_HIGH, strict=True)
+    ]
+    # The middle of a symmetric range comes out near 1e-17; it is the zero command.
+    axes = [
+        torch.where(axis.abs() < 1e-9, torch.zeros_like(axis), axis) for axis in axes
+    ]
+    commands, names, planes = [], [], []
+    for plane, first, second in STEP_TEST_PLANES:
+        for u in axes[first]:
+            for v in axes[second]:
+                command = torch.zeros(3, dtype=torch.float64)
+                command[first], command[second] = u, v
+                if float(command.abs().max()) < 1e-6:
+                    continue
+                commands.append(command)
+                names.append(
+                    f"{plane}:{command[0]:+.3f},{command[1]:+.3f},{command[2]:+.3f}"
+                )
+                planes.append(plane)
+    return torch.stack(commands).float(), names, planes
 
 
 def velocity_fall(state: torch.Tensor) -> torch.Tensor:
@@ -118,5 +154,7 @@ def velocity_reward(
     lean = torso_z[..., 1].pow(2)
     torso_rate = torch.matmul(heading_t, ang[:, TORSO].unsqueeze(-1)).squeeze(-1)
     rate = torso_rate[..., 0].pow(2) + torso_rate[..., 1].pow(2)
-    total = 2.0 * lin + 2.0 * yaw - 0.3 * smooth - 2.0 * limit - 4.0 * lean - 0.05 * rate
+    total = (
+        2.0 * lin + 2.0 * yaw - 0.3 * smooth - 2.0 * limit - 4.0 * lean - 0.05 * rate
+    )
     return total * DT

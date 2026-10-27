@@ -16,9 +16,12 @@
 
 Pinned to mjlab commit ``8bb2bc9e187797689ec82c78c35019afd2fd0376``.
 
-Physics is 50 Hz: four 5 ms MuJoCo Warp steps per action. ``step`` does not
-reset. The returned state is the post-physics state, and the caller resets
-only after that transition has been stored.
+Physics is 50 Hz: four 5 ms MuJoCo Warp steps per action. ``mjwarp.step``
+integrates ``qpos`` and ``qvel`` but leaves ``xpos``, ``xquat``, and ``cvel``
+at the previous kinematics pass. ``step`` calls ``sim.forward()`` after the
+four substeps. That refreshes the derived state and does not integrate, so
+the 71-d vector is one physical time. ``step`` does not reset. The caller
+resets only after that transition has been stored.
 """
 
 from __future__ import annotations
@@ -30,10 +33,6 @@ import torch
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     DT,
-    EPISODE_CLIP_END,
-    EPISODE_CONT,
-    EPISODE_FAILURE,
-    EPISODE_TIMEOUT,
     G1_JOINT_NAMES,
     JOINT_POS,
     JOINT_VEL,
@@ -42,6 +41,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_POS,
     ROOT_QUAT,
 )
+from rlinf.envs.sim.g1_mimic.env import compose_end_kind
 from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 from rlinf.envs.sim.g1_mimic.reward import failure_signals
@@ -57,6 +57,22 @@ def _rotate(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
 
 def _rotate_inverse(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
     return torch.einsum("...ji,...j->...i", quat_to_rotmat(quat), vec)
+
+
+def check_default_pose(q0: torch.Tensor, pd_offset: torch.Tensor) -> None:
+    """Refuse clips whose default pose is not the asset's PD offset.
+
+    The goal and observation subtract the clips' ``q0``; the PD target adds
+    ``pd_offset`` (``q_sp = alpha a + q0``), so they must be the same pose.
+    """
+    q0 = q0.to(pd_offset)
+    if not torch.allclose(q0, pd_offset, atol=1e-5):
+        worst = int((q0 - pd_offset).abs().argmax())
+        raise ValueError(
+            "reference clip q0 differs from the mjlab G1 default joint pose "
+            f"used as the PD offset; joint {G1_JOINT_NAMES[worst]}: clip "
+            f"{float(q0[worst]):.4f}, asset {float(pd_offset[worst]):.4f}"
+        )
 
 
 class MjlabG1Env:
@@ -83,7 +99,10 @@ class MjlabG1Env:
         from mjlab.terrains import TerrainEntityCfg
 
         if abs(DECIMATION * PHYSICS_DT - DT) > 1e-8:
-            raise RuntimeError("control period must stay 0.02 s")
+            raise RuntimeError(
+                f"control period must be {DT} s, got DECIMATION * PHYSICS_DT = "
+                f"{DECIMATION * PHYSICS_DT} s"
+            )
         self.num_envs = int(num_envs)
         self.motion = motion
         self.device = torch.device(device)
@@ -145,6 +164,7 @@ class MjlabG1Env:
             )
         self.action_scale = scale
         self.pd_offset = self.robot.data.default_joint_pos[0].to(self.dtype).clone()
+        check_default_pose(self.q0, self.pd_offset)
         foot_ids = []
         for geom_id in range(self.sim.mj_model.ngeom):
             name = mujoco.mj_id2name(
@@ -154,7 +174,9 @@ class MjlabG1Env:
             if FOOT_GEOM.fullmatch(leaf):
                 foot_ids.append(geom_id)
         if not foot_ids:
-            raise RuntimeError("G1 foot collision geoms were not found")
+            raise RuntimeError(
+                f"expected G1 foot collision geoms named {FOOT_GEOM.pattern}, found none"
+            )
         self._foot_ids = torch.tensor(foot_ids, dtype=torch.long, device=self.device)
         torso = mujoco.mj_name2id(
             self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "robot/torso_link"
@@ -170,9 +192,7 @@ class MjlabG1Env:
         self.state = torch.zeros(
             self.num_envs, 71, device=self.device, dtype=self.dtype
         )
-        self.xi = torch.zeros(
-            self.num_envs, 33, device=self.device, dtype=self.dtype
-        )
+        self.xi = torch.zeros(self.num_envs, 33, device=self.device, dtype=self.dtype)
         self.motion_id = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
         )
@@ -224,6 +244,7 @@ class MjlabG1Env:
         )
 
     def ref_state(self) -> torch.Tensor:
+        """Reference state at each env's current motion frame."""
         return self.motion.state_at(self.motion_id, self.motion_time)
 
     def reset(
@@ -232,6 +253,10 @@ class MjlabG1Env:
         motion_id: torch.Tensor | None = None,
         motion_time: torch.Tensor | None = None,
     ) -> None:
+        """Reset ``env_ids`` to reference frames and draw a new sim context.
+
+        Without ``motion_id``/``motion_time`` the envs start at random clip frames.
+        """
         from rlinf.envs.sim.g1_mimic.env import sample_xi
 
         n = int(env_ids.numel())
@@ -259,7 +284,48 @@ class MjlabG1Env:
         self._write_state(env_ids, start)
         self.state = self._read_state()
 
+    def reset_standing(self, env_ids: torch.Tensor) -> None:
+        """Start from mjlab's standing keyframe, the Appendix G.2 initial state.
+
+        The reference clock is set to clip 0, frame 0 only so that ``step``
+        has a reference to read; velocity tests ignore it. Outside eval mode
+        the sim context and the joint noise are drawn as in ``reset``.
+        """
+        from rlinf.envs.sim.g1_mimic.env import sample_xi
+        from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+
+        n = int(env_ids.numel())
+        if n == 0:
+            return
+        self.motion_id[env_ids] = 0
+        self.motion_time[env_ids] = 0
+        self.time_in_episode[env_ids] = 0
+        self.xi[env_ids] = sample_xi(n, self.device, self.dtype)
+        if self.eval_mode:
+            self.xi[env_ids, 0] = 1.0
+            self.xi[env_ids, 1:] = 0.0
+        self._apply_xi(env_ids)
+        start = (
+            asset_default_state()
+            .to(device=self.device, dtype=self.dtype)
+            .expand(n, -1)
+            .clone()
+        )
+        if not self.eval_mode:
+            start[:, JOINT_POS] = start[:, JOINT_POS] + 0.02 * torch.randn_like(
+                start[:, JOINT_POS]
+            )
+        self._write_state(env_ids, start)
+        self.state = self._read_state()
+
     def step(self, action_executed: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Apply one 20 ms control step and check the new state against the next frame.
+
+        Returns:
+            ``next_state``, ``end_kind``, ``motion_failure``, ``timeout``,
+            ``clip_end``, ``height_err``, ``tilt_err`` and the ``ref_state`` the
+            new state is checked against.
+        """
         target = (
             self.pd_offset
             + self.action_scale * action_executed
@@ -270,32 +336,27 @@ class MjlabG1Env:
             self.robot.write_data_to_sim()
             self.sim.step()
             self.robot.update(PHYSICS_DT)
+        # Refresh xpos/xquat/cvel from the qpos/qvel just integrated.
+        # mjwarp.forward does not advance time.
+        self.sim.forward()
         next_state = self._read_state()
         next_time = self.motion_time + 1
         ref = self.motion.state_at(self.motion_id, next_time)
         height, tilt, failed = failure_signals(
             next_state, ref, termination_body=self.termination_body
         )
-        timeout = (not self.eval_mode) & (self.time_in_episode + 1 >= self.max_steps)
+        timeout = (self.time_in_episode + 1 >= self.max_steps) & (not self.eval_mode)
         clip_end = self.motion.past_clip_end(self.motion_id, next_time)
-        end_kind = torch.full(
-            (self.num_envs,), EPISODE_CONT, dtype=torch.long, device=self.device
-        )
-        end_kind = torch.where(
-            clip_end, torch.full_like(end_kind, EPISODE_CLIP_END), end_kind
-        )
-        end_kind = torch.where(
-            timeout, torch.full_like(end_kind, EPISODE_TIMEOUT), end_kind
-        )
-        end_kind = torch.where(
-            failed, torch.full_like(end_kind, EPISODE_FAILURE), end_kind
-        )
+        end_kind = compose_end_kind(failed, timeout, clip_end)
         self.state = next_state
         self.motion_time = next_time
         self.time_in_episode = self.time_in_episode + 1
         return {
             "next_state": next_state,
             "end_kind": end_kind,
+            "motion_failure": failed,
+            "timeout": timeout,
+            "clip_end": clip_end,
             "height_err": height,
             "tilt_err": tilt,
             "ref_state": ref,

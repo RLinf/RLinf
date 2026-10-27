@@ -7,7 +7,4 @@ runner:
     experiment_name: supermimic_velocity
 
 algorithm:
-  goal_encoding: paper
-  goal_anchor: false
-  obs_dim: 93
   velocity_tracking: true

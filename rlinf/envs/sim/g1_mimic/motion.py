@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 from pathlib import Path
 
 import torch
@@ -23,9 +26,7 @@ import torch
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     CONTROL_FPS,
-    DT,
     G1_JOINT_NAMES,
-    GOAL_FRAME_DIM,
     GOAL_FRAMES,
     GOAL_REF_DIM,
     JOINT_POS,
@@ -36,7 +37,6 @@ from rlinf.envs.sim.g1_mimic.constants import (
     STATE_DIM,
 )
 from rlinf.envs.sim.g1_mimic.features import (
-    default_state,
     heading_yaw,
     projected_gravity,
     quat_mul,
@@ -45,6 +45,12 @@ from rlinf.envs.sim.g1_mimic.features import (
     rotmat_to_6d,
     yaw_rotation,
 )
+
+# First and last goal frame relative to the robot's reference time t. The
+# step taken at t is scored against frame t+1, so the 680-d goal holds the
+# current reference frame and nine after it; the 730-d goal holds ten frames
+# after it. Checkpoints record the window they were trained with.
+GOAL_WINDOW = {"paper": (0, GOAL_FRAMES - 1), "goal730": (1, GOAL_FRAMES)}
 
 
 def _frame_goal(state: torch.Tensor, q0: torch.Tensor) -> torch.Tensor:
@@ -65,25 +71,28 @@ def _frame_goal(state: torch.Tensor, q0: torch.Tensor) -> torch.Tensor:
 
 
 class MotionLibrary:
-    """Stores clips as [N, T_n, 71] packed into a ragged list."""
+    """All clips in one contiguous ``[sum_T, 71]`` block.
+
+    Clip ``i`` is rows ``offsets[i] .. offsets[i] + lengths[i] - 1``. Memory
+    is ``O(sum_T)``; a short clip does not pay for the longest one. Queries
+    still take a clip id and a frame index.
+    """
 
     def __init__(self, clips: list[torch.Tensor], q0: torch.Tensor | None = None):
         if not clips:
-            raise ValueError("MotionLibrary needs at least one clip")
-        self.clips = [c.float() for c in clips]
-        self.lengths = torch.tensor([c.shape[0] for c in self.clips], dtype=torch.long)
-        width = int(self.clips[0].shape[-1])
-        longest = int(self.lengths.max())
-        packed = torch.zeros(
-            len(self.clips),
-            longest,
-            width,
-            dtype=torch.float32,
-            device=self.clips[0].device,
-        )
-        for i, clip in enumerate(self.clips):
-            packed[i, : clip.shape[0]] = clip
-        self._packed = packed
+            raise ValueError("MotionLibrary needs at least one clip, got none")
+        lengths = [int(c.shape[0]) for c in clips]
+        if min(lengths) < 1:
+            raise ValueError(
+                "every reference clip needs at least one frame; clip "
+                f"{lengths.index(min(lengths))} has {min(lengths)}"
+            )
+        self.lengths = torch.tensor(lengths, dtype=torch.long)
+        self.offsets = torch.cumsum(self.lengths, dim=0) - self.lengths
+        self.frames = torch.cat([c.float() for c in clips], dim=0)
+        self._index_cache: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = {}
+        # Source name per clip, for per-clip evaluation rows.
+        self.clip_names = [f"clip_{i:03d}" for i in range(len(clips))]
         self.q0 = (
             q0.float()
             if q0 is not None
@@ -92,10 +101,30 @@ class MotionLibrary:
 
     @property
     def num_clips(self) -> int:
-        return len(self.clips)
+        """Number of clips."""
+        return int(self.lengths.shape[0])
+
+    @property
+    def num_frames(self) -> int:
+        """Total frames over all clips."""
+        return int(self.frames.shape[0])
+
+    def clip(self, motion_id: int) -> torch.Tensor:
+        """One clip as a view into the block."""
+        start = int(self.offsets[motion_id])
+        return self.frames[start : start + int(self.lengths[motion_id])]
+
+    def _index(self, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        if device not in self._index_cache:
+            self._index_cache[device] = (
+                self.offsets.to(device=device),
+                self.lengths.to(device=device),
+            )
+        return self._index_cache[device]
 
     def clip_length(self, motion_id: torch.Tensor) -> torch.Tensor:
-        return self.lengths.to(motion_id.device)[motion_id]
+        """Frame count of each clip in ``motion_id``."""
+        return self._index(motion_id.device)[1][motion_id]
 
     def state_at(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
         """Gather reference states without a Python loop.
@@ -108,12 +137,12 @@ class MotionLibrary:
             motion_id = motion_id.unsqueeze(0)
             time = time.unsqueeze(0)
         query_device = motion_id.device
-        store = self._packed.device
+        store = self.frames.device
+        offsets, lengths = self._index(store)
         mid = motion_id.to(device=store).long()
         index = time.to(device=store).long().clamp_min(0)
-        lengths = self.lengths.to(device=store)
         index = torch.minimum(index, lengths[mid] - 1)
-        out = self._packed[mid, index]
+        out = self.frames[offsets[mid] + index]
         if out.device != query_device:
             out = out.to(device=query_device)
         return out.squeeze(0) if squeezed else out
@@ -121,7 +150,8 @@ class MotionLibrary:
     def goal_ref(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
         """680-d reference: frames t .. t+9, last frame held past the clip end."""
         q0 = self.q0.to(device=motion_id.device)
-        offsets = torch.arange(GOAL_FRAMES, device=motion_id.device)
+        first, last = GOAL_WINDOW["paper"]
+        offsets = torch.arange(first, last + 1, device=motion_id.device)
         times = time.long().unsqueeze(-1) + offsets
         ids = motion_id.long().unsqueeze(-1).expand_as(times)
         states = self.state_at(ids.reshape(-1), times.reshape(-1))
@@ -150,9 +180,10 @@ class MotionLibrary:
         if squeezed:
             motion_id = motion_id.unsqueeze(0)
             time = time.unsqueeze(0)
-        offsets = torch.arange(1, GOAL_FRAMES + 1, device=motion_id.device)
+        first, last = GOAL_WINDOW["goal730"]
+        offsets = torch.arange(first, last + 1, device=motion_id.device)
         times = time.long().unsqueeze(-1) + offsets
-        length = self.lengths.to(device=motion_id.device)[motion_id.long()]
+        length = self.clip_length(motion_id.long())
         times = torch.minimum(times, (length - 1).unsqueeze(-1)).clamp_min(0)
         current = self.state_at(motion_id, time.long())
         flat_id = motion_id.long().unsqueeze(-1).expand_as(times).reshape(-1)
@@ -195,7 +226,7 @@ class MotionLibrary:
         half = window // 2
         offsets = torch.arange(-half, half + 1, device=motion_id.device)
         times = time.long().unsqueeze(-1) + offsets
-        length = self.lengths.to(device=motion_id.device)[motion_id.long()]
+        length = self.clip_length(motion_id.long())
         times = torch.minimum(times, (length - 1).unsqueeze(-1)).clamp_min(0)
         flat_id = motion_id.long().unsqueeze(-1).expand_as(times).reshape(-1)
         states = self.state_at(flat_id, times.reshape(-1)).view(*times.shape, STATE_DIM)
@@ -210,33 +241,15 @@ class MotionLibrary:
         command = torch.cat((planar, world_ang[..., 2:3]), dim=-1)
         return command.mean(dim=-2)
 
-    def past_clip_end(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
+    def past_clip_end(
+        self, motion_id: torch.Tensor, time: torch.Tensor
+    ) -> torch.Tensor:
         """True once ``time`` is past the last stored frame.
 
         ``state_at`` still returns that last frame, so a terminal step holds
         the reference instead of reading off the end of the clip.
         """
         return time.long() >= self.clip_length(motion_id)
-
-
-def synthetic_clips(
-    num_clips: int = 40,
-    clip_len: int = 200,
-    device: torch.device | str = "cpu",
-) -> MotionLibrary:
-    """Deterministic stand-in for LAFAN1, used by analytic smoke and tests."""
-    clips = []
-    t = torch.arange(clip_len, dtype=torch.float32)
-    for i in range(num_clips):
-        state = default_state(clip_len, "cpu", torch.float32)
-        freq = 0.04 + 0.01 * (i % 5)
-        state[:, 0] = 0.02 * t
-        state[:, JOINT_POS] = 0.25 * torch.sin(2 * torch.pi * freq * t).unsqueeze(-1)
-        state[:, JOINT_VEL] = (
-            0.25 * 2 * torch.pi * freq * torch.cos(2 * torch.pi * freq * t)
-        ).unsqueeze(-1)
-        clips.append(state.to(device))
-    return MotionLibrary(clips)
 
 
 def _quat_inv(q: torch.Tensor) -> torch.Tensor:
@@ -263,36 +276,106 @@ def _slerp(q0: torch.Tensor, q1: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
     return torch.where(close.unsqueeze(-1), lerped, slerped)
 
 
-def resample_states(state: torch.Tensor, src_fps: float, dst_fps: float = CONTROL_FPS) -> torch.Tensor:
-    """Linear positions, slerp quaternions, velocities from the new samples."""
-    count = int(state.shape[0])
-    if count < 2:
-        raise ValueError("a reference clip needs at least two frames to resample")
-    duration = (count - 1) / float(src_fps)
-    new_count = int(round(duration * float(dst_fps))) + 1
-    src_t = torch.linspace(0.0, duration, count)
-    dst_t = torch.linspace(0.0, duration, new_count)
+def control_time_grid(
+    num_frames: int, src_fps: float, dst_fps: float
+) -> tuple[torch.Tensor, torch.Tensor, float]:
+    """Source sample times and the destination times on ``1 / dst_fps``.
+
+    Destination times are ``0, dt, 2 dt, ...`` while ``t`` is still inside
+    the source duration ``(num_frames - 1) / src_fps``. A tail shorter than
+    one control step is dropped. It is not stretched onto the source
+    endpoint, so every finite difference uses the same ``dt``.
+    """
+    if num_frames < 2:
+        raise ValueError(
+            f"a reference clip needs at least two frames to resample, got {num_frames}"
+        )
+    dt = 1.0 / float(dst_fps)
+    # i / dst_fps <= (num_frames - 1) / src_fps, in exact rational form.
+    steps = int(math.floor((num_frames - 1) * float(dst_fps) / float(src_fps) + 1e-8))
+    if steps < 1:
+        raise ValueError(
+            f"a clip of {num_frames} frames at {src_fps} fps is shorter than one "
+            f"{dst_fps} Hz control step"
+        )
+    src_t = torch.arange(num_frames, dtype=torch.float64) / float(src_fps)
+    dst_t = torch.arange(steps + 1, dtype=torch.float64) * dt
+    return src_t, dst_t, dt
+
+
+def _interp_weights(
+    src_t: torch.Tensor, dst_t: torch.Tensor, count: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     idx = torch.searchsorted(src_t, dst_t, right=True).clamp(1, count - 1)
     t0 = src_t[idx - 1]
     t1 = src_t[idx]
-    u = (dst_t - t0) / (t1 - t0).clamp_min(1e-8)
+    u = (dst_t - t0) / (t1 - t0).clamp_min(1e-12)
+    return idx, u
+
+
+def resample_series(
+    values: torch.Tensor, src_fps: float, dst_fps: float = CONTROL_FPS
+) -> torch.Tensor:
+    """Linear resample of a per-frame array onto the control-time grid."""
+    values = torch.as_tensor(values, dtype=torch.float32)
+    count = int(values.shape[0])
+    src_t, dst_t, _dt = control_time_grid(count, src_fps, dst_fps)
+    idx, u = _interp_weights(src_t, dst_t, count)
+    shape = [u.shape[0]] + [1] * (values.ndim - 1)
+    u = u.to(dtype=values.dtype).reshape(shape)
+    return (1.0 - u) * values[idx - 1] + u * values[idx]
+
+
+def _central_difference(values: torch.Tensor, dt: float) -> torch.Tensor:
+    """Rate at each sample: central inside, one-sided at the two ends."""
+    rate = torch.empty_like(values)
+    rate[1:-1] = (values[2:] - values[:-2]) / (2.0 * dt)
+    rate[0] = (values[1] - values[0]) / dt
+    rate[-1] = (values[-1] - values[-2]) / dt
+    return rate
+
+
+def _root_angular_velocity(quat: torch.Tensor, dt: float) -> torch.Tensor:
+    """Root-frame angular velocity from a world-frame central SO(3) difference."""
+    world = torch.empty(quat.shape[0], 3, dtype=quat.dtype)
+    world[1:-1] = quat_to_rotvec(quat_mul(quat[2:], _quat_inv(quat[:-2]))) / (2.0 * dt)
+    world[0] = quat_to_rotvec(quat_mul(quat[1], _quat_inv(quat[0]))) / dt
+    world[-1] = quat_to_rotvec(quat_mul(quat[-1], _quat_inv(quat[-2]))) / dt
+    return torch.einsum("tji,tj->ti", quat_to_rotmat(quat), world)
+
+
+def resample_states(
+    state: torch.Tensor, src_fps: float, dst_fps: float = CONTROL_FPS
+) -> torch.Tensor:
+    """Linear positions, slerp quaternions, velocities on the control grid.
+
+    Root position, joint position, and translation use linear interpolation.
+    Root orientation uses slerp, so the result stays unit length and does
+    not flip hemisphere between adjacent samples. Velocities are central
+    differences on the same grid, so frame ``i`` holds the rate at time
+    ``i * dt`` rather than half a step earlier; the two end frames use the
+    one-sided difference. Angular velocity is expressed in the root frame.
+    """
+    count = int(state.shape[0])
+    src_t, dst_t, dt = control_time_grid(count, src_fps, dst_fps)
+    idx, u = _interp_weights(src_t, dst_t, count)
+    u = u.to(dtype=state.dtype)
     u_col = u.unsqueeze(-1)
-    out = torch.empty(new_count, STATE_DIM, dtype=state.dtype)
+    out = torch.empty(dst_t.shape[0], STATE_DIM, dtype=state.dtype)
     out[:, :3] = (1.0 - u_col) * state[idx - 1, :3] + u_col * state[idx, :3]
-    out[:, JOINT_POS] = (1.0 - u_col) * state[idx - 1, JOINT_POS] + u_col * state[idx, JOINT_POS]
+    out[:, JOINT_POS] = (1.0 - u_col) * state[idx - 1, JOINT_POS] + u_col * state[
+        idx, JOINT_POS
+    ]
     out[:, ROOT_QUAT] = _slerp(state[idx - 1, ROOT_QUAT], state[idx, ROOT_QUAT], u)
-    dt = 1.0 / float(dst_fps)
-    out[1:, ROOT_LIN_VEL] = (out[1:, :3] - out[:-1, :3]) / dt
-    out[0, ROOT_LIN_VEL] = out[1, ROOT_LIN_VEL]
-    out[1:, JOINT_VEL] = (out[1:, JOINT_POS] - out[:-1, JOINT_POS]) / dt
-    out[0, JOINT_VEL] = out[1, JOINT_VEL]
-    delta = quat_mul(_quat_inv(out[:-1, ROOT_QUAT]), out[1:, ROOT_QUAT])
-    out[1:, ROOT_ANG_VEL] = quat_to_rotvec(delta) / dt
-    out[0, ROOT_ANG_VEL] = out[1, ROOT_ANG_VEL]
+    out[:, ROOT_LIN_VEL] = _central_difference(out[:, :3], dt)
+    out[:, JOINT_VEL] = _central_difference(out[:, JOINT_POS], dt)
+    out[:, ROOT_ANG_VEL] = _root_angular_velocity(out[:, ROOT_QUAT], dt)
     return out
 
 
-def decode_motion_payload(payload, source: str) -> tuple[torch.Tensor, torch.Tensor]:
+def decode_motion_payload(
+    payload: object, source: str
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Check one G1 reference clip and return ``(state [T, 71], q0 [29])``.
 
     A bare tensor is rejected: it does not say which joint is which, or
@@ -306,7 +389,9 @@ def decode_motion_payload(payload, source: str) -> tuple[torch.Tensor, torch.Ten
             f"joint_names ({ACTION_DIM} names), q0, and state."
         )
     if not isinstance(payload, dict):
-        raise ValueError(f"{source} must be a dict with fps, joint_names, q0, and state")
+        raise ValueError(
+            f"{source} must be a dict with fps, joint_names, q0, and state"
+        )
     names = [str(name) for name in payload.get("joint_names", ())]
     if names != list(G1_JOINT_NAMES):
         raise ValueError(
@@ -319,9 +404,13 @@ def decode_motion_payload(payload, source: str) -> tuple[torch.Tensor, torch.Ten
     q0 = torch.as_tensor(payload["q0"], dtype=torch.float32).reshape(-1)
     state = torch.as_tensor(payload["state"], dtype=torch.float32)
     if q0.shape != (ACTION_DIM,):
-        raise ValueError(f"{source} q0 has shape {tuple(q0.shape)}, expected ({ACTION_DIM},)")
+        raise ValueError(
+            f"{source} q0 has shape {tuple(q0.shape)}, expected ({ACTION_DIM},)"
+        )
     if state.ndim != 2 or state.shape[-1] != STATE_DIM:
-        raise ValueError(f"{source} state has shape {tuple(state.shape)}, expected [T, {STATE_DIM}]")
+        raise ValueError(
+            f"{source} state has shape {tuple(state.shape)}, expected [T, {STATE_DIM}]"
+        )
     if not torch.isfinite(state).all() or not torch.isfinite(q0).all():
         raise ValueError(f"{source} has non-finite state or q0")
     quat_norm = state[:, ROOT_QUAT].norm(dim=-1)
@@ -339,28 +428,52 @@ def decode_motion_payload(payload, source: str) -> tuple[torch.Tensor, torch.Ten
     return decoded, q0
 
 
+def check_manifest(directory: Path, files: list[Path]) -> list[str]:
+    """Verify ``files`` against ``directory/manifest.json`` if there is one.
+
+    Returns each clip's source name, or the file name without a manifest.
+    A listed file with another SHA-256, or a file the manifest does not
+    list, raises: the clips are not the ones that were prepared.
+    """
+    path = directory / "manifest.json"
+    if not path.is_file():
+        return [file.name for file in files]
+    manifest = json.loads(path.read_text())
+    listed = {clip["file"]: clip for clip in manifest.get("clips", [])}
+    names = []
+    for file in files:
+        entry = listed.get(file.name)
+        if entry is None:
+            raise ValueError(f"{file} is not listed in {path}")
+        digest = hashlib.sha256(file.read_bytes()).hexdigest()
+        if digest != entry["sha256"]:
+            raise ValueError(f"{file} does not match its SHA-256 in {path}")
+        names.append(str(entry.get("source", file.name)))
+    return names
+
+
 def load_motion_library(
-    path: str | None,
-    num_clips: int,
-    device,
-    allow_synthetic: bool = False,
+    path: str | None, num_clips: int | None, device: torch.device | str
 ) -> MotionLibrary:
     """Load verified ``clip_*.pt`` payloads.
 
-    Synthetic clips exist only for the analytic backend. A LAFAN1 run with a
-    missing, short, or unchecked directory raises instead of training on noise.
+    ``num_clips`` takes the first files in name order; ``None`` takes all of
+    them. A missing, short, or unchecked directory raises.
     """
     directory = Path(path) if path else None
-    files = sorted(directory.glob("clip_*.pt")) if directory and directory.is_dir() else []
+    files = (
+        sorted(directory.glob("clip_*.pt")) if directory and directory.is_dir() else []
+    )
     if files:
-        if len(files) < num_clips:
+        if num_clips is not None and len(files) < num_clips:
             raise FileNotFoundError(
-                f"{directory} has {len(files)} clip_*.pt files, need {num_clips}. "
-                "Refusing to substitute synthetic clips."
+                f"{directory} has {len(files)} clip_*.pt files, need {num_clips}."
             )
+        selected = files if num_clips is None else files[:num_clips]
+        sources = check_manifest(directory, selected)
         clips = []
         q0 = None
-        for file in files[:num_clips]:
+        for file in selected:
             payload = torch.load(file, map_location="cpu", weights_only=True)
             state, clip_q0 = decode_motion_payload(payload, str(file))
             if q0 is None:
@@ -368,15 +481,11 @@ def load_motion_library(
             elif not torch.allclose(q0, clip_q0, atol=1e-5):
                 raise ValueError(f"{file} default pose does not match the other clips")
             clips.append(state.to(device))
-        return MotionLibrary(clips, q0=q0)
-    if allow_synthetic:
-        return synthetic_clips(num_clips=num_clips, device=device)
+        library = MotionLibrary(clips, q0=q0)
+        library.clip_names = sources
+        return library
     raise FileNotFoundError(
         "No verified G1 reference clips at motion_path. Each clip_*.pt must "
         "contain fps, the 29 G1 joint names, the default pose q0, and state "
-        "[T, 71]. Refusing to substitute synthetic clips."
+        "[T, 71]."
     )
-
-
-# Touch unused imports that document the frame layout.
-_ = (DT, GOAL_FRAME_DIM, STATE_DIM, quat_to_rotmat)

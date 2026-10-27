@@ -12,14 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.sim.g1_mimic.env import AnalyticG1Env, make_env
-from rlinf.envs.sim.g1_mimic.motion import MotionLibrary, load_motion_library
-from rlinf.envs.sim.g1_mimic.replay import SuperMimicReplay
+"""Unitree G1 motion tracking for SuperMimic on MuJoCo Warp (mjlab).
 
-__all__ = [
-    "AnalyticG1Env",
-    "MotionLibrary",
-    "SuperMimicReplay",
-    "load_motion_library",
-    "make_env",
-]
+Reference motion, kinematics, reward, observation, and the simulator adapter.
+Submodules are imported explicitly so mjlab loads only with the simulator.
+"""

@@ -112,3 +112,4 @@ RL
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RL Token <embodied/rlt>
+   SuperMimic <embodied/supermimic>

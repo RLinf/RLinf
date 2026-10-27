@@ -49,6 +49,7 @@ infer_benchmark() {
         robocasa_*|robocasa-* ) echo "robocasa" ;;
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
+        supermimic_*|supermimic-* ) echo "supermimic" ;;
         * )
             echo "unknown"
             ;;
@@ -172,6 +173,11 @@ fi
 
 if [ "${BENCHMARK}" != "realworld" ]; then
     setup_sim_env
+fi
+
+if [ "${BENCHMARK}" = "supermimic" ]; then
+    # Single-GPU checkpoint evaluation without Ray workers.
+    export SRC_FILE="${EVALUATIONS_PATH}/eval_supermimic.py"
 fi
 
 if [ "${BENCHMARK}" = "robocasa365" ]; then

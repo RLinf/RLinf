@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Heading-invariant features, residual integration, and the 9-d anchor."""
+"""Quaternion and heading utilities, and world-model residual integration."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ import torch.nn.functional as F
 
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
-    ANCHOR_DIM,
     CRITIC_ROOT_ERR_DIM,
     JOINT_POS,
     JOINT_VEL,
@@ -45,10 +44,12 @@ def _as_batch(x: torch.Tensor) -> torch.Tensor:
 
 
 def quat_normalize(q: torch.Tensor) -> torch.Tensor:
+    """Unit quaternion (wxyz) along the last axis."""
     return F.normalize(q, dim=-1, eps=1e-8)
 
 
 def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
+    """Hamilton product ``q1 * q2`` of wxyz quaternions."""
     w1, x1, y1, z1 = q1.unbind(-1)
     w2, x2, y2, z2 = q2.unbind(-1)
     return torch.stack(
@@ -63,6 +64,7 @@ def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
 
 
 def quat_to_rotmat(q: torch.Tensor) -> torch.Tensor:
+    """Rotation matrix ``[..., 3, 3]`` of a wxyz quaternion."""
     q = quat_normalize(q)
     w, x, y, z = q.unbind(-1)
     xx, yy, zz = x * x, y * y, z * z
@@ -88,10 +90,12 @@ def quat_to_rotmat(q: torch.Tensor) -> torch.Tensor:
 
 
 def rotmat_to_6d(rot: torch.Tensor) -> torch.Tensor:
+    """First two columns of a rotation matrix, flattened (Rot6D)."""
     return rot[..., :, :2].reshape(*rot.shape[:-2], 6)
 
 
 def rotvec_to_quat(rotvec: torch.Tensor) -> torch.Tensor:
+    """wxyz quaternion of a rotation vector."""
     angle = rotvec.norm(dim=-1, keepdim=True).clamp_min(1e-8)
     axis = rotvec / angle
     half = 0.5 * angle
@@ -99,6 +103,7 @@ def rotvec_to_quat(rotvec: torch.Tensor) -> torch.Tensor:
 
 
 def quat_to_rotvec(q: torch.Tensor) -> torch.Tensor:
+    """Rotation vector of the shortest rotation a wxyz quaternion represents."""
     q = quat_normalize(q)
     # Shortest rotation: q and -q are the same attitude.
     q = torch.where(q[..., :1] < 0, -q, q)
@@ -111,6 +116,7 @@ def quat_to_rotvec(q: torch.Tensor) -> torch.Tensor:
 
 
 def quat_inv(q: torch.Tensor) -> torch.Tensor:
+    """Inverse of a wxyz quaternion (conjugate of its normalized form)."""
     out = quat_normalize(q).clone()
     out[..., 1:] = -out[..., 1:]
     return out
@@ -128,11 +134,13 @@ def so3_relative_rotvec(q_pred: torch.Tensor, q_target: torch.Tensor) -> torch.T
 
 
 def heading_yaw(quat: torch.Tensor) -> torch.Tensor:
+    """Yaw of the body x axis projected on the ground plane."""
     rot = quat_to_rotmat(quat)
     return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
 
 
 def yaw_rotation(yaw: torch.Tensor) -> torch.Tensor:
+    """Rotation matrix about z for each yaw angle."""
     c, s = torch.cos(yaw), torch.sin(yaw)
     z = torch.zeros_like(c)
     o = torch.ones_like(c)
@@ -143,6 +151,7 @@ def yaw_rotation(yaw: torch.Tensor) -> torch.Tensor:
 
 
 def projected_gravity(quat: torch.Tensor) -> torch.Tensor:
+    """World gravity ``(0, 0, -1)`` expressed in the body frame."""
     rot = quat_to_rotmat(quat)
     gravity = torch.tensor([0.0, 0.0, -1.0], device=quat.device, dtype=quat.dtype)
     gravity = gravity.expand(*quat.shape[:-1], 3)
@@ -150,6 +159,7 @@ def projected_gravity(quat: torch.Tensor) -> torch.Tensor:
 
 
 def tilt_error(quat: torch.Tensor) -> torch.Tensor:
+    """``1 + g_z`` in the body frame: 0 upright, 2 upside down."""
     return 1.0 + projected_gravity(quat)[..., 2]
 
 
@@ -223,58 +233,36 @@ def root_error_4d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:
     return out.squeeze(0) if squeezed else out
 
 
-def anchor_error_9d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:
-    """3-d robot-frame position error plus 6-d relative rotation.
-
-    Recomputed every imagined step from the current (possibly predicted)
-    state. The 680-d reference goal is not enough; this term depends on
-    the body.
-    """
-    squeezed = state.dim() == 1
-    state = _as_batch(state)
-    ref_state = _as_batch(ref_state)
-    rot = quat_to_rotmat(state[..., ROOT_QUAT])
-    rot_ref = quat_to_rotmat(ref_state[..., ROOT_QUAT])
-    pos_err_w = ref_state[..., ROOT_POS] - state[..., ROOT_POS]
-    pos_err_b = torch.einsum("...ji,...j->...i", rot, pos_err_w)
-    rel_rot = torch.einsum("...ji,...jk->...ik", rot, rot_ref)
-    out = torch.cat((pos_err_b, rotmat_to_6d(rel_rot)), dim=-1)
-    return out.squeeze(0) if squeezed else out
-
-
-def compose_goal(
-    goal_ref: torch.Tensor,
-    state: torch.Tensor | None,
-    ref_state: torch.Tensor | None,
-    goal_anchor: bool,
+def identity_residual(
+    batch: int, device: torch.device | str, dtype: torch.dtype
 ) -> torch.Tensor:
-    """680-d reference, optionally plus a freshly computed 9-d anchor."""
-    if not goal_anchor:
-        return goal_ref
-    if state is None or ref_state is None:
-        raise ValueError("anchor goal requires the current and reference states")
-    return torch.cat((goal_ref, anchor_error_9d(state, ref_state)), dim=-1)
-
-
-def identity_residual(batch: int, device, dtype) -> torch.Tensor:
+    """Zero dynamics residual ``[batch, 70]``."""
     return torch.zeros(batch, RESIDUAL_DIM, device=device, dtype=dtype)
 
 
-def zero_action(batch: int, device, dtype) -> torch.Tensor:
+def zero_action(
+    batch: int, device: torch.device | str, dtype: torch.dtype
+) -> torch.Tensor:
+    """Zero action ``[batch, 29]``."""
     return torch.zeros(batch, ACTION_DIM, device=device, dtype=dtype)
 
 
-def default_state(batch: int, device, dtype) -> torch.Tensor:
+def default_state(
+    batch: int, device: torch.device | str, dtype: torch.dtype
+) -> torch.Tensor:
+    """Upright state ``[batch, 71]`` at 0.75 m with zero joints and velocities."""
     state = torch.zeros(batch, STATE_DIM, device=device, dtype=dtype)
     state[..., 2] = 0.75
     state[..., 3] = 1.0
     return state
 
 
-assert heading_invariant_features(default_state(1, "cpu", torch.float32)).shape[-1] == 71
-assert root_error_4d(
-    default_state(1, "cpu", torch.float32), default_state(1, "cpu", torch.float32)
-).shape[-1] == CRITIC_ROOT_ERR_DIM
-assert anchor_error_9d(
-    default_state(1, "cpu", torch.float32), default_state(1, "cpu", torch.float32)
-).shape[-1] == ANCHOR_DIM
+assert (
+    heading_invariant_features(default_state(1, "cpu", torch.float32)).shape[-1] == 71
+)
+assert (
+    root_error_4d(
+        default_state(1, "cpu", torch.float32), default_state(1, "cpu", torch.float32)
+    ).shape[-1]
+    == CRITIC_ROOT_ERR_DIM
+)

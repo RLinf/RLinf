@@ -21,10 +21,16 @@ world frame, matching ``mj_objectVelocity`` after the COM-to-origin shift.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, G1_JOINT_NAMES
-from rlinf.envs.sim.g1_mimic.features import quat_mul, quat_normalize, quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.features import quat_normalize, quat_to_rotmat
+
+if TYPE_CHECKING:
+    import mujoco
+
 
 # mjlab's G1 tracking bodies. Pelvis is the termination body. Torso is the
 # reward root. They are not the same link.
@@ -49,26 +55,64 @@ TORSO_BODY = TRACKED_BODY_NAMES.index("torso_link")
 
 
 def _rotate(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
+    """``quat_to_rotmat(quat) @ vec`` without building the matrix.
+
+    The tree walk calls this a few times per body; the rotation-matrix form
+    launched about 25 kernels per call and dominated update time.
+    """
     if vec.dim() == 1:
         vec = vec.expand(quat.shape[0], 3)
-    rot = quat_to_rotmat(quat)
-    return torch.einsum("...ij,...j->...i", rot, vec)
+    quat = quat_normalize(quat)
+    w = quat[..., :1]
+    u = quat[..., 1:]
+    t = 2.0 * torch.cross(u, vec, dim=-1)
+    return vec + w * t + torch.cross(u, t, dim=-1)
 
 
-def _axis_angle_quat(axis: torch.Tensor, angle: torch.Tensor) -> torch.Tensor:
-    axis = axis / axis.norm().clamp_min(1e-8)
-    half = 0.5 * angle
-    sine = torch.sin(half)
-    return torch.stack(
-        (torch.cos(half), axis[0] * sine, axis[1] * sine, axis[2] * sine),
-        dim=-1,
-    )
+def _axis_angle_quat(unit_axis: torch.Tensor, angle: torch.Tensor) -> torch.Tensor:
+    half = (0.5 * angle).unsqueeze(-1)
+    return torch.cat((torch.cos(half), unit_axis * torch.sin(half)), dim=-1)
+
+
+def _hamilton_table() -> torch.Tensor:
+    """``C`` with ``(q1 * q2)_k = sum_ij q1_i q2_j C[i, j, k]``, wxyz order."""
+    table = torch.zeros(4, 4, 4)
+    for i, j, k, sign in (
+        (0, 0, 0, 1),
+        (1, 1, 0, -1),
+        (2, 2, 0, -1),
+        (3, 3, 0, -1),
+        (0, 1, 1, 1),
+        (1, 0, 1, 1),
+        (2, 3, 1, 1),
+        (3, 2, 1, -1),
+        (0, 2, 2, 1),
+        (1, 3, 2, -1),
+        (2, 0, 2, 1),
+        (3, 1, 2, 1),
+        (0, 3, 3, 1),
+        (1, 2, 3, 1),
+        (2, 1, 3, -1),
+        (3, 0, 3, 1),
+    ):
+        table[i, j, k] = sign
+    return table
+
+
+def _quat_mul(q1: torch.Tensor, q2: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    """``features.quat_mul`` in three kernels instead of about thirty.
+
+    Elementwise products and a sum, not a matmul, so TF32 settings elsewhere
+    in a process cannot change the precision.
+    """
+    outer = q1.unsqueeze(-1).unsqueeze(-1) * q2.unsqueeze(-2).unsqueeze(-1)
+    return (outer * table).sum(dim=(-3, -2))
 
 
 class G1Kinematics:
     """Batched kinematics. Constants follow ``state`` to its device."""
 
-    def __init__(self, model) -> None:
+    def __init__(self, model: mujoco.MjModel) -> None:
         import mujoco
 
         hinge = int(mujoco.mjtJoint.mjJNT_HINGE)
@@ -76,9 +120,7 @@ class G1Kinematics:
         names = []
         for j in range(model.njnt):
             if int(model.jnt_type[j]) == hinge:
-                names.append(
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
-                )
+                names.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j))
         if tuple(names) != G1_JOINT_NAMES:
             raise RuntimeError(
                 "G1 MJCF joint order does not match G1_JOINT_NAMES. "
@@ -133,12 +175,23 @@ class G1Kinematics:
         if hinge_i != ACTION_DIM:
             raise RuntimeError(f"expected {ACTION_DIM} hinge joints, found {hinge_i}")
         self.joints = joints
+        # Tracked index of the free-joint body. Its position is state[:, 0:3].
+        free_bodies = [i for i, owned in enumerate(joints) if ("free",) in owned]
+        tracked = self.tracked.tolist()
+        self.free_tracked = (
+            tracked.index(free_bodies[0])
+            if len(free_bodies) == 1 and free_bodies[0] in tracked
+            else None
+        )
         self.joint_low = torch.tensor(lows, dtype=torch.float32)
         self.joint_high = torch.tensor(highs, dtype=torch.float32)
         if self.joint_low.shape != (ACTION_DIM,) or not torch.all(
             self.joint_high > self.joint_low
         ):
-            raise RuntimeError("G1 hinge ranges are missing or not ordered")
+            raise RuntimeError(
+                f"expected {ACTION_DIM} G1 hinge ranges with high > low, found "
+                f"low={self.joint_low.tolist()}, high={self.joint_high.tolist()}"
+            )
         self._cache: dict[tuple, tuple] = {}
 
     def _packed(self, device, dtype):
@@ -152,13 +205,15 @@ class G1Kinematics:
                         row.append(("free",))
                     else:
                         _, index, axis, anchor, has_anchor = joint
+                        axis = axis.to(device=device, dtype=dtype)
                         row.append(
                             (
                                 "hinge",
                                 index,
-                                axis.to(device=device, dtype=dtype),
+                                axis,
                                 anchor.to(device=device, dtype=dtype),
                                 has_anchor,
+                                axis / axis.norm().clamp_min(1e-8),
                             )
                         )
                 packed.append(row)
@@ -167,6 +222,7 @@ class G1Kinematics:
                 self.body_quat.to(device=device, dtype=dtype),
                 self.tracked.to(device=device),
                 packed,
+                _hamilton_table().to(device=device, dtype=dtype),
             )
         return self._cache[key]
 
@@ -184,7 +240,7 @@ class G1Kinematics:
             state = state.unsqueeze(0)
         batch = state.shape[0]
         device, dtype = state.device, state.dtype
-        body_pos, body_quat, tracked, joints = self._packed(device, dtype)
+        body_pos, body_quat, tracked, joints, table = self._packed(device, dtype)
         # Lists, not slice writes. Imagination backprop reads parent poses
         # after the child is computed, and an inplace write bumps the version.
         positions = [torch.zeros(batch, 3, device=device, dtype=dtype)]
@@ -198,11 +254,9 @@ class G1Kinematics:
         for i in range(1, self.nbody):
             pid = self.parents[i]
             pos_i = positions[pid] + _rotate(quats[pid], body_pos[i])
-            quat_i = quat_mul(quats[pid], body_quat[i].expand(batch, 4))
+            quat_i = _quat_mul(quats[pid], body_quat[i].expand(batch, 4), table)
             w = angular[pid]
-            v = linear[pid] + torch.cross(
-                angular[pid], pos_i - positions[pid], dim=-1
-            )
+            v = linear[pid] + torch.cross(angular[pid], pos_i - positions[pid], dim=-1)
             for joint in joints[i]:
                 if joint[0] == "free":
                     pos_i = state[:, 0:3]
@@ -210,16 +264,16 @@ class G1Kinematics:
                     v = state[:, 36:39]
                     w = _rotate(quat_i, state[:, 39:42])
                 else:
-                    _, index, axis, anchor, has_anchor = joint
+                    _, index, axis, anchor, has_anchor, unit_axis = joint
                     angle = state[:, 7 + index]
                     rate = state[:, 42 + index]
-                    qj = _axis_angle_quat(axis, angle)
+                    qj = _axis_angle_quat(unit_axis, angle)
                     if has_anchor:
                         world_anchor = pos_i + _rotate(quat_i, anchor)
-                        quat_i = quat_mul(quat_i, qj)
+                        quat_i = _quat_mul(quat_i, qj, table)
                         pos_i = world_anchor - _rotate(quat_i, anchor)
                     else:
-                        quat_i = quat_mul(quat_i, qj)
+                        quat_i = _quat_mul(quat_i, qj, table)
                     axis_w = _rotate(quat_i, axis)
                     w = w + axis_w * rate.unsqueeze(-1)
                     anchor_w = pos_i + _rotate(quat_i, anchor)

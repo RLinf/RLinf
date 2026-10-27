@@ -7,6 +7,4 @@ runner:
     experiment_name: supermimic_lafan1_obs99
 
 algorithm:
-  goal_encoding: paper
-  goal_anchor: false
   obs_dim: 99

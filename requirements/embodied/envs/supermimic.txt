@@ -1,75 +1,8 @@
-# SuperMimic runtime and tests for the existing jrwsdjango env (Python 3.11).
-# Install from the RLinf repo root with one command and no extra flags:
-#   python -m pip install -r requirements/embodied/envs/supermimic.txt
-# Do not add --no-deps or any flag that skips a dependency conflict.
-#
-# RLinf's torch==2.11.0 line is only [tool.uv] override-dependencies in
-# pyproject.toml. This file does not change that pin. pip does not read it.
-# A later `uv sync` would still force torch==2.11.0 and then disagree with
-# mjlab's torch>=2.14.0.
-#
-# torch==2.14.0+cu126 is the CUDA 12.6 wheel
-# torch-2.14.0+cu126-cp311-cp311-manylinux_2_28_x86_64.whl
-# on https://download.pytorch.org/whl/cu126
-# The unsuffixed PyPI torch==2.14.0 depends on CUDA 13 (cuda-toolkit 13.0.3)
-# and is not usable with driver 566.26. The +cu126 local version stops pip
-# from selecting that wheel. mjlab commit 8bb2bc9's cu126 lock resolved the
-# newer torch==2.14.1+cu126; 2.14.0+cu126 still satisfies torch>=2.14.0.
-# These pins are not a Warp / MuJoCo Warp / PyTorch CUDA runtime check.
-#
-# PyPI and pypi.nvidia.com publish warp-lang==1.18.0 built with CUDA 13.4.
-# That wheel needs driver >= 13.0 and does not see this machine's driver
-# 566.26 (CUDA 12.7). The line below is the CUDA 12 build of the same Warp
-# version, warp-lang==1.18.0+cu12, from the v1.18.0 GitHub release. It is
-# not on those indexes. Do not add https://pypi.nvidia.com here: a later
-# install would replace this wheel with the CUDA 13 build.
-
---extra-index-url https://download.pytorch.org/whl/cu126
-
-torch==2.14.0+cu126
-torchvision==0.29.0+cu126
-
-mujoco==3.16.0
-mujoco-warp==3.16.0
-warp-lang @ https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl
+# SuperMimic physics stack for `bash requirements/install.sh embodied --env supermimic`.
+# install.sh selects torch 2.14.0 for this env (mjlab requires torch>=2.14.0)
+# and, when that torch is a CUDA 12 build, installs warp-lang 1.18.0+cu12 first.
+# Installing this file into a venv with an older torch upgrades that torch.
 mjlab @ git+https://github.com/mujocolab/mjlab.git@8bb2bc9e187797689ec82c78c35019afd2fd0376
-
-# Direct mjlab dependencies, held at the versions resolved by that commit's
-# uv.lock. wandb is the one exception: the lock has 0.30.0, which is outside
-# RLinf's wandb<0.25.1. 0.22.3 satisfies mjlab's wandb>=0.22.3 and that cap,
-# and accepts protobuf<7.
-prettytable==3.16.0
-tqdm==4.67.1
-tyro==1.0.1
-torchrunx==0.3.4
-trimesh==4.8.3
-scipy==1.15.3
-viser==1.0.27
-mjviser==0.0.14
-mediapy==1.2.7
-imageio-ffmpeg==0.6.0
-tensordict==0.14.2
-rsl-rl-lib==5.5.1
-tensorboard==2.20.0
-onnxscript==0.5.4
-wandb==0.22.3
-
-# jrwsdjango has numba==0.62.1 (pulled in by robosuite), which requires
-# numpy<2.4. mjlab's lock selects numpy==2.4.6 on Python 3.11 as a resolver
-# choice, not as a Requires-Dist. Stay below numba's ceiling.
-numpy>=1.26.4,<2.4
-
-hydra-core==1.3.2
-omegaconf==2.3.0
-antlr4-python3-runtime==4.9.3
-
-# RLinf requires ray[default]>=2.47.0. 2.51.0 is a published release in that
-# range. It rejects click==8.3.0, which is what jrwsdjango currently has;
-# typer 0.24.1 requires click>=8.2.1.
-ray[default]==2.51.0
-click>=8.2.1,!=8.3.0
-# RLinf pins this range because the Ray dashboard loads googleapis-common-protos
-# generated with protobuf 6.33.5. Installed protobuf is 6.33.0.
-protobuf>=6.33.5,<7
-
-pytest==8.3.4
+mujoco~=3.16
+mujoco-warp~=3.16
+warp-lang>=1.15

@@ -12,15 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Re-export. Prefer ``rlinf.envs.sim.g1_mimic.objectives`` in tests."""
+"""SuperMimic objectives (Eq. 1-3), networks, replay, and reset sampling.
 
-from rlinf.envs.sim.g1_mimic.objectives import (  # noqa: F401
-    actor_objective,
-    collect_bootstrap_mask,
-    gae_targets,
-    is_episode_boundary,
-    state_prediction_loss,
-    survival_weights,
-    termination_bce,
-    wm_termination_target,
-)
+The G1 simulator, reference motion, and reward live in
+``rlinf.envs.sim.g1_mimic``; the training loop in ``rlinf.workers.supermimic``.
+"""

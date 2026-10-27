@@ -9,5 +9,3 @@ runner:
 algorithm:
   goal_encoding: goal730
   goal_frame_dim: 73
-  goal_anchor: false
-  obs_dim: 93

@@ -85,6 +85,7 @@ def collect_bootstrap_mask(end_kind: torch.Tensor) -> torch.Tensor:
 
 
 def is_episode_boundary(end_kind: torch.Tensor) -> torch.Tensor:
+    """True where an episode ended for any reason."""
     return end_kind != EPISODE_CONT
 
 
@@ -92,21 +93,25 @@ def state_prediction_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Ten
     """Sum of squared scaled errors. Not a mean."""
     pos = (pred[..., ROOT_POS] - target[..., ROOT_POS]) / STATE_LOSS_SCALES["root_pos"]
     # Relative SO(3) error. Subtracting two absolute rotvecs is not a rotation.
-    rot = so3_relative_rotvec(pred[..., 3:7], target[..., 3:7]) / STATE_LOSS_SCALES[
-        "root_rotvec"
+    rot = (
+        so3_relative_rotvec(pred[..., 3:7], target[..., 3:7])
+        / STATE_LOSS_SCALES["root_rotvec"]
+    )
+    lin = (pred[..., ROOT_LIN_VEL] - target[..., ROOT_LIN_VEL]) / STATE_LOSS_SCALES[
+        "root_lin_vel"
     ]
-    lin = (
-        pred[..., ROOT_LIN_VEL] - target[..., ROOT_LIN_VEL]
-    ) / STATE_LOSS_SCALES["root_lin_vel"]
-    ang = (
-        pred[..., ROOT_ANG_VEL] - target[..., ROOT_ANG_VEL]
-    ) / STATE_LOSS_SCALES["root_ang_vel"]
+    ang = (pred[..., ROOT_ANG_VEL] - target[..., ROOT_ANG_VEL]) / STATE_LOSS_SCALES[
+        "root_ang_vel"
+    ]
     q = (pred[..., JOINT_POS] - target[..., JOINT_POS]) / STATE_LOSS_SCALES["joint_pos"]
-    qd = (pred[..., JOINT_VEL] - target[..., JOINT_VEL]) / STATE_LOSS_SCALES["joint_vel"]
+    qd = (pred[..., JOINT_VEL] - target[..., JOINT_VEL]) / STATE_LOSS_SCALES[
+        "joint_vel"
+    ]
     stacked = torch.cat((pos, rot, lin, ang, q, qd), dim=-1)
     return (stacked**2).sum(dim=-1).mean()
 
 
 def termination_bce(logit: torch.Tensor, end_kind: torch.Tensor) -> torch.Tensor:
+    """BCE of the termination logit against failure-only labels."""
     target = wm_termination_target(end_kind).to(device=logit.device, dtype=logit.dtype)
     return F.binary_cross_entropy_with_logits(logit, target)
