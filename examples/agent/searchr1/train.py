@@ -129,9 +129,7 @@ def main(cfg) -> None:
     if cfg.runner.get("async_mode", False):
         # The buffer worker owns the dataloader and the admission budget;
         # one instance on the head node, like the search tool worker.
-        rollout_buffer = RolloutBufferWorker.create_group(
-            cfg, train_ds
-        ).launch(
+        rollout_buffer = RolloutBufferWorker.create_group(cfg, train_ds).launch(
             cluster,
             name="RolloutBuffer",
             placement_strategy=singleton_tool_placement,
