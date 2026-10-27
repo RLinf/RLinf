@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -3164,7 +3164,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
+        franka|franka-ros|so101|lekiwi|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
@@ -3201,6 +3201,9 @@ install_env_only() {
             ;;
         so101)
             install_so101_env
+            ;;
+        lekiwi)
+            install_lekiwi_env
             ;;
         piper)
             install_piper_env
@@ -3708,6 +3711,12 @@ install_so101_env() {
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "lerobot[feetech]>=0.4.1,<0.7"
     use_opencv_gui_wheel
+}
+
+install_lekiwi_env() {
+    # Feetech wheel motors over lerobot and OpenCV cameras: the same
+    # dependency set the SO-101 uses.
+    install_so101_env
 }
 
 install_xsquare_turtle2_env() {
