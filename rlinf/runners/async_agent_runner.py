@@ -299,6 +299,7 @@ class AsyncAgentRunner(AgentRunner):
 
                     actor_handle: Handle = self.actor.run_training(
                         input_channel=self.rollout_channel,
+                        version=self.global_steps,
                     )
                     step_start = time.perf_counter()
                     metrics = self._wait_actor(
@@ -310,6 +311,14 @@ class AsyncAgentRunner(AgentRunner):
                     actor_training_metrics = metrics[0][1]
                     self.global_steps += 1
 
+                    # Agent loop idle time since the last step, sampled while
+                    # the sync has not yet replaced any rollout weights.
+                    idle_stats_list = self.agent_loop.pop_idle_stats().wait()
+                    agent_loop_idle_ratios = [
+                        idle_seconds / window_seconds
+                        for idle_seconds, window_seconds in idle_stats_list
+                        if window_seconds > 0
+                    ]
                     with self.timer("sync_weights"):
                         # With algorithm.staleness_threshold=0 no group should
                         # be in flight and no batch unclaimed when the sync
@@ -358,9 +367,7 @@ class AsyncAgentRunner(AgentRunner):
                 # Wall-clock wait minus the actor's training time: how long
                 # the actor spent waiting for rollout data. The synchronous
                 # runner's time/rollout has no source here.
-                time_metrics["wait_data"] = (
-                    actor_wait_time - time_metrics["training"]
-                )
+                time_metrics["wait_data"] = actor_wait_time - time_metrics["training"]
                 logging_steps = (
                     self.global_steps - 1
                 ) * self.cfg.algorithm.n_minibatches
@@ -371,11 +378,18 @@ class AsyncAgentRunner(AgentRunner):
 
                 self.metric_logger.log(agent_metrics, logging_steps)
                 self.metric_logger.log(log_time_metrics, logging_steps)
-                if actor_rollout_metrics is not None:
-                    rollout_metrics = {
-                        f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
-                    }
-                    self.metric_logger.log(rollout_metrics, logging_steps)
+                rollout_metrics = {
+                    f"rollout/{k}": v for k, v in (actor_rollout_metrics or {}).items()
+                }
+                if agent_loop_idle_ratios:
+                    rollout_metrics["rollout/agent_loop_idle_ratio"] = sum(
+                        agent_loop_idle_ratios
+                    ) / len(agent_loop_idle_ratios)
+                rollout_metrics["rollout/inflight_groups"] = sum(num_inflight)
+                loaded_versions = list(self._rollout_loaded_versions.values())
+                rollout_metrics["rollout/loaded_version_min"] = min(loaded_versions)
+                rollout_metrics["rollout/loaded_version_max"] = max(loaded_versions)
+                self.metric_logger.log(rollout_metrics, logging_steps)
                 for i in range(self.cfg.algorithm.n_minibatches):
                     training_metrics = {
                         f"train/{k}": v for k, v in actor_training_metrics[i].items()
