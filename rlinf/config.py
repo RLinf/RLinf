@@ -1640,6 +1640,32 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "SearchR1 multi-agent actors support only collocated component "
                 "placement unless actor.training_backend is megatron."
             )
+    if cfg.runner.get("async_mode", False):
+        # Defaults are set here once; the async runner reads the fields
+        # without further fallbacks.
+        with open_dict(cfg):
+            if cfg.algorithm.get("staleness_threshold", None) is None:
+                cfg.algorithm.staleness_threshold = 0
+            if cfg.rollout.get("pause_mode", None) is None:
+                cfg.rollout.pause_mode = "retract"
+        if cfg.algorithm.staleness_threshold < 0:
+            raise ValueError(
+                f"algorithm.staleness_threshold must be >= 0, found "
+                f"{cfg.algorithm.staleness_threshold}."
+            )
+        if cfg.rollout.pause_mode not in ("in_place", "retract", "drain"):
+            raise ValueError(
+                f"rollout.pause_mode must be one of in_place/retract/drain, "
+                f"found {cfg.rollout.pause_mode!r}."
+            )
+        if cfg.rollout.pause_mode == "in_place":
+            logging.warning(
+                "rollout.pause_mode=in_place keeps the prefix cache across "
+                "weight syncs, so later requests reuse prefix KV computed "
+                "with older weights; this staleness is not reflected in "
+                "version_start/version_end. retract is recommended for "
+                "training."
+            )
     return cfg
 
 

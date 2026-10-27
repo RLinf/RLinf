@@ -114,6 +114,12 @@ class AgentLoopWorker(Worker):
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)
 
+        # State of the continuous rollout loop (run_agentloop_rollout_continuously).
+        self._agentloop_task = None
+        self._agent_metric_channel = None
+        self._producer_error = None
+        self._inflight_groups = set()
+
     def init_worker(
         self,
         generate_input_channel: Channel,
@@ -274,6 +280,91 @@ class AgentLoopWorker(Worker):
 
             await asyncio.gather(*send_output_tasks)
             return {}
+
+    async def run_agentloop_rollout_continuously(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        agent_metric_channel: Channel,
+    ):
+        """Serve rollout requests until stopped; used by the async runner.
+
+        Each request spawns one task per (input_ids, answer) group; finished
+        groups put `{"bucket": ..., "metrics": ...}` on
+        `agent_metric_channel`. Stops via `stop()` or a group failure, both
+        by cancelling the loop task; a clean stop returns normally, a group
+        failure re-raises here.
+        """
+        assert self._agentloop_task is None, (
+            "agent loop task is not None but the continuous loop is called."
+        )
+        self._producer_error = None
+        self._agentloop_task = asyncio.create_task(
+            self._run_agentloop_rollout_continuously(
+                input_channel, output_channel, agent_metric_channel
+            )
+        )
+        try:
+            await self._agentloop_task
+        except asyncio.CancelledError:
+            if self._producer_error is not None:
+                raise self._producer_error
+
+    async def _run_agentloop_rollout_continuously(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        agent_metric_channel: Channel,
+    ):
+        self._agent_metric_channel = agent_metric_channel
+        self._inflight_groups: set[asyncio.Task] = set()
+        try:
+            while True:
+                request = await input_channel.get(async_op=True).async_wait()
+                for input_ids, answer in zip(request.input_ids, request.answers):
+                    task = asyncio.create_task(
+                        self.run_agentloop_rollout_group(
+                            input_ids, answer, request.n, output_channel
+                        )
+                    )
+                    task.add_done_callback(self._on_group_done)
+                    self._inflight_groups.add(task)
+        finally:
+            # In-flight groups are dropped on any exit: the loop only stops
+            # when training ended or a group failed.
+            for task in self._inflight_groups:
+                task.cancel()
+            if self._inflight_groups:
+                await asyncio.gather(*self._inflight_groups, return_exceptions=True)
+
+    def _on_group_done(self, task: asyncio.Task):
+        self._inflight_groups.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            agent_metrics = task.result()
+            if agent_metrics is not None and agent_metrics:
+                # The bucket key is always None for now; the runner groups
+                # records by it before aggregating.
+                self._agent_metric_channel.put(
+                    {"bucket": None, "metrics": agent_metrics}, async_op=True
+                )
+        elif self._producer_error is None:
+            # A done callback cannot raise; record the error and cancel the
+            # loop task so it unwinds and the recorded error is raised.
+            self.log_error(f"Agent loop group failed:\n{type(exc).__name__}: {exc}")
+            self._producer_error = exc
+            self._agentloop_task.cancel()
+
+    def stop(self):
+        """Stop the continuous agent loop; in-flight groups are cancelled."""
+        if self._agentloop_task is not None and not self._agentloop_task.done():
+            self._agentloop_task.cancel()
+
+    def num_inflight_groups(self) -> int:
+        """In-flight group count."""
+        return len(self._inflight_groups)
 
     def get_rollout_result(
         self, task_results: list[AgentLoopOutput], answer: str

@@ -927,6 +927,71 @@ class TestSearchr1DisaggregatedValidation:
                 cfg_mod.validate_searchr1_cfg(self._make_cfg("fsdp"))
 
 
+class TestSearchr1AsyncPauseModeDefaults:
+    """validate_searchr1_cfg: async runs default to pause_mode=retract and
+    warn when in_place is selected."""
+
+    @staticmethod
+    def _make_cfg(pause_mode):
+        cfg = DictConfig(
+            {
+                "runner": {"task_type": "reasoning", "async_mode": True},
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-7",
+                        "reward": "4-7",
+                    },
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": {"recompute_logprobs": False},
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {},
+            }
+        )
+        if pause_mode is not None:
+            cfg.rollout.pause_mode = pause_mode
+        return cfg
+
+    def _validate(self, cfg):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_pause_mode_defaults_to_retract(self):
+        cfg = self._validate(self._make_cfg(pause_mode=None))
+        assert cfg.rollout.pause_mode == "retract"
+
+    def test_in_place_emits_warning(self, caplog):
+        import logging as std_logging
+
+        with caplog.at_level(std_logging.WARNING, logger="root"):
+            cfg = self._validate(self._make_cfg(pause_mode="in_place"))
+        assert cfg.rollout.pause_mode == "in_place"
+        assert any(
+            "in_place keeps the prefix cache" in r.message
+            for r in caplog.records
+            if r.name == "root"
+        )
+
+
 class TestRolloutModelInstanceLayout:
     """Cross-node rollout layout.
 
