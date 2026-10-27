@@ -38,7 +38,7 @@
       1 节点 · 1–8 GPU
 
 | **你将完成：** 安装 → 下载数据集 + 模型 → 启动训练 → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 安装步骤中的 DexJoCo 资产 · DexJoCo LeRobot 数据集 · 基座检查点（见下文步骤）。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 安装步骤中的 DexJoCo 包 · DexJoCo LeRobot 数据集 · 基座检查点（见下文步骤）。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -108,7 +108,7 @@
    * - 字段
      - 规格
    * - 观测
-     - ``camera_names`` 中各相机的 640×640 RGB 图像（CNN 配方渲染 128×128），以及单臂任务 23 维 ``[pose7, hand16]``、双臂任务 46 维 ``[right_pose7, left_pose7, right_hand16, left_hand16]`` 的本体状态；每个 pose 由位置和标量在前的四元数组成。单臂任务使用 ``[front, wrist]``\ （``click_mouse`` 使用 ``[ego_right, wrist]``），双臂任务使用 ``[ego, wrist_left, wrist_right]``。
+     - ``camera_names`` 中各相机的 640×640 RGB 图像（CNN 配方中缩小为 128×128），以及单臂任务 23 维 ``[pose7, hand16]``、双臂任务 46 维 ``[right_pose7, left_pose7, right_hand16, left_hand16]`` 的本体状态；每个 pose 由位置和标量在前的四元数组成。单臂任务使用 ``[front, wrist]``\ （``click_mouse`` 使用 ``[ego_right, wrist]``），双臂任务使用 ``[ego, wrist_left, wrist_right]``。
    * - 动作
      - 每条机械臂 22 维连续动作：3D 末端执行器绝对位置、3D 旋转向量和 16 个 Allegro 关节目标；44 维双臂动作中右臂在前。
    * - 奖励
@@ -136,7 +136,13 @@
    # bash requirements/install.sh embodied --model openpi --env dexjoco
    # source .venv/bin/activate
 
-安装脚本会把 DexJoCo 克隆到 ``.venv/dexjoco`` 并检出 commit ``8d23b0f``，激活环境时会把 ``DEXJOCO_ASSET_DIR`` 设为其中的 ``dexjoco/dexjoco/sim/envs`` 目录，场景 XML、网格、纹理和相机预设都在该目录下。如需使用其他副本，请设置 ``env.train.assets_path`` 和 ``env.eval.assets_path``。
+DexJoCo 没有发布到 PyPI，因此 ``--env dexjoco`` 会把 `DexJoCo 仓库 <https://github.com/brave-eai/dexjoco>`__ 克隆到 ``.venv/dexjoco``、检出 commit ``8d23b0f``，再用 ``uv pip install -e`` 安装其中的 ``dexjoco`` 包。安装前设置 ``DEXJOCO_PATH`` 时，会改为克隆到该路径，或复用该路径下已有的检出。该包包含各任务环境及其场景 XML、网格、纹理和相机预设，``env_type: dexjoco`` 的所有环境都由它创建。若要把 DexJoCo 装进一个已有 RLinf 依赖的环境，可手动执行：
+
+.. code:: bash
+
+   git clone https://github.com/brave-eai/dexjoco.git
+   git -C dexjoco checkout 8d23b0fab23b17a58c4b55f3942e17013aaf8267
+   uv pip install -e dexjoco/dexjoco
 
 下载数据集
 ----------------------------------------
@@ -262,7 +268,7 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 这条命令会：
 
 1. 加载 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``，并把 actor、rollout 和 env worker 放在 GPU ``0`` 上。
-2. 启动 8 个渲染 128×128 图像的训练环境。
+2. 启动 8 个返回 128×128 图像的训练环境。
 3. 基于主视角图像和本体状态运行 PPO。
 
 .. admonition:: 进一步配置

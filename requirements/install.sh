@@ -2589,6 +2589,8 @@ EOF
         dexjoco)
             create_and_sync_venv
             install_common_embodied_deps
+            # Before LeRobot, which needs a newer gymnasium than DexJoCo's pin.
+            install_dexjoco_env
             # LeRobot 0.4.4 reads LeRobot v3 data; rerun-sdk 0.22 keeps NumPy 1 for OpenPI.
             local override_file
             override_file=$(mktemp)
@@ -2600,7 +2602,6 @@ EOF
             uv pip install --no-deps "datasets==4.1.1"
             popd >/dev/null
             install_flash_attn
-            install_dexjoco_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
@@ -3965,10 +3966,8 @@ install_roboverse_env() {
 }
 
 install_dexjoco_env() {
-    # Version validated with the ported tasks.
-    uv pip install "mujoco==3.4.0"
     local dexjoco_dir
-    # Revision the in-tree tasks are ported from.
+    # DexJoCo is not on PyPI; install the package at the revision RLinf is validated with.
     local dexjoco_ref="${DEXJOCO_GIT_REF:-8d23b0fab23b17a58c4b55f3942e17013aaf8267}"
     local use_external_dexjoco=0
     if [ -n "${DEXJOCO_PATH:-}" ]; then
@@ -3976,16 +3975,13 @@ install_dexjoco_env() {
     fi
     dexjoco_dir=$(clone_or_reuse_repo DEXJOCO_PATH "$VENV_DIR/dexjoco" \
         https://github.com/brave-eai/dexjoco.git --filter=blob:none --no-checkout)
-    local asset_dir="$dexjoco_dir/dexjoco/dexjoco/sim/envs"
-    if [ "$use_external_dexjoco" -eq 0 ] || [ ! -d "$asset_dir/xmls" ]; then
+    if [ "$use_external_dexjoco" -eq 0 ] || [ ! -f "$dexjoco_dir/dexjoco/pyproject.toml" ]; then
         if ! git -C "$dexjoco_dir" cat-file -e "$dexjoco_ref^{commit}" 2>/dev/null; then
             git -C "$dexjoco_dir" fetch --depth 1 origin "$dexjoco_ref" >&2
         fi
         git -C "$dexjoco_dir" checkout --detach "$dexjoco_ref" >&2
     fi
-    if ! grep -q '^export DEXJOCO_ASSET_DIR=' "$VENV_DIR/bin/activate" 2>/dev/null; then
-        echo "export DEXJOCO_ASSET_DIR=\"$asset_dir\"" >> "$VENV_DIR/bin/activate"
-    fi
+    uv pip install -e "$dexjoco_dir/dexjoco"
 }
 
 #=======================AGENTIC INSTALLER=======================

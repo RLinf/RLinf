@@ -13,20 +13,149 @@
 # limitations under the License.
 
 import copy
+import random
 from typing import Any
 
+import cv2
 import gymnasium as gym
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.envs.sim.dexjoco.tasks import TASKS
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
     valid_action_mask_from_counts,
 )
 from rlinf.envs.venv import SubprocVectorEnv
+
+# DexJoCo keeps its prompts in the repository's eval configs, outside the package.
+TASK_DESCRIPTIONS = {
+    "water_plant": "Grasp the watering can and apply water to the plant.",
+    "pick_bucket": "Place the boxed food into the bucket and then lift the bucket.",
+    "fold_glasses": "Fold the glasses and place them into the case.",
+    "click_mouse": (
+        "Move the mouse to the purple mouse pad and click the left mouse button."
+    ),
+    "hammer_nail": "Use the hammer to drive the nail into the wooden board.",
+    "pinch_tongs": (
+        "Grasp the tongs and perform three consecutive open-close motions."
+    ),
+    "bimanual_assembly": (
+        "Grasp the tray with the left hand and the peg with the right hand, "
+        "then insert the peg into the hole."
+    ),
+    "bimanual_hanoi": (
+        "Execute the final two moves of the three-level Tower of Hanoi: move "
+        "the medium disk from the middle peg to the right peg with the right "
+        "hand, then move the small disk from the left peg to the right peg with "
+        "the left hand."
+    ),
+    "bimanual_microwave_cook": (
+        "Open the microwave door, place the food inside the microwave, close "
+        "the door, and press the start button."
+    ),
+    "bimanual_photograph": (
+        "Grasp the camera with the left hand, align it with the logo, and press "
+        "the shutter button with the right hand."
+    ),
+    "bimanual_unlock_ipad": (
+        "Grasp the iPad and enter the password 123 to unlock the device."
+    ),
+}
+
+# DexJoCo ends each task after this many steps, reporting it as a termination.
+TASK_STEP_LIMITS = {
+    "water_plant": 1000,
+    "pick_bucket": 1200,
+    "fold_glasses": 1200,
+    "click_mouse": 1200,
+    "hammer_nail": 1000,
+    "pinch_tongs": 1000,
+    "bimanual_assembly": 1500,
+    "bimanual_hanoi": 1500,
+    "bimanual_microwave_cook": 1100,
+    "bimanual_photograph": 1000,
+    "bimanual_unlock_ipad": 1200,
+}
+
+
+class DexJoCoTaskEnv(gym.Wrapper):
+    """Run one installed DexJoCo task with seeded resets and named RGB cameras.
+
+    Observations hold ``state`` (the 23- or 46-dim robot proprioception) and one
+    image per name in ``camera_names``. Actions use DexJoCo's policy layout.
+    """
+
+    def __init__(
+        self,
+        task_name: str,
+        camera_names: list[str],
+        camera_heights: int = 640,
+        camera_widths: int = 640,
+        randomize: bool = False,
+        randomize_dynamics: bool = False,
+        **task_options,
+    ) -> None:
+        from dexjoco.tasks import CONFIG_MAPPING
+
+        if task_name == "bimanual_hanoi":
+            # Hanoi otherwise resets itself a few wall-clock seconds after an
+            # illegal move; RLinf resets its envs itself.
+            task_options.setdefault("illegal_reset_delay", float("inf"))
+        env = CONFIG_MAPPING[task_name]().get_environment(
+            policy_mode=True,
+            render_mode="rgb_array",
+            randomize=randomize,
+            randomize_dynamics=randomize_dynamics,
+            **task_options,
+        )
+        super().__init__(env)
+        # DexJoCo sleeps in every step to pace teleoperation at 30 Hz.
+        env.unwrapped.hz = float("inf")
+        self._step_limit = TASK_STEP_LIMITS[task_name]
+        self._state_dim = 46 if task_name.startswith("bimanual_") else 23
+        # With randomize, DexJoCo renames the moved base camera to random_camera.
+        self._image_keys = {
+            name: "random_camera" if randomize and name in ("front", "ego") else name
+            for name in camera_names
+        }
+        self._image_size = (camera_widths, camera_heights)
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        if seed is not None:
+            # DexJoCo samples initial states from the global RNGs.
+            random.seed(seed)
+            np.random.seed(seed)
+        obs, _ = self.env.reset()
+        return self._observation(obs), {"success": False}
+
+    def step(
+        self, action: np.ndarray
+    ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
+        obs, reward, terminated, _, info = self.env.step(action)
+        success = bool(info["succeed"])
+        truncated = self.env.unwrapped.env_step >= self._step_limit
+        return (
+            self._observation(obs),
+            reward,
+            success or (terminated and not truncated),
+            truncated,
+            {"success": success},
+        )
+
+    def _observation(self, obs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        images = {}
+        for name, key in self._image_keys.items():
+            image = obs[key]
+            if image.shape[1::-1] != self._image_size:
+                image = cv2.resize(
+                    image, self._image_size, interpolation=cv2.INTER_AREA
+                )
+            images[name] = image
+        return {"state": obs["state"][: self._state_dim], **images}
 
 
 class DexJoCoEnv(gym.Env):
@@ -54,13 +183,13 @@ class DexJoCoEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
 
-        if cfg.task_name not in TASKS:
+        if cfg.task_name not in TASK_DESCRIPTIONS:
             raise ValueError(
                 f"Unknown DexJoCo task {cfg.task_name!r}; expected one of "
-                f"{list(TASKS)}."
+                f"{list(TASK_DESCRIPTIONS)}."
             )
-        self.dual_arm = TASKS[cfg.task_name].dual_arm
-        self.task_description = TASKS[cfg.task_name].task_description
+        self.dual_arm = cfg.task_name.startswith("bimanual_")
+        self.task_description = TASK_DESCRIPTIONS[cfg.task_name]
         self._generator = np.random.default_rng(seed=self.seed)
         self.update_reset_state_ids()
         self._init_env()
@@ -83,11 +212,10 @@ class DexJoCoEnv(gym.Env):
     def get_env_fns(self):
         """Create environment factory functions for each parallel environment."""
         init_params = OmegaConf.to_container(self.cfg.init_params, resolve=True)
-        init_params["asset_dir"] = self.cfg.assets_path
         init_params["camera_names"] = list(self.cfg.camera_names)
 
         def env_fn(task_name=self.cfg.task_name, params=init_params):
-            return TASKS[task_name](**params)
+            return DexJoCoTaskEnv(task_name, **params)
 
         return [env_fn for _ in range(self.num_envs)]
 

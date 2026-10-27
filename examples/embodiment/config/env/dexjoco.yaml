@@ -17,8 +17,6 @@ use_rel_reward: False
 reward_coef: 1.0
 is_eval: False
 
-assets_path: ${oc.env:DEXJOCO_ASSET_DIR}
-
 video_cfg:
   save_video: False
   info_on_video: True

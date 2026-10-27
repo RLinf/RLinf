@@ -41,7 +41,7 @@ Train Franka and Allegro policies on DexJoCo tasks from camera images and propri
       1 node · 1–8 GPUs
 
 | **You'll do:** install → download datasets + models → launch training → watch ``env/success_once``.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · DexJoCo assets from the install step · DexJoCo LeRobot datasets · a base checkpoint (steps below).
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the DexJoCo package from the install step · DexJoCo LeRobot datasets · a base checkpoint (steps below).
 
 Tasks
 ~~~~~
@@ -112,7 +112,7 @@ Observation and Action
    * - Field
      - Specification
    * - Observation
-     - RGB images from ``camera_names`` at 640×640 (the CNN recipe renders 128×128), plus 23-dim proprioception ``[pose7, hand16]`` for single-arm tasks or 46-dim ``[right_pose7, left_pose7, right_hand16, left_hand16]`` for dual-arm tasks; each pose is a position and a scalar-first quaternion. Single-arm tasks use ``[front, wrist]`` (``[ego_right, wrist]`` for ``click_mouse``); dual-arm tasks use ``[ego, wrist_left, wrist_right]``.
+     - RGB images from ``camera_names`` at 640×640 (downscaled to 128×128 in the CNN recipe), plus 23-dim proprioception ``[pose7, hand16]`` for single-arm tasks or 46-dim ``[right_pose7, left_pose7, right_hand16, left_hand16]`` for dual-arm tasks; each pose is a position and a scalar-first quaternion. Single-arm tasks use ``[front, wrist]`` (``[ego_right, wrist]`` for ``click_mouse``); dual-arm tasks use ``[ego, wrist_left, wrist_right]``.
    * - Action
      - 22-dim continuous action per arm: absolute 3D end-effector position, 3D rotation vector, and 16 Allegro joint targets; the 44-dim dual-arm action lists the right arm first.
    * - Reward
@@ -140,11 +140,20 @@ Clone RLinf and install the environment for the model you want to run:
    # bash requirements/install.sh embodied --model openpi --env dexjoco
    # source .venv/bin/activate
 
-The installer clones DexJoCo into ``.venv/dexjoco`` at commit ``8d23b0f``, and
-activating the environment sets ``DEXJOCO_ASSET_DIR`` to the checkout's
-``dexjoco/dexjoco/sim/envs`` directory, which holds the scene XMLs, meshes,
-textures, and camera presets. Set ``env.train.assets_path`` and
-``env.eval.assets_path`` to use another copy.
+DexJoCo has no PyPI release, so ``--env dexjoco`` clones the
+`DexJoCo repository <https://github.com/brave-eai/dexjoco>`__ into
+``.venv/dexjoco`` at commit ``8d23b0f`` and installs its ``dexjoco`` package
+with ``uv pip install -e``. Set ``DEXJOCO_PATH`` before installing to clone into,
+or reuse, a checkout at that path instead. The package holds the task
+environments together with their scene XMLs, meshes, textures, and camera
+presets, and ``env_type: dexjoco`` builds every environment from it. To add
+DexJoCo to an environment that already has RLinf's dependencies:
+
+.. code:: bash
+
+   git clone https://github.com/brave-eai/dexjoco.git
+   git -C dexjoco checkout 8d23b0fab23b17a58c4b55f3942e17013aaf8267
+   uv pip install -e dexjoco/dexjoco
 
 Download the Datasets
 ---------------------
@@ -287,7 +296,7 @@ Launch a config with ``run_embodiment.sh``:
 What this does:
 
 1. Loads ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` and places the actor, rollout, and env workers on GPU ``0``.
-2. Starts 8 training environments that render 128×128 images.
+2. Starts 8 training environments that return 128×128 images.
 3. Runs PPO on the base camera image and proprioception.
 
 .. admonition:: Configure further
