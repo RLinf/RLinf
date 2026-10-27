@@ -3600,15 +3600,26 @@ link_simple_data_dir() {
 
 install_simple_env() {
     local simple_dir
+    local revision=5e3d6f84e85343e34e9bca8d157f0d7813231185
+    local repo_env=SIMPLE_PATH
+    local repo_dir="$VENV_DIR/SIMPLE"
+    # SIMPLE_CACHE_DIR is a prepared checkout. Reuse it and do not fetch
+    # submodules; the upstream SSH URLs hang on hosts without a key.
+    if [ -z "${SIMPLE_PATH:-}" ] && [ -n "${SIMPLE_CACHE_DIR:-}" ]; then
+        repo_env=SIMPLE_CACHE_DIR
+        repo_dir="$SIMPLE_CACHE_DIR"
+    fi
     # Checkout the fixed parent revision before initializing its gitlink-pinned
     # submodules; this avoids ever resolving submodules from a moving default branch.
-    simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    simple_dir=$(clone_or_reuse_repo "$repo_env" "$repo_dir" https://github.com/physical-superintelligence-lab/SIMPLE.git)
     export OMNI_KIT_ACCEPT_EULA=YES
     if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
         echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
     fi
-    ensure_psi0_simple_repo_revision SIMPLE_PATH "$simple_dir" 5e3d6f84e85343e34e9bca8d157f0d7813231185
-    git -C "$simple_dir" submodule update --init --recursive
+    ensure_psi0_simple_repo_revision "$repo_env" "$simple_dir" "$revision"
+    if [ "$repo_env" != "SIMPLE_CACHE_DIR" ]; then
+        git -C "$simple_dir" submodule update --init --recursive
+    fi
 
     # Isaac Sim resolves its shared extension tree through real file paths.
     UV_LINK_MODE=hardlink uv pip install -r "$SCRIPT_DIR/embodied/envs/simple.txt"

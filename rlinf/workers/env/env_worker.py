@@ -495,7 +495,8 @@ class EnvWorker(Worker):
                 intervene_flags=intervene_flags,
                 rlt_switch_flags=rlt_switch_flags,
                 executed_mask=infos["executed_mask"]
-                if self.cfg.env.train.env_type == "simple"
+                if SupportedEnvType(self.cfg.env.train.env_type)
+                is SupportedEnvType.SIMPLE
                 else None,
             ),
         )

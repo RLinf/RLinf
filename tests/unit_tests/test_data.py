@@ -2866,6 +2866,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
