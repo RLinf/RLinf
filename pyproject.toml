@@ -70,6 +70,11 @@ dependencies = [
     "sortedcontainers"
 ]
 
+[project.scripts]
+rlinf-lekiwi-check-camera = "toolkits.lekiwi.camera:main"
+rlinf-lekiwi-teleoperate = "toolkits.lekiwi.teleop:main"
+rlinf-lekiwi-test-wheels = "toolkits.lekiwi.wheels:main"
+
 [project.urls]
 Homepage = "https://github.com/RLinf/RLinf"
 Repository = "https://github.com/RLinf/RLinf"
@@ -130,8 +135,9 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["rlinf*"]
-exclude = ["tests*", "docs*", "examples*", "docker*", "toolkits*"]
+# toolkits.lekiwi ships because its modules are the entry points above.
+include = ["rlinf*", "toolkits", "toolkits.lekiwi*"]
+exclude = ["tests*", "docs*", "examples*", "docker*"]
 
 [tool.setuptools.package-data]
 rlinf = ["**/*.yaml", "**/*.yml"]
