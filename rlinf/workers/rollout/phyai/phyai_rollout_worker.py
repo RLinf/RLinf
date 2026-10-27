@@ -96,7 +96,7 @@ class _PhyAIWeightTarget(torch.nn.Module):
     ) -> Any:
         del strict, assign
         normalized = {
-            PhyAIWorker._actor_weight_name(name): tensor
+            PhyAIRolloutWorker._actor_weight_name(name): tensor
             for name, tensor in state_dict.items()
         }
         converted = new_to_old_state_dict(normalized)
@@ -109,7 +109,7 @@ class _PhyAIWeightTarget(torch.nn.Module):
         return None
 
 
-class PhyAIWorker(Worker):
+class PhyAIRolloutWorker(Worker):
     """Run embodied rollout and evaluation with an in-process PhyAI engine.
 
     The RLinf worker remains the Ray actor and owns one in-process PhyAI
@@ -129,7 +129,7 @@ class PhyAIWorker(Worker):
         self._phyai_plugin = str(self._phyai_cfg.get("plugin", "pi05")).lower()
         if self._phyai_plugin != "pi05":
             raise NotImplementedError(
-                "PhyAIWorker supports the 'pi05' engine plugin; "
+                "PhyAIRolloutWorker supports the 'pi05' engine plugin; "
                 f"got {self._phyai_plugin!r}."
             )
 
@@ -216,11 +216,11 @@ class PhyAIWorker(Worker):
 
         if self.enable_offload:
             raise NotImplementedError(
-                "PhyAIWorker does not support rollout.enable_offload yet."
+                "PhyAIRolloutWorker does not support rollout.enable_offload yet."
             )
         if cfg.runner.get("enable_decoupled_mode", False):
             raise NotImplementedError(
-                "PhyAIWorker does not support runner.enable_decoupled_mode yet."
+                "PhyAIRolloutWorker does not support runner.enable_decoupled_mode yet."
             )
         if len(self.global_accelerator_ids) != 1:
             raise ValueError(
@@ -237,7 +237,7 @@ class PhyAIWorker(Worker):
             raise RuntimeError("PhyAI engine is already initialized.")
         if str(self.model_cfg.get("model_type", "")) != "openpi":
             raise NotImplementedError(
-                "PhyAIWorker requires actor.model.model_type='openpi'."
+                "PhyAIRolloutWorker requires actor.model.model_type='openpi'."
             )
 
         checkpoint_dir = str(self.model_cfg.model_path)
@@ -377,6 +377,22 @@ class PhyAIWorker(Worker):
         self._model_action_dim = int(plugin_cfg.max_action_dim)
         self._num_steps = int(plugin_cfg.num_inference_steps)
         self._weight_target = _PhyAIWeightTarget(engine)
+
+        checkpoint_path = self.cfg.runner.get("ckpt_path", None)
+        if checkpoint_path:
+            checkpoint_state = torch.load(
+                checkpoint_path, map_location="cpu", weights_only=True
+            )
+            engine.begin_weight_update()
+            try:
+                self._weight_target.load_state_dict(checkpoint_state)
+                engine.finish_weight_update()
+            except Exception:
+                engine.abort_weight_update()
+                raise
+            self.log_info(
+                f"Loaded runner.ckpt_path into PhyAI engine: {checkpoint_path}."
+            )
 
     @staticmethod
     def _build_plugin_config(model_cfg: Any) -> PI05Config:

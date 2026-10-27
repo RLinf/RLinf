@@ -36,8 +36,11 @@ if _HAS_PHYAI:
     from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
 
     from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
-    from rlinf.workers.rollout.phyai import phyai_worker
-    from rlinf.workers.rollout.phyai.phyai_worker import PhyAIWorker, _PhyAIWeightTarget
+    from rlinf.workers.rollout.phyai import phyai_rollout_worker
+    from rlinf.workers.rollout.phyai.phyai_rollout_worker import (
+        PhyAIRolloutWorker,
+        _PhyAIWeightTarget,
+    )
 
 
 class _FakeEngine:
@@ -80,7 +83,7 @@ class _FakeBucketWeightSyncer(BucketWeightSyncer):
 
 
 def _make_rollout_worker(*, fail: bool = False):
-    worker = object.__new__(PhyAIWorker)
+    worker = object.__new__(PhyAIRolloutWorker)
     engine = _FakeEngine()
     worker._accelerator_type = "cpu"
     worker._timer_metrics = {}
@@ -156,7 +159,7 @@ def _configure_preprocessing(worker):
 
 def test_sync_model_from_actor_commits_only_complete_updates():
     worker, engine = _make_rollout_worker()
-    asyncio.run(inspect.unwrap(PhyAIWorker.sync_model_from_actor)(worker))
+    asyncio.run(inspect.unwrap(PhyAIRolloutWorker.sync_model_from_actor)(worker))
 
     event_names = [
         event[0] if isinstance(event, tuple) else event for event in engine.events
@@ -168,7 +171,7 @@ def test_sync_model_from_actor_commits_only_complete_updates():
 
     worker, engine = _make_rollout_worker(fail=True)
     with pytest.raises(RuntimeError, match="sync failed"):
-        asyncio.run(inspect.unwrap(PhyAIWorker.sync_model_from_actor)(worker))
+        asyncio.run(inspect.unwrap(PhyAIRolloutWorker.sync_model_from_actor)(worker))
     assert engine.events[-1] == "abort"
     assert worker.version == 0
 
@@ -181,7 +184,7 @@ def test_evaluate_preserves_channel_contract():
         async def async_wait(self):
             return self.value
 
-    worker = object.__new__(PhyAIWorker)
+    worker = object.__new__(PhyAIRolloutWorker)
     worker.cfg = OmegaConf.create({"env": {"group_name": "env"}})
     worker.eval_rollout_epoch = 1
     worker.n_eval_chunk_steps = 1
@@ -221,7 +224,7 @@ def test_evaluate_preserves_channel_contract():
     worker.predict = predict
     worker.send_to = lambda **kwargs: send_calls.append(kwargs)
 
-    asyncio.run(inspect.unwrap(PhyAIWorker.evaluate)(worker, "input", "output"))
+    asyncio.run(inspect.unwrap(PhyAIRolloutWorker.evaluate)(worker, "input", "output"))
 
     assert [call["route_key"] for call in recv_calls] == [0, 1]
     assert all(call["group_name"] == "env" for call in recv_calls)
@@ -276,12 +279,12 @@ def test_phyai_weight_target_converts_actor_layout():
     assert weights["value_head.mlp.0.bias"] is value_bias
 
 
-def test_phyai_worker_rejects_unknown_plugin(monkeypatch):
+def test_phyai_rollout_worker_rejects_unknown_plugin(monkeypatch):
     monkeypatch.setattr(Worker, "__init__", lambda _worker: None)
     cfg = OmegaConf.create({"rollout": {"phyai": {"plugin": "unknown"}}})
 
     with pytest.raises(NotImplementedError, match="pi05"):
-        PhyAIWorker(cfg)
+        PhyAIRolloutWorker(cfg)
 
 
 @pytest.mark.parametrize("only_eval", [False, True])
@@ -298,10 +301,11 @@ def test_phyai_worker_rejects_unknown_plugin(monkeypatch):
         },
     ],
 )
-def test_init_worker_passes_checkpoint_model_and_kernel_config(
+def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     monkeypatch, only_eval, kernel_config
 ):
     captured = {}
+    trained_weight = torch.ones(4, 4)
     monkeypatch.setenv("PHYAI_KERNEL_CONFIG", "/environment/kernel.yaml")
 
     class _InitializedEngine:
@@ -312,12 +316,31 @@ def test_init_worker_passes_checkpoint_model_and_kernel_config(
             assert os.environ.get("PHYAI_KERNEL_CONFIG") == expected_env
             captured["engine_args"] = args
 
-    monkeypatch.setattr(phyai_worker, "RuntimeConfig", SimpleNamespace)
-    monkeypatch.setattr(phyai_worker, "DeviceConfig", SimpleNamespace)
-    monkeypatch.setattr(phyai_worker, "EngineConfig", SimpleNamespace)
-    monkeypatch.setattr(phyai_worker, "PI05Args", SimpleNamespace)
-    monkeypatch.setattr(phyai_worker, "EngineArgs", SimpleNamespace)
-    monkeypatch.setattr(phyai_worker, "Engine", _InitializedEngine)
+        def begin_weight_update(self):
+            captured.setdefault("events", []).append("begin")
+
+        def update_weights(self, state_dict):
+            captured.setdefault("events", []).append(("update", state_dict))
+
+        def finish_weight_update(self):
+            captured.setdefault("events", []).append("finish")
+
+        def abort_weight_update(self):
+            captured.setdefault("events", []).append("abort")
+
+    def load_checkpoint(path, *, map_location, weights_only):
+        assert path == "/trained.pt"
+        assert map_location == "cpu"
+        assert weights_only
+        return {"model.state_proj.weight": trained_weight}
+
+    monkeypatch.setattr(phyai_rollout_worker, "RuntimeConfig", SimpleNamespace)
+    monkeypatch.setattr(phyai_rollout_worker, "DeviceConfig", SimpleNamespace)
+    monkeypatch.setattr(phyai_rollout_worker, "EngineConfig", SimpleNamespace)
+    monkeypatch.setattr(phyai_rollout_worker, "PI05Args", SimpleNamespace)
+    monkeypatch.setattr(phyai_rollout_worker, "EngineArgs", SimpleNamespace)
+    monkeypatch.setattr(phyai_rollout_worker, "Engine", _InitializedEngine)
+    monkeypatch.setattr(torch, "load", load_checkpoint)
 
     def input_transform(sample):
         return sample
@@ -335,9 +358,12 @@ def test_init_worker_passes_checkpoint_model_and_kernel_config(
     openpi.transforms = transforms
     monkeypatch.setitem(sys.modules, "openpi", openpi)
     monkeypatch.setitem(sys.modules, "openpi.transforms", transforms)
-    monkeypatch.setattr(phyai_worker, "build_openpi_transforms", _build_transforms)
+    monkeypatch.setattr(
+        phyai_rollout_worker, "build_openpi_transforms", _build_transforms
+    )
 
-    worker = object.__new__(PhyAIWorker)
+    worker = object.__new__(PhyAIRolloutWorker)
+    worker.cfg = OmegaConf.create({"runner": {"ckpt_path": "/trained.pt"}})
     worker._engine = None
     worker._phyai_plugin = "pi05"
     worker._phyai_cfg = OmegaConf.create(
@@ -396,11 +422,15 @@ def test_init_worker_passes_checkpoint_model_and_kernel_config(
     assert captured["transforms"] == ("/checkpoint", "pi05_libero", None)
     assert worker._input_transform_fn is input_transform
     assert worker._output_transform_fn is output_transform
+    assert captured["events"][0] == "begin"
+    assert captured["events"][1][0] == "update"
+    assert captured["events"][1][1]["state_proj.weight"] is trained_weight
+    assert captured["events"][2] == "finish"
 
 
 def test_phyai_preprocessing_builds_canonical_request():
     env_obs = _make_env_obs()
-    worker = object.__new__(PhyAIWorker)
+    worker = object.__new__(PhyAIRolloutWorker)
     _configure_preprocessing(worker)
 
     request, replay = worker._build_request(env_obs)
@@ -455,7 +485,7 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
                 raw_values=torch.tensor([[1.0], [2.0]]),
             )
 
-    worker = object.__new__(PhyAIWorker)
+    worker = object.__new__(PhyAIRolloutWorker)
     worker._accelerator_type = "cpu"
     worker._timer_metrics = {}
     worker._engine = _Engine()
@@ -483,9 +513,11 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
         assert (low, high) == (0, 1)
         return 1
 
-    monkeypatch.setattr(phyai_worker.random, "randint", select_denoise_step)
+    monkeypatch.setattr(phyai_rollout_worker.random, "randint", select_denoise_step)
 
-    actions, result = inspect.unwrap(PhyAIWorker.predict)(worker, env_obs, mode="train")
+    actions, result = inspect.unwrap(PhyAIRolloutWorker.predict)(
+        worker, env_obs, mode="train"
+    )
 
     normalized_state = env_obs["states"] / 10
     expected_actions = model_actions[:, :5, :7] + normalized_state[:, :1, None]
@@ -539,7 +571,7 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
 
 
 def test_rollout_plan_uses_actor_sampling_defaults():
-    worker = object.__new__(PhyAIWorker)
+    worker = object.__new__(PhyAIRolloutWorker)
     worker._engine_device = torch.device("cpu")
     worker._model_action_horizon = 10
     worker._model_action_dim = 32
@@ -571,7 +603,7 @@ def test_joint_initial_logprob_uses_realized_chain():
         sigmas=torch.zeros(1, 2),
         compute_values=False,
     )
-    plan = phyai_worker._PI05SamplingPlan(
+    plan = phyai_rollout_worker._PI05SamplingPlan(
         request=request,
         denoise_inds=torch.tensor([[0, 1]]),
         action_chunk=1,
@@ -584,7 +616,7 @@ def test_joint_initial_logprob_uses_realized_chain():
         raw_values=None,
     )
 
-    actual, values = PhyAIWorker._reduce_rollout_outputs(plan, rollout_result)
+    actual, values = PhyAIRolloutWorker._reduce_rollout_outputs(plan, rollout_result)
 
     expected = (-0.5 * math.log(2 * math.pi) - 2.0) / 3
     torch.testing.assert_close(actual, torch.full((1, 1, 1), expected))

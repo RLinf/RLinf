@@ -25,12 +25,14 @@ PhyAI 具身 Rollout 后端
      --engine phyai
    source .venv/bin/activate
 
-安装器保留 OpenPI 已安装的 Torch 和 Transformers 版本，从 ``requirements/agentic/phyai_0.1.1_cu13.txt`` 安装额外运行时依赖，再使用 ``--no-deps`` 从官方 PhyAI wheel index 安装三个 PhyAI 包。包版本限定在 ``0.1.1`` 发布线内，包括预发布版本。
+安装器检测 NVIDIA 驱动并选择兼容的 Torch CUDA build，同时保留 OpenPI 已安装的 Torch 和 Transformers 版本。随后，安装器为同一 CUDA 线选择 ``requirements/agentic/phyai_0.1.1_cu12.txt`` 或 ``requirements/agentic/phyai_0.1.1_cu13.txt``，再使用 ``--no-deps`` 从官方 PhyAI wheel index 安装三个 PhyAI 包。若所选 CUDA 线与 ``torch.version.cuda`` 的主版本不同，安装器会在安装 PhyAI 前停止。
 
 配置 Checkpoint 与后端
 ----------------------
 
 在 ``examples/embodiment/config/libero_spatial_ppo_openpi_pi05_phyai.yaml`` 中，将 ``actor.model.model_path`` 设置为 PI0.5 LIBERO checkpoint 目录。目录中应包含 ``model.safetensors`` 和 ``physical-intelligence/libero/norm_stats.json``。rollout model 继承 actor 的权重路径与归一化统计，确保两侧使用一致的观测和动作变换。
+
+若要从 RL 训练 checkpoint 初始化，请将 ``runner.ckpt_path`` 设置为对应的 ``.pt`` 文件。每个 PhyAI rollout engine 会先加载 ``model.safetensors``，再加载完整 state dict，确保评测与第一次训练 rollout 使用和 actor 相同的权重，包括冻结参数。
 
 示例通过 ``rollout.rollout_backend`` 选择 PhyAI，并使用 Hydra defaults 引入内核配置：
 

@@ -32,11 +32,13 @@ the same virtual environment, then activate it:
      --engine phyai
    source .venv/bin/activate
 
-The installer retains the Torch and Transformers versions installed for OpenPI.
-It installs the additional runtime dependencies from
-``requirements/agentic/phyai_0.1.1_cu13.txt`` and installs the three PhyAI packages
-with ``--no-deps`` from the official PhyAI wheel index. Package versions stay in
-the ``0.1.1`` release line, including prereleases.
+The installer detects the NVIDIA driver, selects a compatible Torch CUDA build,
+and retains the Torch and Transformers versions installed for OpenPI. It then
+selects ``requirements/agentic/phyai_0.1.1_cu12.txt`` or
+``requirements/agentic/phyai_0.1.1_cu13.txt`` for the same CUDA line and installs
+the three PhyAI packages with ``--no-deps`` from the official PhyAI wheel index.
+It stops before installing PhyAI when the selected CUDA line and
+``torch.version.cuda`` have different major versions.
 
 Configure the Checkpoint and Backend
 ------------------------------------
@@ -48,6 +50,11 @@ PI0.5 LIBERO checkpoint directory. The checkpoint must contain
 ``physical-intelligence/libero/norm_stats.json``. The rollout model inherits
 the actor's checkpoint path and normalization statistics so both use the same
 observation and action transforms.
+
+To initialize from an RL training checkpoint, set ``runner.ckpt_path`` to its
+``.pt`` file. Each PhyAI rollout engine loads the complete state dict after
+loading ``model.safetensors`` so evaluation and the initial training rollout use
+the same weights as the actor, including frozen parameters.
 
 The example selects PhyAI through ``rollout.rollout_backend`` and loads the
 kernel policy through a Hydra default:

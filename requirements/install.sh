@@ -1502,7 +1502,7 @@ agentic_cuda_line() {
 }
 
 agentic_requirements_file() {
-    # $1 = engine (sglang|vllm), $2 = version
+    # $1 = engine (sglang|vllm|phyai), $2 = version
     local line path
     line=$(agentic_cuda_line)
     path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
@@ -2610,29 +2610,57 @@ EOF
 }
 
 install_phyai_runtime() {
+    local phyai_version="0.1.1"
     local phyai_version_spec=">=0.1.1.dev0,<0.1.2"
-    local torch_before transformers_before
-    read -r torch_before transformers_before < <(python - <<'PYEOF'
+    local cuda_line expected_cuda_major cudart_lib
+    cuda_line=$(agentic_cuda_line)
+    case "$cuda_line" in
+        cu12)
+            expected_cuda_major=12
+            cudart_lib=libcudart.so.12
+            ;;
+        cu13)
+            expected_cuda_major=13
+            cudart_lib=libcudart.so.13
+            ;;
+        *)
+            echo "[install.sh] ERROR: unsupported PhyAI CUDA line: ${cuda_line}." >&2
+            exit 1
+            ;;
+    esac
+    local torch_before transformers_before version_output
+    version_output=$(python - "$cuda_line" "$expected_cuda_major" <<'PYEOF'
+import sys
+
 import torch
 import transformers
 
+expected_line, expected_major = sys.argv[1:]
+torch_cuda = torch.version.cuda
+actual_major = torch_cuda.split(".", 1)[0] if torch_cuda else None
+if actual_major != expected_major:
+    raise SystemExit(
+        "PhyAI CUDA line mismatch: "
+        f"expected {expected_line}, but torch.version.cuda={torch_cuda!r}."
+    )
 print(torch.__version__, transformers.__version__)
 PYEOF
-)
+) || exit 1
+    read -r torch_before transformers_before <<< "$version_output"
 
-    uv pip install -r "$SCRIPT_DIR/agentic/phyai_0.1.1_cu13.txt"
-    uv pip install --no-deps \
+    install_engine_requirements "$(agentic_requirements_file phyai "$phyai_version")"
+    env -u UV_TORCH_BACKEND uv pip install --no-deps \
         "phyai${phyai_version_spec}" \
         "phyai-kernel${phyai_version_spec}" \
         "phyai-ext${phyai_version_spec}" \
         --index https://mingti-org.github.io/phyai/simple/ \
         --prerelease=allow
 
-    # CUTLASS ships CUDA 12 and CUDA 13 runtime libraries in the cu13 extra.
-    # Select the runtime matching RLinf's Torch 2.11 CUDA 13 stack explicitly.
-    export CUDNN_FRONTEND_CUDART_LIB_NAME=libcudart.so.13
-    if ! grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
-        echo 'export CUDNN_FRONTEND_CUDART_LIB_NAME=libcudart.so.13' >> "$VENV_DIR/bin/activate"
+    export CUDNN_FRONTEND_CUDART_LIB_NAME="$cudart_lib"
+    if grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i "s|^export CUDNN_FRONTEND_CUDART_LIB_NAME=.*|export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}|" "$VENV_DIR/bin/activate"
+    else
+        echo "export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}" >> "$VENV_DIR/bin/activate"
     fi
 
     python - "$torch_before" "$transformers_before" <<'PYEOF'
