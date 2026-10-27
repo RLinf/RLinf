@@ -23,7 +23,10 @@ import asyncio
 from types import SimpleNamespace
 from unittest import mock
 
-from rlinf.workers.agent.agent_loop import AgentLoopWorker
+from omegaconf import OmegaConf
+
+from rlinf.data.schema import DiscardedGroup
+from rlinf.workers.agent.agent_loop import AgentLoopWorker, GroupDiscarded
 
 
 class _QueueChannel:
@@ -331,6 +334,147 @@ class TestRunAgentloopRolloutContinuously:
             await asyncio.wait_for(continuously, timeout=5)
 
             assert seen == [None, None]
+
+        asyncio.run(run())
+
+
+class TestGroupDiscarded:
+    """GroupDiscarded turns into a discard record; other errors stay fatal."""
+
+    @staticmethod
+    def _make_group_worker():
+        from rlinf.workers.agent.agent_loop import AgentLoopWorker
+
+        worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker.print_outputs = False
+        worker.return_logprobs = False
+        worker.cfg = OmegaConf.create(
+            {
+                "data": {
+                    "rollout_batch_size": 4,
+                    "shuffle": False,
+                    "num_workers": 0,
+                    "seed": 1,
+                    "max_prompt_length": 8,
+                },
+                "runner": {"seq_length": 16},
+                "algorithm": {
+                    "staleness_threshold": 0,
+                    "group_size": 2,
+                    "max_num_gen_batches": 1,
+                },
+            }
+        )
+        return worker
+
+    def test_discard_puts_a_record_and_the_group_ends_normally(self):
+        """A GroupDiscarded with a group id yields a DiscardedGroup."""
+
+        async def run():
+            worker = self._make_group_worker()
+            out_channel = _QueueChannel()
+
+            async def _query(input_ids):
+                raise GroupDiscarded("reward_rule_failed")
+
+            worker.run_one_query = _query
+            await worker.run_agentloop_rollout_group(
+                input_ids=[1, 2],
+                answer="a",
+                group_size=2,
+                output_channel=out_channel,
+                group_id=9,
+            )
+            record = out_channel.get_nowait()
+            assert isinstance(record, DiscardedGroup)
+            assert record.group_id == 9
+            assert record.reason == "reward_rule_failed"
+
+        asyncio.run(run())
+
+    def test_discard_cancels_the_siblings(self):
+        """A discarded trajectory cancels the group's remaining ones."""
+
+        async def run():
+            worker = self._make_group_worker()
+            out_channel = _QueueChannel()
+            cancelled = asyncio.Event()
+            calls = 0
+
+            async def _query(input_ids):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise GroupDiscarded("reward_rule_failed")
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+            worker.run_one_query = _query
+            await worker.run_agentloop_rollout_group(
+                input_ids=[1, 2],
+                answer="a",
+                group_size=3,
+                output_channel=out_channel,
+                group_id=4,
+            )
+            record = out_channel.get_nowait()
+            assert record.group_id == 4
+            assert cancelled.is_set()
+
+        asyncio.run(run())
+
+    def test_discard_without_group_id_is_fatal(self):
+        """Synchronous callers get the exception, not a record."""
+
+        async def run():
+            worker = self._make_group_worker()
+            out_channel = _QueueChannel()
+
+            async def _query(input_ids):
+                raise GroupDiscarded("reward_rule_failed")
+
+            worker.run_one_query = _query
+            try:
+                await worker.run_agentloop_rollout_group(
+                    input_ids=[1, 2],
+                    answer="a",
+                    group_size=2,
+                    output_channel=out_channel,
+                )
+                raise AssertionError("expected the exception to propagate")
+            except GroupDiscarded as e:
+                assert e.reason == "reward_rule_failed"
+            assert out_channel._queue.empty()
+
+        asyncio.run(run())
+
+    def test_other_errors_are_fatal(self):
+        """A plain failure of one query ends the group with that error."""
+
+        async def run():
+            worker = self._make_group_worker()
+            out_channel = _QueueChannel()
+            boom = RuntimeError("tool call failed")
+
+            async def _query(input_ids):
+                raise boom
+
+            worker.run_one_query = _query
+            try:
+                await worker.run_agentloop_rollout_group(
+                    input_ids=[1, 2],
+                    answer="a",
+                    group_size=2,
+                    output_channel=out_channel,
+                    group_id=4,
+                )
+                raise AssertionError("expected the exception to propagate")
+            except RuntimeError as e:
+                assert e is boom
+            assert out_channel._queue.empty()
 
         asyncio.run(run())
 
