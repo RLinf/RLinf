@@ -1,0 +1,11 @@
+# Common runtime dependencies for RLinf's in-process PhyAI 0.1.1 PI0.5 backend.
+# PhyAI packages are installed separately with --no-deps so their metadata
+# cannot replace the RLinf/OpenPI Torch and Transformers stack.
+
+apache-tvm-ffi==0.1.13.post3
+setproctitle==1.3.7
+torch-c-dlpack-ext==0.1.5
+
+# Ray's current unconstrained PyArrow release requires NumPy 2 at import time,
+# while the OpenPI and LIBERO packages in this environment require NumPy <2.
+pyarrow==19.0.1

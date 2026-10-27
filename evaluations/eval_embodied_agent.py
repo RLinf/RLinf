@@ -89,9 +89,9 @@ def main(cfg) -> None:
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "phyai":
-        from rlinf.workers.rollout.phyai import PhyAIWorker
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
-        rollout_group = PhyAIWorker.create_group(cfg).launch(
+        rollout_group = PhyAIRolloutWorker.create_group(cfg).launch(
             cluster,
             name=cfg.rollout.group_name,
             placement_strategy=rollout_placement,

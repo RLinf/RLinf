@@ -108,9 +108,9 @@ def main(cfg) -> None:
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     if str(cfg.rollout.get("rollout_backend", "huggingface")).lower() == "phyai":
-        from rlinf.workers.rollout.phyai import PhyAIWorker
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
-        rollout_worker_cls = PhyAIWorker
+        rollout_worker_cls = PhyAIRolloutWorker
     elif str(cfg.rollout.get("rollout_backend", "huggingface")).lower() in {
         "hf",
         "huggingface",

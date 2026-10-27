@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .phyai_worker import PhyAIWorker
+from .phyai_rollout_worker import PhyAIRolloutWorker
 
-__all__ = ["PhyAIWorker"]
+__all__ = ["PhyAIRolloutWorker"]
