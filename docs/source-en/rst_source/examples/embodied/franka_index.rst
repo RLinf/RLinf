@@ -57,6 +57,12 @@ extensions.
 
       Use ZED cameras and Robotiq grippers.
 
+   .. grid-item-card:: Orbbec Cameras
+      :link: franka_orbbec
+      :link-type: doc
+
+      Capture color images and aligned depth from Orbbec USB cameras.
+
    .. grid-item-card:: Dexterous Hand
       :link: franka_dexhand
       :link-type: doc
@@ -74,4 +80,5 @@ extensions.
    HG-DAgger <hg-dagger>
    Reward Model <franka_reward_model>
    ZED + Robotiq <franka_zed_robotiq>
+   Orbbec Cameras <franka_orbbec>
    Dexterous Hand <franka_dexhand>
