@@ -16,7 +16,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor: all
 
 runner:
   task_type: sft
@@ -34,9 +34,6 @@ data:
   train_data_paths: /path/to/so101_dataset
   num_workers: 4
 
-algorithm:
-  adv_type: gae
-
 actor:
   group_name: ActorGroup
   training_backend: fsdp
@@ -47,7 +44,6 @@ actor:
   model:
     model_path: /path/to/pi05_base_pytorch
     openpi:
-      action_horizon: 20
       task: sft
     openpi_data:
       norm_stats_path: /path/to/norm_stats.json
@@ -73,9 +69,3 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-reward:
-  use_reward_model: false
-
-critic:
-  use_critic_model: false

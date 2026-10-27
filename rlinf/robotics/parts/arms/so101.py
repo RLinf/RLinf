@@ -358,9 +358,7 @@ class SO101Arm(BaseArm):
             self._check_gripper_monitor()
             reading = self._robot.get_observation()
         joints = [reading[f"{motor}.pos"] for motor in self.MOTORS]
-        grip = np.clip(
-            reading[f"{self.GRIPPER}.pos"] / self.GRIPPER_SCALE, 0.0, 1.0
-        )
+        grip = np.clip(reading[f"{self.GRIPPER}.pos"] / self.GRIPPER_SCALE, 0.0, 1.0)
         return SO101RobotState(
             arm_joint_position=np.deg2rad(np.asarray(joints, dtype=float)),
             gripper_position=np.asarray([grip], dtype=float),
@@ -581,6 +579,8 @@ class SO101Arm(BaseArm):
         period = 1.0 / 30.0
         steps = max(2, int(np.ceil(travel_time / period)))
 
+        # A moving gripper advances only a little per frame. Running the stall
+        # monitor between trajectory frames can mistake that motion for a stall.
         with self._gripper_condition:
             self._check_gripper_monitor()
             self._gripper_target = None
@@ -606,6 +606,7 @@ class SO101Arm(BaseArm):
                     self._gripper_requested = float(sent[f"{self.GRIPPER}.pos"])
                     self._gripper_target = self._gripper_requested
         self.wait_for_gripper()
+        self.wait_until_still()
 
     def is_robot_up(self) -> bool:
         """Report whether the servo bus and any lerobot cameras are live."""

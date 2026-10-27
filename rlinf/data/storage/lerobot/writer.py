@@ -306,6 +306,7 @@ class LeRobotDatasetWriter:
                 ]
             if "done" in episode_buffer:
                 episode_buffer["done"][-1] = np.array([True], dtype=bool)
+        self._normalize_scalar_episode_fields()
         self.dataset.save_episode()
         self.logger.info(f"Saved streaming episode with {size} frames.")
         return size

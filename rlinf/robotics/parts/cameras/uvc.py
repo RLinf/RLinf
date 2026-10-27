@@ -61,21 +61,26 @@ class UVCCamera(BaseCamera):
         info = self.camera_info
         capture = cv2.VideoCapture(self._resolve_device(), cv2.CAP_V4L2)
         if not capture.isOpened():
+            capture.release()
             raise RuntimeError(f"Failed to open UVC camera {info.serial_number!r}.")
-        preferred_fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-        capture.set(cv2.CAP_PROP_FOURCC, preferred_fourcc)
-        width, height = info.resolution
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        capture.set(cv2.CAP_PROP_FPS, info.fps)
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        actual_fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
-        if actual_fourcc != preferred_fourcc:
-            _logger.warning(
-                "UVC camera %r did not accept MJPG; using FOURCC %#010x.",
-                info.serial_number,
-                actual_fourcc,
-            )
+        try:
+            preferred_fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+            capture.set(cv2.CAP_PROP_FOURCC, preferred_fourcc)
+            width, height = info.resolution
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            capture.set(cv2.CAP_PROP_FPS, info.fps)
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            actual_fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+            if actual_fourcc != preferred_fourcc:
+                _logger.warning(
+                    "UVC camera %r did not accept MJPG; using FOURCC %#010x.",
+                    info.serial_number,
+                    actual_fourcc,
+                )
+        except BaseException:
+            capture.release()
+            raise
         return capture
 
     def _read_frame(self) -> tuple[bool, np.ndarray | None]:
@@ -90,8 +95,18 @@ class UVCCamera(BaseCamera):
 
     @classmethod
     def discover(cls) -> set[str]:
-        """Return V4L2 device names visible on this node."""
-        devices = set(glob.glob("/dev/video*"))
-        # Keep stable udev links so camera numbering can change across reconnects.
-        devices.update(glob.glob("/dev/v4l/by-id/*-video-index*"))
-        return {device for device in devices if os.path.exists(device)}
+        """Return one stable identifier per V4L2 camera visible on this node.
+
+        A by-id link for ``video-index0`` identifies the camera itself; other
+        indices are alternate streams of the same device and are ignored.
+        When stable links are unavailable, the video nodes are the only
+        identifiers available.
+        """
+        by_id = {
+            device
+            for device in glob.glob("/dev/v4l/by-id/*-video-index0")
+            if os.path.exists(device)
+        }
+        if by_id:
+            return by_id
+        return {device for device in glob.glob("/dev/video*") if os.path.exists(device)}

@@ -76,6 +76,9 @@ class SO101Leader(TeleopDevice):
 
     #: Joint limits and the gripper range both come from the action space.
     CLIPS_TO_ACTION_SPACE = True
+    # Keep the follower at its current pose while the absolute-position leader
+    # is idle, matching the existing passive-hold teleop capability.
+    APPLIES_WHILE_IDLE = True
 
     MOVEMENT_EPSILON = 0.01
     SERIAL_CONNECT_RETRIES = 3
@@ -109,6 +112,7 @@ class SO101Leader(TeleopDevice):
         self._torque_enabled = False
         self._reset_prepared = False
         self._manual_release_pending = False
+        self._manual_release_reference: np.ndarray | None = None
         self._last_valid_observation: Observation | None = None
 
     @classmethod
@@ -153,6 +157,8 @@ class SO101Leader(TeleopDevice):
         procedure asks the operator to move the arm through its range and
         waits on stdin, which would hang a worker that has no terminal.
         """
+        self._manual_release_pending = False
+        self._manual_release_reference = None
         self._last_valid_observation = None
         try:
             from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
@@ -219,6 +225,8 @@ class SO101Leader(TeleopDevice):
             try:
                 device.disconnect()
             finally:
+                self._manual_release_pending = False
+                self._manual_release_reference = None
                 self._last_valid_observation = None
 
     @property
@@ -257,8 +265,25 @@ class SO101Leader(TeleopDevice):
 
     def prepare_reset(self, context: Mapping[str, Any]) -> None:
         """Move to the reset state while the follower executes its reset."""
+        self._manual_release_pending = False
+        self._manual_release_reference = None
         joints = np.asarray(context["reset_joint_positions"], dtype=float).reshape(-1)
-        grip = np.asarray(context["reset_gripper_position"], dtype=float).reshape(-1)
+        configured_grip = context["reset_gripper_position"]
+        if configured_grip is None:
+            with self._serial_lock:
+                reading = self._device.get_action()
+            grip = np.asarray(
+                [
+                    np.clip(
+                        float(reading[f"{GRIPPER}.pos"]) / GRIPPER_SCALE,
+                        0.0,
+                        1.0,
+                    )
+                ],
+                dtype=float,
+            )
+        else:
+            grip = np.asarray(configured_grip, dtype=float).reshape(-1)
         duration = float(context["reset_duration"])
         max_joint_speed = float(context["reset_joint_speed"])
         self._move_to(joints, grip, duration, max_joint_speed=max_joint_speed)
@@ -280,9 +305,11 @@ class SO101Leader(TeleopDevice):
         with self._serial_lock:
             self._set_torque(False)
             self._reset_prepared = False
-            # The arm can settle by gravity when torque is disabled. Ignore
-            # that first reading instead of treating it as operator motion.
+            # The arm can settle by gravity when torque is disabled. Establish
+            # the movement reference from the first post-release reading,
+            # rather than comparing that settling pose with the follower pose.
             self._manual_release_pending = True
+            self._manual_release_reference = None
 
     def hold_for_reset(self, context: Mapping[str, Any]) -> None:
         """Hold the current leader pose before the robot is reset or parked."""
@@ -296,6 +323,8 @@ class SO101Leader(TeleopDevice):
             self._device.bus.sync_write("Goal_Position", current)
             self._set_torque(True)
             self._reset_prepared = True
+            self._manual_release_pending = False
+            self._manual_release_reference = None
 
     def abort_reset(self, context: Mapping[str, Any]) -> None:
         """Release the leader after an incomplete reset."""
@@ -304,6 +333,8 @@ class SO101Leader(TeleopDevice):
         with self._serial_lock:
             self._set_torque(False)
             self._reset_prepared = False
+            self._manual_release_pending = False
+            self._manual_release_reference = None
 
     def _move_to(
         self,
@@ -406,20 +437,35 @@ class SO101Leader(TeleopDevice):
         target = np.asarray(reading["joint_position"], dtype=float)
         current = np.asarray(context["joint_positions"])[0]
         grip = np.asarray(reading["grip"], dtype=float).reshape(1)
-        current_grip = np.asarray(
-            context.get("gripper_open", context.get("gripper_position", grip)),
-            dtype=float,
-        ).reshape(-1)
-        # Idle until the operator actually moves, so the policy keeps control
-        # while the leader is just resting in its holder.
-        moved = (
-            float(np.linalg.norm(target - current)) > self.MOVEMENT_EPSILON
-            or float(np.linalg.norm(grip - current_grip)) > self.MOVEMENT_EPSILON
-        )
         if self._manual_release_pending:
             self._manual_release_pending = False
+            self._manual_release_reference = np.concatenate((target, grip))
             moved = False
-        return TeleopAction(parts={"arm": target, "end_effector": grip}, driving=moved)
+        elif self._manual_release_reference is not None:
+            moved = (
+                float(
+                    np.linalg.norm(
+                        np.concatenate((target, grip)) - self._manual_release_reference
+                    )
+                )
+                > self.MOVEMENT_EPSILON
+            )
+        else:
+            # The follower and leader have independent gripper readings.  A
+            # gripper mismatch alone must not make an idle leader intervene.
+            moved = float(np.linalg.norm(target - current)) > self.MOVEMENT_EPSILON
+        if not moved:
+            parts = self.hold(context)
+            return TeleopAction(
+                parts=parts,
+                driving=False,
+                info={
+                    "so101_idle_hold_action": np.concatenate(
+                        (parts["arm"], parts["end_effector"])
+                    )
+                },
+            )
+        return TeleopAction(parts={"arm": target, "end_effector": grip}, driving=True)
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
         """Return the current follower pose while collection is idle."""

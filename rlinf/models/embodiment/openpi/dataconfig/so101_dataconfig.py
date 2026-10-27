@@ -36,7 +36,7 @@ class SO101JointDataConfig(DataConfigFactory):
                         "actions": "actions",
                         # LeRobot v3 stores the task text under ``task``.
                         # Avoid OpenPI's legacy task-index transform here.
-                        "task": "prompt",
+                        "prompt": "task",
                     }
                 )
             ]

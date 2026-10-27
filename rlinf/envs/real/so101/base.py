@@ -60,6 +60,13 @@ _CAMERA_FRAME_TIMEOUT_S = 0.5
 _CAMERA_REOPEN_ATTEMPTS = 3
 
 
+def _camera_frame_timeout(max_age: float) -> float:
+    """Keep bounded camera retries within the configured freshness window."""
+    if max_age <= 0:
+        return _CAMERA_FRAME_TIMEOUT_S
+    return min(_CAMERA_FRAME_TIMEOUT_S, max_age / _CAMERA_REOPEN_ATTEMPTS)
+
+
 def _zero_observation(space: gym.Space) -> Any:
     """Build a deterministic zero value matching a Gymnasium space."""
     if isinstance(space, gym.spaces.Dict):
@@ -86,13 +93,13 @@ class SO101EnvConfig:
     """Control rate in Hz. A step sleeps for the remainder of its period."""
 
     camera_max_age: float = 0.5
-    """Maximum age in seconds of a camera frame reused between control steps."""
+    """Maximum age for a reused frame; zero disables frame reuse."""
 
     reset_joint_qpos: list[float] = field(default_factory=lambda: [0.0] * _DOF)
     """Rest configuration, in radians."""
 
-    reset_gripper_position: float = 0.0
-    """Gripper opening at reset, from ``0`` closed to ``1`` open."""
+    reset_gripper_position: Optional[float] = None
+    """Gripper opening at reset, or ``None`` to keep its current position."""
 
     reset_duration: float = 3.0
     """Minimum reset trajectory duration in seconds."""
@@ -227,7 +234,9 @@ class SO101Env(gym.Env):
             target > self.config.joint_limit_high
         ):
             raise ValueError(f"{name}_joint_qpos must lie within the joint limits.")
-        if gripper is None or not np.isfinite(gripper) or not 0.0 <= gripper <= 1.0:
+        if gripper is not None and (
+            not np.isfinite(gripper) or not 0.0 <= gripper <= 1.0
+        ):
             raise ValueError(f"{name}_gripper_position must be between 0 and 1.")
 
     # Hardware setup.
@@ -396,9 +405,12 @@ class SO101Env(gym.Env):
 
     def go_to_rest(self) -> None:
         """Move the joints and gripper to the configured reset state."""
+        gripper = self.config.reset_gripper_position
+        if gripper is None:
+            gripper = float(self._arm.get_state().gripper_position.reshape(-1)[0])
         self._move_to_configured_pose(
             self.config.reset_joint_qpos,
-            self.config.reset_gripper_position,
+            gripper,
             self.config.reset_duration,
         )
 
@@ -416,8 +428,10 @@ class SO101Env(gym.Env):
         """Return the reset joint target for coordinated teleoperation reset."""
         return np.asarray(self.config.reset_joint_qpos, dtype=np.float64)[None, :]
 
-    def get_reset_gripper_position(self) -> np.ndarray:
-        """Return the reset gripper target for coordinated teleoperation reset."""
+    def get_reset_gripper_position(self) -> Optional[np.ndarray]:
+        """Return the reset gripper target, if one was explicitly configured."""
+        if self.config.reset_gripper_position is None:
+            return None
         return np.asarray([[self.config.reset_gripper_position]], dtype=np.float64)
 
     def get_reset_duration(self) -> float:
@@ -525,20 +539,23 @@ class SO101Env(gym.Env):
         for camera in getattr(self, "_cameras", []):
             camera: BaseCamera
             name = camera.name
+            used_fallback = False
             try:
                 # Cameras deliver their native resolution; the space fixes one.
                 size = declared[name].shape[:2][::-1]
                 raw_frame = camera.get_frame(
-                    timeout=_CAMERA_FRAME_TIMEOUT_S,
+                    timeout=_camera_frame_timeout(self.config.camera_max_age),
                     attempts=_CAMERA_REOPEN_ATTEMPTS,
                     max_age=self.config.camera_max_age,
                 )
             except queue.Empty:
+                used_fallback = True
                 raw_frame = self._last_camera_frame.get(name)
                 captured_at = self._last_camera_frame_at.get(name)
                 if (
                     raw_frame is None
                     or captured_at is None
+                    or self.config.camera_max_age <= 0
                     or time.monotonic() - captured_at > self.config.camera_max_age
                 ):
                     raise RuntimeError(
@@ -552,8 +569,11 @@ class SO101Env(gym.Env):
                     _CAMERA_REOPEN_ATTEMPTS,
                 )
 
-            self._last_camera_frame[name] = np.asarray(raw_frame).copy()
-            self._last_camera_frame_at[name] = time.monotonic()
+            if not used_fallback:
+                # Keep this timestamp tied to a successful camera read. A
+                # fallback frame must not appear fresh on every control step.
+                self._last_camera_frame[name] = np.asarray(raw_frame).copy()
+                self._last_camera_frame_at[name] = time.monotonic()
             frames[name] = self._crop_frame(raw_frame, size)
 
         if hasattr(self, "camera_player"):

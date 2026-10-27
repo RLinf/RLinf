@@ -5680,6 +5680,69 @@ def test_so101_commands_are_converted_back_to_degrees():
         arm.disconnect()
 
 
+def test_so101_pose_waits_until_joints_are_still(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        waited = []
+        monkeypatch.setattr(arm, "wait_until_still", lambda: waited.append(True))
+        try:
+            arm.move_to_pose(np.r_[np.zeros(5), 0.0], duration=0.01, max_velocity=100.0)
+            assert waited == [True]
+        finally:
+            arm.disconnect()
+
+
+def test_so101_leader_ignores_follower_gripper_mismatch_when_idle():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    reading = {"joint_position": np.zeros(5), "grip": np.array([1.0])}
+    action = leader.action(
+        reading,
+        {
+            "joint_positions": np.zeros((1, 5)),
+            "gripper_open": np.array([0.4]),
+        },
+    )
+
+    assert not action.driving
+    np.testing.assert_allclose(action.parts["arm"], np.zeros(5))
+    np.testing.assert_allclose(action.parts["end_effector"], [0.4])
+    np.testing.assert_allclose(action.info["so101_idle_hold_action"], [0.0] * 5 + [0.4])
+
+
+def test_so101_leader_anchors_motion_after_manual_release():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    leader._manual_release_pending = True
+    context = {"joint_positions": np.zeros((1, 5)), "gripper_open": np.array([0.0])}
+    first = {"joint_position": np.full(5, 0.2), "grip": np.array([0.5])}
+    same = leader.action(first, context)
+    assert not same.driving
+
+    assert not leader.action(first, context).driving
+    moved = {
+        "joint_position": np.full(5, 0.2 + leader.MOVEMENT_EPSILON * 2),
+        "grip": np.array([0.5]),
+    }
+    assert leader.action(moved, context).driving
+
+    grip_moved = {
+        "joint_position": np.full(5, 0.2),
+        "grip": np.array([0.5 + 2 * leader.MOVEMENT_EPSILON]),
+    }
+    leader._manual_release_reference = np.concatenate(
+        (first["joint_position"], first["grip"])
+    )
+    assert leader.action(grip_moved, context).driving
+
+
 def test_so101_clips_out_of_range_gripper_feedback_to_the_public_contract():
     from robot_mocks import mocked_sdks
 

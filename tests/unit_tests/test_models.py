@@ -1374,6 +1374,7 @@ def test_apxinf_close_delegates_to_model():
     adapter.close()
     assert model.closed
 
+
 def test_so101_openpi_transforms_pad_six_joint_contract():
     np = pytest.importorskip("numpy")
     pytest.importorskip("openpi")
@@ -1394,6 +1395,32 @@ def test_so101_openpi_transforms_pad_six_joint_contract():
     assert result["actions"].shape == (20, 32)
     assert result["image"]["base_0_rgb"].shape == image.shape
     assert not result["image_mask"]["left_wrist_0_rgb"]
+
+
+def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from openpi.models.pi0_config import Pi0Config
+
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        SO101JointDataConfig,
+    )
+
+    data_config = SO101JointDataConfig(repo_id="so101_joint").create(
+        assets_dirs=Path("/tmp/nonexistent-openpi-assets"),
+        model_config=Pi0Config(pi05=True),
+    )
+    raw_sample = {
+        "image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "state": np.zeros(6, dtype=np.float32),
+        "actions": np.zeros((2, 6), dtype=np.float32),
+        "task": "reach a joint configuration",
+    }
+
+    repacked = data_config.repack_transforms.inputs[0](raw_sample)
+
+    assert repacked["prompt"] == raw_sample["task"]
+    assert "task" not in repacked
 
 
 def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):

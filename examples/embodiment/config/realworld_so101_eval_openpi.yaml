@@ -9,6 +9,8 @@ hydra:
   run:
     dir: .
   output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
@@ -59,6 +61,12 @@ env:
     override_cfg:
       max_num_steps: 1800
       step_frequency: 15.0
+      reset_on_init: false
+      reset_joint_qpos:
+        [-0.06981317, -1.11317483, 0.58689094, 1.45993915, -1.60263420]
+      reset_gripper_position: 0.01265823
+      reset_duration: 3.0
+      reset_joint_speed: 1.3089969390
       success_hold_steps: 1
       use_dense_reward: false
       enable_camera_player: false

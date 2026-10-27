@@ -25,6 +25,7 @@ import numpy as np
 from gymnasium.core import ActType, ObsType
 
 from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
 
 
 class SO101StartEndWrapper(KeyboardStartEndWrapper):
@@ -114,10 +115,35 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         """Hold the leader before the runner resets the saved episode."""
         self._hold_before_reset()
 
+    def _finalize_random_reset_target(
+        self, seed: int | None
+    ) -> tuple[Any, bool] | None:
+        """Finalize a randomized target before teleop builds reset context."""
+        try:
+            config = self.env.get_wrapper_attr("config")
+            enabled = bool(getattr(config, "enable_random_reset"))
+            base_qpos = self.env.get_wrapper_attr("_base_reset_qpos")
+            noise_limit = float(getattr(config, "random_joint_noise"))
+            low = np.asarray(self.env.get_wrapper_attr("_joint_limit_low"), dtype=float)
+            high = np.asarray(
+                self.env.get_wrapper_attr("_joint_limit_high"), dtype=float
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not enabled:
+            return None
+        rng = np.random.default_rng(seed)
+        noise = rng.uniform(-noise_limit, noise_limit, size=len(base_qpos))
+        target = np.clip(np.asarray(base_qpos, dtype=float) + noise, low, high)
+        config.reset_joint_qpos = target.tolist()
+        config.enable_random_reset = False
+        return config, enabled
+
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[Any, dict[str, Any]]:
         """Reset leader and follower together before the next episode."""
+        prepared_random_reset = self._finalize_random_reset_target(seed)
         prepare_hook = self._teleop_attr("prepare_reset")
         abort = self._teleop_attr("abort_reset")
         context = self._teleop_context()
@@ -149,6 +175,17 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
                 reset_thread.join()
             if not completed and abort is not None:
                 abort(context)
+            if prepared_random_reset is not None:
+                prepared_random_reset[0].enable_random_reset = prepared_random_reset[1]
+
+    def _step_with_hold(
+        self, action: ActType, *, hold: bool
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Step explicit holds without inner teleop arbitration."""
+        if hold and isinstance(self.env, TeleopIntervention):
+            self.env.device.before_step(self.env)
+            return self.env.env.step(action)
+        return self.env.step(action)
 
     def _hold_action(self, action: ActType) -> ActType:
         """Use the follower pose while the absolute-position leader is idle."""
@@ -170,8 +207,16 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         aborted = "a" in pressed and self._recording
         if started:
             self.before_recording_start()
+            self._recording = True
+            self._recording_since = time.monotonic()
         elif aborted:
-            self.before_recording_abort()
+            now = time.monotonic()
+            if now - self._recording_since < self.ABORT_LOCKOUT_S:
+                aborted = False
+            else:
+                self.before_recording_abort()
+                self._recording = False
+                self._recording_since = -math.inf
 
         # Abort wins when both keys arrive in one poll; never save an episode
         # after the operator explicitly discarded it.
@@ -180,17 +225,22 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             # Stop accepting leader actions before the terminal transition.
             # The terminal frame is still marked as recordable below.
             self.before_recording_success()
-            self._recording = False
-            self._last_segment_ts = -math.inf
 
-        if not self._recording or started or aborted or success:
+        hold = not self._recording or started or aborted or success
+        if hold:
             action = self._hold_action(action)
 
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        if success:
-            # TeleopIntervention intentionally does not mark an inactive
-            # device's hold action as an intervention. This action was chosen
-            # by this wrapper, so expose it to both dataset writers.
+        obs, reward, terminated, truncated, info = self._step_with_hold(
+            action, hold=hold
+        )
+        idle_hold_action = info.pop("so101_idle_hold_action", None)
+        if self._recording and idle_hold_action is not None:
+            info["intervene_action"] = idle_hold_action
+            info["intervene_flag"] = np.ones(1, dtype=bool)
+        if hold:
+            # This wrapper bypasses TeleopIntervention for explicit holds. Keep
+            # the executed hold action visible to the collector instead of
+            # leaving the caller's usually-zero policy action in the dataset.
             info["intervene_action"] = action
             info["intervene_flag"] = np.ones(1, dtype=bool)
         terminated = aborted
@@ -201,12 +251,11 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
 
         if started:
             event = "start"
-            self._recording = True
             record_reset = True
+            self._recording_since = time.monotonic()
             self._last_segment_ts = -math.inf
         elif aborted:
             event = "abort"
-            self._recording = False
             record_reset = True
             self._last_segment_ts = -math.inf
 
@@ -214,9 +263,10 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             if key == "a":
                 if aborted:
                     reward = 0.0
-                elif not started:
+                elif not self._recording and not started:
                     event = "abort"
                     self._recording = False
+                    self._recording_since = -math.inf
                     record_reset = True
                     self._last_segment_ts = -math.inf
                     terminated = True
@@ -231,9 +281,16 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
                 event = "end_success"
                 reward = 1.0
                 terminated = True
+                info["success"] = True
                 break
 
+        if success:
+            self._recording = False
+            self._recording_since = -math.inf
+            self._last_segment_ts = -math.inf
+
         info["pre_record"] = not self._recording and event != "end_success"
+        info["episode_discarded"] = bool(event == "abort")
         info["record_reset"] = record_reset
         info["keyboard_phase"] = (
             "rec" if self._recording or event == "end_success" else "pre"
