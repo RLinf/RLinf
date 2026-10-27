@@ -35,13 +35,18 @@ env:
   group_name: EnvGroup
   eval:
     rollout_epoch: 1
-    total_num_envs: 1
-    max_episode_steps: 750
-    max_steps_per_rollout_epoch: 750
+    total_num_envs: 10
+    # Use the task's max_steps from the exported RoboLab task metadata.
+    max_episode_steps: 300
+    # Cover max_episode_steps with complete 15-action chunks.
+    max_steps_per_rollout_epoch: 300
     auto_reset: false
     ignore_terminations: false
     is_eval: true
     seed: 0
+    init_params:
+      task: BowlStackingLeftOnRightTask
+      output_dir: ./logs/robolab/BowlStackingLeftOnRightTask
     video_cfg:
       save_video: false
       video_base_dir: ./data/logs/robolab/video

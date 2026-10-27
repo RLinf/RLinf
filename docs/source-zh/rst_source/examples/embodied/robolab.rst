@@ -8,7 +8,7 @@ RoboLab 评估
 
    RoboLab (`NVlabs/RoboLab <https://github.com/NVlabs/RoboLab>`__).
 
-使用 RLinf 的 π₀.₅ policy 评测 RoboLab 的 120 个 DROID joint-position 操作任务。此示例覆盖环境安装、checkpoint 下载、任务查询及成功率和归一化得分统计，执行流程由 RLinf 的环境接口和评估 runner 调度。
+RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务，覆盖程序性、关系性和视觉能力，以及三个难度等级。RLinf 支持使用 OpenPI π₀.₅ policy 评估其中的 DROID joint-position 任务。
 
 概览
 ----
@@ -74,20 +74,10 @@ RoboLab 评估
    * - Prompt
      - 任务元数据中的自然语言指令。
 
-安装环境
---------
-
-通过 ``bash requirements/install.sh embodied --model openpi --env robolab`` 安装单个 uv 环境。硬件要求、安装检查限制和已有源码复用方式见 :doc:`评估指南 <../../evaluations/guides/robolab>`。
-
-下载模型
---------
-
-使用 ``RLinf/RLinf-Pi05-RoboLab-droid-jointpos`` checkpoint，并将 ``rollout.model.model_path`` 指向下载目录。下载命令和文件结构见 :doc:`评估指南 <../../evaluations/guides/robolab>`。
-
 运行评估
 --------
 
-配置入口为 ``evaluations/robolab/pi05_droid_jointpos.yaml``。使用 ``bash evaluations/run_eval.sh robolab pi05_droid_jointpos`` 启动；先按 :doc:`评估指南 <../../evaluations/guides/robolab>` 设置模型目录和任务步数，再选择单任务或完整 benchmark。
+按照 :doc:`评估指南 <../../evaluations/guides/robolab>` 安装环境、下载 checkpoint、配置任务并运行评估。
 
 可视化与结果
 ------------
@@ -113,5 +103,3 @@ RoboLab 评估
    * - RLinf + Torch (aligned, eager)
      - 27.00%
      - 0.4228
-
-本次 RLinf 评测使用 8 张 A800，每卡 15 个任务；每任务 10 个并行环境，policy 每批处理 1 条观测。原生 Torch 启用了编译，RLinf 使用 eager 执行。实验未逐回合对齐随机数流，汇总结果接近不代表逐步动作完全相同。
