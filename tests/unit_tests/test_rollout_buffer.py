@@ -491,6 +491,96 @@ class TestCheckpoint:
             worker.log_warning.assert_called_once()
             assert worker.buffer.start_step == 5
 
+    def test_save_checkpoint_logs_the_resume_skip_count(self):
+        """The info log counts prompts a resume will skip."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            worker = self._make_worker(_cfg(rollout_batch_size=4))
+            buffer = worker.buffer
+            # Two fetched batches of 4: 8 samples taken from the
+            # dataloader. 4 groups were released to training, 2 dropped,
+            # 2 still buffered: a resume skips the remaining 2.
+            buffer.num_samples_fetched = 8
+            for group_id in range(8):
+                buffer.issue_group(group_id)
+            for group_id in range(4):
+                buffer.record_result(
+                    _result(group_id), _result(group_id).group_metadata()
+                )
+            buffer.release_groups()
+            for group_id in (4, 5):
+                buffer.drop_group(
+                    group_id, "equal_reward", 1000, already_buffered=False
+                )
+            for group_id in (6, 7):
+                buffer.record_result(
+                    _result(group_id), _result(group_id).group_metadata()
+                )
+
+            asyncio.run(worker.save_checkpoint(tmp_dir))
+
+            worker.log_info.assert_called_once()
+            message = worker.log_info.call_args[0][0]
+            assert "fetched 8 samples" in message
+            assert "4 groups released" in message
+            assert "2 dropped" in message
+            assert "skip 2 prompts" in message
+
+    def test_skip_count_after_a_resume_counts_only_this_process(self):
+        """After a resume the skip count restarts from the reload.
+
+        A fresh process loads data.pt, fetches on, and saves again: the
+        log must count only what the new process fetched, dropped, and
+        buffered — not the samples the previous process consumed.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            first = self._make_worker(_cfg(rollout_batch_size=4))
+            buffer = first.buffer
+            buffer.num_samples_fetched = 8
+            for group_id in range(8):
+                buffer.issue_group(group_id)
+            for group_id in range(4):
+                buffer.record_result(
+                    _result(group_id), _result(group_id).group_metadata()
+                )
+            buffer.release_groups()
+            for group_id in (4, 5):
+                buffer.drop_group(
+                    group_id, "equal_reward", 1000, already_buffered=False
+                )
+            for group_id in (6, 7):
+                buffer.record_result(
+                    _result(group_id), _result(group_id).group_metadata()
+                )
+            asyncio.run(first.save_checkpoint(tmp_dir))
+            first.log_info.reset_mock()
+
+            # The reloaded worker: the dataloader fast-forwards past the
+            # first 8 samples, then this process fetches one more batch
+            # of 4. 2 groups are dropped, 2 are buffered.
+            second = self._make_worker(_cfg(rollout_batch_size=4))
+            asyncio.run(second.load_checkpoint(tmp_dir, start_step=1))
+            data_iter = iter(second.buffer.dataloader)
+            next(data_iter)
+            second.buffer.num_samples_fetched = 4
+            for group_id in range(4):
+                second.buffer.issue_group(group_id)
+            for group_id in (0, 1):
+                second.buffer.drop_group(
+                    group_id, "stale", 1000, already_buffered=False
+                )
+            for group_id in (2, 3):
+                second.buffer.record_result(
+                    _result(group_id), _result(group_id).group_metadata()
+                )
+
+            asyncio.run(second.save_checkpoint(tmp_dir))
+
+            message = second.log_info.call_args[0][0]
+            assert "fetched 4 samples" in message
+            assert "0 groups released" in message
+            assert "2 dropped" in message
+            assert "skip 2 prompts" in message
+
 
 class TestWorkerResident:
     """The worker's resident coroutines over fake channels."""
@@ -646,12 +736,19 @@ class TestWorkerResident:
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                # Budget spent; admission now waits on the event.
+                # Budget spent; admission now waits on the event. The
+                # second batch is already fetched (4 samples) but none
+                # of it is issued yet.
                 await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
+                assert worker.buffer.num_samples_fetched == 4
                 await worker.set_loaded_versions({0: 1, 1: 1})
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                # Third batch fetched once the budget is spent again.
+                await asyncio.sleep(0.05)
+                assert dataloader_channel._queue.empty()
+                assert worker.buffer.num_samples_fetched == 6
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)

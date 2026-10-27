@@ -74,6 +74,10 @@ class RolloutBuffer:
         self.sample_drop_counts: dict[int, int] = {}
         # Drops since the last release, by reason.
         self.drops_since_release: dict[str, int] = {}
+        # Dataset samples this process has taken from the dataloader,
+        # whether issued yet or not. A resume-relevant quantity, so it is
+        # a process-local counter rather than dataloader state.
+        self.num_samples_fetched = 0
         # Version of the release request waiting for a full batch.
         self.pending_release_version: Optional[int] = None
         self.next_group_id = 0
@@ -412,6 +416,7 @@ class RolloutBufferWorker(Worker):
         while True:
             batch = await self._next_batch()
             sample_indices = batch["idx"].tolist()
+            self.buffer.num_samples_fetched += len(sample_indices)
             # One request carries one group (one prompt): the agent loop
             # starts one task per request and groups complete
             # independently, so a finished group can be buffered as soon
@@ -541,11 +546,27 @@ class RolloutBufferWorker(Worker):
         """Write the dataloader state to `path/data.pt` atomically."""
         if self._pending_fetch is not None:
             await self._pending_fetch
+        state_dict = self.buffer.dataloader.state_dict()
+        dropped = sum(self.buffer.num_dropped_groups.values())
+        released = self.buffer.num_finished_groups - dropped - len(self.buffer.buffer)
+        # The dataloader runs ahead of training: a resume restores the
+        # weight checkpoint, so everything this process took beyond the
+        # released groups is skipped (in flight, buffered, or fetched
+        # but not yet issued). Dropped groups are subtracted: their
+        # prompts are never re-issued, resume or not.
+        skipped = self.buffer.num_samples_fetched - released - dropped
+        self.log_info(
+            f"RolloutBuffer checkpoint: fetched "
+            f"{self.buffer.num_samples_fetched} samples, {released} "
+            f"groups released to training, {dropped} dropped; a resume "
+            f"will skip {skipped} prompts that were issued ahead of the "
+            f"resume point."
+        )
         local_mkdir_safe(path)
         local_path = os.path.join(path, "data.pt")
         tmp_path = f"{local_path}.tmp"
         try:
-            torch.save(self.buffer.dataloader.state_dict(), tmp_path)
+            torch.save(state_dict, tmp_path)
             os.replace(tmp_path, local_path)
         except BaseException:
             if os.path.exists(tmp_path):
