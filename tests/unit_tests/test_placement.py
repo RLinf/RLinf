@@ -992,6 +992,64 @@ class TestSearchr1AsyncPauseModeDefaults:
         )
 
 
+class TestSearchr1AsyncBatchDivisibility:
+    """validate_searchr1_cfg: async runs need rollout_batch_size divisible
+    by the actor data-parallel size, or per-DP-rank takes leave groups
+    behind in rollout_channel."""
+
+    @staticmethod
+    def _make_cfg(rollout_batch_size):
+        cfg = DictConfig(
+            {
+                "runner": {"task_type": "reasoning", "async_mode": True},
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-7",
+                        "reward": "4-7",
+                    },
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": {"recompute_logprobs": False},
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {"rollout_batch_size": rollout_batch_size},
+            }
+        )
+        return cfg
+
+    def _validate(self, cfg, actor_dp_size):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        placement.actor_dp_size = actor_dp_size
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_indivisible_batch_size_is_rejected(self):
+        cfg = self._make_cfg(rollout_batch_size=6)
+        with pytest.raises(ValueError, match="divisible"):
+            self._validate(cfg, actor_dp_size=4)
+
+    def test_divisible_batch_size_passes(self):
+        cfg = self._validate(self._make_cfg(rollout_batch_size=8), actor_dp_size=4)
+        assert cfg.data.rollout_batch_size == 8
+
+
 class TestRolloutModelInstanceLayout:
     """Cross-node rollout layout.
 

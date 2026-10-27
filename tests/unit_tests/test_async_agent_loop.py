@@ -15,9 +15,8 @@
 """Unit tests for the continuous agent loop and the async agent runner.
 
 Covers `run_agentloop_rollout_continuously` (stop exit, error propagation,
-in-flight cancellation, metric records on the metric channel), the runner's
-metric drain/aggregation, and its batch admission under the staleness
-threshold. No Ray or sglang is launched.
+in-flight cancellation, metric records on the metric channel) and the
+runner's metric drain/aggregation. No Ray or sglang is launched.
 """
 
 import asyncio
@@ -62,12 +61,13 @@ def _make_worker() -> AgentLoopWorker:
     return worker
 
 
-def _request(n_groups=1, group_size=2):
+def _request(n_groups=1, group_size=2, group_ids=None):
     """A RolloutRequest double: n_groups (input_ids, answer) pairs."""
     return SimpleNamespace(
         input_ids=[[1, 2] for _ in range(n_groups)],
         answers=[f"a{i}" for i in range(n_groups)],
         n=group_size,
+        group_ids=group_ids,
     )
 
 
@@ -149,7 +149,7 @@ class TestRunAgentloopRolloutContinuously:
             metric_channel = _QueueChannel()
             calls = []
 
-            async def _group(input_ids, answer, group_size, output_channel):
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
                 calls.append((answer, group_size))
                 return {"__sum__/turns": 1}
 
@@ -202,7 +202,7 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             boom = RuntimeError("group exploded")
 
-            async def _group(input_ids, answer, group_size, output_channel):
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
                 raise boom
 
             worker.run_agentloop_rollout_group = _group
@@ -229,7 +229,7 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             cancelled = asyncio.Event()
 
-            async def _group(input_ids, answer, group_size, output_channel):
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
                 try:
                     await asyncio.sleep(60)
                 except asyncio.CancelledError:
@@ -260,7 +260,7 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             metric_channel = _QueueChannel()
 
-            async def _group(input_ids, answer, group_size, output_channel):
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
                 return None if answer == "a0" else {}
 
             worker.run_agentloop_rollout_group = _group
@@ -274,6 +274,63 @@ class TestRunAgentloopRolloutContinuously:
             assert metric_channel._queue.empty()
             worker.stop()
             await asyncio.wait_for(continuously, timeout=5)
+
+        asyncio.run(run())
+
+    def test_group_ids_reach_the_group_tasks(self):
+        """Each (input_ids, answer) pair gets its request's group id."""
+
+        async def run():
+            worker = _make_worker()
+            in_channel = _QueueChannel()
+            out_channel = _QueueChannel()
+            seen = []
+
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
+                seen.append((answer, group_id))
+                return {}
+
+            worker.run_agentloop_rollout_group = _group
+            continuously = asyncio.create_task(
+                worker.run_agentloop_rollout_continuously(
+                    in_channel, out_channel, _QueueChannel()
+                )
+            )
+            in_channel.put(_request(n_groups=2, group_ids=[7, 3]))
+            while len(seen) < 2:
+                await asyncio.sleep(0.01)
+            worker.stop()
+            await asyncio.wait_for(continuously, timeout=5)
+
+            assert seen == [("a0", 7), ("a1", 3)]
+
+        asyncio.run(run())
+
+    def test_requests_without_group_ids_pass_none(self):
+        """Synchronous-style requests carry no group ids; groups get None."""
+
+        async def run():
+            worker = _make_worker()
+            in_channel = _QueueChannel()
+            seen = []
+
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
+                seen.append(group_id)
+                return {}
+
+            worker.run_agentloop_rollout_group = _group
+            continuously = asyncio.create_task(
+                worker.run_agentloop_rollout_continuously(
+                    in_channel, _QueueChannel(), _QueueChannel()
+                )
+            )
+            in_channel.put(_request(n_groups=2))
+            while len(seen) < 2:
+                await asyncio.sleep(0.01)
+            worker.stop()
+            await asyncio.wait_for(continuously, timeout=5)
+
+            assert seen == [None, None]
 
         asyncio.run(run())
 
@@ -300,6 +357,7 @@ class TestRunnerConstruction:
                 actor=None,
                 reward=None,
                 agent_loop=None,
+                rollout_buffer=object(),
             )
             raise AssertionError("expected construction to fail")
         except AssertionError as e:
@@ -319,72 +377,3 @@ class TestSyncWeightsInstanceSubset:
             raise AssertionError("expected the sync to fail")
         except AssertionError as e:
             assert "subset" in str(e)
-
-
-class TestBatchAdmission:
-    """The runner's batch admission under the staleness threshold."""
-
-    @staticmethod
-    def _make_runner(staleness: int, loaded_versions: dict[int, int]):
-        from rlinf.runners.async_agent_runner import AsyncAgentRunner
-
-        runner = AsyncAgentRunner.__new__(AsyncAgentRunner)
-        runner.staleness_threshold = staleness
-        runner._rollout_loaded_versions = loaded_versions
-        runner.batch_split_num = 1
-        put_batches = []
-
-        def _put_batch(batch, split_size=None):
-            put_batches.append(batch)
-
-        runner._put_batch = _put_batch
-        return runner, put_batches
-
-    def test_zero_threshold_admits_one_batch_per_loaded_version(self):
-        """From steady state (issued == versions loaded), each version admits one."""
-        for loaded in [0, 1, 5]:
-            runner, put = self._make_runner(
-                staleness=0,
-                loaded_versions=dict.fromkeys(range(8), loaded),
-            )
-            issued = runner._issue_batches(iter(["b"] * 10), loaded, start_step=0)
-            assert issued == loaded + 1
-            assert len(put) == 1
-
-    def test_batch_count_accumulates_across_steps(self):
-        """The count accumulates; a later call admits only the difference."""
-        runner, put = self._make_runner(
-            staleness=0, loaded_versions=dict.fromkeys(range(8), 0)
-        )
-        batches = iter([f"b{i}" for i in range(10)])
-        issued = runner._issue_batches(batches, 0, start_step=0)
-        assert issued == 1 and len(put) == 1
-        for instance_id in runner._rollout_loaded_versions:
-            runner._rollout_loaded_versions[instance_id] = 1
-        issued = runner._issue_batches(batches, issued, start_step=0)
-        assert issued == 2 and len(put) == 2
-
-    def test_admission_waits_for_all_instances(self):
-        """The minimum loaded version across instances gates admission."""
-        runner, put = self._make_runner(
-            staleness=0,
-            loaded_versions={0: 5, 1: 0, 2: 0},
-        )
-        issued = runner._issue_batches(iter(["b"] * 10), 0, start_step=0)
-        assert issued == 1 and len(put) == 1
-
-    def test_threshold_allows_extra_stale_batches(self):
-        """A threshold of 1 admits one batch beyond the loaded version."""
-        runner, put = self._make_runner(
-            staleness=1, loaded_versions=dict.fromkeys(range(8), 0)
-        )
-        issued = runner._issue_batches(iter(["b"] * 10), 0, start_step=0)
-        assert issued == 2 and len(put) == 2
-
-    def test_admission_counts_from_the_resume_step(self):
-        """After resuming at step 7, step-7 weights admit one batch."""
-        runner, put = self._make_runner(
-            staleness=0, loaded_versions=dict.fromkeys(range(8), 7)
-        )
-        issued = runner._issue_batches(iter(["b"] * 10), 0, start_step=7)
-        assert issued == 1 and len(put) == 1

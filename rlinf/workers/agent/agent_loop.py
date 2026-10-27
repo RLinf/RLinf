@@ -256,6 +256,7 @@ class AgentLoopWorker(Worker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        group_id: Optional[int] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -268,6 +269,8 @@ class AgentLoopWorker(Worker):
 
         task_results = await asyncio.gather(*rollout_tasks)
         rollout_result = self.get_rollout_result(task_results, answer)
+        if group_id is not None:
+            rollout_result.group_id = group_id
         await output_channel.put(rollout_result, async_op=True).async_wait()
 
     async def run_agentloop_rollout(
@@ -337,10 +340,14 @@ class AgentLoopWorker(Worker):
         try:
             while True:
                 request = await input_channel.get(async_op=True).async_wait()
-                for input_ids, answer in zip(request.input_ids, request.answers):
+                group_ids = request.group_ids
+                for index, (input_ids, answer) in enumerate(
+                    zip(request.input_ids, request.answers)
+                ):
+                    group_id = group_ids[index] if group_ids is not None else None
                     task = asyncio.create_task(
                         self.run_agentloop_rollout_group(
-                            input_ids, answer, request.n, output_channel
+                            input_ids, answer, request.n, output_channel, group_id
                         )
                     )
                     task.add_done_callback(self._on_group_done)
@@ -597,6 +604,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        group_id: Optional[int] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -606,6 +614,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
             output_channel: Channel to output results
+            group_id: Id of the query group, carried on the result so the
+                receiver can route it; None in synchronous training.
         """
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
@@ -620,6 +630,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
         extra_fields = self.gen_extra_fields(task_results, answer)
         rollout_result = self.get_rollout_result(task_results, *extra_fields)
+        if group_id is not None:
+            rollout_result.group_id = group_id
         agent_metrics = self.get_rollout_metrics(rollout_result)
 
         await output_channel.put(rollout_result, async_op=True).async_wait()

@@ -1658,6 +1658,17 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 f"rollout.pause_mode must be one of in_place/retract/drain, "
                 f"found {cfg.rollout.pause_mode!r}."
             )
+        if cfg.data.get("rollout_batch_size", None) is not None:
+            actor_dp_size = component_placement.actor_dp_size
+            if cfg.data.rollout_batch_size % actor_dp_size != 0:
+                raise ValueError(
+                    f"data.rollout_batch_size ({cfg.data.rollout_batch_size}) "
+                    f"must be divisible by the actor data-parallel size "
+                    f"({actor_dp_size}): each DP rank takes "
+                    f"rollout_batch_size // {actor_dp_size} groups per step, "
+                    "and a remainder would leave groups behind in "
+                    "rollout_channel to be picked up by the next step."
+                )
         if cfg.rollout.pause_mode == "in_place":
             logging.warning(
                 "rollout.pause_mode=in_place keeps the prefix cache across "

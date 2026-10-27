@@ -360,7 +360,7 @@ class TestIdleStats:
             started = asyncio.Event()
             release = asyncio.Event()
 
-            async def _group(input_ids, answer, group_size, output_channel):
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
                 started.set()
                 await release.wait()
                 return {}
@@ -407,12 +407,13 @@ class _QueueChannel:
         return mock.MagicMock(async_wait=_wait)
 
 
-def _request(n_groups=1, group_size=2):
+def _request(n_groups=1, group_size=2, group_ids=None):
     """A RolloutRequest double: n_groups (input_ids, answer) pairs."""
     return SimpleNamespace(
         input_ids=[[1, 2] for _ in range(n_groups)],
         answers=[f"a{i}" for i in range(n_groups)],
         n=group_size,
+        group_ids=group_ids,
     )
 
 
