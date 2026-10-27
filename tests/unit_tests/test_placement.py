@@ -14,6 +14,7 @@
 
 import os
 import sys
+from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
@@ -814,6 +815,116 @@ class TestModelParallelComponentPlacement:
         cluster = create_fake_cluster(num_nodes=5, accelerators_per_node=2)
         with pytest.raises(AssertionError, match="Auto scheduler does not support"):
             ModelParallelComponentPlacement(config, cluster)
+
+
+class TestDisaggregatedMultiAgentPlacement:
+    """AS0 disaggregated layout for the multi-agent (searchr1) actor:
+    2x8, actor 0-7 / rollout 8-15, rollout tp1."""
+
+    def _make_config(self):
+        return DictConfig(
+            {
+                "cluster": {
+                    "num_nodes": 2,
+                    "component_placement": {
+                        "actor": "0-7",
+                        "rollout": "8-15",
+                        "reward": "8-15",
+                    },
+                },
+                "actor": {
+                    "model": {
+                        "tensor_model_parallel_size": 1,
+                        "context_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                    }
+                },
+                "rollout": {
+                    "tensor_parallel_size": 1,
+                    "pipeline_parallel_size": 1,
+                },
+            }
+        )
+
+    def test_disaggregated_2x8_layout(self):
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(self._make_config(), cluster)
+
+        assert placement.is_disaggregated
+        assert placement.actor_world_size == 8
+        assert placement.rollout_world_size == 8
+        assert placement.rollout_num_model_instances == 8
+
+    def test_actor_to_rollout_push_targets(self):
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(self._make_config(), cluster)
+
+        # Disaggregated mode: each actor rank all-gathers its TP group and
+        # slices for its target rollout ranks. With actor_tp=1 / rollout_tp=1
+        # and equal world sizes, actor rank r pushes to rollout rank r.
+        from rlinf.workers.rollout.utils import RankMapper
+
+        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(placement)
+        assert len(rank_map) == 8
+        for actor_rank in range(8):
+            assert rank_map[actor_rank] == [(actor_rank, 0)]
+
+
+class TestSearchr1DisaggregatedValidation:
+    """validate_searchr1_cfg: the Megatron MA actor may run disaggregated,
+    the FSDP one may not."""
+
+    @staticmethod
+    def _make_cfg(training_backend):
+        return DictConfig(
+            {
+                "runner": {"task_type": "reasoning"},
+                "cluster": {
+                    "num_nodes": 2,
+                    "component_placement": {
+                        "actor": "0-7",
+                        "rollout": "8-15",
+                        "reward": "8-15",
+                    },
+                },
+                "actor": {
+                    "training_backend": training_backend,
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": {"recompute_logprobs": False},
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {},
+            }
+        )
+
+    def test_megatron_backend_allows_disaggregated(self):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = False
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            cfg_mod.validate_searchr1_cfg(self._make_cfg("megatron"))
+
+    def test_fsdp_backend_rejects_disaggregated(self):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = False
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            with pytest.raises(ValueError, match="collocated"):
+                cfg_mod.validate_searchr1_cfg(self._make_cfg("fsdp"))
 
 
 class TestRolloutModelInstanceLayout:

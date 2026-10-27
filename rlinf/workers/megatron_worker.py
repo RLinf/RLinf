@@ -180,15 +180,6 @@ class MegatronWorker(MegatronModelManager, Worker):
                 self.cfg.algorithm.down_sampling.down_sampling_config
             )
 
-        # Config validation
-        if self.is_pipeline:
-            assert not self.enable_dp_load_balance, (
-                "DP load balance is not supported in pipeline mode."
-            )
-            assert not self.cfg.runner.enable_dynamic_batch_size, (
-                "Dynamic batch size is not supported in pipeline mode."
-            )
-
         self.use_profiler = self.role_cfg.megatron.use_profiler
         if self.use_profiler:
             self.init_profiler()
@@ -801,8 +792,18 @@ class MegatronWorker(MegatronModelManager, Worker):
 
         return rollout_metrics, training_metrics_list
 
+    def _check_pipeline_training_config(self):
+        """Assert the config restrictions of the pipeline code paths."""
+        assert not self.enable_dp_load_balance, (
+            "DP load balance is not supported in pipeline mode."
+        )
+        assert not self.cfg.runner.enable_dynamic_batch_size, (
+            "Dynamic batch size is not supported in pipeline mode."
+        )
+
     def run_training_pipeline(self, input_channel: Channel):
         """Run the training loop for the actor."""
+        self._check_pipeline_training_config()
         self.scheduler_pre_process()
         self._load_weight_and_optimizer()
         self._training_setup()
@@ -1201,6 +1202,8 @@ class MegatronWorker(MegatronModelManager, Worker):
             compute_ref_logprobs: Whether to compute reference logprobs.
             do_offload: Whether offload weights after inference done
         """
+        if self.is_pipeline:
+            self._check_pipeline_training_config()
         inference_split = self.role_cfg.get("inference_split", None)
         if inference_split is None:
             if not self.is_pipeline:
