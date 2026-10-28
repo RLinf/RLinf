@@ -4,10 +4,10 @@ Configuration Reference
 .. note::
 
    This page describes configs for the generic embodied eval entry,
-   ``eval_embodied_agent.py``. SuperMimic eval configs
-   (``evaluations/supermimic/``) are read by their own entry,
-   ``eval_supermimic.py``: each composes its training config with
-   ``supermimic_eval_common.yaml``, takes the checkpoint from
+   ``eval_embodied_agent.py``. SuperMimic motion and velocity configs
+   (``evaluations/supermimic/``) are read by ``eval_supermimic.py``, and push
+   recovery by ``eval_supermimic_push.py``. Each composes its training config
+   with ``supermimic_eval_common.yaml``, takes the checkpoint from
    ``eval.checkpoint`` and the results folder from ``eval.output_dir``, has no
    ``rollout`` or ``env.eval`` section, and does not need
    ``runner.task_type: embodied_eval``. The required-field and

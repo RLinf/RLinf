@@ -428,7 +428,7 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 评测
 ----
 
-``evaluations/eval_supermimic.py`` 只从检查点加载网络，单卡运行，不需要 Ray。``evaluations/run_eval.sh`` 看到 ``supermimic_`` 开头的配置名就会调用它，所以 ``run_eval.sh supermimic_lafan1_eval`` 和 ``run_eval.sh supermimic supermimic_lafan1_eval`` 等价。RLinf 通用评测配置里的 ``rollout.model.model_path``、``runner.task_type: embodied_eval`` 等字段对 SuperMimic 不适用；它用 ``eval.checkpoint`` 指定检查点。
+``evaluations/eval_supermimic.py`` 只从检查点加载网络，单卡运行，不需要 Ray。``evaluations/run_eval.sh`` 看到 ``supermimic_`` 开头的配置名就会调用它，所以 ``run_eval.sh supermimic_lafan1_eval`` 和 ``run_eval.sh supermimic supermimic_lafan1_eval`` 等价。``supermimic_push_recovery`` 改用 ``evaluations/eval_supermimic_push.py``。RLinf 通用评测配置里的 ``rollout.model.model_path``、``runner.task_type: embodied_eval`` 等字段对 SuperMimic 不适用；它用 ``eval.checkpoint`` 指定检查点。
 
 ``eval.checkpoint`` 可以是一个 ``global_step_<N>`` 目录，也可以是装着多个检查点的目录（如 ``log_path/<experiment_name>``），后者选最新的完整检查点。评测配置与训练配置的对应关系：
 
@@ -484,7 +484,23 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 * ``g2``\ （速度评测配置的默认值）运行附录 G.2 阶跃测试：在 (vx, vy)、(vx, wz)、(vy, wz) 三个平面上各取 15 × 15 网格，去掉站立命令，共 672 条命令，每条 4 次试验，从 mjlab 的站立姿态开始执行 5 s。每次试验的值是最后 2 s 平均速度误差的范数除以命令范数；每条命令报告没有摔倒的试验的中位数；4 次都摔倒的命令没有数值（CSV 里是 NaN，``summary.json`` 里是 ``null``），计入 ``eval_velocity_g2/commands_all_trials_fell``。论文没有说明试验之间什么不同，本实现让仿真上下文和初始关节噪声各不相同。结果写到 ``velocity_g2.csv``，汇总指标以 ``eval_velocity_g2/`` 为前缀。
 * ``smoke`` 从参考起点开始保持 7 条固定命令，写出 ``velocity_smoke.csv``，汇总指标以 ``eval_velocity_smoke/`` 为前缀。它只检查速度编码器能跑通，不是论文指标。
 
-也可以用 ``runner.only_eval=true runner.resume_dir=<检查点>`` 走训练入口评测，此时用训练配置的环境数，结果只记在日志里。设置了 ``runner.val_check_interval`` 时，训练每隔这么多次更新评测一次，最后一次更新后也会评测。
+**静止站立姿态推力恢复。** 论文 §4.3 要求静态 T-pose。本入口的协议是 stationary standing-pose push recovery，不把它当作论文的 T-pose 协议。``evaluations/run_eval.sh supermimic_push_recovery`` 调用 ``evaluations/eval_supermimic_push.py``，单卡、不需要 Ray，用已有跟踪检查点，不重新训练。参考在整个评测里保持同一个站立姿态，Goal 不会换成走路。
+
+论文规定的是：仿真中保持静态 T-pose，施加 0.5–4 m/s 的速度推力；带 critic 的策略在 0.5–2.4 s 内稳定，无 critic 的策略在 0.5 m/s 时持续踉跄、在 4 m/s 时摔倒。论文没有公布 T-pose 的关节角、区间内的速度网格、方向、坐标系、试验次数、推力前的等待，也没有公布“稳定”的数值门槛。本实现固定使用 mjlab 的屈膝关键帧 ``KNEES_BENT_KEYFRAME``，与 ``q0`` 和 ``reset_standing`` 相同。正运动学下，每侧手腕相对同侧 ``shoulder_roll_link`` 约在前方 0.10 m、外侧 0.07 m、下方 0.31 m；肩 roll 为 ±0.2 rad，肘为 0.6 rad，双臂垂在身侧而不是水平张开。资产里只有 ``HOME_KEYFRAME`` 和 ``KNEES_BENT_KEYFRAME``，MJCF 没有 keyframe；关节角全 0 时前臂朝前约 0.20 m、低于肩约 0.19 m，侧向几乎为 0，也不是 T-pose。论文没有公布 T-pose 关节角，所以这里不另造一套水平臂姿态并把它叫成论文姿态。默认速度是 0.5、1、2、4 m/s，每种 4 次，这些数字是本实现的选择。``eval.direction=random`` 在水平面随机取方向，也可以写成 ``eval.direction=[1.0,0.0]``。``eval.frame`` 取 ``world`` 或 ``heading``。``eval.push_mode=add`` 把该水平速度加到当前世界系根线速度上，``set`` 替换 xy 并保留 z。写入 MuJoCo Warp 的根速度后调用 ``forward``，这一步不积分；下一步 ``step`` 才使用新速度。这次写入不改根位置、角速度和关节状态。
+
+跌倒沿用训练的 ``failure_signals``：相对这份静止参考，高度误差超过 0.25 m 或倾角误差超过 0.8 即摔倒。下面几项是本实现的约定。推力之后要同时满足：根水平速度不超过 ``eval.speed_threshold``\ （默认 0.15 m/s），根倾角差不超过 ``eval.tilt_threshold``\ （默认 0.35），躯干朝向误差不超过 ``eval.torso_ori_threshold``\ （默认 0.5 rad），并且连续保持 ``eval.stable_seconds``\ （默认 0.5 s）。``eval.max_xy_drift`` 默认是 ``null``，不要求回到原来的水平位置。``recovery_time_s`` 从推力施加时刻算到稳定窗口结束的那个控制步；``stable_onset_time_s`` 是这个窗口的第一帧。没有恢复的试次把时间留空，不写成 0。推力之前摔倒、关节越限或状态非有限，记为 ``initialization_failed``，不计入推力后的跌倒率。``eval.settle_seconds``\ （默认 1 s）和 ``eval.max_seconds``\ （默认 5 s）也是本实现的等待和截止，不是论文里的 0.5–2.4 s。
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_push_recovery \
+       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1 \
+       eval.output_dir=/data/runs/lafan1/push_recovery
+
+``summary.json`` 按速度给出试验数、恢复率、跌倒率、超时率，以及成功试次的平均和中位恢复时间；某一档没有成功试次时，恢复时间是 ``null``。``per_trial.csv`` 每次一行，包含方向、读回的速度增量、结果和原因。``eval.save_trajectory=true`` 时另写 ``trajectory.csv``。锚点、730 维 Goal 或 99 维观测的检查点需要在命令里覆盖对应的 ``algorithm`` 字段，使它和检查点一致。
+
+在一张 8 GB 的 RTX 4060 上，用只更新了 3 步的检查点跑过 0.5 m/s 和 1 m/s 各 1 次，推力前 0.4 s、之后最多 0.8 s，世界系 +x。两次都在推力前站住，读回的水平速度增量分别是 0.5 m/s 和 1.0 m/s，随后按训练的跌倒条件摔倒，恢复时间为空。这只说明评测链路能跑完。这次用的是上述屈膝站立姿态，不能说明策略达到论文 T-pose 协议的恢复性能。
+
+也可以用 ``runner.only_eval=true runner.resume_dir=<检查点>`` 走训练入口评测，此时用训练配置的环境数，结果只记在日志里。设置了 ``runner.val_check_interval`` 时，训练每隔这么多次更新评测一次，最后一次更新后也会评测。动作和速度评测走这条路径；推力恢复只走上面的独立入口。
 
 可视化与结果
 ------------
@@ -549,4 +565,4 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 * 双卡小规模训练走真实 NCCL：两次运行的 ``train/param_divergence`` 都是 0，两边计数逐项相等，两个 rank 的检查点都完整。全局规模是 64 个环境、256 条想象 rollout，不是论文双卡配方。同样规模的速度配置短训练也完成了。
 * 同样的双卡规模上，短期学习信号跑了 12 次更新。指标有限、计数单调。归一化回报从 0.001892 到 0.001893，失败率保持为 1。这是单种子、短预算，不能据此说 policy 学会了跟踪。
 
-尚未运行：论文规模训练（单卡 4096 个环境，以及论文双卡配方）、多节点、Slurm、BONES-SEED 真实数据，以及长到可以对照论文指标的训练。因此本页还没有学习曲线和论文指标的对照，长时间训练完成后再补充。
+尚未运行：论文规模训练（单卡 4096 个环境，以及论文双卡配方）、多节点、Slurm、BONES-SEED 真实数据、论文 §4.3 的 T-pose 恢复性能（当前入口是静止站立姿态，不能代替该项），以及长到可以对照论文指标的训练。因此本页还没有学习曲线和论文指标的对照，长时间训练完成后再补充。

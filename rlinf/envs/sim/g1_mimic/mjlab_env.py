@@ -228,6 +228,47 @@ class MjlabG1Env:
         )
         self.sim.forward()
 
+    def apply_horizontal_velocity_push(
+        self,
+        env_ids: torch.Tensor,
+        delta_xy_world: torch.Tensor,
+        mode: str = "add",
+    ) -> torch.Tensor:
+        """Write a horizontal root-velocity push into MuJoCo Warp.
+
+        ``delta_xy_world`` is an xy velocity in the world frame, in m/s.
+        ``add`` adds it to the current world linear velocity. ``set`` replaces
+        the xy components and keeps the vertical component. Root position,
+        world angular velocity, and joint state are not written. ``forward``
+        refreshes derived velocities and does not integrate; the next
+        ``step`` is what integrates the new ``qvel``.
+        """
+        if mode not in {"add", "set"}:
+            raise ValueError(f"push mode must be add or set, got {mode!r}")
+        env_ids = env_ids.to(device=self.device, dtype=torch.long).reshape(-1)
+        delta = delta_xy_world.to(device=self.device, dtype=self.dtype)
+        if delta.shape != (int(env_ids.shape[0]), 2):
+            raise ValueError(
+                f"delta_xy_world must be [{int(env_ids.shape[0])}, 2], "
+                f"got {tuple(delta.shape)}"
+            )
+        if not torch.isfinite(delta).all():
+            raise ValueError("push velocity is not finite")
+        linear = self.robot.data.root_link_lin_vel_w[env_ids].clone()
+        angular = self.robot.data.root_link_ang_vel_w[env_ids].clone()
+        if mode == "add":
+            linear[:, 0] = linear[:, 0] + delta[:, 0]
+            linear[:, 1] = linear[:, 1] + delta[:, 1]
+        else:
+            linear[:, 0] = delta[:, 0]
+            linear[:, 1] = delta[:, 1]
+        self.robot.write_root_link_velocity_to_sim(
+            torch.cat((linear, angular), dim=-1), env_ids
+        )
+        self.sim.forward()
+        self.state = self._read_state()
+        return self.state
+
     def _read_state(self) -> torch.Tensor:
         quat = self.robot.data.root_link_quat_w
         ang_b = _rotate_inverse(quat, self.robot.data.root_link_ang_vel_w)

@@ -83,10 +83,11 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
    * - :doc:`SuperMimic <../examples/embodied/supermimic>`
-     - G1 motion and velocity tracking. Uses its own entry,
-       ``evaluations/eval_supermimic.py`` (run by ``run_eval.sh supermimic_*``),
-       on one GPU without Ray, with the checkpoint given by
-       ``eval.checkpoint``; see the Evaluate section of that page.
+     - G1 motion tracking, velocity tracking, and push recovery. Motion and
+       velocity use ``evaluations/eval_supermimic.py``; push recovery uses
+       ``evaluations/eval_supermimic_push.py``. ``run_eval.sh supermimic_*``
+       selects the entry, on one GPU without Ray, with the checkpoint given
+       by ``eval.checkpoint``. See the Evaluate section of that page.
 
 Reference
 ---------

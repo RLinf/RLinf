@@ -83,7 +83,7 @@ Benchmark 指南
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
    * - :doc:`SuperMimic <../examples/embodied/supermimic>`
-     - G1 动作与速度跟踪。使用专用入口 ``evaluations/eval_supermimic.py``\ （``run_eval.sh supermimic_*`` 自动调用），单卡、不需要 Ray，用 ``eval.checkpoint`` 指定检查点；流程见该页的“评测”一节。
+     - G1 动作、速度跟踪和推力恢复。动作与速度用 ``evaluations/eval_supermimic.py``，推力恢复用 ``evaluations/eval_supermimic_push.py``。``run_eval.sh supermimic_*`` 会选对应入口，单卡、不需要 Ray，用 ``eval.checkpoint`` 指定检查点；流程见该页的“评测”一节。
 
 参考
 ----

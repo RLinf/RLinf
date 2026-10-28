@@ -626,7 +626,9 @@ Evaluate
 evaluates on one GPU without Ray. ``evaluations/run_eval.sh`` runs it for any
 config name that starts with ``supermimic_``, so
 ``run_eval.sh supermimic_lafan1_eval`` and
-``run_eval.sh supermimic supermimic_lafan1_eval`` are the same. Fields of
+``run_eval.sh supermimic supermimic_lafan1_eval`` are the same.
+``supermimic_push_recovery`` uses ``evaluations/eval_supermimic_push.py``
+instead. Fields of
 RLinf's generic eval configs such as ``rollout.model.model_path`` and
 ``runner.task_type: embodied_eval`` do not apply; SuperMimic takes the
 checkpoint from ``eval.checkpoint``.
@@ -717,10 +719,85 @@ unplayed part in the denominator and :math:`\mathrm{NR}_i \le 1`.
   ``eval_velocity_smoke/`` prefix. It checks that the velocity encoder runs;
   it is not a paper metric.
 
+**Stationary standing-pose push recovery.** Paper §4.3 holds a static
+T-pose. This entry is a different protocol and does not claim to reproduce
+that T-pose. ``evaluations/run_eval.sh supermimic_push_recovery`` runs
+``evaluations/eval_supermimic_push.py`` on one GPU without Ray. It loads
+an existing tracking checkpoint and does not train. The reference stays
+one standing pose for the whole trial, so the goal does not switch to a
+walk.
+
+The paper specifies a static T-pose in simulation and velocity pushes of
+0.5–4 m/s. The critic policy settles in 0.5–2.4 s; the critic-free policy
+keeps stumbling at 0.5 m/s and falls at 4 m/s. It does not publish the
+T-pose joint angles, the speed grid, the direction, the frame, the trial
+count, the pre-push wait, or a numerical definition of "settles". This
+implementation holds mjlab's knees-bent keyframe, ``KNEES_BENT_KEYFRAME``,
+the same pose as ``q0`` and ``reset_standing``. Forward kinematics puts
+each wrist about 0.10 m forward, 0.07 m outward, and 0.31 m below its
+``shoulder_roll_link``. Shoulder roll is ±0.2 rad and each elbow is 0.6
+rad, so both arms hang beside the torso. The asset has only
+``HOME_KEYFRAME`` and ``KNEES_BENT_KEYFRAME``, and the MJCF has no
+keyframe. With every joint at zero the forearm points about 0.20 m forward
+and 0.19 m below the shoulder, with almost no lateral offset, so that rest
+pose is not a T-pose either. Because the paper does not publish the joint
+angles, this code does not invent a horizontal-arm pose and call it the
+paper pose. The default speeds are 0.5, 1, 2, and 4 m/s, four trials each;
+that grid is this implementation's choice. ``eval.direction=random`` draws
+a horizontal direction, or pass ``eval.direction=[1.0,0.0]``.
+``eval.frame`` is ``world`` or ``heading``. ``eval.push_mode=add`` adds
+that horizontal velocity to the current world-frame root linear velocity;
+``set`` replaces xy and keeps z. The write goes into MuJoCo Warp's root
+velocity and ``forward`` refreshes derived state without integrating. The
+next ``step`` integrates it. The write does not change root position,
+angular velocity, or joint state.
+
+A fall is the training ``failure_signals`` test against this static
+reference: height error above 0.25 m or tilt error above 0.8. The settle
+test is this implementation's. After the push the root's horizontal speed
+must stay within ``eval.speed_threshold`` (default 0.15 m/s), the root tilt
+within ``eval.tilt_threshold`` (default 0.35), and the torso orientation
+error within ``eval.torso_ori_threshold`` (default 0.5 rad), for
+``eval.stable_seconds`` (default 0.5 s) without a break.
+``eval.max_xy_drift`` defaults to ``null`` and does not require a return to
+the original horizontal position. ``recovery_time_s`` runs from the push to
+the control step that completes the stable window;
+``stable_onset_time_s`` is that window's first frame. A trial that does not
+recover leaves the time blank rather than zero. A fall, a joint-limit
+violation, or a non-finite state before the push is
+``initialization_failed`` and is left out of the post-push fall rate.
+``eval.settle_seconds`` (default 1 s) and ``eval.max_seconds`` (default
+5 s) are this implementation's wait and cutoff, not the paper's 0.5–2.4 s.
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_push_recovery \
+       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1 \
+       eval.output_dir=/data/runs/lafan1/push_recovery
+
+``summary.json`` reports, per speed, the trial count, recovery rate, fall
+rate, timeout rate, and the mean and median recovery time of the trials
+that recovered. A speed with no recovery has a ``null`` recovery time.
+``per_trial.csv`` has one row per trial, including the direction, the
+measured velocity change, the outcome, and the reason.
+``eval.save_trajectory=true`` also writes ``trajectory.csv``. An anchor,
+730-d goal, or 99-d observation checkpoint needs matching ``algorithm``
+overrides on the command line.
+
+On an 8 GB RTX 4060, a checkpoint from 3 updates was run at 0.5 m/s and
+1 m/s, one trial each, with 0.4 s before the push and at most 0.8 s after
+it, world +x. Both trials were standing when pushed. The measured
+horizontal speed changes were 0.5 m/s and 1.0 m/s. Both then fell under
+the training fall test, and the recovery times were empty. That shows the
+evaluator runs on the knees-bent standing pose. It does not show recovery
+under the paper's T-pose protocol.
+
 ``runner.only_eval=true runner.resume_dir=<checkpoint>`` evaluates through
 the training entry instead, using the training config's environment count;
 the results go to the logs only. With ``runner.val_check_interval`` set,
-training evaluates every that many updates and after the last one.
+training evaluates every that many updates and after the last one. Motion
+and velocity evaluation can use that path. Push recovery uses only the
+entry above.
 
 Visualization and Results
 -------------------------
@@ -854,7 +931,8 @@ passed:
   short budget do not show that the policy learned to track.
 
 Not yet run: paper-scale training (4096 environments on one GPU, and the
-paper's two-GPU recipe), multiple nodes, Slurm, real BONES-SEED data, and a
-run long enough to compare with the paper's metrics. This page therefore
-still has no learning curves or paper comparison; those will be added after
-a long run.
+paper's two-GPU recipe), multiple nodes, Slurm, real BONES-SEED data,
+paper §4.3 T-pose recovery (this entry is a standing pose and does not
+stand in for that result), and a run long enough to compare with the
+paper's metrics. This page therefore still has no learning curves or paper
+comparison; those will be added after a long run.

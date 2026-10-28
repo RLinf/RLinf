@@ -53,7 +53,10 @@ Supported Benchmark Prefixes
 - ``supermimic_*`` → supermimic. This prefix switches to its own entry,
   ``evaluations/eval_supermimic.py`` (one GPU, no Ray). The checkpoint comes
   from ``eval.checkpoint`` and results go to ``eval.output_dir``; fields such
-  as ``rollout.model.model_path`` below do not apply:
+  as ``rollout.model.model_path`` below do not apply.
+  ``supermimic_push_recovery`` uses ``evaluations/eval_supermimic_push.py``
+  instead. The protocol is in the Evaluate section of
+  :doc:`SuperMimic <../../examples/embodied/supermimic>`:
 
   .. code-block:: bash
 

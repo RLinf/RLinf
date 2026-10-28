@@ -187,6 +187,7 @@ jobs:
               - 'examples/embodiment/slurm_supermimic.sh'
               - 'examples/embodiment/config/supermimic*.yaml'
               - 'evaluations/eval_supermimic.py'
+              - 'evaluations/eval_supermimic_push.py'
               - 'evaluations/supermimic/**'
               - 'toolkits/supermimic/**'
               - 'requirements/embodied/envs/supermimic.txt'
