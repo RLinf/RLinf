@@ -1540,3 +1540,115 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+_FASTWAM_NPU_PATCHES = "rlinf.models.embodiment.fastwam.npu_patches"
+
+
+@pytest.fixture
+def fastwam_npu_ops(monkeypatch) -> ModuleType:
+    """Load torch-only operators without importing the upstream FastWAM package."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "rlinf/models/embodiment/fastwam/npu_patches.py"
+    )
+    spec = importlib.util.spec_from_file_location(_FASTWAM_NPU_PATCHES, path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, _FASTWAM_NPU_PATCHES, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_fastwam_rope_matches_complex_forward_and_backward(fastwam_npu_ops):
+    """Match the upstream complex rotation for action and video token layouts."""
+    ops = fastwam_npu_ops
+    torch.manual_seed(42)
+    for frames, height, width, dims in ((7, 1, 1, (128,)), (3, 4, 5, (44, 42, 42))):
+        real_tables, complex_tables = [], []
+        for axis, dim in enumerate(dims):
+            length = (frames, height, width)[axis]
+            angles = torch.outer(
+                torch.arange(length, dtype=torch.float64),
+                10000 ** (-torch.arange(0, dim, 2, dtype=torch.float64) / dim),
+            )
+            shape = [1, 1, 1, -1]
+            shape[axis] = length
+            real_tables.append(
+                ops.precompute_freqs_real(dim, length)
+                .view(shape)
+                .expand(frames, height, width, -1)
+            )
+            complex_tables.append(
+                torch.polar(torch.ones_like(angles), angles)
+                .view(shape)
+                .expand(frames, height, width, -1)
+            )
+        sequence = frames * height * width
+        freqs = torch.cat(real_tables, dim=-1).reshape(sequence, 1, -1)
+        rotations = torch.cat(complex_tables, dim=-1).reshape(sequence, 1, -1)
+        assert freqs.dtype == torch.float32
+        x = torch.randn(2, sequence, 256, requires_grad=True)
+        reference_x = x.detach().clone().requires_grad_()
+        pairs = torch.view_as_complex(
+            reference_x.double().reshape(2, sequence, 2, 64, 2)
+        )
+        expected = torch.view_as_real(pairs * rotations).reshape_as(x).float()
+        actual = ops.rope_apply_real(x, freqs, 2)
+        torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
+        grad = torch.randn_like(x)
+        actual.backward(grad)
+        expected.backward(grad)
+        torch.testing.assert_close(x.grad, reference_x.grad, atol=1e-6, rtol=1e-5)
+
+
+def test_fastwam_time_embedding_matches_fp64_reference(fastwam_npu_ops):
+    position = torch.tensor([0.0, 17.0, 999.0])
+    angles = torch.outer(
+        position.double(),
+        10000 ** (-torch.arange(128, dtype=torch.float64) / 128),
+    )
+    expected = torch.cat((angles.cos(), angles.sin()), dim=1).float()
+    actual = fastwam_npu_ops.sinusoidal_embedding_1d(256, position)
+    assert actual.dtype == position.dtype
+    assert actual.device == position.device
+    torch.testing.assert_close(actual, expected, atol=1e-4, rtol=0)
+
+
+def test_fastwam_fused_operators_forward_and_backward(fastwam_npu_ops):
+    """Check the production BF16 RoPE and RMSNorm kernels against PyTorch."""
+    import os
+
+    device = os.environ.get("FASTWAM_TEST_DEVICE", "cpu")
+    if not device.startswith("npu"):
+        pytest.skip("Fused operators require FASTWAM_TEST_DEVICE=npu:<id>")
+    ops = fastwam_npu_ops
+    torch.manual_seed(7)
+    x = torch.randn(
+        2, 19, 3072, device=device, dtype=torch.bfloat16, requires_grad=True
+    )
+    freqs = ops.precompute_freqs_real(128, 19).to(device)
+    actual = ops.rope_apply_fused(x, freqs, 24)
+    expected = ops.rope_apply_real(x, freqs, 24)
+    grad = torch.randn_like(x)
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(
+        torch.autograd.grad(actual, x, grad)[0],
+        torch.autograd.grad(expected, x, grad)[0],
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+    norm = SimpleNamespace(
+        weight=torch.randn_like(x[0, 0], requires_grad=True), eps=1e-6
+    )
+    expected = (
+        x.float() * torch.rsqrt(x.float().square().mean(-1, keepdim=True) + norm.eps)
+    ).to(x.dtype) * norm.weight
+    actual = ops.npu_rmsnorm_forward(norm, x)
+    actual_grads = torch.autograd.grad(actual, (x, norm.weight), grad)
+    expected_grads = torch.autograd.grad(expected, (x, norm.weight), grad)
+    for got, reference in zip((actual, *actual_grads), (expected, *expected_grads)):
+        assert torch.isfinite(got).all()
+        error = (got.float() - reference.float()).norm()
+        scale = reference.float().norm().clamp_min(1e-8)
+        assert error / scale < 0.015

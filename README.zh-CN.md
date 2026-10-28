@@ -316,6 +316,7 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 | [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
 | [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
 | [DreamZero](docs/source-zh/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — |
+| [FastWAM](docs/source-zh/rst_source/examples/embodied/sft_fastwam.rst#sft-fastwam-hardware) | LIBERO（SFT · 评测） | ✅ | ✅ | — | — |
 
 ### 智能体强化学习
 
