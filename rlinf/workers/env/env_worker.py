@@ -402,8 +402,8 @@ class EnvWorker(Worker):
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """Execute a chunk and build environment output and LeRobot payload.
 
-        ``obs_list`` in the payload stays post-action. The caller prepends the
-        observation from before this chunk when a valid-action mask is present.
+        ``obs_list`` in the payload stays post-action. The caller snapshots the
+        observation from before this chunk for LeRobot action pairing.
         """
         exec_actions = prepare_actions(
             raw_chunk_actions=chunk_actions["raw_actions"]
@@ -1138,26 +1138,17 @@ class EnvWorker(Worker):
                     actions = self._recv_actions(input_channel, stage_id)
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
+                    if self.enable_online_lerobot:
+                        # Snapshot before stepping; environments may reuse obs buffers.
+                        initial_observation = clone_nested_to_cpu(
+                            env_outputs[stage_id].obs
+                        )
                     env_output, env_info, chunk_step_data = self.env_interact_step(
                         actions,
                         stage_id,
                     )
-
-                    # LeRobot stores the observation from before each action.
-                    # The env returns the frame after each action, so prepend the
-                    # frame sent to the policy and drop the last post-action frame.
-                    if (
-                        self.enable_online_lerobot
-                        and chunk_step_data.get("valid_action_mask") is not None
-                    ):
-                        post_action_obs = chunk_step_data["obs_list"]
-                        if not isinstance(post_action_obs, (list, tuple)):
-                            post_action_obs = [post_action_obs]
-                        chunk_step_data["obs_list"] = [
-                            env_outputs[stage_id].obs,
-                            *post_action_obs[:-1],
-                        ]
-
+                    if self.enable_online_lerobot:
+                        chunk_step_data["initial_observation"] = initial_observation
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)
 

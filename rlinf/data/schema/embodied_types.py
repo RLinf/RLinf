@@ -1114,7 +1114,7 @@ class LeRobotStep:
 
     # Environment index in [0, B).
     env_index: int
-    # Observation associated with the executed action; environment-specific.
+    # Post-action observation, before auto-reset; environment-specific.
     observation: Any
     # Metadata for the same step after selecting this environment.
     info: Any
@@ -1126,8 +1126,6 @@ class LeRobotStep:
     truncated: bool
     # Auto-reset observation for the next episode, if returned in the same step.
     reset_observation: Any | None = None
-    # Metadata accompanying ``reset_observation``.
-    reset_info: Any | None = None
     # Terminal metadata reported after a shortened action chunk.
     completion_info: Any | None = None
 
@@ -1165,9 +1163,7 @@ class LeRobotChunk:
     # Policy-side expert masks, bool [B, C].
     intervention_flags: np.ndarray | None
     # Valid leading action slots, bool [B, C], or ``None`` for full chunks.
-    # When present (even if all True), observations are pre-action and aligned
-    # with actions; otherwise the legacy post-action convention applies.
-    # Completion metadata is carried separately from these observations.
+    # Completion metadata for shortened chunks is carried separately.
     valid_action_mask: np.ndarray | None
     # Number of parallel environments represented by the leading batch B.
     num_envs: int
@@ -1276,8 +1272,8 @@ class LeRobotChunk:
             )
         done = terminated or truncated
 
-        # Masked chunks already carry pre-action observations; replacing them
-        # with terminal post-action observations would misalign action pairs.
+        # A shortened chunk's last observation is the next pre-action state;
+        # completion metadata carries its terminal outcome separately.
         has_final_observation = (
             self.valid_action_mask is None
             and isinstance(step_info, dict)
@@ -1292,7 +1288,6 @@ class LeRobotChunk:
             reset_observation = self._slice_env(
                 step_observation, env_index, self.num_envs
             )
-            reset_info = self._slice_env(info_without_reset, env_index, self.num_envs)
         else:
             observation = self._slice_env(step_observation, env_index, self.num_envs)
             info = self._slice_env(step_info, env_index, self.num_envs)
@@ -1301,7 +1296,6 @@ class LeRobotChunk:
                 info.pop("final_observation", None)
                 info.pop("final_info", None)
             reset_observation = None
-            reset_info = None
         completion_info = (
             self._completion_info(env_index)
             if self.valid_action_mask is not None and done
@@ -1319,7 +1313,6 @@ class LeRobotChunk:
             terminated=terminated,
             truncated=truncated,
             reset_observation=reset_observation,
-            reset_info=reset_info,
             completion_info=completion_info,
         )
 
@@ -1970,14 +1963,24 @@ def split_episode_data(
     return [
         {
             "chunk_actions": chunk_actions,
+            "initial_observation": initial_observation,
             "obs_list": obs_list,
             "terminations": terminations,
             "truncations": truncations,
             "infos_list": infos_list,
             "valid_action_mask": valid_action_mask,
         }
-        for chunk_actions, obs_list, terminations, truncations, infos_list, valid_action_mask in zip(
+        for (
+            chunk_actions,
+            initial_observation,
+            obs_list,
+            terminations,
+            truncations,
+            infos_list,
+            valid_action_mask,
+        ) in zip(
             split_batch_value(data["chunk_actions"], split_sizes),
+            split_batch_value(data["initial_observation"], split_sizes),
             split_steps(data["obs_list"]),
             split_batch_value(data["terminations"], split_sizes),
             split_batch_value(data["truncations"], split_sizes),
@@ -2000,6 +2003,9 @@ def merge_episode_data(data: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "chunk_actions": merge_batch_values([value["chunk_actions"] for value in data]),
+        "initial_observation": merge_batch_values(
+            [value["initial_observation"] for value in data]
+        ),
         "obs_list": merge_steps([value["obs_list"] for value in data]),
         "terminations": merge_batch_values([value["terminations"] for value in data]),
         "truncations": merge_batch_values([value["truncations"] for value in data]),
