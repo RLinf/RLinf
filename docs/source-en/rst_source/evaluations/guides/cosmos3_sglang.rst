@@ -68,6 +68,23 @@ Then run:
 
 **What this command does:** launches one Cosmos3 SGLang server per GPU, starts the LIBERO environment for evaluation, prints per-episode success/failure, and summarizes the success rate at the end. Logs are written to ``logs/<timestamp>-<config>/eval_embodiment.log``.
 
+Use a Running Action Server
+----------------------------------------
+
+You can point the evaluation at action servers that are already running, on this machine or another, served by any engine that implements ``POST /v1/actions/generations`` with the msgpack request and response described above. The driver then launches and stops no server:
+
+.. code-block:: bash
+
+   export ACTION_SERVER_KEY=...   # only when the server checks a bearer token
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang \
+     rollout.sglang.launch_server=false \
+     'rollout.sglang.server_urls=[http://10.0.0.5:8000]' \
+     rollout.sglang.api_key_env=ACTION_SERVER_KEY
+
+**What this command does:** rollout worker ``i`` posts to ``server_urls[i % len(server_urls)]`` and sends ``Authorization: Bearer $ACTION_SERVER_KEY`` with every request. Export the key in the shell that runs the command; the cluster passes it to the rollout workers. Set ``rollout.sglang.server.batching_max_size`` to the largest batch the running server accepts, since the adapter still splits requests by it.
+
+Every request carries ``parameters.seeds``, one seed per environment row in request order, next to the single ``parameters.seed``. The seeds are ``rollout.sglang.seed`` plus an offset that differs for every environment, and they stay the same from one step to the next, so a server that draws noise per row gives each environment its own noise and the evaluation replays exactly.
+
 Key Configuration
 ----------------------------------------
 
@@ -95,6 +112,10 @@ Key Configuration
      - Largest number of environments the server batches in one request (example 8). The adapter splits each prompt group into chunks of this size; left unset it follows SGLang's default of 1, one request per environment.
    * - ``rollout.sglang.http_timeout_s``
      - HTTP timeout; diffusion inference is slow, recommend ``600``.
+   * - ``rollout.sglang.server_urls``
+     - Base URLs of running action servers; set together with ``launch_server: false``. ``null`` launches servers instead.
+   * - ``rollout.sglang.api_key_env``
+     - Name of the environment variable that holds a bearer token for the servers; ``null`` sends no ``Authorization`` header.
    * - ``env.eval.total_num_envs``
      - Number of parallel environments; adjust by GPU / memory.
 

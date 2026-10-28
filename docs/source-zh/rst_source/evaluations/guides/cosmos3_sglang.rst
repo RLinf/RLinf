@@ -68,6 +68,23 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 
 每张 GPU 起一个 Cosmos3 SGLang server，逐 episode 打印成功与否，最后汇总成功率；日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
 
+使用已在运行的动作服务
+----------------------------------------
+
+评测可以直接连接已经在运行的动作服务（本机或其他机器均可），服务端可以是任意实现了 ``POST /v1/actions/generations``、并使用上文 msgpack 请求与响应格式的推理引擎。此时 driver 不启动、也不关闭任何 server：
+
+.. code-block:: bash
+
+   export ACTION_SERVER_KEY=...   # 仅当服务校验 bearer token 时需要
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang \
+     rollout.sglang.launch_server=false \
+     'rollout.sglang.server_urls=[http://10.0.0.5:8000]' \
+     rollout.sglang.api_key_env=ACTION_SERVER_KEY
+
+**命令说明：** 第 ``i`` 个 rollout worker 向 ``server_urls[i % len(server_urls)]`` 发请求，每个请求都带 ``Authorization: Bearer $ACTION_SERVER_KEY``。在运行命令的 shell 中 export 该变量即可，集群会把它传给 rollout worker。``rollout.sglang.server.batching_max_size`` 请设为该服务单次能接受的最大 batch，adapter 仍按它切分请求。
+
+每个请求都带 ``parameters.seeds``：按请求中的行顺序，每个环境一个 seed，与单个 ``parameters.seed`` 并存。seed 取 ``rollout.sglang.seed`` 加上每个环境各不相同的偏移，且各步之间保持不变；按行采样噪声的服务因此能给每个环境不同的噪声，评测也能精确复现。
+
 关键配置
 ----------------------------------------
 
@@ -95,6 +112,10 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
      - 单次请求中 server 最多批处理的环境数（示例为 8）。adapter 按该值切分每个 prompt 分组；不设置时采用 SGLang 默认值 1，即每个环境单独一次请求。
    * - ``rollout.sglang.http_timeout_s``
      - HTTP 超时；扩散推理慢，建议 ``600``。
+   * - ``rollout.sglang.server_urls``
+     - 已在运行的动作服务的 base URL 列表，需同时设置 ``launch_server: false``；为 ``null`` 时由 driver 启动 server。
+   * - ``rollout.sglang.api_key_env``
+     - 存放服务 bearer token 的环境变量名；为 ``null`` 时不发送 ``Authorization`` 头。
    * - ``env.eval.total_num_envs``
      - 并行环境数，按 GPU / 显存调整。
 

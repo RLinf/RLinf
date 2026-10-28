@@ -594,3 +594,89 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_http_client_sends_arrays_and_auth_in_the_action_wire_format(
+    action_servers,
+):
+    import numpy as np
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    server = action_servers()
+    server.reply = lambda body: {
+        "data": [
+            {
+                "input_index": 0,
+                "action": {
+                    "values": {
+                        b"__ndarray__": True,
+                        b"data": np.arange(4, dtype="<f4").tobytes(),
+                        b"dtype": "<f4",
+                        b"shape": [2, 2],
+                    }
+                },
+            }
+        ],
+        "latency": {"__npgeneric__": True, "data": 0.5, "dtype": "<f8"},
+    }
+    client = InferenceHTTPClient(server.url, headers={"Authorization": "Bearer secret"})
+
+    response = client.post(
+        server.path,
+        {"input": {"images": torch.ones(2, 3, dtype=torch.uint8)}, "seed": 7},
+        msgpack=True,
+    )
+
+    headers, body = server.requests[0]
+    assert headers["Authorization"] == "Bearer secret"
+    assert body["seed"] == 7
+    images = body["input"]["images"]
+    assert images[b"__ndarray__"] is True
+    assert (images[b"dtype"], images[b"shape"]) == ("|u1", [2, 3])
+    assert images[b"data"] == bytes([1] * 6)
+    values = response["data"][0]["action"]["values"]
+    np.testing.assert_array_equal(values, np.arange(4, dtype="<f4").reshape(2, 2))
+    assert response["latency"] == np.float64(0.5)
+
+
+def test_http_client_retries_only_transient_server_errors(action_servers):
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    server = action_servers()
+    server.statuses = [503, 502]
+    client = InferenceHTTPClient(server.url)
+
+    assert client.post(server.path, {}, msgpack=True, max_retries=2) == {"data": []}
+    assert len(server.requests) == 3
+
+    server.statuses = [503, 503]
+    with pytest.raises(RuntimeError, match="status=503"):
+        client.post(server.path, {}, msgpack=True, max_retries=1)
+
+    server.requests.clear()
+    server.statuses = [400]
+    with pytest.raises(RuntimeError, match="status=400, body=server busy"):
+        client.post(server.path, {}, msgpack=True, max_retries=3)
+    assert len(server.requests) == 1
+
+
+def test_http_client_rejects_a_response_that_is_not_msgpack(action_servers):
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    server = action_servers()
+    server.content_type = "application/json"
+
+    with pytest.raises(RuntimeError, match="expected a msgpack response"):
+        InferenceHTTPClient(server.url).post(server.path, {}, msgpack=True)
+
+
+def test_http_client_gives_up_on_an_unreachable_server(action_servers):
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    server = action_servers()
+    url = server.url
+    server.close()
+
+    with pytest.raises(RuntimeError, match="failed after 2 attempt"):
+        InferenceHTTPClient(url).post("/v1/actions/generations", {}, max_retries=1)

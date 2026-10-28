@@ -18,7 +18,8 @@ server, no in-worker subprocess).
 
 Used by embodied sglang-convert-action models (e.g. DreamZero). The eval driver
 launches the ``sglang serve`` server group via
-:func:`launch_sglang_router_and_server` and pushes the server URLs to each
+:func:`launch_sglang_router_and_server`, or takes the running servers listed in
+``rollout.sglang.server_urls``, and pushes the server URLs to each
 rollout worker via :meth:`set_sglang_server_urls`; the worker picks the URL
 at its own rank (for N-server parallel throughput), loads the sglang action converter
 registered for ``rollout.model.model_type``, and is driven by
@@ -27,6 +28,7 @@ host its own HTTP server (the agent path uses
 :class:`SGLangAgentWorkerWithHTTPServer`).
 """
 
+import os
 from typing import Any, Literal, Optional
 
 import torch
@@ -99,27 +101,45 @@ class SGLangEmbodiedWorker(Worker):
         self._init_sglang_server()
         from rlinf.utils.http_client import InferenceHTTPClient
 
-        self.http_client = InferenceHTTPClient(self.sglang_server_url)
         sglang_cfg = self.cfg.rollout.get("sglang", {})
+        self.http_client = InferenceHTTPClient(
+            self.sglang_server_url, headers=self._auth_headers(sglang_cfg)
+        )
         self._http_timeout_s = float(
             sglang_cfg.get("http_timeout_s", sglang_cfg.get("timeout_s", 120.0))
         )
         self._http_max_retries = int(sglang_cfg.get("http_max_retries", 5))
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
+        self._seed = int(sglang_cfg.get("seed", 1140))
         self.sglang_adapter = adapter_cls(self.cfg, self._rank)
 
+    @staticmethod
+    def _auth_headers(sglang_cfg: DictConfig) -> dict[str, str]:
+        """Return the bearer header named by ``rollout.sglang.api_key_env``."""
+        api_key_env = sglang_cfg.get("api_key_env", None)
+        if not api_key_env:
+            return {}
+        api_key = os.environ.get(api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                f"rollout.sglang.api_key_env is {api_key_env!r}, but that "
+                "environment variable is unset or empty in the rollout worker; "
+                "export it in the shell that starts the eval."
+            )
+        return {"Authorization": f"Bearer {api_key}"}
+
     def set_sglang_server_urls(self, urls) -> None:
-        """Receive the sglang server URLs the driver launched."""
+        """Receive the server URLs the driver launched or was configured with."""
         self._sglang_server_urls = list(urls)
 
     def _init_sglang_server(self) -> None:
-        """Pick the pre-launched sglang server URL assigned to this rank."""
+        """Pick the server URL assigned to this rank."""
         urls = self._sglang_server_urls
         if not urls:
             raise RuntimeError(
                 "sglang server URLs not set; the eval driver must call "
-                "rollout_group.set_sglang_server_urls(urls) (after "
-                "launch_sglang_router_and_server) before init_workers()."
+                "rollout_group.set_sglang_server_urls(urls) with the launched "
+                "servers or rollout.sglang.server_urls before init_workers()."
             )
         self.sglang_server_url = urls[int(self._rank) % len(urls)]
         self.log_info(
@@ -163,19 +183,24 @@ class SGLangEmbodiedWorker(Worker):
 
         Owns the sglang HTTP round-trip: the adapter builds the request
         payload and parses the response; this worker performs the msgpack POST.
-        Adapters with ``request_groups`` get one request per env group.
+        Adapters with ``request_groups`` get one request per env group. Each
+        request carries ``parameters.seeds``, one seed per env row in request
+        order; see :meth:`_row_seeds`.
         """
         from rlinf.models.embodiment.sglang_adapter import (
             gather_env_rows,
             select_env_rows,
         )
 
+        seeds = self._row_seeds(env_obs)
         request_groups = getattr(self.sglang_adapter, "request_groups", None)
         groups = request_groups(env_obs) if request_groups is not None else None
         if groups is None or len(groups) <= 1:
-            return self._request_actions(env_obs, mode)
+            return self._request_actions(env_obs, mode, seeds)
         outputs = [
-            self._request_actions(select_env_rows(env_obs, group), mode)
+            self._request_actions(
+                select_env_rows(env_obs, group), mode, [seeds[i] for i in group]
+            )
             for group in groups
         ]
         order = [index for group in groups for index in group]
@@ -183,11 +208,26 @@ class SGLangEmbodiedWorker(Worker):
         info = gather_env_rows([info for _, info in outputs], order)
         return actions, info
 
+    def _row_seeds(self, env_obs: dict[str, Any]) -> list[int]:
+        """Return one seed per env row, distinct across rows, stages and ranks.
+
+        The seeds stay the same from one chunk step to the next, as the single
+        ``rollout.sglang.seed`` does, so an eval replays exactly.
+        """
+        num_rows = infer_obs_batch_size(env_obs)
+        stage_id = int(env_obs.get("_rlinf_stage_id", 0))
+        first = self._seed + (stage_id * self._world_size + self._rank) * num_rows
+        return list(range(first, first + num_rows))
+
     def _request_actions(
-        self, env_obs: dict[str, Any], mode: Literal["train", "eval"]
+        self,
+        env_obs: dict[str, Any],
+        mode: Literal["train", "eval"],
+        seeds: list[int],
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         adapter = self.sglang_adapter
         payload, state = adapter.build_request(env_obs, mode=mode)
+        payload.setdefault("parameters", {})["seeds"] = seeds
         resp = self.http_client.post(
             adapter.action_path,
             payload,

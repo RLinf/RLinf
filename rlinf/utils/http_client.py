@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 import aiohttp
+import numpy as np
 import requests
 
 _PROXY_ENV_VARS = (
@@ -32,6 +33,65 @@ _PROXY_ENV_VARS = (
     "HTTPS_PROXY",
     "ALL_PROXY",
 )
+
+
+def _encode_numpy(value: Any) -> Any:
+    if isinstance(value, (np.ndarray, np.generic)) and value.dtype.kind in "VOc":
+        raise TypeError(f"Cannot msgpack-encode numpy dtype {value.dtype}.")
+    if isinstance(value, np.ndarray):
+        return {
+            b"__ndarray__": True,
+            b"data": value.tobytes(),
+            b"dtype": value.dtype.str,
+            b"shape": value.shape,
+        }
+    if isinstance(value, np.generic):
+        return {
+            b"__npgeneric__": True,
+            b"data": value.item(),
+            b"dtype": value.dtype.str,
+        }
+    raise TypeError(f"Cannot msgpack-encode {type(value).__name__}.")
+
+
+def _decode_numpy(value: dict) -> Any:
+    def field(name: str) -> Any:
+        # Servers may send the marker keys as bytes or as str.
+        return value.get(name, value.get(name.encode()))
+
+    if field("__ndarray__"):
+        array = np.frombuffer(field("data"), dtype=np.dtype(field("dtype")))
+        return array.reshape(field("shape"))
+    if field("__npgeneric__"):
+        return np.dtype(field("dtype")).type(field("data"))
+    return value
+
+
+def pack_msgpack(payload: Any) -> bytes:
+    """Encode ``payload`` for a msgpack action endpoint.
+
+    A numpy array travels as a map ``{"__ndarray__": True, "data": <raw bytes>,
+    "dtype": <numpy dtype str>, "shape": [...]}`` and a numpy scalar as
+    ``{"__npgeneric__": True, "data": <value>, "dtype": <numpy dtype str>}``,
+    with the marker keys written as msgpack bin, the encoding the
+    ``/v1/actions/generations`` servers use.
+
+    Args:
+        payload: Plain Python values, numpy arrays and numpy scalars.
+
+    Returns:
+        The msgpack bytes.
+    """
+    import msgpack
+
+    return msgpack.packb(payload, default=_encode_numpy, use_bin_type=True)
+
+
+def unpack_msgpack(payload: bytes) -> Any:
+    """Decode bytes written by :func:`pack_msgpack` or a msgpack action server."""
+    import msgpack
+
+    return msgpack.unpackb(payload, object_hook=_decode_numpy, raw=False)
 
 
 @contextmanager
@@ -85,10 +145,21 @@ class InferenceHTTPClient:
         base_url: str,
         connect_timeout: float = 10.0,
         max_connections: int = 1024 * 16,
+        headers: Optional[Mapping[str, str]] = None,
     ):
+        """Create a client for one server base URL.
+
+        Args:
+            base_url: Server base URL, e.g. ``http://host:30000``.
+            connect_timeout: Seconds allowed for the TCP connect phase.
+            max_connections: Ceiling on concurrent async connections.
+            headers: Extra headers sent with every request, such as
+                ``Authorization``.
+        """
         self.base_url = base_url.rstrip("/")
         self.connect_timeout = connect_timeout
         self.max_connections = max_connections
+        self.headers = dict(headers or {})
         self._session: Optional[aiohttp.ClientSession] = None
 
     # ------------------------------------------------------------------
@@ -119,6 +190,7 @@ class InferenceHTTPClient:
         try:
             r = requests.get(
                 f"{self.base_url}/health",
+                headers=self.headers,
                 timeout=5,
                 proxies={"http": None, "https": None},
             )
@@ -174,7 +246,9 @@ class InferenceHTTPClient:
                 limit_per_host=0,
                 enable_cleanup_closed=True,
             )
-            self._session = aiohttp.ClientSession(connector=connector)
+            self._session = aiohttp.ClientSession(
+                connector=connector, headers=self.headers
+            )
         return self._session
 
     async def aclose(self) -> None:
@@ -222,40 +296,28 @@ class InferenceHTTPClient:
         """POST ``body`` to ``path`` and return the decoded response dict.
 
         JSON by default. With ``msgpack=True`` the body (including torch tensors
-        / numpy arrays) is serialized with the sglang msgpack codec and the
-        response is msgpack-decoded; transient 5xx / connection errors are then
-        retried with linear backoff. Proxies are always stripped. Heavy deps
-        (sglang codec, torch, tianshou) are imported lazily so this module stays
-        importable without them.
+        / numpy arrays) is serialized with :func:`pack_msgpack` and the
+        response is decoded with :func:`unpack_msgpack`. Transient 5xx and
+        connection errors are retried with linear backoff up to
+        ``max_retries`` times. Proxies are always stripped. Heavy deps
+        (torch, tianshou) are imported lazily so this module stays importable
+        without them.
         """
         url = f"{self.base_url}{path}"
         retries = max(0, int(max_retries))
         retry_statuses = {500, 502, 503, 504}
         if msgpack:
-            # 0.5.17+: sglang renamed vla/ -> action/; support both for
-            # compatibility with older sglang forks.
-
-            try:
-                from sglang.multimodal_gen.runtime.entrypoints.action.protocol import (
-                    pack_msgpack,
-                    unpack_msgpack,
-                )
-            except ImportError:
-                from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-                    pack_msgpack,
-                    unpack_msgpack,
-                )
-
             ct = "application/msgpack"
             request_kwargs = {
                 "data": pack_msgpack(self._to_msgpackable(body)),
-                "headers": {"Content-Type": ct, "Accept": ct},
+                "headers": {**self.headers, "Content-Type": ct, "Accept": ct},
                 "timeout": timeout_s,
             }
         else:
             # (connect, read) tuple: bound the TCP connect phase only.
             request_kwargs = {
                 "json": body,
+                "headers": self.headers,
                 "timeout": (self.connect_timeout, timeout_s),
             }
 
