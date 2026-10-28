@@ -1,0 +1,20 @@
+env_type: robolab
+total_num_envs: 1
+auto_reset: false
+ignore_terminations: false
+seed: 0
+group_size: 1
+max_steps_per_rollout_epoch: 750
+max_episode_steps: 750
+video_cfg:
+  save_video: false
+  video_base_dir: ./logs/robolab/video
+init_params:
+  task: BananaInBowlTask
+  device: cuda:0
+  output_dir: ./logs/robolab_native/BananaInBowlTask
+  instruction_type: null
+  renderer: realtime
+  kit_args: "--/renderer/multiGpu/enabled=false --/plugins/carb.tasking.plugin/threadCount=8 --/plugins/omni.tbb.globalcontrol/maxThreadCount=8"
+  rendering_mode: null
+  enable_subtask: true

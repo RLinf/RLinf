@@ -58,6 +58,7 @@ def posemb_sincos(
     embedding_dim: int,
     min_period: float = 4e-3,
     max_period: float = 4.0,
+    pytorch_numerics: bool = False,
 ) -> torch.Tensor:
     """Sine-cosine positional embedding for scalar positions.
 
@@ -72,7 +73,11 @@ def posemb_sincos(
         raise ValueError(f"embedding_dim ({embedding_dim}) must be divisible by 2")
 
     fraction = torch.linspace(
-        0.0, 1.0, embedding_dim // 2, device=pos.device, dtype=torch.float32
+        0.0,
+        1.0,
+        embedding_dim // 2,
+        device=pos.device,
+        dtype=torch.float64 if pytorch_numerics else torch.float32,
     )
     period = min_period * (max_period / min_period) ** fraction
     sinusoid_input = torch.einsum("i,j->ij", pos.float(), 1.0 / period * 2 * torch.pi)
@@ -115,6 +120,7 @@ class Pi0(model.BaseModel):
             embed_dtype=config.dtype,
             adarms=adarms,
             use_gradient_checkpointing=False,
+            pytorch_numerics=config.pytorch_numerics,
         )
 
         # SigLIP vision encoder
@@ -123,6 +129,7 @@ class Pi0(model.BaseModel):
             pool_type="none",
             num_classes=paligemma_config.width,
             use_gradient_checkpointing=False,
+            pytorch_numerics=config.pytorch_numerics,
             dtype_mm=config.dtype,
         )
 
@@ -290,7 +297,11 @@ class Pi0(model.BaseModel):
 
         # Time embedding
         time_emb = posemb_sincos(
-            timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0
+            timestep,
+            self.action_in_proj.out_features,
+            min_period=4e-3,
+            max_period=4.0,
+            pytorch_numerics=self._config.pytorch_numerics,
         )
 
         if self.pi05:
@@ -553,10 +564,17 @@ class Pi0(model.BaseModel):
 
         x_t = noise
         t = 1.0
+        if self._config.pytorch_numerics:
+            t = torch.tensor(t, device=device, dtype=torch.float32)
+            dt = torch.tensor(dt, device=device, dtype=torch.float32)
 
         # Euler integration
         while t >= -dt / 2:
-            t_tensor = torch.full((B,), t, device=device, dtype=torch.float32)
+            t_tensor = (
+                t.expand(B)
+                if self._config.pytorch_numerics
+                else torch.full((B,), t, device=device, dtype=torch.float32)
+            )
             suffix_out_act = self.run_suffix(
                 observation, x_t, t_tensor, kv_cache, prefix_mask
             )

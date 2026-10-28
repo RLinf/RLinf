@@ -148,6 +148,18 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/robolab.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png"
+            alt="RoboLab manipulation benchmark"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/robolab.html" style="text-decoration: underline; color: blue;">
+           <b>Evaluate on RoboLab</b>
+         </a><br>
+         120 DROID manipulation tasks · pi0.5 evaluation
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/polaris.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -199,6 +211,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
    PolaRiS <embodied/polaris>
+   RoboLab <embodied/robolab>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
    Real-World Simulator <embodied/real_simulator>

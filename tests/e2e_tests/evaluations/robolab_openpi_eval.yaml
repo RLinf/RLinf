@@ -1,0 +1,27 @@
+defaults:
+  - pi05_droid_jointpos
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:EVALUATIONS_PATH}/robolab
+    - file://${oc.env:EMBODIED_PATH}/config
+
+runner:
+  logger:
+    log_path: ./logs/robolab_openpi_eval
+    experiment_name: robolab_openpi_eval
+
+env:
+  eval:
+    total_num_envs: 2
+    rollout_epoch: 1
+    max_episode_steps: 300
+    max_steps_per_rollout_epoch: 300
+    init_params:
+      task: BowlStackingLeftOnRightTask
+      output_dir: ./logs/robolab_openpi_eval/native
+
+rollout:
+  model:
+    model_path: /workspace/dataset/RLinf-Pi05-RoboLab-droid-jointpos

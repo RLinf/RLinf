@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "robolab")
 
 #=======================Utility Functions=======================
 
@@ -1055,6 +1055,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        robolab) env_torch="2.7.1" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -2584,6 +2585,13 @@ EOF
             install_polaris_env
             uv pip install "rlinf-openpi==0.1.1"
             ;;
+        robolab)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_robolab_env
+            uv pip uninstall -y transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -3214,6 +3222,9 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        robolab)
+            install_robolab_env
+            ;;
         libero|maniskill_libero)
             install_common_embodied_deps
             install_${ENV_NAME}_env
@@ -3513,6 +3524,29 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_robolab_env() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "RoboLab requires NVIDIA Isaac Sim; platform '$PLATFORM' is unsupported." >&2
+        exit 1
+    fi
+
+    local robolab_dir
+    robolab_dir=$(clone_or_reuse_repo ROBOLAB_PATH "$VENV_DIR/robolab" https://github.com/NVlabs/RoboLab.git)
+    if [ -z "${ROBOLAB_PATH:-}" ]; then
+        git -C "$robolab_dir" checkout b6cfcf6ccd2113c4cd1216d35b33024a7d5691da
+    fi
+    export OMNI_KIT_ACCEPT_EULA=YES
+
+    uv pip install "setuptools<82" wheel
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    pushd "$robolab_dir" >/dev/null
+    uv pip install -e ".[isaac50]"
+    popd >/dev/null
+    uv pip install openpi-client
+
+    python -c "import isaacsim"
 }
 
 install_isaaclab_env() {

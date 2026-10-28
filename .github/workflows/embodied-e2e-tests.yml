@@ -2080,6 +2080,78 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-robolab-eval-test:
+    runs-on: embodied
+    timeout-minutes: 90
+    env:
+      OMNI_KIT_ACCEPT_EULA: "YES"
+      JAX_PLATFORMS: cpu
+      OMP_NUM_THREADS: "4"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openpi --env robolab
+
+      - name: Download RoboLab checkpoint
+        run: |
+          source .venv/bin/activate
+          hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos \
+            --local-dir /workspace/dataset/RLinf-Pi05-RoboLab-droid-jointpos
+
+      - name: RoboLab OpenPI Pi05 evaluation
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          rm -rf logs/robolab_openpi_eval
+          mkdir -p logs/robolab_openpi_eval
+          bash tests/e2e_tests/evaluations/run.sh robolab_openpi_eval \
+            2>&1 | tee logs/robolab_openpi_eval/console.log
+          python tests/e2e_tests/evaluations/check_robolab_results.py \
+            --log-dir logs/robolab_openpi_eval --num-envs 2 \
+            --rollout-epochs 1 --max-episode-steps 300
+
+      - name: RoboLab truncation and reset evaluation
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          rm -rf logs/robolab_openpi_truncation_eval
+          mkdir -p logs/robolab_openpi_truncation_eval
+          bash tests/e2e_tests/evaluations/run.sh robolab_openpi_truncation_eval \
+            2>&1 | tee logs/robolab_openpi_truncation_eval/console.log
+          python tests/e2e_tests/evaluations/check_robolab_results.py \
+            --log-dir logs/robolab_openpi_truncation_eval --num-envs 2 \
+            --rollout-epochs 2 --max-episode-steps 17
+
+      - name: Upload RoboLab evaluation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robolab-openpi-eval-logs
+          path: |
+            logs/robolab_openpi*/**/*.log
+            logs/robolab_openpi*/**/*.json
+            logs/robolab_openpi*/**/events.out.tfevents.*
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-molmoact2-libero-eval-test:
     runs-on: embodied
     steps:

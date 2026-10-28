@@ -49,6 +49,7 @@ infer_benchmark() {
         robocasa_*|robocasa-* ) echo "robocasa" ;;
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
+        robolab_*|robolab-*|pi05_droid_jointpos ) echo "robolab" ;;
         * )
             echo "unknown"
             ;;
@@ -138,6 +139,7 @@ run_mani_ood_eval() {
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <benchmark> <config_name> [hydra_overrides...]" >&2
     echo "   or: $0 <config_name> [hydra_overrides...]" >&2
+    echo "   or: $0 robolab pi05_droid_jointpos [hydra_overrides...]" >&2
     echo "   or: $0 mani-ood [config_name]  (requires EVAL_NAME, CKPT_PATH, TOTAL_NUM_ENVS, EVAL_ROLLOUT_EPOCH)" >&2
     exit 1
 fi
@@ -170,7 +172,7 @@ if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then
     echo "Config not found under evaluations/${BENCHMARK}, fallback to ${CONFIG_PATH}"
 fi
 
-if [ "${BENCHMARK}" != "realworld" ]; then
+if [ "${BENCHMARK}" != "realworld" ] && [ "${BENCHMARK}" != "robolab" ]; then
     setup_sim_env
 fi
 

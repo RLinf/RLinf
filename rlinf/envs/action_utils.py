@@ -433,6 +433,10 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.ROBOLAB:
+        chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32).copy()
+        if _is_openpi_family(model_type):
+            chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).astype(np.float32)
     else:
         chunk_actions = raw_chunk_actions
 
