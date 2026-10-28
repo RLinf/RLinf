@@ -40,6 +40,7 @@ class SupportedEnvType(Enum):
     GENESIS = "genesis"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
+    GENIESIM = "geniesim"
     D4RL = "d4rl"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
@@ -173,6 +174,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.roboverse.roboverse_env import RoboVerseEnv
 
         return RoboVerseEnv
+    elif env_type == SupportedEnvType.GENIESIM:
+        from rlinf.envs.sim.geniesim.geniesim_env import GenieSimEnv
+
+        return GenieSimEnv
     elif env_type == SupportedEnvType.D4RL:
         from rlinf.envs.sim.d4rl.d4rl_env import D4RLEnv
 

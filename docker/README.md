@@ -16,6 +16,11 @@ docker build -f docker/Dockerfile --build-arg BUILD_TARGET=$BUILD_TARGET -t rlin
 
 Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see the full, up-to-date list of targets and the venvs each one installs, look at the stage names (`FROM ... AS <target>-image`) and the `install.sh` invocations inside them — the Dockerfile is the source of truth, so this README does not duplicate the list.
 
+`embodied-geniesim` also needs the GenieSim client package as a named build
+context and currently builds for NVIDIA CUDA 12.8. See the
+[GenieSim example](../docs/source-en/rst_source/examples/embodied/geniesim.rst)
+for its build command.
+
 ### Additional build arguments
 
 - `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), `musa` (Moore Threads), `kunlun` (Kunlunxin), or `metax` (MetaX MACA). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image.

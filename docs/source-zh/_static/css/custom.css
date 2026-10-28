@@ -554,3 +554,24 @@ div.highlight button.copybtn {
   flex: none;
   align-self: auto;
 }
+
+/* Compact success-rate comparison on the GenieSim page. */
+.bd-article table.geniesim-results-table {
+  font-size: 0.9rem;
+}
+
+.bd-article table.geniesim-results-table th,
+.bd-article table.geniesim-results-table td {
+  padding: 0.4rem 0.55rem;
+  vertical-align: middle;
+}
+
+.bd-article table.geniesim-results-table p {
+  margin: 0;
+}
+
+.bd-article table.geniesim-results-table th:not(:first-child),
+.bd-article table.geniesim-results-table td:not(:first-child) {
+  text-align: center;
+  white-space: nowrap;
+}
