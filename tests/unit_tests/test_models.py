@@ -2415,6 +2415,34 @@ def test_openwam_dataset_sft_recipes_inherit_the_libero_recipe(name):
     assert cfg.actor.optim.lr == base.actor.optim.lr
 
 
+def test_openwam_libero_sft_smoke_recipe_validates(monkeypatch):
+    """The e2e SFT smoke reads CI assets and keeps the recipe's FSDP2 layout."""
+    import hydra
+
+    from rlinf.config import validate_sft_cfg
+
+    repo = Path(__file__).resolve().parents[2]
+    # The smoke resolves the SFT presets through ${oc.env:REPO_PATH}.
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with hydra.initialize_config_dir(
+        version_base="1.1", config_dir=str(repo / "tests/e2e_tests/sft")
+    ):
+        cfg = hydra.compose(config_name="libero_sft_openwam")
+    with hydra.initialize_config_dir(
+        version_base="1.1", config_dir=str(repo / "examples/sft/config")
+    ):
+        recipe = hydra.compose(config_name="libero_sft_openwam")
+    assert validate_sft_cfg(cfg) is cfg
+    assert cfg.runner.max_steps == 1
+    assert str(cfg.actor.model.model_path).startswith("/workspace/dataset/")
+    assert str(cfg.data.train_data_paths).startswith("/workspace/dataset/")
+    assert cfg.actor.fsdp_config.strategy == recipe.actor.fsdp_config.strategy
+    assert (
+        cfg.actor.fsdp_config.wrap_policy.module_classes_to_wrap
+        == recipe.actor.fsdp_config.wrap_policy.module_classes_to_wrap
+    )
+
+
 def test_openwam_get_model_requires_model_config_path():
     """The model factory reports a role-neutral missing checkpoint field."""
     from rlinf.models.embodiment.openwam import get_model

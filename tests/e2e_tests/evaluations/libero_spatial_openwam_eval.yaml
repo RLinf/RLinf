@@ -1,7 +1,7 @@
 # OpenWAM (Wan2.2 dual-system) LIBERO-Spatial eval smoke, shortened for CI.
 # Needs the OpenWAM venv (requirements/install.sh embodied --model openwam --env libero)
-# and a deploy checkpoint; override rollout.model.model_path when the default path
-# is not mounted. Run: bash tests/e2e_tests/evaluations/run.sh libero_spatial_openwam_eval
+# and the OpenWAM/OpenWAM-Alpha-Sim-LIBERO checkpoint under /workspace/dataset.
+# Run: bash tests/e2e_tests/evaluations/run.sh libero_spatial_openwam_eval
 defaults:
   - env/libero_spatial@env.eval
   - override hydra/job_logging: stdout
@@ -18,8 +18,8 @@ cluster:
   num_nodes: 1
   # Keep MuJoCo/EGL environments off the OpenWAM rollout GPU.
   component_placement:
-    env: 2
-    rollout: 3
+    env: 0
+    rollout: 1
 
 runner:
   task_type: embodied_eval
@@ -71,7 +71,7 @@ rollout:
     model_type: "openwam"
     precision: bf16
     is_lora: false
-    model_path: /path/to/openwam-libero-sft-delta-aligned
+    model_path: /workspace/dataset/OpenWAM/OpenWAM-Alpha-Sim-LIBERO
     device: cuda
     load_to_device: true
     ckpt_name: null

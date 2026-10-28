@@ -57,7 +57,7 @@ Available under ``evaluations/libero/``:
      - Goal
      - OpenWAM
    * - ``libero_10_openwam_eval.yaml``
-     - LIBERO-10
+     - Long (libero_10)
      - OpenWAM
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object

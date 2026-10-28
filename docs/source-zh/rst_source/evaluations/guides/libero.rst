@@ -57,7 +57,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - Goal
      - OpenWAM
    * - ``libero_10_openwam_eval.yaml``
-     - LIBERO-10
+     - Long (libero_10)
      - OpenWAM
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
