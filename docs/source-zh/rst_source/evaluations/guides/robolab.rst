@@ -15,8 +15,6 @@
 
 需要镜像源时，在安装命令中添加 ``--use-mirror``。
 
-默认源码目录为 ``.venv/robolab``，固定到 ``b6cfcf6ccd2113c4cd1216d35b33024a7d5691da``。运行时需要保留已安装源码旁的任务元数据和资产。若要复用已有源码，在安装前设置 ``ROBOLAB_PATH=/path/to/RoboLab``，安装器会使用该目录的现有版本；运行时适配器从包安装元数据中定位源码。
-
 下载模型
 --------
 
@@ -38,7 +36,7 @@
 
    python -m toolkits.standalone_eval_scripts.robolab.export_tasks
 
-脚本会创建 ``data/robolab_tasks.tsv``，包含任务名称、原生控制步数上限（``max_steps``）、难度、能力属性、指令和源码文件名。可通过 ``--output /path/to/tasks.tsv`` 指定其他输出位置。任务实现位于已安装 RoboLab 源码目录的 ``robolab/tasks/<filename>``。
+脚本会在仓库根目录创建 ``robolab_tasks.tsv``，包含任务名称、原生控制步数上限（``max_steps``）、难度、能力属性、指令和源码文件名。可通过 ``--output /path/to/tasks.tsv`` 指定其他输出位置。任务实现位于已安装 RoboLab 源码目录的 ``robolab/tasks/<filename>``。
 
 配置评估
 --------
@@ -66,7 +64,7 @@
    * - ``env.eval.init_params.output_dir``
      - 任务配置与轨迹的输出目录，默认为 ``./logs/robolab/BowlStackingLeftOnRightTask``。不同任务或实验应使用独立目录。
 
-导出脚本已经将任务时长换算为控制步数，用户无需手动换算。切换任务时，将该行的 ``max_steps`` 同时填入上表的两个步数字段；只修改任务名称不会自动更新这两个字段。例如切换到 ``BananaInBowlTask`` 时，两个字段都应设为 750。
+导出脚本已经将任务时长换算为控制步数，用户无需手动换算。使用单任务命令切换任务时，将该行的 ``max_steps`` 同时填入上表的两个步数字段；只修改任务名称不会自动更新这两个字段。例如切换到 ``BananaInBowlTask`` 时，两个字段都应设为 750。
 
 这 120 个任务的原生步数均为当前动作块长度 15 的整数倍。如果自行缩短回合上限，应将 ``max_steps_per_rollout_epoch`` 设为不小于该上限的最小 15 的整数倍，例如回合上限为 17 时，rollout 步数设为 30。原生任务终止仍可能让回合提前结束。
 
@@ -84,19 +82,25 @@
 运行全部 120 个任务
 -------------------
 
-导出 TSV 并在 YAML 中设置 checkpoint 路径后，保留 ``total_num_envs: 10`` 和 ``rollout_epoch: 1``，共评测 1200 回合。下面的 Bash 循环在一张 GPU 上依次运行全部任务，从 TSV 读取任务名称和原生步数，自动设置任务、两个步数字段及输出目录：
+导出 TSV 并在 YAML 中设置 checkpoint 路径后，保留 ``total_num_envs: 10`` 和 ``rollout_epoch: 1``，共评测 1200 回合。在仓库根目录启动全量评估：
 
 .. code-block:: bash
 
-   while IFS=$'	' read -r task max_steps rest; do
-       bash evaluations/run_eval.sh robolab pi05_droid_jointpos \
-           "env.eval.init_params.task=${task}" \
-           "env.eval.max_episode_steps=${max_steps}" \
-           "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
-           "env.eval.init_params.output_dir=./logs/robolab/${task}" || break
-   done < <(tail -n +2 data/robolab_tasks.tsv)
+   python -m toolkits.standalone_eval_scripts.robolab.run_benchmark \
+       --output-dir robolab_benchmark
 
-命令失败时循环停止。该循环没有自动断点续跑功能；可复制 TSV 并删除已完成任务的行，选择剩余任务。新实验应使用新的输出目录，跨多次运行汇总时以任务日志为准。
+结果保存在仓库根目录的 ``robolab_benchmark/`` 下。该工具读取 ``robolab_tasks.tsv`` 和 ``evaluations/robolab/pi05_droid_jointpos.yaml``，按 YAML 的 GPU 放置配置依次运行任务。工具自动将 TSV 中的 ``max_steps`` 设置为该任务的 ``env.eval.max_episode_steps``，并将 ``env.eval.max_steps_per_rollout_epoch`` 向上取整到完整动作块；使用这个入口时，无需逐任务手动修改 YAML 中的任务名称和两个步数字段。使用 ``--config`` 或 ``--tasks`` 可以指定其他 YAML 或任务 TSV；如需评测子集，可复制 TSV 并只保留需要的任务行。
+
+终端每 30 秒显示已完成任务数、当前任务及尝试次数、经过时间、成功率和归一化得分，同步以原子写入方式保存到输出目录下的 ``progress.json``。每个任务成功完成后保存 ``result.json``；每次尝试分别保存 ``console.log``、TensorBoard 事件、配置和 ``native/`` 轨迹。
+
+每个任务通过 ``evaluations/run_eval.sh`` 执行。``--output-dir`` 用于创建新实验，目录应为空或尚不存在。工具将配置和任务列表保存到该目录；任务失败时记录错误并以非零状态码退出，修复问题后使用 ``--resume-dir`` 继续：
+
+.. code-block:: bash
+
+   python -m toolkits.standalone_eval_scripts.robolab.run_benchmark \
+       --resume-dir robolab_benchmark
+
+恢复时直接使用该目录保存的配置和任务列表，无需再次指定 ``--config`` 或 ``--tasks``。如果指定了这两个参数，内容必须与保存的实验一致。已完成任务自动跳过，未完成任务从第一个回合重新评测，之前的尝试日志会保留。``--output-dir`` 和 ``--resume-dir`` 只能选择一个；需要修改配置或任务列表时，使用新的 ``--output-dir``。续跑时保持 checkpoint 内容不变。
 
 查看结果
 --------

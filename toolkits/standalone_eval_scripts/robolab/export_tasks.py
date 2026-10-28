@@ -73,8 +73,8 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/robolab_tasks.tsv"),
-        help="Output TSV path (default: data/robolab_tasks.tsv).",
+        default=Path("robolab_tasks.tsv"),
+        help="Output TSV path (default: robolab_tasks.tsv).",
     )
     args = parser.parse_args()
     count = export_tasks(args.output)

@@ -8,11 +8,11 @@ max_steps_per_rollout_epoch: 750
 max_episode_steps: 750
 video_cfg:
   save_video: false
-  video_base_dir: ./data/logs/robolab/video
+  video_base_dir: ./logs/robolab/video
 init_params:
   task: BananaInBowlTask
   device: cuda:0
-  output_dir: ./data/robolab_native/BananaInBowlTask
+  output_dir: ./logs/robolab_native/BananaInBowlTask
   instruction_type: null
   renderer: realtime
   kit_args: "--/renderer/multiGpu/enabled=false --/plugins/carb.tasking.plugin/threadCount=8 --/plugins/omni.tbb.globalcontrol/maxThreadCount=8"

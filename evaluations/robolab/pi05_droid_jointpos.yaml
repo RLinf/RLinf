@@ -19,7 +19,7 @@ cluster:
 runner:
   task_type: embodied_eval
   logger:
-    log_path: ./data/logs/robolab
+    log_path: ./logs/robolab
     project_name: rlinf
     experiment_name: pi05_droid_jointpos
     logger_backends: [tensorboard]
@@ -49,7 +49,7 @@ env:
       output_dir: ./logs/robolab/BowlStackingLeftOnRightTask
     video_cfg:
       save_video: false
-      video_base_dir: ./data/logs/robolab/video
+      video_base_dir: ./logs/robolab/video
 
 rollout:
   group_name: RolloutGroup
