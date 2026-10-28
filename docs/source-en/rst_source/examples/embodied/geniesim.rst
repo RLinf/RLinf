@@ -232,6 +232,48 @@ example values; adjust them to match your RLinf configuration:
    geniesim post-train server start --count 2 --base-port 5601 --devices 0
    geniesim post-train server status --count 2 --base-port 5601
 
+The example starts the two servers of the single-task recipes on GPU 0.
+Each recipe needs the following servers and GPUs; the simulation GPUs are
+RTX 4090s. ``--devices`` places consecutive ports on the same GPU, which
+matches how each recipe groups its endpoints by env process:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 14 12 12 12 20
+
+   * - Recipe
+     - Servers (ports)
+     - Envs per server
+     - Simulation GPUs
+     - Training GPUs
+     - Server start options
+   * - Single-task PPO / GRPO
+     - 2 (5601–5602)
+     - 16
+     - 1
+     - 1
+     - ``--count 2 --devices 0``
+   * - ``geniesim_multitask4_ppo_openpi_pi05``
+     - 4 (5601–5604)
+     - 16
+     - 2
+     - 2
+     - ``--count 4 --devices 0,1``
+   * - ``geniesim_multitask6_ppo_openpi_pi05``
+     - 6 (5601–5606)
+     - 12
+     - 2
+     - 2
+     - ``--count 6 --devices 0,1``
+   * - ``geniesim_multitask10_ppo_openpi_pi05``
+     - 12 (5601–5612)
+     - 14
+     - 4
+     - 4
+     - ``--count 12 --devices 0,1,2,3``
+
+All recipes start their training servers at ``--base-port 5601``.
+
 In another terminal on the simulation host, outside containers and from any
 directory, list the host's IP addresses and listening TCP ports:
 
@@ -250,9 +292,10 @@ checkout for a custom installation. Use ``GENIESIM_CHECKPOINT_PATH`` set above.
 
 .. note::
 
-   On an RTX 4090, each GenieSim server supports up to 128 parallel environments
-   with ``env.train.override_cfg.render_width`` set to 360, or up to 32 parallel
-   environments at the default render width of 640.
+   On an RTX 4090, we recommend at most 42 parallel environments per GPU at
+   the default render width of 640, or 64 with
+   ``env.train.override_cfg.render_width`` set to 360. Servers on the same GPU
+   share this budget.
 
    ``env.train.override_cfg.images_at_chunk_end_only`` is enabled by default.
    With this option, RLinf and the simulator exchange complete action chunks,
@@ -273,8 +316,8 @@ endpoints; edit this list to change hosts or ports.
 
 Training-time validation is disabled by default. If you enable it with a
 positive ``runner.val_check_interval``, set ``GENIESIM_EVAL_HOST`` to the
-validation host and start the additional servers listed in
-``env.eval.override_cfg.addresses``.
+validation host and start one more server for each port listed in
+``env.eval.override_cfg.addresses``, as many as the training servers.
 
 **Evaluate**
 

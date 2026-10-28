@@ -18,8 +18,10 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout: all
-    env: 0-0:0-1
+    # The batch sizes assume one actor GPU: global_batch_size must divide by
+    # micro_batch_size times the actor GPU count.
+    actor,rollout: 0
+    env: 0-0
 
 runner:
   task_type: embodied
@@ -70,7 +72,7 @@ env:
 
   train:
     rollout_epoch: 4
-    total_num_envs: 128
+    total_num_envs: 32
     auto_reset: False
     max_steps_per_rollout_epoch: 200
     group_size: ${algorithm.group_size}
@@ -110,7 +112,7 @@ rollout:
   generation_backend: huggingface
   recompute_logprobs: False
   enable_offload: False
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
   model:
     model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
@@ -120,7 +122,7 @@ actor:
   training_backend: "fsdp"
 
   micro_batch_size: 128
-  global_batch_size: 2048
+  global_batch_size: 512
   seed: 42
   enable_offload: False
 

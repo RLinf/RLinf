@@ -187,6 +187,45 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
    geniesim post-train server start --count 2 --base-port 5601 --devices 0
    geniesim post-train server status --count 2 --base-port 5601
 
+示例在 GPU 0 上启动单任务配方所需的两个 server。各配方所需的 server 和 GPU 如下，仿真 GPU 为 RTX 4090。``--devices`` 会把连续端口分配到同一张 GPU，与配方中每个 env 进程负责的一组端点相对应：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 14 12 12 12 20
+
+   * - 配方
+     - server 数（端口）
+     - 每个 server 的环境数
+     - 仿真 GPU 数
+     - 训练 GPU 数
+     - server 启动参数
+   * - 单任务 PPO / GRPO
+     - 2（5601–5602）
+     - 16
+     - 1
+     - 1
+     - ``--count 2 --devices 0``
+   * - ``geniesim_multitask4_ppo_openpi_pi05``
+     - 4（5601–5604）
+     - 16
+     - 2
+     - 2
+     - ``--count 4 --devices 0,1``
+   * - ``geniesim_multitask6_ppo_openpi_pi05``
+     - 6（5601–5606）
+     - 12
+     - 2
+     - 2
+     - ``--count 6 --devices 0,1``
+   * - ``geniesim_multitask10_ppo_openpi_pi05``
+     - 12（5601–5612）
+     - 14
+     - 4
+     - 4
+     - ``--count 12 --devices 0,1,2,3``
+
+所有配方的训练 server 均从 ``--base-port 5601`` 开始。
+
 在仿真主机另开终端，于容器外的任意目录查看主机 IP 和监听中的 TCP 端口：
 
 .. code:: bash
@@ -200,7 +239,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 
 .. note::
 
-   在 RTX 4090 上，将 ``env.train.override_cfg.render_width`` 设为 360 时，单个 GenieSim server 最多支持 128 个并行环境；使用默认渲染宽度 640 时，单个 server 最多支持 32 个并行环境。
+   在 RTX 4090 上，使用默认渲染宽度 640 时，建议每张 GPU 最多运行 42 个并行环境；将 ``env.train.override_cfg.render_width`` 设为 360 时，建议每张 GPU 最多运行 64 个。同一张 GPU 上的 server 共用这一额度。
 
    ``env.train.override_cfg.images_at_chunk_end_only`` 默认开启。开启后，RLinf 与仿真端以整个 action chunk 为单位交互，并只渲染该 chunk 最后一帧的图像。
 
@@ -215,7 +254,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 
 GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.override_cfg.addresses`` 列出所需的 server 端点；使用其他主机或端口时，修改该列表。
 
-训练默认关闭验证。将 ``runner.val_check_interval`` 设为正数启用后，还需将 ``GENIESIM_EVAL_HOST`` 设为验证用仿真主机，并启动 ``env.eval.override_cfg.addresses`` 列出的额外 server。
+训练默认关闭验证。将 ``runner.val_check_interval`` 设为正数启用后，还需将 ``GENIESIM_EVAL_HOST`` 设为验证用仿真主机，并按 ``env.eval.override_cfg.addresses`` 列出的端口额外启动与训练数量相同的 server。
 
 **评测**
 
