@@ -57,7 +57,9 @@ jobs:
             install_filter: &install
               - 'pyproject.toml'
               - 'requirements/*.sh'
-              - 'requirements/**/*.txt'
+              - 'requirements/*.txt'
+              - 'requirements/embodied/models/psi0.txt'
+              - 'requirements/embodied/envs/simple.txt'
               - '.github/workflows/install.yml'
             docker_filter: &docker
               - *install
@@ -103,7 +105,8 @@ jobs:
               - 'rlinf/runners/async_weight_sync_mixin.py'
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
-              - 'examples/embodiment/config/**'
+              - 'examples/embodiment/config/*.yaml'
+              - 'examples/embodiment/config/*/**'
               - 'examples/diffusion/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
