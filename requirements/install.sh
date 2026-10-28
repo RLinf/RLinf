@@ -12,12 +12,30 @@ PYTHON_VERSION="3.11.14"
 USER_SET_PYTHON=0
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
+USER_SET_TORCH=0
 SGLANG_VERSION=""
 ENGINE=""
 TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
+# Probed host hardware and toolchain facts (populated by probe_host_facts).
+HOST_ARCH="$(uname -m)"
+HOST_DRIVER_CUDA_NUM=""
+HOST_NVCC_CUDA_MM=""
+HOST_NVCC_CUDA_NUM=""
+HOST_GPU_MIN_CC=""
+HOST_GPU_MAX_CC=""
+HOST_ROCM_VERSION=""
+HOST_AMD_GFX_ARCH=""
+# Resolved target stack versions and pins (populated by resolve_install_plan).
+RESOLVED_TORCH_VERSION=""
+RESOLVED_TORCHVISION_VERSION=""
+RESOLVED_TORCHAUDIO_VERSION=""
+RESOLVED_TORCH_PIN=""
+RESOLVED_TORCHVISION_PIN=""
+RESOLVED_TORCHAUDIO_PIN=""
+RESOLVED_TORCHCODEC_SPEC=""
 # Keep Ray's protobuf runtime and generated code compatible. Platforms with
 # older TensorFlow builds also pin googleapis-common-protos here.
 RAY_COMPAT_DEPS=("protobuf>=6.33.5,<7")
@@ -224,6 +242,7 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
+                USER_SET_TORCH=1
                 shift 2
                 ;;
             --sglang)
@@ -337,6 +356,11 @@ parse_args() {
     fi
 }
 
+# Returns 0 if version $1 >= version $2 (using sort -V), 1 otherwise.
+version_ge() {
+    [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
+}
+
 validate_python_version() {
     # Reject malformed versions (must be X.Y or X.Y.Z with numeric components).
     if [[ ! "$PYTHON_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
@@ -348,7 +372,7 @@ validate_python_version() {
     local py_major py_minor _py_patch
     IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
     local mm="${py_major}.${py_minor}"
-    if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
+    if ! version_ge "$mm" "3.10"; then
         echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
     fi
 }
@@ -365,11 +389,10 @@ use_opencv_gui_wheel() {
     uv pip install --no-deps "opencv-python==${ver}"
 }
 
-#=======================PLATFORM CONFIG=======================
-# Per-platform runtime env-var configuration. Each configure_<platform> runs
-# before any uv operation, so set everything that affects how dependencies
-# resolve here (UV_TORCH_BACKEND, indexes, build flags, etc.). All functions
-# respect a pre-existing UV_TORCH_BACKEND from the caller's environment.
+#=======================STAGE 1: HARDWARE & TOOLCHAIN PROBES=======================
+# Read-only probes that inspect the host/container environment and populate
+# HOST_* facts before version resolution or venv creation. Probes never mutate
+# PYTHON_VERSION or TORCH_VERSION.
 
 # Detect installed ROCm version. Prints major.minor on success, returns 1 on
 # failure. Probes the standard locations in order of reliability.
@@ -467,7 +490,7 @@ detect_torch_for_rocm() {
     # surfaces a usable starting point).
     local picked=""
     while IFS= read -r v; do
-        if [ "$(printf '%s\n2.5.0\n' "$v" | sort -V | head -n1)" = "2.5.0" ]; then
+        if version_ge "$v" "2.5.0"; then
             picked="$v"
             break
         fi
@@ -476,6 +499,22 @@ detect_torch_for_rocm() {
         picked=$(echo "$versions" | tail -n1)
     fi
     echo "$picked"
+}
+
+# Probes only the local CUDA toolkit (nvcc) without importing torch.
+# Prints "MAJOR MINOR" (e.g. "12 8") on success, returns 1 if nvcc is absent.
+probe_nvcc_cuda_mm() {
+    local nvcc_exe=""
+    if command -v nvcc &>/dev/null; then
+        nvcc_exe=$(command -v nvcc)
+    elif [ -x /usr/local/cuda/bin/nvcc ]; then
+        nvcc_exe="/usr/local/cuda/bin/nvcc"
+    fi
+    [ -z "$nvcc_exe" ] && return 1
+    local ver
+    ver=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',')
+    [ -z "$ver" ] && return 1
+    echo "${ver%%.*} ${ver#*.}"
 }
 
 # Prints "MAJOR MINOR" (e.g. "12 4") on success, returns 1 if no CUDA is
@@ -495,18 +534,7 @@ EOF
         echo "$mm"
         return 0
     fi
-
-    local nvcc_exe=""
-    if command -v nvcc &>/dev/null; then
-        nvcc_exe=$(command -v nvcc)
-    elif [ -x /usr/local/cuda/bin/nvcc ]; then
-        nvcc_exe="/usr/local/cuda/bin/nvcc"
-    fi
-    [ -z "$nvcc_exe" ] && return 1
-    local ver
-    ver=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',')
-    [ -z "$ver" ] && return 1
-    echo "${ver%%.*} ${ver#*.}"
+    probe_nvcc_cuda_mm
 }
 
 detect_nvidia_driver_max_cuda() {
@@ -519,17 +547,86 @@ detect_nvidia_driver_max_cuda() {
     echo "$(( maj * 10 + min ))"
 }
 
-# Prints the newest cuXXX tag <= driver_num that publishes the given torch
-# version. Returns 1 when no index has the wheel, and 2 when an index cannot be
-# fetched, so a network failure never silently selects an older CUDA build.
+# Prints "MIN_CC MAX_CC" (e.g. "8.0 12.0") across visible NVIDIA GPUs, or falls
+# back to TORCH_CUDA_ARCH_LIST during GPU-less container builds. Returns 1 when
+# no GPU compute capability can be determined.
+detect_nvidia_gpu_arch_bounds() {
+    local caps=""
+    if command -v nvidia-smi &>/dev/null; then
+        caps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null \
+            | tr -d ' \r' \
+            | grep -E '^[0-9]+\.[0-9]+$' \
+            | sort -V || true)
+    fi
+    if [ -z "$caps" ] && [ -n "${TORCH_CUDA_ARCH_LIST:-}" ]; then
+        caps=$(printf '%s\n' "$TORCH_CUDA_ARCH_LIST" \
+            | grep -oE '[0-9]+\.[0-9]+' \
+            | sort -V || true)
+    fi
+    [ -n "$caps" ] || return 1
+    local min_cc max_cc
+    min_cc=$(printf '%s\n' "$caps" | head -n1)
+    max_cc=$(printf '%s\n' "$caps" | tail -n1)
+    echo "${min_cc} ${max_cc}"
+}
+
+# Stage 1 entry point: populate read-only HOST_* facts once for the active platform.
+probe_host_facts() {
+    HOST_ARCH="$(uname -m)"
+    HOST_DRIVER_CUDA_NUM=""
+    HOST_NVCC_CUDA_MM=""
+    HOST_NVCC_CUDA_NUM=""
+    HOST_GPU_MIN_CC=""
+    HOST_GPU_MAX_CC=""
+    HOST_ROCM_VERSION=""
+    HOST_AMD_GFX_ARCH=""
+
+    case "$PLATFORM" in
+        nvidia)
+            HOST_DRIVER_CUDA_NUM=$(detect_nvidia_driver_max_cuda 2>/dev/null || true)
+            if HOST_NVCC_CUDA_MM=$(probe_nvcc_cuda_mm 2>/dev/null); then
+                local cmaj cmin
+                read -r cmaj cmin <<< "$HOST_NVCC_CUDA_MM"
+                HOST_NVCC_CUDA_NUM=$(( cmaj * 10 + cmin ))
+            fi
+            local cc_bounds
+            if cc_bounds=$(detect_nvidia_gpu_arch_bounds 2>/dev/null); then
+                read -r HOST_GPU_MIN_CC HOST_GPU_MAX_CC <<< "$cc_bounds"
+            fi
+            ;;
+        amd)
+            HOST_ROCM_VERSION=$(detect_rocm_version 2>/dev/null || true)
+            HOST_AMD_GFX_ARCH=$(detect_amd_gfx_arch 2>/dev/null || true)
+            ;;
+    esac
+}
+
+# Prints the PyPI default CUDA tag number (e.g. 124, 126, 128) for torch X.Y,
+# or 0 when the release requires explicit index routing (torch >= 2.11).
+pypi_default_cuda_num() {
+    local tmaj="$1" tmin="$2"
+    [ "$tmaj" = "2" ] || { echo "0"; return 0; }
+    case "$tmin" in
+        5|6)    echo "124" ;;
+        7)      echo "126" ;;
+        8|9|10) echo "128" ;;
+        *)      echo "0" ;;
+    esac
+}
+
+# Prints the newest cuXXX tag in [min_cuda_num, driver_num] that publishes the
+# given torch version. Returns 1 when no index has the wheel, and 2 when an
+# index cannot be fetched, so a network failure never silently selects an older
+# CUDA build.
 detect_nvidia_torch_cuda_tag() {
-    local torch_ver="$1" index_base="$2" driver_num="$3"
+    local torch_ver="$1" index_base="$2" driver_num="$3" min_cuda_num="${4:-0}"
     local ver_re n url listing http_code attempt
     local listing_file
     ver_re=$(printf '%s' "$torch_ver" | sed 's/\./\\./g')
     listing_file=$(mktemp)
     for n in 130 129 128 126 124 121 118; do
         [ "$n" -le "$driver_num" ] || continue
+        [ "$n" -ge "$min_cuda_num" ] || continue
         url="${index_base}/cu${n}/torch/"
         http_code=""
         # curl on Ubuntu 20.04 lacks --retry-all-errors, so retry explicitly.
@@ -586,79 +683,133 @@ configure_nvidia() {
         export UV_TORCH_BACKEND="$DEFAULT_BACKEND_NVIDIA"
     fi
 
-    local _torch_ver _tmaj _tmin _rest _driver_num _index_base _cuda_tag
+    local _torch_ver _tmaj _tmin _rest
     _torch_ver="$TORCH_VERSION"
     if [ -z "$_torch_ver" ] && [ -f "$PYPROJECT_FILE" ]; then
         _torch_ver=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
     fi
+    [ -n "$_torch_ver" ] || return 0
+
+    # 1. Hardware lower-bound constraints from GPU compute capability:
+    #    Blackwell (sm_100 / sm_120, compute_cap >= 10.0) requires CUDA >= 12.8
+    #    (cu128) and torch >= 2.7.1.
+    local _min_cuda_num=0
+    if [ -n "$HOST_GPU_MAX_CC" ] && version_ge "$HOST_GPU_MAX_CC" "10.0"; then
+        _min_cuda_num=128
+        if ! version_ge "$_torch_ver" "2.7.0"; then
+            if [ "$USER_SET_TORCH" -eq 1 ]; then
+                echo "[install.sh] ERROR: --torch ${_torch_ver} does not support NVIDIA Blackwell GPUs (compute capability ${HOST_GPU_MAX_CC}); torch >= 2.7.1 with cu128+ is required." >&2
+                exit 1
+            fi
+            TORCH_VERSION="2.7.1"
+            _torch_ver="$TORCH_VERSION"
+            echo "[install.sh] NVIDIA GPU compute capability ${HOST_GPU_MAX_CC} requires cu128+; bumping torch to ${TORCH_VERSION}."
+        fi
+    fi
+
     _tmaj=${_torch_ver%%.*}
     _rest=${_torch_ver#*.}
     _tmin=${_rest%%.*}
-    if [ -n "$_torch_ver" ] && [[ "$_tmaj" =~ ^[0-9]+$ ]] && [[ "$_tmin" =~ ^[0-9]+$ ]] \
-        && { [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
-        local _cpu_only=0
-        # An explicit UV_TORCH_BACKEND=cuXXX wins over driver detection, for
-        # hosts with CUDA forward-compatibility libraries installed.
-        if [ "$_uvtb_user_set" -eq 1 ] && [[ "$UV_TORCH_BACKEND" =~ ^cu[0-9]+$ ]]; then
-            _driver_num="${UV_TORCH_BACKEND#cu}"
-            echo "[install.sh] UV_TORCH_BACKEND=${UV_TORCH_BACKEND} was set explicitly; using it instead of the detected driver CUDA version."
-        elif ! _driver_num=$(detect_nvidia_driver_max_cuda); then
-            local _cmm _cmaj _cmin
-            if _cmm=$(detect_cuda_major_minor); then
-                read -r _cmaj _cmin <<< "$_cmm"
-                _driver_num=$(( _cmaj * 10 + _cmin ))
-                echo "[install.sh] No NVIDIA driver detected; using CUDA toolkit ${_cmaj}.${_cmin} (cu${_driver_num}) for the torch build (e.g. docker build)."
-            else
-                _cpu_only=1
-                echo "[install.sh] No NVIDIA driver or CUDA toolkit detected; using CPU-only torch."
-            fi
+    if ! [[ "$_tmaj" =~ ^[0-9]+$ ]] || ! [[ "$_tmin" =~ ^[0-9]+$ ]]; then
+        return 0
+    fi
+
+    # 2. Decide whether explicit wheel index routing is needed:
+    #    - torch >= 2.11 (where PyPI default is no longer used directly),
+    #    - hardware minimum CUDA exceeds the release's PyPI default CUDA wheel
+    #      (e.g. Blackwell needing cu128 on torch 2.7.1 whose PyPI wheel is cu126),
+    #    - caller explicitly set UV_TORCH_BACKEND=cuXXX or cpu.
+    local _pypi_cu _needs_index_routing=0
+    _pypi_cu=$(pypi_default_cuda_num "$_tmaj" "$_tmin")
+    if [ "$_pypi_cu" -eq 0 ] || [ "$_min_cuda_num" -gt "$_pypi_cu" ]; then
+        _needs_index_routing=1
+    elif [ "$_uvtb_user_set" -eq 1 ] && [[ "$UV_TORCH_BACKEND" =~ ^(cu[0-9]+|cpu)$ ]]; then
+        _needs_index_routing=1
+    fi
+
+    [ "$_needs_index_routing" -eq 1 ] || return 0
+
+    local _cpu_only=0 _max_cuda_num=0 _index_base _cuda_tag
+    if [ "$_uvtb_user_set" -eq 1 ] && [ "$UV_TORCH_BACKEND" = "cpu" ]; then
+        _cpu_only=1
+    elif [ "$_uvtb_user_set" -eq 1 ] && [[ "$UV_TORCH_BACKEND" =~ ^cu[0-9]+$ ]]; then
+        _max_cuda_num="${UV_TORCH_BACKEND#cu}"
+        _min_cuda_num="$_max_cuda_num"
+        echo "[install.sh] UV_TORCH_BACKEND=${UV_TORCH_BACKEND} was set explicitly; using it instead of the detected driver CUDA version."
+    elif [ -n "$HOST_DRIVER_CUDA_NUM" ]; then
+        _max_cuda_num="$HOST_DRIVER_CUDA_NUM"
+        # For torch < 2.11, keep automatic selection on the CUDA 12.8 line even
+        # when the host driver supports CUDA 12.9/13.0, so prebuilt cu12
+        # companion wheels (flash-attn, torchcodec) and nvcc 12 builds match.
+        if ! version_ge "$_torch_ver" "2.11.0" && [ "$_max_cuda_num" -gt 128 ]; then
+            _max_cuda_num=128
         fi
-        if [ "$USE_MIRRORS" -eq 1 ]; then
-            _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
-        else
-            _index_base="https://download.pytorch.org/whl"
+    elif [ -n "$HOST_NVCC_CUDA_NUM" ]; then
+        _max_cuda_num="$HOST_NVCC_CUDA_NUM"
+        if ! version_ge "$_torch_ver" "2.11.0" && [ "$_max_cuda_num" -gt 128 ]; then
+            _max_cuda_num=128
         fi
-        local _tag_rc=1
-        if [ "$_cpu_only" -eq 0 ]; then
-            _tag_rc=0
-            _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num") || _tag_rc=$?
-            if [ "$_tag_rc" -eq 2 ]; then
-                exit 1
-            fi
+        echo "[install.sh] No NVIDIA driver detected; using CUDA toolkit (cu${HOST_NVCC_CUDA_NUM}) for the torch build (e.g. docker build)."
+    else
+        _cpu_only=1
+        echo "[install.sh] No NVIDIA driver or CUDA toolkit detected; using CPU-only torch."
+    fi
+
+    if [ "$USE_MIRRORS" -eq 1 ]; then
+        _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
+    else
+        _index_base="https://download.pytorch.org/whl"
+    fi
+
+    if [ "$_cpu_only" -eq 0 ] && [ "$_min_cuda_num" -gt "$_max_cuda_num" ]; then
+        echo "[install.sh] ERROR: GPU compute capability ${HOST_GPU_MAX_CC} requires CUDA >= cu${_min_cuda_num}, but the host driver/toolkit only supports up to cu${_max_cuda_num}." >&2
+        exit 1
+    fi
+
+    local _tag_rc=1
+    if [ "$_cpu_only" -eq 0 ]; then
+        _tag_rc=0
+        _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_max_cuda_num" "$_min_cuda_num") || _tag_rc=$?
+        if [ "$_tag_rc" -eq 2 ]; then
+            exit 1
         fi
-        if [ "$_cpu_only" -eq 1 ]; then
-            PLATFORM_TORCH_STR=""
-            PLATFORM_TORCH_INDEX="${_index_base}/cpu"
-            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
-            if [ "$_uvtb_user_set" -eq 0 ]; then
-                export UV_TORCH_BACKEND="cpu"
-            fi
-            echo "[install.sh] Routing torch ${_torch_ver} (cpu) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
-        elif [ "$_tag_rc" -eq 0 ]; then
-            PLATFORM_CUDA_TAG="$_cuda_tag"
-            PLATFORM_TORCH_STR="+${_cuda_tag}"
-            PLATFORM_TORCH_INDEX="${_index_base}/${_cuda_tag}"
-            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
-            # PyPI's torchcodec links PyPI torch's CUDA (13 for torch 2.13).
-            if [ "$_tmaj" -gt 2 ] || [ "$_tmin" -ge 12 ]; then
-                PLATFORM_TORCH_PACKAGES+=("torchcodec")
-            fi
-            if [ "$_uvtb_user_set" -eq 0 ]; then
-                export UV_TORCH_BACKEND="$_cuda_tag"
-            fi
-            echo "[install.sh] Driver supports CUDA <= ${_driver_num}; routing torch ${_torch_ver} (${_cuda_tag}) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
-        else
-            echo "[install.sh] Could not resolve a driver-compatible CUDA wheel for torch ${_torch_ver}; leaving torch on the default index (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})." >&2
+    fi
+    if [ "$_cpu_only" -eq 1 ]; then
+        PLATFORM_TORCH_STR=""
+        PLATFORM_TORCH_INDEX="${_index_base}/cpu"
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+        if [ "$_uvtb_user_set" -eq 0 ]; then
+            export UV_TORCH_BACKEND="cpu"
         fi
+        echo "[install.sh] Routing torch ${_torch_ver} (cpu) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
+    elif [ "$_tag_rc" -eq 0 ]; then
+        PLATFORM_CUDA_TAG="$_cuda_tag"
+        PLATFORM_TORCH_STR="+${_cuda_tag}"
+        PLATFORM_TORCH_INDEX="${_index_base}/${_cuda_tag}"
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+        # PyPI's torchcodec links PyPI torch's CUDA (13 for torch 2.13).
+        if [ "$_tmaj" -gt 2 ] || [ "$_tmin" -ge 12 ]; then
+            PLATFORM_TORCH_PACKAGES+=("torchcodec")
+        fi
+        if [ "$_uvtb_user_set" -eq 0 ]; then
+            export UV_TORCH_BACKEND="$_cuda_tag"
+        fi
+        echo "[install.sh] Routing torch ${_torch_ver} (${_cuda_tag}, range cu${_min_cuda_num}..cu${_max_cuda_num}) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
+    elif [ "$_min_cuda_num" -gt 0 ]; then
+        echo "[install.sh] ERROR: Could not find a prebuilt wheel for torch ${_torch_ver} satisfying cu >= cu${_min_cuda_num} and cu <= cu${_max_cuda_num} on ${_index_base}." >&2
+        exit 1
+    else
+        echo "[install.sh] Could not resolve a driver-compatible CUDA wheel for torch ${_torch_ver}; leaving torch on the default index (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})." >&2
     fi
 }
 
 configure_amd() {
     if [ -z "$ROCM_VERSION" ]; then
-        ROCM_VERSION=$(detect_rocm_version) || {
+        ROCM_VERSION="${HOST_ROCM_VERSION:-$(detect_rocm_version || true)}"
+        if [ -z "$ROCM_VERSION" ]; then
             echo "[install.sh] Could not auto-detect ROCm version; pass --rocm explicitly." >&2
             exit 1
-        }
+        fi
         echo "[install.sh] Auto-detected ROCm version: ${ROCM_VERSION}"
     fi
 
@@ -694,8 +845,7 @@ configure_amd() {
     # software rasterizer. VK_DRIVER_FILES wins over VK_ICD_FILENAMES and
     # AMD_VULKAN_ICD steers Mesa back to RADV, so all three move together.
     # Undetected GPUs keep the RADV defaults.
-    local gfx_arch
-    gfx_arch=$(detect_amd_gfx_arch) || gfx_arch=""
+    local gfx_arch="${HOST_AMD_GFX_ARCH:-$(detect_amd_gfx_arch || true)}"
     if [ -n "$gfx_arch" ] && amd_gfx_is_cdna "$gfx_arch"; then
         echo "[install.sh] Detected CDNA (${gfx_arch}); rendering with Mesa lavapipe."
         PLATFORM_VENV_EXPORTS=(
@@ -1046,15 +1196,16 @@ configure_metax() {
 
 
 # Envs that need a different torch than the project default (Isaac Sim /
-# OmniGibson need 2.5.1) declare it here, so configure_platform and
-# apply_torch_override re-point TORCH_VERSION, the wheel index and
-# UV_TORCH_BACKEND together instead of a mid-install `uv pip install torch==...`
-# that leaves a mixed torch tree. An explicit --torch always wins.
+# OmniGibson need 2.5.1 on pre-Blackwell; Genesis needs 2.8.0) declare it here,
+# so configure_platform and apply_torch_override re-point TORCH_VERSION, the
+# wheel index and UV_TORCH_BACKEND together instead of a mid-install torch
+# re-pin that leaves a mixed torch tree. An explicit --torch always wins.
 apply_env_default_torch() {
     [ -n "$TORCH_VERSION" ] && return 0
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        genesis)  env_torch="2.8.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -1555,6 +1706,84 @@ derive_torchcodec_spec() {
 
 VLLM_VERSION=""
 
+#=======================STAGE 2: TARGET & STACK RESOLUTION=======================
+# Resolves target validation, Python version, Torch version, platform index,
+# and companion package specs (torchvision/torchaudio/torchcodec) in a single
+# deterministic pass before pyproject.toml or the venv is touched.
+
+validate_target_args() {
+    if [[ ! " ${SUPPORTED_PLATFORMS[*]} " =~ " $PLATFORM " ]]; then
+        echo "--platform must be one of: ${SUPPORTED_PLATFORMS[*]} (got '$PLATFORM')." >&2
+        exit 1
+    fi
+    if [ -n "$ROCM_VERSION" ] && [ "$PLATFORM" != "amd" ]; then
+        echo "[install.sh] WARNING: --rocm is only meaningful with --platform amd; ignoring on platform=${PLATFORM}." >&2
+        ROCM_VERSION=""
+    fi
+    case "$TARGET" in
+        embodied)
+            if [ -n "$MODEL" ] && [[ ! " ${SUPPORTED_MODELS[*]} " =~ " $MODEL " ]]; then
+                echo "Unknown embodied model: $MODEL. Supported models: ${SUPPORTED_MODELS[*]}" >&2
+                exit 1
+            fi
+            if [ -n "$ENV_NAME" ]; then
+                if [[ ! " ${SUPPORTED_ENVS[*]} " =~ " $ENV_NAME " ]]; then
+                    echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
+                    exit 1
+                fi
+            elif [[ "$MODEL" != "dreamzero" && "$MODEL" != "fastwam" && "$MODEL" != "diffusion" ]]; then
+                echo "--env must be specified when target=embodied." >&2
+                exit 1
+            fi
+            if [ "$MODEL" = "qwen3_vl" ]; then
+                local missing_tags=()
+                [ -z "$TORCH_VERSION" ] && missing_tags+=("--torch 2.8.0")
+                [ -z "$SGLANG_VERSION" ] && missing_tags+=("--sglang 0.5.4")
+                [ -z "$TRANSFORMERS_VERSION" ] && missing_tags+=("--transformers 4.57.1")
+                if [ ${#missing_tags[@]} -ne 0 ]; then
+                    echo "[install.sh] Qwen3-VL SGLang reward serving requires explicit install tags: ${missing_tags[*]}" >&2
+                    exit 1
+                fi
+            fi
+            ;;
+        agentic|docs)
+            ;;
+        *)
+            echo "Unknown target: $TARGET" >&2
+            echo "Supported targets: ${SUPPORTED_TARGETS[*]}" >&2
+            exit 1
+            ;;
+    esac
+}
+
+# Resolves PYTHON_VERSION from target/model/env defaults before platform wheel
+# probes (e.g. detect_torch_for_rocm) run. An explicit --python wins.
+resolve_target_python_version() {
+    if [ "$USER_SET_PYTHON" -eq 0 ]; then
+        case "$TARGET" in
+            embodied)
+                if [ "$ENV_NAME" = "behavior" ] || [ "$ENV_NAME" = "d4rl" ] || [ "$MODEL" = "diffusion" ]; then
+                    PYTHON_VERSION="3.10"
+                fi
+                ;;
+            agentic)
+                # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
+                # stacks keep 3.11 (no cp312 flash-attn/apex wheels); a venv over a
+                # vendor image's site-packages keeps the image interpreter.
+                case "$PLATFORM" in
+                    musa|biren|metax|kunlun) ;;
+                    *)
+                        if engine_needs_torch211; then
+                            PYTHON_VERSION="3.12.12"
+                        fi
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+    validate_python_version
+}
+
 apply_agentic_torch_default() {
     [ "$TARGET" = "agentic" ] || return 0
     local torch_ver
@@ -1590,33 +1819,98 @@ apply_model_default_torch() {
     echo "[install.sh] Model '${MODEL}' pins torch ${TORCH_VERSION}; overriding the project default (pass --torch to override)."
 }
 
-apply_torch_override() {
-    # Fires when --torch is given (rewrite versions), PLATFORM_TORCH_STR is
-    # non-empty (append a PEP 440 local segment so uv picks the platform-specific
-    # wheel rather than PyPI's CUDA build), PLATFORM_TORCH_INDEX is non-empty
-    # (route torch* through a dedicated index for `uv sync`, which doesn't honor
-    # UV_TORCH_BACKEND), PLATFORM_RELAX_TORCHCODEC is set (rewrite the
-    # torchcodec pin for non-x86_64 / non-CUDA torch combos), or
-    # PLATFORM_EXTRA_OVERRIDES has entries (insert extra override pins).
+# Computes RESOLVED_TORCH_*, RESOLVED_TORCHVISION_*, RESOLVED_TORCHAUDIO_*, and
+# RESOLVED_TORCHCODEC_SPEC once after target defaults and platform configuration
+# have finalized TORCH_VERSION and PLATFORM_TORCH_STR.
+resolve_torch_family_specs() {
+    if [ -n "$TORCH_VERSION" ]; then
+        local torch_major torch_minor torch_patch
+        IFS='.' read -r torch_major torch_minor torch_patch <<< "$TORCH_VERSION"
+        if [ "$torch_major" != "2" ] || [ -z "$torch_minor" ] || [ -z "$torch_patch" ]; then
+            echo "--torch must be of form 2.Y.Z (got '$TORCH_VERSION')." >&2
+            exit 1
+        fi
+        case "$torch_minor$torch_patch" in
+            *[!0-9]*)
+                echo "--torch components must be numeric (got '$TORCH_VERSION')." >&2
+                exit 1
+                ;;
+        esac
+        local tv_minor=$((torch_minor + 15))
+        RESOLVED_TORCH_VERSION="$TORCH_VERSION"
+        RESOLVED_TORCHVISION_VERSION="0.${tv_minor}.${torch_patch}"
+        RESOLVED_TORCHAUDIO_VERSION="$TORCH_VERSION"
+        # torchaudio's last release is 2.11.0; newer torch keeps it.
+        if [ "$torch_minor" -ge 12 ]; then
+            RESOLVED_TORCHAUDIO_VERSION="2.11.0"
+        fi
+    else
+        # Reuse the public versions already pinned in pyproject.toml, stripping
+        # any pre-existing local segment so PLATFORM_TORCH_STR can be re-applied cleanly.
+        RESOLVED_TORCH_VERSION=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
+        RESOLVED_TORCHVISION_VERSION=$(sed -nE 's/.*"torchvision==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
+        RESOLVED_TORCHAUDIO_VERSION=$(sed -nE 's/.*"torchaudio==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
+        if [ -z "$RESOLVED_TORCH_VERSION" ] || [ -z "$RESOLVED_TORCHVISION_VERSION" ] || [ -z "$RESOLVED_TORCHAUDIO_VERSION" ]; then
+            echo "Could not parse existing torch/torchvision/torchaudio pins from $PYPROJECT_FILE" >&2
+            exit 1
+        fi
+    fi
 
-    local _eff_torch="${TORCH_VERSION}"
-    if [ -z "$_eff_torch" ] && [ -f "$PYPROJECT_FILE" ]; then
-        _eff_torch=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
-    fi
-    local _torchcodec_spec="" _cur_torchcodec=""
+    RESOLVED_TORCH_PIN="${RESOLVED_TORCH_VERSION}${PLATFORM_TORCH_STR}"
+    RESOLVED_TORCHVISION_PIN="${RESOLVED_TORCHVISION_VERSION}${PLATFORM_TORCH_STR}"
+    RESOLVED_TORCHAUDIO_PIN="${RESOLVED_TORCHAUDIO_VERSION}${PLATFORM_TORCH_STR}"
+
     if [ -n "$PLATFORM_TORCHCODEC_SPEC" ]; then
-        _torchcodec_spec="$PLATFORM_TORCHCODEC_SPEC"
-    elif [ -n "$_eff_torch" ]; then
+        RESOLVED_TORCHCODEC_SPEC="$PLATFORM_TORCHCODEC_SPEC"
+    else
         local _tmaj _tmin _tpatch
-        IFS='.' read -r _tmaj _tmin _tpatch <<< "$_eff_torch"
-        _torchcodec_spec=$(derive_torchcodec_spec "$_tmaj" "$_tmin")
+        IFS='.' read -r _tmaj _tmin _tpatch <<< "$RESOLVED_TORCH_VERSION"
+        RESOLVED_TORCHCODEC_SPEC=$(derive_torchcodec_spec "$_tmaj" "$_tmin")
     fi
+
+    local _cur_torchcodec=""
     if [ -f "$PYPROJECT_FILE" ]; then
         _cur_torchcodec=$(sed -nE 's/.*"(torchcodec[<>=!][^"]*)".*/\1/p' "$PYPROJECT_FILE" | head -1)
     fi
-    if [ -n "$_torchcodec_spec" ] && [ "$_torchcodec_spec" != "$_cur_torchcodec" ]; then
+    if [ -n "$RESOLVED_TORCHCODEC_SPEC" ] && [ "$RESOLVED_TORCHCODEC_SPEC" != "$_cur_torchcodec" ]; then
         PLATFORM_RELAX_TORCHCODEC=1
     fi
+
+    echo "[install.sh] Resolved stack: python=${PYTHON_VERSION}, torch=${RESOLVED_TORCH_PIN}, torchvision=${RESOLVED_TORCHVISION_PIN}, torchaudio=${RESOLVED_TORCHAUDIO_PIN}, index=${PLATFORM_TORCH_INDEX:-<default>}"
+}
+
+resolve_install_plan() {
+    validate_target_args
+    resolve_target_python_version
+    apply_model_default_torch
+    apply_env_default_torch
+    apply_agentic_torch_default
+    configure_platform
+    resolve_torch_family_specs
+}
+
+# Re-asserts the resolved torch/torchvision/torchaudio pins after an external
+# installer (e.g. OmniGibson's setup.sh or genesis-world) modifies the venv's
+# torch tree. Honors PLATFORM_TORCH_INDEX and --use-mirror.
+reassert_torch_override() {
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    local specs=(
+        "torch==${RESOLVED_TORCH_PIN}"
+        "torchvision==${RESOLVED_TORCHVISION_PIN}"
+        "torchaudio==${RESOLVED_TORCHAUDIO_PIN}"
+    )
+    if [ -n "$PLATFORM_TORCH_INDEX" ]; then
+        env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" "${specs[@]}"
+    else
+        uv pip install "${specs[@]}"
+    fi
+}
+
+apply_torch_override() {
+    # Applies the resolved stack pins (RESOLVED_TORCH_PIN, RESOLVED_TORCHVISION_PIN,
+    # RESOLVED_TORCHAUDIO_PIN, RESOLVED_TORCHCODEC_SPEC) and platform index/override
+    # rules to pyproject.toml for the duration of the install.
 
     local needs_torch_rewrite=0
     if [ -n "$TORCH_VERSION" ] || [ -n "$PLATFORM_TORCH_STR" ] || [ -n "$PLATFORM_TORCH_INDEX" ]; then
@@ -1638,9 +1932,9 @@ apply_torch_override() {
     cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
     trap 'restore_pyproject' EXIT INT TERM HUP
 
-    if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ] && [ -n "$_torchcodec_spec" ]; then
-        sed -i -E "s/\"torchcodec[<>=!][^\"]*\"/\"${_torchcodec_spec}\"/" "$PYPROJECT_FILE"
-        echo "[install.sh] Set torchcodec override to ${_torchcodec_spec} for torch ${_eff_torch}"
+    if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ] && [ -n "$RESOLVED_TORCHCODEC_SPEC" ]; then
+        sed -i -E "s/\"torchcodec[<>=!][^\"]*\"/\"${RESOLVED_TORCHCODEC_SPEC}\"/" "$PYPROJECT_FILE"
+        echo "[install.sh] Set torchcodec override to ${RESOLVED_TORCHCODEC_SPEC} for torch ${RESOLVED_TORCH_VERSION}"
     fi
 
     # Replace the default protobuf override rather than adding a conflicting
@@ -1688,51 +1982,13 @@ apply_torch_override() {
         return 0
     fi
 
-    local torch_version torchvision_version torchaudio_version
-    if [ -n "$TORCH_VERSION" ]; then
-        local torch_major torch_minor torch_patch
-        IFS='.' read -r torch_major torch_minor torch_patch <<< "$TORCH_VERSION"
-        if [ "$torch_major" != "2" ] || [ -z "$torch_minor" ] || [ -z "$torch_patch" ]; then
-            echo "--torch must be of form 2.Y.Z (got '$TORCH_VERSION')." >&2
-            exit 1
-        fi
-        case "$torch_minor$torch_patch" in
-            *[!0-9]*)
-                echo "--torch components must be numeric (got '$TORCH_VERSION')." >&2
-                exit 1
-                ;;
-        esac
-        local tv_minor=$((torch_minor + 15))
-        torch_version="$TORCH_VERSION"
-        torchvision_version="0.${tv_minor}.${torch_patch}"
-        torchaudio_version="$TORCH_VERSION"
-        # torchaudio's last release is 2.11.0; newer torch keeps it.
-        if [ "$torch_minor" -ge 12 ]; then
-            torchaudio_version="2.11.0"
-        fi
-    else
-        # Reuse the public versions already pinned in pyproject.toml, stripping
-        # any pre-existing local segment so PLATFORM_TORCH_STR can be re-applied cleanly.
-        torch_version=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
-        torchvision_version=$(sed -nE 's/.*"torchvision==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
-        torchaudio_version=$(sed -nE 's/.*"torchaudio==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
-        if [ -z "$torch_version" ] || [ -z "$torchvision_version" ] || [ -z "$torchaudio_version" ]; then
-            echo "Could not parse existing torch/torchvision/torchaudio pins from $PYPROJECT_FILE" >&2
-            exit 1
-        fi
-    fi
-
-    local torch_pin="${torch_version}${PLATFORM_TORCH_STR}"
-    local torchvision_pin="${torchvision_version}${PLATFORM_TORCH_STR}"
-    local torchaudio_pin="${torchaudio_version}${PLATFORM_TORCH_STR}"
-
     sed -i \
-        -e "s/\"torch==[^\"]*\"/\"torch==${torch_pin}\"/" \
-        -e "s/\"torchvision==[^\"]*\"/\"torchvision==${torchvision_pin}\"/" \
-        -e "s/\"torchaudio==[^\"]*\"/\"torchaudio==${torchaudio_pin}\"/" \
+        -e "s/\"torch==[^\"]*\"/\"torch==${RESOLVED_TORCH_PIN}\"/" \
+        -e "s/\"torchvision==[^\"]*\"/\"torchvision==${RESOLVED_TORCHVISION_PIN}\"/" \
+        -e "s/\"torchaudio==[^\"]*\"/\"torchaudio==${RESOLVED_TORCHAUDIO_PIN}\"/" \
         "$PYPROJECT_FILE"
 
-    echo "[install.sh] Patched pyproject.toml override-dependencies: torch==${torch_pin}, torchvision==${torchvision_pin}, torchaudio==${torchaudio_pin}"
+    echo "[install.sh] Patched pyproject.toml override-dependencies: torch==${RESOLVED_TORCH_PIN}, torchvision==${RESOLVED_TORCHVISION_PIN}, torchaudio==${RESOLVED_TORCHAUDIO_PIN}"
 
     if [ -n "$PLATFORM_TORCH_INDEX" ]; then
         # `uv sync` does not honor UV_TORCH_BACKEND for resolution, so register
@@ -1899,6 +2155,31 @@ EOF
     uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
+# Queries the active venv's Python and PyTorch ABI metadata in a single call.
+# Prints: "<py_tag> <torch_mm> <torch_full> <cu_major> <cu_full> <cxx_abi>"
+# Example: "cp311 2.11 2110 12 128 cxx11abiTRUE"
+query_installed_torch_abi() {
+    python - <<'EOF'
+import sys
+import torch
+
+py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+ver = torch.__version__.split("+", 1)[0]
+parts = ver.split(".")
+torch_mm = f"{parts[0]}.{parts[1]}"
+torch_full = ver.replace(".", "")
+cuda_ver = (torch.version.cuda or "").split(".")
+cu_major = cuda_ver[0] if cuda_ver and cuda_ver[0] else "-"
+cu_full = "".join(cuda_ver[:2]) if len(cuda_ver) >= 2 else "-"
+cxx_abi = (
+    "cxx11abiTRUE"
+    if getattr(torch._C, "_GLIBCXX_USE_CXX11_ABI", False)
+    else "cxx11abiFALSE"
+)
+print(py_tag, torch_mm, torch_full, cu_major, cu_full, cxx_abi)
+EOF
+}
+
 install_flash_attn() {
     local flash_ver="2.7.4.post1"
 
@@ -1911,21 +2192,9 @@ install_flash_attn() {
         return 0
     fi
 
-    local torch_ge_28
-    if torch_ge_28=$(python - <<'EOF' 2>/dev/null
-import re
-import torch
-
-version = torch.__version__.split("+", 1)[0]
-match = re.match(r"^(\d+)\.(\d+)", version)
-if match is None:
-    print("0")
-else:
-    major, minor = (int(part) for part in match.groups())
-    print("1" if (major, minor) >= (2, 8) else "0")
-EOF
-    ); then
-        if [ "$torch_ge_28" = "1" ]; then
+    local py_tag torch_mm _torch_full cu_major _cu_full cxx_abi
+    if read -r py_tag torch_mm _torch_full cu_major _cu_full cxx_abi < <(query_installed_torch_abi 2>/dev/null); then
+        if version_ge "$torch_mm" "2.8"; then
             flash_ver="2.8.3"
         fi
     fi
@@ -1938,30 +2207,8 @@ EOF
         FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     fi
-    # Detect Python tags
-    local py_major py_minor
-    py_major=$(python - <<'EOF'
-import sys
-print(sys.version_info.major)
-EOF
-)
-    py_minor=$(python - <<'EOF'
-import sys
-print(sys.version_info.minor)
-EOF
-)
-    local py_tag="cp${py_major}${py_minor}"   # e.g. cp311
-    local abi_tag="${py_tag}"                 # we assume cpXY-cpXY ABI, adjust if needed
 
-    # Detect torch version (major.minor) and strip dots, e.g. 2.6.0 -> 26
-    local torch_mm
-    torch_mm=$(python - <<'EOF'
-import torch
-v = torch.__version__.split("+")[0]
-parts = v.split(".")
-print(f"{parts[0]}.{parts[1]}")
-EOF
-)
+    local abi_tag="${py_tag}"
 
     # Accelerator tag of the wheel: cu12 for CUDA 12.x, rocm7.2 for ROCm 7.2.
     local cu_tag
@@ -1978,16 +2225,7 @@ EOF
         cu_tag="cu${cuda_major}"
     fi
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
-
-    # Match flash-attn wheel ABI to the currently installed torch build.
     local platform_tag="linux_x86_64"
-    local cxx_abi
-    cxx_abi=$(python - <<'EOF'
-import torch
-
-print("cxx11abiTRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "cxx11abiFALSE")
-EOF
-)
 
     uv pip uninstall flash-attn || true
     local prebuilt_ver base_url wheel_name flash_attn_release_hosts host
@@ -2022,40 +2260,15 @@ install_apex() {
     # Example URL: https://github.com/RLinf/apex/releases/download/25.09/apex-0.1+torch2.6-cp311-cp311-linux_x86_64.whl
     local base_url="${GITHUB_PREFIX}https://github.com/RLinf/apex/releases/download/25.09"
 
-    local py_major py_minor
-    py_major=$(python - <<'EOF'
-import sys
-print(sys.version_info.major)
-EOF
-)
-    py_minor=$(python - <<'EOF'
-import sys
-print(sys.version_info.minor)
-EOF
-)
-
-# Detect torch version (major.minor) and strip dots, e.g. 2.6.0 -> 26
-    local torch_mm
-    torch_mm=$(python - <<'EOF'
-import torch
-v = torch.__version__.split("+")[0]
-parts = v.split(".")
-print(f"{parts[0]}.{parts[1]}")
-EOF
-)
+    local py_tag torch_mm _torch_full cu_major _cu_full _cxx_abi
+    read -r py_tag torch_mm _torch_full cu_major _cu_full _cxx_abi < <(query_installed_torch_abi)
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
-    local py_tag="cp${py_major}${py_minor}"   # e.g. cp311
     local abi_tag="${py_tag}"                 # we assume cpXY-cpXY ABI, adjust if needed
     local platform_tag="linux_x86_64"
     # Newer wheels embed the CUDA major (e.g. +cu13torch2.11); prefer that, then
     # fall back to the legacy torch-only name, then a source build.
-    local torch_cu
-    torch_cu=$(python - <<'EOF'
-import torch
-v = (torch.version.cuda or "").split(".")
-print("cu" + v[0] if v and v[0] else "")
-EOF
-)
+    local torch_cu=""
+    [ "$cu_major" != "-" ] && torch_cu="cu${cu_major}"
     local wheel_cu=""
     [ -n "$torch_cu" ] && wheel_cu="apex-0.1+${torch_cu}${torch_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
     local wheel_legacy="apex-0.1+${torch_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
@@ -2089,32 +2302,10 @@ install_natten() {
     # torch / cuda / python, like install_apex / install_flash_attn.
     # Example: natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl
     local natten_version="0.21.6"
-    local py_major py_minor
-    py_major=$(python - <<'EOF'
-import sys
-print(sys.version_info.major)
-EOF
-)
-    py_minor=$(python - <<'EOF'
-import sys
-print(sys.version_info.minor)
-EOF
-)
-    local py_tag="cp${py_major}${py_minor}"   # e.g. cp311
+    local py_tag _torch_mm torch_full _cu_major cu_full _cxx_abi
+    read -r py_tag _torch_mm torch_full _cu_major cu_full _cxx_abi < <(query_installed_torch_abi)
     local abi_tag="${py_tag}"                 # cpXY-cpXY ABI
     local platform_tag="linux_x86_64"
-    local torch_full cu_full
-    torch_full=$(python - <<'EOF'
-import torch
-print(torch.__version__.split("+")[0].replace(".", ""))
-EOF
-)
-    cu_full=$(python - <<'EOF'
-import torch
-v = (torch.version.cuda or "").split(".")
-print("".join(v[:2]))
-EOF
-)
     local torch_tag="torch${torch_full}"
     local cu_tag="cu${cu_full}"
     local natten_wheel="natten-${natten_version}+${torch_tag}${cu_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
@@ -2384,14 +2575,11 @@ install_openvla_oft_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
             ;;
         behavior)
-            PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             install_behavior_env
-            pushd ~ >/dev/null
             install_flash_attn
-            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -2499,15 +2687,12 @@ EOF
             install_flash_attn
             ;;
         behavior)
-            PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
             uv pip install "${RAY_COMPAT_DEPS[@]}"
-            pushd ~ >/dev/null
             install_flash_attn
-            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -2944,16 +3129,11 @@ install_dreamzero_deps() {
 install_dreamzero_model() {
     case "$ENV_NAME" in
         behavior)
-            # BEHAVIOR/OmniGibson currently requires Python 3.10 and installs
-            # its own Torch 2.5.1 stack inside install_behavior_env.
-            PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
             install_behavior_env
             install_dreamzero_deps
-            pushd ~ >/dev/null
             install_flash_attn
-            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -3089,9 +3269,6 @@ install_cosmos3_model() {
 }
 
 install_diffusion_model() {
-    # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
-    # Python 3.10 in the generation examples.
-    PYTHON_VERSION="3.10"
     create_and_sync_venv
     install_common_embodied_deps
     uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
@@ -3156,9 +3333,6 @@ install_franka_ros_realworld_env() {
 }
 
 install_env_only() {
-    if [ "$ENV_NAME" = "d4rl" ]; then
-        PYTHON_VERSION="3.10"
-    fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     # A robot host trains in its env venv, so it takes the same embodied extra,
@@ -3469,9 +3643,10 @@ install_behavior_env() {
     uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
     uv pip install click==8.2.1
     uv pip install llvmlite==0.47.0 numba==0.65.1
-    # Re-assert the pin after OmniGibson's setup, which otherwise leaves a torch
-    # tree mixing two versions (inductor then fails in _pad_mm_init).
-    uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+    # Re-assert the resolved torch stack after OmniGibson's setup, which
+    # otherwise leaves a torch tree mixing two versions (inductor then fails in
+    # _pad_mm_init).
+    reassert_torch_override
 }
 
 install_metaworld_env() {
@@ -3872,9 +4047,7 @@ install_genesis_env() {
     uv pip install "pyglet==2.1.14"
     uv pip install "matplotlib==3.10.8"
 
-    uv pip install "torch==2.8.0"
-    uv pip install "torchvision==0.23.0"
-    uv pip install "torchaudio==2.8.0"
+    reassert_torch_override
     uv pip install "torchcodec==0.6"
 }
 
@@ -4025,8 +4198,12 @@ select_flash_attn_variant() {
         uv pip uninstall flash-attn-4 || true
         return 0
     fi
-    local gpu_cc
-    gpu_cc=$(python -c "import torch;print(torch.cuda.get_device_capability(0)[0])" 2>/dev/null || true)
+    local gpu_cc=""
+    if [ -n "$HOST_GPU_MIN_CC" ]; then
+        gpu_cc="${HOST_GPU_MIN_CC%%.*}"
+    else
+        gpu_cc=$(python -c "import torch;print(torch.cuda.get_device_capability(0)[0])" 2>/dev/null || true)
+    fi
     if [ -z "$gpu_cc" ]; then
         echo "[install.sh] WARNING: Could not detect GPU compute capability; keeping FA4. Set UNINSTALL_FA4=1 to drop it (needed for sm<90 images)."
         FA4_KEPT=1
@@ -4157,36 +4334,65 @@ install_docs() {
     uv pip uninstall pynvml || true
 }
 
+#=======================STAGE 4: VERIFICATION=======================
+
+verify_installed_stack() {
+    python - "$RESOLVED_TORCH_VERSION" "$RESOLVED_TORCH_PIN" "$PLATFORM" "$ENV_NAME" "$PLATFORM_SYSTEM_SITE_PACKAGES" "$HOST_GPU_MAX_CC" <<'EOF'
+import sys
+
+expected_base, expected_pin, platform, env_name, sys_site, host_max_cc = sys.argv[1:7]
+py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+try:
+    import torch
+except Exception as exc:
+    raise SystemExit(f"[install.sh] ERROR: Failed to import torch after installation: {exc}")
+
+actual_torch = torch.__version__
+actual_base = actual_torch.split("+")[0]
+cuda_ver = getattr(torch.version, "cuda", None) or "none"
+archs = []
+if platform == "nvidia" and hasattr(torch.cuda, "get_arch_list"):
+    try:
+        archs = torch.cuda.get_arch_list()
+    except Exception:
+        archs = []
+
+# IsaacLab and vendor system-site-packages images manage their own torch build.
+if env_name != "isaaclab" and sys_site != "1" and expected_base:
+    if actual_base != expected_base:
+        raise SystemExit(
+            f"[install.sh] ERROR: Installed torch ({actual_torch}) drifted from resolved target ({expected_pin})."
+        )
+
+if platform == "nvidia" and host_max_cc and archs:
+    cc_Parts = host_max_cc.split(".")
+    if len(cc_Parts) == 2:
+        sm_prefix = f"sm_{cc_Parts[0]}{cc_Parts[1]}"
+        compute_prefix = f"compute_{cc_Parts[0]}{cc_Parts[1]}"
+        if not any(a.startswith(sm_prefix) or a.startswith(compute_prefix) for a in archs):
+            print(
+                f"[install.sh] WARNING: Host GPU compute capability {host_max_cc} ({sm_prefix}) "
+                f"is not listed in torch.cuda.get_arch_list()={archs}.",
+                file=sys.stderr,
+            )
+
+print(
+    f"[install.sh] Verified stack: python={py_ver}, torch={actual_torch}, "
+    f"cuda={cuda_ver}, archs={','.join(archs) if archs else 'n/a'}"
+)
+EOF
+}
+
 main() {
     parse_args "$@"
-    validate_python_version
-    apply_model_default_torch
-    apply_env_default_torch
-    apply_agentic_torch_default
-    configure_platform
     setup_mirror
+    probe_host_facts
+    resolve_install_plan
     apply_torch_override
 
     case "$TARGET" in
         embodied)
-            # validate --model
-            if [ -n "$MODEL" ]; then
-                if [[ ! " ${SUPPORTED_MODELS[*]} " =~ " $MODEL " ]]; then
-                    echo "Unknown embodied model: $MODEL. Supported models: ${SUPPORTED_MODELS[*]}" >&2
-                    exit 1
-                fi
-            fi
-            # check --env is set and supported
-            if [ -n "$ENV_NAME" ]; then
-                if [[ ! " ${SUPPORTED_ENVS[*]} " =~ " $ENV_NAME " ]]; then
-                    echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
-                    exit 1
-                fi
-            elif [[ "$MODEL" != "dreamzero" && "$MODEL" != "fastwam" && "$MODEL" != "diffusion" ]]; then
-                echo "--env must be specified when target=embodied." >&2
-                exit 1
-            fi
-
             case "$MODEL" in
                 openvla)
                     install_openvla_model
@@ -4218,8 +4424,8 @@ main() {
                 dexbotic)
                     install_dexbotic_model
                     ;;
-                lingbotvla)                  
-                    install_lingbot_vla_model 
+                lingbotvla)
+                    install_lingbot_vla_model
                     ;;
                 abot_m0)
                     install_abot_m0_model
@@ -4251,12 +4457,6 @@ main() {
             esac
             ;;
         agentic)
-            # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
-            # stacks keep 3.11 (no cp312 flash-attn/apex wheels); a venv over a
-            # vendor image's site-packages keeps the image interpreter.
-            if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 0 ] && engine_needs_torch211; then
-                PYTHON_VERSION="3.12.12"
-            fi
             create_and_sync_venv
             install_agentic
             ;;
@@ -4264,17 +4464,13 @@ main() {
             create_and_sync_venv
             install_docs
             ;;
-        *)
-			echo "Unknown target: $TARGET" >&2
-			echo "Supported targets: ${SUPPORTED_TARGETS[*]}" >&2
-            exit 1
-            ;;
     esac
 
     install_platform_extras
     # Env/model installs may have changed the protobuf runtime or gencode.
     echo "[install.sh] Ensuring ${RAY_COMPAT_DEPS[*]} for Ray dashboard/agent"
     uv pip install "${RAY_COMPAT_DEPS[@]}"
+    verify_installed_stack
 }
 
 main "$@"
