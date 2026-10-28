@@ -263,12 +263,28 @@ class AMDGPUManager(AcceleratorManager):
         env_vars["RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES"] = "1"
         # https://github.com/ray-project/ray/blob/5d6c40aba865b2b80ee4dc549e603e89817ad285/python/ray/_private/accelerators/amd_gpu.py#L128
 
-        # Simulator env vars: render on the worker's first GPU.
+        return env_vars
+
+    @staticmethod
+    def get_worker_local_env_var(visible_accelerators: list[int]) -> dict[str, str]:
+        """Get the environment variables a worker resolves on its own node.
+
+        Simulators render on the worker's first GPU through ``DRI_PRIME``. The
+        PCI slot comes from the KFD topology and render nodes of the node the
+        worker runs on, which can differ from the driver's.
+
+        Args:
+            visible_accelerators (List[int]): The worker's HIP device IDs.
+
+        Returns:
+            Dict[str, str]: ``DRI_PRIME`` for the first device, or nothing when it
+            has no Vulkan render device to pin.
+        """
+        env_vars = {}
         if len(visible_accelerators) > 0:
             dri_prime = AMDGPUManager.get_dri_prime(visible_accelerators[0])
             if dri_prime is not None:
                 env_vars[DRI_PRIME_ENV] = dri_prime
-
         return env_vars
 
     @staticmethod
