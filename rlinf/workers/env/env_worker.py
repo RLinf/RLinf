@@ -122,7 +122,9 @@ class EnvWorker(Worker):
         eval_env_cfg = self.cfg.env.get("eval", None)
         self.enable_train = not self.only_eval and train_env_cfg is not None
         self.enable_eval = (
-            self.cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
+            self.cfg.runner.get("val_check_interval", -1) > 0
+            or self.only_eval
+            or self.cfg.runner.get("eval_at_start", False)
         )
         self.rollout_epoch = (
             train_env_cfg.rollout_epoch if train_env_cfg is not None else 1

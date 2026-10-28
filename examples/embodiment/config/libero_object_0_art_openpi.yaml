@@ -49,6 +49,14 @@ algorithm:
   art_branch_state_atol: 1.0e-5
   art_branch_image_atol: 1.0
   art_replay_diagnostics: False
+  art_reference_source: rollout
+  art_parameter_diagnostics: False
+  art_replay_batch_sizes: []
+  art_probe_only: False
+  art_state_sampler: legacy
+  art_states_per_trajectory: 4
+  art_success_state_fraction: 0.7
+  art_failure_max_step_fraction: 0.5
   art_reward_reduction: sum
   art_timestep_fraction: 0.25
   art_exclude_final_step: False

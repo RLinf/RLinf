@@ -137,7 +137,9 @@ class MultiStepRolloutWorker(Worker):
         eval_env_cfg = cfg.env.get("eval", None)
         self.enable_train = not self.only_eval and train_env_cfg is not None
         self.enable_eval = (
-            cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
+            cfg.runner.get("val_check_interval", -1) > 0
+            or self.only_eval
+            or cfg.runner.get("eval_at_start", False)
         )
         self.rollout_epoch = (
             train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
@@ -230,6 +232,8 @@ class MultiStepRolloutWorker(Worker):
         # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
+        if self.cfg.rollout.get("seed", None) is not None:
+            torch.manual_seed(int(self.cfg.rollout.seed) + self._rank)
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
@@ -750,7 +754,15 @@ class MultiStepRolloutWorker(Worker):
             art_branch_image_error=self._art_branch_image_error.clone(),
         )
         if self.art_state_sampling:
-            result["forward_inputs"]["art_state_id"] = env_obs["art_state_id"]
+            for key in (
+                "art_state_id",
+                "art_state_steps",
+                "art_source_success",
+                "art_source_trajectory_id",
+                "art_source_reset_state_id",
+            ):
+                if key in env_obs:
+                    result["forward_inputs"][key] = env_obs[key]
         return actions, result
 
     @Worker.timer("sync_model_from_actor")
@@ -1079,7 +1091,24 @@ class MultiStepRolloutWorker(Worker):
             self.offload_model()
 
     @Worker.timer("evaluate")
-    async def evaluate(self, input_channel: Channel, output_channel: Channel):
+    async def evaluate(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        seed: int | None = None,
+    ):
+        """Evaluate with optional paired seeds without advancing training RNG."""
+        if seed is None:
+            return await self._evaluate(input_channel, output_channel)
+        devices = [] if self.torch_device_type == "cpu" else [self.device]
+        device_type = (
+            "cuda" if self.torch_device_type == "cpu" else self.torch_device_type
+        )
+        with torch.random.fork_rng(devices=devices, device_type=device_type):
+            torch.manual_seed(seed + self._rank)
+            return await self._evaluate(input_channel, output_channel)
+
+    async def _evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()
         if self.env_decoupled_mode:

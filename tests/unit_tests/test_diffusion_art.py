@@ -827,10 +827,18 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         worker.art_state_sampling = True
         worker.art_branch_chunk_index = 0
         env_obs["art_state_id"] = torch.tensor([19, 19])
+        env_obs["art_state_steps"] = torch.tensor([40, 40])
+        env_obs["art_source_success"] = torch.tensor([1, 1])
+        env_obs["art_source_trajectory_id"] = torch.tensor([7, 7])
+        env_obs["art_source_reset_state_id"] = torch.tensor([3, 3])
         _, state_result = worker._predict_art_branch_actions(env_obs, 0)
         state_inputs = state_result["forward_inputs"]
         assert state_inputs["art_branch_valid"].all()
         assert state_inputs["art_state_id"].tolist() == [19, 19]
+        assert state_inputs["art_state_steps"].tolist() == [40, 40]
+        assert state_inputs["art_source_success"].tolist() == [1, 1]
+        assert state_inputs["art_source_trajectory_id"].tolist() == [7, 7]
+        assert state_inputs["art_source_reset_state_id"].tolist() == [3, 3]
         model._input_transform_fn = lambda data: data
         for name, value in observation.images.items():
             inputs[f"obs_image__{name}"] = value
@@ -984,3 +992,40 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
     finally:
         set_torch_compile(compiled)
         torch.set_num_threads(threads)
+
+
+@pytest.mark.parametrize(
+    "phase", ["diagnose", "probe", "train", "confirm", "object", "eval"]
+)
+def test_art_ablation_commands_validate(
+    monkeypatch, art_config_cluster, tmp_path, phase
+):
+    from examples.embodiment.run_art_ablation import build_command, experiment_matrix
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    args = SimpleNamespace(
+        phase=phase,
+        suite="long",
+        checkpoint=tmp_path,
+        steps=None,
+        eval_repeats=None,
+        lr=5e-7,
+        override=[],
+    )
+    arms = experiment_matrix(phase, "uniform", 42, [42, 43])
+    for arm in arms:
+        command = build_command(args, arm, tmp_path, "20261028_test")
+        config_name = command[command.index("--config-name") + 1]
+        with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+            cfg = compose(
+                config_name=config_name,
+                overrides=command[command.index("--config-name") + 2 :],
+            )
+        cfg = validate_cfg(cfg)
+        assert cfg.actor.global_batch_size == 64
+        assert cfg.env.train.task_id_filter == [0]
+        assert cfg.env.train.art_state_sampler == arm["sampler"]
+        assert cfg.actor.optim.use_fp32_master_params == arm["master"]
+        if phase == "eval":
+            assert cfg.runner.max_steps == 0 and cfg.runner.eval_at_start
