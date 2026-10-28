@@ -308,7 +308,7 @@ DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设�
 机械臂柔顺性参数
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集配置在 ``DualFranka`` 硬件条目里写了两条臂共用的 ``compliance``：平移刚度 1000 N/m，旋转刚度 56 Nm/rad，平移限幅 0.024 m，旋转限幅 0.15 rad，每步平移上限 0.06 m，每步旋转上限 0.15 rad，``max_delta_tau`` 0.2。``max_step`` 0.03 m（10 Hz）在带 Robotiq 负载时容易触发 ``joint_velocity_violation``；若当前负载和控制频率下出现此错误，应减小 ``max_step``。DAgger 配置没有这段 mapping，因此使用 Franky 默认值；要和采集手感一致，把同一段抄到 DAgger 的硬件条目。默认值和 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。
+采集配置在 ``DualFranka`` 硬件条目里写了两条臂共用的 ``compliance``：平移刚度 1000 N/m，旋转刚度 56 Nm/rad，平移限幅 0.024 m，旋转限幅 0.15 rad，每步平移上限 0.06 m，每步旋转上限 0.15 rad。``max_delta_tau`` 未设置，使用默认值 0.3 N·m/控制周期。``max_step`` 0.03 m（10 Hz）在带 Robotiq 负载时容易触发 ``joint_velocity_violation``；若当前负载和控制频率下出现此错误，应减小 ``max_step``。DAgger 配置没有这段 mapping，因此使用 Franky 默认值；要和采集手感一致，把同一段抄到 DAgger 的硬件条目。默认值和 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。
 
 单侧 mapping 会替换该机械臂使用的共享 mapping，其中未填写的字段使用 Franky 默认值。例如：
 
