@@ -43,6 +43,7 @@ class SupportedEnvType(Enum):
     D4RL = "d4rl"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
+    BENCH2DEX = "bench2dex"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -185,5 +186,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.polaris.polaris_env import PolarisEnv
 
         return PolarisEnv
+    elif env_type == SupportedEnvType.BENCH2DEX:
+        from rlinf.envs.sim.bench2dex.bench2dex_env import Bench2DexEnv
+
+        return Bench2DexEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

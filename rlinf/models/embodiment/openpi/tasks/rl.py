@@ -26,7 +26,6 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.models.embodiment.openpi.env_io import EnvIO
 from rlinf.models.embodiment.openpi.modules import gemma
 from rlinf.models.embodiment.openpi.modules.model import (
-    IMAGE_KEYS,
     Observation,
     preprocess_observation,
 )
@@ -185,7 +184,9 @@ class Pi0RL(EnvIO, Pi0):
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
-        observation = preprocess_observation(observation, train=False)
+        observation = preprocess_observation(
+            observation, train=False, image_keys=self._config.image_keys
+        )
         B = observation.state.shape[0]
         num_steps = self.num_steps
 
@@ -375,7 +376,7 @@ class Pi0RL(EnvIO, Pi0):
 
         Prefer raw ``observation/*`` tensors (OpenPI path): re-run
         ``input_transform`` then ``preprocess_observation``. Fall back to the
-        older ``obs_image__*`` layout, assembling cameras in ``IMAGE_KEYS``
+        older ``obs_image__*`` layout, assembling cameras in configured
         order rather than ``dict`` iteration order.
         """
         has_raw_obs = any(key.startswith("observation/") for key in forward_inputs)
@@ -385,7 +386,7 @@ class Pi0RL(EnvIO, Pi0):
         else:
             images: dict[str, torch.Tensor] = {}
             image_masks: dict[str, torch.Tensor] = {}
-            for name in IMAGE_KEYS:
+            for name in self._config.image_keys:
                 image_key = f"obs_image__{name}"
                 if image_key in forward_inputs:
                     images[name] = forward_inputs[image_key]
@@ -406,7 +407,9 @@ class Pi0RL(EnvIO, Pi0):
                 tokenized_prompt=forward_inputs["tokenized_prompt"],
                 tokenized_prompt_mask=forward_inputs["tokenized_prompt_mask"],
             )
-        return preprocess_observation(observation, train=False)
+        return preprocess_observation(
+            observation, train=False, image_keys=self._config.image_keys
+        )
 
     def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:

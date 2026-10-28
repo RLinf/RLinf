@@ -202,11 +202,13 @@ class Pi0(model.BaseModel):
         input_mask = []
         ar_mask = []
 
-        # Embed images through SigLIP in IMAGE_KEYS order (not dict iteration
+        # Embed images through SigLIP in configured order (not dict iteration
         # order). Official OpenPI preprocess rebuilds cameras this way, then
         # concatenates ``list(observation.images.values())``.
-        image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
-        image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
+        image_names = [name for name in self._config.image_keys if name in obs.images]
+        image_names.extend(
+            name for name in obs.images if name not in self._config.image_keys
+        )
         for name in image_names:
             image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
             tokens.append(image_tokens)
@@ -357,7 +359,9 @@ class Pi0(model.BaseModel):
         # Preprocess first (requires float32 for image ops), then cast the
         # observation to embed_dtype for Gemma / SigLIP. Keep actions in
         # fp32 like the RL sampler: action / time projections stay fp32.
-        observation = model.preprocess_observation(observation, train=train, rng=rng)
+        observation = model.preprocess_observation(
+            observation, train=train, rng=rng, image_keys=self._config.image_keys
+        )
 
         observation = model._observation_to_dtype(observation, self.embed_dtype)
         actions = actions.to(dtype=torch.float32)
@@ -538,7 +542,9 @@ class Pi0(model.BaseModel):
         Returns:
             actions: (B, action_horizon, action_dim)
         """
-        observation = model.preprocess_observation(observation, train=False)
+        observation = model.preprocess_observation(
+            observation, train=False, image_keys=self._config.image_keys
+        )
 
         dt = -1.0 / num_steps
         B = observation.state.shape[0]
@@ -783,7 +789,9 @@ class Pi0(model.BaseModel):
         batch_size = actions.shape[0]
         device = actions.device
 
-        observation = model.preprocess_observation(observation, train=True)
+        observation = model.preprocess_observation(
+            observation, train=True, image_keys=self._config.image_keys
+        )
         observation = model._observation_to_dtype(observation, self.embed_dtype)
         actions = actions.to(dtype=torch.float32)
         dtype = actions.dtype
