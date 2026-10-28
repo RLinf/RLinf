@@ -4969,7 +4969,6 @@ def _fake_robotwin_camera(tmp_path, near_line="        near, far = 0.1, 100\n"):
     camera = tmp_path / "envs" / "camera" / "camera.py"
     camera.parent.mkdir(parents=True)
     camera.write_text(
-        "import sapien.core as sapien\n"
         "import os\n"
         "\n"
         "class Camera:\n"
