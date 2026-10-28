@@ -82,25 +82,19 @@
 运行全部 120 个任务
 -------------------
 
-导出 TSV 并在 YAML 中设置 checkpoint 路径后，保留 ``total_num_envs: 10`` 和 ``rollout_epoch: 1``，共评测 1200 回合。在仓库根目录启动全量评估：
+导出 TSV 并在 YAML 中设置 checkpoint 路径后，保留 ``total_num_envs: 10`` 和 ``rollout_epoch: 1``，共评测 1200 回合。下面的 Bash 循环在一张 GPU 上依次运行全部任务，从 TSV 读取任务名称和原生步数，自动设置任务、两个步数字段及输出目录：
 
 .. code-block:: bash
 
-   python -m toolkits.standalone_eval_scripts.robolab.run_benchmark \
-       --output-dir robolab_benchmark
+   while IFS=$'\t' read -r task max_steps rest; do
+       bash evaluations/run_eval.sh robolab pi05_droid_jointpos \
+           "env.eval.init_params.task=${task}" \
+           "env.eval.max_episode_steps=${max_steps}" \
+           "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
+           "env.eval.init_params.output_dir=./logs/robolab/${task}" || break
+   done < <(tail -n +2 robolab_tasks.tsv)
 
-结果保存在仓库根目录的 ``robolab_benchmark/`` 下。该工具读取 ``robolab_tasks.tsv`` 和 ``evaluations/robolab/pi05_droid_jointpos.yaml``，按 YAML 的 GPU 放置配置依次运行任务。工具自动将 TSV 中的 ``max_steps`` 设置为该任务的 ``env.eval.max_episode_steps``，并将 ``env.eval.max_steps_per_rollout_epoch`` 向上取整到完整动作块；使用这个入口时，无需逐任务手动修改 YAML 中的任务名称和两个步数字段。使用 ``--config`` 或 ``--tasks`` 可以指定其他 YAML 或任务 TSV；如需评测子集，可复制 TSV 并只保留需要的任务行。
-
-终端每 30 秒显示已完成任务数、当前任务及尝试次数、经过时间、成功率和归一化得分，同步以原子写入方式保存到输出目录下的 ``progress.json``。每个任务成功完成后保存 ``result.json``；每次尝试分别保存 ``console.log``、TensorBoard 事件、配置和 ``native/`` 轨迹。
-
-每个任务通过 ``evaluations/run_eval.sh`` 执行。``--output-dir`` 用于创建新实验，目录应为空或尚不存在。工具将配置和任务列表保存到该目录；任务失败时记录错误并以非零状态码退出，修复问题后使用 ``--resume-dir`` 继续：
-
-.. code-block:: bash
-
-   python -m toolkits.standalone_eval_scripts.robolab.run_benchmark \
-       --resume-dir robolab_benchmark
-
-恢复时直接使用该目录保存的配置和任务列表，无需再次指定 ``--config`` 或 ``--tasks``。如果指定了这两个参数，内容必须与保存的实验一致。已完成任务自动跳过，未完成任务从第一个回合重新评测，之前的尝试日志会保留。``--output-dir`` 和 ``--resume-dir`` 只能选择一个；需要修改配置或任务列表时，使用新的 ``--output-dir``。续跑时保持 checkpoint 内容不变。
+命令失败时循环停止。该循环没有自动断点续跑功能；可复制 TSV 并删除已完成任务的行，选择剩余任务。新实验应使用新的输出目录，跨多次运行汇总时以任务日志为准。
 
 查看结果
 --------

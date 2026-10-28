@@ -82,25 +82,19 @@ With the default task and episode settings, this runs ten episodes of ``BowlStac
 Run All 120 Tasks
 -----------------
 
-After exporting the TSV and setting the checkpoint path in the YAML, keep ``total_num_envs: 10`` and ``rollout_epoch: 1`` for 1,200 episodes in total. Run the benchmark launcher from the repository root:
+After exporting the TSV and setting the checkpoint path in the YAML, keep ``total_num_envs: 10`` and ``rollout_epoch: 1`` for 1,200 episodes in total. The loop below runs all tasks sequentially on one GPU. It reads each task name and native step limit from the TSV and overrides the task, both step fields, and output directory automatically:
 
 .. code-block:: bash
 
-   python -m toolkits.standalone_eval_scripts.robolab.run_benchmark \
-       --output-dir robolab_benchmark
+   while IFS=$'\t' read -r task max_steps rest; do
+       bash evaluations/run_eval.sh robolab pi05_droid_jointpos \
+           "env.eval.init_params.task=${task}" \
+           "env.eval.max_episode_steps=${max_steps}" \
+           "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
+           "env.eval.init_params.output_dir=./logs/robolab/${task}" || break
+   done < <(tail -n +2 robolab_tasks.tsv)
 
-Results are saved under ``robolab_benchmark/`` in the repository root. The launcher reads ``robolab_tasks.tsv`` and ``evaluations/robolab/pi05_droid_jointpos.yaml``. It runs tasks sequentially using the YAML's GPU placement. For each task, it sets ``env.eval.max_episode_steps`` to the TSV's ``max_steps`` and rounds ``env.eval.max_steps_per_rollout_epoch`` up to a complete action chunk. With this entry point, you do not need to edit the task name or either step field in the YAML for each task. Use ``--config`` or ``--tasks`` to select a different YAML or task TSV. Keep only the required rows in a copy of the TSV to evaluate a subset.
-
-Every 30 seconds, the terminal shows the completed task count, current task and attempt, elapsed time, success rate, and normalized score. The same information is saved atomically to ``progress.json`` under the output directory. Each task has a ``result.json`` after successful completion; each attempt keeps its own ``console.log``, TensorBoard events, configuration, and ``native/`` trajectories.
-
-Each task runs through ``evaluations/run_eval.sh``. Use ``--output-dir`` for a new experiment in an empty or nonexistent directory. The launcher saves the configuration and task list there. If a task fails, it records the error and exits with a nonzero status. After fixing the error, continue with ``--resume-dir``:
-
-.. code-block:: bash
-
-   python -m toolkits.standalone_eval_scripts.robolab.run_benchmark \
-       --resume-dir robolab_benchmark
-
-Resume uses the configuration and task list saved in that directory, so you can omit ``--config`` and ``--tasks``. If you provide either option, its contents must match the saved experiment. Completed tasks are skipped; unfinished tasks restart from their first episode, with earlier attempt logs preserved. Choose either ``--output-dir`` or ``--resume-dir``. To change the configuration or task list, use a new ``--output-dir``. Keep checkpoint contents unchanged when resuming.
+The loop stops on a failed command. It does not implement automatic resume; remove completed rows from a copy of the TSV to select remaining tasks, and use a fresh output directory for a new experiment. Use the task-level logs when combining results across separate runs.
 
 Read the Results
 ----------------
