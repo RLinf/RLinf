@@ -46,14 +46,14 @@ cluster:
             left_controller_node_rank: 0
             right_controller_node_rank: 0
             node_rank: 0
-            # max_step stays under the 3 cm/step that trips
-            # joint_velocity_violation with a Robotiq payload.
+            # Reduce max_step if the payload or control rate causes
+            # joint_velocity_violation.
             compliance:
               translational_stiffness: 1000
               rotational_stiffness: 56
-              translational_clip: 0.02
+              translational_clip: 0.024
               rotational_clip: 0.15
-              max_step: 0.02
+              max_step: 0.06
               max_step_rad: 0.15
               max_delta_tau: 0.2
 
