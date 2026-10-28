@@ -4311,6 +4311,26 @@ def test_a_real_arm_runs_against_a_faked_sdk():
         assert not arm.is_connected
 
 
+def test_a_franky_arm_on_fakes_leaves_the_test_process_unhardened(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from robot_mocks import mocked_sdks
+
+    # mlockall(MCL_FUTURE) in the pytest process makes a later Ray connection
+    # abort once the object store mapping exceeds RLIMIT_MEMLOCK.
+    calls = []
+    monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(os, "sched_setscheduler", lambda *args: calls.append(args))
+    monkeypatch.setattr(os, "sched_setaffinity", lambda *args: calls.append(args))
+
+    with mocked_sdks():
+        arm = FrankyArm("10.0.0.1")
+        arm.connect()
+        arm.disconnect()
+
+    assert calls == []
+
+
 def test_a_franky_arm_takes_no_end_effector_settings():
     from rlinf.robotics.parts.arms.franky import FrankyArm
 
@@ -4333,13 +4353,6 @@ def franky_arm(
     from rlinf.robotics.parts import claims
 
     monkeypatch.setattr(claims, "_CLAIM_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        ctypes,
-        "CDLL",
-        lambda *args, **kwargs: SimpleNamespace(mlockall=lambda flags: 0),
-    )
-    monkeypatch.setattr(os, "sched_setscheduler", lambda *args: None)
-    monkeypatch.setattr(os, "sched_setaffinity", lambda *args: None)
     with mocked_sdks() as sdk:
         arm = FrankyArm("10.0.0.1")
         arm.connect()

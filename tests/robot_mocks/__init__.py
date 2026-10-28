@@ -32,6 +32,7 @@ The bench check exposes the same setup through ``--mock``.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import os
 import pathlib
 import sys
@@ -97,6 +98,42 @@ def _no_processes() -> Any:
     return fake
 
 
+class _Delegating(types.ModuleType):
+    """Delegate to a real module except for the members set on the proxy."""
+
+    def __init__(self, real: types.ModuleType, **members: Any):
+        super().__init__(real.__name__)
+        self._real = real
+        for name, value in members.items():
+            setattr(self, name, value)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    def __reduce__(self) -> tuple[Any, tuple[str]]:
+        # A driver class pickled into a scheduler worker gets the real module.
+        return importlib.import_module, (self.__name__,)
+
+
+def _no_realtime() -> dict[str, Any]:
+    """Return ``ctypes`` and ``os`` proxies whose real-time calls change nothing.
+
+    ``mlockall`` and the scheduler calls apply to the whole calling process and
+    outlast the context, so a driver run on fakes must not make them.
+    """
+    import ctypes as real_ctypes
+
+    libc = types.SimpleNamespace(mlockall=lambda _flags: 0)
+    return {
+        "ctypes": _Delegating(real_ctypes, CDLL=lambda *_a, **_k: libc),
+        "os": _Delegating(
+            os,
+            sched_setscheduler=lambda *_a: None,
+            sched_setaffinity=lambda *_a: None,
+        ),
+    }
+
+
 def sdk_modules() -> dict[str, types.ModuleType]:
     """Return fake SDK modules keyed by their import names."""
     made: dict[str, types.ModuleType] = {}
@@ -126,7 +163,9 @@ def mocked_sdks(*, extra: dict[str, Any] | None = None) -> Iterator[dict[str, An
     Only the vendor SDKs are faked. Everything else behaves as it does in a
     real run: a part with a ``node_rank`` is hosted in a scheduler worker,
     which installs the same fakes for itself. A test that wants a part in this
-    process declares it without a ``node_rank``, as production does.
+    process declares it without a ``node_rank``, as production does. The one
+    exception is real-time hardening: a driver connected in this process
+    leaves its memory locking and scheduling unchanged.
 
     Args:
         extra: More modules to install, by dotted name.
@@ -134,6 +173,9 @@ def mocked_sdks(*, extra: dict[str, Any] | None = None) -> Iterator[dict[str, An
     Yields:
         Installed modules available for test assertions.
     """
+    # ctypes and os cannot be replaced through sys.modules, so the Franky
+    # driver is imported here, before any fake, and patched below.
+    importlib.import_module("rlinf.robotics.parts.arms.franky")
     made = sdk_modules()
     if extra:
         made.update(extra)
@@ -169,6 +211,7 @@ def mocked_sdks(*, extra: dict[str, Any] | None = None) -> Iterator[dict[str, An
         "rlinf.robotics.parts.arms.franka_ros": {"psutil": processes},
         "rlinf.robotics.parts.transports.ros.ros_controller": {"psutil": processes},
         "rlinf.robotics.parts.arms.dosw1": dosw1_patch,
+        "rlinf.robotics.parts.arms.franky": _no_realtime(),
         **_PATCHES,
     }.items():
         target = sys.modules.get(dotted)
