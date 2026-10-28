@@ -1,0 +1,68 @@
+defaults:
+  - env/dexjoco@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dexjoco_openpi_pi05_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 50
+    auto_reset: False
+    ignore_terminations: False
+    max_episode_steps: 1000
+    max_steps_per_rollout_epoch: 1020
+    is_eval: True
+    seed: 42
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/dexjoco_sft_openpi_pi05/checkpoints/global_step_<N>"
+    num_action_chunks: 30
+    action_dim: 22
+    num_steps: 10
+    openpi:
+      task: eval
+      config_name: "pi05_dexjoco"
+    openpi_data:
+      norm_stats_path: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json"

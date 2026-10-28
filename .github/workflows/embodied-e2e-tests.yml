@@ -551,6 +551,34 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-cnn-ppo-dexjoco-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env dexjoco
+
+      - name: DexJoCo PPO CNN test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh dexjoco_ppo_cnn
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvla-maniskill-libero-test:
     runs-on: embodied
     steps:
@@ -1609,6 +1637,34 @@ jobs:
           export ROBOCASA365_OPENPI_CKPT=/workspace/dataset/pi0-robocasa-pretrain-human300
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh robocasa365_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-dexjoco-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openpi --env dexjoco
+
+      - name: DexJoCo PPO OpenPI Pi05 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh dexjoco_ppo_openpi_pi05
 
       - name: Clean up
         run: |

@@ -154,6 +154,8 @@ Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 
      - MetaWorld
    * - ``pi05_calvin``
      - CALVIN
+   * - ``pi05_dexjoco`` · ``pi05_dexjoco_dual_arm``
+     - DexJoCo
    * - ``pi0_custom``
      - 自定义 LeRobot
 
