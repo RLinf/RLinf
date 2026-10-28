@@ -1,0 +1,52 @@
+# RLinf PI0.5 BF16 compatibility policy for the PhyAI hybrid engine.
+#
+# Model semantics:
+# - RLinf calls exact F.gelu in SigLIP and Gemma. The rules below select the
+#   corresponding exact GELU kernels.
+#
+# Implementation differences:
+# - RLinf casts Q and K to fp32 for the Gemma score einsum. The profiled Torch
+#   path uses a TF32 GEMM. Softmax runs in fp32, then its output is cast to bf16
+#   for the value einsum.
+# - PhyAI uses paged bf16 attention. It implements the same attention operation
+#   with different rounding. FA2 is pinned for both prefix and expert paged
+#   attention so rollout training uses one stable kernel across engine versions.
+# - RLinf uses torch.compile to fuse exact GELU and the gate multiply. PhyAI
+#   uses the FlashInfer exact GELU kernel.
+# - RMSNorm reduction order, compiled RoPE, and GEMM selection add smaller
+#   numerical differences.
+# - Repeated Euler updates can amplify these differences.
+
+kernel_config:
+  schema: phyai.kernel/v1
+  profile: static
+  defaults:
+    fallback: error
+
+  overrides:
+    - id: pi05-rlinf-paged-fa2
+      priority: 100
+      match:
+        op: attention_paged
+        model.family: pi05
+      use: flashinfer.attention_paged.fa2
+
+    - id: pi05-rlinf-exact-geglu
+      priority: 100
+      match:
+        op: activation
+        model.family: pi05
+        attrs:
+          activation: gelu
+          gated: true
+      use: flashinfer.activation.gelu_and_mul
+
+    - id: pi05-rlinf-exact-gelu
+      priority: 100
+      match:
+        op: activation
+        model.family: pi05
+        attrs:
+          activation: gelu
+          gated: false
+      use: torch.activation.gelu

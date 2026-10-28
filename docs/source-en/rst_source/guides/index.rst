@@ -44,7 +44,7 @@ Choose a Workflow
       :link: rollout-engines/index
       :link-type: doc
 
-      Launch sglang servers and routers behind a single inference endpoint.
+      Configure embodied rollout backends and expose a unified inference interface.
 
 .. toctree::
    :hidden:

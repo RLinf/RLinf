@@ -1371,6 +1371,49 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-libero-phyai-test:
+    runs-on: embodied
+    timeout-minutes: 90
+    env:
+      CUDA_VISIBLE_DEVICES: 0,1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PhyAI environment
+        timeout-minutes: 45
+        run: |
+          unset UV_DEFAULT_INDEX PYTHONPATH
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          rm -rf "$GITHUB_WORKSPACE/.venv"
+          bash requirements/install.sh \
+            --python 3.12 \
+            --venv .venv \
+            --install-rlinf \
+            embodied \
+            --model openpi \
+            --env libero \
+            --engine phyai
+
+      - name: Libero-Spatial PPO OpenPI Pi05 PhyAI test
+        timeout-minutes: 40
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_pi05_phyai_ci
+
+      - name: Clean up
+        if: always()
+        run: |
+          source .venv/bin/activate 2>/dev/null || true
+          ray stop --force || true
+          rm -rf "$GITHUB_WORKSPACE/.venv"
+          uv cache prune
+
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
     steps:

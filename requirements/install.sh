@@ -117,7 +117,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_ENGINES=("sglang" "vllm")
+SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
@@ -146,7 +146,7 @@ Common options:
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
     --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
-                           (default: sglang). One venv holds one engine -- they pin the
+                           (default: sglang, vllm, phyai). One venv holds one engine -- they pin the
                            same kernel libraries to different versions, so run install.sh
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
@@ -350,6 +350,39 @@ validate_python_version() {
     local mm="${py_major}.${py_minor}"
     if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
         echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
+    fi
+}
+
+validate_engine() {
+    [ -z "$ENGINE" ] && return 0
+
+    if [ "$TARGET" = "embodied" ]; then
+        if [ "$ENGINE" != "phyai" ]; then
+            echo "target=embodied supports only --engine phyai." >&2
+            exit 1
+        fi
+        if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
+            echo "--engine phyai currently requires --model openpi --env libero." >&2
+            exit 1
+        fi
+        if [ "$PLATFORM" != "nvidia" ]; then
+            echo "--engine phyai currently requires --platform nvidia." >&2
+            exit 1
+        fi
+        local py_major py_minor _py_patch
+        IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+        if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
+            echo "--engine phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
+            exit 1
+        fi
+    elif [ "$TARGET" = "agentic" ]; then
+        if [ "$ENGINE" = "phyai" ]; then
+            echo "--engine phyai is supported only with target=embodied." >&2
+            exit 1
+        fi
+    else
+        echo "--engine is not supported when target=${TARGET}." >&2
+        exit 1
     fi
 }
 
@@ -1467,7 +1500,7 @@ agentic_cuda_line() {
 }
 
 agentic_requirements_file() {
-    # $1 = engine (sglang|vllm), $2 = version
+    # $1 = engine (sglang|vllm|phyai), $2 = version
     local line path
     line=$(agentic_cuda_line)
     path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
@@ -2615,6 +2648,90 @@ EOF
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
+}
+
+install_phyai_runtime() {
+    local phyai_version="0.1.1"
+    local phyai_version_spec=">=0.1.1.dev0,<0.1.2"
+    local cuda_line expected_cuda_major cudart_lib
+    cuda_line=$(agentic_cuda_line)
+    case "$cuda_line" in
+        cu12)
+            expected_cuda_major=12
+            cudart_lib=libcudart.so.12
+            ;;
+        cu13)
+            expected_cuda_major=13
+            cudart_lib=libcudart.so.13
+            ;;
+        *)
+            echo "[install.sh] ERROR: unsupported PhyAI CUDA line: ${cuda_line}." >&2
+            exit 1
+            ;;
+    esac
+    local torch_before transformers_before version_output
+    version_output=$(python - "$cuda_line" "$expected_cuda_major" <<'PYEOF'
+import sys
+
+import torch
+import transformers
+
+expected_line, expected_major = sys.argv[1:]
+torch_cuda = torch.version.cuda
+actual_major = torch_cuda.split(".", 1)[0] if torch_cuda else None
+if actual_major != expected_major:
+    raise SystemExit(
+        "PhyAI CUDA line mismatch: "
+        f"expected {expected_line}, but torch.version.cuda={torch_cuda!r}."
+    )
+print(torch.__version__, transformers.__version__)
+PYEOF
+) || exit 1
+    read -r torch_before transformers_before <<< "$version_output"
+
+    install_engine_requirements "$(agentic_requirements_file phyai "$phyai_version")"
+    env -u UV_TORCH_BACKEND uv pip install --no-deps \
+        "phyai${phyai_version_spec}" \
+        "phyai-kernel${phyai_version_spec}" \
+        "phyai-ext${phyai_version_spec}" \
+        --index https://mingti-org.github.io/phyai/simple/ \
+        --prerelease=allow
+
+    export CUDNN_FRONTEND_CUDART_LIB_NAME="$cudart_lib"
+    if grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i "s|^export CUDNN_FRONTEND_CUDART_LIB_NAME=.*|export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}|" "$VENV_DIR/bin/activate"
+    else
+        echo "export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}" >> "$VENV_DIR/bin/activate"
+    fi
+
+    python - "$torch_before" "$transformers_before" <<'PYEOF'
+import sys
+from importlib.metadata import version
+
+import torch
+import transformers
+from phyai.engine import Engine, EngineArgs
+from phyai.models.pi05.main_pi05 import PI05Args
+from phyai.models.pi05.scheduler_pi05 import PI05Request, PI05RolloutRequest
+
+expected_torch, expected_transformers = sys.argv[1:]
+if torch.__version__ != expected_torch:
+    raise SystemExit(
+        f"PhyAI installation changed Torch: {expected_torch} -> {torch.__version__}."
+    )
+if transformers.__version__ != expected_transformers:
+    raise SystemExit(
+        "PhyAI installation changed Transformers: "
+        f"{expected_transformers} -> {transformers.__version__}."
+    )
+assert all((Engine, EngineArgs, PI05Args, PI05Request, PI05RolloutRequest))
+print(
+    "[install.sh] PhyAI import smoke passed; "
+    f"phyai={version('phyai')}, phyai-kernel={version('phyai-kernel')}, "
+    f"phyai-ext={version('phyai-ext')}, torch={torch.__version__}, "
+    f"transformers={transformers.__version__}."
+)
+PYEOF
 }
 
 install_pi0_fast_model() {
@@ -4160,6 +4277,7 @@ install_docs() {
 main() {
     parse_args "$@"
     validate_python_version
+    validate_engine
     apply_model_default_torch
     apply_env_default_torch
     apply_agentic_torch_default
@@ -4249,6 +4367,9 @@ main() {
                     install_env_only
                     ;;
             esac
+            if [ "$ENGINE" = "phyai" ]; then
+                install_phyai_runtime
+            fi
             ;;
         agentic)
             # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
