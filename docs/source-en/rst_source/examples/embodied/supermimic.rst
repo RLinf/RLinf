@@ -149,23 +149,57 @@ The 40 clips are 2.45 h of motion. With ``manifest.json`` present, the loader
 refuses a clip whose SHA-256 differs or that the manifest does not list, so do
 not rename, add, remove, or edit the prepared files.
 
-**BONES-SEED (experimental).** The loader expects clips that are already G1
-retargets in the format below, plus a ``name`` used by the Appendix E name
-filter. RLinf does not ship a converter from the BONES-SEED release, because
-that format has not been checked against real data. The feasibility filter
-needs per-frame geometry, which this tool computes with ``mj_geomDistance``
-and writes into a copy of each clip:
+**BONES-SEED (experimental).** The official release is
+`bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_ on
+Hugging Face. G1 trajectories live in ``g1/csv/{date}/{motion}.csv``. The
+layout is described in
+`bones-studio/seed-viewer <https://github.com/bones-studio/seed-viewer>`_.
+Read ``LICENSE.md`` in the download before converting. The script does not
+download the data.
+
+The public header is the one in NVIDIA ProtoMotions'
+`SEED G1 CSV preparation <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_
+and in the ``Rotation.from_euler("xyz")`` call used by
+GR00T-WholeBodyControl: 120 Hz; ``root_translateX/Y/Z`` in centimeters;
+``root_rotateX/Y/Z`` as extrinsic XYZ Euler angles in degrees; 29 joint
+columns named ``<joint>_dof`` in degrees, matching the mjlab G1 joint names.
+The script reorders columns by those names and does not swap axes. In scipy,
+lowercase ``xyz`` means extrinsic. This convention has not been checked
+against an official CSV.
 
 .. code-block:: bash
 
+   python toolkits/supermimic/convert_bones_seed.py \
+       --input /data/bones-seed/g1/csv \
+       --output /data/bones_g1
    python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
        --out /data/bones_g1_filtered
    export SUPERMIMIC_BONES_PATH=/data/bones_g1_filtered
 
+``--input`` is one CSV or a directory, and a directory is scanned
+recursively. The default resample is 120 Hz to 50 Hz. Velocities are
+recomputed on that grid by the existing ``resample_states``. An existing
+``clip_*.pt`` is left in place unless ``--overwrite`` is set. One broken CSV
+is reported and the rest of the directory continues. A clip's ``name`` is its
+path relative to ``--input``, without the suffix, so the same motion name
+under two dates does not share an output file and the Appendix E name filter
+still sees words such as ``stair`` and ``sit``. Feasibility stays in
+``bones_feasibility.py``: it writes per-frame ``mj_geomDistance`` results
+into a copy, and the loader filters on those arrays.
+
+A few CSVs can exercise the training entry without the paper's 4096
+environments:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_supermimic.sh supermimic_bones_seed \
+       env.num_envs=8 algorithm.total_updates=3 runner.save_interval=3
+
 The BONES-SEED configs load every clip that passes the filters
 (``env.num_clips: null``) and log how many each filter removed. The paper's
-142,220 / 129,667 / 129,514 counts belong to its release; no full BONES-SEED
-dump has been run through this pipeline.
+142,220 / 129,667 / 129,514 counts belong to its release. The converter is
+tested on synthetic CSVs only. No full BONES-SEED dump has been converted,
+and no official CSV has been checked.
 
 Clip File Format
 ~~~~~~~~~~~~~~~~
@@ -741,6 +775,10 @@ Troubleshooting
   ``env.motion_path`` does not point at prepared clips.
 * **"reference clip q0 differs from the mjlab G1 default joint pose".** The
   clips were converted with another default pose; reconvert them.
+* **A BONES-SEED CSV is rejected.** The header needs ``Frame``,
+  ``root_translateX/Y/Z``, ``root_rotateX/Y/Z``, and 29 ``<joint>_dof``
+  columns. Root position is in centimeters and angles are in degrees. The
+  message names the file and the missing column.
 * **A resumed run starts at update 0.** The log shows ``resume_dir=auto: no
   complete checkpoint under ...``: the ``log_path`` or config name differs
   from the original run, or the original run never wrote a checkpoint
@@ -776,12 +814,47 @@ before planning a full run.
 What Has Been Run
 -----------------
 
-On one 8 GB GPU with MuJoCo Warp and the LAFAN1 clips: short training runs of
-the LAFAN1 configs (680-d, 689-d, 730-d, 99-d observation, velocity) at small
-sizes, resume including after a killed driver, motion and velocity
-evaluation, and the G.2 step test. The multi-GPU
-arithmetic is tested with two CPU (Gloo) processes. Not yet run: paper-scale
-training, NCCL on real GPUs, multiple nodes, Slurm, BONES-SEED data, and a
-training run long enough to show that the policy learns to track. This page
-therefore has no learning curves or comparison with the paper's metrics yet;
-they will be added after a long run.
+On one 8 GB GPU with MuJoCo Warp and the LAFAN1 clips: short training of the
+LAFAN1 configs (680-d, 689-d, 730-d, 99-d observation, velocity) at small
+sizes, including resume after the driver was killed, motion and velocity
+evaluation, and the G.2 step test. Multi-GPU arithmetic is also tested with
+two CPU (Gloo) processes.
+
+A later acceptance run used two 80 GB A800 GPUs, the 40 LAFAN1 clips, and
+local scheduling (not inside a Slurm job). The run reported below reused an
+existing virtual environment, so its own stage 01 is not applicable. An
+earlier run of the same commit had already passed a from-scratch ``install.sh``
+install, and the training and evaluation below used that environment. What
+passed:
+
+* Unit tests: 10 files, 201 passed, 1 skipped because the machine does not
+  have 4 accelerators.
+* One-GPU MuJoCo Warp smoke training: 3 updates, monotonic counters, finite
+  metrics, and a complete checkpoint.
+* Checkpoint resume after the driver was killed, on one GPU and on two. A
+  two-GPU checkpoint continued on one GPU. After one rank was killed, the
+  remaining processes exited nonzero within 20.3 s and left no orphan
+  processes.
+* Motion evaluation of all 40 clips. Repeating it on the same checkpoint
+  stayed within tolerance (absolute :math:`5\times10^{-5}`, relative
+  :math:`2\times10^{-4}`) but was not bitwise identical. ``only_eval`` and
+  velocity evaluation passed. Velocity evaluation used the Appendix G.2
+  command grid with 2 trials per command, not the paper's 4.
+* One-GPU profiling measured throughput and memory at 128 and 512
+  environments. 4096 environments was only a linear estimate from the 512
+  measurement, not a measurement.
+* A small two-GPU run on real NCCL: ``train/param_divergence`` stayed 0,
+  the two ranks' counters matched term by term, and both rank checkpoints
+  were complete. The global sizes were 64 environments and 256 imagined
+  rollouts, not the paper's two-GPU recipe. A short velocity run at the
+  same width also finished.
+* A 12-update learning-signal run at that same two-GPU size. Metrics stayed
+  finite and counters stayed monotonic. Normalized return moved from
+  0.001892 to 0.001893 and the failure rate stayed at 1. One seed and a
+  short budget do not show that the policy learned to track.
+
+Not yet run: paper-scale training (4096 environments on one GPU, and the
+paper's two-GPU recipe), multiple nodes, Slurm, real BONES-SEED data, and a
+run long enough to compare with the paper's metrics. This page therefore
+still has no learning curves or paper comparison; those will be added after
+a long run.

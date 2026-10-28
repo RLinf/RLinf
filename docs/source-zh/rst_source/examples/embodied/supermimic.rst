@@ -89,15 +89,29 @@ G1 的模型、关节顺序、执行器增益和站立关键帧都来自 mjlab�
 
 40 条片段共 2.45 小时。有 ``manifest.json`` 时，加载器会拒绝 SHA-256 对不上或清单里没有的片段，所以不要改名、增删或修改准备好的文件。
 
-**BONES-SEED（实验性）。** 加载器要求片段已经是下面格式的 G1 重定向数据，并带一个供附录 E 名字过滤使用的 ``name``。RLinf 不提供从 BONES-SEED 发布格式转换的脚本，因为还没有拿真实数据核对过那个格式。可行性过滤需要逐帧几何量，下面的工具用 ``mj_geomDistance`` 算出来，写进每个片段的副本：
+**BONES-SEED（实验性）。** 官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。目录说明见 `bones-studio/seed-viewer <https://github.com/bones-studio/seed-viewer>`_。下载前先读数据包里的 ``LICENSE.md``。下面的脚本不下载数据。
+
+公开表头来自 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_，并与 GR00T-WholeBodyControl 里实际执行的 ``Rotation.from_euler("xyz")`` 一致：120 Hz；``root_translateX/Y/Z`` 是厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个关节列是 ``<关节名>_dof``、单位度，名字对应 mjlab 的 G1 关节。脚本按关节名重排到 ``G1_JOINT_NAMES``，不额外交换坐标轴。scipy 里小写 ``xyz`` 表示外旋。这个约定还没有拿一份官方 CSV 核对过。
 
 .. code-block:: bash
 
+   python toolkits/supermimic/convert_bones_seed.py \
+       --input /data/bones-seed/g1/csv \
+       --output /data/bones_g1
    python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
        --out /data/bones_g1_filtered
    export SUPERMIMIC_BONES_PATH=/data/bones_g1_filtered
 
-BONES-SEED 配置加载所有通过过滤的片段（``env.num_clips: null``），并在日志里打印每个过滤器去掉了多少。论文的 142,220 / 129,667 / 129,514 是它那个版本的数据；这条流程还没有处理过完整的 BONES-SEED。
+``--input`` 可以是单个 CSV，也可以是目录，目录会递归扫描。默认从 120 Hz 转到 50 Hz，速度由现有的 ``resample_states`` 在 50 Hz 网格上重算。已经存在的 ``clip_*.pt`` 不会被覆盖，除非加上 ``--overwrite``。单个损坏的 CSV 会打印原因并继续处理其他文件。片段的 ``name`` 是相对 ``--input`` 的路径、不含扩展名，因此不同日期下的同名文件不会写到同一个输出，附录 E 的名字过滤仍能看到 ``stair``、``sit`` 这类词。可行性过滤沿用 ``bones_feasibility.py``：它用 ``mj_geomDistance`` 把逐帧几何写进副本，加载器再按这些数组过滤。
+
+先用少量 CSV 确认训练入口时，不必直接跑论文的 4096 个环境：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_supermimic.sh supermimic_bones_seed \
+       env.num_envs=8 algorithm.total_updates=3 runner.save_interval=3
+
+BONES-SEED 配置加载所有通过过滤的片段（``env.num_clips: null``），并在日志里打印每个过滤器去掉了多少。论文的 142,220 / 129,667 / 129,514 是它那个版本的数据。转换器只在合成 CSV 上测试过，还没有处理过完整的 BONES-SEED，也没有在真实 CSV 上核对过姿态。
 
 片段文件格式
 ~~~~~~~~~~~~
@@ -501,6 +515,7 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 * **Ray 因内存不足杀掉 worker。** 应该释放主机内存，而不是调高 ``RAY_memory_usage_threshold``；smoke 启动是唯一的例外。CPU 核多、内存少的机器上，Ray 会按核数预启动空闲 worker（每个约 50 MB），SuperMimic 用不到它们；设置 ``RAY_prestart_worker_first_driver=0`` 可以不启动这些进程，内存监控保持不变。
 * **"No verified G1 reference clips"。** ``SUPERMIMIC_MOTION_PATH`` 或 ``env.motion_path`` 没有指向准备好的片段。
 * **"reference clip q0 differs from the mjlab G1 default joint pose"。** 片段是用别的默认姿态转换的，需要重新转换。
+* **BONES-SEED 的 CSV 被拒绝。** 表头需要 ``Frame``、``root_translateX/Y/Z``、``root_rotateX/Y/Z`` 和 29 个 ``关节名_dof``。根位置用厘米，角度用度。报错会写出文件名和缺掉的列。
 * **恢复后从第 0 次更新开始。** 日志里有 ``resume_dir=auto: no complete checkpoint under ...``：``log_path`` 或配置名与原运行不同，或者原运行从没写过检查点（``save_interval`` 为 -1 且没有跑完）。
 * **检查点格式或 Goal 窗口被拒绝。** 检查点来自别的版本或配置，不能用当前配置恢复或评测。
 * **没有 TensorBoard 文件。** ``runner.logger.logger_backends`` 还是默认的 ``[]``。
@@ -522,4 +537,16 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 已经运行过的内容
 ----------------
 
-在一张 8 GB GPU 上用 MuJoCo Warp 和 LAFAN1 片段跑过：LAFAN1 各配置（680 维、689 维、730 维、99 维观测、速度）的小规模短训练，包括 driver 被强杀后的恢复，动作和速度评测，以及 G.2 阶跃测试。多卡的数值逻辑用两个 CPU（Gloo）进程测试过。尚未运行：论文规模训练、真实 GPU 上的 NCCL、多节点、Slurm、BONES-SEED 数据，以及足以证明 policy 学会跟踪的长时间训练。因此本页还没有学习曲线和论文指标的对照，长时间训练完成后再补充。
+在一张 8 GB GPU 上用 MuJoCo Warp 和 LAFAN1 片段跑过：LAFAN1 各配置（680 维、689 维、730 维、99 维观测、速度）的小规模短训练，包括 driver 被强杀后的恢复，动作和速度评测，以及 G.2 阶跃测试。多卡的数值逻辑用两个 CPU（Gloo）进程测试过。
+
+在两张 80 GB 的 A800 上，用 40 条 LAFAN1 片段又做了一轮本机调度的验收（不在 Slurm 作业里）。下面这份结果复用了已有的虚拟环境，所以它自己的阶段 01 记为不适用。在此之前，同一次提交上用 ``install.sh`` 从零安装的阶段 01 已经通过，后面的训练和评测用的就是那个环境。通过的内容是：
+
+* 单元测试 10 个文件：201 通过，1 个因为加速器数量不是 4 而跳过。
+* 单卡真实 MuJoCo Warp smoke：3 次更新，计数单调，指标有限，检查点完整。
+* 单卡在写出检查点后强杀 driver，从最近的完整检查点恢复并继续训练。双卡同样测过保存、强杀和恢复；双卡检查点可以换成单卡继续训练。杀掉一个 rank 后，其余进程在 20.3 秒内以非零状态退出，没有留下孤儿进程。
+* 动作评测覆盖 40 条片段。同一检查点重复评测的指标差在容差以内（绝对容差 :math:`5\times10^{-5}`，相对容差 :math:`2\times10^{-4}`），但不是逐位相同。训练入口的 ``only_eval`` 和速度评测通过。速度评测使用附录 G.2 的命令网格，每条命令 2 次试验，不是论文的 4 次。
+* 单卡 profiling 实测了 128 和 512 个环境的吞吐与显存。4096 个环境只做了从 512 线性外推的估计，没有实测。
+* 双卡小规模训练走真实 NCCL：两次运行的 ``train/param_divergence`` 都是 0，两边计数逐项相等，两个 rank 的检查点都完整。全局规模是 64 个环境、256 条想象 rollout，不是论文双卡配方。同样规模的速度配置短训练也完成了。
+* 同样的双卡规模上，短期学习信号跑了 12 次更新。指标有限、计数单调。归一化回报从 0.001892 到 0.001893，失败率保持为 1。这是单种子、短预算，不能据此说 policy 学会了跟踪。
+
+尚未运行：论文规模训练（单卡 4096 个环境，以及论文双卡配方）、多节点、Slurm、BONES-SEED 真实数据，以及长到可以对照论文指标的训练。因此本页还没有学习曲线和论文指标的对照，长时间训练完成后再补充。

@@ -265,8 +265,10 @@ Known limitations
   paper does not specify normalization and none is applied.
 * **BPTT gradient spikes.** The pre-clip actor gradient norm can spike by two
   orders of magnitude; the paper's clipping bounds each step.
-* **Not implemented:** the Appendix G distillation encoder, push-recovery
-  experiments, and a converter from the BONES-SEED release format.
-* **Not demonstrated:** learning a tracking policy at paper scale, multi-GPU
-  NCCL training, and multi-node runs. See the user guide for what has and has
-  not been run.
+* **Not implemented:** the Appendix G distillation encoder and the
+  push-recovery experiments. A converter for the official BONES-SEED G1 CSV
+  exists, and it has not been checked on a real release.
+* **Not demonstrated:** a tracking policy at paper scale, the paper's
+  two-GPU recipe, and multi-node runs. A short two-GPU run on 80 GB A800s
+  has finished on real NCCL with zero parameter divergence. See the user
+  guide for what has and has not been run.
