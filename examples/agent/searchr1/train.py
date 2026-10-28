@@ -134,19 +134,23 @@ def main(cfg) -> None:
             name="RolloutBuffer",
             placement_strategy=singleton_tool_placement,
         )
-    runner = runner_cls(
-        cfg=cfg,
-        placement=component_placement,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        rollout=rollout_group,
-        inference=inference_group,
-        actor=actor_group,
-        reward=None,
-        agent_loop=agentloop_group,
-        rollout_buffer=rollout_buffer,
-        tool_workers=tool_workers,
-    )
+    runner_kwargs = {
+        "cfg": cfg,
+        "placement": component_placement,
+        "train_dataset": train_ds,
+        "val_dataset": val_ds,
+        "rollout": rollout_group,
+        "inference": inference_group,
+        "actor": actor_group,
+        "reward": None,
+        "agent_loop": agentloop_group,
+        "tool_workers": tool_workers,
+    }
+    if rollout_buffer is not None:
+        # Only AsyncAgentRunner takes the buffer worker that owns the
+        # dataloader and the admission budget.
+        runner_kwargs["rollout_buffer"] = rollout_buffer
+    runner = runner_cls(**runner_kwargs)
 
     runner.init_workers()
     runner.run()
