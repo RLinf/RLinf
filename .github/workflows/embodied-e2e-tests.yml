@@ -2147,8 +2147,6 @@ jobs:
 
   embodied-psi0-simple-test:
     runs-on: embodied
-    env:
-      PSI0_SIMPLE_ROOT: /workspace/dataset/psi0_simple
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -2161,22 +2159,10 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export SIMPLE_ASSETS_PATH=${PSI0_SIMPLE_ROOT}/simple_assets
+          export SIMPLE_ASSETS_PATH=/workspace/dataset/psi0_simple/simple_assets
           # Reuse the precloned checkout. Cleanup deletes .venv.
-          export SIMPLE_CACHE_DIR=${PSI0_SIMPLE_ROOT}/SIMPLE
+          export SIMPLE_CACHE_DIR=/workspace/dataset/psi0_simple/SIMPLE
           bash requirements/install.sh embodied --model psi0 --env simple
-
-      - name: Download Qwen3-VL processor metadata
-        timeout-minutes: 30
-        run: |
-          set -euo pipefail
-          source .venv/bin/activate
-          export HF_HOME=/workspace/dataset/.cache/huggingface
-          mkdir -p "${HF_HOME}"
-          hf download Qwen/Qwen3-VL-2B-Instruct \
-            chat_template.json config.json generation_config.json merges.txt \
-            preprocessor_config.json tokenizer.json tokenizer_config.json \
-            video_preprocessor_config.json vocab.json
 
       - name: SIMPLE OpenOven Psi0 PPO test
         timeout-minutes: 60
@@ -2186,8 +2172,8 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export HF_HOME=/workspace/dataset/.cache/huggingface
-          export PSI0_RUN_DIR=${PSI0_SIMPLE_ROOT}/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-          export SIMPLE_RESET_DIR=${PSI0_SIMPLE_ROOT}/reset-states/G1WholebodyOpenOvenTeleop-v0
+          export PSI0_RUN_DIR=/workspace/dataset/psi0_simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+          export SIMPLE_RESET_DIR=/workspace/dataset/psi0_simple/reset-states/G1WholebodyOpenOvenTeleop-v0
           export PSI0_TEST_ROOT=${RUNNER_TEMP}/psi0-simple-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
           export PSI0_TEST_LOG_DIR=${PSI0_TEST_ROOT}/train
           mkdir -p "${PSI0_TEST_ROOT}"
@@ -2204,8 +2190,8 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export HF_HOME=/workspace/dataset/.cache/huggingface
-          export PSI0_RUN_DIR=${PSI0_SIMPLE_ROOT}/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-          export SIMPLE_RESET_DIR=${PSI0_SIMPLE_ROOT}/reset-states/G1WholebodyOpenOvenTeleop-v0
+          export PSI0_RUN_DIR=/workspace/dataset/psi0_simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+          export SIMPLE_RESET_DIR=/workspace/dataset/psi0_simple/reset-states/G1WholebodyOpenOvenTeleop-v0
           export PSI0_TEST_ROOT=${RUNNER_TEMP}/psi0-simple-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
           export PSI0_TEST_LOG_DIR=${PSI0_TEST_ROOT}/eval
           export PSI0_PPO_CHECKPOINT=${PSI0_TEST_ROOT}/train/ci-test/checkpoints/global_step_2/actor/model_state_dict/full_weights.pt
