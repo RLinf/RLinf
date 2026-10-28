@@ -1,0 +1,11 @@
+defaults:
+  - supermimic_lafan1
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_lafan1_goal730
+
+algorithm:
+  goal_encoding: goal730
+  goal_frame_dim: 73

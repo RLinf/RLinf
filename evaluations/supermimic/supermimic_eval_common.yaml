@@ -1,0 +1,31 @@
+# Shared by the SuperMimic eval configs. Composed after the training config.
+runner:
+  only_eval: true
+  logger:
+    log_path: "../results/eval/${runner.logger.experiment_name}"
+    logger_backends: []
+
+env:
+  # One simulator env per clip; 40 covers the LAFAN1 set in one batch.
+  num_envs: 40
+
+eval:
+  checkpoint: null
+  seed: 0
+  motion: true
+  # none, smoke or g2. smoke holds seven fixed commands from a reference
+  # start, a functional check and not a paper metric. g2 is the Appendix G.2
+  # step test: 672 commands, four trials each, from standing.
+  velocity: none
+  velocity_smoke_seconds: 10.0
+  # Smoke rollouts start from frame 0 of this clip.
+  velocity_smoke_start_clip: 0
+  # null uses DEFAULT_VELOCITY_COMMANDS in rlinf/workers/supermimic/evaluator.py,
+  # or give {name: [vx, vy, yaw_rate]}.
+  velocity_smoke_commands: null
+  g2_trials: 4
+  g2_seconds: 5.0
+  g2_steady_seconds: 2.0
+  # Rollouts per simulator vector; 672 x 4 = 2688 in all.
+  g2_batch: 448
+  output_dir: null

@@ -1,6 +1,19 @@
 Configuration Reference
 =======================
 
+.. note::
+
+   This page describes configs for the generic embodied eval entry,
+   ``eval_embodied_agent.py``. SuperMimic motion and velocity configs
+   (``evaluations/supermimic/``) are read by ``eval_supermimic.py``, and push
+   recovery by ``eval_supermimic_push.py``. Each composes its training config
+   with ``supermimic_eval_common.yaml``, takes the checkpoint from
+   ``eval.checkpoint`` and the results folder from ``eval.output_dir``, has no
+   ``rollout`` or ``env.eval`` section, and does not need
+   ``runner.task_type: embodied_eval``. The required-field and
+   derive-from-training sections below do not apply to it; see the Evaluate
+   section of :doc:`../../examples/embodied/supermimic`.
+
 Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core structure (using ``libero_spatial_openpi_pi05_eval.yaml`` as an example):
 
 .. code-block:: yaml

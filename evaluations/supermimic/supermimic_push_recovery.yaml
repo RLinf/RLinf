@@ -1,0 +1,43 @@
+# Section 4.3 push recovery for a 680-d tracking checkpoint.
+# The reference is synthesized. env.motion_path is not read.
+defaults:
+  - supermimic_lafan1
+  - supermimic_eval_common
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+runner:
+  logger:
+    experiment_name: supermimic_push_recovery
+
+env:
+  num_envs: 1
+  # Sentinel only. The evaluator builds the knees-bent standing pose itself.
+  # This is not the paper T-pose and is not read as a motion file.
+  motion_path: static_standing
+
+eval:
+  motion: false
+  velocity: none
+  # Paper range is 0.5-4 m/s. This grid, the trial count, and the
+  # thresholds are this implementation's choices.
+  speeds: [0.5, 1.0, 2.0, 4.0]
+  direction: random
+  frame: world
+  push_mode: add
+  trials: 4
+  seed: 0
+  settle_seconds: 1.0
+  max_seconds: 5.0
+  speed_threshold: 0.15
+  tilt_threshold: 0.35
+  torso_ori_threshold: 0.5
+  stable_seconds: 0.5
+  max_xy_drift: null
+  save_trajectory: false

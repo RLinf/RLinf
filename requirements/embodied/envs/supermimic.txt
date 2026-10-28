@@ -1,0 +1,8 @@
+# SuperMimic physics stack for `bash requirements/install.sh embodied --env supermimic`.
+# install.sh selects torch 2.14.0 for this env (mjlab requires torch>=2.14.0)
+# and, when that torch is a CUDA 12 build, installs warp-lang 1.18.0+cu12 first.
+# Installing this file into a venv with an older torch upgrades that torch.
+mjlab @ git+https://github.com/mujocolab/mjlab.git@8bb2bc9e187797689ec82c78c35019afd2fd0376
+mujoco~=3.16
+mujoco-warp~=3.16
+warp-lang>=1.15

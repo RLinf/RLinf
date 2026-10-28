@@ -1,0 +1,27 @@
+# The paper's two-GPU recipe (Table A.5, the 2 GPU x 9.8 h run of Table A.8):
+# each GPU keeps the one-GPU sizes (4096 envs, 10 x 2048 world-model windows,
+# 4096 imagined rollouts), gradients are averaged over the two GPUs, and the
+# learning rate is 2 * sqrt(2) * 1e-4. SuperMimic sizes are global, so they
+# are twice the one-GPU values here. updates_per_env_step still counts one
+# global update per 2.5 synchronized vector steps. A fixed global batch on
+# two GPUs is plain data parallelism instead: keep supermimic_bones_seed and
+# set only cluster.component_placement.supermimic=0-1.
+defaults:
+  - supermimic_bones_seed
+  - _self_
+
+cluster:
+  component_placement:
+    supermimic: 0-1
+
+runner:
+  logger:
+    experiment_name: supermimic_bones_seed_2gpu
+
+algorithm:
+  lr: 2.8284271e-4
+  wm_window_batch: 4096
+  imagine_batch: 8192
+
+env:
+  num_envs: 8192

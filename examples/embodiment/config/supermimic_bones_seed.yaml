@@ -1,0 +1,13 @@
+defaults:
+  - supermimic_lafan1
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_bones_seed
+
+env:
+  motion_format: bones_seed
+  # Every clip that passes the name and feasibility filters. A count caps it.
+  num_clips: null
+  motion_path: ${oc.env:SUPERMIMIC_BONES_PATH,""}

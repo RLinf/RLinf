@@ -50,6 +50,19 @@ Supported Benchmark Prefixes
 - ``realworld_*`` → realworld
 - ``maniskill_*`` → maniskill
 - ``polaris_*`` → polaris
+- ``supermimic_*`` → supermimic. This prefix switches to its own entry,
+  ``evaluations/eval_supermimic.py`` (one GPU, no Ray). The checkpoint comes
+  from ``eval.checkpoint`` and results go to ``eval.output_dir``; fields such
+  as ``rollout.model.model_path`` below do not apply.
+  ``supermimic_push_recovery`` uses ``evaluations/eval_supermimic_push.py``
+  instead. The protocol is in the Evaluate section of
+  :doc:`SuperMimic <../../examples/embodied/supermimic>`:
+
+  .. code-block:: bash
+
+     bash evaluations/run_eval.sh supermimic_lafan1_eval \
+       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1 \
+       eval.output_dir=/data/runs/lafan1/eval
 
 Config Fallback
 ---------------
@@ -64,6 +77,7 @@ Full launch examples per benchmark:
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/realworld`
 - :doc:`../guides/polaris`
+- :doc:`SuperMimic <../../examples/embodied/supermimic>` (the Evaluate section)
 
 Direct Python Invocation
 ------------------------

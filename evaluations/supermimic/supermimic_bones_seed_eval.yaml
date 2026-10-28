@@ -1,0 +1,16 @@
+# Evaluate a checkpoint trained with supermimic_bones_seed.yaml.
+defaults:
+  - supermimic_bones_seed
+  - supermimic_eval_common
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+runner:
+  logger:
+    experiment_name: supermimic_bones_seed_eval

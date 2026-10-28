@@ -50,6 +50,13 @@ CLI 参考
 - ``realworld_*`` → realworld
 - ``maniskill_*`` → maniskill
 - ``polaris_*`` → polaris
+- ``supermimic_*`` → supermimic。这个前缀改用专用入口 ``evaluations/eval_supermimic.py``\ （单卡、不需要 Ray），用 ``eval.checkpoint`` 指定检查点、``eval.output_dir`` 指定结果目录，下面的 ``rollout.model.model_path`` 等字段不适用。``supermimic_push_recovery`` 改用 ``evaluations/eval_supermimic_push.py``，协议见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节：
+
+  .. code-block:: bash
+
+     bash evaluations/run_eval.sh supermimic_lafan1_eval \
+       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1 \
+       eval.output_dir=/data/runs/lafan1/eval
 
 配置回退
 --------
@@ -64,6 +71,7 @@ CLI 参考
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/realworld`
 - :doc:`../guides/polaris`
+- :doc:`SuperMimic <../../examples/embodied/supermimic>`\ （“评测”一节）
 
 直接调用 Python
 ---------------

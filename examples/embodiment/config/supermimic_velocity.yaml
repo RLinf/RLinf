@@ -1,0 +1,10 @@
+defaults:
+  - supermimic_lafan1
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_velocity
+
+algorithm:
+  velocity_tracking: true

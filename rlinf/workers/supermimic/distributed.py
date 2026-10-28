@@ -1,0 +1,213 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Synchronous data parallelism for SuperMimic.
+
+Every rank runs the whole graph on its own envs and replay. Before each
+optimizer step the gradients of that optimizer's parameters are summed
+across ranks, weighted by the local sample count, and divided by the global
+count. Clipping and the non-finite check happen after the reduction, so all
+ranks see the same gradient, take the same step, and keep identical
+parameters and Adam state.
+
+This is not DDP: one SuperMimic update has five optimizers, freezes
+different parameters per phase, and backpropagates through a frozen world
+model, which DDP's per-step reducer does not model.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Iterable
+from datetime import timedelta
+
+import torch
+import torch.distributed as dist
+
+
+class DataParallel:
+    """Rank info and the collectives SuperMimic needs. World size 1 is a no-op."""
+
+    def __init__(
+        self,
+        world_size: int = 1,
+        rank: int = 0,
+        device: torch.device | str | None = None,
+    ):
+        self.world_size = int(world_size)
+        self.rank = int(rank)
+        self.device = (
+            torch.device(device) if device is not None else torch.device("cpu")
+        )
+        self.comm_seconds = 0.0
+        if self.world_size > 1 and not dist.is_initialized():
+            raise RuntimeError(
+                "world_size > 1 needs torch.distributed to be initialized first"
+            )
+
+    @classmethod
+    def initialize(
+        cls,
+        world_size: int,
+        rank: int,
+        device: torch.device,
+        timeout: timedelta | None = None,
+    ) -> DataParallel:
+        """Join the process group from RLinf's env (MASTER_ADDR/PORT, RANK)."""
+        if int(world_size) > 1 and not dist.is_initialized():
+            backend = "nccl" if torch.device(device).type == "cuda" else "gloo"
+            kwargs = {
+                "backend": backend,
+                "world_size": int(world_size),
+                "rank": int(rank),
+            }
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            dist.init_process_group(**kwargs)
+        return cls(world_size, rank, device)
+
+    @property
+    def enabled(self) -> bool:
+        """True when there is more than one rank."""
+        return self.world_size > 1
+
+    @property
+    def is_main(self) -> bool:
+        """True on rank 0."""
+        return self.rank == 0
+
+    def _collective_device(self) -> torch.device:
+        if self.enabled and dist.get_backend() == "nccl":
+            return self.device
+        return torch.device("cpu")
+
+    def reduce_grads(
+        self, params: Iterable[torch.nn.Parameter], weight: float, mean: bool = True
+    ) -> tuple[float, bool]:
+        """Average gradients over ranks, weighted by ``weight`` samples.
+
+        A parameter without a gradient counts as zero. A rank with weight 0
+        contributes nothing. With ``mean=False`` the caller has already
+        scaled its loss by its global share, and gradients are summed.
+        Returns the global weight and whether the reduced gradient is
+        finite. With global weight 0 every gradient is cleared and no rank
+        should step.
+        """
+        params = list(params)
+        weight = float(weight)
+        if not self.enabled:
+            finite = True
+            if weight <= 0:
+                for p in params:
+                    p.grad = None
+                return 0.0, True
+            for p in params:
+                if p.grad is not None and not bool(torch.isfinite(p.grad).all()):
+                    finite = False
+                    break
+            return weight, finite
+        start = time.perf_counter()
+        scale = weight if mean else 1.0
+        parts = []
+        for p in params:
+            if weight > 0 and p.grad is not None:
+                parts.append(p.grad.detach().reshape(-1) * scale)
+            else:
+                parts.append(torch.zeros(p.numel(), device=p.device, dtype=p.dtype))
+        flat = torch.cat(
+            parts
+            + [torch.tensor([weight], device=params[0].device, dtype=parts[0].dtype)]
+        )
+        dist.all_reduce(flat, op=dist.ReduceOp.SUM)
+        total = float(flat[-1])
+        offset = 0
+        finite = bool(torch.isfinite(flat).all()) if total > 0 else True
+        divisor = total if mean else 1.0
+        for p in params:
+            n = p.numel()
+            if total > 0:
+                p.grad = (flat[offset : offset + n] / divisor).view_as(p).clone()
+            else:
+                p.grad = None
+            offset += n
+        self.comm_seconds += time.perf_counter() - start
+        return total, finite
+
+    def all_reduce(self, values: list[float], op: str = "sum") -> list[float]:
+        """Reduce a few Python numbers. ``op`` is ``sum``, ``max`` or ``min``."""
+        if not self.enabled:
+            return [float(v) for v in values]
+        start = time.perf_counter()
+        tensor = torch.tensor(
+            values, dtype=torch.float64, device=self._collective_device()
+        )
+        reduce_op = {
+            "sum": dist.ReduceOp.SUM,
+            "max": dist.ReduceOp.MAX,
+            "min": dist.ReduceOp.MIN,
+        }[op]
+        dist.all_reduce(tensor, op=reduce_op)
+        self.comm_seconds += time.perf_counter() - start
+        return [float(v) for v in tensor.cpu().tolist()]
+
+    def all_reduce_tensor(self, tensor: torch.Tensor, op: str = "sum") -> torch.Tensor:
+        """In-place reduce of one tensor on the collective device."""
+        if not self.enabled:
+            return tensor
+        start = time.perf_counter()
+        reduce_op = {"sum": dist.ReduceOp.SUM, "max": dist.ReduceOp.MAX}[op]
+        work = tensor.to(self._collective_device())
+        dist.all_reduce(work, op=reduce_op)
+        if work is not tensor:
+            tensor.copy_(work.to(tensor.device))
+        self.comm_seconds += time.perf_counter() - start
+        return tensor
+
+    def broadcast_module(self, module: torch.nn.Module, src: int = 0) -> None:
+        """Copy parameters and buffers from ``src`` to every rank."""
+        if not self.enabled:
+            return
+        with torch.no_grad():
+            for tensor in list(module.parameters()) + list(module.buffers()):
+                work = tensor.data.to(self._collective_device())
+                dist.broadcast(work, src=src)
+                if work is not tensor.data:
+                    tensor.data.copy_(work.to(tensor.device))
+
+    def param_divergence(self, module: torch.nn.Module) -> float:
+        """Max minus min over ranks of a float64 checksum of all parameters.
+
+        Ranks that took identical steps give exactly 0.
+        """
+        with torch.no_grad():
+            checksum = sum(
+                float(p.detach().double().sum())
+                + 1e-3 * float(p.detach().double().abs().sum())
+                for p in module.parameters()
+            )
+        if not self.enabled:
+            return 0.0
+        high = self.all_reduce([checksum], op="max")[0]
+        low = self.all_reduce([checksum], op="min")[0]
+        return high - low
+
+    def barrier(self) -> None:
+        """Wait for every rank; a no-op on one rank."""
+        if self.enabled:
+            dist.barrier()
+
+    def destroy(self) -> None:
+        """Destroy the process group if one was created."""
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()

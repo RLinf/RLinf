@@ -1,0 +1,10 @@
+defaults:
+  - supermimic_base
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_lafan1
+
+env:
+  motion_path: ${oc.env:SUPERMIMIC_MOTION_PATH,""}

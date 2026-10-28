@@ -23,7 +23,7 @@ All evaluation code and configs live under ``evaluations/`` at the repository ro
 Evaluation Architecture
 -----------------------
 
-Evaluation is driven by ``EmbodiedEvalRunner``: the environment worker and rollout worker communicate through Channels and run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files.
+Evaluation is driven by ``EmbodiedEvalRunner``: the environment worker and rollout worker communicate through Channels and run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files. SuperMimic does not use this pipeline; it has its own single-GPU entry, ``eval_supermimic.py``, described in the Evaluate section of :doc:`../../examples/embodied/supermimic`.
 
 Typical data flow:
 
