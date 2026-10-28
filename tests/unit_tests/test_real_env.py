@@ -72,6 +72,7 @@ from rlinf.robotics import (
     SO101Config,
 )
 from rlinf.robotics.discovery import RobotDiscovery
+from rlinf.scheduler.hardware import AcceleratorType, AcceleratorUtil
 from rlinf.scheduler.hardware.accelerators.amd_gpu import DRI_PRIME_ENV, AMDGPUManager
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import (
     EGL_DEVICE_ID_ENV_VARS,
@@ -4442,31 +4443,48 @@ def test_cdna_gpus_are_not_pinned(kfd_topology):
     kfd_topology([0x0C, 0x22], gfx_target=90402)  # gfx942
 
     assert AMDGPUManager.get_dri_prime(0) is None
-    assert DRI_PRIME_ENV not in AMDGPUManager.get_accelerator_env_var(["0"])
+    assert AMDGPUManager.get_worker_local_env_var([0]) == {}
 
 
 def test_a_node_without_kfd_gets_no_dri_prime(kfd_topology, monkeypatch, tmp_path):
     monkeypatch.setattr(amd_gpu, "_KFD_TOPOLOGY_NODES", str(tmp_path / "missing"))
 
-    env_vars = AMDGPUManager.get_accelerator_env_var(["3"])
-
-    assert env_vars["HIP_VISIBLE_DEVICES"] == "3"
-    assert DRI_PRIME_ENV not in env_vars
+    assert AMDGPUManager.get_worker_local_env_var([3]) == {}
 
 
 def test_a_worker_renders_on_its_first_gpu(kfd_topology):
     kfd_topology(_W7900D_GPU_BUSES)
 
+    env_vars = AMDGPUManager.get_worker_local_env_var([5, 6])
+
+    assert env_vars == {DRI_PRIME_ENV: "pci-0000_a3_00_0"}
+
+
+def test_the_driver_leaves_the_render_device_to_the_worker(kfd_topology):
+    # The driver may run on a node with another PCI layout, so the env vars it
+    # builds for a worker carry the GPUs but not the render device.
+    kfd_topology(_W7900D_GPU_BUSES)
+
     env_vars = AMDGPUManager.get_accelerator_env_var(["5", "6"])
 
     assert env_vars["HIP_VISIBLE_DEVICES"] == "5,6"
-    assert env_vars[DRI_PRIME_ENV] == "pci-0000_a3_00_0"
+    assert DRI_PRIME_ENV not in env_vars
+
+
+def test_only_amd_workers_resolve_a_render_device(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    amd = AcceleratorUtil.get_worker_local_env_var(AcceleratorType.AMD_GPU, [5])
+    nvidia = AcceleratorUtil.get_worker_local_env_var(AcceleratorType.NV_GPU, [5])
+
+    assert amd == {DRI_PRIME_ENV: "pci-0000_a3_00_0"}
+    assert nvidia == {}
 
 
 def test_a_worker_without_gpus_gets_no_dri_prime(kfd_topology):
     kfd_topology(_W7900D_GPU_BUSES)
 
-    assert DRI_PRIME_ENV not in AMDGPUManager.get_accelerator_env_var([])
+    assert AMDGPUManager.get_worker_local_env_var([]) == {}
 
 
 def test_the_kfd_topology_is_read_once(kfd_topology, monkeypatch):

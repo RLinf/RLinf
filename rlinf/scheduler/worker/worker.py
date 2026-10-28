@@ -1480,6 +1480,14 @@ class Worker(metaclass=WorkerMeta):
     def _setup_accelerator_info(self) -> int:
         cluster = Cluster()
         visible_devices = AcceleratorUtil.get_visible_devices(self._accelerator_type)
+        if self._is_ray_actor:
+            # Resolved here rather than by the driver: these depend on the
+            # hardware layout of the node this worker runs on.
+            os.environ.update(
+                AcceleratorUtil.get_worker_local_env_var(
+                    self._accelerator_type, visible_devices
+                )
+            )
         node_accelerator_ranks = cluster.accelerator_ranks[self._cluster_node_rank]
         self.global_accelerator_ids = [
             node_accelerator_ranks[local_id] for local_id in visible_devices
