@@ -49,9 +49,6 @@ override_cfg:
   # the adapter hand the whole chunk to the simulator in one call.
   images_at_chunk_end_only: true
   venv_to_torch: true
-  # Device for simulator observations.
-  venv_device: cpu
-  geniesim_env_seed: ${..seed}
   num_episodes: 1
   # 0 takes every work item of the sub-task.
   work_item_budget: 0

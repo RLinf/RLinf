@@ -3,7 +3,7 @@
 
 .. |pi| replace:: π₀.₅
 
-.. figure:: /_static/images/genie_sim_system_overview.webp
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/genie_sim_system_overview.webp
    :align: center
    :width: 100%
    :alt: Genie Sim 平台与功能概览。
@@ -97,14 +97,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 .. include:: _setup_common.rst
    :end-before: 然后，使用下列两种方式之一准备依赖
 
-在 RLinf 仓库根目录，将 GenieSim 克隆到同级目录，并设置客户端包路径：
-
-.. code:: bash
-
-   git clone https://github.com/AgibotTech/genie_sim.git ../genie_sim
-   export GENIESIM_CLIENT_PATH="$(realpath ../genie_sim/source/rlinf_geniesim)"
-
-以下两种安装方式任选其一，都会从这份源码安装 ``rlinf-geniesim-client``。前置依赖和 GPU 驱动要求见 :doc:`安装 </rst_source/start/installation>`。
+以下两种安装方式任选其一，都会安装 GenieSim ``v3.5.0`` 中的 ``rlinf-geniesim-client``，``install.sh`` 会自动克隆对应源码。如需使用已有的 GenieSim 源码，将 ``GENIESIM_PATH`` 设为其路径。前置依赖和 GPU 驱动要求见 :doc:`安装 </rst_source/start/installation>`。
 
 **自定义环境**
 
@@ -118,14 +111,13 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 
 **Docker 镜像**
 
-在 RLinf 主机的 RLinf 仓库根目录构建镜像，通过 ``geniesim`` 构建上下文传入客户端源码：
+在 RLinf 主机的 RLinf 仓库根目录构建镜像：
 
 .. code:: bash
 
    docker build -f docker/Dockerfile \
      --build-arg BUILD_TARGET=embodied-geniesim \
      --build-arg NO_MIRROR=1 \
-     --build-context "geniesim=$GENIESIM_CLIENT_PATH" \
      -t rlinf:embodied-geniesim .
 
 镜像提供基于 NVIDIA CUDA 12.8 的 OpenPI 训练环境和 GenieSim 客户端，连接 GenieSim 服务即可开展训练。
@@ -177,7 +169,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 运行
 ----------------------------------------
 
-在仿真主机上，按照 `GenieSim post-training server 说明 <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__ 准备 ``geniesim_assets`` 并构建基于 Isaac Sim 6.0.1 的镜像。GenieSim 源码版本应与已安装的客户端一致。
+在仿真主机上，按照 `GenieSim post-training server 说明 <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__ 准备 ``geniesim_assets`` 并构建基于 Isaac Sim 6.0.1 的镜像。使用 GenieSim ``v3.5.0``，与已安装的客户端版本一致。
 
 **启动仿真 server**
 
@@ -345,6 +337,8 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
      - 18.00%\ :sup:`※`
 
 :sup:`※` 表示该任务包含在对应多任务模型的训练组合中。
+
+表中每个成功率对子任务的每个测试用例（一个场景实例与一条指令的组合）只统计一次。独立评测配置运行 128 条轨迹，多于子任务的测试用例数，部分用例会跑两次；计算成功率前已去掉重复的部分。因此，运行时记录的成功率包含重复部分，可能与表中数值略有差异。
 
 对应的训练参考配置均位于 ``examples/embodiment/config/``：
 

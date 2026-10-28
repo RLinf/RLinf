@@ -4,7 +4,7 @@
 # point at it, and GENIESIM_CHECKPOINT_PATH at the pi0.5 checkpoint.
 defaults:
   - env/geniesim@env.eval
-  - model/pi0_5_geniesim@rollout.model
+  - model/pi0_5@rollout.model
   - _self_
   - override hydra/job_logging: stdout
 
@@ -48,23 +48,17 @@ env:
     rollout_epoch: 4
     total_num_envs: 32
     auto_reset: False
-    max_episode_steps: 200
     max_steps_per_rollout_epoch: 200
     group_size: 1
     video_cfg:
       # Recording renders every substep, which costs the one-call chunk path.
       # Turn it on when you want the rollout videos.
       save_video: False
-      info_on_video: True
       fps: 10
-      video_base_dir: ${runner.logger.log_path}/video/eval
     override_cfg:
       address: ${oc.env:GENIESIM_EVAL_SERVER_ADDR,tcp://127.0.0.1:5601}
       task_name: table_task_1_g2_op
       sub_task_name: pick_block_color
-      # The run asks for more trajectories than the sub-task has work items,
-      # so the cursor wraps instead of stopping at the end.
-      cycle_work_items: true
 
 rollout:
   group_name: "RolloutGroup"
@@ -75,5 +69,11 @@ rollout:
 
   model:
     model_path: ${oc.env:GENIESIM_CHECKPOINT_PATH}
+    # The G2 checkpoint predicts 14 joints and 2 grippers.
+    action_dim: 16
+    num_steps: 10
+    openpi_data:
+      norm_stats_path: ${..model_path}/assets/norm_stats.json
     openpi:
       task: eval
+      config_name: "pi05_geniesim_g2_ah10"

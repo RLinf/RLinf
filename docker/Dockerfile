@@ -523,13 +523,10 @@ RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-geniesim-image
 
 ENV UV_TORCH_BACKEND=cu128
-# The named context is the GenieSim client package directory.
-COPY --from=geniesim / /tmp/rlinf_geniesim/
 RUN test "${RLINF_PLATFORM}" = nvidia && \
-    GENIESIM_CLIENT_PATH=/tmp/rlinf_geniesim bash requirements/install.sh ${INSTALL_MIRROR_OPTION} \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} \
         --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi \
-        --env geniesim && \
-    rm -rf /tmp/rlinf_geniesim
+        --env geniesim
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets

@@ -40,7 +40,6 @@ from rlinf.envs.sim.geniesim.geniesim_env import GenieSimEnv
         ("examples/embodiment/config/geniesim_multitask10_ppo_openpi_pi05", 8),
         ("evaluations/geniesim/geniesim_pick_block_color_eval", 1),
         ("evaluations/geniesim/geniesim_pick_block_color_eval", 8),
-        ("tests/e2e_tests/embodied/geniesim_ppo_openpi_pi05", 8),
     ],
 )
 def test_example_endpoints_match_placement(recipe, devices, monkeypatch):
@@ -170,7 +169,6 @@ class _VecEnv:
         seeds,
         instance_ids,
         instruction_ids,
-        block,
     ):
         self.reset_calls.append(
             {
@@ -224,9 +222,6 @@ def _config(*, addresses=None, recovery=False, chunk_end_only=False, auto_reset=
         "comm_backend": "zmq",
         "task_name": "table_task",
         "sub_task_name": "pick_block_color",
-        "reset_blocking": True,
-        "geniesim_env_seed": 7,
-        "venv_device": "cpu",
         "nonfinite_state_recovery": recovery,
         "images_at_chunk_end_only": chunk_end_only,
     }
@@ -423,25 +418,25 @@ def test_partial_done_preserves_other_episode_metrics(simulator, batched):
     env.close()
 
 
-def test_task_rotation_reuses_metadata_and_resumes_group_cursors(simulator):
-    clients, vec_envs = simulator
-    cfg = _config()
-    cfg.group_size = 2
-    cfg.override_cfg.sub_task_names = ["pick_block_color", "place_block"]
-    cfg.override_cfg.sub_task_rotate_every = 1
+@pytest.mark.parametrize("batched", [False, True])
+def test_ignore_terminations_still_truncates(simulator, batched):
+    _, vec_envs = simulator
+    cfg = _config(chunk_end_only=batched)
+    cfg.ignore_terminations = True
+    cfg.max_episode_steps = 20
     env = GenieSimEnv(cfg, num_envs=2)
-    for expected_task, expected_instance in [
-        ("pick_block_color", 0),
-        ("place_block", 0),
-        ("pick_block_color", 1),
-    ]:
-        env.reset()
-        reset = vec_envs[0].reset_calls[-1]
-        assert env._sub_task_name == expected_task
-        assert reset["instance_ids"].tolist() == [expected_instance] * 2
-        assert reset["instruction_ids"][0] == reset["instruction_ids"][1]
-        assert reset["seeds"][0] == reset["seeds"][1]
-    assert clients[0].metadata_requests == ["pick_block_color", "place_block"]
+    env.reset()
+    vec_envs[0].success_at_step = 1
+    actions = np.zeros((2, 10, 16), dtype=np.float32)
+    _, _, terminated, truncated, infos = env.chunk_step(actions)
+    assert not terminated.any()
+    assert not truncated.any()
+    assert infos[-1]["episode"]["success_once"].tolist() == [1.0, 0.0]
+    _, _, terminated, truncated, infos = env.chunk_step(actions)
+    assert not terminated.any()
+    assert truncated[:, -1].tolist() == [True, True]
+    assert infos[-1]["episode"]["length"].tolist() == [20.0, 20.0]
+    assert infos[-1]["episode"]["success_once"].tolist() == [1.0, 0.0]
     env.close()
 
 

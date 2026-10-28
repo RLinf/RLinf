@@ -20,7 +20,6 @@ import copy
 import dataclasses
 import hashlib
 import json
-import random
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -174,30 +173,6 @@ def resolve_geniesim_randomization(override: dict[str, Any]) -> dict[str, Any] |
     return raw
 
 
-def resolve_geniesim_sub_tasks(
-    override: dict[str, Any], *, rank: int, world_size: int
-) -> tuple[list[str], int]:
-    """Resolve the global task list and this logical slot's initial task.
-
-    Duplicate names weight task frequency; the list need not match the slot count."""
-    raw_names = override.get("sub_task_names")
-    if raw_names is None:
-        scalar = str(override.get("sub_task_name", "")).strip()
-        return ([scalar] if scalar else []), 0
-
-    if isinstance(raw_names, str | bytes) or not isinstance(raw_names, Sequence):
-        raise TypeError("GenieSim override_cfg.sub_task_names must be a sequence")
-    names = [str(value).strip() for value in raw_names]
-    if not names or not all(names):
-        raise ValueError(
-            "GenieSim override_cfg.sub_task_names must be a non-empty list of "
-            f"non-empty names, got {list(raw_names)!r}"
-        )
-    # Unlike ``addresses``, no length check and no uniqueness check -- see the
-    # docstring: this list is global, and duplicates are the weighting knob.
-    return names, rank % len(names)
-
-
 def resolve_geniesim_task_names(override: dict[str, Any]) -> list[str]:
     """Resolve allowed backgrounds in preference order.
 
@@ -220,95 +195,13 @@ def resolve_geniesim_task_names(override: dict[str, Any]) -> list[str]:
             "GenieSim override_cfg.task_name must be a non-empty list of "
             f"non-empty names, got {list(raw)!r}"
         )
-    # Duplicates are rejected here, unlike in ``sub_task_names`` where they are
-    # the weighting knob: this list is a priority order consumed by ``next()``,
-    # so a repeat is unreachable and can only mean the author mistyped.
+    # This list is a priority order consumed by ``next()``, so a repeat is
+    # unreachable and can only mean the author mistyped.
     if len(set(names)) != len(names):
         raise ValueError(
             f"GenieSim override_cfg.task_name must not repeat a background, got {names!r}"
         )
     return names
-
-
-# Mixed into the per-block seed below. Any odd constant works; it only has to be
-# fixed forever, because changing it re-deals every task schedule.
-_SUB_TASK_STREAM_SALT = 1000003
-
-
-def geniesim_sub_task_stream(
-    num_tasks: int,
-    length: int,
-    *,
-    base_seed: int,
-    window: int = 1,
-    max_retries: int = 32,
-) -> list[int]:
-    """A deterministic WITHOUT-REPLACEMENT stream of sub-task indices.
-
-    The stream is the concatenation of independent random permutations of
-    ``range(num_tasks)`` ("shuffled blocks"). Consuming it ``window`` indices at
-    a time -- one per env rank, one draw per rotation round -- is what decouples
-    the task count ``N`` from the server count ``M`` entirely: nothing here
-    depends on how ``M`` and ``N`` relate.
-
-    Why blocks and not i.i.d. sampling. Drawing each round independently gives
-    every task the right *marginal* probability but only converges to equal
-    frequency in expectation, leaving O(sqrt(k)) imbalance in any finite rollout
-    buffer -- and, worse, a nonzero chance that a task is absent from a buffer
-    altogether. A shuffled block gives every task **exactly** the same count
-    over any whole number of blocks, so the buffer is exactly balanced whenever
-    ``rollout_epoch * M`` is a multiple of ``N`` (minimal such value:
-    ``N // gcd(M, N)``). Same wall-clock cost, strictly lower variance, and the
-    order is still random -- which is the point of not using the deterministic
-    ``+M`` stride: that one couples the task-pair sequence to the iteration
-    index with period ``N``, and the advantage-normalisation baseline rides
-    along with it.
-
-    ``window`` (the number of ranks drawn per round) additionally forbids each
-    block's first ``window - 1`` entries from repeating the previous block's
-    last ``window - 1``. Within one block the entries are distinct by
-    construction; only a window straddling a block seam could put two ranks on
-    the SAME sub-task, wasting one server's worth of task diversity for that
-    episode. The constraint is satisfiable iff ``num_tasks >= 2 * (window - 1)``;
-    past ``max_retries`` the last shuffle is accepted rather than looping
-    forever, so a pathological ``M`` near ``N`` degrades diversity instead of
-    hanging.
-
-    Determinism ACROSS PROCESSES is load-bearing, not a convenience: every env
-    rank calls this independently and reads only its own slot, which is what
-    removes the need for any cross-rank coordination channel (the ranks are
-    separate Ray workers with no barrier between them at reset time). Hence the
-    per-block seed is an explicit integer mix and NEVER ``hash()`` of a tuple
-    containing a ``str`` -- ``PYTHONHASHSEED`` randomises that per process, and
-    the failure would be silent: ranks would disagree on the schedule, landing
-    two servers on one task while another task is never drawn at all.
-
-    The stream is also PREFIX-STABLE: block ``b`` depends only on blocks
-    ``< b``, so asking for a longer stream reproduces the shorter one exactly.
-    Callers can therefore regrow it on demand instead of preallocating.
-    """
-    if num_tasks <= 0:
-        raise ValueError(
-            f"geniesim_sub_task_stream needs num_tasks >= 1, got {num_tasks}"
-        )
-    if length <= 0:
-        return []
-    overlap = min(max(int(window) - 1, 0), num_tasks)
-    stream: list[int] = []
-    block = 0
-    while len(stream) < length:
-        rng = random.Random(
-            (int(base_seed) * _SUB_TASK_STREAM_SALT + block) & 0xFFFF_FFFF
-        )
-        tail = set(stream[len(stream) - overlap :]) if overlap else set()
-        perm = list(range(num_tasks))
-        for _ in range(max(int(max_retries), 1)):
-            rng.shuffle(perm)
-            if not tail or not tail.intersection(perm[:overlap]):
-                break
-        stream.extend(perm)
-        block += 1
-    return stream[:length]
 
 
 def resolve_geniesim_address(
@@ -635,7 +528,7 @@ class GenieSimEnv:
             override = self._slot_overrides[self._seed_offset]
         # Retry only reset failures; a lost step has no valid transition to return.
         self._nonfinite_state_recovery = bool(
-            override.get("nonfinite_state_recovery", False)
+            override.get("nonfinite_state_recovery", True)
         )
         self._nonfinite_state_reset_retries = int(
             override.get("nonfinite_state_reset_retries", 3)
@@ -650,44 +543,10 @@ class GenieSimEnv:
             rank=self._seed_offset,
             world_size=self._total_num_processes,
         )
-        # Resolve backgrounds before selecting a sub-task.
         self._task_names = resolve_geniesim_task_names(override)
-        # Select this worker's initial sub-task.
-        self._sub_task_names, self._sub_task_idx = resolve_geniesim_sub_tasks(
-            override,
-            rank=self._seed_offset,
-            world_size=self._total_num_processes,
-        )
-        if not self._task_names or not self._sub_task_names:
+        self._sub_task_name = str(override.get("sub_task_name", "")).strip()
+        if not self._task_names or not self._sub_task_name:
             raise ValueError("GenieSim task_name and sub_task_name are required")
-        # Binding may select a different background for this sub-task.
-        self._task_name = self._task_names[0]
-        self._sub_task_name = self._sub_task_names[self._sub_task_idx]
-        # Rotate after this many rollout epochs; zero disables rotation.
-        self._sub_task_rotate_every = int(override.get("sub_task_rotate_every", 0) or 0)
-        if self._sub_task_rotate_every < 0:
-            raise ValueError(
-                f"GenieSim sub_task_rotate_every must be >= 0, "
-                f"got {self._sub_task_rotate_every}"
-            )
-        self._rotation_counter = 0
-        # Shuffle draws without replacement; stride advances deterministically.
-        self._sub_task_sampling = (
-            str(override.get("sub_task_sampling", "stride")).strip().lower()
-        )
-        if self._sub_task_sampling not in ("stride", "shuffle"):
-            raise ValueError(
-                f"GenieSim sub_task_sampling must be 'stride' or 'shuffle', "
-                f"got {self._sub_task_sampling!r}"
-            )
-        # Count rotation rounds separately from rollout epochs.
-        self._sub_task_round = 0
-        self._sub_task_slot_stream: list[int] = []
-        if str(override.get("instruction_mode", "full")) != "full":
-            raise NotImplementedError("GenieSim only supports instruction_mode=full")
-        self._reset_blocking = bool(override.get("reset_blocking", True))
-        if not self._reset_blocking:
-            raise NotImplementedError("GenieSim only supports reset_blocking=true")
 
         backend, client_kwargs = _client_kwargs(override, address=self._address)
         self._client = _make_geniesim_client(backend, **client_kwargs)
@@ -697,14 +556,13 @@ class GenieSimEnv:
         self._venv = _make_geniesim_venv(
             self._client,
             to_torch=bool(override.get("venv_to_torch", True)),
-            device=str(override.get("venv_device", "cuda:0")),
             # Keep per-step boundaries; this adapter owns auto-reset.
             auto_reset=False,
             # The client truncates on its own counter, so it needs the same
             # limit; its default is 200 and would cut a longer episode short.
             max_episode_steps=self._max_episode_steps,
         )
-        # Retain settings needed when the sub-task changes.
+        # Settings for the task init and the work-item catalogue.
         self._render_width = resolve_geniesim_render_width(override)
         self._randomization = resolve_geniesim_randomization(override)
         self._eval_interval = int(override.get("eval_interval", 1))
@@ -715,16 +573,13 @@ class GenieSimEnv:
             "budget": int(override.get("work_item_budget", 0) or 0),
         }
         self._need_images = bool(override.get("need_images", True))
-        # Render only the last action substep when enabled. Accept the legacy key.
+        # Render only the last action substep when enabled.
         self._images_at_chunk_end_only = bool(
-            override.get(
-                "images_at_chunk_end_only",
-                override.get("render_last_frame_only", False),
-            )
+            override.get("images_at_chunk_end_only", False)
         )
         # Video recording requires a frame for every substep.
         self._save_video = bool((cfg.get("video_cfg") or {}).get("save_video", False))
-        self._base_seed = int(override.get("geniesim_env_seed", cfg.get("seed", 0)))
+        self._base_seed = int(cfg.get("seed", 0))
         self._cycle_work_items = bool(override.get("cycle_work_items", True))
 
         self._adapter = GenieSimAdapter(
@@ -760,25 +615,13 @@ class GenieSimEnv:
             )
         self._num_group = self._num_envs // self._group_size
         self._work_stride = self._work_item_shard_world_size * self._num_group
-        # Keep task cursors by reference so revisiting a task resumes its work sequence.
-        self._work_state: dict[str, tuple[list[GenieSimWorkItem], list[int]]] = {}
-        # Sub-tasks whose cursor has already been consumed at least once. A
-        # freshly-bound task's cursor sits at the rank's base offset and has not
-        # been used yet, so the first reset on it must NOT advance. This is the
-        # per-sub-task generalization of ``_first_reset``.
-        self._work_started: set[str] = set()
-        self._action_dim = -1
 
-        # All ranks share a fixed scheduling seed, independent of later reset seeds.
-        self._sub_task_stream_seed = int(self._base_seed)
-        # Resolve the curriculum before building the first scene.
-        self._task_metadata = self._validate_sub_task_curriculum()
-        if self._sub_task_sampling == "shuffle" and len(self._sub_task_names) > 1:
-            # Draw the initial assignment from the shuffled stream.
-            self._sub_task_idx = self._draw_sub_task_slot(0)
-            self._sub_task_name = self._sub_task_names[self._sub_task_idx]
-
-        self._bind_sub_task(self._sub_task_name)
+        self._metadata = parse_geniesim_task_metadata(
+            self._client.task_metadata(sub_task_name=self._sub_task_name),
+            task_names=self._task_names,
+            sub_task_name=self._sub_task_name,
+        )
+        self._bind_sub_task()
         self.is_start = True
         # Track the first reset independently of the worker's is_start flag.
         self._first_reset = True
@@ -824,137 +667,50 @@ class GenieSimEnv:
             config["randomization"] = copy.deepcopy(self._randomization)
         return config or None
 
-    def _bind_sub_task(self, sub_task_name: str) -> None:
-        """Switch the server task and restore its catalogue, cursor, and action layout."""
-        self._sub_task_name = sub_task_name
-        self._metadata = self._task_metadata[sub_task_name]
-        # Each sub-task can select a different background from the configured list.
+    def _bind_sub_task(self) -> None:
+        """Initialize the server task and lay out this slot's work-item cursor."""
+        # The sub-task can select any background from the configured list.
         self._task_name = self._metadata.task_name
         self._venv.init(
             {
                 "task_name": self._task_name,
-                "sub_task_name": sub_task_name,
-                # The server needs num_envs on every task switch to retain its layout.
+                "sub_task_name": self._sub_task_name,
                 "num_envs": self._num_envs,
                 "eval_interval": self._eval_interval,
             },
             config=self._init_config(),
         )
-        new_action_dim = int(self._venv.action_dim)
-        if self._action_dim >= 0 and new_action_dim != self._action_dim:
-            # A task switch cannot change the policy action layout.
-            raise RuntimeError(
-                f"GenieSim action_dim changed across a sub-task switch "
-                f"({self._action_dim} -> {new_action_dim}, now {sub_task_name!r}). "
-                f"The policy's action head cannot follow; every background in "
-                f"task_name={self._task_names!r} must share one robot."
-            )
-        self._action_dim = new_action_dim
+        self._action_dim = int(self._venv.action_dim)
 
-        cached = self._work_state.get(sub_task_name)
-        if cached is None:
-            work_items = build_geniesim_work_items(
-                self._metadata,
-                instance_ids=self._work_item_spec["instance_ids"],
-                instruction_ids_by_instance=self._work_item_spec[
-                    "instruction_ids_by_instance"
-                ],
-                num_episodes=self._work_item_spec["num_episodes"],
-            )
-            budget = self._work_item_spec["budget"]
-            if budget > 0:
-                work_items = work_items[:budget]
-            # Slots with distinct catalogues start at their own catalogue offset.
-            base = self._work_item_shard_rank * self._num_group
-            cursor = [
-                (base + env_id // self._group_size) % len(work_items)
-                for env_id in range(self._num_envs)
-            ]
-            cached = (work_items, cursor)
-            self._work_state[sub_task_name] = cached
-        self._work_items, self._work_cursor = cached
+        work_items = build_geniesim_work_items(
+            self._metadata,
+            instance_ids=self._work_item_spec["instance_ids"],
+            instruction_ids_by_instance=self._work_item_spec[
+                "instruction_ids_by_instance"
+            ],
+            num_episodes=self._work_item_spec["num_episodes"],
+        )
+        budget = self._work_item_spec["budget"]
+        if budget > 0:
+            work_items = work_items[:budget]
+        # Slots with distinct catalogues start at their own catalogue offset.
+        base = self._work_item_shard_rank * self._num_group
+        self._work_items = work_items
+        self._work_cursor = [
+            (base + env_id // self._group_size) % len(work_items)
+            for env_id in range(self._num_envs)
+        ]
 
-        # Log the slot mapping again whenever the task changes.
         get_logger().info(
             f"[geniesim] slot={self._seed_offset}/{self._total_num_processes} "
             f"address={self._address} "
             f"task={self._task_name} sub_task={self._sub_task_name} "
-            f"({self._sub_task_idx + 1}/{len(self._sub_task_names)}) "
             f"num_envs={self._num_envs} server action_dim={self._action_dim} "
             f"work_items={len(self._work_items)} "
             f"shard={self._work_item_shard_rank}/{self._work_item_shard_world_size} "
             f"group_size={self._group_size} num_group={self._num_group} "
             f"cursor={self._work_cursor} stride={self._work_stride}"
         )
-
-    def _validate_sub_task_curriculum(self) -> dict[str, GenieSimTaskMetadata]:
-        """Validate each distinct task once and retain its resolved catalogue."""
-        resolved: dict[str, GenieSimTaskMetadata] = {}
-        for name in dict.fromkeys(self._sub_task_names):  # de-dup, keep order
-            metadata = parse_geniesim_task_metadata(
-                self._client.task_metadata(sub_task_name=name),
-                task_names=self._task_names,
-                sub_task_name=name,
-            )
-            resolved[name] = metadata
-        by_background: dict[str, list[str]] = {}
-        for sub, metadata in resolved.items():
-            by_background.setdefault(metadata.task_name, []).append(sub)
-        get_logger().info(
-            f"[geniesim] curriculum N={len(self._sub_task_names)} over "
-            f"{len(by_background)} background(s): "
-            + "; ".join(
-                f"{background}={subs}"
-                for background, subs in sorted(by_background.items())
-            )
-        )
-        return resolved
-
-    def _draw_sub_task_slot(self, round_index: int) -> int:
-        """Select this rank's slot from a shared, prefix-stable shuffled schedule."""
-        num_ranks = max(self._total_num_processes, 1)
-        needed = (round_index + 1) * num_ranks
-        if len(self._sub_task_slot_stream) < needed:
-            self._sub_task_slot_stream = geniesim_sub_task_stream(
-                len(self._sub_task_names),
-                needed,
-                base_seed=self._sub_task_stream_seed,
-                window=num_ranks,
-            )
-        return self._sub_task_slot_stream[round_index * num_ranks + self._seed_offset]
-
-    def _maybe_rotate_sub_task(self) -> None:
-        """Advance the task schedule at a whole-env reset.
-
-        Stride mode advances by the logical slot count; shuffle mode draws from
-        the shared stream. Repeated task assignments do not rebuild the scene."""
-
-        if self._sub_task_rotate_every <= 0 or len(self._sub_task_names) <= 1:
-            return
-        self._rotation_counter += 1
-        if self._rotation_counter < self._sub_task_rotate_every:
-            return
-        self._rotation_counter = 0
-        self._sub_task_round += 1
-        if self._sub_task_sampling == "shuffle":
-            next_idx = self._draw_sub_task_slot(self._sub_task_round)
-        else:
-            next_idx = (self._sub_task_idx + self._total_num_processes) % len(
-                self._sub_task_names
-            )
-        if next_idx == self._sub_task_idx:
-            # stride mode: N divides the stride, nothing to switch to.
-            # shuffle mode: this rank happened to redraw its current task
-            # (probability ~1/N) -- a free skipped rebuild, not an error.
-            return
-        self._sub_task_idx = next_idx
-        next_name = self._sub_task_names[next_idx]
-        get_logger().info(
-            f"[geniesim] rotating sub_task {self._sub_task_name!r} -> "
-            f"{next_name!r} (rank {self._seed_offset}/{self._total_num_processes}, "
-            f"mode={self._sub_task_sampling} round={self._sub_task_round})"
-        )
-        self._bind_sub_task(next_name)
 
     @property
     def _success_metric_key(self) -> str:
@@ -1009,7 +765,6 @@ class GenieSimEnv:
                     seeds=seeds,
                     instance_ids=instance_ids,
                     instruction_ids=instruction_ids,
-                    block=self._reset_blocking,
                 )
             except _nonfinite_state_error_types() as exc:
                 if not self._nonfinite_state_recovery:
@@ -1039,12 +794,9 @@ class GenieSimEnv:
             if env_idx is None
             else np.asarray(env_idx, dtype=np.int64).reshape(-1)
         )
-        # Rotate only at whole-env resets; partial resets must not change other episodes.
-        if env_idx is None and not self._first_reset:
-            self._maybe_rotate_sub_task()
-
-        if self._sub_task_name in self._work_started:
-            # Advance each group once to keep its reset work item and seed aligned.
+        # The first reset consumes each env's initial work item; later resets
+        # advance each group once to keep its work item and seed aligned.
+        if not self._first_reset:
             groups = sorted({env_id // self._group_size for env_id in ids.tolist()})
             if self._group_size > 1 and int(ids.size) != self._group_size * len(groups):
                 # Partial group resets break GRPO initial-state alignment.
@@ -1059,12 +811,6 @@ class GenieSimEnv:
                 )
             for group_id in groups:
                 self._advance_work(group_id)
-        else:
-            # First visit to this sub-task: its cursor was just laid down at the
-            # rank's base offset and has never been consumed, so advancing now
-            # would skip the first work item of every env. (The single-task case
-            # is the ``_first_reset`` guard this generalizes.)
-            self._work_started.add(self._sub_task_name)
 
         seeds, instance_ids, instruction_ids = build_geniesim_reset_vectors(
             self._num_envs,

@@ -2,7 +2,7 @@
 defaults:
   - env/geniesim@env.train
   - env/geniesim@env.eval
-  - model/pi0_5_geniesim@actor.model
+  - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - _self_
@@ -60,11 +60,6 @@ algorithm:
   clip_ratio_high: 0.2
   clip_ratio_low: 0.2
   clip_ratio_c: 3.0
-  value_clip: 0.2
-  huber_delta: 10.0
-
-  gamma: 0.99
-  gae_lambda: 0.95
 
   filter_rewards: False
   rewards_lower_bound: 0.0
@@ -77,20 +72,17 @@ env:
     rollout_epoch: 4
     total_num_envs: 128
     auto_reset: False
-    max_episode_steps: 200
     max_steps_per_rollout_epoch: 200
     group_size: ${algorithm.group_size}
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/train
     override_cfg:
-      nonfinite_state_recovery: false
       addresses:
         - tcp://${oc.env:GENIESIM_HOST_0}:5601
         - tcp://${oc.env:GENIESIM_HOST_0}:5602
       task_name: table_task_1_g2_op
       sub_task_name: pick_block_color
-      cycle_work_items: true
 
   eval:
     seed: -1
@@ -98,25 +90,19 @@ env:
     rollout_epoch: 4
     total_num_envs: 32
     auto_reset: False
-    max_episode_steps: 200
     max_steps_per_rollout_epoch: 200
     group_size: 1
     video_cfg:
       # Recording renders every substep, which costs the one-call chunk
       # path. Turn it on when you want the rollout videos.
       save_video: False
-      info_on_video: True
       fps: 10
-      video_base_dir: ${runner.logger.log_path}/video/eval
     override_cfg:
       addresses:
         - tcp://${oc.env:GENIESIM_EVAL_HOST,127.0.0.1}:5603
         - tcp://${oc.env:GENIESIM_EVAL_HOST,127.0.0.1}:5604
       task_name: ${env.train.override_cfg.task_name}
       sub_task_name: ${env.train.override_cfg.sub_task_name}
-      # More trajectories than the sub-task has work items, so the
-      # cursor wraps instead of stopping at the end.
-      cycle_work_items: true
 
 rollout:
   group_name: "RolloutGroup"
@@ -140,6 +126,13 @@ actor:
 
   model:
     model_path: ${oc.env:GENIESIM_CHECKPOINT_PATH}
+    # The G2 checkpoint predicts 14 joints and 2 grippers.
+    action_dim: 16
+    num_steps: 10
+    openpi_data:
+      norm_stats_path: ${..model_path}/assets/norm_stats.json
+    openpi:
+      config_name: "pi05_geniesim_g2_ah10"
 
   optim:
     lr: 5.0e-6

@@ -3,7 +3,7 @@ RL with GenieSim Benchmark
 
 .. |pi| replace:: π₀.₅
 
-.. figure:: /_static/images/genie_sim_system_overview.webp
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/genie_sim_system_overview.webp
    :align: center
    :width: 100%
    :alt: Genie Sim platform and capabilities overview.
@@ -116,16 +116,10 @@ Run the repository setup commands on the RLinf host, outside any container.
 .. include:: _setup_common.rst
    :end-before: Then set up the dependencies
 
-From the RLinf repository root, clone GenieSim into a sibling directory and
-set the client package path:
-
-.. code:: bash
-
-   git clone https://github.com/AgibotTech/genie_sim.git ../genie_sim
-   export GENIESIM_CLIENT_PATH="$(realpath ../genie_sim/source/rlinf_geniesim)"
-
 Choose one of the following installation methods. Both install
-``rlinf-geniesim-client`` from this checkout. See
+``rlinf-geniesim-client`` from GenieSim ``v3.5.0``, which ``install.sh``
+clones automatically. To install from an existing GenieSim checkout instead,
+set ``GENIESIM_PATH`` to it. See
 :doc:`Installation </rst_source/start/installation>` for prerequisites and
 GPU driver setup.
 
@@ -142,15 +136,13 @@ the GenieSim client, then activate the environment:
 
 **Docker image**
 
-On the RLinf host, run this build from the RLinf repository root. The
-``geniesim`` build context supplies the client package:
+On the RLinf host, run this build from the RLinf repository root:
 
 .. code:: bash
 
    docker build -f docker/Dockerfile \
      --build-arg BUILD_TARGET=embodied-geniesim \
      --build-arg NO_MIRROR=1 \
-     --build-context "geniesim=$GENIESIM_CLIENT_PATH" \
      -t rlinf:embodied-geniesim .
 
 The image provides an NVIDIA CUDA 12.8 training environment with OpenPI and
@@ -219,7 +211,7 @@ Run It
 
 On the simulation host, follow the `GenieSim post-training server guide <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__
 to prepare ``geniesim_assets`` and build the Isaac Sim 6.0.1-based image.
-Use the same GenieSim revision as the installed client.
+Use GenieSim ``v3.5.0``, the same revision as the installed client.
 
 **Start the Simulation Server**
 
@@ -412,6 +404,13 @@ the same evaluation protocol.
 
 :sup:`※` indicates that the task was included in the corresponding
 multi-task model's training mix.
+
+Each success rate counts every test case of the sub-task (a scene instance
+paired with one instruction) exactly once. The standalone evaluation config
+runs 128 trajectories, more than a sub-task has test cases, so some cases run
+twice; the repeats were removed before computing the rates. The success rate
+logged during the run includes the repeats and can differ slightly from the
+table.
 
 The training reference configs are in ``examples/embodiment/config/``:
 

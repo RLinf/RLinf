@@ -3489,12 +3489,9 @@ install_behavior_env() {
 }
 
 install_geniesim_env() {
-    local client_path="${GENIESIM_CLIENT_PATH:-}"
-    if [ -z "$client_path" ] || [ ! -f "$client_path/pyproject.toml" ]; then
-        echo "Set GENIESIM_CLIENT_PATH to the GenieSim source/rlinf_geniesim package directory." >&2
-        return 1
-    fi
-    uv pip install "$client_path"
+    local geniesim_path
+    geniesim_path=$(clone_or_reuse_repo GENIESIM_PATH "$VENV_DIR/genie_sim" ${GITHUB_PREFIX}https://github.com/AgibotTech/genie_sim.git -b "${GENIESIM_GIT_REF:-v3.5.0}" --depth 1)
+    uv pip install "$geniesim_path/source/rlinf_geniesim"
 }
 
 install_metaworld_env() {
