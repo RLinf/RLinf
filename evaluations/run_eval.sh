@@ -180,23 +180,6 @@ if [ "${BENCHMARK}" = "robocasa365" ]; then
     export NUMBA_DISABLE_JIT="${NUMBA_DISABLE_JIT:-1}"
 fi
 
-if [ "${BENCHMARK}" = "simple" ]; then
-    # Isaac Sim must start non-interactively in Ray workers.
-    export ACCEPT_EULA="${ACCEPT_EULA:-Y}"
-    export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"
-
-    # Let pip-installed Isaac Sim discover its own package paths.
-    if [ "${ISAAC_PATH:-}" = "/path/to/isaac-sim" ]; then
-        unset ISAAC_PATH
-    fi
-    if [ "${EXP_PATH:-}" = "/path/to/isaac-sim/apps" ]; then
-        unset EXP_PATH
-    fi
-    if [ "${CARB_APP_PATH:-}" = "/path/to/isaac-sim/kit" ]; then
-        unset CARB_APP_PATH
-    fi
-fi
-
 if [ "${BENCHMARK}" = "libero" ]; then
     export ROBOT_PLATFORM="${ROBOT_PLATFORM:-LIBERO}"
     export LIBERO_TYPE="${LIBERO_TYPE:-standard}"

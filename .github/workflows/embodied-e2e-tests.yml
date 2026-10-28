@@ -2159,8 +2159,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export SIMPLE_ASSETS_PATH=/workspace/dataset/psi0_simple/simple_assets
-          # Reuse the precloned checkout. Cleanup deletes .venv.
+          # Reuse the prepared checkout; its data/ links to the prepared assets.
           export SIMPLE_CACHE_DIR=/workspace/dataset/psi0_simple/SIMPLE
           bash requirements/install.sh embodied --model psi0 --env simple
 

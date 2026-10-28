@@ -26,8 +26,8 @@ Examples:
   bash requirements/embodied/download_assets.sh --assets maniskill
   bash requirements/embodied/download_assets.sh --dir /opt/.assets --assets maniskill,openpi
   bash requirements/embodied/download_assets.sh --use-mirror --assets maniskill,openpi
-  # --dir is the SIMPLE checkout; zips are unpacked into <dir>/data.
-  bash requirements/embodied/download_assets.sh --assets simple --dir .venv/SIMPLE
+  # Unpacks into --dir; link <SIMPLE checkout>/data to that directory.
+  bash requirements/embodied/download_assets.sh --assets simple --dir /path/to/simple_assets
 EOF
 }
 
@@ -135,12 +135,12 @@ download_openpi_assets() {
 	fi
 }
 
-# Open Oven reads these from <SIMPLE checkout>/data and otherwise downloads them
-# on the first rollout. Unpack into data/ the same way resolve_data_path does,
-# so a later run sees the extracted paths and skips Hugging Face.
+# Assets shared by the SIMPLE G1 Teleop tasks. SIMPLE reads them from
+# <SIMPLE checkout>/data and otherwise downloads them on the first rollout.
+# Unpack them the same way resolve_data_path does, so once data/ links to
+# this directory a run sees the extracted paths and skips Hugging Face.
 download_simple_assets() {
-	local root_dir=$1
-	local data_dir="${root_dir}/data"
+	local data_dir=$1
 	local entry zip_name marker
 
 	mkdir -p "$data_dir"
@@ -151,7 +151,6 @@ download_simple_assets() {
 		"robots_g1.zip|robots/g1"
 		"assets_graspnet.zip|assets/graspnet"
 		"assets_articulated.zip|assets/articulated"
-		"scenes_hssd_102344280.zip|scenes/hssd/102344280"
 		"vMaterials_2.zip|vMaterials_2"
 	)
 	for entry in "${assets[@]}"; do

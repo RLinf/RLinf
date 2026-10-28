@@ -29,6 +29,21 @@ import numpy as np
 from filelock import FileLock, Timeout
 
 
+def use_pip_isaac_sim() -> None:
+    """Let the pip-installed Isaac Sim locate its own Kit in this process.
+
+    RLinf launch scripts export ``ISAAC_PATH``, ``EXP_PATH`` and
+    ``CARB_APP_PATH`` for a standalone Isaac Sim, with placeholder defaults.
+    SIMPLE runs on the ``isaacsim`` wheel pinned in ``simple.txt``, which
+    derives these paths only when they are unset.
+    """
+    for key in ("ISAAC_PATH", "EXP_PATH", "CARB_APP_PATH"):
+        os.environ.pop(key, None)
+    # Isaac Sim must start non-interactively in a Ray actor.
+    os.environ.setdefault("ACCEPT_EULA", "Y")
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+
+
 def install_data_path_lock() -> None:
     """Guard the upstream resolver before importing SIMPLE runtime modules.
 

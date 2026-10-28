@@ -21,58 +21,31 @@ the pinned Psi0 release. ``G1WholebodyBendPickMP-v0`` and
 ``G1WholebodyTabletopGraspMP-v0`` use different state, action, and System-0
 protocols and are not supported yet.
 
-Install the Runtime
--------------------
+Set Up the Environment
+----------------------
 
-Install the Psi0 and SIMPLE dependencies into the default virtual environment:
+All eight tasks share steps 1–4 of the
+:doc:`Psi0 guide </rst_source/examples/embodied/psi0>`. First, install and
+activate the runtime from the RLinf repository root. To use Docker instead, see
+:ref:`step 1 <psi0-setup-env>`.
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied \
-     --model psi0 \
-     --env simple
+   bash requirements/install.sh embodied --model psi0 --env simple
    source .venv/bin/activate
 
-.. _simple-sim-assets:
+Then complete steps 2–4:
 
-Simulation Assets
-~~~~~~~~~~~~~~~~~
+- :ref:`Download the Qwen metadata <psi0-qwen-metadata>`.
+- :ref:`Download the simulation assets <simple-sim-assets>`, or reuse assets
+  you already have.
+- :ref:`Link the assets <simple-link-assets>` to ``${VIRTUAL_ENV}/SIMPLE/data``.
 
-Before the installer finishes, it downloads the OpenOven simulation assets from
-`USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_,
-unpacks them into ``.venv/SIMPLE/data``, and removes the zip files. A package
-is skipped when its unpacked directory is already present:
+.. note::
 
-- ``robots/g1``
-- ``assets/graspnet``
-- ``assets/articulated``
-- ``scenes/hssd/102344280`` (the task's ``hssd:scene1``)
-- ``vMaterials_2``
+   The Psi0 loader needs the raw Hugging Face snapshot of the Qwen metadata. Set ``HF_HOME`` when downloading it instead of using ``--local-dir``, and export the same ``HF_HOME`` before evaluation.
 
-Assets stored inside the virtual environment are deleted with ``.venv``. Set
-``SIMPLE_ASSETS_PATH`` before installation to keep them outside it. The
-installer copies any files already in ``.venv/SIMPLE/data`` into that directory
-without overwriting existing files, then replaces ``.venv/SIMPLE/data`` with a
-symlink. Later installs only recreate the symlink and skip packages that are
-already unpacked.
-
-.. code-block:: bash
-
-   export SIMPLE_ASSETS_PATH=/path/to/simple_assets
-   bash requirements/install.sh embodied \
-     --model psi0 \
-     --env simple
-
-Without this variable, assets stay in ``.venv/SIMPLE/data``. To fetch only the
-missing packages without reinstalling the environment:
-
-.. code-block:: bash
-
-   bash requirements/embodied/download_assets.sh --assets simple --dir .venv/SIMPLE
-
-``install.sh --use-mirror`` forwards ``HF_ENDPOINT`` to this download. If you
-run ``download_assets.sh`` on its own and want to use a mirror, pass the
-``--use-mirror`` flag.
+Step 5 depends on the task. See :ref:`Task-Specific Assets <simple-reset-data>`.
 
 .. _simple-tasks:
 
@@ -131,8 +104,8 @@ levels 0, 1, and 2 in the
 Task-Specific Assets
 ~~~~~~~~~~~~~~~~~~~~
 
-The commands below use OpenOven. All tasks share the asset root and
-``HF_HOME``, so set them once. When switching tasks, change only the annotated
+The commands below use OpenOven. All tasks share the artifact root, so set it
+once. When switching tasks, change only the annotated
 ``SIMPLE_TASK`` and run name. Both values must come from the same table row.
 The remaining commands derive the matching paths from these values.
 
@@ -140,7 +113,6 @@ The remaining commands derive the matching paths from these values.
 
    # Set once. Reuse for every SIMPLE task.
    export PSI0_ARTIFACT_ROOT=/path/to/psi0-simple-artifacts
-   export HF_HOME="${PSI0_ARTIFACT_ROOT}/hf-cache"
 
    # Replace these two values together for each task.
    export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0  # Replace the task ID.
@@ -166,26 +138,9 @@ The remaining commands derive the matching paths from these values.
    unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" \
      -d "${SIMPLE_RESET_DIR}"
 
-Shared Qwen Metadata
-~~~~~~~~~~~~~~~~~~~~
-
-The joint Psi0 checkpoint contains both the System-2 ``vlm_model`` weights and
-the System-1 ``action_header`` weights. The pinned loader still resolves the
-Qwen configuration, tokenizer, and processor by model ID. Download the following
-shared metadata once per ``HF_HOME``:
-
-.. code-block:: bash
-
-   hf download Qwen/Qwen3-VL-2B-Instruct \
-     chat_template.json config.json generation_config.json merges.txt \
-     preprocessor_config.json tokenizer.json tokenizer_config.json \
-     video_preprocessor_config.json vocab.json
-
-The upstream loader resolves ``main`` by default. This command writes metadata
-to the standard cache under ``HF_HOME`` for offline reuse. Downloading only a
-commit SHA does not create the cache's ``main`` reference, and an arbitrary
-``--local-dir`` cannot replace the standard cache. ``main`` can change; strict
-pinning also requires the loader to use the same revision.
+If a task's HSSD scene is missing, SIMPLE downloads it into the linked
+``data/`` directory on the first rollout. To download the OpenOven scene in
+advance, follow :ref:`step 5 of the Psi0 guide <psi0-model-download>`.
 
 Run Evaluation
 --------------

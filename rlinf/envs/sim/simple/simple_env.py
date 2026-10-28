@@ -44,6 +44,7 @@ from rlinf.envs.sim.simple.runtime import (
     install_data_path_lock,
     link_kit_cache,
     resolve_hssd_scene_dir,
+    use_pip_isaac_sim,
 )
 from rlinf.envs.sim.simple.utils import (
     SIMPLE_ACTION_CHUNK_SHAPE,
@@ -79,6 +80,7 @@ class SimpleProcess(gym.Env):
     ) -> None:
         if num_envs != 1:
             raise ValueError("SIMPLE requires one env per EnvWorker.")
+        use_pip_isaac_sim()
         if total_num_processes < 1:
             raise ValueError("total_num_processes must be positive.")
         task_id = str(cfg.init_params.task_id)

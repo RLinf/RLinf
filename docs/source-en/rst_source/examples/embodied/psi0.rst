@@ -64,6 +64,14 @@ then sends the predicted commands to SIMPLE's whole-body controller.
 Installation
 ------------
 
+Set up Psi0 + SIMPLE in five steps. Steps 1–4 are shared by all SIMPLE tasks;
+step 5 downloads the resources of one task.
+
+.. _psi0-setup-env:
+
+1. Set Up the Environment
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
 From the RLinf repository root, install and activate the Psi0 + SIMPLE runtime:
 
 .. code-block:: bash
@@ -71,29 +79,88 @@ From the RLinf repository root, install and activate the Psi0 + SIMPLE runtime:
    bash requirements/install.sh embodied --model psi0 --env simple
    source .venv/bin/activate
 
-The installer pins
+Alternatively, build the Docker image and switch to its Psi0 environment:
+
+.. code-block:: bash
+
+   docker build -f docker/Dockerfile --build-arg BUILD_TARGET=embodied-simple -t rlinf:embodied-simple .
+   # Inside the container:
+   source switch_env psi0
+
+Both pin
 `Psi0 <https://github.com/physical-superintelligence-lab/Psi0/tree/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06>`_
 and
-`SIMPLE <https://github.com/physical-superintelligence-lab/SIMPLE/tree/5e3d6f84e85343e34e9bca8d157f0d7813231185>`_.
+`SIMPLE <https://github.com/physical-superintelligence-lab/SIMPLE/tree/5e3d6f84e85343e34e9bca8d157f0d7813231185>`_,
+and neither includes the simulation assets.
 See :doc:`Installation </rst_source/start/installation>` for system prerequisites.
 
-The same command downloads the OpenOven simulation assets and unpacks them into
-``.venv/SIMPLE/data``. A package is skipped when its directory is already there.
-Set ``SIMPLE_ASSETS_PATH`` before installation to store the assets outside the
-virtual environment; ``.venv/SIMPLE/data`` becomes a symlink, and later installs
-do not download those packages again. See :ref:`Simulation Assets <simple-sim-assets>`.
+.. _psi0-qwen-metadata:
+
+2. Download the Qwen Metadata
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The joint checkpoint already contains the Qwen3-VL weights, but the loader reads
+the Qwen configuration, tokenizer, and processor by model ID:
+
+.. code-block:: bash
+
+   export HF_HOME=/path/to/hf-cache
+   hf download Qwen/Qwen3-VL-2B-Instruct \
+     chat_template.json config.json generation_config.json merges.txt \
+     preprocessor_config.json tokenizer.json tokenizer_config.json \
+     video_preprocessor_config.json vocab.json
+
+.. note::
+
+   The loader needs the raw Hugging Face snapshot of these files. Set ``HF_HOME`` when downloading them instead of using ``--local-dir``, and export the same ``HF_HOME`` before training or evaluation.
+
+.. _simple-sim-assets:
+
+3. Download the Simulation Assets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Download the assets shared by the SIMPLE tasks (G1 robot, GraspNet objects,
+articulated objects, and vMaterials) from
+`USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_.
+If you already have them, set ``SIMPLE_ASSETS_DIR`` to that directory and skip
+the download.
+
+.. code-block:: bash
+
+   export SIMPLE_ASSETS_DIR=/path/to/simple_assets
+   bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
+
+The script unpacks each package into ``SIMPLE_ASSETS_DIR``, removes the zip,
+and skips packages that are already unpacked. If you want to use a mirror, pass
+the ``--use-mirror`` flag.
+
+.. _simple-link-assets:
+
+4. Link the Assets
+~~~~~~~~~~~~~~~~~~
+
+SIMPLE reads assets from ``data/`` in its checkout, which the installer places
+at ``${VIRTUAL_ENV}/SIMPLE``. In the checkout, ``data/`` only holds SIMPLE's
+README and download helper. Replace it with a link to the assets:
+
+.. code-block:: bash
+
+   rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
+   ln -s "${SIMPLE_ASSETS_DIR}" "${VIRTUAL_ENV}/SIMPLE/data"
+
+If you installed with ``SIMPLE_PATH``, link ``${SIMPLE_PATH}/data`` instead.
 
 .. _psi0-model-download:
 
-Download the Model
-------------------
+5. Download the Task Resources
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Download the official OpenOven checkpoint and its run configuration:
+Download the official OpenOven checkpoint with its run configuration, the
+OpenOven reset data, and the OpenOven HSSD scene:
 
 .. code-block:: bash
 
    export PSI0_ARTIFACT_ROOT=/path/to/psi0-simple-artifacts
-   export HF_HOME="${PSI0_ARTIFACT_ROOT}/hf-cache"
    export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
    export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
 
@@ -103,43 +170,29 @@ Download the official OpenOven checkpoint and its run configuration:
      "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
      --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
      --local-dir "${PSI0_ARTIFACT_ROOT}/psi-model"
-
    export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
-
-Set ``model_path`` to this run directory. Its configuration supplies the model
-architecture and preprocessing transforms; the joint checkpoint contains both
-System-2 and System-1 weights.
-
-The loader also reads Qwen configuration, tokenizer, and processor files by
-model ID. Cache them in the same ``HF_HOME``:
-
-.. code-block:: bash
-
-   hf download Qwen/Qwen3-VL-2B-Instruct \
-     chat_template.json config.json generation_config.json merges.txt \
-     preprocessor_config.json tokenizer.json tokenizer_config.json \
-     video_preprocessor_config.json vocab.json
-
-Keep these files in the standard Hugging Face cache for offline loading. The
-loader resolves ``main`` for Qwen metadata; strict pinning requires a matching
-loader revision setting.
-
-Download the matching reset data before launching SIMPLE:
-
-.. code-block:: bash
 
    hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
      --repo-type dataset \
      --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
      --local-dir "${PSI0_ARTIFACT_ROOT}/psi-data"
-
    export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
    mkdir -p "${SIMPLE_RESET_DIR}"
    unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" \
      -d "${SIMPLE_RESET_DIR}"
 
-The training configuration reads ``PSI0_RUN_DIR`` for both actor and rollout
-models, and ``SIMPLE_RESET_DIR`` for reset data.
+   hf download USC-PSI-Lab/SIMPLE scenes_hssd_102344280.zip \
+     --repo-type dataset \
+     --local-dir "${SIMPLE_ASSETS_DIR}"
+   unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
+   rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
+
+``PSI0_RUN_DIR`` is the run directory. Its configuration supplies the model
+architecture and preprocessing transforms; the joint checkpoint contains both
+System-2 and System-1 weights. The training configuration reads
+``PSI0_RUN_DIR`` for both actor and rollout models, and ``SIMPLE_RESET_DIR``
+for reset data. ``scenes_hssd_102344280`` is the OpenOven scene
+``hssd:scene1``. If it is missing, SIMPLE downloads it on the first rollout.
 
 .. _psi0-ppo-training:
 

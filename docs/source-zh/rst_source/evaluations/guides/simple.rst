@@ -19,52 +19,29 @@ SIMPLE 评测
 ``G1WholebodyBendPickMP-v0`` 和 ``G1WholebodyTabletopGraspMP-v0`` 使用另一套
 state、action 和 System-0 协议，暂不支持。
 
-安装 Runtime
-------------
+准备环境
+--------
+
+八个任务共用 :doc:`Psi0 指南 </rst_source/examples/embodied/psi0>` 的第 1–4 步。
+首先在 RLinf 仓库根目录安装并激活运行环境；如需使用 Docker，见
+:ref:`第 1 步 <psi0-setup-env>`。
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied \
-     --model psi0 \
-     --env simple
+   bash requirements/install.sh embodied --model psi0 --env simple
    source .venv/bin/activate
 
-.. _simple-sim-assets:
+然后完成第 2–4 步：
 
-仿真资源
-~~~~~~~~
+- :ref:`下载 Qwen Metadata <psi0-qwen-metadata>`。
+- :ref:`下载仿真资源 <simple-sim-assets>`，或复用已经下载的资源。
+- 将资源 :ref:`链接 <simple-link-assets>` 到 ``${VIRTUAL_ENV}/SIMPLE/data``。
 
-安装结束前会从
-`USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_
-下载 OpenOven 用到的仿真资源，解压到 ``.venv/SIMPLE/data``，然后删掉 zip。
-下面这些目录已经存在时，对应的包会跳过，不再访问 Hugging Face：
+.. note::
 
-- ``robots/g1``
-- ``assets/graspnet``
-- ``assets/articulated``
-- ``scenes/hssd/102344280``\ （任务里的 ``hssd:scene1``）
-- ``vMaterials_2``
+   Psi0 loader 需要 Qwen metadata 的 Hugging Face 原始 snapshot。下载时请设置 ``HF_HOME``，不要使用 ``--local-dir``；评测前也要导出同一个 ``HF_HOME``。
 
-资源留在虚拟环境里时，删掉 ``.venv`` 就会一起丢掉。
-安装前设置 ``SIMPLE_ASSETS_PATH``，可以把它们放到虚拟环境外面。
-安装脚本把 ``.venv/SIMPLE/data`` 里已有的文件拷入该目录（不覆盖已存在的文件），
-再把 ``.venv/SIMPLE/data`` 软链过去。之后每次安装只重建软链，并跳过已经解压的包。
-
-.. code-block:: bash
-
-   export SIMPLE_ASSETS_PATH=/path/to/simple_assets
-   bash requirements/install.sh embodied \
-     --model psi0 \
-     --env simple
-
-未设置该变量时，资源仍写在 ``.venv/SIMPLE/data``。也可以不重装环境，单独补下缺失的包：
-
-.. code-block:: bash
-
-   bash requirements/embodied/download_assets.sh --assets simple --dir .venv/SIMPLE
-
-``install.sh --use-mirror`` 会把 ``HF_ENDPOINT`` 传给这次下载。
-如果单独运行 ``download_assets.sh`` 并希望使用镜像，请传入 ``--use-mirror``。
+第 5 步与任务有关，见 :ref:`任务专属资产 <simple-reset-data>`。
 
 .. _simple-tasks:
 
@@ -123,15 +100,14 @@ state、action 和 System-0 协议，暂不支持。
 任务专属资产
 ~~~~~~~~~~~~
 
-以下命令以 OpenOven 为例。资产根目录和 ``HF_HOME`` 由所有任务共用，只需设置
-一次。切换任务时，仅修改注释标出的 ``SIMPLE_TASK`` 和 run 名；两者必须来自上表
+以下命令以 OpenOven 为例。资产根目录由所有任务共用，只需设置一次。
+切换任务时，仅修改注释标出的 ``SIMPLE_TASK`` 和 run 名；两者必须来自上表
 同一行，其余命令会据此生成对应路径。
 
 .. code-block:: bash
 
    # Set once. Reuse for every SIMPLE task.
    export PSI0_ARTIFACT_ROOT=/path/to/psi0-simple-artifacts
-   export HF_HOME="${PSI0_ARTIFACT_ROOT}/hf-cache"
 
    # Replace these two values together for each task.
    export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0  # Replace the task ID.
@@ -158,27 +134,9 @@ state、action 和 System-0 协议，暂不支持。
      -d "${SIMPLE_RESET_DIR}"
 
 
-公共 Qwen Metadata
-~~~~~~~~~~~~~~~~~~
-
-Psi0 的联合 checkpoint 已包含 System-2 的 ``vlm_model`` 权重和 System-1 的
-``action_header`` 权重，不会另行下载 Qwen 模型权重。固定 loader 仍会通过模型 ID
-读取 Qwen 配置、tokenizer 和 processor。以下公共 metadata 在同一 ``HF_HOME``
-中只需下载一次，切换任务时不要重复执行：
-
-.. code-block:: bash
-
-   hf download Qwen/Qwen3-VL-2B-Instruct \
-     chat_template.json config.json generation_config.json merges.txt \
-     preprocessor_config.json tokenizer.json tokenizer_config.json \
-     video_preprocessor_config.json vocab.json
-
-上游 loader 默认解析 ``main``。仅按提交 SHA 下载不会建立缓存中的 ``main``
-引用，离线加载时可能找不到已下载的快照，因此这里沿用 loader 的默认版本，写入
-``HF_HOME`` 下的标准缓存，而非任意 ``--local-dir``。缓存完整后可离线复用。
-这部分 metadata 与上面固定版本的资产不同：``main`` 可能更新，并非严格版本锁定；
-若要锁定，还需让 loader 显式使用相同 revision。
-
+任务的 HSSD 场景缺失时，SIMPLE 会在第一次 rollout 时把它下载到已链接的
+``data/`` 目录。如需提前下载 OpenOven 场景，见
+:ref:`Psi0 指南第 5 步 <psi0-model-download>`。
 
 运行 Eval
 ---------
