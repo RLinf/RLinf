@@ -239,40 +239,46 @@ matches how each recipe groups its endpoints by env process:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 14 12 12 12 20
+   :widths: 22 10 16 12 12 12 16
 
    * - Recipe
-     - Servers (ports)
+     - Servers
+     - Ports
      - Envs per server
      - Simulation GPUs
      - Training GPUs
-     - Server start options
+     - ``--devices``
    * - Single-task PPO / GRPO
-     - 2 (5601–5602)
+     - 2
+     - 5601–5602
      - 16
      - 1
      - 1
-     - ``--count 2 --devices 0``
-   * - ``geniesim_multitask4_ppo_openpi_pi05``
-     - 4 (5601–5604)
+     - ``0``
+   * - 4-task PPO
+     - 4
+     - 5601–5604
      - 16
      - 2
      - 2
-     - ``--count 4 --devices 0,1``
-   * - ``geniesim_multitask6_ppo_openpi_pi05``
-     - 6 (5601–5606)
+     - ``0,1``
+   * - 6-task PPO
+     - 6
+     - 5601–5606
      - 12
      - 2
      - 2
-     - ``--count 6 --devices 0,1``
-   * - ``geniesim_multitask10_ppo_openpi_pi05``
-     - 12 (5601–5612)
+     - ``0,1``
+   * - 10-task PPO
+     - 12
+     - 5601–5612
      - 14
      - 4
      - 4
-     - ``--count 12 --devices 0,1,2,3``
+     - ``0,1,2,3``
 
-All recipes start their training servers at ``--base-port 5601``.
+Start each recipe's training servers with ``--count`` set to its server
+count, ``--base-port 5601``, and the ``--devices`` value from the table.
 
 In another terminal on the simulation host, outside containers and from any
 directory, list the host's IP addresses and listening TCP ports:

@@ -191,40 +191,45 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 14 12 12 12 20
+   :widths: 22 10 16 12 12 12 16
 
    * - 配方
-     - server 数（端口）
+     - server 数
+     - 端口
      - 每个 server 的环境数
      - 仿真 GPU 数
      - 训练 GPU 数
-     - server 启动参数
+     - ``--devices``
    * - 单任务 PPO / GRPO
-     - 2（5601–5602）
+     - 2
+     - 5601–5602
      - 16
      - 1
      - 1
-     - ``--count 2 --devices 0``
-   * - ``geniesim_multitask4_ppo_openpi_pi05``
-     - 4（5601–5604）
+     - ``0``
+   * - 4 任务 PPO
+     - 4
+     - 5601–5604
      - 16
      - 2
      - 2
-     - ``--count 4 --devices 0,1``
-   * - ``geniesim_multitask6_ppo_openpi_pi05``
-     - 6（5601–5606）
+     - ``0,1``
+   * - 6 任务 PPO
+     - 6
+     - 5601–5606
      - 12
      - 2
      - 2
-     - ``--count 6 --devices 0,1``
-   * - ``geniesim_multitask10_ppo_openpi_pi05``
-     - 12（5601–5612）
+     - ``0,1``
+   * - 10 任务 PPO
+     - 12
+     - 5601–5612
      - 14
      - 4
      - 4
-     - ``--count 12 --devices 0,1,2,3``
+     - ``0,1,2,3``
 
-所有配方的训练 server 均从 ``--base-port 5601`` 开始。
+启动各配方的训练 server 时，``--count`` 取表中的 server 数，``--base-port`` 为 5601，``--devices`` 取表中的值。
 
 在仿真主机另开终端，于容器外的任意目录查看主机 IP 和监听中的 TCP 端口：
 
