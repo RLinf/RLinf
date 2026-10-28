@@ -607,6 +607,64 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
 
         return result
 
+    def _prepare_observation(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+        task_descriptions = [
+            f"In: What action should the robot take to {t.lower()}?\nOut: "
+            for t in env_obs["task_descriptions"]
+        ]
+        device = next(self.parameters()).device
+        # Frames cross as uint8; resize and normalize on the model's device.
+        image_tensor = (
+            env_obs["main_images"].to(device, non_blocking=True).permute(0, 3, 1, 2)
+        )  # [B, H, W, C] -> [B, C, H, W]
+        if image_tensor.ndim == 4:
+            image_tensor = image_tensor.unsqueeze(1)
+        assert image_tensor.ndim == 5
+
+        precision = next(self.parameters()).dtype
+        processed_obs = self.input_processor(
+            text=task_descriptions,
+            images=image_tensor,
+            padding="max_length",
+            max_length=self.max_prompt_length,
+        )
+
+        input_ids = processed_obs["input_ids"]
+        attention_mask = processed_obs["attention_mask"]
+        assert torch.all(input_ids[:, 0] == 1)
+        assert torch.all(attention_mask[:, 0] == 1)
+        assert torch.all(input_ids[:, -1] == 29871)
+        assert torch.all(attention_mask[:, -1] == 1)
+
+        input_ids = input_ids.to(device=device, dtype=torch.long)
+        attention_mask = attention_mask.to(device=device, dtype=torch.bool)
+        pixel_values = processed_obs["pixel_values"].to(device=device, dtype=precision)
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+        }
+
+    @torch.no_grad()
+    def predict_value_batch(self, env_obs: dict[str, Any]) -> torch.Tensor:
+        """Return prompt-state values with shape [B, 1] for terminal bootstrap.
+
+        Requires a value head. Uses the same image and prompt preprocessing as
+        action inference, without generating action tokens or consuming sampling
+        randomness. Call with the model in evaluation mode.
+        """
+        if not hasattr(self, "value_head"):
+            raise ValueError("OpenVLA value inference requires a value head.")
+        forward_inputs = self._prepare_observation(env_obs)
+        outputs = super().forward(
+            **forward_inputs,
+            use_cache=False,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        return self.value_head(outputs.hidden_states[-1][:, -1])
+
     @torch.no_grad()
     def predict_action_batch(
         self,
@@ -621,47 +679,21 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         do_sample = kwargs.pop("do_sample")
 
         if env_obs is not None:
-            task_descriptions = [
-                f"In: What action should the robot take to {t.lower()}?\nOut: "
-                for t in env_obs["task_descriptions"]
-            ]
-            image_tensor = env_obs["main_images"].permute(
-                0, 3, 1, 2
-            )  # [B, H, W, C] -> [B, C, H, W]
-            if image_tensor.ndim == 4:
-                image_tensor = image_tensor.unsqueeze(1)
-            assert image_tensor.ndim == 5
-
-            max_length = self.max_prompt_length
-            device = next(self.parameters()).device
-            precision = next(self.parameters()).dtype
-            processed_obs = self.input_processor(
-                text=task_descriptions,
-                images=image_tensor,
-                padding="max_length",
-                max_length=max_length,
-            )
-
-            input_ids = processed_obs["input_ids"].to(device=device, dtype=torch.long)
-            attention_mask = processed_obs["attention_mask"].to(
-                device=device, dtype=torch.bool
-            )
-            pixel_values = processed_obs["pixel_values"].to(
-                device=device, dtype=precision
-            )
+            processed_obs = self._prepare_observation(env_obs)
+            input_ids = processed_obs["input_ids"]
+            attention_mask = processed_obs["attention_mask"]
+            pixel_values = processed_obs["pixel_values"]
+        else:
+            assert torch.all(input_ids[:, 0] == 1)
+            assert torch.all(attention_mask[:, 0] == 1)
+            assert torch.all(input_ids[:, -1] == 29871)
+            assert torch.all(attention_mask[:, -1] == 1)
 
         forward_inputs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "pixel_values": pixel_values,
         }
-
-        # assert first token is 1
-        assert torch.all(input_ids[:, 0] == 1)
-        assert torch.all(attention_mask[:, 0] == 1)
-        # last token is space ` `
-        assert torch.all(input_ids[:, -1] == 29871)
-        assert torch.all(attention_mask[:, -1] == 1)
 
         generated_results: GenerateDecoderOnlyOutput = self.generate(
             input_ids,

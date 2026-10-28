@@ -39,8 +39,8 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     # construction finishes.
     npu_patch_state = apply_npu_patches(Patcher)
     musa_patch_state = apply_musa_patches(Patcher)
-    Patcher.apply()
     try:
+        Patcher.apply()
         from gr00t.experiment.data_config import load_data_config
 
         from rlinf.models.embodiment.gr00t.gr00t_n1d5.gr00t_action_model import (

@@ -37,6 +37,8 @@ from rlinf.models.embodiment.gr00t.simulation_io import (
     OBS_CONVERSION,
 )
 from rlinf.models.embodiment.gr00t.utils import (
+    backbone_graph_call,
+    capture_backbone_graph,
     squeeze_dict_values,
     unsqueeze_dict_values,
 )
@@ -399,8 +401,10 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
 
     @staticmethod
     def _use_fp32_normal(device):
-        device_type = torch.device(device).type
-        return device_type == "npu"
+        del device
+        from rlinf.scheduler import AcceleratorType, Worker
+
+        return Worker.accelerator_type == AcceleratorType.NPU
 
     def get_value(self, vl_embs, state_features):
         # TODO: add value vlm mode param
@@ -466,6 +470,12 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.compute_dtype = compute_dtype
         self.output_action_chunks = output_action_chunks
         self.model_path = Path(local_model_path)
+        self.cuda_graph_manager = None
+        # Per-signature eager call counts for lazy graph capture; -1 marks a
+        # signature whose capture failed and stays eager forever.
+        self._rl_graph_state: dict[Any, int] = {}
+        # Captured rollout graphs keyed by input signature.
+        self._rl_graph_specs: dict[Any, dict] = {}
 
         # Convert string embodiment tag to EmbodimentTag enum if needed
         if isinstance(embodiment_tag, str):
@@ -491,7 +501,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
 
     def eval(self):
         self._modality_transform.eval()
-        super().eval()
+        return super().eval()
 
     def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():
@@ -639,6 +649,35 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             Dict[str, Any]: The transformed observation.
         """
         # Ensure correct dimensions before applying transforms
+        device = next(self.parameters()).device
+        orig_members = getattr(
+            self._modality_transform,
+            "_rlinf_orig_transforms",
+            getattr(self._modality_transform, "transforms", []),
+        )
+        if any(hasattr(t, "set_device") for t in orig_members):
+            if not hasattr(self._modality_transform, "_rlinf_orig_transforms"):
+                self._modality_transform._rlinf_orig_transforms = list(orig_members)
+                for transform in orig_members:
+                    if hasattr(transform, "configure_from_pipeline"):
+                        transform.configure_from_pipeline(orig_members)
+            if getattr(self._modality_transform, "training", False):
+                self._modality_transform.transforms = list(orig_members)
+                for transform in orig_members:
+                    if hasattr(transform, "set_device"):
+                        transform.set_device(None)
+            else:
+                # The device Eagle transform absorbs the eval video legs, so
+                # pixels cross once as uint8 and every image op runs on device.
+                kept = [
+                    t
+                    for t in orig_members
+                    if hasattr(t, "set_device") or "Video" not in type(t).__name__
+                ]
+                self._modality_transform.transforms = kept
+                for transform in kept:
+                    if hasattr(transform, "set_device"):
+                        transform.set_device(device)
         return self._modality_transform(obs)
 
     def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -653,6 +692,35 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         """
         return self._modality_transform.unapply(action)
 
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int) -> None:
+        """Enable lazy graph capture of the rollout backbone forward.
+
+        Graphs are captured per input signature on the third occurrence: the
+        first two calls run eagerly as warmup, later calls copy inputs into
+        the static buffers and replay. Only the backbone is captured: the
+        action head samples (``torch.randn``), and NPU graph capture rejects
+        generator ops. Weight updates through ``load_state_dict`` copy in
+        place, so replays observe new weights.
+        """
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager(
+                device=next(self.parameters()).device
+            )
+
+    def release_cuda_graph(self) -> None:
+        super().release_cuda_graph()
+        self._rl_graph_state.clear()
+        self._rl_graph_specs.clear()
+
+    def _backbone_graph_call(self, backbone_inputs):
+        """Graph-routed backbone forward with eager warmup and fallback."""
+        return backbone_graph_call(self, backbone_inputs)
+
+    def _capture_backbone_graph(self, key, backbone_inputs):
+        return capture_backbone_graph(self, key, backbone_inputs)
+
     def _get_rl_action(
         self,
         normalized_input: dict[str, Any],
@@ -661,7 +729,10 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         # We expand get_action() and replace action head inference with RL inference.
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
-        backbone_outputs = self.backbone(backbone_inputs)
+        if self.is_cuda_graph_enabled():
+            backbone_outputs = self._backbone_graph_call(backbone_inputs)
+        else:
+            backbone_outputs = self.backbone(backbone_inputs)
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
             backbone_outputs, action_inputs, mode=mode
         )

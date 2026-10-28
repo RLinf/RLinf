@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
+import pickle
+import random
 import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -49,6 +52,821 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
+
+
+@pytest.mark.parametrize("layout", ["hwc", "chw"])
+def test_evo_device_preprocessing_preserves_per_frame_ranges_and_clipping(layout):
+    from rlinf.models.embodiment.evo1.utils.data_pipeline import build_evo1_inputs
+
+    images = np.zeros((2, 8, 10, 3), dtype=np.float32)
+    images[0] = np.linspace(-0.5, 1.0, images[0].size).reshape(images[0].shape)
+    images[1] = np.linspace(-10, 300, images[1].size).reshape(images[1].shape)
+    if layout == "chw":
+        images = images.transpose(0, 3, 1, 2)
+    observation = {"main_images": images, "task_descriptions": ["pick", "place"]}
+    host = build_evo1_inputs(observation, image_size=6)
+    device = build_evo1_inputs(observation, image_size=6, device="cpu")
+    for host_views, device_views in zip(host[0], device[0]):
+        for expected, actual in zip(host_views, device_views):
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(device[1], host[1])
+    assert device[2] == host[2]
+
+
+def test_openpi_fused_attention_preserves_fully_masked_query_rows(monkeypatch):
+    import rlinf.models.embodiment.openpi.modules.utils as openpi_utils
+    from rlinf.models.embodiment.openpi.modules.gemma import Attention
+
+    monkeypatch.setattr(
+        openpi_utils,
+        "_sdpa_attention_enabled",
+        openpi_utils._sdpa_attention_enabled,
+    )
+    config = SimpleNamespace(
+        width=16, num_heads=4, num_kv_heads=2, head_dim=4, lora_configs={}
+    )
+    model = Attention([config])
+    inputs = [torch.randn(2, 4, 16)]
+    positions = torch.arange(4).repeat(2, 1)
+    mask = torch.ones(2, 1, 4, 4, dtype=torch.bool).tril()
+    mask[:, :, 0] = False
+    for updated in (False, True):
+        if updated:
+            with torch.no_grad():
+                model.v_proj[0].weight.add_(0.1)
+        openpi_utils.set_sdpa_attention(False)
+        eager_in = inputs[0].detach().clone().requires_grad_(True)
+        expected, _ = model([eager_in], positions, mask)
+        expected[0].sum().backward()
+
+        openpi_utils.set_sdpa_attention(True)
+        fused_in = inputs[0].detach().clone().requires_grad_(True)
+        actual, _ = model([fused_in], positions, mask)
+        actual[0].sum().backward()
+
+        torch.testing.assert_close(actual[0], expected[0], rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(fused_in.grad, eager_in.grad, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("aspect_ratio", ["pad", "square"])
+@pytest.mark.parametrize("policy_kind", ["dm0", "pi0"])
+def test_dm0_tensor_images_match_native_padding_and_view_masks(
+    aspect_ratio, policy_kind
+):
+    pytest.importorskip("dexbotic")
+    from PIL import Image
+    from transformers import SiglipImageProcessor
+
+    from rlinf.models.embodiment.dexbotic_dm0.dm0_policy import (
+        DexboticDM0ForRLActionPrediction,
+    )
+    from rlinf.models.embodiment.dexbotic_pi.dexbotic_pi_policy import (
+        DexboticPi0ForRLActionPrediction,
+    )
+
+    cls = (
+        DexboticDM0ForRLActionPrediction
+        if policy_kind == "dm0"
+        else DexboticPi0ForRLActionPrediction
+    )
+    model = cls.__new__(cls)
+    torch.nn.Module.__init__(model)
+    model.anchor = torch.nn.Parameter(torch.zeros(()))
+    model.config = SimpleNamespace(image_aspect_ratio=aspect_ratio)
+    model.model = SimpleNamespace(
+        mm_vision_module=SimpleNamespace(
+            image_processor=SiglipImageProcessor(size={"height": 6, "width": 6})
+        )
+    )
+    images = torch.full((2, 4, 6, 3), 31, dtype=torch.uint8)
+    expected = model.process_images(
+        [Image.fromarray(frame.numpy()) for frame in images]
+    )
+    for raw in (images, images.numpy()):
+        actual, masks = model._process_images_for_training(
+            raw, None, torch.device("cpu")
+        )
+        torch.testing.assert_close(actual[:, 0], expected, rtol=0, atol=1e-6)
+        assert masks.tolist() == [[True, False, False], [True, False, False]]
+        assert not torch.count_nonzero(actual[:, 1:])
+
+
+@pytest.mark.parametrize("precision", [None, "bf16"])
+def test_dexbotic_configured_precision_supports_actions_and_training(
+    precision, monkeypatch
+):
+    source = os.environ.get("RLINF_DEXBOTIC_TEST_OBSERVATIONS")
+    if source is None:
+        pytest.skip("Dexbotic checkpoint and captured observations required")
+    pytest.importorskip("dexbotic")
+    if Worker.torch_platform is None or not Worker.torch_platform.is_available():
+        pytest.skip("Configured accelerator required")
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models import get_model
+    from rlinf.utils.cuda_graph import clone_tensor_tree
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/embodied"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_ppo_dexbotic_pi0")
+    model_cfg = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    model_cfg.precision = precision
+    torch.manual_seed(42)
+    model = get_model(model_cfg)
+    expected_dtype = torch.float32 if precision is None else torch.bfloat16
+    assert {parameter.dtype for parameter in model.parameters()} == {expected_dtype}
+    with Path(source).open("rb") as stream:
+        captured = pickle.load(stream)
+    observation = (
+        captured["args"][0] if captured["args"] else captured["kwargs"]["env_obs"]
+    )
+    source_batch = len(observation["task_descriptions"])
+
+    def select(value):
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            return value[:2] if value.ndim and value.shape[0] == source_batch else value
+        if isinstance(value, dict):
+            return {key: select(item) for key, item in value.items()}
+        if isinstance(value, list) and len(value) == source_batch:
+            return value[:2]
+        return value
+
+    model.eval()
+    actions, rollout = model.predict_action_batch(select(observation), mode="train")
+    assert torch.isfinite(torch.as_tensor(actions)).all()
+    model.train()
+    model.zero_grad(set_to_none=True)
+    output = model.default_forward(
+        data=clone_tensor_tree(rollout["forward_inputs"]), compute_values=True
+    )
+    assert all(torch.isfinite(value).all() for value in output.values())
+    weights = torch.linspace(
+        -1, 1, output["logprobs"].numel(), device=output["logprobs"].device
+    ).reshape_as(output["logprobs"])
+    loss = (output["logprobs"].float() * weights).mean()
+    loss = loss + output["values"].float().square().mean()
+    loss.backward()
+    gradients = [
+        parameter.grad for parameter in model.parameters() if parameter.grad is not None
+    ]
+    assert gradients and all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert any(torch.count_nonzero(gradient).item() for gradient in gradients)
+
+
+@pytest.mark.parametrize("mode", ["train", "eval"])
+@pytest.mark.parametrize("joint", [False, True])
+@pytest.mark.parametrize("ignore_last", [False, True])
+@pytest.mark.parametrize("steps", [1, 4])
+def test_evo_denoising_preserves_random_draws_masks_and_replay(
+    monkeypatch, mode, joint, ignore_last, steps
+):
+    from rlinf.models.embodiment.evo1 import evo1_rl_head as head_ops
+
+    class ActionHead(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.horizon = 2
+            self.per_action_dim = 3
+            self.dtype = torch.float32
+            self.state_encoder = None
+            self.transformer_blocks = torch.nn.ModuleList()
+            self.action_projection = torch.nn.Linear(3, 8)
+            self.norm_out = torch.nn.LayerNorm(8)
+            self.seq_pool_proj = torch.nn.Linear(16, 8)
+            self.output_projection = torch.nn.Linear(8, 6)
+            self.register_buffer("time_embedding", torch.zeros(1, 1000, 8))
+
+        def time_pos_enc(self, length):
+            return self.time_embedding[:, :length]
+
+        def _project_actions(self, actions, embodiment_id):
+            return self.action_projection(actions)
+
+        def mlp_head(self, features, embodiment_id):
+            return self.output_projection(features)
+
+    head = ActionHead()
+    context = torch.zeros(2, 4, 8)
+    embodiment = torch.zeros(2, dtype=torch.long)
+    mask = torch.ones(2, 2, 3)
+    mask[..., -1] = 0
+    config = {"joint_logprob": joint, "ignore_last": ignore_last, "noise_level": 0.5}
+    selection_rng = random.Random(1234)
+    if mode == "eval":
+        expected_indices = [-1] * steps
+    elif joint:
+        expected_indices = list(range(steps))
+    else:
+        last_step = max(steps - (2 if ignore_last else 1), 0)
+        expected_indices = [selection_rng.randint(0, last_step)] * steps
+    noise_rng = torch.Generator().manual_seed(1234)
+    initial = (torch.rand(2, 2, 3, generator=noise_rng) * 2 - 1) * mask
+    for _ in range(steps):
+        torch.randn(2, 2, 3, generator=noise_rng)
+
+    def reject_scalar_read(tensor):
+        raise AssertionError("Denoising must not read device scalars on the host")
+
+    random.seed(1234)
+    torch.manual_seed(1234)
+    with monkeypatch.context() as guarded, torch.no_grad():
+        guarded.setattr(torch.Tensor, "item", reject_scalar_read)
+        actions, chains, indices, logprobs = head_ops.rl_denoise_sample(
+            head, context, None, embodiment, mask, steps, config, mode=mode
+        )
+    assert random.getstate() == selection_rng.getstate()
+    assert torch.equal(torch.random.get_rng_state(), noise_rng.get_state())
+    torch.testing.assert_close(chains[:, 0], initial, rtol=0, atol=0)
+    torch.testing.assert_close(actions, chains[:, -1], rtol=0, atol=0)
+    assert torch.count_nonzero(chains[..., -1]) == 0
+    assert indices.tolist() == [expected_indices, expected_indices]
+    if mode == "eval":
+        assert torch.count_nonzero(logprobs[:, int(joint) :]) == 0
+    else:
+        replay = head_ops.rl_replay_logprob(
+            head, context, None, embodiment, mask, chains, indices, steps, config
+        )
+        if joint:
+            expected = logprobs
+        else:
+            selected = indices[:, :1, None, None].expand(-1, 1, 2, 3)
+            expected = logprobs.gather(1, selected)
+        torch.testing.assert_close(replay, expected, rtol=0, atol=0)
+        replay.mean().backward()
+        assert torch.isfinite(head.output_projection.weight.grad).all()
+
+
+def test_evo_vision_attention_chunking_is_inert_off_npu(monkeypatch):
+    from rlinf.models.embodiment.evo1.npu_patches import (
+        set_vision_attention_batch_size,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    vision = torch.nn.Linear(4, 8)
+    images = torch.randn(2, 4)
+    reference = vision(images)
+    assert set_vision_attention_batch_size(vision, 8) == 0
+    torch.testing.assert_close(vision(images), reference, rtol=0, atol=0)
+
+
+def test_evo_mask_padded_language_attention_zeros_masked_query_rows():
+    from rlinf.models.embodiment.evo1.npu_patches import (
+        mask_padded_language_attention,
+    )
+
+    class Qwen2Attention(torch.nn.Module):
+        def forward(
+            self, hidden_states, position_embeddings, attention_mask=None, **kwargs
+        ):
+            return hidden_states + 1.0, None
+
+    class DummyLM(torch.nn.Module):
+        def __init__(self, attn_impl: str):
+            super().__init__()
+            self.config = SimpleNamespace(_attn_implementation=attn_impl)
+            self.attn = Qwen2Attention()
+
+    fa2_lm = DummyLM("flash_attention_2")
+    assert mask_padded_language_attention(fa2_lm) == 0
+
+    eager_lm = DummyLM("eager")
+    assert mask_padded_language_attention(eager_lm) == 1
+    hidden = torch.ones(1, 3, 4)
+    mask = torch.zeros(1, 1, 3, 3)
+    mask[:, :, :, 1] = float("-inf")
+    out, _ = eager_lm.attn(hidden, (None, None), attention_mask=mask)
+    torch.testing.assert_close(out[:, 0], torch.full((1, 4), 2.0))
+    torch.testing.assert_close(out[:, 1], torch.zeros((1, 4)))
+    torch.testing.assert_close(out[:, 2], torch.full((1, 4), 2.0))
+
+
+def test_evo_chunked_vision_preserves_actions_replay_gradients_and_rng(monkeypatch):
+    """Compare the real NPU checkpoint using captured rollout observations."""
+    observation_path = os.environ.get("RLINF_EVO_TEST_OBSERVATIONS")
+    if not observation_path:
+        pytest.skip("Set RLINF_EVO_TEST_OBSERVATIONS to captured Evo observations")
+    pytest.importorskip("torch_npu")
+    if not torch.npu.is_available():
+        pytest.skip("Ascend NPU required")
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models.embodiment.evo1.npu_patches import (
+        set_vision_attention_batch_size,
+    )
+    from rlinf.scheduler import AcceleratorType
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import AscendNPUManager
+    from rlinf.utils.cuda_graph import clone_tensor_tree
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/embodied"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_grpo_evo1")
+    if not Path(cfg.actor.model.model_path).is_dir():
+        pytest.skip("Evo checkpoint required")
+    torch.npu.set_device(0)
+    monkeypatch.setattr(Worker, "torch_device_type", "npu")
+    monkeypatch.setattr(Worker, "torch_platform", torch.npu)
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    AscendNPUManager.setup_worker_torch()
+    cfg.actor.model.evo1.vision_attention_batch_size = 8
+    model = get_model(OmegaConf.merge(cfg.actor.model, cfg.rollout.model))
+    vision = model.evo1.embedder.model.vision_model
+    attention_layers = set_vision_attention_batch_size(vision, 8)
+    assert attention_layers > 0
+    with Path(observation_path).open("rb") as stream:
+        captured = pickle.load(stream)
+    observation = (
+        captured["args"][0] if captured["args"] else captured["kwargs"]["env_obs"]
+    )
+    assert observation["main_images"].shape[0] >= 8
+    for updated, batch in ((False, 2), (True, 2), (False, 8)):
+        if updated:
+            with torch.no_grad():
+                model.evo1.action_head.mlp_head.fc2.linear.bias[0].add_(0.5)
+        predictions, replay, gradients, rng = [], [], [], []
+        for size in (0, 8):
+            assert set_vision_attention_batch_size(vision, size) == (
+                attention_layers if size else 0
+            )
+            model.eval()
+            random.seed(1234)
+            torch.manual_seed(1234)
+            obs = {
+                key: value[:batch].clone()
+                if torch.is_tensor(value)
+                else value[:batch].copy()
+                if isinstance(value, np.ndarray)
+                else value[:batch]
+                if isinstance(value, list)
+                else value
+                for key, value in observation.items()
+            }
+            predictions.append(model.predict_action_batch(obs, mode="train"))
+            rng.append((random.getstate(), torch.npu.get_rng_state()))
+            model.zero_grad(set_to_none=True)
+            output = model.default_forward(
+                forward_inputs=clone_tensor_tree(predictions[0][1]["forward_inputs"])
+            )["logprobs"]
+            replay.append(output.detach().clone())
+            output.float().mean().backward()
+            gradients.append(
+                {
+                    name: parameter.grad.detach().clone()
+                    for name, parameter in model.evo1.action_head.named_parameters()
+                    if parameter.grad is not None
+                }
+            )
+        assert gradients[0] and gradients[0].keys() == gradients[1].keys()
+        torch.testing.assert_close(
+            torch.as_tensor(predictions[1][0]),
+            torch.as_tensor(predictions[0][0]),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(replay[1], replay[0], rtol=0, atol=0)
+        torch.testing.assert_close(
+            predictions[1][1]["prev_logprobs"],
+            predictions[0][1]["prev_logprobs"],
+            rtol=0,
+            atol=0,
+        )
+        for name, reference in gradients[0].items():
+            torch.testing.assert_close(gradients[1][name], reference, rtol=0, atol=0)
+            assert torch.isfinite(reference).all()
+        assert any(torch.count_nonzero(value).item() for value in gradients[0].values())
+        assert rng[0][0] == rng[1][0]
+        assert torch.equal(rng[0][1], rng[1][1])
+
+
+def test_evo_rollout_graph_preserves_actions_replay_and_weight_updates(monkeypatch):
+    """Run the real checkpoint with observations in RLINF_EVO_TEST_OBSERVATIONS."""
+    from hydra import compose, initialize_config_dir
+
+    observation_path = os.environ.get("RLINF_EVO_TEST_OBSERVATIONS")
+    if not observation_path:
+        pytest.skip("Set RLINF_EVO_TEST_OBSERVATIONS to captured Evo observations")
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/embodied"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_grpo_evo1")
+    if not Path(cfg.actor.model.model_path).is_dir():
+        pytest.skip("Evo checkpoint required")
+    try:
+        import torch_npu  # noqa: F401
+    except ImportError:
+        pass
+    from rlinf.scheduler import AcceleratorType
+
+    if hasattr(torch, "npu") and torch.npu.is_available():
+        from rlinf.scheduler.hardware.accelerators.ascend_npu import AscendNPUManager
+
+        device, platform, accelerator = "npu", torch.npu, AcceleratorType.NPU
+        AscendNPUManager.setup_worker_torch()
+    elif torch.cuda.is_available():
+        device, platform, accelerator = "cuda", torch.cuda, AcceleratorType.NV_GPU
+    else:
+        pytest.skip("CUDA or Ascend graph support required")
+    platform.set_device(0)
+    monkeypatch.setattr(Worker, "torch_device_type", device)
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+    monkeypatch.setattr(Worker, "accelerator_type", accelerator)
+    model = get_model(OmegaConf.merge(cfg.actor.model, cfg.rollout.model))
+    model.eval()
+    with Path(observation_path).open("rb") as stream:
+        captured = pickle.load(stream)
+    observation = (
+        captured["args"][0] if captured["args"] else captured["kwargs"]["env_obs"]
+    )
+    previous_actions = None
+    try:
+        for updated, batch in ((False, 2), (True, 2), (False, 1)):
+            existing_graph_prediction = None
+            if updated:
+                with torch.no_grad():
+                    model.evo1.action_head.mlp_head.fc2.linear.bias[0].add_(0.5)
+                random.seed(1234)
+                torch.manual_seed(1234)
+                obs = {
+                    key: value[:batch].clone()
+                    if torch.is_tensor(value)
+                    else value[:batch]
+                    if isinstance(value, list)
+                    else value
+                    for key, value in observation.items()
+                }
+                existing_graph_prediction = model.predict_action_batch(
+                    obs, mode="train"
+                )
+            predictions, rng_states, gradients = [], [], []
+            for use_graph in (False, True):
+                model.release_cuda_graph()
+                if use_graph:
+                    model.capture_cuda_graph(train_batch_size=batch, eval_batch_size=1)
+                random.seed(1234)
+                torch.manual_seed(1234)
+                obs = {
+                    key: value[:batch].clone()
+                    if torch.is_tensor(value)
+                    else value[:batch]
+                    if isinstance(value, list)
+                    else value
+                    for key, value in observation.items()
+                }
+                predictions.append(model.predict_action_batch(obs, mode="train"))
+                rng_states.append((random.getstate(), platform.get_rng_state()))
+                model.zero_grad(set_to_none=True)
+                output = model.default_forward(
+                    forward_inputs=predictions[-1][1]["forward_inputs"]
+                )["logprobs"]
+                output.float().mean().backward()
+                gradients.append(
+                    model.evo1.action_head.seq_pool_proj.weight.grad.clone()
+                )
+            assert model.is_cuda_graph_enabled()
+            torch.testing.assert_close(
+                torch.as_tensor(predictions[1][0]),
+                torch.as_tensor(predictions[0][0]),
+                rtol=0,
+                atol=0,
+            )
+            for name in ("chains", "denoise_inds"):
+                torch.testing.assert_close(
+                    predictions[1][1]["forward_inputs"][name],
+                    predictions[0][1]["forward_inputs"][name],
+                    rtol=0,
+                    atol=0,
+                )
+            torch.testing.assert_close(
+                predictions[1][1]["prev_logprobs"],
+                predictions[0][1]["prev_logprobs"],
+                rtol=0,
+                atol=0,
+            )
+            torch.testing.assert_close(gradients[1], gradients[0], rtol=0, atol=0)
+            assert torch.isfinite(gradients[1]).all()
+            assert rng_states[0][0] == rng_states[1][0]
+            assert torch.equal(rng_states[0][1], rng_states[1][1])
+            if updated:
+                torch.testing.assert_close(
+                    torch.as_tensor(existing_graph_prediction[0]),
+                    torch.as_tensor(predictions[0][0]),
+                    rtol=0,
+                    atol=0,
+                )
+                assert not np.array_equal(predictions[1][0], previous_actions)
+            previous_actions = predictions[1][0]
+    finally:
+        model.release_cuda_graph()
+        model.release_cuda_graph()
+    assert not model.is_cuda_graph_enabled()
+
+
+@pytest.mark.parametrize("device", ["cpu", "npu"])
+def test_qwen_npu_attention_preserves_masks_cache_gradients_and_weight_updates(
+    monkeypatch, device
+):
+    import copy
+
+    if device == "npu":
+        pytest.importorskip("torch_npu")
+        if not torch.npu.is_available():
+            pytest.skip("Ascend NPU required")
+    vendor = pytest.importorskip("transformers.models.qwen2_5_vl.modeling_qwen2_5_vl")
+    if not hasattr(vendor, "Qwen2_5_VLTextModel") or not hasattr(
+        vendor.Qwen2_5_VLTextModel, "set_attn_implementation"
+    ):
+        pytest.skip("Transformers Qwen2.5-VL text attention interface required")
+    from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import (
+        Qwen2_5_VLTextConfig,
+    )
+
+    from rlinf.models.embodiment.qwen_vl_npu_attention import (
+        enable_qwen_vl_npu_attention,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    torch.manual_seed(1234)
+    config = Qwen2_5_VLTextConfig(
+        vocab_size=128,
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        rope_scaling={"rope_type": "default", "mrope_section": [4, 6, 6]},
+    )
+    config._attn_implementation = "sdpa"
+    dtype = torch.bfloat16 if device == "npu" else torch.float32
+    reference = vendor.Qwen2_5_VLTextModel(config).to(device=device, dtype=dtype).eval()
+    candidate = copy.deepcopy(reference)
+    precise = (
+        copy.deepcopy(reference).to(device="cpu", dtype=torch.float32)
+        if device == "npu"
+        else None
+    )
+    parameters = list(candidate.parameters())
+    assert enable_qwen_vl_npu_attention(candidate)
+    assert all(a is b for a, b in zip(parameters, candidate.parameters()))
+    assert candidate.state_dict().keys() == reference.state_dict().keys()
+    ids = torch.randint(1, 128, (2, 32), device=device)
+    upstream = torch.randn(2, 32, 128, device=device) / (2 * 32 * 128)
+    rtol, atol = (0.03, 0.01) if device == "npu" else (1e-5, 1e-6)
+
+    for updated in (False, True):
+        if updated:
+            with torch.no_grad():
+                reference.layers[0].self_attn.q_proj.weight.add_(0.001)
+            candidate.load_state_dict(reference.state_dict())
+            if precise is not None:
+                precise.load_state_dict(reference.state_dict())
+        for padded in (False, True):
+            mask = torch.ones_like(ids)
+            if padded:
+                mask[1, :4] = 0
+            outputs = []
+            models = (
+                (reference, candidate)
+                if precise is None
+                else (reference, candidate, precise)
+            )
+            for model in models:
+                model_device = next(model.parameters()).device
+                model.zero_grad(set_to_none=True)
+                output = model(
+                    input_ids=ids.to(model_device),
+                    attention_mask=mask.to(model_device),
+                    use_cache=False,
+                ).last_hidden_state
+                # Padding is excluded from the action loss. Fully masked rows
+                # have different SDPA behavior across CPU and NPU backends.
+                (
+                    output.float()
+                    * upstream.to(model_device)
+                    * mask.to(model_device).unsqueeze(-1)
+                ).sum().backward()
+                outputs.append(output)
+            torch.testing.assert_close(outputs[1], outputs[0], rtol=rtol, atol=atol)
+            if precise is None:
+                for expected, actual in zip(
+                    reference.parameters(), candidate.parameters()
+                ):
+                    torch.testing.assert_close(
+                        actual.grad, expected.grad, rtol=rtol, atol=1e-6
+                    )
+            else:
+                # BF16 reductions can disagree elementwise near zero. Compare
+                # both paths with an independent FP32 gradient instead.
+                for expected, original, actual in zip(
+                    precise.parameters(), reference.parameters(), candidate.parameters()
+                ):
+                    torch.testing.assert_close(
+                        actual.grad, original.grad, rtol=0, atol=0
+                    )
+                    expected_grad = expected.grad
+                    denominator = expected_grad.norm().clamp_min(1e-30)
+                    original_error = (
+                        original.grad.float().cpu() - expected_grad
+                    ).norm() / denominator
+                    actual_error = (
+                        actual.grad.float().cpu() - expected_grad
+                    ).norm() / denominator
+                    assert torch.isfinite(actual.grad).all()
+                    assert actual_error < 0.03
+                    assert actual_error <= original_error * 1.25 + 0.002
+        with torch.no_grad():
+            decoded = []
+            for model in (reference, candidate):
+                first = model(input_ids=ids, use_cache=True)
+                decoded.append(
+                    model(
+                        input_ids=ids[:, :2],
+                        past_key_values=first.past_key_values,
+                        use_cache=True,
+                    ).last_hidden_state
+                )
+            torch.testing.assert_close(decoded[1], decoded[0], rtol=rtol, atol=atol)
+            modified = ids.clone()
+            modified[:, -1] = (modified[:, -1] + 1) % 128
+            original = candidate(input_ids=ids, use_cache=False).last_hidden_state
+            changed = candidate(input_ids=modified, use_cache=False).last_hidden_state
+            torch.testing.assert_close(
+                changed[:, :-1], original[:, :-1], rtol=0, atol=0
+            )
+
+
+def test_qwen_npu_attention_preserves_vision_windows_and_weight_updates(monkeypatch):
+    import copy
+
+    pytest.importorskip("torch_npu")
+    if not torch.npu.is_available():
+        pytest.skip("Ascend NPU required")
+    vendor = pytest.importorskip("transformers.models.qwen2_5_vl.modeling_qwen2_5_vl")
+    if not hasattr(vendor, "Qwen2_5_VLTextModel") or not hasattr(
+        vendor.Qwen2_5_VLModel, "set_attn_implementation"
+    ):
+        pytest.skip("Transformers Qwen2.5-VL attention interface required")
+    from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLConfig
+
+    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+        patch_vision_patch_embed,
+    )
+    from rlinf.models.embodiment.qwen_vl_npu_attention import (
+        enable_qwen_vl_npu_attention,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    torch.manual_seed(1234)
+    config = Qwen2_5_VLConfig(
+        text_config={
+            "vocab_size": 128,
+            "hidden_size": 128,
+            "intermediate_size": 256,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "rope_scaling": {"rope_type": "default", "mrope_section": [4, 6, 6]},
+        },
+        vision_config={
+            "depth": 2,
+            "hidden_size": 128,
+            "intermediate_size": 256,
+            "num_heads": 4,
+            "patch_size": 2,
+            "temporal_patch_size": 1,
+            "spatial_merge_size": 2,
+            "window_size": 8,
+            "out_hidden_size": 128,
+            "fullatt_block_indexes": [1],
+        },
+    )
+    config._attn_implementation = "sdpa"
+    reference = (
+        vendor.Qwen2_5_VLModel(config).to(device="npu", dtype=torch.bfloat16).eval()
+    )
+    patch_vision_patch_embed(reference)
+    candidate = copy.deepcopy(reference)
+    parameters = list(candidate.parameters())
+    assert enable_qwen_vl_npu_attention(candidate)
+    assert all(a is b for a, b in zip(parameters, candidate.parameters()))
+    assert candidate.state_dict().keys() == reference.state_dict().keys()
+    pixels = torch.randn(80, 12, device="npu", dtype=torch.bfloat16)
+    grid = torch.tensor([[1, 8, 8], [1, 4, 4]], device="npu")
+    upstream = torch.randn(20, 128, device="npu") / (20 * 128)
+    for updated in (False, True):
+        if updated:
+            with torch.no_grad():
+                reference.visual.blocks[0].attn.qkv.weight.add_(0.001)
+            candidate.load_state_dict(reference.state_dict())
+        outputs = []
+        for model in (reference, candidate):
+            model.zero_grad(set_to_none=True)
+            output = model.visual(pixels, grid_thw=grid)
+            (output.float() * upstream).sum().backward()
+            outputs.append(output)
+        torch.testing.assert_close(outputs[1], outputs[0], rtol=0.01, atol=0.001)
+        for expected, actual in zip(
+            reference.visual.parameters(), candidate.visual.parameters()
+        ):
+            error = (actual.grad.float() - expected.grad.float()).norm()
+            assert torch.isfinite(actual.grad).all()
+            assert error <= expected.grad.float().norm() * 0.01 + 1e-8
+
+
+def _small_openvla():
+    # Prismatic configures process-wide logging when imported.
+    with patch("logging.config.dictConfig"):
+        pytest.importorskip("prismatic")
+    from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
+    from transformers import GenerationConfig, LlamaForCausalLM
+
+    from rlinf.models.embodiment.openvla.openvla_action_model import (
+        OpenVLAForRLActionPrediction,
+    )
+
+    config = OpenVLAConfig(
+        text_config={
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "vocab_size": 32064,
+        },
+        norm_stats={"test": {"action": {"q01": [-1.0] * 7, "q99": [1.0] * 7}}},
+    )
+    # Keep the real multimodal forward and generation paths, with small modules.
+    model = OpenVLAForRLActionPrediction.__new__(OpenVLAForRLActionPrediction)
+    torch.nn.Module.__init__(model)
+    model.config = config
+    model.generation_config = GenerationConfig.from_model_config(config)
+    model.language_model = LlamaForCausalLM(config.text_config)
+
+    class VisionBackbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = torch.nn.Conv2d(3, 16, 1)
+
+        def forward(self, images):
+            images = torch.nn.functional.interpolate(images, size=(16, 16))
+            return self.projection(images).flatten(2).transpose(1, 2)
+
+    def input_processor(*, text, images, **kwargs):
+        batch = len(text)
+        return {
+            "input_ids": torch.tensor([[1, 0, 3, 29871]]).repeat(batch, 1),
+            "attention_mask": torch.tensor([[1, 0, 1, 1]]).repeat(batch, 1),
+            "pixel_values": images.float() / 255,
+        }
+
+    model.vision_backbone = VisionBackbone()
+    model.projector = torch.nn.Linear(16, 16)
+    model.value_head = torch.nn.Linear(16, 1)
+    model.action_dim = 7
+    model.num_action_chunks = 1
+    model.unnorm_key = "test"
+    model.max_prompt_length = 4
+    model._init_logits_processor()
+    model.setup_config_and_processor(config, input_processor)
+    return model.eval()
+
+
+def test_openvla_bootstrap_values_match_generation_before_and_after_weight_update():
+    torch.manual_seed(1234)
+    model = _small_openvla()
+    obs = {
+        "main_images": torch.randint(0, 256, (2, 2, 2, 3), dtype=torch.uint8),
+        "task_descriptions": ["Move the block", "Move the block"],
+    }
+    for _ in range(2):
+        _, result = model.predict_action_batch(
+            env_obs=obs, do_sample=True, max_new_tokens=7
+        )
+        rng_state = torch.random.get_rng_state()
+        values = model.predict_value_batch(obs)
+        torch.testing.assert_close(values, result["prev_values"])
+        assert values.shape == (2, 1)
+        assert not values.requires_grad
+        assert torch.equal(torch.random.get_rng_state(), rng_state)
+        with torch.no_grad():
+            model.value_head.weight.add_(0.1)
+            model.language_model.model.layers[0].self_attn.q_proj.weight.add_(0.01)
+
+
+def test_openvla_bootstrap_values_require_a_value_head():
+    model = _small_openvla()
+    del model.value_head
+    with pytest.raises(ValueError, match="requires a value head"):
+        model.predict_value_batch({})
 
 
 class _DummyModel:
@@ -320,6 +1138,99 @@ def _load_starvla_util(name: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def starvla_preprocessing(monkeypatch):
+    from PIL import Image
+
+    image_tools = ModuleType("deployment.model_server.tools.image_tools")
+    image_tools.to_pil_preserve = lambda views: [
+        Image.fromarray(np.asarray(view.cpu() if torch.is_tensor(view) else view))
+        for view in views
+    ]
+    trainer_tools = ModuleType("starVLA.training.trainer_utils.trainer_tools")
+    trainer_tools.resize_images = lambda images, target_size: images
+    monkeypatch.setitem(sys.modules, image_tools.__name__, image_tools)
+    monkeypatch.setitem(sys.modules, trainer_tools.__name__, trainer_tools)
+    root = "starvla_preprocessing_under_test"
+    for suffix, directory in (
+        ("", _STARVLA_UTILS_DIR.parent),
+        (".utils", _STARVLA_UTILS_DIR),
+        (".action_heads", _STARVLA_UTILS_DIR.parent / "action_heads"),
+    ):
+        package = ModuleType(root + suffix)
+        package.__path__ = [str(directory)]
+        monkeypatch.setitem(sys.modules, package.__name__, package)
+    try:
+        yield SimpleNamespace(
+            data=importlib.import_module(root + ".utils.data_pipeline"),
+            vlm=importlib.import_module(root + ".utils.vlm_preprocess"),
+            oft=importlib.import_module(root + ".action_heads.oft"),
+        )
+    finally:
+        for name in list(sys.modules):
+            if name.startswith(root + "."):
+                sys.modules.pop(name, None)
+
+
+def test_starvla_device_views_match_host_clipping(starvla_preprocessing):
+    images = torch.linspace(-20, 300, 2 * 4 * 5 * 3).reshape(2, 4, 5, 3)
+    obs = {"main_images": images, "task_descriptions": ["pick", "place"]}
+    kwargs = {
+        "state_adapter_name": "none",
+        "prepare_state_tensor": None,
+        "include_state": False,
+    }
+    host = starvla_preprocessing.data.build_examples_from_env_obs(obs, **kwargs)
+    device = starvla_preprocessing.data.build_examples_from_env_obs(
+        obs, image_device="cpu", **kwargs
+    )
+    for expected, actual in zip(host, device):
+        np.testing.assert_array_equal(
+            actual["image"][0].numpy(), np.asarray(expected["image"][0])
+        )
+        assert actual["lang"] == expected["lang"]
+
+
+def test_starvla_prompt_cache_uses_each_processors_template(starvla_preprocessing):
+    class Processor:
+        def __init__(self, prefix):
+            self.prefix = prefix
+
+        def apply_chat_template(self, conversation, **kwargs):
+            return self.prefix + conversation[0]["content"][-1]["text"]
+
+        def __call__(self, *, text, images, **kwargs):
+            return {"input_ids": torch.tensor([[ord(prompt[0])] for prompt in text])}
+
+    examples = [{"image": [torch.zeros(4, 5, 3, dtype=torch.uint8)], "lang": "pick"}]
+    first, second = Processor("A"), Processor("B")
+    for processor in (first, second, first):
+        result = starvla_preprocessing.vlm.build_device_vlm_inputs(
+            SimpleNamespace(), examples, SimpleNamespace(processor=processor)
+        )
+        assert result["input_ids"].tolist() == [[ord(processor.prefix)]]
+
+
+def test_starvla_oft_keeps_the_host_builder_fallback_for_tensor_views(
+    starvla_preprocessing,
+):
+    class Interface:
+        def build_qwenvl_inputs(self, *, images, instructions):
+            return {
+                "pixel_values": torch.from_numpy(np.asarray(images[0][0]).copy()),
+                "prompt": instructions,
+            }
+
+    image = torch.full((4, 5, 3), 127, dtype=torch.uint8)
+    result = starvla_preprocessing.oft._build_oft_vlm_inputs(
+        SimpleNamespace(qwen_vl_interface=Interface(), action_token="x"),
+        num_action_chunks=2,
+        examples=[{"image": [image], "lang": "pick"}],
+    )
+    torch.testing.assert_close(result["pixel_values"], image)
+    assert "next 2 robot actions" in result["prompt"][0]
 
 
 @pytest.mark.parametrize(("source", "bound"), [("q01q99", 0.5), ("minmax", 1.0)])
@@ -1540,3 +2451,341 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def _gr00t_npu_patch_modules():
+    from rlinf.models.embodiment.gr00t.gr00t_n1d5 import npu_patches as n1d5
+    from rlinf.models.embodiment.gr00t.gr00t_n1d6 import npu_patches as n1d6
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7 import npu_patches as n1d7
+
+    return {"n1d5": n1d5, "n1d6": n1d6, "n1d7": n1d7}
+
+
+def test_gr00t_npu_patches_are_inert_off_ascend(monkeypatch):
+    # Every GR00T version registers its Ascend patches through the same pair of
+    # calls, and off NPU both do nothing, so a CUDA run is untouched.
+    from rlinf.scheduler import AcceleratorType
+    from rlinf.utils.patcher import Patcher
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NO_ACCEL)
+    for version, module in _gr00t_npu_patch_modules().items():
+        Patcher.clear()
+        state = module.apply_npu_patches(Patcher)
+        assert state is None, version
+        module.restore_npu_patches(Patcher, state)
+        assert Patcher._mappings_dict == {}, version
+
+
+def test_gr00t_npu_fused_kernel_paths_resolve_for_every_version():
+    # The Patcher names replacements by string path, so a moved or renamed
+    # kernel wrapper has to fail here rather than at model construction on NPU.
+    from rlinf.utils.patcher import Patcher
+
+    for path in (
+        "rlinf.models.embodiment.gr00t.npu_common.npu_rmsnorm_forward",
+        "rlinf.models.embodiment.gr00t.npu_common.npu_apply_rotary_pos_emb",
+        "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches.npu_rmsnorm_forward",
+        "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches.npu_apply_rotary_pos_emb",
+    ):
+        _, obj = Patcher._get_parent_obj_and_obj(path)
+        assert callable(obj), path
+
+
+def test_npu_flash_attention_binding_fills_only_missing_names(monkeypatch):
+    # GR00T's vendored SigLIP2 attention leaves its flash-attention names
+    # undefined on Ascend; binding supplies them without displacing a module
+    # that found real kernels.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    def fake_symbols():
+        return {"flash_attn_varlen_func": "npu", "_flash_supports_window_size": False}
+
+    monkeypatch.setattr(npu_common, "_npu_flash_attention_symbols", fake_symbols)
+
+    vendored = ModuleType("modeling_siglip2")
+    npu_common.bind_npu_flash_attention(vendored)
+    assert vendored.flash_attn_varlen_func == "npu"
+    assert vendored._flash_supports_window_size is False
+
+    with_real_kernels = ModuleType("modeling_siglip2")
+    with_real_kernels.flash_attn_varlen_func = "cuda"
+    npu_common.bind_npu_flash_attention(with_real_kernels)
+    assert with_real_kernels.flash_attn_varlen_func == "cuda"
+
+
+def test_npu_flash_attention_binding_reaches_a_later_import(monkeypatch, tmp_path):
+    # The vendored module is loaded by trust_remote_code after the patches are
+    # registered, so the binding has to apply as it is imported, and stop once
+    # the installer's uninstall callable runs.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    monkeypatch.setattr(
+        npu_common, "_npu_flash_attention_symbols", lambda: {"flash_attn_func": "npu"}
+    )
+    (tmp_path / "modeling_siglip2.py").write_text("flash_attn_func = None\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    stop = npu_common.install_npu_flash_attention("modeling_siglip2")
+    try:
+        sys.modules.pop("modeling_siglip2", None)
+        import modeling_siglip2
+
+        assert modeling_siglip2.flash_attn_func == "npu"
+    finally:
+        stop()
+        sys.modules.pop("modeling_siglip2", None)
+
+    import modeling_siglip2 as unbound
+
+    assert unbound.flash_attn_func is None
+
+
+def test_npu_flash_attention_cache_is_inert_off_ascend(monkeypatch):
+    from rlinf.models.embodiment.gr00t.npu_common import (
+        install_npu_flash_attention_cache,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NO_ACCEL)
+    assert not install_npu_flash_attention_cache()
+
+
+@pytest.mark.parametrize("padded", [False, True])
+def test_npu_flash_attention_cache_preserves_gradients_and_mask_updates(
+    monkeypatch, padded
+):
+    pytest.importorskip("torch_npu")
+    if not torch.npu.is_available():
+        pytest.skip("Ascend NPU required")
+    from transformers import modeling_flash_attention_utils as flash_utils
+    from transformers.integrations import npu_flash_attention as native_flash
+    from transformers.models.qwen3 import Qwen3Config, Qwen3Model
+
+    if hasattr(native_flash, "get_attn_mask_npu"):
+        pytest.skip("Legacy Transformers NPU FlashAttention required")
+    from rlinf.models.embodiment.gr00t.npu_common import (
+        install_npu_flash_attention_cache,
+    )
+    from rlinf.scheduler import AcceleratorType
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    monkeypatch.setattr(
+        flash_utils, "flash_attn_func", native_flash.npu_flash_attn_func
+    )
+    monkeypatch.setattr(
+        flash_utils, "flash_attn_varlen_func", native_flash.npu_flash_attn_varlen_func
+    )
+    original = (
+        flash_utils._get_unpad_data,
+        flash_utils.flash_attn_func,
+        flash_utils.flash_attn_varlen_func,
+    )
+    for name, value in zip(
+        ("_get_unpad_data", "flash_attn_func", "flash_attn_varlen_func"), original
+    ):
+        monkeypatch.setattr(flash_utils, name, value)
+    assert install_npu_flash_attention_cache()
+    assert install_npu_flash_attention_cache()
+    cached = (
+        flash_utils._get_unpad_data,
+        flash_utils.flash_attn_func,
+        flash_utils.flash_attn_varlen_func,
+    )
+    torch.manual_seed(1234)
+    config = Qwen3Config(
+        vocab_size=128,
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+    )
+    config._attn_implementation = "flash_attention_2"
+    model = Qwen3Model(config).to(device="npu", dtype=torch.bfloat16).eval()
+    ids = torch.randint(1, 128, (2, 32), device="npu")
+    mask = torch.ones_like(ids)
+    if padded:
+        mask[1, :4] = 0
+        mask[0, -2:] = 0
+    upstream = torch.randn(2, 32, 128, device="npu") / (2 * 32 * 128)
+    for updated in (False, True):
+        if updated:
+            mask[1, :4] = 1 - mask[1, :4]
+            with torch.no_grad():
+                model.layers[0].self_attn.q_proj.weight.add_(0.001)
+        outputs, gradients = [], []
+        for functions in (original, cached):
+            for name, value in zip(
+                ("_get_unpad_data", "flash_attn_func", "flash_attn_varlen_func"),
+                functions,
+            ):
+                setattr(flash_utils, name, value)
+            model.zero_grad(set_to_none=True)
+            output = model(input_ids=ids, attention_mask=mask, use_cache=False)
+            (output.last_hidden_state.float() * upstream).sum().backward()
+            outputs.append(output.last_hidden_state.detach().clone())
+            gradients.append(
+                {
+                    name: parameter.grad.detach().clone()
+                    for name, parameter in model.named_parameters()
+                    if parameter.grad is not None
+                }
+            )
+        torch.testing.assert_close(outputs[1], outputs[0], rtol=0, atol=0)
+        assert gradients[0].keys() == gradients[1].keys() and gradients[0]
+        for name, expected in gradients[0].items():
+            torch.testing.assert_close(gradients[1][name], expected, rtol=0, atol=0)
+
+
+def test_openpi_kernels_compile_only_where_inductor_can_run(monkeypatch):
+    # OpenPI's fused kernels go through Inductor, which needs Triton. Ascend and
+    # MUSA venvs have none, and compiling there used to fail at the first
+    # forward, so absence of Triton has to read as "do not compile".
+    from rlinf.models.embodiment.openpi.modules import utils
+
+    real_find_spec = importlib.util.find_spec
+
+    def without_triton(name, *args, **kwargs):
+        return None if name == "triton" else real_find_spec(name, *args, **kwargs)
+
+    utils.inductor_available.cache_clear()
+    monkeypatch.setattr(importlib.util, "find_spec", without_triton)
+    try:
+        assert utils.inductor_available() is False
+    finally:
+        utils.inductor_available.cache_clear()
+
+    # An explicit choice still wins over the platform default, in both directions.
+    utils.set_torch_compile(True)
+    assert utils.torch_compile_enabled() is True
+    utils.set_torch_compile(False)
+    assert utils.torch_compile_enabled() is False
+
+
+def test_npu_sdpa_context_materializes_a_broadcast_mask():
+    # Ascend's attention kernel rejects a mask whose query dimension is 1, which
+    # CUDA broadcasts. GR00T's DiT builds exactly that, so the context has to
+    # expand it to the query length and leave every other mask alone.
+    from rlinf.models.embodiment.gr00t import npu_common
+
+    seen = {}
+
+    def record(query, key, value, attn_mask=None, *args, **kwargs):
+        seen["mask_shape"] = None if attn_mask is None else tuple(attn_mask.shape)
+        return torch.zeros_like(query)
+
+    original = torch.nn.functional.scaled_dot_product_attention
+    torch.nn.functional.scaled_dot_product_attention = record
+    try:
+        q = torch.zeros(2, 32, 51, 64)
+        kv = torch.zeros(2, 32, 570, 64)
+        with npu_common.npu_sdpa_context():
+            torch.nn.functional.scaled_dot_product_attention(
+                q, kv, kv, attn_mask=torch.zeros(2, 32, 1, 570)
+            )
+            assert seen["mask_shape"] == (2, 32, 51, 570)
+
+            # A mask that already spans the queries is passed through untouched.
+            torch.nn.functional.scaled_dot_product_attention(
+                q, kv, kv, attn_mask=torch.zeros(2, 32, 51, 570)
+            )
+            assert seen["mask_shape"] == (2, 32, 51, 570)
+
+            torch.nn.functional.scaled_dot_product_attention(q, kv, kv)
+            assert seen["mask_shape"] is None
+        # The context restores what it replaced.
+        assert torch.nn.functional.scaled_dot_product_attention is record
+    finally:
+        torch.nn.functional.scaled_dot_product_attention = original
+
+
+@pytest.mark.parametrize(
+    ("batch", "frames", "channel", "grid_h", "grid_w", "patch", "merge", "t_p"),
+    [
+        (2, 2, 3, 4, 4, 14, 2, 2),
+        (1, 4, 3, 8, 6, 14, 2, 2),
+        (3, 1, 3, 2, 2, 16, 1, 1),
+        (2, 2, 3, 6, 4, 7, 2, 1),
+    ],
+)
+def test_qwen_patchify_matches_upstream_10d_layout(
+    batch, frames, channel, grid_h, grid_w, patch, merge, t_p
+):
+    """The staged <=8-dim packing reproduces the upstream 10-dim chain."""
+    from rlinf.models.embodiment.qwen_vl_npu_patchify import _patchify_qwen_vl
+
+    torch.manual_seed(0)
+    height, width = grid_h * patch, grid_w * patch
+    patches = torch.randn(batch, frames, channel, height, width)
+    grid_t = frames // t_p
+
+    upstream = patches.view(
+        batch,
+        grid_t,
+        t_p,
+        channel,
+        grid_h // merge,
+        merge,
+        patch,
+        grid_w // merge,
+        merge,
+        patch,
+    )
+    upstream = upstream.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
+    upstream = upstream.reshape(
+        batch, grid_t * grid_h * grid_w, channel * t_p * patch * patch
+    )
+
+    staged = _patchify_qwen_vl(patches, patch, t_p, merge)
+    assert staged.shape == upstream.shape
+    torch.testing.assert_close(staged, upstream)
+
+
+def test_gr00t_n1d6_batched_eagle_processor_aligns_frames_to_patch_factor(monkeypatch):
+    from PIL import Image
+
+    class FakeCollator:
+        pass
+
+    class FakeProcessor:
+        pass
+
+    processing_mod = ModuleType("gr00t.model.gr00t_n1d6.processing_gr00t_n1d6")
+    processing_mod.Gr00tN1d6DataCollator = FakeCollator
+    processing_mod.Gr00tN1d6Processor = FakeProcessor
+    for name in ("gr00t", "gr00t.model", "gr00t.model.gr00t_n1d6"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, processing_mod.__name__, processing_mod)
+
+    mod_name = "rlinf.models.embodiment.gr00t.gr00t_n1d6.device_transform"
+    monkeypatch.delitem(sys.modules, mod_name, raising=False)
+    device_transform = importlib.import_module(mod_name)
+
+    proc = FakeProcessor()
+    proc.collator = FakeCollator()
+    proc.processor = SimpleNamespace(
+        pixels_per_token=784,
+        apply_chat_template=lambda conv, **kw: f"prompt:{len(conv[0]['content'])}",
+    )
+    device_transform.BatchedEagleProcessor.upgrade(proc)
+    proc.set_device("cpu")
+
+    # 256x256 is not divisible by sqrt(784)=28 (or SigLIP2 patch_size=14);
+    # smart_resize rounds it to 252x252 (9*28 = 18*14) matching PIL resize.
+    raw_256 = np.arange(2 * 3 * 256 * 256, dtype=np.uint8).reshape(2, 3, 256, 256)
+    out_256 = proc._apply_vlm_processing(raw_256, "pick up bowl")["vlm_content"]
+    assert out_256["text"] == "prompt:3"
+    assert len(out_256["images"]) == 2
+    expected_0 = np.transpose(
+        np.asarray(
+            Image.fromarray(np.transpose(raw_256[0], (1, 2, 0))).resize((252, 252))
+        ),
+        (2, 0, 1),
+    )
+    assert out_256["images"][0].shape == (3, 252, 252)
+    torch.testing.assert_close(out_256["images"][0], torch.from_numpy(expected_0))
+
+    # 224x224 is already a multiple of 28 and passes through without resizing.
+    raw_224 = np.zeros((1, 3, 224, 224), dtype=np.uint8)
+    out_224 = proc._apply_vlm_processing(raw_224, "pick up bowl")["vlm_content"]
+    assert out_224["images"][0].shape == (3, 224, 224)

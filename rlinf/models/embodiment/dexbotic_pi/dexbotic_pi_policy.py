@@ -244,6 +244,23 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
                         ).contiguous()
         return processed_obs
 
+    def embed_suffix(
+        self,
+        states: Optional[torch.Tensor] = None,
+        noisy_actions: Optional[torch.Tensor] = None,
+        time: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Project continuous inputs in the model's configured precision."""
+        if states is not None:
+            states = states.to(dtype=self.model.state_proj.weight.dtype)
+        if noisy_actions is not None:
+            noisy_actions = noisy_actions.to(
+                dtype=self.model.action_in_proj.weight.dtype
+            )
+        return super().embed_suffix(
+            states=states, noisy_actions=noisy_actions, time=time
+        )
+
     def forward(self, forward_type="default_forward", **kwargs):
         if "forward_inputs" in kwargs and "data" not in kwargs:
             kwargs["data"] = kwargs.pop("forward_inputs")
@@ -301,7 +318,69 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
             "entropy": entropy,
         }
 
+    def _device_view_batch(self, raw, device):
+        """SigLIP preprocessing (square pad, 224 bicubic, rescale, normalize) on device."""
+        import torchvision.transforms.functional as TVF
+
+        t = raw if torch.is_tensor(raw) else torch.as_tensor(np.asarray(raw))
+        t = t.to(device, non_blocking=True)
+        if t.dtype != torch.uint8:
+            t = (
+                (t * 255).clamp(0, 255).to(torch.uint8)
+                if t.max() <= 1
+                else t.to(torch.uint8)
+            )
+        t = t.permute(0, 3, 1, 2)  # [B, C, H, W]
+        proc = self.model.mm_vision_module.image_processor
+        h, w = t.shape[-2:]
+        if h != w and getattr(self.config, "image_aspect_ratio", "pad") == "pad":
+            side = max(h, w)
+            pad_h, pad_w = side - h, side - w
+            padded = torch.zeros(
+                t.shape[0], t.shape[1], side, side, dtype=t.dtype, device=t.device
+            )
+            padded[:, :, pad_h // 2 : pad_h // 2 + h, pad_w // 2 : pad_w // 2 + w] = t
+            t = padded
+        size = (proc.size["height"], proc.size["width"])
+        t = TVF.resize(
+            t, list(size), interpolation=TVF.InterpolationMode.BICUBIC, antialias=True
+        )
+        t = t.float() * proc.rescale_factor
+        return TVF.normalize(t, proc.image_mean, proc.image_std)
+
+    @staticmethod
+    def _is_uint8_batch(value) -> bool:
+        return (torch.is_tensor(value) and value.dtype == torch.uint8) or (
+            isinstance(value, np.ndarray) and value.dtype == np.uint8
+        )
+
     def _process_images_for_training(self, raw_main_images, raw_wrist_images, device):
+        if (
+            self._is_uint8_batch(raw_main_images)
+            and (raw_wrist_images is None or self._is_uint8_batch(raw_wrist_images))
+            and device is not None
+        ):
+            views = [self._device_view_batch(raw_main_images, device)]
+            if raw_wrist_images is not None:
+                views.append(self._device_view_batch(raw_wrist_images, device))
+            images = torch.stack(views, dim=1).to(next(self.parameters()).dtype)
+            batch_size, num_views = images.shape[0], images.shape[1]
+            required_num_images = 3
+            if num_views < required_num_images:
+                padding = torch.zeros(
+                    batch_size,
+                    required_num_images - num_views,
+                    *images.shape[2:],
+                    dtype=images.dtype,
+                    device=device,
+                )
+                images = torch.cat([images, padding], dim=1)
+            image_masks = torch.zeros(
+                batch_size, required_num_images, dtype=torch.bool, device=device
+            )
+            image_masks[:, :num_views] = True
+            return images, image_masks
+
         if torch.is_tensor(raw_main_images):
             raw_main_images = raw_main_images.cpu().numpy()
         if raw_wrist_images is not None and torch.is_tensor(raw_wrist_images):
@@ -398,55 +477,9 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
             batch_size = raw_images.shape[0]
             device = states.device
 
-            base_pil_images = []
-            for batch_idx in range(batch_size):
-                img_np = raw_images[batch_idx].cpu().numpy()
-                if img_np.dtype != np.uint8:
-                    if img_np.max() <= 1.0:
-                        img_np = (img_np * 255).astype(np.uint8)
-                    else:
-                        img_np = img_np.astype(np.uint8)
-
-                pil_img = Image.fromarray(img_np)
-                base_pil_images.append(pil_img)
-
-            wrist_pil_images = []
-            if "observation/wrist_image" in processed_obs:
-                wrist_raw = processed_obs["observation/wrist_image"]
-                for batch_idx in range(batch_size):
-                    wrist_np = wrist_raw[batch_idx].cpu().numpy().astype(np.uint8)
-                    pil_img = Image.fromarray(wrist_np)
-                    wrist_pil_images.append(pil_img)
-            images_list = []
-            for batch_idx in range(batch_size):
-                if wrist_pil_images:
-                    pil_pair = [base_pil_images[batch_idx], wrist_pil_images[batch_idx]]
-                    processed = self.process_images(pil_pair)
-                else:
-                    processed = self.process_images([base_pil_images[batch_idx]])
-                images_list.append(processed)
-            images = torch.stack(images_list, dim=0).to(
-                device=device, dtype=next(self.parameters()).dtype
+            images, image_masks = self._process_images_for_training(
+                raw_images, processed_obs.get("observation/wrist_image"), device
             )
-            num_views = images.shape[1]
-            required_num_images = 3
-
-            if num_views < required_num_images:
-                pad_size = required_num_images - num_views
-                padding = torch.zeros(
-                    batch_size,
-                    pad_size,
-                    images.shape[2],
-                    images.shape[3],
-                    images.shape[4],
-                    dtype=images.dtype,
-                    device=device,
-                )
-                images = torch.cat([images, padding], dim=1)
-            image_masks = torch.zeros(
-                batch_size, required_num_images, dtype=torch.bool, device=device
-            )
-            image_masks[:, :num_views] = True
             target_dtype = next(self.parameters()).dtype
             num_steps = self.num_steps
 
