@@ -63,7 +63,7 @@ class AsyncAgentRunner(AgentRunner):
         actor: MegatronActor,
         reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
-        rollout_buffer: Optional[RolloutBufferWorker] = None,
+        rollout_buffer: RolloutBufferWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
     ):
@@ -80,11 +80,6 @@ class AsyncAgentRunner(AgentRunner):
         assert not cfg.algorithm.recompute_logprobs, (
             "AsyncAgentRunner: recompute_logprobs requires the actor to "
             "double as the inference engine, which is not supported here."
-        )
-        assert rollout_buffer is not None, (
-            "AsyncAgentRunner: a RolloutBufferWorker is required; it owns "
-            "the dataloader, the admission budget and the release of "
-            "training batches."
         )
         super().__init__(
             cfg,
