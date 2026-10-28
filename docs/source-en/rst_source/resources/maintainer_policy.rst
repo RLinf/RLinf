@@ -126,7 +126,7 @@ one outcome into many PRs does not create extra credit.
      - One accepted contribution: code, tested documentation, a confirmed reproducible report, a
        useful review, or a support outcome acknowledged by an area owner.
      - Credit on the contribution and in the contributor registry; a verifiable “RLinf Contributor”
-       badge; an optional downloadable contribution acknowledgement linking to the accepted work.
+       certificate; an optional downloadable contribution acknowledgement linking to the accepted work.
      - Normal public participation. No elevated repository access.
    * - **2. Recognized Contributor**
      - Normally at least **8 weeks** of participation and **3 substantive outcomes**, including
@@ -151,7 +151,7 @@ one outcome into many PRs does not create extra credit.
        the candidate's institution and reporting relationships. Complete the supervised trial in
        :ref:`Section 5 <maintainer-policy-section-5>`.
      - Public candidacy announcement with consent; a verifiable “RLinf Area Owner Candidate — [area]”
-       badge; mentor assignment, written midpoint feedback, and a trial completion record stating
+       certificate; mentor assignment, written midpoint feedback, and a trial completion record stating
        the assessment outcome.
      - Lead reviews and triage under supervision. An existing authorized Area Owner remains
        responsible for acceptance and merge. No new write or release credentials.
