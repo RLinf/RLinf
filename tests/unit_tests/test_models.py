@@ -1540,3 +1540,36 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def test_psi0_rtc_prefix_survives_the_last_denoise_step():
+    from rlinf.models.embodiment.psi0.psi0_sampler import (
+        Psi0StochasticTransitionSampler,
+    )
+
+    class Scheduler:
+        def set_timesteps(self, num_inference_steps, device=None):
+            self.sigmas = torch.linspace(1.0, 0.0, num_inference_steps + 1)
+            self.timesteps = self.sigmas[:-1] * 1000
+
+    torch.manual_seed(0)
+    batch_size, horizon, action_dim, overlap = 1, 30, 4, 6
+    condition_actions = torch.zeros(batch_size, horizon, action_dim)
+    condition_actions[:, :overlap] = torch.randn(batch_size, overlap, action_dim)
+    condition_mask = torch.zeros(batch_size, horizon, dtype=torch.bool)
+    condition_mask[:, :overlap] = True
+
+    plan, transition = Psi0StochasticTransitionSampler().sample(
+        scheduler=Scheduler(),
+        num_inference_steps=10,
+        initial_noise=torch.randn(batch_size, horizon, action_dim),
+        # A non-zero velocity on the prefix would move it on every Euler step.
+        velocity_fn=lambda samples, timestep: torch.ones_like(samples),
+        condition_actions=condition_actions,
+        condition_mask=condition_mask,
+        generator=torch.Generator().manual_seed(1),
+    )
+
+    assert torch.equal(plan[:, :overlap], condition_actions[:, :overlap])
+    assert not transition.sample_mask[:, :overlap].any()
+    assert torch.all(transition.logprobs[:, :overlap] == 0)

@@ -70,8 +70,9 @@ missing packages without reinstalling the environment:
 
    bash requirements/embodied/download_assets.sh --assets simple --dir .venv/SIMPLE
 
-``install.sh --use-mirror`` forwards ``HF_ENDPOINT`` to this download. Pass
-``--use-mirror`` when running the command above on its own.
+``install.sh --use-mirror`` forwards ``HF_ENDPOINT`` to this download. If you
+run ``download_assets.sh`` on its own and want to use a mirror, pass the
+``--use-mirror`` flag.
 
 .. _simple-tasks:
 

@@ -331,7 +331,7 @@ class SimpleProcess(gym.Env):
                 obs_list.append(self._wrap_observation(observation, reset=False))
             else:
                 # RLinf reads only the final or terminal observation of a chunk;
-                # RecordVideo skips None entries.
+                # RecordVideo.record_video_in_result filters out None entries.
                 obs_list.append(None)
             infos_list.append(dict(info))
             if terminated or truncated:

@@ -64,7 +64,7 @@ state、action 和 System-0 协议，暂不支持。
    bash requirements/embodied/download_assets.sh --assets simple --dir .venv/SIMPLE
 
 ``install.sh --use-mirror`` 会把 ``HF_ENDPOINT`` 传给这次下载。
-单独运行上面的命令时，加上 ``--use-mirror``。
+如果单独运行 ``download_assets.sh`` 并希望使用镜像，请传入 ``--use-mirror``。
 
 .. _simple-tasks:
 

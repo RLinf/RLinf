@@ -166,13 +166,12 @@ assets from the :ref:`SIMPLE task table <simple-tasks>`. In
 divide the number of sampled chunks per update. The launcher reads these
 settings from YAML.
 
-.. admonition:: Configure Further
-   :class: note
+.. note::
 
-   - Model settings → ``examples/embodiment/config/model/psi0.yaml``.
-     Keep the 30/24/6 plan, execution, and overlap horizons aligned.
-   - Placement → one environment per rollout worker and
-     ``rollout.pipeline_stage_num: 1``.
+   Keep ``actor.model.psi0.plan_horizon`` / ``actor.model.num_action_chunks`` /
+   ``actor.model.psi0.overlap_horizon`` at ``30`` / ``24`` / ``6``. Their defaults
+   are in ``examples/embodiment/config/model/psi0.yaml``. Each rollout worker
+   runs one environment, so keep ``rollout.pipeline_stage_num`` at ``1``.
 
 Visualization and Results
 -------------------------

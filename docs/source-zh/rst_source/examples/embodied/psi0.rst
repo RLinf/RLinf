@@ -158,12 +158,9 @@ loader 还会按模型 ID 读取 Qwen 配置、tokenizer 和 processor，
 ``env.train.max_steps_per_rollout_epoch``，并让 ``actor.global_batch_size``
 整除每轮采样的 chunk 数。训练脚本从 YAML 读取这些设置。
 
-.. admonition:: 进一步配置
-   :class: note
+.. note::
 
-   - 模型设置 → ``examples/embodiment/config/model/psi0.yaml``，
-     保持 plan、execution 和 overlap horizon 为 30/24/6。
-   - 放置 → 每个 rollout worker 使用一个环境，保持 ``rollout.pipeline_stage_num: 1``。
+   请将 ``actor.model.psi0.plan_horizon`` / ``actor.model.num_action_chunks`` / ``actor.model.psi0.overlap_horizon`` 保持为 ``30`` / ``24`` / ``6``，默认值位于 ``examples/embodiment/config/model/psi0.yaml``。每个 rollout worker 只运行一个环境，因此请将 ``rollout.pipeline_stage_num`` 保持为 ``1``。
 
 可视化与结果
 ------------

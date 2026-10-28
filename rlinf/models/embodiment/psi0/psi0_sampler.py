@@ -183,6 +183,10 @@ class Psi0StochasticTransitionSampler:
                 next_x = x + dt * velocity
             x = next_x
 
+        if condition_mask.any():
+            # The last Euler step also moves the RTC prefix. Restore it so the
+            # executed overlap is exactly the action scored by the previous plan.
+            x = torch.where(condition_mask[..., None], condition_actions, x)
         if selected is None:
             raise RuntimeError("Psi0 stochastic transition was not sampled.")
         return x, selected
