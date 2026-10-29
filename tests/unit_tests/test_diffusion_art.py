@@ -31,10 +31,12 @@ from rlinf.data.schema.embodied_types import EnvOutput
 from rlinf.envs.utils import grouped_state_max_error
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
+from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 from rlinf.workers.actor.fsdp_art_policy_worker import (
     EmbodiedARTFSDPPolicy,
     _art_loss,
+    _art_mask_count_metrics,
     _art_scalar_covariance,
     _art_trajectory_guidance,
     _art_velocity_drift_stats,
@@ -456,39 +458,51 @@ def art_config_cluster(monkeypatch, request):
     monkeypatch.setattr("rlinf.config.Cluster", lambda **kwargs: cluster)
 
 
-@pytest.mark.parametrize("first_chunk_only", [False, True])
+@pytest.mark.parametrize(
+    "config_name", ["libero_object_0_art_openpi", "libero_object_0_art_states_openpi"]
+)
 def test_openpi_art_recipe_composes_with_matching_batch_budget(
-    monkeypatch, art_config_cluster, first_chunk_only
+    monkeypatch, art_config_cluster, config_name
 ):
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
-        cfg = compose(
-            config_name="libero_object_0_art_openpi",
-            overrides=(
-                [
-                    "algorithm.art_first_chunk_only=true",
-                    "algorithm.art_replay_diagnostics=true",
-                    "actor.global_batch_size=32",
-                ]
-                if first_chunk_only
-                else []
-            ),
-        )
+        cfg = compose(config_name=config_name)
     cfg = validate_cfg(cfg)
-    assert cfg.actor.global_batch_size == (
-        cfg.env.train.total_num_envs
-        * cfg.env.train.rollout_epoch
-        * (
-            1
-            if first_chunk_only
-            else cfg.env.train.max_steps_per_rollout_epoch
-            // cfg.actor.model.num_action_chunks
+    assert (
+        cfg.env.train.task_suite_name == cfg.env.eval.task_suite_name == "libero_object"
+    )
+    assert cfg.env.train.task_id_filter == cfg.env.eval.task_id_filter == [0]
+    assert cfg.env.train.total_num_envs == 128
+    assert (
+        cfg.actor.global_batch_size
+        == (
+            cfg.env.train.total_num_envs
+            * cfg.env.train.rollout_epoch
+            // cfg.algorithm.art_updates_per_rollout
         )
-        // cfg.algorithm.art_updates_per_rollout
+        == 64
     )
     assert cfg.actor.model.openpi.is_nft is False
     assert cfg.actor.model.num_steps == 4
+    assert cfg.algorithm.art_timestep_fraction == 1.0
+    assert cfg.algorithm.art_reference_source == "actor"
+    assert cfg.actor.optim.use_fp32_master_params
+    assert cfg.runner.eval_at_start
+    assert (
+        cfg.env.train.init_params.ignore_done and cfg.env.eval.init_params.ignore_done
+    )
+    assert cfg.rollout.seed == cfg.actor.seed
+    if "states" in config_name:
+        assert (
+            cfg.algorithm.art_state_sampling
+            and cfg.algorithm.art_branch_chunk_index is None
+        )
+    else:
+        assert (
+            not cfg.algorithm.art_state_sampling
+            and cfg.algorithm.art_branch_chunk_index == 8
+        )
 
 
 def test_art_branch_conditioning_checks_simulator_images_and_tasks():
@@ -625,38 +639,33 @@ def test_art_state_sampling_recipe_composes(monkeypatch, art_config_cluster):
         cfg = compose(config_name="libero_object_0_art_states_openpi")
     cfg = validate_cfg(cfg)
     assert cfg.env.train.art_state_sampling
-    assert cfg.env.train.total_num_envs == 64 and cfg.env.eval.total_num_envs == 48
-    assert cfg.actor.global_batch_size == 32 and cfg.actor.micro_batch_size == 2
+    assert cfg.env.train.total_num_envs == 128 and cfg.env.eval.total_num_envs == 48
+    assert cfg.actor.global_batch_size == 64 and cfg.actor.micro_batch_size == 2
     assert cfg.actor.optim.lr == 5e-7
-    assert cfg.runner.val_check_interval == 5
+    assert cfg.runner.val_check_interval == 10
     cfg.runner.overlap_env_bootstrap = True
     with pytest.raises(AssertionError, match="after the policy weight sync"):
         validate_openpi_art_cfg(cfg)
 
 
-@pytest.mark.parametrize(
-    ("config_name", "task_suite"),
-    [
-        ("libero_object_0_art_openpi", "libero_object"),
-        ("libero_10_0_art_openpi", "libero_10"),
-    ],
-)
 @pytest.mark.parametrize("branch_index", [0, 8])
 def test_art_fixed_branch_recipe_composes(
-    monkeypatch, art_config_cluster, config_name, task_suite, branch_index
+    monkeypatch, art_config_cluster, branch_index
 ):
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
         cfg = compose(
-            config_name=config_name,
+            config_name="libero_object_0_art_openpi",
             overrides=[
                 f"algorithm.art_branch_chunk_index={branch_index}",
-                "actor.global_batch_size=32",
+                "actor.global_batch_size=64",
             ],
         )
     cfg = validate_cfg(cfg)
-    assert cfg.env.train.task_suite_name == cfg.env.eval.task_suite_name == task_suite
+    assert (
+        cfg.env.train.task_suite_name == cfg.env.eval.task_suite_name == "libero_object"
+    )
     assert cfg.env.train.art_branch_chunk_index == branch_index
     cfg.env.train.art_branch_chunk_index = branch_index + 1
     with pytest.raises(AssertionError, match="derived from algorithm"):
@@ -688,6 +697,7 @@ def test_art_fixed_branch_recipe_composes(
         ("actor.model.openpi.action_env_dim", 6, "action_env_dim=action_dim"),
         ("actor.model.openpi.model_action_dim", 6, "action_env_dim=action_dim"),
         ("algorithm.art_reward_reduction", "mean", "episode returns"),
+        ("algorithm.art_reference_source", "invalid", "rollout or actor"),
         ("env.train.max_steps_per_rollout_epoch", 100, "complete episodes"),
     ],
 )
@@ -828,17 +838,10 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         worker.art_branch_chunk_index = 0
         env_obs["art_state_id"] = torch.tensor([19, 19])
         env_obs["art_state_steps"] = torch.tensor([40, 40])
-        env_obs["art_source_success"] = torch.tensor([1, 1])
-        env_obs["art_source_trajectory_id"] = torch.tensor([7, 7])
-        env_obs["art_source_reset_state_id"] = torch.tensor([3, 3])
         _, state_result = worker._predict_art_branch_actions(env_obs, 0)
         state_inputs = state_result["forward_inputs"]
         assert state_inputs["art_branch_valid"].all()
         assert state_inputs["art_state_id"].tolist() == [19, 19]
-        assert state_inputs["art_state_steps"].tolist() == [40, 40]
-        assert state_inputs["art_source_success"].tolist() == [1, 1]
-        assert state_inputs["art_source_trajectory_id"].tolist() == [7, 7]
-        assert state_inputs["art_source_reset_state_id"].tolist() == [3, 3]
         model._input_transform_fn = lambda data: data
         for name, value in observation.images.items():
             inputs[f"obs_image__{name}"] = value
@@ -994,38 +997,127 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         torch.set_num_threads(threads)
 
 
-@pytest.mark.parametrize(
-    "phase", ["diagnose", "probe", "train", "confirm", "object", "eval"]
-)
-def test_art_ablation_commands_validate(
-    monkeypatch, art_config_cluster, tmp_path, phase
-):
-    from examples.embodiment.run_art_ablation import build_command, experiment_matrix
+class _VelocityPolicy(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.offset = torch.nn.Parameter(torch.zeros(4, 4, 3))
 
-    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
-    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
-    args = SimpleNamespace(
-        phase=phase,
-        suite="long",
-        checkpoint=tmp_path,
-        steps=None,
-        eval_repeats=None,
-        lr=5e-7,
-        override=[],
+    def forward(self, forward_type, forward_inputs, nft_inputs, compute_values):
+        ids = forward_inputs["observation/state"][:, 0].long()
+        return {"v_theta": nft_inputs["x_t"] + self.offset[ids]}
+
+
+@pytest.fixture
+def cpu_art_backend(monkeypatch):
+    # Replace GPU/distributed boundaries only; execute the real worker kernels,
+    # loss, optimizer, scheduler, and reference construction below.
+    platform = SimpleNamespace(
+        current_device=lambda: torch.device("cpu"),
+        synchronize=lambda: None,
+        ipc_collect=lambda: None,
+        empty_cache=lambda: None,
     )
-    arms = experiment_matrix(phase, "uniform", 42, [42, 43])
-    for arm in arms:
-        command = build_command(args, arm, tmp_path, "20261028_test")
-        config_name = command[command.index("--config-name") + 1]
-        with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
-            cfg = compose(
-                config_name=config_name,
-                overrides=command[command.index("--config-name") + 2 :],
-            )
-        cfg = validate_cfg(cfg)
-        assert cfg.actor.global_batch_size == 64
-        assert cfg.env.train.task_id_filter == [0]
-        assert cfg.env.train.art_state_sampler == arm["sampler"]
-        assert cfg.actor.optim.use_fp32_master_params == arm["master"]
-        if phase == "eval":
-            assert cfg.runner.max_steps == 0 and cfg.runner.eval_at_start
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *args, **kwargs: None)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    return platform
+
+
+def _cpu_art_actor(platform, reference_source, state_sampling):
+    actor = object.__new__(EmbodiedARTFSDPPolicy)
+    actor._rank, actor._world_size, actor.version = 0, 1, 0
+    actor.device, actor.torch_platform = torch.device("cpu"), platform
+    actor.cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "group_size": 2,
+                "art_branch_chunk_index": None if state_sampling else 0,
+                "art_state_sampling": state_sampling,
+                "art_updates_per_rollout": 2,
+                "art_timestep_fraction": 1.0,
+                "art_reference_source": reference_source,
+                "art_replay_diagnostics": True,
+            },
+            "actor": {
+                "seed": 42,
+                "micro_batch_size": 1,
+                "global_batch_size": 2,
+                "model": {
+                    "model_type": "openpi",
+                    "num_action_chunks": 2,
+                    "action_dim": 2,
+                },
+            },
+            "env": {"train": {"max_episode_steps": 100}},
+        }
+    )
+    states = torch.arange(4.0).view(1, 1, 4, 1, 1).expand(1, 4, 4, 4, 3).clone()
+    inputs = {
+        "art_endpoint": torch.arange(16.0).reshape(1, 4, 2, 2),
+        "art_states": states,
+        "art_old_velocity": states + 10,
+        "art_sigmas": torch.tensor([1.0, 0.75, 0.5, 0.25]).expand(1, 4, 4),
+        "art_sigmas_next": torch.tensor([0.75, 0.5, 0.25, 0.0]).expand(1, 4, 4),
+        "observation/state": torch.arange(4).view(1, 4, 1),
+        "art_branch_valid": torch.ones(1, 4, dtype=torch.bool),
+        "art_branch_state_error": torch.zeros(1, 4),
+        "art_branch_image_error": torch.zeros(1, 4),
+        "art_state_id": torch.tensor([[0, 0, 1, 1]]),
+    }
+    actor.rollout_batch = {
+        "forward_inputs": inputs,
+        "rewards": torch.tensor([[[1.0, 0], [0, 0], [0, 0], [0, 1.0]]]),
+        "dones": torch.zeros(2, 4, 2, dtype=torch.bool),
+    }
+    actor.model = _VelocityPolicy()
+    actor.optimizer = torch.optim.AdamW(
+        actor.model.parameters(), lr=0.01, weight_decay=0
+    )
+    actor.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        actor.optimizer, lambda step: 1
+    )
+    actor.amp_context = nullcontext()
+    actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    actor.is_weight_offloaded, actor.is_optimizer_offloaded = False, False
+    actor.before_micro_batch = lambda *args, **kwargs: nullcontext()
+
+    def optimizer_step():
+        norm = torch.nn.utils.clip_grad_norm_(actor.model.parameters(), 1)
+        actor.optimizer.step()
+        return norm.item(), [0.01]
+
+    actor.optimizer_step = optimizer_step
+    return actor
+
+
+@pytest.mark.parametrize("reference_source", ["rollout", "actor"])
+@pytest.mark.parametrize("state_sampling", [False, True])
+def test_art_reference_is_frozen_across_two_real_updates(
+    cpu_art_backend, reference_source, state_sampling
+):
+    actor = _cpu_art_actor(cpu_art_backend, reference_source, state_sampling)
+    metrics = inspect.unwrap(EmbodiedARTFSDPPolicy.run_training)(actor)
+    inputs = actor.rollout_batch["forward_inputs"]
+    offset = 0 if reference_source == "actor" else 10
+    torch.testing.assert_close(
+        inputs["art_old_velocity"], inputs["art_states"] + offset
+    )
+    assert metrics["actor/replay_mse"] == pytest.approx(100)
+    assert metrics["actor/reference_pre_mse"] == pytest.approx(offset**2)
+    assert actor.lr_scheduler.last_epoch == 2
+    assert metrics["actor/active_count"] > 0
+    if reference_source == "actor":
+        assert metrics["actor/u1/mask_frac_global"] == 0
+        assert metrics["actor/update_u1_exec_rms"] > 0
+        assert metrics["actor/update_u2_unexec_rms"] == 0
+    else:
+        assert "actor/update_u1_exec_rms" not in metrics
+
+
+def test_art_mask_ratios_pool_only_active_items():
+    empty = torch.zeros(4)
+    active = torch.tensor([2.0, 1.0, 1.0, 0.04])
+    result = _art_mask_count_metrics(empty + active, "actor")
+    assert result["actor/mask_frac_global"] == 0.5
+    assert result["actor/movement_score_active"] == pytest.approx(0.02)
+    assert _art_mask_count_metrics(empty, "actor")["actor/mask_frac_global"] == 0

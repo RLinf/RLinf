@@ -4,8 +4,8 @@ Diffusion Model Fine-Tuning with ART
 This page describes DiffusionART fine-tuning for SD3.5 Medium image text
 rendering and Wan2.2 TI2V 5B video text rendering. It covers the algorithm
 and its equations, OCR data, training configuration, recorded ART/NFT
-reward and runtime results, and training metrics. An experimental Pi0 recipe
-extends ART to multi-step LIBERO action trajectories.
+reward and runtime results, and training metrics. The final LIBERO section
+extends ART to Pi0 action chunks with fixed-prefix and snapshot-state sampling.
 
 Overview
 --------
@@ -35,20 +35,14 @@ reference implementation, see the
    .. grid-item-card:: Output
       :text-align: center
 
-      Image / Video
-
-   .. grid-item-card:: Reward
-      :text-align: center
-
-      OCR / Video OCR
-
-| **You'll do:** select a recipe → launch training → inspect OCR reward and generated samples.
-| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>`. The recorded Wan experiment used four NVIDIA A800 GPUs.
+      Image/video: LoRA + FSDP2; Pi0: action expert + FSDP1
 
 Tasks
 ~~~~~
 
-Choose the config for the output you want to generate.
+The image and video configs in ``examples/diffusion/config/`` use Diffusers
+checkpoints and OCR rewards. The LIBERO configs in ``examples/embodiment/config/``
+use Pi0 and environment returns.
 
 .. list-table::
    :header-rows: 1
@@ -72,8 +66,8 @@ Observation and Action
 
 Each image/video episode generates one image or video. ART uses one scalar reward for each
 candidate, then compares candidates generated from the same prompt.
-The :ref:`LIBERO action recipe <diffusion-art-libero>` instead groups complete
-robot trajectories and aligns their action chunks by decision index.
+The :ref:`LIBERO action recipes <diffusion-art-libero>` instead compare action
+chunks sampled from a common robot state, using continuation returns as rewards.
 
 .. list-table::
    :header-rows: 1
@@ -155,199 +149,6 @@ Wan records ODE trajectories.
      - Enables the corrective movement mask; both recipes use ``True``.
    * - ``algorithm.art_mask_threshold``
      - Movement threshold for the mask; both recipes use ``1e-5`` with ``art_mask_metric=sde_kl``.
-
-.. _diffusion-art-libero:
-
-LIBERO Action Fine-Tuning
-------------------------------
-
-The ``libero_object_0_art_openpi`` recipe fine-tunes Pi0 on LIBERO Object task 0
-from the same SFT checkpoint as
-``examples/embodiment/config/libero_object_0_nft_openpi.yaml``. It uses the
-existing environment/rollout pipeline, complete episode returns, cached rollout
-velocities, and two ART updates per rollout.
-
-.. warning::
-
-   This is an experimental trajectory-level adaptation. A group shares a task
-   and initial simulator state; its observations diverge after different
-   actions. Aggregation at later decisions therefore differs from the paper's
-   same-condition image/video setting. Success rates, guidance strength, and
-   drift thresholds require LIBERO experiments. ``art_first_chunk_only=True``
-   restricts training to the initial decision as a same-initial-observation
-   control.
-
-Episode Returns and Action Guidance
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-One robot episode contains multiple decisions, each generating an action chunk
-through its own denoising process. The recipe sums rewards up to and including
-termination, then uses that episode return at each valid decision. This carries
-terminal success feedback to earlier actions.
-
-For group :math:`g`, decision :math:`h`, and executed action coordinate :math:`j`,
-the valid trajectories form :math:`\mathcal V_{g,h,j}`. The covariance is computed
-only from those trajectories:
-
-.. math::
-
-   C_{g,h,j}=\frac{1}{n_{g,h,j}-1}
-   \sum_{i\in\mathcal V_{g,h,j}}
-   (R_i-\bar R_{g,h,j})(a_{i,h,j}-\bar a_{g,h,j}).
-
-Here :math:`R_i` is the complete episode return, :math:`a_{i,h,j}` is a normalized
-model-space action coordinate, and :math:`n_{g,h,j}=|\mathcal V_{g,h,j}|`.
-Coordinates with fewer than two valid trajectories receive zero guidance.
-The covariance is normalized over supported action coordinates before assigning
-guidance to each trajectory. Constant-return groups have zero guidance.
-
-The transformer still receives its full action horizon and model dimensions.
-The covariance, target loss, and drift proxy use executed actions and real
-environment dimensions. An action after termination is excluded even when it
-shares a chunk with earlier valid actions. Loss normalization accounts for
-valid chunks across actor ranks.
-
-Both updates retain the velocities cached during rollout. Each reset group
-contributes half its trajectories to each window, and every chunk from one
-trajectory stays in the same window. Group guidance is computed before this
-split. Pi0 uses the same velocity sign as the SD3/Wan implementation, so the
-target is :math:`v_{\mathrm{old}}-H_{g,h}`. The existing corrective mask applies
-to the valid action coordinates.
-
-Configuration and Launch
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-The OpenPi environment and checkpoint setup follows :doc:`Pi0 <embodied/pi0>`.
-The LIBERO installer selects the simulator assets used by this recipe:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model openpi --env libero \
-      --venv .venv-openpi-libero
-   source .venv-openpi-libero/bin/activate
-
-This creates a separate OpenPi environment. With the Pi0 SFT checkpoint already
-available locally, the following command starts the experiment from the
-repository root:
-
-.. code-block:: bash
-
-   export CUDA_VISIBLE_DEVICES=0,1,2,3
-   export EMBODIED_PATH="$PWD/examples/embodiment"
-   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
-   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
-   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl OMP_NUM_THREADS=1
-
-   python examples/embodiment/train_embodied_agent.py \
-      --config-path "$EMBODIED_PATH/config" \
-      --config-name libero_object_0_art_openpi \
-      actor.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
-      rollout.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-
-The defaults collect 64 episodes, with 240 environment steps and 5 actions per
-decision. Each rollout contains :math:`64\times(240/5)=3072` action chunks before
-termination masking. Two disjoint updates therefore require
-``actor.global_batch_size=1536``. In general, the required batch size is
-``total_num_envs * rollout_epoch * decisions / art_updates_per_rollout``.
-With ``algorithm.art_first_chunk_only=True``, the decision count is one and
-the matching override is ``actor.global_batch_size=32`` for this recipe.
-
-The model uses ``openpi.rl_mode=art``, ``is_nft=False``, and
-``noise_method=flow_ode`` with zero transition noise. Training requires
-``auto_reset=False``, ``ignore_terminations=False``, and fixed grouped reset
-states. The four-step sampler and ``art_timestep_fraction=0.25`` select one
-rollout denoising state per action chunk. The full recipe is in
-``examples/embodiment/config/libero_object_0_art_openpi.yaml``.
-
-Fixed Branch Sampling
-~~~~~~~~~~~~~~~~~~~~~
-
-A shared action prefix extends the same-condition comparison to a later robot
-decision. ``algorithm.art_branch_chunk_index`` selects one zero-based decision
-for every group. Before that decision, each group executes its first member's
-sampled action chunk. At the branch and throughout the continuation, each member
-samples independently with the frozen rollout policy. The actor trains only the
-branch chunk, using its observations, denoising states, and cached old velocities.
-The return includes rewards from the branch through termination:
-
-.. math::
-
-   R_i^{(b)}=\sum_{t=t_b}^{T_i}r_{i,t}.
-
-The branch mode uses the existing launch command with these overrides:
-
-.. code-block:: bash
-
-   algorithm.art_first_chunk_only=False \
-   algorithm.art_branch_chunk_index=8 \
-   actor.global_batch_size=32
-
-With five actions per chunk, index 8 branches after 40 environment steps. Index 0
-provides an initial-decision control. Each episode contributes one training chunk,
-so 64 episodes and two disjoint updates require a global batch size of 32.
-``art_first_chunk_only`` and a non-null branch index are mutually exclusive.
-The branch mode requires synchronous batches containing complete groups on every
-environment, rollout, and actor rank. Evaluation retains the standard full-task
-rollout.
-
-During the prefix and at the branch, the rollout checks task identity, robot
-observations, exposed simulator state, and both camera images. The default maximum
-state difference is ``art_branch_state_atol=1e-5``; the maximum per-camera mean
-absolute pixel difference is ``art_branch_image_atol=1.0``. A mismatch at any
-prefix decision, or any group member terminating before the branch, masks the
-entire group for training while preserving batch shapes. These checks compare
-the exposed state and observations; they do not restore controller snapshots.
-
-Validation and Metrics
-~~~~~~~~~~~~~~~~~~~~~~
-
-The tensor/config tests exercise termination masks, group alignment, frozen
-targets, and cached-state replay. The model test uses small Gemma/SigLIP
-backbones and generated observations, so it runs without a checkpoint:
-
-.. code-block:: bash
-
-   python -m pytest tests/unit_tests/test_diffusion_art.py
-
-A startup experiment with ``runner.max_steps=2``, ``runner.max_epochs=2``,
-``runner.val_check_interval=1``, and ``runner.save_interval=1`` exercises
-training, evaluation, and checkpoint saving before a full run. GPU LIBERO
-training and checkpoint resume require the actual model and simulator assets.
-
-``actor/art_reward_mean`` and ``actor/art_reward_std`` describe episode returns.
-``actor/valid_chunk_frac`` and ``actor/valid_action_frac`` report the fractions
-remaining after termination and optional reward filtering. The existing
-``active_group_frac``, ``mask_frac``, and ``movement_score`` diagnose guidance
-and drift. ART/NFT comparisons use the same SFT initialization, reset/evaluation
-states, environment interactions, optimizer-update counts, and elapsed time;
-their loss magnitudes are different objectives.
-
-Branch experiments also report ``actor/branch_chunk_index``,
-``actor/branch_valid_group_frac``, ``actor/branch_state_error_max``, and
-``actor/branch_image_error_max``. The errors summarize prefix checks, and the
-valid-group fraction excludes groups that terminated before the branch. A short
-index-0 run followed by an index-8 run checks initial-decision behavior and later
-branching before increasing the training budget. These experiments require GPU
-LIBERO validation; the unit tests cover sampling, cache alignment, return slicing,
-and invalid-group masking.
-
-Full-output velocity diagnostics use ``algorithm.art_replay_diagnostics=true``.
-``actor/replay_{region}_rms`` measures pre-update replay error;
-``actor/drift_u1_{region}_rms`` and ``actor/drift_u2_{region}_rms`` measure drift
-from the same frozen rollout velocities after each optimizer update. The
-``region`` suffix is ``exec`` for valid executed coordinates, ``future`` for
-later action tokens in environment dimensions, ``padding`` for remaining model
-dimensions, ``unexec`` for all unexecuted coordinates, or ``full`` for the whole
-output. Entirely invalid rows are excluded; squared errors and coordinate counts
-are summed across microbatches and ranks before computing RMS. These probes use
-fixed cached states and the selected denoising timesteps, not regenerated action
-chains. The training loss and trust-region mask still cover executed coordinates.
-Full velocity caching increases rollout storage and transport; enabling these
-diagnostics adds eval-mode forward passes before and after the updates.
-The same option also reports ``actor/art_output_restore_ratio`` and
-``actor/art_output_restore_cosine``, which compare the restoration and guidance
-parts of the loss gradient with respect to the executed velocity outputs, after
-loss scaling, accumulation, and rank averaging.
 
 .. _diffusion-art-results:
 
@@ -719,97 +520,200 @@ minute account for differences in sampling amounts. The
 :ref:`Training Results <diffusion-art-results>` reports a comparison over the same
 cumulative sampling interval.
 
-Diagnose LIBERO Updates and State Sampling
-------------------------------------------
+.. _diffusion-art-libero:
 
-Use ``libero_10_0_art_diagnostics_openpi`` for Long task 0 or
-``libero_object_0_art_diagnostics_openpi`` for Object task 0. Both select 128
-training environments, K=8, all four denoising steps, actor-side reference
-velocities, FP32 master AdamW, and five rounds. The existing recipes retain
-rollout-side reference velocities and leader-only state collection.
+LIBERO Object Task 0
+--------------------
 
-First separate rollout replay error from parameter updates. Set
-``algorithm.art_reference_source=actor`` to recompute the frozen reference once
-before both ART updates. With ``algorithm.art_replay_diagnostics=True``, compare
-``actor/replay_mse`` (actor versus rollout before updating),
-``actor/reference_pre_mse`` (actor versus the selected reference), and
-``actor/update_u1_exec_rms`` / ``actor/update_u2_exec_rms`` (actor-reference
-update displacement). ``actor/drift_u1_*`` and ``actor/drift_u2_*`` continue to
-use the rollout reference. The ``update_u*`` metrics require actor references.
+Use Pi0 to compare candidate action chunks from the same robot state on LIBERO
+Object task 0. The two recipes differ only in how they choose that state:
+``libero_object_0_art_openpi`` shares a fixed prefix and branches at zero-based decision index 8;
+``libero_object_0_art_states_openpi`` restores snapshots sampled along collected
+trajectories. Neither recipe groups later, independently reached states merely
+because they have the same decision index.
 
-Enable ``algorithm.art_parameter_diagnostics=True`` for a short FSDP1 NO_SHARD
-check. ``actor/param_u1_bf16_changed_frac`` and
-``actor/param_u2_bf16_update_rms`` measure actual model-weight changes;
-``actor/param_u2_master_update_rms`` measures FP32 master accumulation. These
-probes keep CPU copies of trainable parameters and measure cumulative change
-from before the first update. Set ``algorithm.art_replay_batch_sizes=[1,2,8]``
-to compare a fixed subset under different actor inference batch sizes.
+Both load ``RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``. Rollout uses
+``MultiStepRolloutWorker`` with the Hugging Face backend; training uses
+``EmbodiedARTFSDPPolicy`` with FSDP1 NO_SHARD. The vision-language backbone stays
+frozen, while the action expert and its associated trainable layers are updated
+without LoRA. Each observation supplies two camera images, robot state, and the
+task instruction. Pi0 generates a full action tensor; the environment executes
+five 7-dimensional actions per decision.
 
-Read ``actor/mask_frac_global`` and ``actor/outward_frac_global`` for
-active-item-count-weighted ratios. The ``actor/u1/`` and ``actor/u2/`` versions
-separate the two updates; ``movement_score_active`` uses the same active-item
-denominator. The existing ``mask_frac`` and ``outward_frac`` remain available
-with their microbatch-average definition for old-log comparisons.
+Fixed Prefix and Snapshot Sampling
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Next freeze the SFT policy with ``algorithm.art_probe_only=True``. This skips
-backward, optimizer, scheduler, and post-initial weight synchronization. Select
-one of these state pools with ``algorithm.art_state_sampler``:
+ART needs candidates with the same conditioning state. A shared task ID alone
+is insufficient: object poses, robot state, observations, and instruction must
+agree before the trained chunk. The two collection paths establish this
+condition in different ways:
 
-.. list-table:: State Sampling Ablations
+.. list-table:: Object Task 0 Collection Modes
    :header-rows: 1
-   :widths: 25 75
+   :widths: 18 41 41
 
-   * - Value
-     - Collection and selection
-   * - ``legacy``
-     - Keep all live leader states and sample task-matched temporal strata.
-   * - ``uniform``
-     - Keep a bounded reservoir from every trajectory and sample temporal strata.
-   * - ``success_mixture``
-     - Use the bounded pool; request approximately ``art_success_state_fraction``
-       successful-source states (default 0.7), falling back to the available
-       outcome pool when necessary.
-   * - ``early_failure``
-     - Use the bounded pool; retain all successful-source states and only failed
-       source states before ``art_failure_max_step_fraction`` of the horizon
-       (default 0.5).
+   * - Mode
+     - State construction
+     - Trained decision
+   * - branch8
+     - Start each group from the same reset state. Execute its leader's action
+       chunks for decisions 0 through 7.
+     - Decision 8, after 40 environment steps. Candidates and their subsequent
+       continuations sample independently.
+   * - ``states``
+     - First collect trajectories with the frozen current policy. Save live
+       group-leader snapshots at decision boundaries; sample task-matched
+       temporal strata and restore each selected snapshot into all K members.
+     - The first decision after restoration, not necessarily the task's initial
+       decision. Subsequent continuation is independent.
 
-``algorithm.art_states_per_trajectory`` defaults to 4 for bounded pools.
-Reservoir admission happens before snapshot capture. Source outcomes are labeled
-when collection ends; restoration preserves the original remaining budget.
-Probe JSONL files under ``<log_path>/art_probe/`` record each group's returns,
-source outcome, source trajectory/reset identity, sampled time, and remaining
-steps. These probes compare sampling distributions without changing rewards.
+branch8 sets ``algorithm.art_branch_chunk_index=8`` and
+``art_state_sampling=False``. The rollout checks simulator state, robot
+observations, task instructions, and both images throughout the prefix and at
+the branch. If a group fails those checks or terminates before branching, its
+training contribution is masked rather than compared across different states.
 
-Run the experiment matrix from an activated OpenPi/LIBERO environment:
+``states`` sets ``algorithm.art_state_sampling=True`` and
+``art_branch_chunk_index=null``. Snapshots include physics, controller and
+gripper state, observation caches, and simulator-process RNG state. Restoration
+also preserves elapsed steps and the previous reward, so it does not grant a
+fresh episode budget. The state bank is collected again after each policy
+synchronization and cleared after restoration. This mode adds a collection
+rollout and snapshot storage; it is not a free replacement for a fixed branch.
+
+In both modes, K=8 candidates use different policy sampling noise to generate
+different chunks. They share the state before that chunk, not the entire future
+trajectory. The return sums environment rewards from the branch/restoration
+through termination or the original 240-step deadline. A group with identical
+returns supplies zero guidance. Only the selected chunk is trained; the
+continuation supplies its Monte Carlo evaluation.
+
+Action Guidance and Updates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the state fixed, compute the reward-action covariance over the group's
+valid executed coordinates, then RMS-normalize it to obtain guidance H. Pi0
+uses the same velocity sign as the SD3/Wan implementation: the frozen target is
+``v_old - H`` at cached reverse-denoising states, not a forward-noised resample.
+The model still processes its complete action tensor, but guidance, restoration,
+and the trust-region mask cover valid executed coordinates only.
+
+The recipes set ``algorithm.art_reference_source=actor``: recompute v_old once
+on the actor before either update and freeze it through both. This avoids using
+cross-backend replay differences as the reference displacement. The
+``rollout`` option retains cached rollout velocities for comparisons. FP32
+master parameters accumulate small optimizer updates before copying back to
+low-precision model weights. Neither setting establishes a success-rate result;
+validate the recipes with the actual checkpoint and simulator.
+
+Compute guidance from all K candidates before splitting each group's candidates
+between two disjoint update windows. No trajectory occurs in both windows.
+With 128 environments, K=8, one trained chunk per environment, and two updates,
+there are 16 groups and ``actor.global_batch_size=64`` per update. All four
+cached denoising steps are trained with ``art_timestep_fraction=1.0``. The common
+learning rate is 5e-7; both modes run 100 rounds by default.
+
+Run Branch8 and States
+~~~~~~~~~~~~~~~~~~~~~~
+
+Install the OpenPi/LIBERO environment as described in :doc:`Pi0 <embodied/pi0>`.
+Skip installation if that environment already exists:
 
 .. code-block:: bash
 
-   python examples/embodiment/run_art_ablation.py diagnose \
-     --checkpoint /path/to/model/RLinf-Pi0-LIBERO-Long-SFT --gpus 0,1,2,3
-   python examples/embodiment/run_art_ablation.py probe \
-     --checkpoint /path/to/model/RLinf-Pi0-LIBERO-Long-SFT --gpus 0,1,2,3
-   python examples/embodiment/run_art_ablation.py summary
+   bash requirements/install.sh embodied --model openpi --env libero \
+     --venv .venv-openpi-libero
+   source .venv-openpi-libero/bin/activate
 
-``diagnose`` runs four five-round arms: rollout/actor references crossed with
-FP32 master disabled/enabled. ``probe`` runs each of the four samplers for ten
-frozen-policy rounds. ``summary`` reports signal yield separately for screening
-and held-out initial reset IDs. Inspect source composition and all-fail/all-success
-rates as well as active fractions; the summary does not select a winner.
+Run from the repository root. Set MODEL_PATH to your existing SFT checkpoint;
+the commands do not download model weights. Both recipes select Object task 0
+for training and evaluation:
 
-After selecting a sampler, run ``train --sampler uniform`` (replace ``uniform``
-with your selection) for two 30-round arms: the corrected numerical baseline
-with ``legacy`` sampling and the same baseline with the selected sampler.
-``confirm --sampler uniform`` repeats both arms for 50 rounds with seeds 42
-and 43. ``object --checkpoint /path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``
-runs a 25-round Object task 0 baseline. Every phase writes timestamp-first run
-names, console logs, and an exact command manifest. Add ``--dry-run`` to inspect
-commands before execution; pass ``--override key=value`` for a Hydra override.
+.. code-block:: bash
 
-Training phases evaluate at step 0 and every 10 rounds (every 5 for ``object``).
-``runner.eval_repeats`` repeats the full available reset set, while
-``runner.eval_seed`` pairs policy-noise seeds across arms without advancing the
-training RNG. Three repeats give 150 episodes when the task has 50 reset states;
-these are repeated initial states, not 150 distinct scenes. Confirmation uses
-five repeats. ``eval`` performs four repeats at step 0 with zero training rounds;
-read ``num_trajectories`` to verify the completed evaluation budget.
+   set -o pipefail
+   export CUDA_VISIBLE_DEVICES=0,1,2,3
+   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
+   export OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
+   export HYDRA_FULL_ERROR=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
+   export MODEL_PATH=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+First run the fixed-prefix recipe on four visible GPUs. Log directories,
+experiment names, and console log filenames start with the timestamp. The bash
+entry point accepts the config name, robot platform, and Hydra overrides;
+LOG_DIR and MEGA_LOG_FILE select the output paths:
+
+.. code-block:: bash
+
+   RUN_NAME="$(date +%Y%m%d_%H%M%S)_object0_branch8_T4_lr5e7_seed42"
+   LOG_DIR="$PWD/logs/$RUN_NAME"
+   LOG_DIR="$LOG_DIR" MEGA_LOG_FILE="$LOG_DIR/$RUN_NAME.log" \
+     bash examples/embodiment/run_embodiment.sh libero_object_0_art_openpi LIBERO \
+     actor.model.model_path="$MODEL_PATH" \
+     rollout.model.model_path="$MODEL_PATH" \
+     env.train.total_num_envs=128 env.eval.total_num_envs=48 \
+     actor.global_batch_size=64 actor.micro_batch_size=2 \
+     actor.seed=42 actor.optim.lr=5e-7 \
+     actor.optim.use_fp32_master_params=true \
+     algorithm.art_reference_source=actor \
+     actor.model.num_steps=4 algorithm.art_timestep_fraction=1.0 \
+     runner.max_steps=100 runner.max_epochs=100 \
+     runner.eval_at_start=true runner.val_check_interval=10 \
+     runner.save_interval=-1 \
+     runner.logger.experiment_name="$RUN_NAME"
+
+For snapshot sampling, start a separate run from the same SFT checkpoint and
+use the states recipe. Execute the two commands sequentially on the same GPUs:
+
+.. code-block:: bash
+
+   RUN_NAME="$(date +%Y%m%d_%H%M%S)_object0_states_T4_lr5e7_seed42"
+   LOG_DIR="$PWD/logs/$RUN_NAME"
+   LOG_DIR="$LOG_DIR" MEGA_LOG_FILE="$LOG_DIR/$RUN_NAME.log" \
+     bash examples/embodiment/run_embodiment.sh libero_object_0_art_states_openpi LIBERO \
+     actor.model.model_path="$MODEL_PATH" \
+     rollout.model.model_path="$MODEL_PATH" \
+     env.train.total_num_envs=128 env.eval.total_num_envs=48 \
+     actor.global_batch_size=64 actor.micro_batch_size=2 \
+     actor.seed=42 actor.optim.lr=5e-7 \
+     actor.optim.use_fp32_master_params=true \
+     algorithm.art_reference_source=actor \
+     actor.model.num_steps=4 algorithm.art_timestep_fraction=1.0 \
+     runner.max_steps=100 runner.max_epochs=100 \
+     runner.eval_at_start=true runner.val_check_interval=10 \
+     runner.save_interval=-1 \
+     runner.logger.experiment_name="$RUN_NAME"
+
+Both runs evaluate the original full task before training and every 10 rounds.
+Evaluation does not branch or restore training snapshots. Check
+``eval/num_trajectories`` for the actual evaluation budget; 48 parallel slots do
+not imply 48 unique reset states. Checkpoint saving is disabled in these
+commands; set a positive ``runner.save_interval`` if you need saved models.
+
+Read Results and Validate
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use full-task evaluation success to compare the modes. Training continuation
+success is conditional on the sampled branch state and is not the same metric.
+Monitor ``actor/active_group_frac``, ``actor/branch_valid_group_frac``,
+``actor/branch_state_error_max``, and ``actor/branch_image_error_max`` to check
+signal availability and same-state grouping. ``actor/mask_frac_global`` and
+``actor/outward_frac_global`` pool active-item counts before forming ratios;
+the ``actor/u1/`` and ``actor/u2/`` versions separate the two updates.
+
+The optional ``algorithm.art_replay_diagnostics=true`` adds replay forwards.
+``actor/replay_mse`` compares the pre-update actor with rollout velocities;
+``actor/update_u1_exec_rms`` and ``actor/update_u2_exec_rms`` compare against the
+frozen actor reference. These are distinct from success metrics. Diagnostics
+are disabled in the default recipes.
+
+Run the CPU regressions for candidate grouping, return slicing, frozen targets,
+and snapshot restoration with:
+
+.. code-block:: bash
+
+   python -m pytest tests/unit_tests/test_diffusion_art.py \
+     tests/unit_tests/test_libero_snapshot.py
+
+These tests do not replace GPU training or real MuJoCo/checkpoint validation.

@@ -4,16 +4,8 @@ defaults:
 
 algorithm:
   art_state_sampling: True
-
-actor:
-  global_batch_size: 32
-  optim:
-    lr: 5.0e-7
+  art_branch_chunk_index: null
 
 runner:
-  max_steps: 100
-  max_epochs: 100
-  val_check_interval: 5
-  save_interval: -1
   logger:
     experiment_name: libero_object_0_art_states_openpi

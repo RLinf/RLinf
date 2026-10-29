@@ -206,28 +206,19 @@ class EmbodiedRunner:
         rollout_handle.wait()
 
     def evaluate(self):
-        eval_metrics_list = []
-        repeats = int(self.cfg.runner.get("eval_repeats", 1))
-        if repeats < 1:
-            raise ValueError("runner.eval_repeats must be positive.")
-        seed = self.cfg.runner.get("eval_seed", None)
-        for repeat in range(repeats):
-            env_handle: Handle = self.env.evaluate(
-                input_channel=self.env_channel,
-                rollout_channel=self.rollout_channel,
-            )
-            seed_kwargs = {} if seed is None else {"seed": int(seed) + repeat}
-            rollout_handle: Handle = self.rollout.evaluate(
-                input_channel=self.rollout_channel,
-                output_channel=self.env_channel,
-                **seed_kwargs,
-            )
-            env_results = env_handle.wait()
-            rollout_handle.wait()
-            eval_metrics_list.extend(
-                results for results in env_results if results is not None
-            )
-        return compute_evaluate_metrics(eval_metrics_list)
+        env_handle: Handle = self.env.evaluate(
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+        )
+        rollout_handle: Handle = self.rollout.evaluate(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+        )
+        env_results = env_handle.wait()
+        rollout_handle.wait()
+        eval_metrics_list = [results for results in env_results if results is not None]
+        eval_metrics = compute_evaluate_metrics(eval_metrics_list)
+        return eval_metrics
 
     def _log_ranked_metrics(
         self,
@@ -512,7 +503,6 @@ class EmbodiedRunner:
             metrics = {f"eval/{key}": value for key, value in self.evaluate().items()}
             self.metric_logger.log(data=metrics, step=0)
             self.logger.info("Step 0 evaluation: %s", metrics)
-        probe_only = self.cfg.algorithm.get("art_probe_only", False)
         for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step).wait()
@@ -531,7 +521,6 @@ class EmbodiedRunner:
                 with self.timer("sync_weights"):
                     if not (_step == start_step and initial_eval) and (
                         _step % self.weight_sync_interval == 0
-                        and (not probe_only or _step == start_step)
                     ):
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):

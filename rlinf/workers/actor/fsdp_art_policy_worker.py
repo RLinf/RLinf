@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import math
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -38,7 +36,6 @@ from rlinf.utils.nested_dict_process import (
     split_dict_to_chunk,
 )
 from rlinf.utils.utils import clear_memory
-from rlinf.workers.actor.art_diagnostics import ARTParameterProbe
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 _ART_LOSS_SPACES = ("velocity_linear_sigma", "velocity_uniform")
@@ -93,13 +90,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         torch.distributed.all_reduce(active, op=torch.distributed.ReduceOp.MAX)
         has_guidance = bool(active.item())
         preparation_metrics["actor/skipped_zero_guidance"] = float(not has_guidance)
-        if self.cfg.algorithm.get("art_probe_only", False):
-            # Guidance/probe logging uses rewards, but never executes backward,
-            # optimizer, scheduler, or a velocity-reference recomputation.
-            preparation_metrics["actor/probe_only"] = 1.0
-            return all_reduce_dict(
-                preparation_metrics, op=torch.distributed.ReduceOp.AVG
-            )
         replay_diagnostics = action_trajectories and self.cfg.algorithm.get(
             "art_replay_diagnostics", False
         )
@@ -123,13 +113,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             self._precompute_old_velocities()
         if replay_diagnostics:
             preparation_metrics.update(self._art_replay_metrics("actor/reference_pre"))
-            if self.cfg.algorithm.get("art_replay_batch_sizes", []):
-                preparation_metrics.update(self._art_batch_replay_metrics())
-        parameter_probe = (
-            ARTParameterProbe(self.model, self.optimizer)
-            if self.cfg.algorithm.get("art_parameter_diagnostics", False)
-            else None
-        )
 
         if not action_trajectories:
             row_windows = _prompt_disjoint_windows(
@@ -245,13 +228,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             append_to_dict(
                 metrics, _art_mask_count_metrics(counts, f"actor/u{update_index}")
             )
-            if parameter_probe is not None:
-                append_to_dict(
-                    metrics,
-                    parameter_probe.metrics(
-                        f"actor/param_u{update_index}", self.device
-                    ),
-                )
             if replay_diagnostics:
                 append_to_dict(
                     metrics,
@@ -378,8 +354,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
             )
             selected_mask = action_mask[:decisions]
         condition_ids = forward_inputs["art_state_id"][0] if state_sampling else None
-        if state_sampling and self.cfg.algorithm.get("art_probe_only", False):
-            self._write_art_probe_groups(forward_inputs, episode_returns, group_valid)
         guidance = _art_trajectory_guidance(
             endpoints[first_decision : first_decision + decisions],
             episode_returns,
@@ -518,71 +492,12 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         )
         del forward_inputs["art_endpoint"]
 
-    def _write_art_probe_groups(
-        self, forward_inputs: dict, returns: torch.Tensor, valid_groups: torch.Tensor
-    ) -> None:
-        """Write group-level continuation outcomes with source-trajectory labels."""
-        group_size = int(self.cfg.algorithm.group_size)
-        rows = []
-        for start in range(0, returns.numel(), group_size):
-            rewards = returns[start : start + group_size].cpu().tolist()
-            row = {
-                "round": self.version,
-                "rank": self._rank,
-                "returns": rewards,
-                "valid": bool(valid_groups[start // group_size].item()),
-                "active": bool(valid_groups[start // group_size].item())
-                and min(rewards) != max(rewards),
-                "sampler": self.cfg.algorithm.get("art_state_sampler", "legacy"),
-            }
-            for key in (
-                "art_state_id",
-                "art_state_steps",
-                "art_source_success",
-                "art_source_trajectory_id",
-                "art_source_reset_state_id",
-            ):
-                row[key] = forward_inputs[key][0, start].item()
-            row["remaining_steps"] = int(
-                self.cfg.env.train.max_episode_steps - row["art_state_steps"]
-            )
-            rows.append(row)
-        path = Path(self.cfg.runner.logger.log_path) / "art_probe"
-        path.mkdir(parents=True, exist_ok=True)
-        with (
-            path
-            / f"{self.cfg.runner.logger.experiment_name}_art_probe_rank{self._rank}.jsonl"
-        ).open("a") as stream:
-            for row in rows:
-                stream.write(json.dumps(row) + "\n")
-
-    @torch.no_grad()
-    def _art_batch_replay_metrics(self) -> dict[str, float]:
-        """Compare fixed first rows under different actor inference batch sizes."""
-        forward_inputs = self.rollout_batch["forward_inputs"]
-        sizes = list(self.cfg.algorithm.art_replay_batch_sizes)
-        count = min(max(sizes), forward_inputs["art_states"].shape[0])
-        inputs = self._index_nested(forward_inputs, torch.arange(count))
-        reference = self._compute_art_old_velocities(inputs)
-        metrics = {}
-        for size in sizes:
-            stats = self._art_replay_metrics(
-                f"actor/batch_mb{size}",
-                reference=reference,
-                forward_inputs=inputs,
-                micro_batch_size=size,
-            )
-            metrics.update(stats)
-        return metrics
-
     @torch.no_grad()
     def _art_replay_metrics(
         self,
         prefix: str = "actor/replay",
         *,
         reference: torch.Tensor | None = None,
-        forward_inputs: dict | None = None,
-        micro_batch_size: int | None = None,
     ) -> dict[str, float]:
         """Measure full-output drift on fixed rollout states, pooled across ranks.
 
@@ -590,8 +505,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         reuse the same rows and denoising timesteps, including zero-guidance and
         corrective-masked samples. Rows without valid executed actions are omitted.
         """
-        if forward_inputs is None:
-            forward_inputs = self.rollout_batch["forward_inputs"]
+        forward_inputs = self.rollout_batch["forward_inputs"]
         if "art_old_velocity" not in forward_inputs and reference is None:
             raise ValueError(
                 "ART replay diagnostics require cached rollout velocities."
@@ -604,9 +518,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         coordinate_mask = forward_inputs.get("art_coordinate_mask")
         stats = torch.zeros(len(_ART_DRIFT_REGIONS), 2, device=self.device)
         max_error = torch.zeros((), device=self.device)
-        for rows, timestep_index, velocity in self._replay_velocities(
-            forward_inputs, micro_batch_size
-        ):
+        for rows, timestep_index, velocity in self._replay_velocities(forward_inputs):
             batch_stats, batch_max = _art_velocity_drift_stats(
                 velocity,
                 old_velocities[rows, timestep_index].to(self.device),
@@ -632,24 +544,16 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         }
 
     @torch.no_grad()
-    def _compute_art_old_velocities(self, forward_inputs: dict) -> torch.Tensor:
+    def _precompute_old_velocities(self) -> None:
+        forward_inputs = self.rollout_batch["forward_inputs"]
         old_velocities = torch.empty_like(forward_inputs["art_states"])
         for rows, timestep_index, velocity in self._replay_velocities(forward_inputs):
             old_velocities[rows, timestep_index] = velocity.to(old_velocities.device)
-        return old_velocities
-
-    @torch.no_grad()
-    def _precompute_old_velocities(self) -> None:
-        forward_inputs = self.rollout_batch["forward_inputs"]
-        forward_inputs["art_old_velocity"] = self._compute_art_old_velocities(
-            forward_inputs
-        )
+        forward_inputs["art_old_velocity"] = old_velocities
         self.torch_platform.empty_cache()
 
     @torch.no_grad()
-    def _replay_velocities(
-        self, forward_inputs: dict, micro_batch_size: int | None = None
-    ):
+    def _replay_velocities(self, forward_inputs: dict):
         """Yield eval-mode velocities at cached states per microbatch and timestep.
 
         Yields ``(rows, timestep_index, velocity)`` with ``rows`` a slice into
@@ -657,7 +561,7 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
         """
         states = forward_inputs["art_states"]
         sigmas = forward_inputs["art_sigmas"]
-        micro_batch_size = micro_batch_size or int(self.cfg.actor.micro_batch_size)
+        micro_batch_size = int(self.cfg.actor.micro_batch_size)
         row_count, timestep_count = states.shape[:2]
         was_training = self.model.training
         self.model.eval()

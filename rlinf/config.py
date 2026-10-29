@@ -1649,13 +1649,6 @@ def validate_embodied_cfg(cfg):
             "art_branch_image_atol",
             "art_replay_diagnostics",
             "art_reference_source",
-            "art_parameter_diagnostics",
-            "art_replay_batch_sizes",
-            "art_probe_only",
-            "art_state_sampler",
-            "art_states_per_trajectory",
-            "art_success_state_fraction",
-            "art_failure_max_step_fraction",
         }
         unsupported_art_options = sorted(
             option
@@ -1905,8 +1898,6 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
     for key in (
         "art_first_chunk_only",
         "art_replay_diagnostics",
-        "art_parameter_diagnostics",
-        "art_probe_only",
     ):
         value = cfg.algorithm.get(key, False)
         assert type(value) is bool, f"algorithm.{key} must be boolean, got {value!r}."
@@ -1916,37 +1907,6 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
         "rollout",
         "actor",
     }, "algorithm.art_reference_source must be rollout or actor."
-    if cfg.algorithm.get("art_parameter_diagnostics", False):
-        assert (
-            cfg.actor.fsdp_config.strategy == "fsdp"
-            and cfg.actor.fsdp_config.sharding_strategy == "no_shard"
-        ), (
-            "ART parameter diagnostics require FSDP1 NO_SHARD with full parameter replicas."
-        )
-    sizes = cfg.algorithm.get("art_replay_batch_sizes", [])
-    assert all(type(size) is int and size > 0 for size in sizes), (
-        "algorithm.art_replay_batch_sizes must contain positive integers."
-    )
-    assert not sizes or cfg.algorithm.get("art_replay_diagnostics", False), (
-        "art_replay_batch_sizes requires art_replay_diagnostics=True."
-    )
-    sampler = cfg.algorithm.get("art_state_sampler", "legacy")
-    assert sampler in {"legacy", "uniform", "success_mixture", "early_failure"}, (
-        "Unsupported algorithm.art_state_sampler."
-    )
-    assert state_sampling or sampler == "legacy", (
-        "ART state samplers require art_state_sampling=True."
-    )
-    assert not cfg.algorithm.get("art_probe_only", False) or state_sampling, (
-        "ART probe-only collection requires art_state_sampling=True."
-    )
-    capacity = cfg.algorithm.get("art_states_per_trajectory", 4)
-    assert type(capacity) is int and capacity > 0, (
-        "art_states_per_trajectory must be a positive integer."
-    )
-    for key in ("art_success_state_fraction", "art_failure_max_step_fraction"):
-        fraction = float(cfg.algorithm.get(key, 0.7 if "success" in key else 0.5))
-        assert 0 <= fraction <= 1, f"algorithm.{key} must be in [0, 1]."
     if state_sampling:
         assert branch_index is None and not cfg.algorithm.get(
             "art_first_chunk_only", False
@@ -2011,16 +1971,6 @@ def validate_openpi_art_cfg(cfg: DictConfig) -> None:
         for key, value in (
             ("art_branch_chunk_index", branch_index),
             ("art_state_sampling", state_sampling),
-            ("art_state_sampler", sampler),
-            ("art_states_per_trajectory", capacity),
-            (
-                "art_success_state_fraction",
-                cfg.algorithm.get("art_success_state_fraction", 0.7),
-            ),
-            (
-                "art_failure_max_step_fraction",
-                cfg.algorithm.get("art_failure_max_step_fraction", 0.5),
-            ),
         ):
             assert train.get(key, value) == value, (
                 f"env.train.{key} is derived from algorithm.{key}; expected "

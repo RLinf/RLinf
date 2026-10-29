@@ -1,7 +1,7 @@
 ART 扩散模型微调
 ================
 
-本页介绍 DiffusionART 在 SD3.5 Medium 图像文字生成和 Wan2.2 TI2V 5B 视频文字生成中的微调，内容涵盖算法与公式、OCR 数据、训练配置、ART/NFT 奖励与耗时实测结果，以及训练指标定义，并给出 Pi0 在 LIBERO 多步动作轨迹上的实验性 ART 配方。
+本页介绍 DiffusionART 在 SD3.5 Medium 图像文字生成和 Wan2.2 TI2V 5B 视频文字生成中的微调，内容涵盖算法与公式、OCR 数据、训练配置、ART/NFT 奖励与耗时实测结果，以及训练指标定义，最后的 LIBERO 一节介绍 Pi0 动作块的固定前缀和 snapshot 状态采样配方。
 
 概览
 ----
@@ -24,20 +24,12 @@ ART 扩散模型微调
    .. grid-item-card:: 输出
       :text-align: center
 
-      图像 / 视频
-
-   .. grid-item-card:: 奖励
-      :text-align: center
-
-      OCR / 视频 OCR
-
-| **操作流程：** 选择配置 → 启动训练 → 检查 OCR reward 和生成样本。
-| **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>`。记录中的 Wan 实验使用四张 NVIDIA A800 GPU。
+      图像、视频：LoRA + FSDP2；Pi0：action expert + FSDP1
 
 任务
 ~~~~
 
-按需要生成的内容选择配置。
+图像、视频配置位于 ``examples/diffusion/config/``，使用 Diffusers checkpoint 和 OCR 奖励；LIBERO 配置位于 ``examples/embodiment/config/``，使用 Pi0 和环境回报。
 
 .. list-table::
    :header-rows: 1
@@ -59,7 +51,7 @@ ART 扩散模型微调
 观测与动作
 ~~~~~~~~~~
 
-图像、视频任务的每个 episode 生成一张图像或一段视频。ART 为每个候选保留一个标量奖励，再比较同一 prompt 下的候选。:ref:`LIBERO 动作配方 <diffusion-art-libero>` 则对完整机器人轨迹分组，按决策位置对齐动作块。
+图像、视频任务的每个 episode 生成一张图像或一段视频。ART 为每个候选保留一个标量奖励，再比较同一 prompt 下的候选。:ref:`LIBERO 动作配方 <diffusion-art-libero>` 则比较从同一机器人状态采样的动作块，用续跑回报评价候选。
 
 .. list-table::
    :header-rows: 1
@@ -119,112 +111,6 @@ ART 要求 ``actor.training_backend=fsdp``、``rollout.pipeline_stage_num=1``、
      - 启用偏移修正 mask；两个配置均为 ``True``。
    * - ``algorithm.art_mask_threshold``
      - mask 的偏移阈值；两个配置均为 ``1e-5``，配合 ``art_mask_metric=sde_kl`` 使用。
-
-.. _diffusion-art-libero:
-
-LIBERO 动作微调
----------------
-
-``libero_object_0_art_openpi`` 使用与 ``examples/embodiment/config/libero_object_0_nft_openpi.yaml`` 相同的 SFT checkpoint，在 LIBERO Object task 0 上微调 Pi0。配方沿用环境交互与 rollout 流程，使用完整 episode 回报、rollout 缓存速度，以及每轮两次 ART 更新。
-
-.. warning::
-
-   这是一种实验性的轨迹级适配。同组轨迹共享任务与模拟器初始状态，执行不同动作之后，观测会逐渐分化。因此，后续决策的聚合条件与论文的同条件图像、视频设置存在差异。成功率、指导强度和漂移阈值需要通过 LIBERO 实验验证。``art_first_chunk_only=True`` 仅训练初始决策，可作为同初始观测对照。
-
-轨迹回报与动作指导
-~~~~~~~~~~~~~~~~~~
-
-一个机器人 episode 包含多次决策，每次决策分别通过去噪生成一个动作块。配方先累加终止之前及终止动作上的奖励，再把完整 episode 回报分配给有效决策，让终局成功反馈参与早期动作训练。
-
-对于组 :math:`g`、第 :math:`h` 次决策和实际执行的动作坐标 :math:`j`，有效轨迹集合记为 :math:`\mathcal V_{g,h,j}`。协方差仅在该集合内计算：
-
-.. math::
-
-   C_{g,h,j}=\frac{1}{n_{g,h,j}-1}
-   \sum_{i\in\mathcal V_{g,h,j}}
-   (R_i-\bar R_{g,h,j})(a_{i,h,j}-\bar a_{g,h,j}).
-
-其中 :math:`R_i` 是完整 episode 回报，:math:`a_{i,h,j}` 是模型内部的归一化动作坐标，:math:`n_{g,h,j}=|\mathcal V_{g,h,j}|`。有效轨迹少于两条的坐标，其指导信号为零。协方差在有效动作坐标上归一化，再分配给各轨迹；回报完全相同的组产生零指导信号。
-
-Transformer 仍接收完整动作生成长度和模型维度；协方差、目标损失和漂移代理只使用实际执行的动作与真实环境维度。同一个动作块中，终止之后的动作也会被排除。损失归一化统计所有 actor rank 上的有效动作块。
-
-两次更新始终使用 rollout 时缓存的速度。每个初始状态组分别向两个窗口分配一半轨迹，同一条轨迹的全部动作块归入同一窗口。组指导在划分窗口前计算。Pi0 与 SD3/Wan 实现使用相同的速度符号，目标为 :math:`v_{\mathrm{old}}-H_{g,h}`，现有 corrective mask 在有效动作坐标上计算。
-
-配置与启动
-~~~~~~~~~~
-
-OpenPi 环境和 checkpoint 设置沿用 :doc:`Pi0 <embodied/pi0>`。LIBERO 安装选项准备该配方使用的模拟器素材：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model openpi --env libero \
-      --venv .venv-openpi-libero
-   source .venv-openpi-libero/bin/activate
-
-这会创建独立的 OpenPi 环境。Pi0 SFT checkpoint 已位于本地时，以下命令从仓库根目录启动实验：
-
-.. code-block:: bash
-
-   export CUDA_VISIBLE_DEVICES=0,1,2,3
-   export EMBODIED_PATH="$PWD/examples/embodiment"
-   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
-   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
-   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl OMP_NUM_THREADS=1
-
-   python examples/embodiment/train_embodied_agent.py \
-      --config-path "$EMBODIED_PATH/config" \
-      --config-name libero_object_0_art_openpi \
-      actor.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
-      rollout.model.model_path=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-
-默认每轮采集 64 条 episode，每条最多 240 个环境步，每次决策执行 5 个动作。终止掩码生效前，每轮共有 :math:`64\times(240/5)=3072` 个动作块，分成两次不重叠更新，因此 ``actor.global_batch_size=1536``。通用关系为 ``total_num_envs * rollout_epoch * decisions / art_updates_per_rollout``。设置 ``algorithm.art_first_chunk_only=True`` 时，决策数为一，该配方对应的 batch 覆盖值为 ``actor.global_batch_size=32``。
-
-模型使用 ``openpi.rl_mode=art``、``is_nft=False``，以及零转移噪声的 ``noise_method=flow_ode``。训练要求 ``auto_reset=False``、``ignore_terminations=False`` 和固定的分组初始状态。四步采样器结合 ``art_timestep_fraction=0.25``，为每个动作块选择一个实际 rollout 去噪状态。完整配置位于 ``examples/embodiment/config/libero_object_0_art_openpi.yaml``。
-
-固定位置分叉采样
-~~~~~~~~~~~~~~~~
-
-共享动作前缀将同条件比较扩展到任务中途。``algorithm.art_branch_chunk_index`` 为所有组指定一个从零开始的决策索引。到达该位置之前，同组环境执行首个成员采样的动作块；从分叉处开始，各成员使用冻结的 rollout policy 独立采样并继续完成任务。Actor 只训练分叉动作块，同时读取该位置的观测、去噪状态和缓存旧速度。回报累加范围为分叉处至终止：
-
-.. math::
-
-   R_i^{(b)}=\sum_{t=t_b}^{T_i}r_{i,t}.
-
-分叉模式在现有启动命令上附加以下覆盖值：
-
-.. code-block:: bash
-
-   algorithm.art_first_chunk_only=False \
-   algorithm.art_branch_chunk_index=8 \
-   actor.global_batch_size=32
-
-每个动作块执行 5 个动作时，索引 8 对应先执行 40 个环境步再分叉；索引 0 用于初始决策对照。每条 episode 提供一个训练动作块，因此 64 条 episode、两次互斥更新对应全局 batch 32。``art_first_chunk_only`` 与非空分叉索引互斥。分叉模式要求同步批次，且每个 environment、rollout 和 actor rank 均包含完整组。评估保持标准的完整任务 rollout。
-
-Rollout 在前缀和分叉处检查同组任务、机器人观测、可获取的模拟器状态及两路相机图像。状态最大差异默认容差为 ``art_branch_state_atol=1e-5``，各相机平均绝对像素差默认容差为 ``art_branch_image_atol=1.0``。任一前缀决策不满足一致性要求，或任一组员在分叉前终止，该组整体退出训练，批次形状保持不变。检查范围为可获取的状态和观测，不包含控制器快照恢复。
-
-验证与指标
-~~~~~~~~~~
-
-张量与配置测试覆盖终止掩码、分组对齐、冻结目标和缓存状态回放。模型测试使用小型 Gemma/SigLIP 与构造的观测，可以在本地直接运行：
-
-.. code-block:: bash
-
-   python -m pytest tests/unit_tests/test_diffusion_art.py
-
-启动实验附加 ``runner.max_steps=2``、``runner.max_epochs=2``、``runner.val_check_interval=1`` 和 ``runner.save_interval=1``，会先执行两轮训练、评估与 checkpoint 保存。GPU LIBERO 训练和 checkpoint 恢复需要真实模型与模拟器素材。
-
-``actor/art_reward_mean`` 和 ``actor/art_reward_std`` 描述 episode 回报；``actor/valid_chunk_frac`` 和 ``actor/valid_action_frac`` 描述终止掩码与可选奖励过滤后保留的比例。现有 ``active_group_frac``、``mask_frac`` 和 ``movement_score`` 反映指导信号与漂移。ART/NFT 对照使用相同 SFT 初始化、初始状态和评估状态，同时记录环境交互量、optimizer 更新次数与耗时；两种损失的数值尺度对应不同目标。
-
-分叉实验额外记录 ``actor/branch_chunk_index``、``actor/branch_valid_group_frac``、``actor/branch_state_error_max`` 和 ``actor/branch_image_error_max``。误差汇总前缀检查结果，有效组比例还排除分叉前终止的组。先运行索引 0 和索引 8 的短实验，分别检查初始决策行为与中途分叉，再增加训练预算。这些实验需要 GPU LIBERO 验证；单元测试覆盖采样、缓存对齐、回报截取和无效组屏蔽。
-
-完整输出速度诊断通过 ``algorithm.art_replay_diagnostics=true`` 开启。
-``actor/replay_{region}_rms`` 记录更新前的回放误差；
-``actor/drift_u1_{region}_rms`` 和 ``actor/drift_u2_{region}_rms`` 分别记录两次 optimizer 更新后相对同一份冻结 rollout 速度的漂移。
-``region`` 为 ``exec`` 时统计有效执行坐标，``future`` 统计后续 action token 的环境动作维度，``padding`` 统计其余模型维度，``unexec`` 统计全部未执行坐标，``full`` 统计完整输出。
-完全无效的行不参与统计；平方误差与坐标数先跨 microbatch、rank 求和，再计算 RMS。
-探针使用固定缓存状态和已选取的去噪时间步，不重新生成动作链。训练 loss 和 trust-region mask 仍只覆盖执行坐标。
-完整速度缓存增加 rollout 存储与传输量；开启诊断会在更新前及每次更新后增加 eval 模式前向计算。
-同一开关还会记录 ``actor/art_output_restore_ratio`` 和 ``actor/art_output_restore_cosine``，比较 loss 对执行坐标速度输出的梯度中 restoration 与 guidance 两部分，统计已计入 loss 缩放、梯度累积和跨 rank 平均。
 
 .. _diffusion-art-results:
 
@@ -495,86 +381,128 @@ runner 的整轮计时与互不重叠的阶段计时反映端到端性能，内�
 
 表头 Global Step 统计采集与训练轮次，一轮 ART 可以包含两次 optimizer update。Elapsed 是累计墙钟时间，ETA 是预估剩余时间，表头 Step Time 是累计墙钟时间除以已完成轮数得到的平均每轮耗时。Time 区的 ``step`` 记录单轮成本，每千条轨迹耗时与每分钟轨迹数反映不同采样量下的执行成本。相同累计采样区间的对比见 :ref:`训练结果 <diffusion-art-results>`。
 
-排查 LIBERO 更新与状态采样
---------------------------
+.. _diffusion-art-libero:
 
-Long task 0 使用 ``libero_10_0_art_diagnostics_openpi``，Object task 0 使用
-``libero_object_0_art_diagnostics_openpi``。两者均选择 128 个训练环境、K=8、
-全部 4 步去噪、actor 端参考速度、FP32 master AdamW，并默认运行 5 轮。
-原有配方仍使用 rollout 参考速度和仅组长轨迹的状态采集。
+LIBERO Object Task 0
+--------------------
 
-先区分回放误差与参数更新。设置 ``algorithm.art_reference_source=actor``，
-在两次 ART 更新前只重算一次冻结参考。开启
-``algorithm.art_replay_diagnostics=True`` 后，对比
-``actor/replay_mse`` （更新前 actor 与 rollout 的差异）、
-``actor/reference_pre_mse`` （actor 与所选参考的差异），以及
-``actor/update_u1_exec_rms`` / ``actor/update_u2_exec_rms`` （相对于 actor
-参考的更新位移）。``actor/drift_u1_*`` 和 ``actor/drift_u2_*`` 继续使用
-rollout 参考；``update_u*`` 指标只在选择 actor 参考时输出。
+本节介绍 Pi0 在 LIBERO Object task 0 上如何从同一机器人状态比较候选动作块。两个配方只在状态选取方式上不同：``libero_object_0_art_openpi`` 共享固定前缀，在决策索引 8（从 0 计数，即第 9 次决策）分叉；``libero_object_0_art_states_openpi`` 则恢复从采集轨迹中抽取的 snapshot。两者都不会因为后续决策序号相同，就把独立到达的不同状态放进同一比较组。
 
-短程 FSDP1 NO_SHARD 排查时开启 ``algorithm.art_parameter_diagnostics=True``。
-``actor/param_u1_bf16_changed_frac`` 和 ``actor/param_u2_bf16_update_rms``
-记录实际模型权重变化，``actor/param_u2_master_update_rms`` 记录 FP32 主权重
-的累积更新。诊断在 CPU 保留可训练参数副本，位移均相对于第一次更新前计算。
-设置 ``algorithm.art_replay_batch_sizes=[1,2,8]``，可在固定数据子集上比较
-不同 actor 推理 batch 大小的回放差异。
+两个配方都加载 ``RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``。Rollout 由 Hugging Face backend 的 ``MultiStepRolloutWorker`` 执行，训练由 FSDP1 NO_SHARD 的 ``EmbodiedARTFSDPPolicy`` 执行。视觉语言骨干保持冻结，更新 action expert 及相关可训练层，不使用 LoRA。输入包含双相机图像、机器人状态和任务指令；Pi0 生成完整动作 tensor，每次决策向环境执行 5 个 7 维动作。
 
-使用 ``actor/mask_frac_global`` 和 ``actor/outward_frac_global`` 查看按
-active 样本计数加权的比例。``actor/u1/`` 和 ``actor/u2/`` 下的同名指标
-区分两次更新；``movement_score_active`` 使用相同的 active 样本分母。
-原有 ``mask_frac`` 和 ``outward_frac`` 保留 microbatch 平均口径，用于对照旧日志。
+固定前缀与 Snapshot 采样
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-随后设置 ``algorithm.art_probe_only=True`` 冻结 SFT 策略。此模式跳过反向传播、
-optimizer、scheduler，以及首次之后的权重同步。通过
-``algorithm.art_state_sampler`` 选择以下状态池：
+ART 要求同组候选具有相同的条件状态。仅 task ID 相同不够：被训练动作块开始之前，物体位置、机器人状态、观测和指令都要对齐。两种采集方式分别建立这一条件：
 
-.. list-table:: 状态采样消融
+.. list-table:: Object Task 0 采集模式
    :header-rows: 1
-   :widths: 25 75
+   :widths: 18 41 41
 
-   * - 取值
-     - 采集与选取方式
-   * - ``legacy``
-     - 保存所有仍有效的组长状态，按任务匹配并进行时间分层采样。
-   * - ``uniform``
-     - 从所有轨迹建立有容量上限的 reservoir，再进行时间分层采样。
-   * - ``success_mixture``
-     - 使用有界状态池，成功来源状态约占 ``art_success_state_fraction``
-       （默认 0.7）；某类来源为空时使用可用的另一类来源。
-   * - ``early_failure``
-     - 使用有界状态池，保留成功来源的全部状态，仅保留失败来源在
-       ``art_failure_max_step_fraction`` 时间比例之前的状态（默认 0.5）。
+   * - 模式
+     - 状态构造
+     - 训练位置
+   * - branch8
+     - 同组从相同 reset state 开始，在决策 0 到 7 执行组长的动作块。
+     - 决策索引 8，即执行 40 个环境步之后。候选动作与后续续跑各自独立采样。
+   * - ``states``
+     - 先用冻结的当前 policy 采集轨迹，在决策边界保存尚未结束的组长 snapshot；按任务匹配、时间分层抽样，并将每个选中状态恢复到同组 K 个环境。
+     - 恢复后的第一个决策，不一定是整条任务的初始决策。之后各自独立续跑。
 
-有界状态池的 ``algorithm.art_states_per_trajectory`` 默认为 4。
-先进行 reservoir 接纳决策，再捕获 snapshot。采集结束后标注来源轨迹结局，
-恢复时保留原始剩余预算。``<log_path>/art_probe/`` 下的 JSONL 按组记录回报、
-来源结局、来源轨迹和 reset 标识、采样时间及剩余步数。探针比较采样分布，保持奖励不变。
+branch8 设置 ``algorithm.art_branch_chunk_index=8``、``art_state_sampling=False``。Rollout 在共享前缀和分叉点检查模拟器状态、机器人观测、任务指令及两路图像。如果检查失败，或同组成员在分叉前已终止，该组训练贡献会被屏蔽，避免比较不同状态。
 
-激活 OpenPi/LIBERO 环境后运行实验矩阵：
+``states`` 设置 ``algorithm.art_state_sampling=True``、``art_branch_chunk_index=null``。Snapshot 包含物理状态、控制器和夹爪状态、观测缓存及模拟器进程的 RNG 状态。恢复时还保留已用步数和前一步奖励，不会重新获得完整 episode 时间预算。状态库在每次 policy 同步后重新采集，恢复后清空。该模式会多一次采集 rollout，并占用 snapshot 存储，不是零开销的固定分叉替代方案。
+
+两种模式下，K=8 个候选通过不同的 policy 采样噪声生成不同动作块。要求一致的是被训练动作块之前的状态，而不是后续整条轨迹。回报累加分叉或恢复之后直到终止或原始 240 步上限的环境奖励；同组回报完全相同时，引导为零。每个候选只训练选中的一个动作块，后续续跑用于提供蒙特卡洛评价。
+
+动作引导与更新
+~~~~~~~~~~~~~~
+
+固定条件状态后，在组内有效执行坐标上计算回报与动作的协方差，再做 RMS 归一化得到引导 H。Pi0 与 SD3/Wan 的速度符号约定一致：在缓存的反向去噪状态上，冻结目标是 ``v_old - H``，不是从终点重新前向加噪。模型仍处理完整动作 tensor，但 guidance、restoration 和 trust-region mask 只覆盖有效执行坐标。
+
+配方默认 ``algorithm.art_reference_source=actor``：两次更新开始前在 actor 上重算一次 v_old，之后始终冻结这一参考。这样避免把跨 backend 回放差异直接当成相对参考的位移。选择 ``rollout`` 可以使用缓存的 rollout 速度进行对照。FP32 master 参数先累积小幅优化器更新，再复制回低精度模型权重。这些设置不代表已经验证成功率，需要用真实 checkpoint 和模拟器确认效果。
+
+先用全部 K 个候选计算引导，再把每组候选分入两个互不重叠的更新窗口，同一候选轨迹不会同时出现在两个窗口。128 个环境、K=8、每个环境训练一个动作块、每轮两次更新，对应 16 个组和每次更新 ``actor.global_batch_size=64``。``art_timestep_fraction=1.0`` 训练全部 4 个缓存去噪步；两种模式统一使用学习率 5e-7，默认训练 100 轮。
+
+运行 Branch8 与 States
+~~~~~~~~~~~~~~~~~~~~~~~
+
+按 :doc:`Pi0 <embodied/pi0>` 安装 OpenPi/LIBERO 环境；已有环境可跳过安装：
 
 .. code-block:: bash
 
-   python examples/embodiment/run_art_ablation.py diagnose \
-     --checkpoint /path/to/model/RLinf-Pi0-LIBERO-Long-SFT --gpus 0,1,2,3
-   python examples/embodiment/run_art_ablation.py probe \
-     --checkpoint /path/to/model/RLinf-Pi0-LIBERO-Long-SFT --gpus 0,1,2,3
-   python examples/embodiment/run_art_ablation.py summary
+   bash requirements/install.sh embodied --model openpi --env libero \
+     --venv .venv-openpi-libero
+   source .venv-openpi-libero/bin/activate
 
-``diagnose`` 运行 4 组各 5 轮的实验：rollout/actor 参考与关闭/开启 FP32 master
-交叉对比。``probe`` 为 4 种采样方式各运行 10 轮冻结策略采集。
-``summary`` 按初始 reset ID 划分筛选集与留出集，分别报告信号产出率。
-同时查看来源构成、全失败和全成功比例，不要只按 active 比例选方案；汇总不会自动选择赢家。
+在仓库根目录执行以下设置，将 MODEL_PATH 指向已有 SFT checkpoint；命令不会下载模型权重。两个配方的训练和评估都限定为 Object task 0：
 
-选定采样方式后，运行 ``train --sampler uniform`` （将 ``uniform`` 换成选定方案），
-比较两组各 30 轮训练：采用 ``legacy`` 采样的数值修正基线，以及相同基线加选定采样。
-``confirm --sampler uniform`` 使用 seed 42 和 43，将这两组各重跑 50 轮。
-``object --checkpoint /path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``
-运行 25 轮 Object task 0 基线。每个阶段的运行名、控制台日志和完整命令清单均以时间戳开头。
-添加 ``--dry-run`` 可先检查命令，``--override key=value`` 可追加 Hydra 覆盖项。
+.. code-block:: bash
 
-训练阶段在 step 0 及每 10 轮评估一次（``object`` 为每 5 轮）。
-``runner.eval_repeats`` 重复完整的可用 reset 集合，``runner.eval_seed``
-为各实验配对策略采样噪声，同时保持训练 RNG 不变。当任务包含 50 个 reset 状态时，
-重复 3 次得到 150 条轨迹；这是重复初始状态，不是 150 个不同场景。确认阶段重复 5 次。
-``eval`` 在 step 0 重复评估 4 次，训练轮数为 0；使用 ``num_trajectories``
-核对实际完成的评估预算。
+   set -o pipefail
+   export CUDA_VISIBLE_DEVICES=0,1,2,3
+   export ROBOT_PLATFORM=LIBERO LIBERO_TYPE=standard
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
+   export OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
+   export HYDRA_FULL_ERROR=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
+   export MODEL_PATH=/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+先在 4 张可见 GPU 上运行固定前缀配方。日志目录、实验名和终端日志文件名均以时间戳开头。Bash 入口依次接受配置名、机器人平台和 Hydra overrides；LOG_DIR、MEGA_LOG_FILE 指定输出路径：
+
+.. code-block:: bash
+
+   RUN_NAME="$(date +%Y%m%d_%H%M%S)_object0_branch8_T4_lr5e7_seed42"
+   LOG_DIR="$PWD/logs/$RUN_NAME"
+   LOG_DIR="$LOG_DIR" MEGA_LOG_FILE="$LOG_DIR/$RUN_NAME.log" \
+     bash examples/embodiment/run_embodiment.sh libero_object_0_art_openpi LIBERO \
+     actor.model.model_path="$MODEL_PATH" \
+     rollout.model.model_path="$MODEL_PATH" \
+     env.train.total_num_envs=128 env.eval.total_num_envs=48 \
+     actor.global_batch_size=64 actor.micro_batch_size=2 \
+     actor.seed=42 actor.optim.lr=5e-7 \
+     actor.optim.use_fp32_master_params=true \
+     algorithm.art_reference_source=actor \
+     actor.model.num_steps=4 algorithm.art_timestep_fraction=1.0 \
+     runner.max_steps=100 runner.max_epochs=100 \
+     runner.eval_at_start=true runner.val_check_interval=10 \
+     runner.save_interval=-1 \
+     runner.logger.experiment_name="$RUN_NAME"
+
+Snapshot 采样使用 states 配方，从相同 SFT checkpoint 单独启动。两条命令在同一组 GPU 上顺序执行：
+
+.. code-block:: bash
+
+   RUN_NAME="$(date +%Y%m%d_%H%M%S)_object0_states_T4_lr5e7_seed42"
+   LOG_DIR="$PWD/logs/$RUN_NAME"
+   LOG_DIR="$LOG_DIR" MEGA_LOG_FILE="$LOG_DIR/$RUN_NAME.log" \
+     bash examples/embodiment/run_embodiment.sh libero_object_0_art_states_openpi LIBERO \
+     actor.model.model_path="$MODEL_PATH" \
+     rollout.model.model_path="$MODEL_PATH" \
+     env.train.total_num_envs=128 env.eval.total_num_envs=48 \
+     actor.global_batch_size=64 actor.micro_batch_size=2 \
+     actor.seed=42 actor.optim.lr=5e-7 \
+     actor.optim.use_fp32_master_params=true \
+     algorithm.art_reference_source=actor \
+     actor.model.num_steps=4 algorithm.art_timestep_fraction=1.0 \
+     runner.max_steps=100 runner.max_epochs=100 \
+     runner.eval_at_start=true runner.val_check_interval=10 \
+     runner.save_interval=-1 \
+     runner.logger.experiment_name="$RUN_NAME"
+
+两组实验都在训练前及每 10 轮训练后评估原始完整任务，评估不使用训练时的分叉或 snapshot 恢复。实际评估条数看 ``eval/num_trajectories``，48 个并行环境槽位不等于 48 个独立 reset state。以上命令关闭 checkpoint 保存；需要保留模型时，将 ``runner.save_interval`` 设为正数。
+
+结果与验证
+~~~~~~~~~~
+
+比较两种模式时，以完整任务的评估成功率为准。训练中的续跑成功率以采样状态为条件，不能直接视为完整任务成功率。通过 ``actor/active_group_frac``、``actor/branch_valid_group_frac``、``actor/branch_state_error_max`` 和 ``actor/branch_image_error_max`` 检查有效信号与同状态分组。``actor/mask_frac_global`` 和 ``actor/outward_frac_global`` 先汇总有效样本计数再计算比例；``actor/u1/``、``actor/u2/`` 分别记录两次更新。
+
+可选的 ``algorithm.art_replay_diagnostics=true`` 会增加回放前向。``actor/replay_mse`` 比较更新前 actor 与 rollout 速度；``actor/update_u1_exec_rms``、``actor/update_u2_exec_rms`` 则相对于冻结的 actor 参考计算位移。它们不是成功率指标，默认配方关闭这类诊断。
+
+以下 CPU 回归测试覆盖候选分组、回报截取、冻结目标及 snapshot 恢复：
+
+.. code-block:: bash
+
+   python -m pytest tests/unit_tests/test_diffusion_art.py \
+     tests/unit_tests/test_libero_snapshot.py
+
+这些测试不能替代 GPU 训练及真实 MuJoCo/checkpoint 验证。

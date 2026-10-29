@@ -24,11 +24,12 @@ runner:
     project_name: rlinf
     experiment_name: "libero_object_0_art_openpi"
     logger_backends: ["tensorboard"]
-  max_epochs: 200
-  max_steps: 200
+  max_epochs: 100
+  max_steps: 100
   only_eval: False
+  eval_at_start: True
   val_check_interval: 10
-  save_interval: 10
+  save_interval: -1
   resume_dir: null
   ckpt_path: null
 
@@ -45,20 +46,13 @@ algorithm:
   art_updates_per_rollout: 2
   art_first_chunk_only: False
   art_state_sampling: False
-  art_branch_chunk_index: null
+  art_branch_chunk_index: 8
   art_branch_state_atol: 1.0e-5
   art_branch_image_atol: 1.0
   art_replay_diagnostics: False
-  art_reference_source: rollout
-  art_parameter_diagnostics: False
-  art_replay_batch_sizes: []
-  art_probe_only: False
-  art_state_sampler: legacy
-  art_states_per_trajectory: 4
-  art_success_state_fraction: 0.7
-  art_failure_max_step_fraction: 0.5
+  art_reference_source: actor
   art_reward_reduction: sum
-  art_timestep_fraction: 0.25
+  art_timestep_fraction: 1.0
   art_exclude_final_step: False
   art_covariance_reduction: unbiased
   art_direction_mode: normalized_aggregate
@@ -78,10 +72,12 @@ env:
   train:
     rollout_epoch: 1
     task_id_filter: [0]
-    total_num_envs: 64
+    total_num_envs: 128
     group_size: 8
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
+    init_params:
+      ignore_done: True
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/train
@@ -96,6 +92,8 @@ env:
     group_size: 1
     use_fixed_reset_state_ids: True
     is_eval: True
+    init_params:
+      ignore_done: True
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -103,24 +101,25 @@ env:
 rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
+  seed: ${actor.seed}
   recompute_logprobs: False
   unnorm_key: libero_10
   enable_offload: False
   pipeline_stage_num: 1
   model:
-    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
+    model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 2
-  # 64 episodes * (240 / 5) decisions / 2 disjoint updates.
-  global_batch_size: 1536
+  # One branch chunk per episode, split across two disjoint ART updates.
+  global_batch_size: 64
   seed: 42
   enable_offload: False
   model:
-    model_path: "/path/to/model/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
+    model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
     precision: null
     num_action_chunks: 5
     add_value_head: False
@@ -131,7 +130,8 @@ actor:
       noise_level: 0.0
       noise_method: flow_ode
   optim:
-    lr: 5.0e-6
+    lr: 5.0e-7
+    use_fp32_master_params: True
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95

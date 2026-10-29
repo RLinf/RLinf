@@ -30,7 +30,6 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.envs.sim.libero.art_states import ARTStateReservoir, select_art_states
 from rlinf.envs.sim.libero.utils import (
     build_interleaved_eval_reset_state_ids,
     distribute_reset_state_ids_round_robin,
@@ -173,16 +172,6 @@ class LiberoEnv(gym.Env):
             )
             self._art_state_steps = torch.zeros(self.num_envs, dtype=torch.int64)
             self._art_states = []
-            self.art_state_sampler = cfg.get("art_state_sampler", "legacy")
-            self._art_reservoir = None
-            self._art_metadata = {
-                key: torch.zeros(self.num_envs, dtype=torch.int64)
-                for key in (
-                    "art_source_success",
-                    "art_source_trajectory_id",
-                    "art_source_reset_state_id",
-                )
-            }
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.specific_reset_id = cfg.get("specific_reset_id", None)
         self.task_id_filter = cfg.get("task_id_filter", None)
@@ -882,7 +871,6 @@ class LiberoEnv(gym.Env):
         if self.art_state_sampling:
             obs["art_state_id"] = self._art_state_ids
             obs["art_state_steps"] = self._art_state_steps
-            obs.update(self._art_metadata)
         return obs
 
     def _append_history(self, obs: dict[str, Any], env_idx: Iterable[int]) -> None:
@@ -1011,63 +999,42 @@ class LiberoEnv(gym.Env):
         )
 
     def capture_art_states(self) -> None:
-        """Save live policy-decision states from leaders or bounded trajectories.
+        """Save live group leaders at policy decision boundaries.
 
         ``restore_art_states`` consumes and clears the bank, so each rollout's
         frozen policy owns the states it collects.
         """
-        candidates = np.arange(
-            0,
-            self.num_envs,
-            self.group_size if self.art_state_sampler == "legacy" else 1,
-        )
-        candidates = candidates[
-            ~self.success_once[candidates]
-            & (self.elapsed_steps[candidates] < self.cfg.max_episode_steps)
+        leaders = np.arange(0, self.num_envs, self.group_size)
+        leaders = leaders[
+            ~self.success_once[leaders]
+            & (self.elapsed_steps[leaders] < self.cfg.max_episode_steps)
         ]
-        records = [
-            {
-                "env_id": int(env_id),
-                "task_id": self.task_ids[env_id],
-                "reset_state_id": self.reset_state_ids[env_id],
-                "elapsed_steps": int(self.elapsed_steps[env_id]),
-                "prev_step_reward": self.prev_step_reward[env_id],
-            }
-            for env_id in candidates
-        ]
-        if self.art_state_sampler == "legacy":
-            for record, snapshot in zip(
-                records, self.env.capture_snapshots(candidates)
-            ):
-                self._art_states.append({**record, "snapshot": snapshot})
-        else:
-            if self._art_reservoir is None:
-                self._art_reservoir = ARTStateReservoir(
-                    self.num_envs,
-                    int(self.cfg.get("art_states_per_trajectory", 4)),
-                    self._generator,
-                )
-            self._art_reservoir.capture(records, self.env.capture_snapshots)
+        for env_id, snapshot in zip(leaders, self.env.capture_snapshots(leaders)):
+            self._art_states.append(
+                {
+                    "snapshot": snapshot,
+                    "task_id": self.task_ids[env_id],
+                    "reset_state_id": self.reset_state_ids[env_id],
+                    "elapsed_steps": self.elapsed_steps[env_id],
+                    "prev_step_reward": self.prev_step_reward[env_id],
+                }
+            )
 
     def restore_art_states(self) -> dict:
-        """Label finished source trajectories, then clone selected states K times."""
+        """Sample task-matched temporal strata and clone each state across a group."""
         leaders = np.arange(0, self.num_envs, self.group_size)
-        states = (
-            self._art_states
-            if self.art_state_sampler == "legacy"
-            else self._art_reservoir.records()
-        )
-        for state in states:
-            state["source_success"] = bool(self.success_once[state["env_id"]])
-        selected = select_art_states(
-            states,
-            self.task_ids[leaders],
-            self._generator,
-            self.art_state_sampler,
-            self.cfg.max_episode_steps,
-            float(self.cfg.get("art_success_state_fraction", 0.7)),
-            float(self.cfg.get("art_failure_max_step_fraction", 0.5)),
-        )
+        selected = [None] * self.num_group
+        for task_id in np.unique(self.task_ids[leaders]):
+            groups = np.flatnonzero(self.task_ids[leaders] == task_id)
+            states = sorted(
+                [state for state in self._art_states if state["task_id"] == task_id],
+                key=lambda state: state["elapsed_steps"],
+            )
+            for group, stratum in zip(
+                groups, np.array_split(np.arange(len(states)), len(groups))
+            ):
+                index = self._generator.choice(stratum)
+                selected[group] = states[index]
         snapshots = [
             state["snapshot"] for state in selected for _ in range(self.group_size)
         ]
@@ -1079,23 +1046,7 @@ class LiberoEnv(gym.Env):
             self.prev_step_reward[rows] = state["prev_step_reward"]
             self.reset_state_ids[rows] = state["reset_state_id"]
         self._init_task_and_trial_ids()
-        self._art_metadata = {
-            key: torch.tensor(values, dtype=torch.int64).repeat_interleave(
-                self.group_size
-            )
-            for key, values in {
-                "art_source_success": [state["source_success"] for state in selected],
-                "art_source_trajectory_id": [
-                    self.seed_offset * self.num_envs + state["env_id"]
-                    for state in selected
-                ],
-                "art_source_reset_state_id": [
-                    state["reset_state_id"] for state in selected
-                ],
-            }.items()
-        }
         self._art_states.clear()
-        self._art_reservoir = None
         self._art_state_steps = torch.from_numpy(self._elapsed_steps.copy())
         obs = self._wrap_obs(self.current_raw_obs)
         self._add_art_sim_state_error(obs)

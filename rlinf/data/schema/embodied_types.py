@@ -1720,14 +1720,7 @@ class EnvOutput:
             "states": states,
             "task_descriptions": task_descriptions,
         }
-        for key in (
-            "art_sim_state_error",
-            "art_state_id",
-            "art_state_steps",
-            "art_source_success",
-            "art_source_trajectory_id",
-            "art_source_reset_state_id",
-        ):
+        for key in ("art_sim_state_error", "art_state_id"):
             if key in obs:
                 prepared[key] = obs[key]
         return prepared
