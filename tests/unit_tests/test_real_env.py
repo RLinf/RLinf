@@ -4439,6 +4439,18 @@ def test_rocr_visible_devices_applies_before_hip_numbering(kfd_topology, monkeyp
     assert AMDGPUManager.get_dri_prime(1) == "pci-0000_e3_00_0"
 
 
+@pytest.mark.parametrize("rocr_visible", ["-1", "6,-1"])
+def test_a_negative_rocr_visible_index_pins_no_gpu(
+    kfd_topology, monkeypatch, rocr_visible
+):
+    # ROCr exposes no GPU for an out-of-range index, so none may be pinned; the
+    # last GPU must not be picked as Python's gpus[-1] would.
+    kfd_topology(_W7900D_GPU_BUSES)
+    monkeypatch.setenv("ROCR_VISIBLE_DEVICES", rocr_visible)
+
+    assert AMDGPUManager.get_dri_prime(0) is None
+
+
 def test_cdna_gpus_are_not_pinned(kfd_topology):
     kfd_topology([0x0C, 0x22], gfx_target=90402)  # gfx942
 
