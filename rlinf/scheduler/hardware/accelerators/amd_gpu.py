@@ -118,7 +118,12 @@ def _dri_prime_by_hip_device() -> dict[int, str]:
     rocr_visible = os.environ.get("ROCR_VISIBLE_DEVICES", "")
     if rocr_visible:
         try:
-            gpus = [gpus[int(index)] for index in rocr_visible.split(",")]
+            indices = [int(index) for index in rocr_visible.split(",")]
+            # ROCr hides every GPU for an out-of-range index such as -1, while
+            # Python would count a negative index from the end of the list.
+            if any(index < 0 for index in indices):
+                raise IndexError("negative device index")
+            gpus = [gpus[index] for index in indices]
         except (ValueError, IndexError):
             logger.debug(
                 "ROCR_VISIBLE_DEVICES=%s does not match the KFD topology.",
