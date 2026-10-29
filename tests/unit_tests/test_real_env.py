@@ -63,7 +63,7 @@ from rlinf.envs.real.wrappers.teleop.intervention import (  # noqa: E402
     TeleopSample,
 )
 from rlinf.envs.real.xsquare.base import Turtle2Env, Turtle2EnvConfig
-from rlinf.envs.sim.robotwin.patch_camera_near import patch_robotwin
+from rlinf.envs.sim.robotwin import robotwin_env
 from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 from rlinf.robotics import (
     DualFrankaConfig,
@@ -4995,48 +4995,112 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
     assert selected_seed_0 != selected_seed_1
 
 
-def _fake_robotwin_camera(tmp_path, near_line="        near, far = 0.1, 100\n"):
-    camera = tmp_path / "envs" / "camera" / "camera.py"
-    camera.parent.mkdir(parents=True)
-    camera.write_text(
-        "import os\n"
-        "\n"
-        "class Camera:\n"
-        "    def load_camera(self, scene):\n"
-        f"{near_line}"
-        "        return near, far\n"
-    )
-    return camera
+class _RecordingScene:
+    """Stand-in for a SAPIEN scene that records the cameras it is asked for."""
+
+    def __init__(self):
+        self.cameras = []
+        self.steps = 0
+
+    def add_camera(self, name, width, height, fovy, near, far):
+        self.cameras.append((name, near, far))
+        return name
+
+    def step(self):
+        self.steps += 1
 
 
-def test_robotwin_camera_patch_reads_the_near_plane_from_the_environment(
-    tmp_path, monkeypatch
+def _fake_robotwin_camera_class():
+    """A class shaped like RoboTwin's envs.camera.Camera, with its 0.1 m near."""
+
+    class Camera:
+        def __init__(self, bias=0, random_head_camera_dis=0, **kwags):
+            self.bias = bias
+
+        def load_camera(self, scene):
+            near, far = 0.1, 100
+            self.head = scene.add_camera(
+                name="head", width=320, height=240, fovy=1.0, near=near, far=far
+            )
+            self.left = scene.add_camera(
+                name="left", width=320, height=240, fovy=1.0, near=near, far=far
+            )
+            scene.step()
+
+    return Camera
+
+
+def test_each_robotwin_camera_uses_its_own_tasks_near_plane():
+    # A training and an evaluation env in one worker build their cameras from
+    # their own task arguments, in any order, on every reset.
+    camera_cls = _fake_robotwin_camera_class()
+    robotwin_env.install_camera_near_plane(camera_cls)
+    train_scene, eval_scene = _RecordingScene(), _RecordingScene()
+
+    train_camera = camera_cls(bias=0.1, camera_near=0.01)
+    eval_camera = camera_cls(bias=0.1, camera_near=0.05)
+    eval_camera.load_camera(eval_scene)
+    train_camera.load_camera(train_scene)
+
+    assert train_scene.cameras == [("head", 0.01, 100), ("left", 0.01, 100)]
+    assert eval_scene.cameras == [("head", 0.05, 100), ("left", 0.05, 100)]
+    assert (train_camera.head, train_camera.bias) == ("head", 0.1)
+    assert train_scene.steps == 1  # other scene calls reach the real scene
+
+
+@pytest.mark.parametrize("task_args", [{}, {"camera_near": None}])
+def test_a_robotwin_camera_without_a_near_plane_keeps_robotwins_value(task_args):
+    camera_cls = _fake_robotwin_camera_class()
+    robotwin_env.install_camera_near_plane(camera_cls)
+    robotwin_env.install_camera_near_plane(camera_cls)  # a second install is a no-op
+    scene = _RecordingScene()
+
+    camera_cls(**task_args).load_camera(scene)
+
+    assert [near for _, near, _ in scene.cameras] == [0.1, 0.1]
+
+
+@pytest.mark.parametrize(
+    ("env_cfg", "expected_near"),
+    [({}, robotwin_env.DEFAULT_CAMERA_NEAR), ({"camera_near": None}, None)],
+)
+def test_robotwin_env_passes_its_camera_near_to_robotwin(
+    monkeypatch, env_cfg, expected_near
 ):
-    camera = _fake_robotwin_camera(tmp_path)
+    # Fake the RoboTwin modules RoboTwinEnv imports; capture what it hands over.
+    camera_cls = _fake_robotwin_camera_class()
+    handed_over = {}
 
-    assert patch_robotwin(str(tmp_path)) is True
+    class FakeVectorEnv:
+        def __init__(self, task_config, n_envs, env_seeds):
+            handed_over.update(task_config=task_config, n_envs=n_envs)
 
-    namespace = {}
-    exec(camera.read_text(), namespace)
-    monkeypatch.delenv("ROBOTWIN_CAMERA_NEAR", raising=False)
-    assert namespace["Camera"]().load_camera(None) == (0.01, 100)
-    monkeypatch.setenv("ROBOTWIN_CAMERA_NEAR", "0.1")
-    assert namespace["Camera"]().load_camera(None) == (0.1, 100)
+    for name in ("envs", "robotwin", "robotwin.envs"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(
+        sys.modules, "envs.camera", types.SimpleNamespace(Camera=camera_cls)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "robotwin.envs.vector_env",
+        types.SimpleNamespace(VectorEnv=FakeVectorEnv),
+    )
+    monkeypatch.setattr(robotwin_env.mp, "set_start_method", lambda *a, **k: None)
+    monkeypatch.setenv("ASSETS_PATH", "unused")
 
+    env = robotwin_env.RoboTwinEnv.__new__(robotwin_env.RoboTwinEnv)
+    env.cfg = OmegaConf.create(
+        {
+            "assets_path": "/assets",
+            "task_config": {"task_name": "place_shoe"},
+            **env_cfg,
+        }
+    )
+    env.num_envs = 2
+    env.reset_state_ids = torch.tensor([7, 8])
+    env._init_env()
 
-def test_robotwin_camera_patch_is_idempotent(tmp_path):
-    camera = _fake_robotwin_camera(tmp_path)
-    patch_robotwin(str(tmp_path))
-    patched = camera.read_text()
-
-    assert patch_robotwin(str(tmp_path)) is False
-    assert camera.read_text() == patched
-
-
-def test_robotwin_camera_patch_refuses_unknown_robotwin_code(tmp_path):
-    camera = _fake_robotwin_camera(tmp_path, near_line="        near, far = 0.05, 50\n")
-    original = camera.read_text()
-
-    with pytest.raises(RuntimeError, match="RoboTwin has changed"):
-        patch_robotwin(str(tmp_path))
-    assert camera.read_text() == original
+    assert handed_over["task_config"]["camera_near"] == expected_near
+    assert handed_over["task_config"]["task_name"] == "place_shoe"
+    assert "camera_near" not in env.cfg.task_config  # the config is not modified
+    assert camera_cls._rlinf_camera_near_installed
