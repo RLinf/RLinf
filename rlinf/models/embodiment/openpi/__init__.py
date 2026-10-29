@@ -52,6 +52,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     model_cfg = cfg.openpi
+    backend = model_cfg.get("backend", "openpi")
+    if backend not in ("openpi", "sglang"):
+        raise ValueError(f"Unknown OpenPI model backend: {backend!r}")
+    if backend == "sglang" and model_cfg.get("task", "sft") != "rl":
+        raise ValueError("The SGLang Pi0.5 backend requires openpi.task=rl")
     set_torch_compile(bool(OmegaConf.select(model_cfg, "torch_compile", default=True)))
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
@@ -186,7 +191,12 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             is_nft=bool(OmegaConf.select(model_cfg, "is_nft", default=False)),
             config_name=config_name,
         )
-        model = Pi0RL(
+        model_cls = Pi0RL
+        if backend == "sglang":
+            from rlinf.models.embodiment.openpi.sglang_model import SGLangPi05RL
+
+            model_cls = SGLangPi05RL
+        model = model_cls(
             pi0_config,
             **runtime,
             rl_cfg=rl_cfg,
@@ -253,7 +263,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             "use 'eval', 'sft', 'rl', 'dagger', or 'dsrl'."
         )
 
-    if full_weights_path is not None:
+    if backend == "sglang":
+        from rlinf.models.embodiment.openpi.checkpoint import load_sglang_checkpoint
+
+        load_sglang_checkpoint(model, full_weights_path or safetensors_path)
+    elif full_weights_path is not None:
         load_full_weights(
             model,
             full_weights_path,

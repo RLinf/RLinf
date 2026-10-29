@@ -434,6 +434,44 @@ OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``。
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
+使用 SGLang 训练 Pi0.5
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用 ``libero_spatial_ppo_sglang_pi05`` 配置，让 Actor 和 rollout 都运行 SGLang 原生 Pi0.5 网络。RLinf 负责 PPO、FSDP、优化器和权重同步。视觉语言前缀保持冻结，梯度更新动作专家和 value head。rollout worker 在自己的进程内加载模型，使用下面的 embodied 训练入口启动。
+
+Pi0.5 通过 flow matching 生成连续动作。训练时，RLinf 的随机 flow sampler 保存去噪轨迹、采样步和转移 logprob。Actor 用同一套 SGLang 网络重算该步的概率，得到 PPO ratio。这里的 logprob 是 sampler 的转移概率，不是语言模型的 token 概率，也不是最终动作的精确边缘概率密度。
+
+准备包含 RLinf OpenPI transforms、LIBERO 和兼容 SGLang 版本的环境。SGLang 源码需要提供 ``Pi05CoreModel(..., action_training=True)`` 和 ``forward_suffix``；此 RLinf 后端对应 ``yufoo1/SGLang-for-RLinf`` 的 ``diffusion/pi05-rl-training`` 分支。将该源码安装到准备好的环境中：
+
+.. code-block:: bash
+
+   python -m pip install --no-deps -e /path/to/sglang/python
+
+该命令让 Python 使用修改后的 SGLang 源码，并保留当前环境的依赖。准备环境时需要核对 SGLang 的 PyTorch 和 Transformers 版本要求；只有标准 OpenPI 环境还不够。
+
+将 YAML 中的 ``actor.model.model_path`` 改为 checkpoint 路径，然后启动训练：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+该配置使用 eager 执行、``flow_sde`` 噪声、同步权重更新和开启参数 offload 的单 GPU 部署，并要求 ``actor.model.openpi.train_expert_only=True``。此后端暂不支持 LoRA、NFT、RTC 和 CUDA graphs。动作 horizon 和归一化统计必须与 checkpoint 匹配：若 horizon 不同于选用的 OpenPI 配置，设置 ``actor.model.openpi.action_horizon``；需要指定统计文件时，设置 ``actor.model.openpi_data.norm_stats_path``。
+
+设置 checkpoint 路径后，先使用同一配置检查两轮训练：
+
+.. code-block:: bash
+
+   STEPS=2 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+该命令在两次更新后停止，并关闭 checkpoint 保存。若只需检查 logprob 重算、梯度、优化器更新和权重同步，可跳过模拟器，运行模型测试：
+
+.. code-block:: bash
+
+   RLINF_PI05_CHECKPOINT=/path/to/checkpoint \
+     python -m pytest -q tests/unit_tests/test_models.py -k sglang_pi05
+
+checkpoint 的动作 horizon 为 50 时，设置 ``RLINF_PI05_HORIZON=50``。未设置 ``RLINF_PI05_CHECKPOINT`` 时，需要真实权重的测试会跳过，采样器配置检查仍可运行。
+
 .. _pi0-hardware:
 
 在不同硬件后端上运行

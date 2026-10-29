@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -1094,18 +1095,18 @@ _fake_gym = MagicMock()
 _fake_gym.Env = _FakeGymEnv
 _fake_gym.Wrapper = _FakeGymWrapper
 
-if "gymnasium" not in sys.modules:
-    sys.modules["gymnasium"] = _fake_gym
-if "imageio" not in sys.modules:
-    sys.modules["imageio"] = MagicMock()
-
 
 def _delayed_env(delay: float):
-    from rlinf.envs.wrappers import InsertDelay
+    # Keep optional-dependency shims local so other model imports see real modules.
+    modules = {"gymnasium": _fake_gym}
+    if importlib.util.find_spec("imageio") is None:
+        modules["imageio"] = MagicMock()
+    with patch.dict(sys.modules, modules):
+        from rlinf.envs.wrappers import InsertDelay
 
-    return InsertDelay(
-        _FakeEnv(), OmegaConf.create({"type": "constant", "delay": delay})
-    )
+        return InsertDelay(
+            _FakeEnv(), OmegaConf.create({"type": "constant", "delay": delay})
+        )
 
 
 def test_chunk_step_does_not_block_the_caller():
@@ -1720,3 +1721,245 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+
+
+def _sglang_pi05_config():
+    return OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_type": "openpi",
+                    "pi05": True,
+                    "openpi": {"backend": "sglang"},
+                }
+            },
+            "rollout": {"rollout_backend": "sglang", "model": {}},
+            "algorithm": {"loss_type": "actor_critic", "adv_type": "gae"},
+            "runner": {},
+        }
+    )
+
+
+def test_sglang_pi05_native_backend_accepts_ppo():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    validate_sglang_pi05_cfg(_sglang_pi05_config(), only_eval=False)
+
+
+def test_sglang_pi05_backend_validation_preserves_other_models():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    cfg.actor.model.model_type = "cosmos3"
+    del cfg.actor.model.openpi
+    validate_sglang_pi05_cfg(cfg, only_eval=False)
+
+
+def test_sglang_pi05_training_configs_compose(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    directory = root / "examples/embodiment/config"
+    name = "libero_spatial_ppo_sglang_pi05"
+    with initialize_config_dir(config_dir=str(directory), version_base="1.1"):
+        cfg = compose(config_name=name)
+    validate_sglang_pi05_cfg(cfg, only_eval=False)
+    assert cfg.actor.model.openpi.task == "rl"
+    assert cfg.actor.fsdp_config.use_orig_params
+    rollout_model = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    assert rollout_model.openpi.backend == "sglang"
+    assert rollout_model.model_path == cfg.actor.model.model_path
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("rollout.model.openpi.backend", "openpi"),
+        ("rollout.rollout_backend", "huggingface"),
+        ("algorithm.loss_type", "embodied_dagger"),
+        ("algorithm.adv_type", "opd"),
+        ("actor.sync_weight_no_wait", True),
+        ("actor.model.is_lora", True),
+        ("rollout.enable_cuda_graph", True),
+    ],
+)
+def test_sglang_pi05_native_backend_rejects_incompatible_training(key, value):
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    OmegaConf.update(cfg, key, value, force_add=True)
+    with pytest.raises(ValueError):
+        validate_sglang_pi05_cfg(cfg, only_eval=False)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"train_expert_only": False},
+        {"noise_method": "flow_ode"},
+        {"noise_method": "flow_noise"},
+        {"noise_level": 0},
+        {"noise_method": "flow_cps", "ignore_last": False},
+    ],
+)
+def test_sglang_pi05_invalid_sampler_fails_before_loading_network(kwargs):
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.sglang_model import SGLangPi05RL
+    from rlinf.models.embodiment.openpi.tasks.rl import Pi0RLConfig
+
+    options = {
+        "train_expert_only": True,
+        "noise_method": "flow_sde",
+        "noise_level": 0.5,
+    }
+    options.update(kwargs)
+    with pytest.raises(ValueError):
+        SGLangPi05RL(Pi0Config(pi05=True), rl_cfg=Pi0RLConfig(**options))
+
+
+def _sglang_pi05_small_checkpoint_target():
+    # A real module with the checkpoint consumer's fused projection shapes.
+    from torch import nn
+
+    target = nn.Module()
+    target.core_model = nn.Module()
+    target.core_model.layer = nn.Module()
+    target.core_model.layer.self_attn = nn.Module()
+    target.core_model.layer.self_attn.qkv_proj = nn.Linear(4, 8, bias=False)
+    return target
+
+
+def test_sglang_pi05_checkpoint_fuses_every_qkv_shard_and_rejects_partial_weights():
+    from rlinf.models.embodiment.openpi.checkpoint import convert_pi05_weights
+
+    pytest.importorskip("sglang.multimodal_gen.runtime.models.vlas.pi05_policy")
+    target = _sglang_pi05_small_checkpoint_target()
+    state = {
+        "layer.self_attn.q_proj.weight": torch.full((4, 4), 1.0),
+        "layer.self_attn.k_proj.weight": torch.full((2, 4), 2.0),
+        "layer.self_attn.v_proj.weight": torch.full((2, 4), 3.0),
+    }
+    converted = convert_pi05_weights(state, target)
+    target.load_state_dict(converted)
+    torch.testing.assert_close(
+        target.core_model.layer.self_attn.qkv_proj.weight,
+        torch.cat(list(state.values())),
+    )
+    del state["layer.self_attn.k_proj.weight"]
+    with pytest.raises(ValueError, match="Incomplete"):
+        convert_pi05_weights(state, target)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("RLINF_PI05_CHECKPOINT"),
+    reason="Set RLINF_PI05_CHECKPOINT to run the full policy training test",
+)
+@pytest.mark.parametrize("checkpointing", [False, True])
+def test_sglang_pi05_full_policy_ppo_and_weight_sync(monkeypatch, checkpointing):
+    """Real weights, transforms, PPO backward, and bucket reload on one accelerator."""
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.algorithms.registry import policy_loss
+    from rlinf.hybrid_engines.weight_syncer import BucketWeightSyncer
+    from rlinf.models.embodiment.openpi import get_model
+    from rlinf.scheduler import Worker
+
+    if not Worker.torch_platform.is_available():
+        pytest.skip("An accelerator is required for the full Pi0.5 checkpoint")
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        cfg = compose(config_name="libero_spatial_ppo_sglang_pi05")
+    cfg.actor.model.model_path = os.environ["RLINF_PI05_CHECKPOINT"]
+    # Official RLinf Pi05 checkpoints use horizon 10; LeRobot usually uses 50.
+    if "RLINF_PI05_HORIZON" in os.environ:
+        OmegaConf.update(
+            cfg.actor.model,
+            "openpi.action_horizon",
+            int(os.environ["RLINF_PI05_HORIZON"]),
+            force_add=True,
+        )
+    device = Worker.torch_device_type
+    torch.manual_seed(17)
+    model = get_model(cfg.actor.model).to(device).eval()
+    env_obs = {
+        "main_images": torch.randint(0, 256, (1, 224, 224, 3), dtype=torch.uint8),
+        "wrist_images": torch.randint(0, 256, (1, 224, 224, 3), dtype=torch.uint8),
+        "states": torch.zeros(1, 8),
+        "task_descriptions": ["pick up the black bowl"],
+    }
+    actions, rollout = model.predict_action_batch(env_obs, mode="train")
+    assert actions.shape == (1, 5, 7)
+    assert rollout["prev_logprobs"].shape == actions.shape
+    assert rollout["forward_inputs"]["chains"].shape[1] == model.num_steps + 1
+    model.train()
+    if checkpointing:
+        model.gradient_checkpointing_enable()
+    replay = model(forward_inputs=rollout["forward_inputs"])
+    torch.testing.assert_close(
+        replay["logprobs"], rollout["prev_logprobs"], rtol=0, atol=1e-5
+    )
+    torch.testing.assert_close(
+        replay["values"], rollout["prev_values"].flatten(), rtol=0, atol=1e-5
+    )
+    trainable = {name: p for name, p in model.named_parameters() if p.requires_grad}
+    before = {name: p.detach().cpu().clone() for name, p in trainable.items()}
+    optimizer = torch.optim.AdamW(trainable.values(), lr=5e-6)
+    loss, metrics = policy_loss(
+        loss_type="actor_critic",
+        task_type="embodied",
+        logprob_type="chunk_level",
+        reward_type="chunk_level",
+        single_action_dim=7,
+        logprobs=replay["logprobs"],
+        old_logprobs=rollout["prev_logprobs"],
+        values=replay["values"],
+        prev_values=rollout["prev_values"],
+        advantages=torch.ones(1, 1, device=device),
+        returns=rollout["prev_values"] + 1,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        value_clip=0.2,
+        huber_delta=10.0,
+    )
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert all(
+        p.grad is not None and torch.isfinite(p.grad).all() for p in trainable.values()
+    )
+    torch.nn.utils.clip_grad_norm_(trainable.values(), 1.0)
+    optimizer.step()
+    updated = {name: p.detach().cpu().clone() for name, p in trainable.items()}
+    assert not torch.equal(
+        before["core_model.action_out_proj.weight"],
+        updated["core_model.action_out_proj.weight"],
+    )
+    assert not torch.equal(
+        before["value_head.mlp.0.weight"], updated["value_head.mlp.0.weight"]
+    )
+    optimizer.zero_grad(set_to_none=True)
+    model.eval()
+    with torch.no_grad():
+        expected = model(forward_inputs=rollout["forward_inputs"])
+    model.load_state_dict(before, strict=False)
+    syncer = BucketWeightSyncer(
+        bucket_size=16 * 1024**2, bucket_dtype=None, bucket_device="cpu"
+    )
+
+    async def synchronize():
+        queue = asyncio.Queue()
+        await syncer.init_sender(updated, list(updated), queue.put)
+        await syncer.init_receiver(model.state_dict(), queue.get)
+        await syncer.sync(updated, queue.put, version=1)
+        return await syncer.apply(model, queue.get)
+
+    assert asyncio.run(synchronize()) == 1
+    with torch.no_grad():
+        synced = model(forward_inputs=rollout["forward_inputs"])
+    torch.testing.assert_close(synced["logprobs"], expected["logprobs"], rtol=0, atol=0)
+    torch.testing.assert_close(synced["values"], expected["values"], rtol=0, atol=0)
+    assert not torch.equal(synced["logprobs"], rollout["prev_logprobs"])

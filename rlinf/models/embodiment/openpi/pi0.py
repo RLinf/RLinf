@@ -104,6 +104,21 @@ class Pi0(model.BaseModel):
         self.embed_dtype = _str_to_dtype(config.dtype)
         self._config = config
 
+        self._build_network(config)
+        self._init_rlinf_runtime(
+            num_steps=num_steps,
+            action_env_dim=action_env_dim,
+            action_chunk=action_chunk,
+            config_name=config_name,
+            state_indices=state_indices,
+            rlt_cfg=rlt_cfg,
+        )
+        # PI0Pytorch.__init__ sets this globally so fp32 action/value heads
+        # use TF32. OpenPI RL keeps this even though it un-compiles sample_actions.
+        torch.set_float32_matmul_precision("high")
+
+    def _build_network(self, config: Pi0Config) -> None:
+        """Construct the backbone and action projections."""
         paligemma_config = gemma.get_config(config.paligemma_variant)
         action_expert_config = gemma.get_config(config.action_expert_variant)
 
@@ -156,17 +171,6 @@ class Pi0(model.BaseModel):
             )
 
         self._init_weights()
-        self._init_rlinf_runtime(
-            num_steps=num_steps,
-            action_env_dim=action_env_dim,
-            action_chunk=action_chunk,
-            config_name=config_name,
-            state_indices=state_indices,
-            rlt_cfg=rlt_cfg,
-        )
-        # PI0Pytorch.__init__ sets this globally so fp32 action/value heads
-        # use TF32. OpenPI RL keeps this even though it un-compiles sample_actions.
-        torch.set_float32_matmul_precision("high")
 
     def _init_weights(self):
         """Initialize projection weights."""

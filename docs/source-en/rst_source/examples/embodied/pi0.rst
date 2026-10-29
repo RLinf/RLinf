@@ -470,6 +470,70 @@ the LIBERO environment, run:
 
 --------------
 
+Train Pi0.5 With SGLang
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``libero_spatial_ppo_sglang_pi05`` to run both Actor and rollout with the
+native SGLang Pi0.5 network. RLinf manages PPO, FSDP, the optimizer, and weight
+synchronization. The visual-language prefix stays frozen; gradients update the
+action expert and value head. The rollout worker loads the model in its own
+process, so use the embodied training entry point below.
+
+Pi0.5 generates continuous actions through flow matching. During training,
+RLinf's stochastic flow sampler records the denoising chain, sampled step, and
+transition log probabilities. Actor replays that transition with the same
+SGLang network to compute the PPO ratio. These are the sampler's transition
+probabilities, rather than language-model token probabilities or the exact
+marginal density of the final action.
+
+Prepare an environment containing RLinf's OpenPI transforms, LIBERO, and a
+compatible SGLang installation. The SGLang checkout must provide
+``Pi05CoreModel(..., action_training=True)`` and ``forward_suffix``; use the
+``diffusion/pi05-rl-training`` branch of ``yufoo1/SGLang-for-RLinf`` with this
+RLinf backend. Install that checkout into your prepared environment:
+
+.. code-block:: bash
+
+   python -m pip install --no-deps -e /path/to/sglang/python
+
+This selects the edited SGLang source while retaining the environment's
+dependencies. Check SGLang's PyTorch and Transformers requirements when preparing
+the environment: the standard OpenPI environment alone is insufficient.
+
+Set ``actor.model.model_path`` in the YAML to your checkpoint, then launch:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+The recipe uses eager execution, ``flow_sde`` noise, synchronous weight updates,
+and one GPU with parameter offloading. It requires
+``actor.model.openpi.train_expert_only=True``. LoRA, NFT, RTC, and CUDA graphs
+are unsupported by this backend. Match the checkpoint's action horizon and
+normalization statistics: set ``actor.model.openpi.action_horizon`` when it
+differs from the selected OpenPI config and
+``actor.model.openpi_data.norm_stats_path`` for an explicit stats file.
+
+After setting the checkpoint path, check two training iterations before a
+longer run:
+
+.. code-block:: bash
+
+   STEPS=2 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+This uses the same recipe, stops after two updates, and disables checkpoint
+saving. To check replay log probabilities, gradients, optimizer updates, and
+weight synchronization without a simulator, run the model tests:
+
+.. code-block:: bash
+
+   RLINF_PI05_CHECKPOINT=/path/to/checkpoint \
+     python -m pytest -q tests/unit_tests/test_models.py -k sglang_pi05
+
+Set ``RLINF_PI05_HORIZON=50`` when testing a checkpoint with that action horizon.
+The tests requiring real weights are skipped when ``RLINF_PI05_CHECKPOINT`` is
+unset; sampler/configuration checks remain runnable without the checkpoint.
+
 .. _pi0-hardware:
 
 Run on Different Hardware Backends
