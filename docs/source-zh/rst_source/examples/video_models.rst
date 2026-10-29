@@ -344,3 +344,41 @@ Wan2.2 图像和视频实验上升更快，SD3 随后达到接近的区间。该
 
 Scalar 定义与 logger 目录结构见
 :doc:`训练指标 </rst_source/reference/metrics>`。
+
+
+验证 Offload 数据传输
+---------------------
+
+比较训练耗时之前，先验证真实 CUDA 到 pinned CPU 的传输，以及共享 HF offload/reload 路径：
+
+.. code:: bash
+
+   pytest tests/unit_tests/test_utils.py tests/unit_tests/test_models.py \
+     -k 'pinned_offload or hf_rollout_offload_reload' \
+     -o junit_family=xunit1 --junitxml=offload-tests.xml
+
+CUDA 测试检查数值、布局、dtype 和异常后的恢复。HF 测试使用非 diffusion 的 MLP 模块，分别在有、无辅助模型时执行三轮 offload/reload，并将 ``host_peak_rss_bytes`` 和 ``offloaded_tensor_bytes`` 写入 JUnit properties。CUDA 单测 CI 会上传这些 XML 报告。仅有 CPU 时会跳过 CUDA 测试。OpenPI PPO e2e 也会开启 rollout offload，运行两轮训练。
+
+2026 年 10 月 29 日，16 项定向测试在 NVIDIA A100 80GB PCIe、PyTorch 2.6.0+cu124 环境中通过。测试使用的 Python 源码与 commit ``3985e819`` 一致：
+
+.. list-table:: 小模型 Offload 测量
+   :header-rows: 1
+
+   * - 模型
+     - Offload Tensor 大小
+     - 进程 RSS 峰值
+   * - 主 MLP
+     - 4.04 MiB
+     - 1050.67 MiB
+   * - 主 MLP + 两个辅助 MLP
+     - 12.13 MiB
+     - 1088.18 MiB
+
+RSS 是测试进程整个生命周期的高水位，包含 import 和 CUDA runtime，不是单项测试的内存增量，也不是完整训练的测量结果。Tensor 大小统计存活的 offload 参数和 buffer，不包含 pinned allocator 缓存。规划 Wan 训练内存时，应分别测量各 worker 和整机峰值。
+
+记录实验版本
+------------
+
+为 main/PR 对照标注每次运行实际使用的源码版本。``run_diffusion.sh`` 会在运行日志目录中将 commit SHA 和工作区状态保存到 ``git_revision.txt``，将已跟踪文件的改动保存到 ``git_diff.patch``，并将启动命令写入 ``run_diffusion.log``。请将这些文件与解析后的配置和指标一同保存。空 patch 表示已跟踪文件没有改动；未跟踪文件会出现在状态记录中，但不会写入 patch。
+
+实验标签应使用记录的 SHA，而不是分支名或 PR 编号。没有版本记录的历史运行应标为 ``source revision unrecorded``，不要用当前 HEAD 追溯标注旧实验。
