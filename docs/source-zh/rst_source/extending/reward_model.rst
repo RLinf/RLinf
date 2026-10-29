@@ -358,7 +358,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 - ``reward_mode`` 控制 reward model 在每一步、终止帧，还是历史窗口上推理。
 - ``reward_weight`` 和 ``env_reward_weight`` 控制 learned reward 与环境 reward 的加权组合。
-- ``reward_threshold`` 仅对 ``model_type: resnet`` 生效：低于阈值的 sigmoid 概率会被置为 ``0``。
+- ``reward_threshold`` 仅对 ``model_type: resnet`` 生效：非负阈值使 Worker 在概率达到或超过阈值时返回 ``1``，否则返回 ``0``；省略、设为 ``null`` 或负数时返回原始概率。
   对 ``buffered_vlm`` / VLM Trend reward，标量 reward 由 ``reward_parser_params`` 定义；
   对 ``shaped_vlm``，标量来自 potential 差分和一次性 success bonus。
   配置里的 ``reward_threshold`` 当前不会被 VLM 路径读取。
@@ -877,7 +877,7 @@ Reward Model 训练
 训练好 reward model 后，有两种方式在真机上使用：
 
 - **真机遥操作 + 在线推理** （见下文）——使用 SpaceMouse 遥操作机械臂，
-  同时让 reward model 在 GPU 节点上运行，实时向终端输出成功概率。
+  同时让 reward model 在 GPU 节点上运行，实时向终端输出二值 reward。
   无需启动完整 RL 训练循环。
 - **真机 RL 训练** （参见 :doc:`../examples/embodied/franka_reward_model`）——
   将 reward model 接入物理 Franka 上的完整 RL 训练循环。
@@ -887,7 +887,7 @@ Reward Model 训练
 
 获得 reward model checkpoint 后，``examples/reward/eval_realworld_teleop.py`` 提供了一种
 遥操作模式：SpaceMouse 控制机器人运动，reward model 在 GPU 节点上运行，
-实时在终端打印每步成功概率。
+实时在终端打印每步二值 reward。
 
 此功能的适用场景：
 
@@ -969,7 +969,6 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
 
    reward:
      use_reward_model: True
-     use_reward_prob: True    # 打印每步原始 sigmoid 概率到终端
      standalone_realworld: True
      reward_mode: "per_step"
      reward_threshold: 0.2
@@ -982,9 +981,8 @@ Reward worker 被部署在 GPU 节点（``"4090"``）上，与机器人节点（
 关键配置字段说明：
 
 - ``reward.use_reward_model: True`` — 启用 reward model 推理。
-- ``reward.use_reward_prob: True`` — 每步将原始 sigmoid 概率打印到终端。
 - ``reward.standalone_realworld: True`` — 利用 reward model 直接判断成功/失败并触发重置。
-- ``reward.reward_threshold`` — 概率阈值，低于该值的成功判定将被抑制。根据模型校准情况调整。
+- ``reward.reward_threshold`` — 非负阈值将概率转换为二值 reward（达到或超过阈值为 ``1``，否则为 ``0``）；省略、设为 ``null`` 或负数时保留原始概率。原始概率不保证满足现有要求 reward 精确等于 ``1.0`` 的成功条件。
 - ``reward.model.model_path`` — 指向训练好的 reward model checkpoint。
 
 启动
@@ -1031,7 +1029,7 @@ SpaceMouse 控制说明：
 2. ``EmbodiedRewardWorker`` 通过 ``EmbodiedRewardWorker.launch_for_realworld(...)``
    在 GPU 节点上启动，在启动时一次性完成初始化。
 3. 每步遥操作中，从观测中提取腕部相机图像（``obs["main_images"]``）并发送给 reward worker 进行推理。
-4. 原始 sigmoid 概率被打印到终端。当 ``standalone_realworld=True`` 时，
+4. 终端通过 ``rm_reward`` 打印阈值处理后的二值 reward。当 ``standalone_realworld=True`` 时，
    reward model 还直接驱动成功/失败判定和环境重置。
 
 与 :doc:`../examples/embodied/franka_reward_model` 中的完整 RL 流程相比，
