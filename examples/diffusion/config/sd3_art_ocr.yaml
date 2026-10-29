@@ -1,0 +1,176 @@
+defaults:
+  - env/ocr@env.train
+  - env/ocr@env.eval
+  - model/sd3@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:DIFFUSION_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  weight_sync_interval: 1
+  use_training_pipeline: False
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "sd3_art_ocr"
+    logger_backends: ["tensorboard"]
+  max_epochs: 70
+  max_steps: -1
+  only_eval: False
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: False
+  group_size: 8
+  reward_coef: 1.0
+  reward_type: chunk_level
+  logprob_type: token_level
+  entropy_type: token_level
+  update_epoch: 1
+  adv_type: raw
+  loss_type: embodied_art
+  loss_agg_func: "token-mean"
+  gamma: 1.0
+  gae_lambda: 1.0
+  filter_rewards: False
+
+  art_updates_per_rollout: 2
+  art_covariance_reduction: unbiased
+  art_direction_mode: historical
+  art_scale_mode: unit_normalized_covariance
+  art_guidance_gain: 1.0
+  art_zero_signal_mode: exact
+  art_zero_signal_atol: 0.0
+  art_loss_space: velocity_linear_sigma
+  art_mask_metric: sde_kl
+  art_mask_threshold: 1.0e-5
+  art_reference_noise_level: 0.8
+  art_corrective_mask_enabled: True
+  art_exclude_final_step: False
+  art_timestep_fraction: 0.5
+  art_reward_reduction: mean
+  art_eps: 1.0e-5
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+  train:
+    total_num_envs: 64
+    group_size: ${algorithm.group_size}
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
+    rollout_epoch: 2
+    dataset:
+      type: "visual.ocr_dataset"
+      path: /path/to/dataset/ocr
+      split: "train"
+    reward:
+      type: "single"
+      model: "visual.ocr"
+      key: "avg"
+      use_gpu: False
+      lang: "en"
+  eval:
+    total_num_envs: 32
+    group_size: 1
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
+    is_eval: True
+    rollout_epoch: 1
+    dataset:
+      type: "visual.ocr_dataset"
+      path: /path/to/dataset/ocr
+      split: "test"
+    reward:
+      type: "single"
+      model: "visual.ocr"
+      key: "avg"
+      use_gpu: False
+      lang: "en"
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  collect_prev_infos: False
+  collect_final_values: False
+  enable_offload: True
+  pipeline_stage_num: 1
+  model:
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 64
+  seed: 42
+  enable_offload: False
+  model:
+    model_path: /path/to/stable-diffusion-3.5-medium
+    precision: "bf16"
+    sd3:
+      rl_mode: art
+      resolution: 512
+      num_steps: 10
+      eval_num_steps: 40
+      timestep_fraction: 0.99
+      guidance_scale: 1.0
+      eval_guidance_scale: 1.0
+      cfg: False
+      noise_level: 0.0
+      eval_noise_level: 0.0
+      train_sampler: ode
+      eval_sampler: ode
+      max_sequence_length: 128
+      output_type: "pt"
+      use_lora: True
+      lora_rank: 32
+      lora_alpha: 64
+      lora_path: null
+      offload_auxiliary_modules: True
+  optim:
+    lr: 1.0e-4
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-4
+    clip_grad: 1.0
+    critic_warmup_steps: 0
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+    enable_gradient_accumulation: True
+    reshard_after_forward: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

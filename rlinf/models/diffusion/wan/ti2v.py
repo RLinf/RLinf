@@ -81,6 +81,7 @@ class Wan22TI2VModel(Wan22Model):
         num_steps: int,
         generator=None,
         latents=None,
+        return_art_trajectory: bool = False,
     ):
         image_condition = conditions["image_condition"]
         device = prompt_embeds.device
@@ -120,7 +121,10 @@ class Wan22TI2VModel(Wan22Model):
         ).contiguous()
 
         self.pipeline._num_timesteps = len(timesteps)
+        art_states = []
         for t in timesteps:
+            if return_art_trajectory:
+                art_states.append(latents.detach())
             latent_model_input = (
                 (1 - first_frame_mask) * latent_condition + first_frame_mask * latents
             ).to(dtype=model_dtype)
@@ -152,6 +156,7 @@ class Wan22TI2VModel(Wan22Model):
             "latent_condition": latent_condition,
             "first_frame_mask": first_frame_mask,
         }
+        denoise_info.update(self._art_trajectory_info(art_states, timesteps))
         return images, latents, denoise_info
 
     def _transformer_forward_i2v(

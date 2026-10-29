@@ -38,7 +38,7 @@ class Wan22Config:
     cfg: bool = False
     max_sequence_length: int = 512
     output_type: str = "pt"
-    rl_mode: Literal["flow-grpo", "nft"] = "nft"
+    rl_mode: Literal["flow-grpo", "nft", "art"] = "nft"
     weight_format: Literal["diffusers", "vidar"] = "diffusers"
     vidar_path: str | None = None
     use_lora: bool = True
@@ -68,7 +68,7 @@ class Wan22Config:
 
 
 class Wan22Model(torch.nn.Module, BasePolicy):
-    """Shared Wan 2.2 video policy logic for RL/NFT rollout."""
+    """Shared Wan 2.2 video policy logic for diffusion RL."""
 
     def __init__(self, config: Wan22Config, pipeline: Any):
         super().__init__()
@@ -87,12 +87,20 @@ class Wan22Model(torch.nn.Module, BasePolicy):
     def to(self, device):
         module = super().to(device)
         device = torch.device(device)
-        if device.type == "cpu":
+        if device.type == "cpu" and not getattr(self, "_nft_reference_only", False):
             self.pipeline.vae.to(device=device)
             self.pipeline.text_encoder.to(device=device)
             if getattr(self.pipeline, "image_encoder", None) is not None:
                 self.pipeline.image_encoder.to(device=device)
         return module
+
+    def prepare_nft_reference_model(self) -> None:
+        """Release pipeline modules that NFT reference forward does not use."""
+        self._nft_reference_only = True
+        self.pipeline.vae = None
+        self.pipeline.text_encoder = None
+        if hasattr(self.pipeline, "image_encoder"):
+            self.pipeline.image_encoder = None
 
     def obs_processor(self, env_obs: Any) -> tuple[list[str], dict[str, Any]]:
         raise NotImplementedError
@@ -115,6 +123,7 @@ class Wan22Model(torch.nn.Module, BasePolicy):
         num_steps: int,
         generator=None,
         latents=None,
+        return_art_trajectory: bool = False,
     ):
         raise NotImplementedError
 
@@ -140,7 +149,7 @@ class Wan22Model(torch.nn.Module, BasePolicy):
     def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
         del kwargs
         raise NotImplementedError(
-            "Wan2.2 flow-grpo is unavailable now. Use rl_mode='nft'."
+            "Wan2.2 flow-grpo is unavailable now. Use rl_mode='nft' or 'art'."
         )
 
     def _prepare_nft_forward_inputs(
@@ -234,6 +243,7 @@ class Wan22Model(torch.nn.Module, BasePolicy):
             num_steps=num_steps,
             generator=kwargs.get("generator"),
             latents=kwargs.get("latents"),
+            return_art_trajectory=not is_eval and self.config.rl_mode == "art",
         )
         if is_eval:
             return images, {"prev_values": None}
@@ -249,15 +259,20 @@ class Wan22Model(torch.nn.Module, BasePolicy):
             device=final_latents.device,
             dtype=final_latents.dtype,
         )
-        forward_inputs = {
-            "nft_x0": final_latents.movedim(2, 1).detach(),
-            "nft_noise_level": torch.zeros(
-                final_latents.shape[0],
-                device=final_latents.device,
-                dtype=final_latents.dtype,
-            ),
-            "prompt_embeds": prompt_embeds.detach(),
-        }
+        forward_inputs = {"prompt_embeds": prompt_embeds.detach()}
+        if self.config.rl_mode == "nft":
+            forward_inputs.update(
+                {
+                    "nft_x0": final_latents.movedim(2, 1).detach(),
+                    "nft_noise_level": torch.zeros(
+                        final_latents.shape[0],
+                        device=final_latents.device,
+                        dtype=final_latents.dtype,
+                    ),
+                }
+            )
+        elif self.config.rl_mode == "art":
+            forward_inputs["art_endpoint"] = final_latents.movedim(2, 1).detach()
         if self.config.cfg:
             forward_inputs["negative_prompt_embeds"] = negative_prompt_embeds.detach()
         for key, value in denoise_info.items():
@@ -280,6 +295,7 @@ class Wan22Model(torch.nn.Module, BasePolicy):
         num_steps: int,
         generator=None,
         latents=None,
+        return_art_trajectory: bool = False,
     ):
         max_batch = int(self.config.max_generation_batch_size)
         if max_batch <= 0 or prompt_embeds.shape[0] <= max_batch:
@@ -291,6 +307,7 @@ class Wan22Model(torch.nn.Module, BasePolicy):
                 num_steps=num_steps,
                 generator=generator,
                 latents=latents,
+                return_art_trajectory=return_art_trajectory,
             )
 
         image_chunks = []
@@ -313,6 +330,7 @@ class Wan22Model(torch.nn.Module, BasePolicy):
                 num_steps=num_steps,
                 generator=generator,
                 latents=chunk_latents,
+                return_art_trajectory=return_art_trajectory,
             )
             image_chunks.append(images)
             latent_chunks.append(final_latents)
@@ -339,6 +357,26 @@ class Wan22Model(torch.nn.Module, BasePolicy):
         if hasattr(self.pipeline.scheduler, "sigmas"):
             self.pipeline.scheduler.sigmas = self.pipeline.scheduler.sigmas.to(device)
         return self.pipeline.scheduler.timesteps
+
+    def _art_trajectory_info(
+        self,
+        states: list[torch.Tensor],
+        timesteps: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Pack Wan ODE states in the actor's time-major latent layout."""
+        if not states:
+            return {}
+        scheduler_sigmas = self.pipeline.scheduler.sigmas[: timesteps.numel() + 1].to(
+            device=states[0].device,
+            dtype=torch.float32,
+        )
+        sigmas = scheduler_sigmas[:-1].unsqueeze(0).expand(states[0].shape[0], -1)
+        sigmas_next = scheduler_sigmas[1:].unsqueeze(0).expand(states[0].shape[0], -1)
+        return {
+            "art_states": torch.stack([state.movedim(2, 1) for state in states], dim=1),
+            "art_sigmas": sigmas,
+            "art_sigmas_next": sigmas_next,
+        }
 
     def _call_transformer(self, **kwargs):
         if not self.config.compile_transformer_forward:
