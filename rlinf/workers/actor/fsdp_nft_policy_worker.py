@@ -344,7 +344,11 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                     ref_config.compile_transformer_forward = False
                 ref_model.eval()
                 ref_model.requires_grad_(False)
-                ref_model.prepare_nft_reference_model()
+                prepare_reference = getattr(
+                    ref_model, "prepare_nft_reference_model", None
+                )
+                if callable(prepare_reference):
+                    prepare_reference()
                 self._cached_ref_model = ref_model
             else:
                 ref_model = self._cached_ref_model
