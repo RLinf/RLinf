@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import ctypes
+import functools
 import json
 import os
 from typing import Optional, Union
@@ -32,6 +33,64 @@ from rlinf.envs.utils import (
 )
 
 __all__ = ["RoboTwinEnv"]
+
+# RoboTwin creates its cameras with a 0.1 m near plane. SAPIEN 3.0.1 clips
+# everything closer, which hides the gripper fingers from the wrist cameras the
+# released checkpoints were trained with.
+DEFAULT_CAMERA_NEAR = 0.01
+# Task argument that carries the near plane to RoboTwin's Camera.
+CAMERA_NEAR_ARG = "camera_near"
+
+
+class _NearPlaneScene:
+    """Forward a SAPIEN scene, creating every camera with a fixed near plane."""
+
+    def __init__(self, scene, near: float) -> None:
+        self._scene = scene
+        self._near = near
+
+    def add_camera(self, *args, **kwargs):
+        kwargs["near"] = self._near
+        return self._scene.add_camera(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._scene, name)
+
+
+def install_camera_near_plane(camera_cls: type) -> None:
+    """Let each RoboTwin task choose the near plane of its cameras.
+
+    RoboTwin builds a new ``Camera`` from the task arguments every time it sets
+    up a task, which happens on every reset. After this call, a ``camera_near``
+    task argument sets the near plane of every camera that ``Camera`` creates;
+    ``None`` or no argument keeps RoboTwin's own value. The value travels with
+    each task, so tasks in one process can use different values. The class is
+    changed in memory, so the RoboTwin checkout stays untouched, and installing
+    the hook again has no further effect.
+
+    Args:
+        camera_cls: RoboTwin's ``envs.camera.Camera`` class.
+    """
+    if getattr(camera_cls, "_rlinf_camera_near_installed", False):
+        return
+    init = camera_cls.__init__
+    load_camera = camera_cls.load_camera
+
+    @functools.wraps(init)
+    def init_with_near(self, *args, **kwargs):
+        init(self, *args, **kwargs)
+        self._rlinf_camera_near = kwargs.get(CAMERA_NEAR_ARG)
+
+    @functools.wraps(load_camera)
+    def load_camera_with_near(self, scene, *args, **kwargs):
+        near = getattr(self, "_rlinf_camera_near", None)
+        if near is not None:
+            scene = _NearPlaneScene(scene, near)
+        return load_camera(self, scene, *args, **kwargs)
+
+    camera_cls.__init__ = init_with_near
+    camera_cls.load_camera = load_camera_with_near
+    camera_cls._rlinf_camera_near_installed = True
 
 
 class RoboTwinEnv(gym.Env):
@@ -90,12 +149,18 @@ class RoboTwinEnv(gym.Env):
         mp.set_start_method("spawn", force=True)
         os.environ["ASSETS_PATH"] = self.cfg.assets_path
 
+        from envs.camera import Camera
         from robotwin.envs.vector_env import VectorEnv
+
+        install_camera_near_plane(Camera)
+        # RoboTwin hands the task arguments to every Camera it builds.
+        task_config = OmegaConf.to_container(self.cfg.task_config, resolve=True)
+        task_config[CAMERA_NEAR_ARG] = self.cfg.get("camera_near", DEFAULT_CAMERA_NEAR)
 
         env_seeds = self.reset_state_ids.tolist()
 
         self.venv = VectorEnv(
-            task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),
+            task_config=task_config,
             n_envs=self.num_envs,
             env_seeds=env_seeds,
         )
