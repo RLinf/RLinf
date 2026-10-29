@@ -594,3 +594,134 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_pinned_offload_context_restores_after_overlapping_exits():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    original_to = torch.Tensor.to
+    first = pinned_offload_context()
+    second = pinned_offload_context()
+    first_active = True
+    first.__enter__()
+    second.__enter__()
+    try:
+        patched_to = torch.Tensor.to
+        assert patched_to is not original_to
+
+        tensor = torch.ones(2)
+        assert tensor.to(torch.float64).dtype == torch.float64
+        torch.testing.assert_close(tensor.to(torch.zeros(2)), tensor)
+
+        first.__exit__(None, None, None)
+        first_active = False
+        assert torch.Tensor.to is patched_to
+    finally:
+        if first_active:
+            first.__exit__(None, None, None)
+        second.__exit__(None, None, None)
+
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize(
+    "source_format", [torch.contiguous_format, torch.channels_last]
+)
+@pytest.mark.parametrize(
+    "memory_format",
+    [torch.preserve_format, torch.contiguous_format, torch.channels_last],
+)
+def test_pinned_offload_preserves_cuda_tensor_values_and_layout(
+    dtype, source_format, memory_format
+):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.randn(2, 3, 8, 8, device="cuda", dtype=dtype).contiguous(
+        memory_format=source_format
+    )
+    expected = source.to("cpu", memory_format=memory_format)
+    original_to = torch.Tensor.to
+    with pinned_offload_context():
+        result = source.to("cpu", None, False, memory_format=memory_format)
+        assert result.is_pinned()
+        assert result.device.type == "cpu"
+        assert result.dtype == source.dtype
+        assert result.stride() == expected.stride()
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result.to(source.device), source)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_restores_after_cuda_copy_and_exception():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda")
+    original_to = torch.Tensor.to
+    with pytest.raises(RuntimeError, match="abort offload"):
+        with pinned_offload_context():
+            assert source.to(device=torch.device("cpu")).is_pinned()
+            raise RuntimeError("abort offload")
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_diffusion_launcher_records_source_revision_and_tracked_changes(
+    tmp_path, dirty
+):
+    import shutil
+
+    repo = tmp_path / "repo"
+    launcher = repo / "examples/diffusion/run_diffusion.sh"
+    launcher.parent.mkdir(parents=True)
+    shutil.copyfile(
+        Path(__file__).resolve().parents[2] / "examples/diffusion/run_diffusion.sh",
+        launcher,
+    )
+    (repo / ".gitignore").write_text("logs/\n")
+    tracked = repo / "input.txt"
+    tracked.write_text("original\n")
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.org",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(repo), *args], check=True)
+    revision = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if dirty:
+        tracked.write_text("modified\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python = bin_dir / "python"
+    python.write_text("#!/bin/sh\nexit 0\n")
+    python.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(launcher), "sd3_nft_ocr"],
+        cwd=repo,
+        env=os.environ | {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    log_dir = next((repo / "logs").iterdir())
+    metadata = (log_dir / "git_revision.txt").read_text().splitlines()
+    assert metadata[0] == revision
+    assert any(line.endswith("input.txt") for line in metadata[1:]) is dirty
+    patch = (log_dir / "git_diff.patch").read_text()
+    assert ("+modified" in patch) is dirty
+    assert "sd3_nft_ocr" in (log_dir / "run_diffusion.log").read_text()
