@@ -374,3 +374,58 @@ Open TensorBoard on the generated log directory. If media saving is enabled in
 
 For scalar definitions and logger layout, see
 :doc:`Training Metrics </rst_source/reference/metrics>`.
+
+
+Validate Offload Transfers
+--------------------------
+
+Check real CUDA-to-pinned-CPU transfers and the shared HF offload/reload path
+before comparing training timings:
+
+.. code:: bash
+
+   pytest tests/unit_tests/test_utils.py tests/unit_tests/test_models.py \
+     -k 'pinned_offload or hf_rollout_offload_reload' \
+     -o junit_family=xunit1 --junitxml=offload-tests.xml
+
+The CUDA cases check values, layouts, dtypes, and exception cleanup. The HF cases
+move non-diffusion MLP modules through three offload/reload cycles, with and
+without auxiliary models. Their JUnit properties record ``host_peak_rss_bytes``
+and ``offloaded_tensor_bytes``. CUDA unit-test CI uploads these XML reports.
+CPU-only runs skip the CUDA cases. The OpenPI PPO e2e job also enables rollout
+offload for two training iterations.
+
+On October 29, 2026, the 16 focused cases passed on an NVIDIA A100 80GB PCIe with
+PyTorch 2.6.0+cu124. The tested Python sources match commit ``3985e819``:
+
+.. list-table:: Small-Model Offload Measurements
+   :header-rows: 1
+
+   * - Models
+     - Offloaded Tensor Size
+     - Process Peak RSS
+   * - Main MLP
+     - 4.04 MiB
+     - 1050.67 MiB
+   * - Main MLP + Two Auxiliary MLPs
+     - 12.13 MiB
+     - 1088.18 MiB
+
+RSS is the test process's lifetime high-water mark, including imports and the
+CUDA runtime, not a per-test increase or a full-training measurement. Tensor
+size counts live offloaded parameters and buffers, not pinned-allocator cache
+usage. Measure each worker and the whole host when sizing a Wan training run.
+
+Record Benchmark Revisions
+--------------------------
+
+Label main/PR comparisons with the source revision used for each run. The
+``run_diffusion.sh`` launcher saves the commit SHA and working-tree status in
+``git_revision.txt``, tracked changes in ``git_diff.patch``, and the launch
+command in ``run_diffusion.log`` under the run's log directory. Keep these files
+with the resolved configuration and metrics. An empty patch denotes no tracked
+changes; untracked files appear in the status but are not included in the patch.
+
+Use the recorded SHA rather than a branch or PR number as the experiment label.
+Mark historical runs without revision records as ``source revision unrecorded``;
+do not assign the current HEAD to an older run.
