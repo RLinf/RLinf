@@ -53,7 +53,12 @@ def _pinned_tensor_to(self: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Te
         and torch.device(device).type == "cpu"
         and self.device.type != "cpu"
     ):
-        buffer = torch.empty_like(self, device="cpu", pin_memory=True)
+        buffer = torch.empty_like(
+            self,
+            device="cpu",
+            pin_memory=True,
+            memory_format=kwargs.get("memory_format", torch.preserve_format),
+        )
         buffer.copy_(self)
         return buffer
 
