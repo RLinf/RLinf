@@ -1,0 +1,18 @@
+# OpenWAM full-parameter SFT on EBench.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=ebench, cameras, action mode) drives the
+# native OpenWAM reader, so a ebench checkpoint must be paired with ebench data.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "ebench_sft_openwam"
+
+data:
+  train_data_paths: /path/to/ebench_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-ebench-checkpoint

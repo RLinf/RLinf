@@ -1,0 +1,82 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/openwam@actor.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    # OpenWAM's trainable DiT/action parameters stay in the root FSDP2 unit.
+    # Use eight ranks by default for more per-GPU memory headroom.
+    # See the SFT docs for measured memory use and hardware limits.
+    actor: 0-7
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_openwam"
+    logger_backends: ["tensorboard"]
+  max_epochs: -1
+  max_steps: 30000
+  val_check_interval: -1
+  save_interval: 1000
+  log_interval: 10
+  resume_dir: null
+  # OpenWAM checkpoints must include data.pt and rng.pt for exact resume.
+  strict_resume: true
+
+data:
+  train_data_paths: /path/to/libero
+  num_workers: 0
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  # Keep micro batches small for memory; the effective global batch is eight
+  # samples, accumulated across actor ranks.
+  global_batch_size: 8
+  seed: 42
+
+  optim:
+    lr: 1.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 1000
+    total_training_steps: 30000
+
+  fsdp_config:
+    # The DiT / action blocks stay in the root FSDP unit (OpenWAM's joint
+    # denoising driver reads their weights outside the blocks' forward), so
+    # FSDP2 is used: FSDP1 would keep a 46 GiB full-precision unsharded flat
+    # parameter per rank. FSDP2 needs at least one sub-unit; the frozen Wan VAE
+    # residual blocks are plain modules only used through their forward.
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    # use_orig_params belongs to the shared FSDP1 defaults and is ignored by
+    # this FSDP2 path, so the OpenWAM recipe does not override it.
+    reshard_after_forward: true
+    wrap_policy:
+      module_classes_to_wrap: [ResidualBlock]
+    gradient_checkpointing: true
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: "bf16"
+    grad_scaler:
+      enabled: false
