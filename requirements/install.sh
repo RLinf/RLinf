@@ -1903,7 +1903,12 @@ EOF
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
-    uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    # Diffusion installs Paddle outside the project dependency set.
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -2270,7 +2275,11 @@ EOF
 }
 
 install_common_embodied_deps() {
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --extra embodied --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
         { grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" || [ $? -eq 1 ]; } \
             | uv pip install -r -
@@ -4355,4 +4364,6 @@ main() {
     uv pip install "${RAY_COMPAT_DEPS[@]}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
