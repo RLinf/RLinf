@@ -44,6 +44,14 @@ class InsertDelay(gym.Wrapper):
         self.delays: list[float] = []
         self._pending_delay = 0.0
 
+    @property
+    def is_start(self):
+        return getattr(self.env, "is_start")
+
+    @is_start.setter
+    def is_start(self, value):
+        setattr(self.env, "is_start", value)
+
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         self.sample_delay()

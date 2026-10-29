@@ -1100,12 +1100,14 @@ if "imageio" not in sys.modules:
     sys.modules["imageio"] = MagicMock()
 
 
-def _delayed_env(delay: float):
+def _delayed_env_over(env, delay: float):
     from rlinf.envs.wrappers import InsertDelay
 
-    return InsertDelay(
-        _FakeEnv(), OmegaConf.create({"type": "constant", "delay": delay})
-    )
+    return InsertDelay(env, OmegaConf.create({"type": "constant", "delay": delay}))
+
+
+def _delayed_env(delay: float):
+    return _delayed_env_over(_FakeEnv(), delay)
 
 
 def test_chunk_step_does_not_block_the_caller():
@@ -1168,6 +1170,22 @@ def test_delay_metrics_report_every_sample():
 
     assert metrics.tolist() == pytest.approx([0.03, 0.03])
     assert env.insert_delay_metrics().numel() == 0
+
+
+@pytest.mark.parametrize("gym_base", [True, False])
+def test_is_start_reaches_the_wrapped_env(gym_base):
+    # The env worker sets is_start on the outermost wrapper before a manual
+    # reset; the base env reads it to pick its fixed reset states.
+    import gymnasium as gym
+
+    base = type("_GymEnv", (_FakeEnv, gym.Env), {})() if gym_base else _FakeEnv()
+    base.is_start = False
+    env = _delayed_env_over(base, 0.0)
+
+    env.is_start = True
+
+    assert base.is_start is True
+    assert env.is_start is True
 
 
 class _FakeApxInfModel:
