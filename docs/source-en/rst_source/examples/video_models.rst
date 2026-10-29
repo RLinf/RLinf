@@ -238,7 +238,10 @@ CUDA-enabled PaddlePaddle wheel for those configurations:
 
 The GPU wheel is approximately 760--800 MB, depending on the CUDA version. The
 installer selects the CUDA 11 or CUDA 12 build and skips the download when the
-matching build is already installed.
+matching build is already installed. Both project synchronization steps preserve
+external packages for diffusion installs, so a matching GPU wheel survives a
+repeated installation. Switching between CPU and GPU Paddle removes the opposite
+distribution; other model installs retain exact synchronization.
 
 .. warning::
 

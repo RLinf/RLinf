@@ -216,7 +216,7 @@ reference model。
 
    bash requirements/install.sh embodied --model diffusion --paddle-gpu
 
-根据 CUDA 版本，GPU wheel 大约为 760--800 MB。安装脚本会选择 CUDA 11 或 CUDA 12 对应的版本；如果环境中已经安装正确版本，则会跳过下载。
+根据 CUDA 版本，GPU wheel 大约为 760--800 MB。安装脚本会选择 CUDA 11 或 CUDA 12 对应的版本；如果环境中已经安装正确版本，则会跳过下载。 diffusion 安装中的两次项目同步都会保留外部安装的包，因此重复安装时会保留匹配的 GPU wheel。切换 CPU/GPU Paddle 时会卸载另一种 distribution；其他模型仍采用精确同步。
 
 .. warning::
 
