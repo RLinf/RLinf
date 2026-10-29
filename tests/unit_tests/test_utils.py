@@ -665,3 +665,63 @@ def test_pinned_offload_restores_after_cuda_copy_and_exception():
             assert source.to(device=torch.device("cpu")).is_pinned()
             raise RuntimeError("abort offload")
     assert torch.Tensor.to is original_to
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_diffusion_launcher_records_source_revision_and_tracked_changes(
+    tmp_path, dirty
+):
+    import shutil
+
+    repo = tmp_path / "repo"
+    launcher = repo / "examples/diffusion/run_diffusion.sh"
+    launcher.parent.mkdir(parents=True)
+    shutil.copyfile(
+        Path(__file__).resolve().parents[2] / "examples/diffusion/run_diffusion.sh",
+        launcher,
+    )
+    (repo / ".gitignore").write_text("logs/\n")
+    tracked = repo / "input.txt"
+    tracked.write_text("original\n")
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.org",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(repo), *args], check=True)
+    revision = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if dirty:
+        tracked.write_text("modified\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python = bin_dir / "python"
+    python.write_text("#!/bin/sh\nexit 0\n")
+    python.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(launcher), "sd3_nft_ocr"],
+        cwd=repo,
+        env=os.environ | {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    log_dir = next((repo / "logs").iterdir())
+    metadata = (log_dir / "git_revision.txt").read_text().splitlines()
+    assert metadata[0] == revision
+    assert any(line.endswith("input.txt") for line in metadata[1:]) is dirty
+    patch = (log_dir / "git_diff.patch").read_text()
+    assert ("+modified" in patch) is dirty
+    assert "sd3_nft_ocr" in (log_dir / "run_diffusion.log").read_text()
