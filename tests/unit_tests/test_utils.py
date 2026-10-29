@@ -622,3 +622,46 @@ def test_pinned_offload_context_restores_after_overlapping_exits():
         second.__exit__(None, None, None)
 
     assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize(
+    "source_format", [torch.contiguous_format, torch.channels_last]
+)
+@pytest.mark.parametrize(
+    "memory_format",
+    [torch.preserve_format, torch.contiguous_format, torch.channels_last],
+)
+def test_pinned_offload_preserves_cuda_tensor_values_and_layout(
+    dtype, source_format, memory_format
+):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.randn(2, 3, 8, 8, device="cuda", dtype=dtype).contiguous(
+        memory_format=source_format
+    )
+    expected = source.to("cpu", memory_format=memory_format)
+    original_to = torch.Tensor.to
+    with pinned_offload_context():
+        result = source.to("cpu", None, False, memory_format=memory_format)
+        assert result.is_pinned()
+        assert result.device.type == "cpu"
+        assert result.dtype == source.dtype
+        assert result.stride() == expected.stride()
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result.to(source.device), source)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_restores_after_cuda_copy_and_exception():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda")
+    original_to = torch.Tensor.to
+    with pytest.raises(RuntimeError, match="abort offload"):
+        with pinned_offload_context():
+            assert source.to(device=torch.device("cpu")).is_pinned()
+            raise RuntimeError("abort offload")
+    assert torch.Tensor.to is original_to

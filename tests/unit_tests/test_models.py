@@ -1540,3 +1540,74 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("with_auxiliary_models", [False, True])
+def test_hf_rollout_offload_reload_preserves_non_diffusion_models(
+    with_auxiliary_models, record_property
+):
+    import resource
+
+    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+    def make_model():
+        model = torch.nn.Sequential(
+            torch.nn.Linear(1024, 1024),
+            torch.nn.LayerNorm(1024),
+            torch.nn.Linear(1024, 8),
+        ).eval()
+        model.register_buffer("step", torch.tensor(1, dtype=torch.int64))
+        return model.to("cuda")
+
+    # Device transfers do not require a scheduler or Ray worker process.
+    worker = object.__new__(MultiStepRolloutWorker)
+    worker.device = torch.device("cuda")
+    worker.torch_platform = torch.cuda
+    worker.enable_cuda_graph = False
+    worker.hf_model = make_model()
+    worker.rlt_feature_model = make_model() if with_auxiliary_models else None
+    worker.expert_model = make_model() if with_auxiliary_models else None
+    models = [
+        model
+        for model in (worker.hf_model, worker.rlt_feature_model, worker.expert_model)
+        if model is not None
+    ]
+    inputs = torch.randn(2, 1024, device="cuda")
+    with torch.no_grad():
+        expected = [model(inputs).cpu() for model in models]
+        states = [
+            {key: value.cpu().clone() for key, value in model.state_dict().items()}
+            for model in models
+        ]
+        for _ in range(3):
+            original_to = torch.Tensor.to
+            worker.offload_model()
+            assert torch.Tensor.to is original_to
+            for model, state in zip(models, states):
+                for key, value in model.state_dict().items():
+                    assert value.device.type == "cpu"
+                    assert value.is_pinned()
+                    torch.testing.assert_close(value, state[key])
+            worker.reload_model()
+            for model, output in zip(models, expected):
+                assert all(value.is_cuda for value in model.state_dict().values())
+                torch.testing.assert_close(model(inputs).cpu(), output)
+
+    record_property("torch_version", torch.__version__)
+    record_property("gpu", torch.cuda.get_device_name())
+    record_property("offload_cycles", 3)
+    record_property(
+        "offloaded_tensor_bytes",
+        sum(
+            value.numel() * value.element_size()
+            for state in states
+            for value in state.values()
+        ),
+    )
+    # ru_maxrss is the process-lifetime high-water mark, not a per-test delta.
+    rss_scale = 1 if sys.platform == "darwin" else 1024
+    record_property(
+        "host_peak_rss_bytes",
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * rss_scale,
+    )

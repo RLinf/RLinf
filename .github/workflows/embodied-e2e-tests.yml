@@ -1307,13 +1307,13 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
-      - name: Libero-Spatial PPO OpenPI test
+      - name: Libero-Spatial PPO OpenPI offload/reload test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi rollout.enable_offload=True runner.max_epochs=2
 
       - name: Libero-Object NFT OpenPI test
         timeout-minutes: 20
