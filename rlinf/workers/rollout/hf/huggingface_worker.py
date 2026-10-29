@@ -39,7 +39,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, load_state_dict
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
@@ -161,8 +161,11 @@ class MultiStepRolloutWorker(Worker):
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
-            model_dict = torch.load(self.cfg.runner.ckpt_path)
-            self.hf_model.load_state_dict(model_dict)
+            load_state_dict(
+                self.hf_model,
+                torch.load(self.cfg.runner.ckpt_path),
+                self.cfg.runner.get("ckpt_allowed_missing_prefixes", []),
+            )
 
         rlt_feature_model_config = OmegaConf.select(
             self.cfg, "rollout.rlt_feature_model", default=None
@@ -539,6 +542,13 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.MLP_POLICY,
         ]:
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
+
+        if self.algorithm_cfg.get("loss_type") == "embodied_ogpo":
+            kwargs = {
+                "return_obs": False,
+                "ogpo_mode": "ode" if mode == "eval" else "sde",
+                "ogpo_noise_std": float(self.cfg.algorithm.ogpo.constant_noise_std),
+            }
 
         only_save_expert = self.algorithm_cfg.get("dagger", {}).get(
             "only_save_expert", True

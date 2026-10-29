@@ -27,7 +27,7 @@ from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
-from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.base_policy import ForwardType, load_state_dict
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.distributed import (
     all_reduce_dict,
@@ -126,8 +126,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model = super().model_provider_func()
 
         if self.cfg.runner.get("ckpt_path", None):
-            model_dict = torch.load(self.cfg.runner.ckpt_path)
-            model.load_state_dict(model_dict)
+            load_state_dict(
+                model,
+                torch.load(self.cfg.runner.ckpt_path),
+                self.cfg.runner.get("ckpt_allowed_missing_prefixes", []),
+            )
 
         return model
 

@@ -46,6 +46,7 @@ from rlinf.data.schema.embodied_types import (
     TrajectoryKey,
     TrajectoryPart,
     TrajectoryStep,
+    get_model_weights_id,
 )
 from rlinf.scheduler.channel import (
     ChannelContext,
@@ -79,6 +80,7 @@ class TrajectoryMode(str, Enum):
     ROLLOUT = "rollout"
     PIPELINE = "pipeline"
     LEROBOT = "lerobot"
+    OGPO = "ogpo"
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,14 @@ class TrajectoryPlan:
                 "Training pipeline does not support OPD because teacher log-probabilities "
                 "are computed on actor workers after rollout."
             )
+        if cfg.algorithm.get("loss_type") == "embodied_ogpo":
+            if (
+                use_pipeline
+                or use_lerobot
+                or cfg.runner.get("execution_mode", "sync") != "sync"
+            ):
+                raise ValueError("OGPO requires synchronous episode collection")
+            return TrajectoryMode.OGPO
         if use_lerobot:
             return TrajectoryMode.LEROBOT
         if use_pipeline:
@@ -203,6 +213,7 @@ class TrajectoryCollector(Collector):
             TrajectoryMode.ROLLOUT: RolloutOutput,
             TrajectoryMode.PIPELINE: PipelineOutput,
             TrajectoryMode.LEROBOT: LerobotOutput,
+            TrajectoryMode.OGPO: OGPOOutput,
         }
         self._output = output_types[self.plan.mode](ctx.cfg, self.plan.geometry)
 
@@ -644,6 +655,157 @@ class PipelineOutput(AccumulatorOutput):
     def _scope(self, key: TrajectoryKey) -> CollectionScope:
         """Group every source participating in the same pipeline epoch."""
         return (key.step_id, key.epoch_id)
+
+
+class OGPOOutput(TrajectoryOutput):
+    """Emit complete episodes as fixed-horizon OGPO replay windows.
+
+    Each source flushes a fixed number of messages per learner step, including
+    empty episode lists. Unfinished episodes remain owned by this collector.
+    """
+
+    def __init__(self, cfg: DictConfig, geometry: RolloutGeometry) -> None:
+        super().__init__(cfg, geometry)
+        self._chunks: dict[
+            tuple[int, int, int], dict[tuple[int, int], JoinedChunk]
+        ] = {}
+        self._pending: dict[SourceID, list[list[dict[str, Any]]]] = {}
+
+    def emit(self, chunk: JoinedChunk) -> Iterator[CollectedItem]:
+        """Order one source's chunks and emit episode shards at its step boundary."""
+        if not chunk.policy.inferred:
+            raise ValueError("OGPO requires inferred policy actions")
+        scope = (chunk.key.step_id, *chunk.source)
+        chunks = self._chunks.setdefault(scope, {})
+        position = (chunk.key.epoch_id, chunk.key.chunk_id)
+        if position in chunks:
+            raise ValueError(f"Duplicate OGPO chunk: {chunk.key}")
+        chunks[position] = chunk
+        expected = self._cfg.env.train.rollout_epoch * self._chunk_count
+        if len(chunks) < expected:
+            return
+
+        episodes = []
+        for position in sorted(chunks):
+            episodes.extend(self._append_chunk(chunks[position]))
+        del self._chunks[scope]
+        shards = self._geometry.shards_per_source
+        for shard in range(shards):
+            yield DEFAULT_KEY, episodes[shard::shards]
+
+    def _append_chunk(self, chunk: JoinedChunk) -> list[Trajectory]:
+        data = chunk.env.transition.episode_data
+        if data is None:
+            raise ValueError("OGPO requires per-substep environment data")
+        output = chunk.policy.output
+        actions = output.forward_inputs["action"]
+        batch_size = actions.shape[0]
+        horizon = int(self._cfg.actor.model.num_action_chunks)
+        action_dim = int(self._cfg.actor.model.action_dim)
+        if actions.shape != (batch_size, horizon * action_dim):
+            raise ValueError("OGPO replay received an invalid action dimension")
+        observations = data["obs_list"]
+        if len(observations) != horizon:
+            raise ValueError(
+                "OGPO replay observation count does not match action chunk"
+            )
+        actions = actions.reshape(batch_size, horizon, action_dim)
+        terminations = data["terminations"]
+        truncations = data["truncations"]
+        dones = terminations | truncations
+        pending = self._pending.setdefault(
+            chunk.source, [[] for _ in range(batch_size)]
+        )
+        episodes = []
+        for env_index in range(batch_size):
+            version = (
+                output.versions[env_index].reshape(-1)[:1]
+                if output.versions is not None
+                else torch.zeros(1, dtype=torch.float32)
+            )
+            for step_index in range(horizon):
+                done = bool(dones[env_index, step_index])
+                curr_obs = (
+                    chunk.policy.obs
+                    if step_index == 0
+                    else observations[step_index - 1]
+                )
+                next_obs = observations[step_index]
+                if done:
+                    next_obs = data["infos_list"][-1]["terminal_obs"]
+                pending[env_index].append(
+                    {
+                        "actions": actions[env_index, step_index].clone(),
+                        "rewards": chunk.env.transition.rewards[
+                            env_index, step_index
+                        ].clone(),
+                        "terminations": terminations[env_index, step_index].clone(),
+                        "truncations": truncations[env_index, step_index].clone(),
+                        "dones": dones[env_index, step_index].clone(),
+                        "versions": version.clone(),
+                        "success": bool(data["valid_action_mask"][env_index]),
+                        "curr_obs": self._observation(curr_obs, env_index),
+                        "next_obs": self._observation(next_obs, env_index),
+                    }
+                )
+                if done:
+                    episodes.append(self._episode(pending[env_index]))
+                    pending[env_index] = []
+                    break
+        return episodes
+
+    @staticmethod
+    def _observation(obs: dict[str, Any], env_index: int) -> dict[str, torch.Tensor]:
+        return {
+            key: value[env_index].detach().cpu().contiguous().clone()
+            for key, value in obs.items()
+            if isinstance(value, torch.Tensor)
+        }
+
+    def _episode(self, steps: list[dict[str, Any]]) -> Trajectory:
+        length = len(steps)
+        horizon = int(self._cfg.actor.model.num_action_chunks)
+        indices = torch.arange(length)[:, None] + torch.arange(horizon)[None, :]
+        valid = indices < length
+        indices = indices.clamp_max(length - 1)
+        discounts = float(self._cfg.algorithm.gamma) ** torch.arange(horizon)
+
+        actions = torch.stack([step["actions"] for step in steps])[indices]
+        rewards = torch.stack([step["rewards"] for step in steps]).reshape(length, 1)
+        rewards = torch.cumsum(
+            rewards[indices] * valid[..., None] * discounts[None, :, None], dim=1
+        )
+        fields = {"actions": actions[:, None], "rewards": rewards[:, None]}
+        for name in ("terminations", "truncations", "dones"):
+            values = (
+                torch.stack([step[name] for step in steps]).bool().reshape(length, 1)
+            )
+            fields[name] = torch.cummax(
+                values[indices] & valid[..., None], dim=1
+            ).values[:, None]
+        versions = torch.stack([step["versions"] for step in steps])
+        fields["versions"] = versions[:, None]
+        fields["forward_inputs"] = {
+            "valid": valid[:, None],
+            "is_success": torch.full(
+                (length, 1, 1), any(step["success"] for step in steps), dtype=torch.bool
+            ),
+        }
+        fields["curr_obs"] = {
+            key: torch.stack([step["curr_obs"][key] for step in steps])[:, None]
+            for key in steps[0]["curr_obs"]
+        }
+        fields["next_obs"] = {
+            key: torch.stack([step["next_obs"][key] for step in steps])[indices[:, -1]][
+                :, None
+            ]
+            for key in steps[0]["next_obs"]
+        }
+        return Trajectory(
+            max_episode_length=self._cfg.env.train.max_episode_steps,
+            model_weights_id=get_model_weights_id(fields["versions"]),
+            **fields,
+        )
 
 
 class LerobotOutput(TrajectoryOutput):
