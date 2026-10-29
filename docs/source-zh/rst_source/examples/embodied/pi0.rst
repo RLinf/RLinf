@@ -455,7 +455,22 @@ Pi0.5 通过 flow matching 生成连续动作。训练时，RLinf 的随机 flow
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
 
-该配置使用 eager 执行、``flow_sde`` 噪声、同步权重更新和开启参数 offload 的单 GPU 部署，并要求 ``actor.model.openpi.train_expert_only=True``。此后端暂不支持 LoRA、NFT、RTC 和 CUDA graphs。动作 horizon 和归一化统计必须与 checkpoint 匹配：若 horizon 不同于选用的 OpenPI 配置，设置 ``actor.model.openpi.action_horizon``；需要指定统计文件时，设置 ``actor.model.openpi_data.norm_stats_path``。
+该配置使用 eager 执行、``flow_sde`` 噪声、同步权重更新和开启参数 offload 的单 GPU 部署，并要求 ``actor.model.openpi.train_expert_only=True``。此后端暂不支持 LoRA、NFT 和 RTC。动作 horizon 和归一化统计必须与 checkpoint 匹配：若 horizon 不同于选用的 OpenPI 配置，设置 ``actor.model.openpi.action_horizon``；需要指定统计文件时，设置 ``actor.model.openpi_data.norm_stats_path``。
+
+在 NVIDIA CUDA 上，可通过以下配置为训练中的随机 rollout 启用 CUDA Graph：
+
+.. code-block:: yaml
+
+   rollout:
+     enable_cuda_graph: true
+
+首个 observation 会触发捕获，覆盖前缀编码、去噪循环、转移 logprob 和 value 计算。后续相同形状的 observation 复用 graph，每次传入新的输入和随机噪声。确定性评估仍使用 eager 执行。参数 offload、加载新权重或推进 policy 版本时会释放已捕获的 graph，下次训练 rollout 再次捕获。比较整轮训练速度时应包含这些捕获开销，尤其是单卡上的短 rollout。
+
+该配置还设置了 ``actor.model.openpi.reuse_rollout_observations=True``。rollout 保存采样时实际使用的归一化图像、掩码和状态，Actor 直接读取这些张量，避免重算 NumPy 输入变换以及将 observation 从 GPU 搬回 CPU。保存后的图像比原始字节图像占用更多空间，评测时应计入 rollout 数据传输和显存成本。设置为 ``False`` 可对照原始 observation 重算路径。
+
+在单张 NVIDIA GPU 上，设置 ``actor.enable_cuda_graph=True`` 可捕获 Actor 网络的前向与反向。该模式要求 FSDP1 ``no_shard``、``use_orig_params=True``、固定的 microbatch 输入形状，并关闭 FSDP 参数精度转换、AMP、gradient checkpointing 和 critic-only warmup。rollout 与训练之间的显式参数 offload 仍受支持。第一个 microbatch 捕获两个 graph，后续 microbatch 在固定梯度缓冲区中累积。PPO loss、梯度裁剪和 AdamW 更新在 graph 外执行。每次训练调用结束后释放 graph，下次更新重新捕获，整轮计时应包含这些开销。
+
+比较 microbatch 1、2、4 时，保持 ``actor.global_batch_size`` 不变。设置 ``actor.profile_memory=True`` 可记录 Actor 的峰值 allocated 和 reserved 显存；启用 graph 后，在 TensorBoard 中检查 ``train/actor/graph_forward_replays`` 和 ``train/actor/graph_backward_replays``。同时比较整轮耗时和 Actor 耗时，因为增大 microbatch 和保存 graph 都可能影响同卡 rollout worker 可用的显存。
 
 设置 checkpoint 路径后，先使用同一配置检查两轮训练：
 

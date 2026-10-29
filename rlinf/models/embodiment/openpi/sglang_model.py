@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import torch
 
-from rlinf.models.embodiment.openpi.modules.model import Observation
+from rlinf.models.embodiment.openpi.modules.model import (
+    IMAGE_KEYS,
+    Observation,
+    preprocess_observation,
+)
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
 
@@ -52,6 +56,117 @@ class SGLangPi05RL(Pi0RL):
                 "flow_cps requires ignore_last=True (last step has zero noise)"
             )
         super().__init__(config, rl_cfg=rl_cfg, **kwargs)
+        self._rollout_graph = None
+        self._rollout_graph_enabled = False
+
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int):
+        """Enable lazy capture on the first observation after loading weights."""
+        del train_batch_size, eval_batch_size
+        from sglang.multimodal_gen.runtime.vla.cuda_graph import VLATensorGraphRunner
+
+        self._rollout_graph_enabled = True
+        if self._rollout_graph is None:
+            self._rollout_graph = VLATensorGraphRunner(
+                "pi05_rl_rollout", enabled=True, max_entries=4
+            )
+
+    def release_cuda_graph(self):
+        graph = getattr(self, "_rollout_graph", None)
+        if graph is not None:
+            graph.clear()
+        self._rollout_graph = None
+
+    def _apply(self, fn, recurse=True):
+        # Offload/dtype changes can replace the storage referenced by a graph.
+        self.release_cuda_graph()
+        return super()._apply(fn, recurse=recurse)
+
+    def train(self, mode=True):
+        if mode:
+            self.release_cuda_graph()
+        return super().train(mode)
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):
+        self.release_cuda_graph()
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+    def set_global_step(self, global_step: int) -> None:
+        if global_step != self.global_step:
+            self.release_cuda_graph()
+        super().set_global_step(global_step)
+
+    def _predict_train(self, observation, *, noise, rng, compute_values):
+        if (
+            not self._rollout_graph_enabled
+            or self.training
+            or torch.is_grad_enabled()
+            or observation.state.device.type != "cuda"
+        ):
+            return super()._predict_train(
+                observation, noise=noise, rng=rng, compute_values=compute_values
+            )
+        self.capture_cuda_graph(0, 0)
+        observation = preprocess_observation(observation, train=False)
+        batch, device = observation.state.shape[0], observation.state.device
+        if noise is None:
+            noise = torch.randn(
+                batch,
+                self.action_horizon,
+                self.model_action_dim,
+                device=device,
+                dtype=torch.float32,
+                generator=rng,
+            )
+        indices = self._sample_denoise_indices(batch, device)
+        # Match the eager RNG calls, including the unused noise on ODE steps.
+        step_noise = tuple(
+            torch.randn(noise.shape, device=device, dtype=torch.float32, generator=rng)
+            for _ in range(self.num_steps)
+        )
+        cameras = tuple(observation.images)
+        full_attention = self._has_full_attention(observation)
+        inputs = (
+            observation.state,
+            observation.tokenized_prompt,
+            observation.tokenized_prompt_mask,
+            *(observation.images[name] for name in cameras),
+            *(observation.image_masks[name] for name in cameras),
+            noise,
+            indices,
+            *step_noise,
+        )
+
+        def sample(*tensors):
+            state, tokens, masks = tensors[:3]
+            count = len(cameras)
+            obs = Observation(
+                state=state,
+                tokenized_prompt=tokens,
+                tokenized_prompt_mask=masks,
+                images=dict(zip(cameras, tensors[3 : 3 + count], strict=True)),
+                image_masks=dict(
+                    zip(cameras, tensors[3 + count : 3 + 2 * count], strict=True)
+                ),
+            )
+            x_t, selected, *noises = tensors[3 + 2 * count :]
+            sampled = self._sample_train_chain(
+                obs,
+                x_t,
+                selected,
+                self.build_prefix_cache(obs, full_attention=full_attention),
+                compute_values=compute_values,
+                step_noises=tuple(noises),
+            )
+            return sampled[:4]
+
+        output = self._rollout_graph.run(
+            sample,
+            inputs,
+            key=(cameras, self.num_steps, self.rl_cfg, compute_values, full_attention),
+        )
+        # Replays reuse graph storage; each trajectory must own its tensors.
+        sampled = (*(tensor.clone() for tensor in output), None)
+        return self._pack_train_output(observation, indices, sampled)
 
     def _build_network(self, config: Pi0Config) -> None:
         from sglang.multimodal_gen.configs.pipeline_configs.pi05 import (
@@ -81,7 +196,10 @@ class SGLangPi05RL(Pi0RL):
         self.core_model = Pi05CoreModel(pipeline_cfg, action_training=True)
         self._gradient_checkpointing = False
 
-    def build_prefix_cache(self, observation: Observation) -> tuple:
+    def build_prefix_cache(
+        self, observation: Observation, *, full_attention: bool | None = None
+    ) -> tuple:
+        """Encode the frozen prefix; graph callers supply the mask decision."""
         # The prefix is frozen in both rollout and replay; never keep its graph.
         with torch.no_grad():
             images = [
@@ -93,10 +211,53 @@ class SGLangPi05RL(Pi0RL):
                 list(observation.image_masks.values()),
                 observation.tokenized_prompt,
                 observation.tokenized_prompt_mask,
+                prefix_full_attention_hint=full_attention,
                 tokens_trimmed=True,
                 return_hidden_states=True,
             )
         return hidden, mask, cache
+
+    @staticmethod
+    def _has_full_attention(observation: Observation) -> bool:
+        """Resolve the mask-dependent graph branch before CUDA capture."""
+        masks = [observation.tokenized_prompt_mask, *observation.image_masks.values()]
+        return bool(torch.cat([mask.flatten() for mask in masks]).all().item())
+
+    def prepare_actor_graph_inputs(self, forward_inputs: dict) -> tuple[dict, bool]:
+        """Run host transforms before capturing the actor network."""
+        observation = self._observation_from_forward_inputs(forward_inputs)
+        inputs = {
+            "chains": forward_inputs["chains"],
+            "denoise_inds": forward_inputs["denoise_inds"],
+            "state": observation.state,
+            "tokens": observation.tokenized_prompt,
+            "token_mask": observation.tokenized_prompt_mask,
+        }
+        for name, tensor in observation.images.items():
+            inputs["image/" + name] = tensor
+            inputs["mask/" + name] = observation.image_masks[name]
+        return inputs, self._has_full_attention(observation)
+
+    def default_forward(self, forward_inputs: dict, **kwargs):
+        if not kwargs.get("prepared_actor_inputs", False):
+            return super().default_forward(forward_inputs, **kwargs)
+        observation = Observation(
+            state=forward_inputs["state"],
+            tokenized_prompt=forward_inputs["tokens"],
+            tokenized_prompt_mask=forward_inputs["token_mask"],
+            images={name: forward_inputs[f"image/{name}"] for name in IMAGE_KEYS},
+            image_masks={name: forward_inputs[f"mask/{name}"] for name in IMAGE_KEYS},
+        )
+        prefix = self.build_prefix_cache(
+            observation, full_attention=kwargs["prefix_full_attention"]
+        )
+        return self._recompute_from_prefix(
+            observation,
+            forward_inputs["chains"],
+            forward_inputs["denoise_inds"],
+            *prefix,
+            compute_values=kwargs.get("compute_values", True),
+        )
 
     def run_suffix(
         self,
@@ -134,6 +295,7 @@ class SGLangPi05RL(Pi0RL):
         return sum(1 for _ in prefix.parameters())
 
     def to_bfloat16_for_selected_params(self, precision: str = "bfloat16") -> None:
+        self.release_cuda_graph()
         self.core_model.paligemma_with_expert.to_selected_dtype(precision)
 
     @property

@@ -21,6 +21,12 @@ def validate_sglang_pi05_cfg(cfg: DictConfig, *, only_eval: bool) -> None:
     """Validate the in-process Pi0.5 backend before launching workers."""
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     native = OmegaConf.select(model_cfg, "openpi.backend", default="openpi") == "sglang"
+    if OmegaConf.select(cfg, "actor.enable_cuda_graph", default=False):
+        if only_eval or not native:
+            raise ValueError("Actor CUDA Graph requires SGLang Pi0.5 training")
+        from rlinf.hybrid_engines.fsdp.actor_graph import validate_actor_graph_cfg
+
+        validate_actor_graph_cfg(cfg.actor)
     if not native:
         if (
             not only_eval
@@ -55,11 +61,9 @@ def validate_sglang_pi05_cfg(cfg: DictConfig, *, only_eval: bool) -> None:
             )
         if cfg.actor.get("sync_weight_no_wait", False):
             raise ValueError("SGLang Pi0.5 requires synchronous weight updates")
-    if cfg.rollout.get("enable_cuda_graph", False) or cfg.rollout.get(
-        "enable_torch_compile", False
-    ):
-        raise ValueError(
-            "SGLang Pi0.5 RL uses eager execution; disable rollout graphs/compile"
-        )
+    if only_eval and cfg.rollout.get("enable_cuda_graph", False):
+        raise ValueError("SGLang Pi0.5 RL graphs require stochastic training rollout")
+    if cfg.rollout.get("enable_torch_compile", False):
+        raise ValueError("SGLang Pi0.5 RL does not support rollout torch.compile")
     if cfg.runner.get("rtc", {}).get("enabled", False):
         raise ValueError("SGLang Pi0.5 RL does not support RTC")

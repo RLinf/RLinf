@@ -508,11 +508,51 @@ Set ``actor.model.model_path`` in the YAML to your checkpoint, then launch:
 
 The recipe uses eager execution, ``flow_sde`` noise, synchronous weight updates,
 and one GPU with parameter offloading. It requires
-``actor.model.openpi.train_expert_only=True``. LoRA, NFT, RTC, and CUDA graphs
+``actor.model.openpi.train_expert_only=True``. LoRA, NFT, and RTC
 are unsupported by this backend. Match the checkpoint's action horizon and
 normalization statistics: set ``actor.model.openpi.action_horizon`` when it
 differs from the selected OpenPI config and
 ``actor.model.openpi_data.norm_stats_path`` for an explicit stats file.
+
+On NVIDIA CUDA, enable graphs for the stochastic training rollout by setting:
+
+.. code-block:: yaml
+
+   rollout:
+     enable_cuda_graph: true
+
+The first observation captures prefix encoding, the denoising loop, transition
+log probabilities, and values. Subsequent observations with the same shapes
+reuse the graph with fresh inputs and random noise. Deterministic evaluation
+keeps eager execution. Parameter offload, loading new
+weights, or advancing the policy version releases the captured graphs; the next
+training rollout captures them again. Include this capture cost when comparing
+whole training iterations, especially for short rollouts on one GPU.
+
+The recipe also sets ``actor.model.openpi.reuse_rollout_observations=True``.
+Rollout retains the normalized images, masks, and state used for sampling, and
+Actor consumes those tensors directly. This avoids repeating the NumPy input
+transforms and transferring observations from GPU back to CPU during replay.
+The retained images use more storage than raw byte images; include rollout
+transport and memory use when measuring the change. Set this option to
+``False`` to compare with raw-observation replay.
+
+For a single NVIDIA GPU, capture the Actor network's forward and backward by
+setting ``actor.enable_cuda_graph=True``. This requires FSDP1 ``no_shard``,
+``use_orig_params=True``, fixed microbatch input shapes, and no FSDP parameter
+casting, AMP, gradient checkpointing, or critic-only warmup. Explicit parameter
+offload between rollout and training remains supported. The first microbatch
+captures both graphs; later microbatches accumulate gradients in persistent
+buffers. PPO loss calculation, gradient clipping, and AdamW stay outside the
+graphs. Each training call releases the graphs before the next offload, so the
+reported iteration time includes capture again on the next update.
+
+Keep ``actor.global_batch_size`` fixed while comparing microbatch sizes 1, 2,
+and 4. Enable ``actor.profile_memory=True`` to record Actor peak allocated and
+reserved memory, and check ``train/actor/graph_forward_replays`` and
+``train/actor/graph_backward_replays`` in TensorBoard when using graphs. Compare full iteration time
+as well as Actor time: larger microbatches and graph storage may change the
+memory available to the colocated rollout worker.
 
 After setting the checkpoint path, check two training iterations before a
 longer run:

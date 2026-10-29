@@ -93,6 +93,8 @@ actor:
   global_batch_size: 16
   seed: 42
   enable_offload: true
+  enable_cuda_graph: false
+  profile_memory: false
   model:
     model_path: /path/to/model/RLinf-Pi05-LIBERO-SFT
     num_action_chunks: 5
@@ -101,6 +103,7 @@ actor:
     openpi:
       value_after_vlm: true
       backend: sglang
+      reuse_rollout_observations: true
       joint_logprob: false
       ignore_last: true
       torch_compile: false

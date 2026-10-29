@@ -188,6 +188,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             train_expert_only=bool(
                 OmegaConf.select(model_cfg, "train_expert_only", default=False)
             ),
+            reuse_rollout_observations=bool(
+                OmegaConf.select(model_cfg, "reuse_rollout_observations", default=False)
+            ),
             is_nft=bool(OmegaConf.select(model_cfg, "is_nft", default=False)),
             config_name=config_name,
         )

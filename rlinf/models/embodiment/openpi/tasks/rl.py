@@ -51,6 +51,7 @@ class Pi0RLConfig:
     detach_critic_input: bool = False
     chunk_critic_input: bool = False
     train_expert_only: bool = False
+    reuse_rollout_observations: bool = False
     is_nft: bool = False
     config_name: str = ""
 
@@ -171,8 +172,8 @@ class Pi0RL(EnvIO, Pi0):
         actions, result = self._predict_train(
             observation, noise=noise, rng=rng, compute_values=compute_values
         )
-        # Match OpenPI: stash raw env obs so the actor can re-transform.
-        result["forward_inputs"].update(_clone_replay_obs(repacked))
+        if not self.rl_cfg.reuse_rollout_observations:
+            result["forward_inputs"].update(_clone_replay_obs(repacked))
         return actions, result
 
     def _predict_train(
@@ -183,11 +184,9 @@ class Pi0RL(EnvIO, Pi0):
         rng: torch.Generator | None,
         compute_values: bool,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        rl_cfg = self.rl_cfg
         device = self.device
         observation = preprocess_observation(observation, train=False)
         B = observation.state.shape[0]
-        num_steps = self.num_steps
 
         if noise is None:
             noise = torch.randn(
@@ -199,15 +198,21 @@ class Pi0RL(EnvIO, Pi0):
                 generator=rng,
             )
 
-        prefix_out, prefix_mask, kv_cache = self.build_prefix_cache(observation)
-        vlm_value = None
-        if rl_cfg.add_value_head and rl_cfg.value_after_vlm:
-            vlm_value = rl_sampler.value_from_prefix(
-                self.value_head, prefix_out, prefix_mask, mode=rl_cfg.value_vlm_mode
-            )
+        prefix = self.build_prefix_cache(observation)
+        denoise_inds = self._sample_denoise_indices(B, device)
+        sampled = self._sample_train_chain(
+            observation,
+            noise,
+            denoise_inds,
+            prefix,
+            rng=rng,
+            compute_values=compute_values,
+        )
+        return self._pack_train_output(observation, denoise_inds, sampled)
 
-        collect_nft = rl_cfg.is_nft
-        if rl_cfg.joint_logprob or collect_nft:
+    def _sample_denoise_indices(self, B: int, device: torch.device) -> torch.Tensor:
+        rl_cfg, num_steps = self.rl_cfg, self.num_steps
+        if rl_cfg.joint_logprob or rl_cfg.is_nft:
             chosen_per_step = torch.arange(num_steps, device=device)
             denoise_inds = chosen_per_step[None].expand(B, -1).contiguous()
         else:
@@ -217,7 +222,30 @@ class Pi0RL(EnvIO, Pi0):
                 (B, num_steps), chosen, device=device, dtype=torch.long
             )
 
-        nft_state = self._init_nft_state(collect_nft, noise, num_steps, device)
+        return denoise_inds
+
+    def _sample_train_chain(
+        self,
+        observation: Observation,
+        noise: torch.Tensor,
+        denoise_inds: torch.Tensor,
+        prefix: tuple,
+        *,
+        compute_values: bool,
+        rng: torch.Generator | None = None,
+        step_noises: tuple[torch.Tensor, ...] | None = None,
+    ) -> tuple:
+        """Sample the chain with eager RNG or noise supplied outside graph capture."""
+        rl_cfg, num_steps = self.rl_cfg, self.num_steps
+        B, device = noise.shape[0], noise.device
+        prefix_out, prefix_mask, kv_cache = prefix
+        vlm_value = None
+        if rl_cfg.add_value_head and rl_cfg.value_after_vlm:
+            vlm_value = rl_sampler.value_from_prefix(
+                self.value_head, prefix_out, prefix_mask, mode=rl_cfg.value_vlm_mode
+            )
+
+        nft_state = self._init_nft_state(rl_cfg.is_nft, noise, num_steps, device)
         timesteps = rl_sampler.get_timesteps(num_steps, device)
         idx_step = torch.empty(B, device=device, dtype=torch.long)
         chains = [noise]
@@ -233,13 +261,17 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         for idx in range(num_steps):
-            method = (
-                rl_cfg.noise_method
-                if idx == int(denoise_inds[0, idx].item())
-                else "flow_ode"
-            )
-            t_val = float(timesteps[idx].item())
-            t_tensor = torch.full((B,), t_val, device=device, dtype=torch.float32)
+            # Graph callers supply noise and select stochastic steps on-device.
+            # Keep the eager branch for NFT and learned exploration noise.
+            if step_noises is None:
+                method = (
+                    rl_cfg.noise_method
+                    if idx == int(denoise_inds[0, idx].item())
+                    else "flow_ode"
+                )
+            else:
+                method = rl_cfg.noise_method
+            t_tensor = timesteps[idx].expand(B)
             suffix_act = self.run_suffix(
                 observation, x_t, t_tensor, kv_cache, prefix_mask
             )
@@ -257,10 +289,24 @@ class Pi0RL(EnvIO, Pi0):
                 num_steps=num_steps,
                 noise_std=noise_std,
             )
+            if step_noises is None:
+                step_noise = torch.randn(
+                    x_t.shape, device=device, dtype=torch.float32, generator=rng
+                )
+            else:
+                ode_mean, ode_std = rl_sampler.sample_mean_var(
+                    x_t.to(torch.float32),
+                    v_t,
+                    idx_step,
+                    noise_method="flow_ode",
+                    noise_level=rl_cfg.noise_level,
+                    num_steps=num_steps,
+                )
+                stochastic = (denoise_inds[:, idx] == idx)[:, None, None]
+                x_t_mean = torch.where(stochastic, x_t_mean, ode_mean)
+                x_t_std = torch.where(stochastic, x_t_std, ode_std)
+                step_noise = step_noises[idx]
             x_t_prev = x_t
-            step_noise = torch.randn(
-                x_t.shape, device=device, dtype=torch.float32, generator=rng
-            )
             x_t = x_t_mean + step_noise * x_t_std
             self._update_nft_state(nft_state, idx, x_t_prev, v_t, x_t, method)
             log_probs.append(rl_sampler.gaussian_logprob(x_t, x_t_mean, x_t_std))
@@ -297,6 +343,12 @@ class Pi0RL(EnvIO, Pi0):
         else:
             prev_values = torch.zeros((B, 1), device=device, dtype=torch.float32)
 
+        return x_0, chains_tensor, log_probs_picked, prev_values, nft_state
+
+    def _pack_train_output(self, observation, denoise_inds, sampled):
+        """Decode actions and retain the sampled transition for actor recompute."""
+        x_0, chains_tensor, log_probs_picked, prev_values, nft_state = sampled
+        B = observation.state.shape[0]
         actions = self.decode_actions(x_0, observation.state)
 
         forward_inputs: dict[str, torch.Tensor] = {
@@ -306,6 +358,7 @@ class Pi0RL(EnvIO, Pi0):
             "tokenized_prompt_mask": observation.tokenized_prompt_mask.contiguous(),
             "action": actions.reshape(B, -1).contiguous(),
             "model_action": x_0.reshape(B, -1).contiguous(),
+            **self._replay_observation_inputs(observation),
         }
         if nft_state is not None:
             forward_inputs.update(nft_state)
@@ -368,16 +421,40 @@ class Pi0RL(EnvIO, Pi0):
             nft_state["nft_noise_level"],
         )
 
+    def _replay_observation_inputs(self, observation: Observation) -> dict:
+        """Retain the exact normalized observation used to sample this chain."""
+        if not self.rl_cfg.reuse_rollout_observations:
+            return {}
+        tensors = {"prepared_obs/state": observation.state}
+        for name, image in observation.images.items():
+            tensors["prepared_obs/image/" + name] = image
+            tensors["prepared_obs/mask/" + name] = observation.image_masks[name]
+        return {name: tensor.detach().clone() for name, tensor in tensors.items()}
+
     def _observation_from_forward_inputs(
         self, forward_inputs: dict[str, torch.Tensor]
     ) -> Observation:
         """Rebuild the rollout observation so actor logprobs match sampling.
 
-        Prefer raw ``observation/*`` tensors (OpenPI path): re-run
-        ``input_transform`` then ``preprocess_observation``. Fall back to the
-        older ``obs_image__*`` layout, assembling cameras in ``IMAGE_KEYS``
-        order rather than ``dict`` iteration order.
+        Read prepared tensors directly; otherwise transform raw ``observation/*``
+        tensors or preprocess the older ``obs_image__*`` layout. Assemble cameras
+        and masks in ``IMAGE_KEYS`` order because trajectory transport can reorder
+        dictionary fields.
         """
+        if "prepared_obs/state" in forward_inputs:
+            return Observation(
+                state=forward_inputs["prepared_obs/state"],
+                images={
+                    name: forward_inputs[f"prepared_obs/image/{name}"]
+                    for name in IMAGE_KEYS
+                },
+                image_masks={
+                    name: forward_inputs[f"prepared_obs/mask/{name}"]
+                    for name in IMAGE_KEYS
+                },
+                tokenized_prompt=forward_inputs["tokenized_prompt"],
+                tokenized_prompt_mask=forward_inputs["tokenized_prompt_mask"],
+            )
         has_raw_obs = any(key.startswith("observation/") for key in forward_inputs)
         if has_raw_obs:
             processed = self.input_transform(forward_inputs, transpose=False)
@@ -421,17 +498,34 @@ class Pi0RL(EnvIO, Pi0):
 
     def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
         """PPO/GRPO recompute of logprobs and values from the stored chain."""
-        rl_cfg = self.rl_cfg
-        compute_values = kwargs.get("compute_values", True)
-        chains = forward_inputs["chains"]
-        denoise_inds = forward_inputs["denoise_inds"]
-        B = chains.shape[0]
-        device = chains.device
         observation = self._observation_from_forward_inputs(forward_inputs)
-
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
             observation
         )
+        return self._recompute_from_prefix(
+            observation,
+            forward_inputs["chains"],
+            forward_inputs["denoise_inds"],
+            prefix_out,
+            prefix_mask,
+            kv_cache,
+            compute_values=kwargs.get("compute_values", True),
+        )
+
+    def _recompute_from_prefix(
+        self,
+        observation,
+        chains,
+        denoise_inds,
+        prefix_out,
+        prefix_mask,
+        kv_cache,
+        *,
+        compute_values: bool,
+    ):
+        """Score stored transitions using an already encoded observation."""
+        rl_cfg = self.rl_cfg
+        B, device = chains.shape[0], chains.device
 
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
         if rl_cfg.joint_logprob:
