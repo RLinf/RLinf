@@ -1830,6 +1830,9 @@ setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
         export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
+        # Every user appends a URL to the prefix, so add the trailing slash if
+        # it is missing: https://gh-proxy.org works like https://gh-proxy.org/.
+        export GITHUB_PREFIX="${GITHUB_PREFIX%/}/"
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com

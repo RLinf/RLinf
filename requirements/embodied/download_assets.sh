@@ -37,6 +37,10 @@ setup_mirror() {
 		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://gh-proxy.com/}
 	fi
+	# A URL is appended to the prefix, so add the trailing slash if it is missing.
+	if [ -n "$GITHUB_PREFIX" ]; then
+		export GITHUB_PREFIX="${GITHUB_PREFIX%/}/"
+	fi
 }
 
 # Ride out transient network / HF Hub errors (e.g. HTTP 429 rate limits during
