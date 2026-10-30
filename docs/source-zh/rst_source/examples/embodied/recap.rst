@@ -404,7 +404,9 @@ Step 2：训练价值模型（Value Model SFT）
 
 - ``train/actor/loss``：价值模型的总训练损失
 - ``train/actor/grad_norm``：梯度范数
-- ``eval/spearman_correlation``：Spearman 相关系数，衡量预测值与真实回报的排序一致性
+- ``eval/value_spearman``：预测值与真实回报的 Spearman 相关系数，并列值使用平均秩。任一序列为常数或样本数少于 2 时返回 0。
+
+每个验证数据集中的样本只计入一次，分布式 sampler 补齐的重复样本会被排除。Loss、MAE 和分类准确率按样本数加权平均。预测值和目标值的均值、样本标准差基于整个数据集计算；只有一个样本时，标准差为 0。``eval/<dataset_name>/<metric>`` 记录各数据集的结果，对应的 ``eval/<metric>`` 则对各数据集结果等权平均。
 
 .. note::
 

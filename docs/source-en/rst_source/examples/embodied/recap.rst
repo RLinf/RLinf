@@ -412,7 +412,15 @@ The training script automatically initializes the Ray cluster:
 
 - ``train/actor/loss``: Total value model training loss
 - ``train/actor/grad_norm``: Gradient norm
-- ``eval/spearman_correlation``: Spearman correlation coefficient measuring rank consistency between predictions and true returns
+- ``eval/value_spearman``: Spearman correlation between predictions and true returns, using average ranks for tied values. A constant sequence or fewer than two samples gives 0.
+
+For each validation dataset, metrics count each sample once, excluding padding
+added by the distributed sampler. Loss, MAE, and categorical accuracy are
+sample-weighted means. Prediction and target means and sample standard
+deviations are computed over the full dataset; a single sample has standard
+deviation 0. The ``eval/<dataset_name>/<metric>`` keys report each dataset's
+results. The corresponding ``eval/<metric>`` keys average the dataset results
+with equal weight per dataset.
 
 .. note::
 
