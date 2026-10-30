@@ -41,6 +41,7 @@ from rlinf.utils.nested_dict_process import (
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import seed_everything
 
 
 class EnvWorker(Worker):
@@ -207,6 +208,14 @@ class EnvWorker(Worker):
         self._trajectory_step = global_step
 
     def init_worker(self):
+        # Seed the process-global RNGs (mirrors the Megatron path's _set_random_seed)
+        # before the envs are built, so env-side draws are reproducible from
+        # actor.seed and differ across env processes. Eval-only runs have no actor
+        # cfg; the fallback 0 still pins what would otherwise come from OS entropy.
+        seed_everything(
+            OmegaConf.select(self.cfg, "actor.seed", default=0) + self._rank
+        )
+
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
         self.broadcast(

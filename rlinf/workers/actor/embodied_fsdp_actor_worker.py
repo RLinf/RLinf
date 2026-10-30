@@ -57,6 +57,7 @@ from rlinf.utils.utils import (
     clear_memory,
     get_loss_agg_func,
     masked_mean,
+    seed_everything,
 )
 
 
@@ -114,6 +115,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Initialize the actor worker. build the model and use corresponding training backend,
         if needed, offload model parameters and optimizer states to CPU.
         """
+        # Mirror the Megatron path (initialize_megatron -> _set_random_seed): seed the
+        # process-global RNGs from actor.seed so draws such as policy sampling are
+        # reproducible from the config and differ across data-parallel ranks.
+        seed_everything(self.cfg.actor.seed + self._rank)
+
         self.setup_model_and_optimizer()
 
         if self.enable_offload:

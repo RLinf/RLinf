@@ -475,6 +475,9 @@ class WorldModelEnv:
         ]
 
         # One seed is shared by the batch; per-trajectory seeds are future work.
+        # Derive it from the env's configured seed (+ the per-process offset, see
+        # __init__) instead of a constant 0, so the backend's generation noise is
+        # reproducible from the config and varies across processes and runs.
         self.backend.close_session(target_slots)
         self.backend.open_session(
             env_ids=target_slots,
@@ -482,7 +485,7 @@ class WorldModelEnv:
             init_actions=torch.stack(
                 [window[1] for window in condition_windows], dim=0
             ).to(self.device),
-            seeds=[0] * num_slots,
+            seeds=[self.seed] * num_slots,
         )
 
         self._reset_metrics(env_idx=None if env_idx is None else target_slots)

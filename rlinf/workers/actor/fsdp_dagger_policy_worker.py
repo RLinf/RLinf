@@ -34,7 +34,7 @@ from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, seed_everything
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -242,6 +242,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_iter = iter(self.data_loader)
 
     def init_worker(self):
+        # This override bypasses EmbodiedFSDPActor.init_worker, so seed the global
+        # RNGs here as well (mirrors the Megatron path's _set_random_seed).
+        seed_everything(self.cfg.actor.seed + self._rank)
         super().setup_model_and_optimizer()
         self.setup_dagger_components()
         if self.cfg.actor.get("enable_offload", False):
