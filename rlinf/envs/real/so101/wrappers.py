@@ -1,0 +1,300 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""SO-101-specific episode controls for leader-follower collection."""
+
+from __future__ import annotations
+
+import math
+import threading
+import time
+from typing import Any, SupportsFloat
+
+import numpy as np
+from gymnasium.core import ActType, ObsType
+
+from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
+from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+
+
+class SO101StartEndWrapper(KeyboardStartEndWrapper):
+    """Collect SO-101 demonstrations with explicit leader handover."""
+
+    LOG_PREFIX = "[SO-101]"
+
+    def _teleop_attr(self, name: str) -> Any:
+        """Return an optional lifecycle hook from the SO-101 leader."""
+        try:
+            composed = self.env.get_wrapper_attr("device")
+        except AttributeError:
+            return None
+        for device in getattr(composed.group, "devices", ()):
+            hook = getattr(device, name, None)
+            if hook is not None:
+                return hook
+        return None
+
+    def _teleop_context(self) -> dict[str, Any]:
+        """Build the context expected by the leader lifecycle hooks."""
+        try:
+            composed = self.env.get_wrapper_attr("device")
+        except AttributeError:
+            return {}
+        context = composed.context_from(self.env)
+        # The minimal PR leaves the common ComposedTeleop context unchanged.
+        # Collect reset targets through SO-101's own environment getters so
+        # the leader can synchronize its reset without widening that API.
+        for key in (
+            "reset_joint_positions",
+            "reset_gripper_position",
+            "reset_duration",
+            "reset_joint_speed",
+        ):
+            try:
+                getter = self.env.get_wrapper_attr(f"get_{key}")
+            except AttributeError:
+                continue
+            if callable(getter):
+                context[key] = getter()
+        return context
+
+    def _countdown(self, message: str, seconds: float) -> None:
+        """Give the operator time to change hand position safely."""
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self.log("%s: %d", message, math.ceil(remaining))
+            time.sleep(min(1.0, remaining))
+
+    def _hold_before_reset(self) -> None:
+        """Reapply leader torque and wait before reset or park."""
+        hold = self._teleop_attr("hold_for_reset")
+        if hold is not None:
+            hold(self._teleop_context())
+        seconds = self._teleop_attr("manual_start_hold_seconds")
+        if seconds is None:
+            return
+        seconds = float(seconds)
+        if seconds < 0 or not math.isfinite(seconds):
+            raise ValueError("manual_start_hold_seconds must be finite and nonnegative")
+        if seconds:
+            self._countdown("Keep hands clear; reset starts in", seconds)
+
+    def before_recording_start(self) -> None:
+        """Release the leader after the handover countdown."""
+        seconds = self._teleop_attr("manual_start_hold_seconds")
+        if seconds is None:
+            seconds = 0.0
+        seconds = float(seconds)
+        if seconds < 0 or not math.isfinite(seconds):
+            raise ValueError("manual_start_hold_seconds must be finite and nonnegative")
+        if seconds:
+            self._countdown("Manual control starts in", seconds)
+        release = self._teleop_attr("release_for_manual")
+        if release is not None:
+            release(self._teleop_context())
+
+    def before_recording_abort(self) -> None:
+        """Hold the leader before the runner resets the discarded episode."""
+        self._hold_before_reset()
+
+    def before_recording_success(self) -> None:
+        """Hold the leader before the runner resets the saved episode."""
+        self._hold_before_reset()
+
+    def _finalize_random_reset_target(
+        self, seed: int | None
+    ) -> tuple[Any, bool] | None:
+        """Finalize a randomized target before teleop builds reset context."""
+        try:
+            config = self.env.get_wrapper_attr("config")
+            enabled = bool(getattr(config, "enable_random_reset"))
+            base_qpos = self.env.get_wrapper_attr("_base_reset_qpos")
+            noise_limit = float(getattr(config, "random_joint_noise"))
+            low = np.asarray(self.env.get_wrapper_attr("_joint_limit_low"), dtype=float)
+            high = np.asarray(
+                self.env.get_wrapper_attr("_joint_limit_high"), dtype=float
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not enabled:
+            return None
+        rng = np.random.default_rng(seed)
+        noise = rng.uniform(-noise_limit, noise_limit, size=len(base_qpos))
+        target = np.clip(np.asarray(base_qpos, dtype=float) + noise, low, high)
+        config.reset_joint_qpos = target.tolist()
+        config.enable_random_reset = False
+        return config, enabled
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[Any, dict[str, Any]]:
+        """Reset leader and follower together before the next episode."""
+        prepared_random_reset = self._finalize_random_reset_target(seed)
+        prepare_hook = self._teleop_attr("prepare_reset")
+        abort = self._teleop_attr("abort_reset")
+        context = self._teleop_context()
+        errors: list[BaseException] = []
+        reset_thread: threading.Thread | None = None
+        completed = False
+
+        def prepare_leader() -> None:
+            try:
+                prepare_hook(context)
+            except BaseException as error:  # noqa: BLE001
+                errors.append(error)
+
+        try:
+            if prepare_hook is not None:
+                reset_thread = threading.Thread(
+                    target=prepare_leader, name="so101-leader-reset", daemon=True
+                )
+                reset_thread.start()
+            result = super().reset(seed=seed, options=options)
+            if reset_thread is not None:
+                reset_thread.join()
+            if errors:
+                raise errors[-1]
+            completed = True
+            return result
+        finally:
+            if reset_thread is not None:
+                reset_thread.join()
+            if not completed and abort is not None:
+                abort(context)
+            if prepared_random_reset is not None:
+                prepared_random_reset[0].enable_random_reset = prepared_random_reset[1]
+
+    def _step_with_hold(
+        self, action: ActType, *, hold: bool
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Step explicit holds without inner teleop arbitration."""
+        if hold and isinstance(self.env, TeleopIntervention):
+            self.env.device.before_step(self.env)
+            return self.env.env.step(action)
+        return self.env.step(action)
+
+    def _hold_action(self, action: ActType) -> ActType:
+        """Use the follower pose while the absolute-position leader is idle."""
+        try:
+            hold = self.env.get_wrapper_attr("get_hold_action")
+        except AttributeError:
+            return action
+        try:
+            return hold(action)
+        except AttributeError:
+            return action
+
+    def step(
+        self, action: ActType
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Handle SO-101 handover before the wrapped environment steps."""
+        pressed = list(self.presses())
+        started = "a" in pressed and not self._recording
+        aborted = "a" in pressed and self._recording
+        if started:
+            self.before_recording_start()
+            self._recording = True
+            self._recording_since = time.monotonic()
+        elif aborted:
+            now = time.monotonic()
+            if now - self._recording_since < self.ABORT_LOCKOUT_S:
+                aborted = False
+            else:
+                self.before_recording_abort()
+                self._recording = False
+                self._recording_since = -math.inf
+
+        # Abort wins when both keys arrive in one poll; never save an episode
+        # after the operator explicitly discarded it.
+        success = "c" in pressed and self._recording and not aborted
+        if success:
+            # Stop accepting leader actions before the terminal transition.
+            # The terminal frame is still marked as recordable below.
+            self.before_recording_success()
+
+        hold = not self._recording or started or aborted or success
+        if hold:
+            action = self._hold_action(action)
+
+        obs, reward, terminated, truncated, info = self._step_with_hold(
+            action, hold=hold
+        )
+        idle_hold_action = info.pop("so101_idle_hold_action", None)
+        if self._recording and idle_hold_action is not None:
+            info["intervene_action"] = idle_hold_action
+            info["intervene_flag"] = np.ones(1, dtype=bool)
+        if hold:
+            # This wrapper bypasses TeleopIntervention for explicit holds. Keep
+            # the executed hold action visible to the collector instead of
+            # leaving the caller's usually-zero policy action in the dataset.
+            info["intervene_action"] = action
+            info["intervene_flag"] = np.ones(1, dtype=bool)
+        terminated = aborted
+        truncated = False
+        record_reset = False
+        segment_advance = False
+        event: str | None = None
+
+        if started:
+            event = "start"
+            record_reset = True
+            self._recording_since = time.monotonic()
+            self._last_segment_ts = -math.inf
+        elif aborted:
+            event = "abort"
+            record_reset = True
+            self._last_segment_ts = -math.inf
+
+        for key in pressed:
+            if key == "a":
+                if aborted:
+                    reward = 0.0
+                elif not self._recording and not started:
+                    event = "abort"
+                    self._recording = False
+                    self._recording_since = -math.inf
+                    record_reset = True
+                    self._last_segment_ts = -math.inf
+                    terminated = True
+                    reward = 0.0
+            elif key == "b" and self._recording:
+                now = time.monotonic()
+                if now - self._last_segment_ts >= self.SEGMENT_DEBOUNCE_S:
+                    event = "segment"
+                    segment_advance = True
+                    self._last_segment_ts = now
+            elif key == "c" and success:
+                event = "end_success"
+                reward = 1.0
+                terminated = True
+                info["success"] = True
+                break
+
+        if success:
+            self._recording = False
+            self._recording_since = -math.inf
+            self._last_segment_ts = -math.inf
+
+        info["pre_record"] = not self._recording and event != "end_success"
+        info["episode_discarded"] = bool(event == "abort")
+        info["record_reset"] = record_reset
+        info["keyboard_phase"] = (
+            "rec" if self._recording or event == "end_success" else "pre"
+        )
+        info["keyboard_event"] = event
+        info["segment_advance"] = segment_advance
+        return obs, reward, terminated, truncated, info

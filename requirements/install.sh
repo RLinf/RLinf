@@ -2578,6 +2578,13 @@ EOF
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
+        so101)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install "rlinf-openpi==0.1.1"
+            install_so101_env
+            install_flash_attn
+            ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3729,6 +3736,9 @@ install_so101_env() {
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "lerobot[feetech]>=0.4.1,<0.7"
+    # OpenPI currently requires NumPy 1.x; reassert the bound after LeRobot's
+    # dependency resolution so installing the robot stack cannot upgrade it.
+    uv pip install "numpy<2"
     use_opencv_gui_wheel
 }
 

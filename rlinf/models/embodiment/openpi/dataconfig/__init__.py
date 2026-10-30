@@ -70,6 +70,9 @@ from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    SO101JointDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
@@ -281,6 +284,31 @@ _CONFIGS = [
         num_train_steps=30_000,
         log_interval=100,
         save_interval=10_000,
+    ),
+    TrainConfig(
+        name="pi05_so101_joint",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=20, action_dim=32, discrete_state_input=True
+        ),
+        data=SO101JointDataConfig(
+            repo_id="so101_joint",
+            # LeRobot v3 samples expose task text as ``task``. The SO-101
+            # repack transform maps it to OpenPI's ``prompt`` field directly.
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=16,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
     ),
     TrainConfig(
         name="pi05_maniskill_sim_real_co_training",
@@ -536,7 +564,7 @@ _CONFIGS = [
         ),
         data=LeRobotIsaacLabStackCubeDataConfig(
             repo_id="RLinf/IsaacLab-Stack-Cube-Data",
-            base_config=DataConfig(prompt_from_task=False),
+            base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_isaaclab/assets"),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(

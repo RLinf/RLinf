@@ -570,6 +570,66 @@ def test_gim_arm_reopens_the_existing_camera_after_a_stall(monkeypatch):
     assert frames["wrist_1"].shape == (4, 4, 3)
 
 
+def test_so101_camera_failure_uses_camera_retry_policy():
+    """Let BaseCamera own retries instead of keeping a second stale cache."""
+    from rlinf.envs.real.so101.base import SO101Env
+
+    env = SO101Env.__new__(SO101Env)
+    env.config = SimpleNamespace(camera_max_age=0.5)
+    env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    env.observation_space = gym.spaces.Dict(
+        {
+            "frames": gym.spaces.Dict(
+                {"wrist_1": gym.spaces.Box(0, 255, shape=(4, 4, 3), dtype=np.uint8)}
+            )
+        }
+    )
+
+    class Camera:
+        name = "wrist_1"
+
+        def __init__(self):
+            self.calls = []
+
+        def get_frame(self, **kwargs):
+            self.calls.append(kwargs)
+            raise __import__("queue").Empty
+
+    camera = Camera()
+    env._cameras = [camera]
+
+    with pytest.raises(RuntimeError, match="camera_max_age=0.500s"):
+        env._get_camera_frames()
+    assert camera.calls == [{"timeout": 0.5, "attempts": 3, "max_age": 0.5}]
+
+
+def test_so101_close_keeps_robot_for_a_retry_after_cleanup_failure():
+    from rlinf.envs.real.so101.base import SO101Env
+
+    class Robot:
+        def __init__(self):
+            self.calls = 0
+
+        def disconnect(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("disconnect failed")
+
+    env = SO101Env.__new__(SO101Env)
+    env._closed = False
+    env._cameras = []
+    env.robot = Robot()
+
+    with pytest.raises(RuntimeError, match="disconnect failed"):
+        env.close()
+    assert env.robot is not None
+    assert not env._closed
+
+    env.close()
+    assert env.robot is None
+    assert env._closed
+
+
 def test_dual_franka_reads_depth_beside_each_frame():
     """Both arms' cameras report depth through the same reading as the frame.
 
@@ -1403,6 +1463,266 @@ def test_start_end_c_sets_success_so_collect_episode_can_flush(monkeypatch):
     assert info["success"] is True
     assert reward == 1.0
     assert terminated is True
+
+
+def test_so101_start_end_preserves_abort_lockout_and_episode_accounting(monkeypatch):
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[], ["a"], ["a"], ["a"], ["a"], ["c"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(action)
+            return {}, 0.25, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = SO101StartEndWrapper(Env())
+    env.DEBOUNCE_S = 0.0
+    env.reset()
+
+    _, _, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "start"
+    assert not terminated
+
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] is None
+    assert not terminated
+    assert reward == 0.25
+    assert env._recording
+
+    env.ABORT_LOCKOUT_S = 0.0
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "abort"
+    assert terminated
+    assert reward == 0.0
+    assert info["pre_record"]
+    assert info["episode_discarded"] is True
+
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "start"
+    assert not terminated
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "end_success"
+    assert info["success"] is True
+    assert terminated
+    assert reward == 1.0
+    assert info["pre_record"] is False
+
+
+def test_so101_hold_bypasses_inner_teleop_intervention(monkeypatch):
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Device(TeleopDevice):
+        group = SimpleNamespace(devices=())
+
+        def context_from(self, env):
+            del env
+            return {}
+
+        def read(self, env, policy_action):
+            del env, policy_action
+            return TeleopSample(np.array([9.0]), active=True)
+
+        def get_hold_action(self, env, fallback_action=None):
+            del env, fallback_action
+            return np.array([7.0])
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(np.asarray(action).copy())
+            return {}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    inner = Env()
+    wrapper = SO101StartEndWrapper(TeleopIntervention(inner, Device()))
+    wrapper.reset()
+    _, _, _, _, info = wrapper.step(np.array([1.0]))
+    np.testing.assert_array_equal(inner.actions, [[7.0]])
+    np.testing.assert_array_equal(info["intervene_action"], [7.0])
+    assert bool(info["intervene_flag"][0])
+
+
+def test_so101_idle_leader_hold_is_recorded_as_the_executed_action(monkeypatch):
+    from rlinf.data.schema.embodied_types import LeRobotFrame
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    idle_action = np.array([0.2, -0.3, 0.4, 0.5, -0.6, 0.7])
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[], ["a"], []]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Device(TeleopDevice):
+        group = SimpleNamespace(devices=())
+
+        def context_from(self, env):
+            del env
+            return {}
+
+        def read(self, env, policy_action):
+            del env, policy_action
+            return TeleopSample(
+                idle_action,
+                active=False,
+                apply_when_inactive=True,
+                info={"so101_idle_hold_action": idle_action},
+            )
+
+    class Env(gym.Env):
+        def __init__(self):
+            super().__init__()
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {"states": np.zeros(6), "task_descriptions": "test"}, {}
+
+        def step(self, action):
+            self.actions.append(np.asarray(action).copy())
+            return (
+                {"states": np.zeros(6), "task_descriptions": "test"},
+                0.0,
+                False,
+                False,
+                {},
+            )
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = Env()
+    wrapper = SO101StartEndWrapper(TeleopIntervention(env, Device()))
+    wrapper.DEBOUNCE_S = 0.0
+    wrapper.reset()
+    wrapper.step(np.zeros(6))
+    wrapper.step(np.zeros(6))
+
+    obs, _, _, _, info = wrapper.step(np.zeros(6))
+
+    np.testing.assert_array_equal(env.actions[-1], idle_action)
+    np.testing.assert_array_equal(info["intervene_action"], idle_action)
+    assert bool(info["intervene_flag"][0])
+    frame = LeRobotFrame.from_step(
+        observation=obs,
+        action=np.zeros(6),
+        info=info,
+        segment_id=0,
+        action_dim=6,
+    )
+    assert frame is not None
+    np.testing.assert_array_equal(frame.action, idle_action.astype(np.float32))
+
+
+def test_so101_reset_builds_teleop_context_after_random_target(monkeypatch):
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Group:
+        parts = ()
+        context_keys = frozenset({"reset_joint_positions"})
+        synchronized_reset_context_keys = context_keys
+
+        def __init__(self):
+            self.contexts = []
+
+        def prepare_reset(self, context):
+            self.contexts.append(dict(context))
+
+        def reset(self, context):
+            self.contexts.append(dict(context))
+
+        def abort_reset(self, context):
+            del context
+
+    class Config:
+        enable_random_reset = True
+        random_joint_noise = 0.1
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.config = Config()
+            self._base_reset_qpos = [0.2] * 5
+            self.config.reset_joint_qpos = list(self._base_reset_qpos)
+            self._joint_limit_low = np.full(5, -1.0)
+            self._joint_limit_high = np.full(5, 1.0)
+
+        def reset(self, seed=None, options=None):
+            del seed, options
+            return {}, {}
+
+        def step(self, action):
+            del action
+            return {}, 0.0, False, False, {}
+
+        def get_reset_joint_positions(self):
+            return np.asarray(self.config.reset_joint_qpos)[None, :]
+
+        def get_wrapper_attr(self, name):
+            if name == "config":
+                return self.config
+            if name == "_base_reset_qpos":
+                return self._base_reset_qpos
+            if name == "_joint_limit_low":
+                return self._joint_limit_low
+            if name == "_joint_limit_high":
+                return self._joint_limit_high
+            if name == "random_joint_noise":
+                return self.config.random_joint_noise
+            if name == "get_reset_joint_positions":
+                return self.get_reset_joint_positions
+            raise AttributeError(name)
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    inner = Env()
+    group = Group()
+    teleop = ComposedTeleop(group, {})
+    teleop.context_from = lambda env: {
+        "reset_joint_positions": env.get_wrapper_attr("get_reset_joint_positions")()
+    }
+    wrapper = SO101StartEndWrapper(TeleopIntervention(inner, teleop))
+    wrapper.reset(seed=3)
+
+    np.testing.assert_allclose(
+        group.contexts[-1]["reset_joint_positions"],
+        inner.get_reset_joint_positions(),
+    )
+    assert inner.config.reset_joint_qpos != inner._base_reset_qpos
+    assert inner.config.enable_random_reset is True
 
 
 def test_eval_control_c_sets_success_so_collect_episode_can_flush(monkeypatch):
@@ -2610,6 +2930,17 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+def test_so101_task_description_comes_from_task_config():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(task_description="pick up an object")
+        try:
+            assert env.task_description == "pick up an object"
+        finally:
+            env.close()
+
+
 @pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
     """The env speaks radians; only the driver may speak lerobot's units.
@@ -2694,6 +3025,15 @@ def test_so101_env_runs_without_hardware_when_dummy():
         env.step(np.zeros(6, dtype=np.float32))
     finally:
         env.close()
+
+
+def test_so101_reset_gripper_is_optional():
+    """An omitted reset gripper target leaves the current opening unchanged."""
+    from rlinf.envs.real.so101 import SO101ReachConfig
+
+    config = SO101ReachConfig(target_joint_qpos=[0.0] * 5)
+
+    assert config.reset_gripper_position is None
 
 
 def test_so101_reach_refuses_a_target_that_is_not_five_joints():
@@ -3434,6 +3774,7 @@ def test_so101_env_is_driven_by_its_leader():
             env_idx=0,
             env_cfg={
                 "teleop": [{"so101_leader": {"port": "/dev/mock-leader"}}],
+                "so101_episode_wrapper": "start_end",
                 "no_gripper": False,
                 "use_relative_frame": False,
             },
@@ -3445,6 +3786,9 @@ def test_so101_env_is_driven_by_its_leader():
         )
         try:
             env.reset()
+            leader = list(env.get_wrapper_attr("device").group.devices)[0]
+            assert leader._device.positions["shoulder_pan.pos"] == pytest.approx(0.0)
+            assert leader._device.torque_enabled
             policy_action = np.zeros(6, dtype=np.float32)
 
             observation, *_ = env.step(policy_action)
@@ -3452,7 +3796,9 @@ def test_so101_env_is_driven_by_its_leader():
                 np.zeros(5)
             )
 
-            leader = list(env.get_wrapper_attr("device").group.devices)[0]
+            # The SO-101 episode wrapper owns the pre-recording hold action;
+            # leader intervention is applied once recording has started.
+            env.set_wrapper_attr("_recording", True)
             leader._device.positions.update(
                 {"shoulder_pan.pos": 45.0, "gripper.pos": 80.0}
             )

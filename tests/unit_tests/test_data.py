@@ -608,6 +608,45 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _StreamingScalarFeatureDataset(_LegacyDataset):
+    """Mimic a streaming LeRobot dataset with scalar HF features."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "is_success": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {
+            "done": [],
+            "is_success": [],
+            "segment_id": [],
+            "size": 0,
+        }
+        self.image_writer = None
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["is_success"].append(frame["is_success"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+        self.episode_buffer["size"] += 1
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, bool) for value in self.episode_buffer["is_success"]
+        )
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -635,6 +674,28 @@ def test_current_dataset_gets_task_as_argument():
     assert dataset.tasks == ["pick up the cube"] * 2
     assert all("task" not in f for f in dataset.frames)
     assert dataset.frames[0]["state"] == 0
+    assert dataset.saved_episodes == 1
+
+
+def test_streaming_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _StreamingScalarFeatureDataset()
+    writer = _make_writer(dataset)
+    writer.add_frame(
+        {
+            "done": np.array([False], dtype=bool),
+            "is_success": np.array([False], dtype=bool),
+            "segment_id": np.array([3], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+    )
+
+    assert writer.save_episode(is_success=True) == 1
+    assert dataset.episode_buffer == {
+        "done": [True],
+        "is_success": [True],
+        "segment_id": [3],
+        "size": 1,
+    }
     assert dataset.saved_episodes == 1
 
 

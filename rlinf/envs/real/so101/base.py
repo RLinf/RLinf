@@ -21,9 +21,10 @@ quantities has to add forward kinematics of its own.
 """
 
 import copy
+import queue
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import cv2
 import gymnasium as gym
@@ -53,6 +54,20 @@ _DEFAULT_JOINT_LIMIT_HIGH = np.array([1.91, 1.75, 1.69, 1.66, 2.79])
 #: Arm joints, matching :pyattr:`SO101Arm.MOTORS`.
 _DOF = len(SO101Arm.MOTORS)
 
+# BaseCamera reopens the device between attempts and owns frame freshness. The
+# environment only supplies the per-attempt read budget.
+_CAMERA_FRAME_TIMEOUT_S = 0.5
+_CAMERA_REOPEN_ATTEMPTS = 3
+
+
+def _zero_observation(space: gym.Space) -> Any:
+    """Build a deterministic zero value matching a Gymnasium space."""
+    if isinstance(space, gym.spaces.Dict):
+        return {key: _zero_observation(value) for key, value in space.spaces.items()}
+    if isinstance(space, gym.spaces.Box):
+        return np.zeros(space.shape, dtype=space.dtype)
+    raise TypeError(f"Zero dummy observations do not support {type(space).__name__}.")
+
 
 @dataclass
 class SO101EnvConfig:
@@ -64,14 +79,20 @@ class SO101EnvConfig:
     is_dummy: bool = False
     """Run without hardware, sampling observations from the space."""
 
+    zero_dummy_observation: bool = False
+    """Return deterministic zero observations for local integration tests."""
+
     step_frequency: float = 10.0
     """Control rate in Hz. A step sleeps for the remainder of its period."""
 
     camera_max_age: float = 0.5
-    """Maximum age in seconds of a camera frame reused between control steps."""
+    """Maximum age for a reused frame; zero disables frame reuse."""
 
     reset_joint_qpos: list[float] = field(default_factory=lambda: [0.0] * _DOF)
     """Rest configuration, in radians."""
+
+    reset_gripper_position: Optional[float] = None
+    """Gripper opening at reset, or ``None`` to keep its current position."""
 
     reset_duration: float = 3.0
     """Minimum reset trajectory duration in seconds."""
@@ -151,6 +172,9 @@ class SO101Env(gym.Env):
             value = getattr(config, name)
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
+        self._validate_configured_pose(
+            "reset", config.reset_joint_qpos, config.reset_gripper_position
+        )
         self.hardware = get_hardware_config(
             SO101Config, robot_info, is_dummy=config.is_dummy
         )
@@ -165,6 +189,7 @@ class SO101Env(gym.Env):
         self._num_steps = 0
         self._success_hold_counter = 0
         self._last_gripper: Optional[float] = None
+        self._gripper_position = np.zeros(1, dtype=np.float32)
         self._joints = np.zeros(_DOF)
         self.robot: Optional[SO101Robot] = None
 
@@ -188,6 +213,22 @@ class SO101Env(gym.Env):
             self.go_to_rest()
         self._open_cameras()
         self.camera_player = VideoPlayer(self.config.enable_camera_player)
+
+    def _validate_configured_pose(
+        self, name: str, joints: list[float], gripper: Optional[float]
+    ) -> None:
+        """Validate a configured joint and gripper target."""
+        target = np.asarray(joints, dtype=np.float64)
+        if target.shape != (_DOF,) or not np.all(np.isfinite(target)):
+            raise ValueError(f"{name}_joint_qpos must contain {_DOF} finite values.")
+        if np.any(target < self.config.joint_limit_low) or np.any(
+            target > self.config.joint_limit_high
+        ):
+            raise ValueError(f"{name}_joint_qpos must lie within the joint limits.")
+        if gripper is not None and (
+            not np.isfinite(gripper) or not 0.0 <= gripper <= 1.0
+        ):
+            raise ValueError(f"{name}_gripper_position must be between 0 and 1.")
 
     # Hardware setup.
 
@@ -253,6 +294,16 @@ class SO101Env(gym.Env):
 
     # Gymnasium API.
 
+    def episode_wrappers(self, cfg: Mapping[str, Any]) -> tuple[type, ...]:
+        """Add the SO-101 collection wrapper without changing shared wrappers."""
+        if getattr(self.config, "is_dummy", False):
+            return ()
+        if cfg.get("so101_episode_wrapper") == "start_end":
+            from .wrappers import SO101StartEndWrapper
+
+            return (SO101StartEndWrapper,)
+        return ()
+
     def action_parts(self) -> tuple[ActionPart, ...]:
         """Return the joint-position and gripper action parts."""
         return (
@@ -312,6 +363,14 @@ class SO101Env(gym.Env):
         """Arm joints as ``(1, 5)``, the shape teleop bindings index by arm."""
         return self._joints.reshape(1, -1).copy()
 
+    def get_gripper_position(self) -> np.ndarray:
+        """Current gripper opening as ``(1, 1)`` for teleop context."""
+        return self._gripper_position.reshape(1, -1).copy()
+
+    def get_gripper_open(self) -> np.ndarray:
+        """Return the gripper opening for the teleop context hook."""
+        return self.get_gripper_position()
+
     @property
     def num_steps(self) -> int:
         """Steps taken in the current episode."""
@@ -336,12 +395,43 @@ class SO101Env(gym.Env):
         return self._get_observation(), {}
 
     def go_to_rest(self) -> None:
-        """Move to :pyattr:`SO101EnvConfig.reset_joint_qpos`."""
-        self._arm.reset_joint(
+        """Move the joints and gripper to the configured reset state."""
+        gripper = self.config.reset_gripper_position
+        if gripper is None:
+            gripper = float(self._arm.get_state().gripper_position.reshape(-1)[0])
+        self._move_to_configured_pose(
             self.config.reset_joint_qpos,
-            duration=self.config.reset_duration,
+            gripper,
+            self.config.reset_duration,
+        )
+
+    def _move_to_configured_pose(
+        self, joints: list[float], gripper: float, duration: float
+    ) -> None:
+        """Move all six servos to one configured state."""
+        self._arm.move_to_pose(
+            [*joints, gripper],
+            duration=duration,
             max_velocity=self.config.reset_joint_speed,
         )
+
+    def get_reset_joint_positions(self) -> np.ndarray:
+        """Return the reset joint target for coordinated teleoperation reset."""
+        return np.asarray(self.config.reset_joint_qpos, dtype=np.float64)[None, :]
+
+    def get_reset_gripper_position(self) -> Optional[np.ndarray]:
+        """Return the reset gripper target, if one was explicitly configured."""
+        if self.config.reset_gripper_position is None:
+            return None
+        return np.asarray([[self.config.reset_gripper_position]], dtype=np.float64)
+
+    def get_reset_duration(self) -> float:
+        """Return the minimum reset trajectory duration in seconds."""
+        return float(self.config.reset_duration)
+
+    def get_reset_joint_speed(self) -> float:
+        """Return the maximum reset joint speed in radians per second."""
+        return float(self.config.reset_joint_speed)
 
     # Reward.
 
@@ -369,19 +459,24 @@ class SO101Env(gym.Env):
     def _get_observation(self) -> dict[str, Any]:
         """Return the joint state and any camera frames."""
         if self.config.is_dummy:
+            if self.config.zero_dummy_observation:
+                return _zero_observation(self._base_observation_space)
             return self._base_observation_space.sample()
         reading = self._state_parts.get_observation()["arm"]
 
         # The driver works in float64; the declared space is float32, and an
         # observation outside its own space fails Gymnasium's env checker.
         self._joints = np.asarray(reading["arm_joint_position"], dtype=float)
+        self._gripper_position = np.asarray(
+            reading["end_effector"]["state"], dtype=np.float32
+        ).reshape(1)
         observation: dict[str, Any] = {
             "state": {
                 "arm_joint_position": np.asarray(
                     reading["arm_joint_position"], dtype=np.float32
                 ),
                 "gripper_position": np.asarray(
-                    reading["end_effector"]["state"], dtype=np.float32
+                    self._gripper_position, dtype=np.float32
                 ),
             }
         }
@@ -423,9 +518,13 @@ class SO101Env(gym.Env):
         return cv2.resize(frame[top : top + side, left : left + side], size)
 
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Read one frame per camera, reopening a camera that has stalled."""
-        import queue
+        """Read fresh camera frames through the camera's recovery policy.
 
+        ``BaseCamera.get_frame`` owns cached-frame freshness and bounded
+        reconnect attempts. Once those attempts are exhausted, the control
+        step fails explicitly instead of maintaining a second stale-frame
+        cache at the environment layer.
+        """
         declared = self.observation_space["frames"]
         frames: dict[str, np.ndarray] = {}
         for camera in getattr(self, "_cameras", []):
@@ -434,18 +533,18 @@ class SO101Env(gym.Env):
             try:
                 # Cameras deliver their native resolution; the space fixes one.
                 size = declared[name].shape[:2][::-1]
-                frames[name] = self._crop_frame(
-                    camera.get_frame(max_age=self.config.camera_max_age), size
+                raw_frame = camera.get_frame(
+                    timeout=_CAMERA_FRAME_TIMEOUT_S,
+                    attempts=_CAMERA_REOPEN_ATTEMPTS,
+                    max_age=self.config.camera_max_age,
                 )
-            except queue.Empty:
-                self._logger.warning(
-                    f"Camera {name} is not producing frames. Waiting 5s and retrying."
-                )
-                time.sleep(5)
-                # Reopen this camera rather than rebuilding the declarations,
-                # which would drop the placement the robot gave it.
-                camera.reopen()
-                return self._get_camera_frames()
+            except queue.Empty as exc:
+                raise RuntimeError(
+                    f"Camera {name} did not produce a fresh frame after "
+                    f"{_CAMERA_REOPEN_ATTEMPTS} attempts or exceeded "
+                    f"camera_max_age={self.config.camera_max_age:.3f}s."
+                ) from exc
+            frames[name] = self._crop_frame(raw_frame, size)
 
         if hasattr(self, "camera_player"):
             self.camera_player.put_frame(frames)
@@ -453,10 +552,30 @@ class SO101Env(gym.Env):
 
     def close(self) -> None:
         """Release the cameras and disconnect the robot."""
+        if getattr(self, "_closed", False):
+            return
+        close_error: Optional[BaseException] = None
         if hasattr(self, "_cameras"):
-            self._close_cameras()
+            try:
+                self._close_cameras()
+            except BaseException as exc:  # noqa: BLE001 - continue hardware cleanup
+                close_error = exc
         if hasattr(self, "camera_player"):
-            self.camera_player.stop()
+            try:
+                self.camera_player.stop()
+            except BaseException as exc:  # noqa: BLE001 - continue hardware cleanup
+                if close_error is None:
+                    close_error = exc
         if self.robot is not None:
-            self.robot.disconnect()
-            self.robot = None
+            robot_disconnected = False
+            try:
+                self.robot.disconnect()
+                robot_disconnected = True
+            except BaseException as exc:  # noqa: BLE001 - preserve first failure
+                if close_error is None:
+                    close_error = exc
+            if robot_disconnected:
+                self.robot = None
+        if close_error is not None:
+            raise close_error
+        self._closed = True

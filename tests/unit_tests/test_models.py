@@ -1375,6 +1375,54 @@ def test_apxinf_close_delegates_to_model():
     assert model.closed
 
 
+def test_so101_openpi_transforms_pad_six_joint_contract():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.so101_policy import SO101Inputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = SO101Inputs(action_dim=32, model_type=openpi_model.ModelType.PI05)(
+        {
+            "observation/image": image,
+            "observation/state": np.zeros(6, dtype=np.float32),
+            "actions": np.zeros((20, 6), dtype=np.float32),
+            "prompt": "reach a joint configuration",
+        }
+    )
+    assert result["state"].shape == (32,)
+    assert result["actions"].shape == (20, 32)
+    assert result["image"]["base_0_rgb"].shape == image.shape
+    assert not result["image_mask"]["left_wrist_0_rgb"]
+
+
+def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from openpi.models.pi0_config import Pi0Config
+
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        SO101JointDataConfig,
+    )
+
+    data_config = SO101JointDataConfig(repo_id="so101_joint").create(
+        assets_dirs=Path("/tmp/nonexistent-openpi-assets"),
+        model_config=Pi0Config(pi05=True),
+    )
+    raw_sample = {
+        "image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "state": np.zeros(6, dtype=np.float32),
+        "actions": np.zeros((2, 6), dtype=np.float32),
+        "task": "reach a joint configuration",
+    }
+
+    repacked = data_config.repack_transforms.inputs[0](raw_sample)
+
+    assert repacked["prompt"] == raw_sample["task"]
+    assert "task" not in repacked
+
+
 def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
     """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
     seen = {}
