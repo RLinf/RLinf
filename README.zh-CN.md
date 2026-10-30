@@ -536,6 +536,20 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 }
 ```
 
+如果您的研究使用了 Collective Experience Learning（CEL），欢迎引用我们的论文：
+
+```bibtex
+@misc{yu2026learningfleetexperiencecollective,
+  title={Learning from Fleet Experience: Collective Experience Learning Across 96 Robots},
+  author={Chao Yu and Shu'ang Yu and Hao Lin and Hongzhi Zang and Yuxiang Yan and Chenxi Jiang and Zhen Guo and Chuankang Li and Yihao Chen and Xin Xu and Xu Fu and Jiakai Zhou and Liangzhi Shi and Hongyi Ren and Yiwei Liu and Jing Wu and Yuanqing Wang and Chen Wu and Bo Dai and Chunyu Yang and Hongliang Huang and Shuoyu Yue and Weiqi Yin and Yinuo Chen and Ruihua Chen and Chunyang Zhu and Han Xiao and Yanghao Li and Ruipu Wu and Zhikai Cai and Xiu Chen and Xu Tan and Si Liu and Yuchen Yan and Jialin Zhang and Wen Zeng and Yiming Zhou and Zixiao Huang and Xinlei Chen and Guanghui Ren and Quanlu Zhang and Boxun Li and Maoqing Yao and Yu Wang},
+  year={2026},
+  eprint={2610.25736},
+  archivePrefix={arXiv},
+  primaryClass={cs.RO},
+  url={https://arxiv.org/abs/2610.25736},
+}
+```
+
 **致谢**
 RLinf 的灵感来源并受益于更广泛开源社区的思想与工具。
 我们特别感谢 veRL、vLLM、AReaL、Megatron-LM、SGLang 和 PyTorch Fully Sharded Data Parallel (FSDP) 的团队与贡献者。
