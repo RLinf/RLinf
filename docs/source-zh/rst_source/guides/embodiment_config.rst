@@ -83,6 +83,7 @@ algorithm
 
     bootstrap_type: always
     kl_beta: 0.0
+    target_kl: null
     entropy_bonus: 0.0
     clip_ratio_low: 0.2
     clip_ratio_high: 0.28
@@ -121,7 +122,13 @@ algorithm
      - 在 episode 边界如何对 Q 值进行自举：``standard`` 仅在截断时自举；``always`` 在
        截断或终止时都自举。
    * - ``algorithm.kl_beta``
-     - 加入奖励的 KL 惩罚权重。
+     - 相对于行为策略的 KL 惩罚初始权重。在具身 FSDP PPO 损失中，它缩放附加到策略
+       损失上的 ``kl_beta * approx_kl`` 项；缺少该项时，长程 PPO 训练可能偏离
+       rollout 策略并导致 KL 散度发散（issue #1110）。
+   * - ``algorithm.target_kl``
+     - 每次更新的目标近似 KL。设置后（且 ``kl_beta > 0``），每次更新后自适应调整系数：
+       当实测 ``actor/approx_kl`` 超过 ``1.5 * target_kl`` 时乘以 1.5，低于
+       ``target_kl / 1.5`` 时乘以 0.5。保持 ``null`` 则 ``kl_beta`` 固定不变。
    * - ``algorithm.entropy_bonus``
      - 熵奖励系数。
    * - ``algorithm.clip_ratio_low`` / ``clip_ratio_high``
