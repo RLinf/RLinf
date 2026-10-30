@@ -311,6 +311,7 @@ def test_megatron_valid_token_scale_matches_unsplit_gradient(
         worker.clip_ratio_low = worker.clip_ratio_high = 0.2
         worker.value_clip = 0.5
         worker.num_microbatches = 1
+        worker.response_only_logits = False
         input_ids = torch.arange(128).reshape(32, 4) % 7 + 1
         positions = torch.arange(4).expand_as(input_ids).clone()
         mask = (positions > 0) & (positions <= (torch.arange(32) % 3 + 1)[:, None])
@@ -838,16 +839,17 @@ def test_ppo_batch_balance_before_minibatches_preserves_targets_and_loss(
 @pytest.mark.parametrize(
     "option,value",
     [
-        ("recompute_logprobs", False),
-        ("group_size", 4),
-        ("adv_type", "gae"),
-        ("kl_beta", 0.01),
-        ("loss_agg_func", "seq-mean-token-mean"),
-        ("use_valid_token_scale", False),
-        ("loss_scales", ["group_level"]),
+        ("algorithm.recompute_logprobs", False),
+        ("algorithm.group_size", 4),
+        ("algorithm.adv_type", "gae"),
+        ("algorithm.kl_beta", 0.01),
+        ("algorithm.loss_agg_func", "seq-mean-token-mean"),
+        ("algorithm.use_valid_token_scale", False),
+        ("algorithm.loss_scales", ["group_level"]),
+        ("actor.model.tensor_model_parallel_size", 2),
     ],
 )
-def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
+def test_searchr1_ppo_rejects_incompatible_options(option, value):
     from omegaconf import OmegaConf
 
     from rlinf.config import validate_searchr1_cfg
@@ -885,8 +887,8 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
         }
     )
     validate_searchr1_cfg(cfg)
-    cfg.algorithm[option] = value
-    with pytest.raises(ValueError, match="SearchR1 (PPO )?requires"):
+    OmegaConf.update(cfg, option, value)
+    with pytest.raises(ValueError, match="SearchR1 .*requires"):
         validate_searchr1_cfg(cfg)
 
 
@@ -929,3 +931,540 @@ def test_searchr1_ci_recipes_validate(config_name):
     validate_searchr1_cfg(cfg)
     assert cfg.algorithm.n_minibatches == 1
     assert cfg.runner.synchronous
+
+
+def test_qwen35_convertor_inverts_megatron_bridge_layouts():
+    from types import SimpleNamespace
+
+    bridge = pytest.importorskip("megatron.bridge.models.conversion.param_mapping")
+    from rlinf.utils.convertor.utils import Qwen35Convertor
+
+    shape = SimpleNamespace(**QWEN3_5_SHAPE)
+    hidden, head_dim = shape.hidden_size, shape.kv_channels
+    qk_dim = shape.linear_key_head_dim * shape.linear_num_key_heads
+    v_dim = shape.linear_value_head_dim * shape.linear_num_value_heads
+    hf = {
+        "q_proj": torch.randn(2 * shape.num_attention_heads * head_dim, hidden),
+        "k_proj": torch.randn(shape.num_query_groups * head_dim, hidden),
+        "v_proj": torch.randn(shape.num_query_groups * head_dim, hidden),
+        "in_proj_qkv": torch.randn(2 * qk_dim + v_dim, hidden),
+        "in_proj_z": torch.randn(v_dim, hidden),
+        "in_proj_b": torch.randn(shape.linear_num_value_heads, hidden),
+        "in_proj_a": torch.randn(shape.linear_num_value_heads, hidden),
+        "norm": torch.randn(shape.linear_value_head_dim),
+    }
+    # Megatron layouts as Megatron-Bridge builds them from the served weights.
+    grouped = bridge._fuse_gdn_separate_to_grouped(
+        shape, hf["in_proj_qkv"], hf["in_proj_z"], hf["in_proj_b"], hf["in_proj_a"]
+    )
+    megatron = {
+        "decoder.layers.3.self_attention.linear_qkv.weight": bridge.merge_qkv_weights(
+            shape, hf["q_proj"], hf["k_proj"], hf["v_proj"]
+        ),
+        "decoder.layers.0.self_attention.in_proj.weight": (
+            bridge.merge_gdn_linear_weights(shape, *grouped, tp_size=1)
+        ),
+        "decoder.layers.0.self_attention.out_norm.weight": hf["norm"] - 1,
+        "embedding.word_embeddings.weight": torch.randn(16, hidden),
+    }
+    config = SimpleNamespace(reshard_tp_size=1, model_config=shape)
+    converted = Qwen35Convertor(config, strict=True).convert(megatron)
+
+    layer3 = "model.language_model.layers.3.self_attn."
+    layer0 = "model.language_model.layers.0.linear_attn."
+    for name in ("q_proj", "k_proj", "v_proj"):
+        torch.testing.assert_close(converted[f"{layer3}{name}.weight"], hf[name])
+    for name in ("in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a"):
+        torch.testing.assert_close(converted[f"{layer0}{name}.weight"], hf[name])
+    torch.testing.assert_close(converted[f"{layer0}norm.weight"], hf["norm"])
+    torch.testing.assert_close(
+        converted["model.language_model.embed_tokens.weight"],
+        megatron["embedding.word_embeddings.weight"],
+    )
+    with pytest.raises(NotImplementedError, match="rollout tensor parallel size 1"):
+        Qwen35Convertor(SimpleNamespace(reshard_tp_size=2, model_config=shape))
+
+
+def test_qwen35_model_config_carries_gated_deltanet_sizes(tmp_path):
+    import json
+
+    pytest.importorskip("transformers.models.qwen3_5")
+    from rlinf.config import validate_model_cfg_by_hf_config
+
+    text = {
+        "model_type": "qwen3_5_text",
+        "vocab_size": 32,
+        "hidden_size": 8,
+        "intermediate_size": 16,
+        "num_hidden_layers": 4,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 3,
+        "attn_output_gate": True,
+        "linear_conv_kernel_dim": 4,
+        "linear_key_head_dim": 2,
+        "linear_value_head_dim": 3,
+        "linear_num_key_heads": 2,
+        "linear_num_value_heads": 4,
+    }
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_5",
+                "architectures": ["Qwen3_5ForConditionalGeneration"],
+                "text_config": text,
+            }
+        )
+    )
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.create({"model": {"model_type": "qwen3_5"}})
+    cfg = validate_model_cfg_by_hf_config(cfg, str(tmp_path))
+    for key, value in QWEN3_5_SHAPE.items():
+        if key.startswith("linear_") or key == "attention_output_gate":
+            assert cfg.model[key] == value
+
+
+def test_qwen35_rollout_tp_is_checked_only_when_megatron_syncs_weights():
+    from omegaconf import OmegaConf
+
+    from rlinf.config import validate_rollout_cfg
+
+    def rollout():
+        return OmegaConf.create(
+            {
+                "model": {"model_type": "qwen3_5", "model_path": "unused"},
+                "tensor_parallel_size": 2,
+                "return_logprobs": False,
+                "sglang": {},
+            }
+        )
+
+    megatron = OmegaConf.create({"training_backend": "megatron"})
+    with pytest.raises(AssertionError, match="tensor_parallel_size=1, got 2"):
+        validate_rollout_cfg(rollout(), OmegaConf.create({}), megatron)
+    # Evaluation serves the checkpoint without weight sync.
+    validate_rollout_cfg(rollout(), OmegaConf.create({}))
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_overridden_scheduler_applies_configured_rates_after_resume(override):
+    pytest.importorskip("megatron.training")
+    from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        parameter_group_rates,
+        restore_parameter_group_rates,
+    )
+
+    def optimizer_and_scheduler(lr):
+        weight = torch.nn.Parameter(torch.zeros(2))
+        optimizer = torch.optim.Adam([{"params": [weight], "max_lr": lr, "min_lr": 0}])
+        scheduler = OptimizerParamScheduler(
+            optimizer,
+            init_lr=0.0,
+            max_lr=lr,
+            min_lr=0.0,
+            lr_warmup_steps=0,
+            lr_decay_steps=10,
+            lr_decay_style="constant",
+            start_wd=0.0,
+            end_wd=0.0,
+            wd_incr_steps=10,
+            wd_incr_style="constant",
+            use_checkpoint_opt_param_scheduler=not override,
+            override_opt_param_scheduler=override,
+        )
+        return optimizer, scheduler
+
+    saved_optimizer, saved_scheduler = optimizer_and_scheduler(1e-5)
+    saved_scheduler.step(increment=3)
+    optimizer, scheduler = optimizer_and_scheduler(2e-6)
+    configured = parameter_group_rates(optimizer)
+    # Megatron restores the optimizer, then the scheduler, from a checkpoint.
+    optimizer.load_state_dict(saved_optimizer.state_dict())
+    if override:
+        scheduler.load_state_dict(saved_scheduler.state_dict())
+        # The restored group rate wins without restoring the configured rates.
+        assert optimizer.param_groups[0]["lr"] == 1e-5
+        restore_parameter_group_rates(optimizer, scheduler, configured)
+        assert optimizer.param_groups[0]["lr"] == 2e-6
+    else:
+        scheduler.load_state_dict(saved_scheduler.state_dict())
+        assert optimizer.param_groups[0]["lr"] == 1e-5
+    assert scheduler.num_steps == 3
+
+
+# A Qwen3.5 shape small enough to test, with Gated DeltaNet sizes that differ
+# from Megatron's defaults.
+QWEN3_5_SHAPE = {
+    "hidden_size": 8,
+    "num_attention_heads": 4,
+    "num_query_groups": 2,
+    "kv_channels": 3,
+    "attention_output_gate": True,
+    "linear_key_head_dim": 2,
+    "linear_num_key_heads": 2,
+    "linear_value_head_dim": 3,
+    "linear_num_value_heads": 4,
+}
+
+
+@pytest.fixture
+def single_process_group(tmp_path):
+    torch.distributed.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'store'}", rank=0, world_size=1
+    )
+    yield
+    torch.distributed.destroy_process_group()
+
+
+def test_tis_weights_only_response_tokens_and_truncates_large_ratios():
+    from rlinf.algorithms.utils import truncated_importance_weights
+
+    recomputed = torch.tensor([[0.0, -1.0, 5.0, -100.0]])
+    rollout = torch.tensor([[-1.0, -1.0, 0.0, 0.0]])
+    mask = torch.tensor([[1, 1, 1, 0]])
+    weights = truncated_importance_weights(recomputed, rollout, mask, clip=2.0)
+    torch.testing.assert_close(weights, torch.tensor([[2.0, 1.0, 2.0, 1.0]]))
+    with pytest.raises(ValueError, match="finite"):
+        truncated_importance_weights(
+            torch.tensor([[float("nan")]]), torch.zeros(1, 1), mask[:, :1], 2.0
+        )
+
+
+def test_behavior_metrics_report_mismatch_without_stopping(single_process_group):
+    from rlinf.algorithms.utils import behavior_logprob_metrics
+
+    rollout = torch.zeros(1, 4)
+    mask = torch.tensor([[1, 1, 1, 0]])
+    # The masked fourth token never counts, however far it is.
+    recomputed = torch.tensor([[0.0, 0.0, 3.0, -50.0]])
+    metrics = behavior_logprob_metrics(recomputed, rollout, mask, clip=2.0)
+    assert metrics["tis/max_abs_logprob_diff"] == 3.0
+    assert metrics["tis/clipped_fraction"] == pytest.approx(1 / 3)
+    assert metrics["tis/mean_weight"] == pytest.approx(4 / 3)
+    assert metrics["tis/ess_fraction"] == pytest.approx(16 / 18)
+    for value in ("nan", "inf", "-inf"):
+        with pytest.raises(ValueError, match="finite"):
+            behavior_logprob_metrics(
+                torch.tensor([[float(value), 0.0, 0.0, 0.0]]), rollout, mask, clip=2.0
+            )
+
+
+def test_response_only_logits_match_full_logits_at_scored_positions():
+    pytest.importorskip("megatron.training")
+    from rlinf.hybrid_engines.megatron.utils import output_layer_positions
+    from rlinf.workers.actor.ma_megatron_actor_worker import _at_positions
+
+    torch.manual_seed(0)
+    module = torch.nn.Module()
+    module.output_layer = torch.nn.Linear(4, 7)
+    hidden = torch.randn(6, 1, 4)  # [tokens, batch, hidden]
+    positions = torch.tensor([1, 2, 5])
+    full = module.output_layer(hidden)
+    with output_layer_positions(module, positions):
+        partial = module.output_layer(hidden)
+    torch.testing.assert_close(partial, full.index_select(0, positions))
+    torch.testing.assert_close(module.output_layer(hidden), full)
+
+    def logprobs(logits, label, label_mask):
+        values = logits.log_softmax(-1).gather(-1, label.unsqueeze(-1)).squeeze(-1)
+        return {"log_probs": values.masked_fill(~label_mask, 0.0)}
+
+    label = torch.randint(0, 7, (1, 6))
+    label_mask = torch.ones(1, 6, dtype=torch.bool)
+    expected = logprobs(full.transpose(0, 1), label, label_mask)["log_probs"]
+    scored = _at_positions(logprobs, positions)(
+        partial.transpose(0, 1), label, label_mask
+    )["log_probs"]
+    torch.testing.assert_close(scored[:, positions], expected[:, positions])
+    assert scored[:, [0, 3, 4]].count_nonzero() == 0
+
+
+def _sequence_parallel_positions_rank(rank: int, store: str) -> None:
+    from megatron.core import parallel_state, tensor_parallel
+    from megatron.core.transformer.transformer_config import TransformerConfig
+
+    from rlinf.hybrid_engines.megatron.utils import output_layer_positions
+
+    torch.cuda.set_device(rank)
+    torch.distributed.init_process_group(
+        "nccl", init_method=f"file://{store}", rank=rank, world_size=2
+    )
+    try:
+        parallel_state.initialize_model_parallel(tensor_model_parallel_size=2)
+        tensor_parallel.model_parallel_cuda_manual_seed(0)
+        config = TransformerConfig(
+            num_layers=1,
+            hidden_size=8,
+            num_attention_heads=2,
+            tensor_model_parallel_size=2,
+            sequence_parallel=True,
+        )
+        module = torch.nn.Module()
+        module.output_layer = tensor_parallel.ColumnParallelLinear(
+            8,
+            12,
+            config=config,
+            init_method=torch.nn.init.normal_,
+            bias=False,
+            gather_output=False,
+        )
+        torch.manual_seed(0)
+        weight = torch.randn(12, 8, device="cuda") * 0.1
+        with torch.no_grad():
+            module.output_layer.weight.copy_(weight.chunk(2)[rank])
+        # Odd counts need padding before the scatter; one row leaves a rank
+        # holding padding only.
+        for positions in ([0, 3, 7], [6]):
+            selected = torch.tensor(positions, device="cuda")
+            full = torch.randn(8, 1, 8, device="cuda", requires_grad=True)
+            full_weight = weight.clone().requires_grad_()
+            expected = torch.nn.functional.linear(full, full_weight)[selected]
+            expected.square().sum().backward()
+
+            hidden = full.detach().chunk(2)[rank].clone().requires_grad_()
+            module.zero_grad()
+            with output_layer_positions(module, selected):
+                logits, _ = module.output_layer(hidden)
+            logits.square().sum().backward()
+
+            close = {"rtol": 2e-5, "atol": 2e-6}
+            torch.testing.assert_close(logits, expected.chunk(2, -1)[rank], **close)
+            torch.testing.assert_close(hidden.grad, full.grad.chunk(2)[rank], **close)
+            torch.testing.assert_close(
+                module.output_layer.weight.grad,
+                full_weight.grad.chunk(2)[rank],
+                **close,
+            )
+    finally:
+        parallel_state.destroy_model_parallel()
+        torch.distributed.destroy_process_group()
+
+
+def test_sequence_parallel_response_logits_match_full_output_and_gradients(
+    tmp_path,
+):
+    pytest.importorskip("megatron.training")
+    if torch.cuda.device_count() < 2:
+        pytest.skip("Tensor parallelism with sequence parallelism needs two GPUs.")
+    torch.multiprocessing.spawn(
+        _sequence_parallel_positions_rank, args=(str(tmp_path / "store"),), nprocs=2
+    )
+
+
+def test_qwen35_tp_gather_restores_each_fused_projection(monkeypatch):
+    pytest.importorskip("megatron.training")
+    from types import SimpleNamespace
+
+    from rlinf.utils.resharding import utils
+
+    shape = SimpleNamespace(**QWEN3_5_SHAPE)
+    qk = shape.linear_key_head_dim * shape.linear_num_key_heads
+    v = shape.linear_value_head_dim * shape.linear_num_value_heads
+    heads = shape.linear_num_value_heads
+    sizes = [qk, qk, v, v, heads, heads]
+    full = torch.arange(sum(sizes) * 2).reshape(-1, 2)
+    projections = full.split(sizes)
+    shards = [torch.cat([p.chunk(2)[rank] for p in projections]) for rank in range(2)]
+    # Simulate only the collective boundary, using the other rank's real shard.
+    remote = iter(shards[1].split([n // 2 for n in sizes]))
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda group: 2)
+    monkeypatch.setattr(
+        utils,
+        "all_gather_tensor",
+        lambda local, dim, group: torch.cat([local, next(remote)], dim),
+    )
+    key = "decoder.layers.0.self_attention.in_proj.weight"
+    result = utils.tp_gather_fn_qwen3_5(
+        {key: shards[0]}, None, "attn", model_config=shape
+    )
+    torch.testing.assert_close(result[key][0], full)
+
+
+def test_rollout_failure_cancels_and_drains_sibling_episodes():
+    from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
+
+    cleaned = []
+
+    async def sibling():
+        try:
+            await asyncio.sleep(10)
+        finally:
+            await asyncio.sleep(0)
+            cleaned.append("sibling")
+
+    async def failing():
+        await asyncio.sleep(0)
+        raise RuntimeError("episode failed")
+
+    async def main():
+        tasks = [asyncio.create_task(sibling()), asyncio.create_task(failing())]
+        with pytest.raises(RuntimeError, match="episode failed"):
+            await MultiAgentLoopWorker._gather_rollout_tasks(tasks)
+        # The sibling finished its cleanup before the failure reached the caller.
+        assert cleaned == ["sibling"] and tasks[0].cancelled()
+
+    asyncio.run(asyncio.wait_for(main(), timeout=5))
+
+
+def _merged_episode(response_mask):
+    """The first episode of ``make_result`` as one row that merges both turns."""
+    return DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[10, 11, 12, 50, 51, 13]],
+        prompt_lengths=[1],
+        response_lengths=[5],
+        is_end=[True],
+        rewards=[1.0],
+        values=torch.tensor([[0.0, 0.2, 0.3, 9.0, 9.0, 0.4]]),
+        response_mask=response_mask,
+    )
+
+
+def test_merged_rows_give_ppo_targets_only_to_generated_tokens():
+    merged = _merged_episode([[1, 1, 0, 0, 1]])
+    separate = DynamicRolloutResult.split_results(make_result(), [2, 1])[0]
+    separate.group_size = 1
+    _prepare_targets([merged], 1.0, 0.9, False)
+    _prepare_targets([separate], 1.0, 0.9, False)
+    for key in ("advantages", "returns"):
+        expected = torch.cat(
+            [getattr(separate, key)[0, 1:3], getattr(separate, key)[1, 5:6]]
+        )
+        torch.testing.assert_close(getattr(merged, key)[0, [1, 2, 5]], expected)
+        # Tool-result tokens inside the row are not actions.
+        assert getattr(merged, key)[0, 3:5].count_nonzero() == 0
+
+
+def test_actor_batch_masks_tool_tokens_of_merged_rows(monkeypatch):
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    merged = _merged_episode([[1, 1, 0, 0, 1]])
+    plain = DynamicRolloutResult.split_results(make_result(), [2, 1])[1]
+    batch = merged.to_actor_batch(8, 0)
+    assert batch["response_mask"][0].tolist() == [0, 1, 1, 0, 0, 1, 0, 0]
+    # A result without a mask trains every response token after merging.
+    combined = DynamicRolloutResult.merge_result_list([merged, plain])
+    assert combined.response_mask == [[1, 1, 0, 0, 1], [1, 1]]
+    restored = DynamicRolloutResult.split_results(combined, [1, 1])
+    assert restored[0].response_mask == merged.response_mask
+    with pytest.raises(ValueError, match="one entry per response token"):
+        _merged_episode([[1, 1, 0]]).to_actor_batch(8, 0)
+
+
+def test_response_length_metric_counts_generated_tokens(
+    single_process_group, monkeypatch
+):
+    if not torch.cuda.is_available():
+        pytest.skip("compute_rollout_metrics_dynamic reduces on the current GPU.")
+    from rlinf.scheduler import Worker
+    from rlinf.utils.distributed import compute_rollout_metrics_dynamic
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+
+    def metrics(result):
+        _prepare_targets([result], 1.0, 1.0, False)
+        batch = result.to_actor_batch(6, 0)
+        return compute_rollout_metrics_dynamic(batch, 1, 5)[0]
+
+    # Each turn its own row: every response token is generated.
+    separate = DynamicRolloutResult.split_results(make_result(), [2, 1])[0]
+    separate.group_size = 1
+    separate = metrics(separate)
+    assert separate["response_length"] == pytest.approx(3 / 2)
+    assert separate["max_response_length"] == 2
+    # The same episode in one row carries the tool result between the turns.
+    merged = metrics(_merged_episode([[1, 1, 0, 0, 1]]))
+    assert merged["response_length"] == 3
+    assert merged["max_response_length"] == 3
+    assert merged["total_length"] == merged["max_total_length"] == 6
+
+
+def test_padded_rollout_metrics_count_generated_tokens(single_process_group):
+    if not torch.cuda.is_available():
+        pytest.skip("compute_rollout_metrics reduces on the current GPU.")
+    from rlinf.utils.distributed import compute_rollout_metrics
+
+    # Two rows padded to four response positions; the second masks a tool result.
+    response_mask = torch.tensor(
+        [[0, 0, 1, 1, 1, 0], [0, 0, 1, 0, 0, 1]], dtype=torch.bool
+    )
+    batch = {
+        "advantages": torch.ones(2, 4),
+        "response_mask": response_mask,
+        "prompt_lengths": torch.tensor([2, 2]),
+        "response_lengths": torch.tensor([3, 4]),
+        "rewards": torch.tensor([1.0, 0.0]),
+        "is_end": torch.tensor([True, True]),
+    }
+    metrics = compute_rollout_metrics(batch, 2, 4)[0]
+    assert metrics["response_length"] == metrics["average_response_length"] == 2.5
+    assert metrics["max_of_response_length"] == 3
+    assert metrics["min_of_response_length"] == 2
+    assert metrics["total_length"] == 5.5
+
+
+@pytest.mark.parametrize("resume_dir", [None, "/checkpoint"])
+@pytest.mark.parametrize("backup", [None, False, True])
+def test_sglang_cpu_backup_loads_unsynchronized_weights(
+    monkeypatch, resume_dir, backup
+):
+    import dataclasses
+
+    from omegaconf import OmegaConf
+
+    pytest.importorskip("sglang")
+    from rlinf.workers.rollout.sglang import sglang_worker
+
+    # Isolate the vendor engine boundary; exercise RLinf's real argument assembly.
+    def server_args(**kwargs):
+        cls = dataclasses.make_dataclass(
+            "ServerArgs", [(key, object) for key in kwargs]
+        )
+        return cls(**kwargs)
+
+    monkeypatch.setattr(sglang_worker, "ServerArgs", server_args)
+    monkeypatch.setattr(sglang_worker, "Engine", lambda **kwargs: kwargs)
+    rollout = OmegaConf.create(
+        {
+            "enforce_eager": False,
+            "validate_weight": False,
+            "validate_weight_first_sync": True,
+            "model": {
+                "model_path": "/model",
+                "precision": "bf16",
+                "trust_remote_code": True,
+            },
+            "sglang": {
+                "use_torch_compile": False,
+                "torch_compile_max_bs": 4,
+                "decode_log_interval": 100,
+                "attention_backend": "triton",
+            },
+            "cuda_graph_max_bs": 4,
+            "max_running_requests": 12,
+            "tensor_parallel_size": 1,
+            "gpu_memory_utilization": 0.7,
+            "detokenize": False,
+        }
+    )
+    if backup is not None:
+        rollout.sglang.enable_weights_cpu_backup = backup
+    worker = SimpleNamespace(
+        _cfg=SimpleNamespace(runner=SimpleNamespace(resume_dir=resume_dir)),
+        _cfg_rollout=rollout,
+        _rank=0,
+        weight_reload="sync",
+        acquire_free_port=lambda: 12345,
+        log_on_first_rank=lambda message: None,
+    )
+    sglang_worker.SGLangWorker._init_engine(worker)
+    assert worker._engine["enable_weights_cpu_backup"] is bool(backup)
+    assert worker._engine["load_format"] == (
+        "auto" if backup or resume_dir is None else "dummy"
+    )

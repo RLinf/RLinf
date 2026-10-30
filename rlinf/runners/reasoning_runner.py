@@ -283,11 +283,22 @@ class ReasoningRunner:
             dataloader_state_dict = torch.load(
                 dataloader_local_path, weights_only=False
             )
-            self.train_dataloader.load_state_dict(dataloader_state_dict)
+            self._restore_dataloader_state(dataloader_state_dict)
         else:
             logging.warning(
                 f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch"
             )
+
+    def _restore_dataloader_state(self, state: dict) -> None:
+        """Restore the sampler's epoch and the saved within-epoch position."""
+        if self.cfg.data.shuffle:
+            # The loader tracks RandomSampler's cursor, not its generator.
+            # Checkpoints precede exhaustion of the current epoch's iterator.
+            completed_epochs = (self.global_steps - 1) // len(self.train_dataloader)
+            for _ in range(completed_epochs):
+                for _ in self.train_dataloader.sampler:
+                    pass
+        self.train_dataloader.load_state_dict(state)
 
     def init_workers(self):
         if self.cfg.runner.resume_dir == "auto":

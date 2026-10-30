@@ -65,6 +65,9 @@ def compute_rollout_metrics_dynamic(
     - Uses idx_to_traj to map turns to trajectories
     - Aggregates turn rewards to trajectory level before averaging
     - Supports tool call metrics, eval metrics, and MAS turn metrics
+    - ``response_length`` counts the generated tokens of a row (``response_mask``);
+      ``total_length`` counts every token, including tool results that a row
+      merging several turns carries in its response
 
     Args:
         rollout_batch: Batch containing turn-level data with idx_to_traj mapping
@@ -85,6 +88,7 @@ def compute_rollout_metrics_dynamic(
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
+    generated_lengths = mask.sum(dim=-1)
     idx_to_traj = rollout_batch["idx_to_traj"]
     num_trajectories = max(idx_to_traj) + 1 if idx_to_traj else 0
     num_seq = prompt_lengths.numel()
@@ -178,7 +182,7 @@ def compute_rollout_metrics_dynamic(
     # must use the local tensor size instead.
     if prompt_lengths.numel() > 0:
         local_max_prompt = prompt_lengths.max().item()
-        local_max_response = response_lengths.max().item()
+        local_max_response = generated_lengths.max().item()
         local_max_total = (prompt_lengths + response_lengths).max().item()
     else:
         local_max_prompt = local_max_response = local_max_total = 0
@@ -198,7 +202,7 @@ def compute_rollout_metrics_dynamic(
     rollout_metrics = {
         "total_num_sequence": num_seq,
         "prompt_length": sum_plen / num_seq,
-        "response_length": sum_rlen / num_seq,
+        "response_length": n_valid_token / num_seq,
         "total_length": (sum_plen + sum_rlen) / num_seq,
         "max_prompt_length": int(global_max_prompt),
         "max_response_length": int(global_max_response),
@@ -228,11 +232,14 @@ def compute_rollout_metrics(
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
     is_end = rollout_batch["is_end"].clone().float().to(device=device)
+    # Tool results inside a response are masked out; count generated tokens.
+    generated_lengths = mask.sum(dim=-1)
 
     dp_world_size = torch.distributed.get_world_size(data_parallel_group)
 
     prompt_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
     decode_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
+    generated_lengths_list: list[list[int]] = [None for _ in range(dp_world_size)]
     torch.distributed.all_gather_object(
         prompt_lengths_list,
         prompt_lengths.tolist(),
@@ -243,18 +250,26 @@ def compute_rollout_metrics(
         response_lengths.tolist(),
         group=data_parallel_group,
     )
+    torch.distributed.all_gather_object(
+        generated_lengths_list,
+        generated_lengths.tolist(),
+        group=data_parallel_group,
+    )
 
     total_prompt_lengths = torch.tensor(sum(prompt_lengths_list, []), device="cpu")
     total_decode_lengths = torch.tensor(sum(decode_lengths_list, []), device="cpu")
+    total_generated_lengths = torch.tensor(
+        sum(generated_lengths_list, []), device="cpu"
+    )
 
     sum_plen = prompt_lengths.sum().detach().item()
     sum_rlen = response_lengths.sum().detach().item()
     sum_rewards = reward_scores.sum().detach().item()
     sum_end = is_end.sum().detach().item()
 
-    mean_rlen = total_decode_lengths.float().mean().detach().item()
-    var_rlen = total_decode_lengths.float().var().detach().item()
-    min_rlen, max_rlen = total_decode_lengths.float().aminmax()
+    mean_rlen = total_generated_lengths.float().mean().detach().item()
+    var_rlen = total_generated_lengths.float().var().detach().item()
+    min_rlen, max_rlen = total_generated_lengths.float().aminmax()
     min_rlen, max_rlen = min_rlen.detach().item(), max_rlen.detach().item()
 
     valid_adv = torch.masked_select(advantages, mask)
@@ -319,7 +334,7 @@ def compute_rollout_metrics(
     rollout_metrics = {
         "total_num_sequence": num_seq,
         "prompt_length": sum_plen / num_seq,
-        "response_length": sum_rlen / num_seq,
+        "response_length": n_valid_token / num_seq,
         "average_response_length": mean_rlen,
         "variance_of_response_length": var_rlen,
         "max_of_response_length": max_rlen,

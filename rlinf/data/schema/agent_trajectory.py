@@ -19,7 +19,17 @@ from collections import defaultdict, deque
 import torch
 
 from rlinf.algorithms.registry import get_adv_and_returns
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel
+
+
+def _action_positions(result: DynamicRolloutResult, row: int) -> torch.Tensor:
+    """Sequence positions of the tokens the policy generated in one row."""
+    start = result.prompt_lengths[row]
+    if result.response_mask is None:
+        return torch.arange(start, start + result.response_lengths[row])
+    mask = torch.as_tensor(result.response_mask[row], dtype=torch.bool)
+    return start + mask.nonzero(as_tuple=True)[0]
 
 
 @torch.no_grad()
@@ -37,6 +47,7 @@ def prepare_agent_ppo_targets(
     SearchR1 settles a final reward at both natural and budget episode endings;
     neither has a future value. Tool observations and padding do not advance GAE.
     A separate logprob channel joins predictions from parallel actor inference.
+    Rows with a ``response_mask`` contribute only their generated tokens.
     """
     results = [input_channel.get() for _ in range(batch_size)]
     if logprob_channel is not None:
@@ -63,21 +74,22 @@ def prepare_agent_ppo_targets(
             rows = [
                 i for i, index in enumerate(result.idx_to_traj) if index == trajectory
             ]
-            if not rows or any(result.response_lengths[i] <= 0 for i in rows):
+            positions = [_action_positions(result, i) for i in rows]
+            if not rows or any(len(p) == 0 for p in positions):
                 raise ValueError(
                     "Each agent episode must contain nonempty generated turns."
                 )
             values = torch.cat(
-                [
-                    result.values[
-                        i,
-                        result.prompt_lengths[i] : result.prompt_lengths[i]
-                        + result.response_lengths[i],
-                    ]
-                    for i in rows
-                ]
-            ).float()  # shape = sum(result.response_lengths[i] for i in rows) (1D tensor of values for the trajectory)
-            trajectories.append((result, rows, values, float(result.rewards[rows[-1]])))
+                [result.values[i, p] for i, p in zip(rows, positions)]
+            ).float()  # [action tokens of the trajectory]
+            trajectories.append(
+                (
+                    result,
+                    list(zip(rows, positions)),
+                    values,
+                    float(result.rewards[rows[-1]]),
+                )
+            )
 
     if not trajectories:
         raise ValueError("Agent PPO requires at least one complete episode.")
@@ -114,14 +126,12 @@ def prepare_agent_ppo_targets(
 
     for index, (result, rows, _, _) in enumerate(trajectories):
         offset = 0
-        for row in rows:
-            start, length = result.prompt_lengths[row], result.response_lengths[row]
-            result.advantages[row, start : start + length] = advantages[
+        for row, positions in rows:
+            length = len(positions)
+            result.advantages[row, positions] = advantages[
                 offset : offset + length, index
             ]
-            result.returns[row, start : start + length] = returns[
-                offset : offset + length, index
-            ]
+            result.returns[row, positions] = returns[offset : offset + length, index]
             offset += length
 
     channels = output_channel if isinstance(output_channel, list) else [output_channel]

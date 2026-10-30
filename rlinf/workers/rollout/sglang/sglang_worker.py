@@ -29,6 +29,7 @@ from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
@@ -147,6 +148,9 @@ class SGLangWorker(Worker):
     def _init_engine(self):
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
+        enable_weights_cpu_backup = self._cfg_rollout.sglang.get(
+            "enable_weights_cpu_backup", False
+        )
         load_format = "dummy"  # dummy means randomize init weight
         if self.weight_reload == "sync":
             validate_weight_first_sync = self._cfg_rollout.get(
@@ -178,6 +182,10 @@ class SGLangWorker(Worker):
                     f"the configured value {value!r} is ignored"
                 )
 
+        # Back up pretrained parameters that the actor does not synchronize.
+        if enable_weights_cpu_backup:
+            load_format = "auto"
+
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
@@ -208,6 +216,7 @@ class SGLangWorker(Worker):
             moe_dense_tp_size=self._cfg_rollout.sglang.get("moe_dense_tp_size", None),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
+            enable_weights_cpu_backup=enable_weights_cpu_backup,
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
             torch_compile_max_bs=min(
                 self._cfg_rollout.sglang.torch_compile_max_bs,
@@ -528,15 +537,26 @@ class SGLangWorker(Worker):
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        result = await self._engine.async_generate(
-            input_ids=prompt_ids,
-            sampling_params=final_sampling_params,
-            return_logprob=self._return_logprobs,
-        )
+        try:
+            result = await self._engine.async_generate(
+                input_ids=prompt_ids,
+                sampling_params=final_sampling_params,
+                return_logprob=self._return_logprobs,
+            )
+        except Exception as error:
+            # The requester waits on this key; report the failure instead of hanging it.
+            self.log_error(f"generation failed for request {channel_key}: {error!r}")
+            await output_channel.put(
+                {"error": f"{type(error).__name__}: {error}"},
+                key=channel_key,
+                async_op=True,
+            ).async_wait()
+            return
         # sglang will trim matched stop in result text, so we should only return output_ids
         result_dict = {
             "output_ids": result["output_ids"],
             "finish_reason": result["meta_info"]["finish_reason"]["type"],
+            "prompt_tokens": result["meta_info"]["prompt_tokens"],
         }
         if self._return_logprobs:
             result_dict["logprobs"] = [
@@ -547,8 +567,16 @@ class SGLangWorker(Worker):
         ).async_wait()
 
     async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
+        # With replica affinity each agent worker addresses one replica by rank.
+        request_key = (
+            self._rank
+            if self._cfg_rollout.get("replica_affinity", False)
+            else DEFAULT_KEY
+        )
         while True:
-            rollout_request = await input_channel.get(async_op=True).async_wait()
+            rollout_request = await input_channel.get(
+                key=request_key, async_op=True
+            ).async_wait()
             asyncio.create_task(
                 self.generate_and_send(
                     output_channel=output_channel,

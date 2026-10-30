@@ -554,6 +554,121 @@ class Qwen3DenseConvertor(Qwen3BaseConvertor):
         ]
 
 
+class Qwen35Convertor(BaseConvertor):
+    """Convert Megatron-Bridge Qwen3.5 weights to the served checkpoint's names.
+
+    Full-attention layers project a gate with each query, and Gated DeltaNet
+    layers fuse four input projections, so both are split here; Megatron keeps
+    the Gated DeltaNet output norm zero-centered. The fused layouts are not
+    narrowed per rank, so the rollout must use tensor parallel size 1.
+    """
+
+    PREFIX = "model.language_model."
+    _LAYER = re.compile(r"decoder\.layers\.(?P<i>\d+)\.(?P<name>.+)")
+
+    def __init__(self, config, strict: bool = False):
+        if config.reshard_tp_size != 1:
+            raise NotImplementedError(
+                "Qwen3.5 weight sync needs rollout tensor parallel size 1, "
+                f"got {config.reshard_tp_size}"
+            )
+        super().__init__(config, strict)
+        self._splits = {
+            "self_attention.linear_qkv.weight": self._split_gated_qkv,
+            "self_attention.in_proj.weight": self._split_gdn_in_proj,
+            "self_attention.out_norm.weight": self._uncenter_gdn_norm,
+        }
+
+    def build_rules(self) -> list[ConvertorRule]:
+        layer_names = {
+            "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
+            "self_attention.in_proj.layer_norm_weight": "input_layernorm.weight",
+            "self_attention.q_layernorm.weight": "self_attn.q_norm.weight",
+            "self_attention.k_layernorm.weight": "self_attn.k_norm.weight",
+            "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
+            "self_attention.A_log": "linear_attn.A_log",
+            "self_attention.dt_bias": "linear_attn.dt_bias",
+            "self_attention.conv1d.weight": "linear_attn.conv1d.weight",
+            "self_attention.out_proj.weight": "linear_attn.out_proj.weight",
+            # tp_gather_fn already split the fused fc1.
+            "mlp.gate_proj.weight": "mlp.gate_proj.weight",
+            "mlp.up_proj.weight": "mlp.up_proj.weight",
+            "mlp.linear_fc2.weight": "mlp.down_proj.weight",
+            "mlp.linear_fc1.layer_norm_weight": "post_attention_layernorm.weight",
+        }
+        return [
+            ConvertorRule(
+                re.compile(r"embedding\.word_embeddings\.weight$"),
+                TransformType.SPLIT_NONE,
+                [f"{self.PREFIX}embed_tokens.weight"],
+            ),
+            ConvertorRule(
+                re.compile(r"decoder\.final_layernorm\.weight$"),
+                TransformType.SPLIT_NONE,
+                [f"{self.PREFIX}norm.weight"],
+            ),
+            ConvertorRule(
+                re.compile(r"output_layer\.weight$"),
+                TransformType.SPLIT_NONE,
+                ["lm_head.weight"],
+            ),
+            *(
+                ConvertorRule(
+                    re.compile(rf"decoder\.layers\.(?P<i>\d+)\.{re.escape(name)}$"),
+                    TransformType.SPLIT_NONE,
+                    [rf"{self.PREFIX}layers.\g<i>.{target}"],
+                )
+                for name, target in layer_names.items()
+            ),
+        ]
+
+    def convert(self, state_dict: dict) -> dict:
+        converted, renamed = {}, {}
+        for key, tensor in state_dict.items():
+            match = self._LAYER.fullmatch(key)
+            split = match and self._splits.get(match["name"])
+            if split:
+                converted.update(split(f"{self.PREFIX}layers.{match['i']}.", tensor))
+            else:
+                renamed[key] = tensor
+        converted.update(super().convert(renamed))
+        return converted
+
+    def _split_gated_qkv(self, prefix: str, qkv: torch.Tensor) -> dict:
+        model = self.cfg.model_config
+        groups = model.num_query_groups
+        heads = model.num_attention_heads // groups
+        head_dim = model.kv_channels
+        hidden = qkv.shape[-1]
+        # Each query group stores its queries, their gates, one key and one value.
+        query_gate, key, value = qkv.view(
+            groups, 2 * heads + 2, head_dim, hidden
+        ).split([2 * heads, 1, 1], dim=1)
+        # The served projection interleaves each head's query with its gate.
+        query_gate = query_gate.view(groups, 2, heads, head_dim, hidden).transpose(1, 2)
+        return {
+            f"{prefix}self_attn.q_proj.weight": query_gate.reshape(-1, hidden),
+            f"{prefix}self_attn.k_proj.weight": key.reshape(-1, hidden),
+            f"{prefix}self_attn.v_proj.weight": value.reshape(-1, hidden),
+        }
+
+    def _split_gdn_in_proj(self, prefix: str, in_proj: torch.Tensor) -> dict:
+        model = self.cfg.model_config
+        qk_dim = model.linear_key_head_dim * model.linear_num_key_heads
+        v_dim = model.linear_value_head_dim * model.linear_num_value_heads
+        heads = model.linear_num_value_heads
+        qkv, z, b, a = in_proj.split([2 * qk_dim + v_dim, v_dim, heads, heads])
+        return {
+            f"{prefix}linear_attn.in_proj_qkv.weight": qkv.clone(),
+            f"{prefix}linear_attn.in_proj_z.weight": z.clone(),
+            f"{prefix}linear_attn.in_proj_b.weight": b.clone(),
+            f"{prefix}linear_attn.in_proj_a.weight": a.clone(),
+        }
+
+    def _uncenter_gdn_norm(self, prefix: str, weight: torch.Tensor) -> dict:
+        return {f"{prefix}linear_attn.norm.weight": weight + 1}
+
+
 class Qwen3MoEConvertor(Qwen3BaseConvertor):
     def build_rules(self) -> list[ConvertorRule]:
         LID = r"(?P<i>\d+)"
@@ -945,6 +1060,7 @@ _MG2HF_CONVERTOR_REGISTRY = {
     SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
     SupportedModel.QWEN3: Qwen3DenseConvertor,
     SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
+    SupportedModel.QWEN3_5: Qwen35Convertor,
     SupportedModel.DEEPSEEK_V3: DeepseekV3Convertor,
     # GLM-4.7-Flash: same MLA+MoE HF weight layout as DeepSeek-V3 (MLA q_a/kv_a/
     # kv_b projections, experts.E.{gate,up,down}_proj, shared_experts, router

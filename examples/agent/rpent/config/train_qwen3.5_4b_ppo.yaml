@@ -1,0 +1,403 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+# Node 0: the actor, critic and SGLang share its eight GPUs and take turns,
+# offloading between phases. Node 1: the agent workers run the RPent episodes
+# next to the LIBERO simulators and the Pi0.5 and SAM3 services (tools.rpent).
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor: 0-7
+    critic: 0-7
+    rollout: 0-7
+    reward: 0-7
+    agentloop:
+      node_group: node
+      placement: "1:0-7"
+
+
+runner:
+  task_type: reasoning
+  synchronous: true
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 50
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 10
+
+  # Longest planner history plus one response, in tokens.
+  seq_length: 65536
+  # A merged row is close to seq_length, so each micro-batch holds one row.
+  enable_dynamic_batch_size: false
+  max_tokens_per_mbs: 65536
+
+  resume_dir: null
+  experiment_name: rpent-qwen3.5-4b-ppo
+  output_dir: ./logs
+
+
+algorithm:
+  group_size: 1
+  # Optimizer steps per rollout batch, for both the actor and the critic.
+  n_minibatches: 2
+  training_batch_size_per_gpu: 1
+  rollout_batch_size_per_gpu: null
+  logprob_forward_micro_batch_size: 1
+  val_rollout_batch_size_per_gpu: 1
+
+  # Recompute old logprobs and correct for the sampler with token-level
+  # truncated importance sampling; rollout/tis/* metrics report the mismatch.
+  recompute_logprobs: true
+  importance_sampling_fix: true
+  importance_sampling_clip: 2
+  shuffle_rollout: false
+
+  loss_type: actor
+  loss_agg_func: token-mean
+  use_valid_token_scale: true
+  kl_beta: 0.0
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: false
+  clip_ratio_c: 3.0
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.2
+
+  adv_type: actor_gae
+  gamma: 1.0
+  gae_lambda: 1.0
+  value_cliprange: 0.2
+  loss_scales: []
+  advantage_mode: trajectory
+  normalize_advantages: true
+  early_stop_imp_ratio: 5.0
+
+  sampling_params:
+    do_sample: true
+    temperature: 0.7
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: 2048
+    min_new_tokens: 1
+
+
+data:
+  type: reasoning
+  max_prompt_length: 1792
+  rollout_batch_size: 128
+  val_rollout_batch_size: null
+  num_workers: 0
+  prompt_key: prompt
+  answer_key: answer
+  apply_chat_template: false
+  shuffle: false
+  validation_shuffle: false
+  seed: 1234
+  # One RPent task per row; the answer holds the task as JSON.
+  train_data_paths: ["/path/to/rpent/train.jsonl"]
+  val_data_paths: null
+
+
+agentloop:
+  group_name: AgentLoopGroup
+  toolcall_parser: qwen3.5
+  agentic_tokenizer: qwen3_5
+  chat_template_kwargs:
+    enable_thinking: false
+  is_dynamic_rollout_batch: true
+  print_outputs: false
+  max_turns: 24
+  # Enforced by the planner for each model request and each episode.
+  model_request_timeout_s: 600
+  episode_timeout_s: 1800
+  # Reserve this many output tokens in every turn; a longer history fails.
+  minimum_output_tokens: 1024
+  # Merge consecutive turns whose prompts extend each other into one row.
+  merge_prefix_turns: true
+  # The planner's native compaction. It counts message text only, so the
+  # trigger leaves room for tool schemas and template tokens; the policy
+  # endpoint rejects any request that still exceeds runner.seq_length.
+  history_compaction:
+    max_messages: 49
+    keep_messages: 18
+    context_window: ${runner.seq_length}
+    max_fraction: 0.9
+    preserve_first_user_message: true
+    receipts: false
+  # Retry episodes whose services failed; stop when too many needed it.
+  max_infra_retries: 1
+  max_infra_retry_rate: 0.05
+
+
+tools:
+  rpent:
+    # Interpreter of the RPent environment on node 1; each episode runs as
+    # `python -m robots.libero.rl_episode` in its own process.
+    python: /path/to/rpent/.venv/bin/python
+    # Pi0.5 and SAM3 services on node 1, started before this job.
+    vla_endpoint: http://127.0.0.1:8100
+    sam3_endpoint: http://127.0.0.1:8101
+    libero_type: pro
+    max_episode_steps: 1200
+    frozen_memory_dir: /path/to/rpent-memory/libero/GPT_5.5_xhigh
+    # Node-1 GPUs that render the simulators, and the episodes each agent worker
+    # runs at once.
+    env_gpus: [0, 1, 2, 3, 4, 5]
+    episodes_per_worker: 8
+    # Episode artifacts on node 1; failed episodes keep theirs.
+    output_dir: /path/to/rpent-episodes
+    keep_episodes: failures
+    # Stops an episode process that outlives its planner and environment limits.
+    process_timeout_s: 3600
+
+
+rollout:
+  group_name: RolloutGroup
+  # SGLang restores its KV cache after each update next to what the actor and
+  # critic leave resident; 0.6 keeps that switch within 80 GB A100s.
+  gpu_memory_utilization: 0.6
+  model:
+    # Each sync replaces language weights and preserves the original vision tower.
+    model_path: /path/to/Qwen3.5-4B # https://huggingface.co/Qwen/Qwen3.5-4B
+    model_type: qwen3_5
+    precision: bf16
+  enforce_eager: false
+  distributed_executor_backend: mp
+  disable_log_stats: false
+  detokenize: false
+  padding: null
+  eos: null
+  return_logprobs: true
+  # Keep each agent worker's requests on one SGLang replica for prefix reuse.
+  replica_affinity: true
+
+  rollout_backend: sglang
+  sglang:
+    # Preserve parameters absent from the language-only actor across offload.
+    enable_weights_cpu_backup: true
+    attention_backend: triton
+    decode_log_interval: 500000
+    use_torch_compile: false
+    torch_compile_max_bs: 128
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 12
+  cuda_graph_max_bs: 4
+  validate_weight: false
+  # On a fresh start, compare the first synced weights with model_path.
+  validate_weight_first_sync: true
+  validate_save_dir: null
+  print_outputs: false
+
+
+reward:
+  group_name: RewardGroup
+  use_reward_model: false
+  reward_type: math
+  reward_scale: 1.0
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: false
+    trust_remote_code: true
+    padding_side: right
+
+
+actor:
+  group_name: ActorGroup
+  training_backend: megatron
+  mcore_gpt: true
+  spec_name: decoder_gpt
+  enable_dp_load_balance: true
+  calculate_flops: false
+  seed: 1234
+  # Rows already merge their turns (agentloop.merge_prefix_turns).
+  pack_traj: false
+  offload_optimizer: true
+  offload_weight: true
+  offload_grad: true
+  # Compute logits only where they score response tokens.
+  response_only_logits: true
+
+  model:
+    model_type: qwen3_5
+    precision: bf16
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    megatron_checkpoint: null
+    activation: swiglu
+    normalization: rmsnorm
+    add_bias_linear: false
+    position_embedding_type: rope
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    apply_rope_fusion: false
+    bias_dropout_fusion: false
+    persist_layer_norm: false
+    bias_activation_fusion: false
+    attention_softmax_in_fp32: true
+    batch_p2p_comm: false
+    variable_seq_lengths: true
+    gradient_accumulation_fusion: false
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: false
+
+  optim:
+    optimizer: adam
+    bf16: true
+    fp16: false
+    lr: 1.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.98
+    adam_eps: 1.0e-08
+    min_lr: 0.0
+    weight_decay: 0.0
+    clip_grad: 1.0
+    use_distributed_optimizer: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: false
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+
+  tokenizer:
+    tokenizer_model: /path/to/Qwen3.5-4B
+    use_fast: false
+    trust_remote_code: true
+    padding_side: right
+
+  megatron:
+    mbridge: true
+    # Long rows leave large activation caches; free them before the gradient
+    # and optimizer collectives allocate.
+    empty_cache_after_backward: true
+    ddp_bucket_size: null
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_dist_ckpt: false
+    tp_comm_bootstrap_backend: nccl
+    tp_comm_overlap_cfg: null
+    use_hf_ckpt: true
+    use_profiler: false
+    ckpt_convertor:
+      model: Qwen3.5-4B
+      # Language model written by `checkpoint.py extract`.
+      hf_model_path: /path/to/Qwen3.5-4B-text
+
+
+critic:
+  use_critic_model: true
+  value_head_init: normal
+  group_name: CriticGroup
+  training_backend: megatron
+  mcore_gpt: true
+  spec_name: decoder_gpt
+  enable_dp_load_balance: true
+  seed: 1234
+  offload_optimizer: true
+  offload_weight: true
+  offload_grad: true
+
+  model:
+    model_type: qwen3_5
+    precision: bf16
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    megatron_checkpoint: null
+    activation: swiglu
+    normalization: rmsnorm
+    add_bias_linear: false
+    position_embedding_type: rope
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    apply_rope_fusion: false
+    bias_dropout_fusion: false
+    persist_layer_norm: false
+    bias_activation_fusion: false
+    attention_softmax_in_fp32: true
+    batch_p2p_comm: false
+    variable_seq_lengths: true
+    gradient_accumulation_fusion: false
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: false
+
+  optim:
+    optimizer: adam
+    bf16: true
+    fp16: false
+    lr: 5.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.98
+    adam_eps: 1.0e-08
+    min_lr: 0.0
+    weight_decay: 0.0
+    clip_grad: 1.0
+    use_distributed_optimizer: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: false
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 5.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+
+  tokenizer:
+    tokenizer_model: /path/to/Qwen3.5-4B
+    use_fast: false
+    trust_remote_code: true
+    padding_side: right
+
+  megatron:
+    mbridge: true
+    empty_cache_after_backward: true
+    ddp_bucket_size: null
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_dist_ckpt: false
+    tp_comm_bootstrap_backend: nccl
+    tp_comm_overlap_cfg: null
+    use_hf_ckpt: true
+    use_profiler: false
+    ckpt_convertor:
+      model: Qwen3.5-4B
+      hf_model_path: /path/to/Qwen3.5-4B-text

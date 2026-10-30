@@ -844,6 +844,10 @@ class DynamicRolloutResult:
     advantages: Optional[torch.Tensor] = None
     values: Optional[torch.Tensor] = None
     returns: Optional[torch.Tensor] = None
+    # Per-token mask over each response: 1 for generated tokens, 0 for tool or
+    # observation tokens inside a row that merges several turns. None trains
+    # every response token.
+    response_mask: Optional[list[list[int]]] = None
 
     # extra fields used in training for custom process
     extra_fields_train: dict[str, list] = field(default_factory=dict)
@@ -852,6 +856,24 @@ class DynamicRolloutResult:
     extra_fields_turn: Optional[dict] = None  # [num_sequence]
     extra_fields_traj: Optional[dict] = None  # [group_size]
     extra_fields_group: Optional[dict] = None  # [1]
+
+    def _merged_response_mask(self, seq_length: int) -> torch.Tensor:
+        """Expand per-response masks to the padded [rows, seq_length] layout."""
+        if len(self.response_mask) != self.num_sequence or any(
+            len(mask) != length
+            for mask, length in zip(self.response_mask, self.response_lengths)
+        ):
+            raise ValueError(
+                "response_mask must have one entry per response token of every row"
+            )
+        return batch_pad_to_fixed_len(
+            [
+                torch.as_tensor([0] * prompt + mask, dtype=torch.bool)
+                for prompt, mask in zip(self.prompt_lengths, self.response_mask)
+            ],
+            max_batch_len=seq_length,
+            pad_token=0,
+        )
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -947,6 +969,8 @@ class DynamicRolloutResult:
             max_batch_len=seq_length,
             pad_token=pad_token,
         )
+        if self.response_mask is not None:
+            response_mask = self._merged_response_mask(seq_length)
 
         device = Worker.torch_device_type
         batch = {
@@ -1333,6 +1357,13 @@ class DynamicRolloutResult:
                 merged_result.rollout_logprobs = (
                     merged_result.rollout_logprobs or []
                 ) + list(res.rollout_logprobs)
+            if any(r.response_mask is not None for r in rollout_results):
+                # Results without a mask train every response token.
+                merged_result.response_mask = (merged_result.response_mask or []) + (
+                    list(res.response_mask)
+                    if res.response_mask is not None
+                    else [[1] * length for length in res.response_lengths]
+                )
 
             # Merge tensor fields (size: num_sequence)
             if res.recomputed_logprobs is not None:
@@ -1441,6 +1472,9 @@ class DynamicRolloutResult:
                 idx_to_traj=split_idx_to_traj,
                 input_ids=split_input_ids,
                 rollout_logprobs=split_rollout_logprobs,
+                response_mask=rollout_result.response_mask[start_idx:end_idx]
+                if rollout_result.response_mask is not None
+                else None,
                 recomputed_logprobs=split_recomputed_logprobs,
                 ref_logprobs=split_ref_logprobs,
                 prompt_lengths=split_prompt_lengths,

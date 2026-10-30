@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Optional
 
 from megatron.core.transformer import TransformerConfig
@@ -117,6 +118,10 @@ class ReshardConfig:
 
         if self.tp_gather_fn is None:
             self.tp_gather_fn = get_tp_gather_fn(self.model_type)
+            if self.model_type == "qwen3_5":
+                self.tp_gather_fn = partial(
+                    self.tp_gather_fn, model_config=self.model_config
+                )
 
         # tpe_gather_fn only use in moe model parallel
         if self.model_config.num_moe_experts is not None and self.tpe_gather_fn is None:

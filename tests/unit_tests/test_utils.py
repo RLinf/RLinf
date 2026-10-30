@@ -28,6 +28,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 from omegaconf import OmegaConf
+from torch.utils.data import RandomSampler, SequentialSampler
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.algorithms.utils import compute_entropy_loss
@@ -478,6 +480,56 @@ def test_interrupted_dataloader_save_does_not_publish_completion(tmp_path, monke
     assert not final_path.exists()
     assert not Path(f"{final_path}.tmp").exists()
     assert not runner._is_complete_checkpoint(str(checkpoint))
+
+
+@pytest.mark.parametrize("checkpoint_step", [3, 4, 5, 8, 9])
+@pytest.mark.parametrize("shuffle", [False, True])
+@pytest.mark.parametrize("num_workers", [0, 2])
+def test_resume_preserves_sampler_order_across_epochs(
+    checkpoint_step, shuffle, num_workers
+):
+    dataset = list(range(16))
+
+    def loader():
+        sampler = (
+            RandomSampler(dataset, generator=torch.Generator().manual_seed(20261023))
+            if shuffle
+            else SequentialSampler(dataset)
+        )
+        return StatefulDataLoader(
+            dataset,
+            batch_size=4,
+            num_workers=num_workers,
+            drop_last=True,
+            sampler=sampler,
+        )
+
+    reference = loader()
+    expected = [batch.tolist() for _ in range(4) for batch in reference]
+    original = loader()
+    seen = 0
+    for _ in range(3):
+        for _batch in original:
+            seen += 1
+            if seen == checkpoint_step:
+                state = original.state_dict()
+                break
+        if seen == checkpoint_step:
+            break
+
+    restored = loader()
+    runner = SimpleNamespace(
+        cfg=OmegaConf.create({"data": {"shuffle": shuffle}}),
+        global_steps=checkpoint_step,
+        train_dataloader=restored,
+    )
+    ReasoningRunner._restore_dataloader_state(runner, state)
+    remaining = [batch.tolist() for batch in restored]
+    start = checkpoint_step
+    assert remaining == expected[start : ((start - 1) // 4 + 1) * 4]
+    assert [batch.tolist() for batch in restored] == expected[
+        ((start - 1) // 4 + 1) * 4 : ((start - 1) // 4 + 2) * 4
+    ]
 
 
 _REDIRECTED_ENTRYPOINT = textwrap.dedent(

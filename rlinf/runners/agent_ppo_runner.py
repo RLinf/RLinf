@@ -49,7 +49,11 @@ class AgentPPORunner(AgentRunner):
     def init_rollout_workers(self) -> None:
         """Reuse agent initialization and convert the independent critic checkpoint."""
         super().init_rollout_workers()
-        if self.cfg.runner.resume_dir is None and self.cfg.critic.megatron.use_hf_ckpt:
+        if (
+            self.cfg.runner.resume_dir is None
+            and self.cfg.critic.megatron.use_hf_ckpt
+            and not self.cfg.critic.megatron.get("mbridge", False)
+        ):
             from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                 convert_hf_to_mg,
             )

@@ -88,6 +88,7 @@ SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
 SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
+SupportedModel.QWEN3_5 = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
@@ -316,6 +317,21 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
+        if cfg.get("replica_affinity", False):
+            assert cfg.rollout_backend == "sglang", (
+                "rollout.replica_affinity requires the SGLang backend, "
+                f"got {cfg.rollout_backend!r}."
+            )
+        if (
+            cfg.model.model_type == "qwen3_5"
+            and actor_cfg is not None
+            and actor_cfg.get("training_backend") == "megatron"
+        ):
+            # Qwen35Convertor syncs the fused projections unsplit.
+            assert cfg.get("tensor_parallel_size", 1) == 1, (
+                "Syncing Megatron Qwen3.5 weights needs "
+                f"rollout.tensor_parallel_size=1, got {cfg.tensor_parallel_size}."
+            )
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
@@ -377,6 +393,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3MoeForCausalLM" in hf_config.architectures
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -394,8 +411,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
-            # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
+        if model_type in {"qwen3_vl", "qwen3_vl_moe", "qwen3_5"}:
+            # These config.json files keep the language model config in text_config.
             hf_config = hf_config.text_config
 
         cfg.model.padded_vocab_size = hf_config.vocab_size
@@ -421,6 +438,19 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         )
         if cfg.model.head_dim is not None:
             cfg.model.kv_channels = cfg.model.head_dim
+
+        if model_type == "qwen3_5":
+            # Gated attention and Gated DeltaNet sizes that the rollout weight
+            # conversion splits by.
+            cfg.model.attention_output_gate = hf_config.attn_output_gate
+            for key in (
+                "linear_conv_kernel_dim",
+                "linear_key_head_dim",
+                "linear_value_head_dim",
+                "linear_num_key_heads",
+                "linear_num_value_heads",
+            ):
+                cfg.model[key] = getattr(hf_config, key)
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
@@ -1559,6 +1589,47 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_agent_ppo_cfg(cfg: DictConfig, task: str) -> None:
+    """Check the settings synchronous agent PPO (``AgentPPORunner``) relies on.
+
+    Args:
+        cfg: The full run config.
+        task: Task name used in error messages.
+    """
+    if not cfg.runner.get("synchronous", False):
+        raise ValueError(f"{task} PPO requires runner.synchronous=True.")
+    if (
+        cfg.actor.training_backend != "megatron"
+        or cfg.critic.training_backend != "megatron"
+        or cfg.rollout.rollout_backend != "sglang"
+    ):
+        raise ValueError(
+            f"{task} PPO requires Megatron actor/critic and SGLang rollout."
+        )
+    if (
+        cfg.algorithm.adv_type != "actor_gae"
+        or cfg.algorithm.kl_beta != 0
+        or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
+    ):
+        raise ValueError(
+            f"{task} PPO requires actor_gae and zero KL reward/loss coefficients."
+        )
+    if cfg.algorithm.group_size != 1:
+        raise ValueError(f"{task} PPO requires algorithm.group_size=1.")
+    if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
+        raise ValueError(f"{task} PPO requires algorithm.loss_agg_func=token-mean.")
+    if not cfg.algorithm.get("use_valid_token_scale", False):
+        raise ValueError(f"{task} PPO requires algorithm.use_valid_token_scale=True.")
+    if cfg.algorithm.get("loss_scales", []):
+        raise ValueError(f"{task} PPO requires uniform action-token loss weights.")
+    for role in ("actor", "critic"):
+        if (
+            cfg[role].model.pipeline_model_parallel_size != 1
+            or cfg[role].model.get("context_parallel_size", 1) != 1
+        ):
+            raise ValueError(f"Synchronous {task} PPO currently requires PP=CP=1.")
+
+
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
     reward_cfg = cfg.get("reward", None)
@@ -1616,45 +1687,12 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         )
 
     if cfg.critic.get("use_critic_model", False):
-        if not cfg.runner.get("synchronous", False):
-            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
-        if (
-            cfg.actor.training_backend != "megatron"
-            or cfg.critic.training_backend != "megatron"
-            or cfg.rollout.rollout_backend != "sglang"
+        validate_agent_ppo_cfg(cfg, "SearchR1")
+        if any(
+            cfg[role].model.tensor_model_parallel_size != 1
+            for role in ("actor", "critic")
         ):
-            raise ValueError(
-                "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
-            )
-        if (
-            cfg.algorithm.adv_type != "actor_gae"
-            or cfg.algorithm.kl_beta != 0
-            or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
-        ):
-            raise ValueError(
-                "SearchR1 PPO requires actor_gae and zero KL reward/loss coefficients."
-            )
-        if cfg.algorithm.group_size != 1:
-            raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
-        if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
-            raise ValueError(
-                "SearchR1 PPO requires algorithm.loss_agg_func=token-mean."
-            )
-        if not cfg.algorithm.get("use_valid_token_scale", False):
-            raise ValueError(
-                "SearchR1 PPO requires algorithm.use_valid_token_scale=True."
-            )
-        if cfg.algorithm.get("loss_scales", []):
-            raise ValueError("SearchR1 PPO requires uniform action-token loss weights.")
-        for role in ("actor", "critic"):
-            if (
-                cfg[role].model.tensor_model_parallel_size != 1
-                or cfg[role].model.pipeline_model_parallel_size != 1
-                or cfg[role].model.get("context_parallel_size", 1) != 1
-            ):
-                raise ValueError(
-                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
-                )
+            raise ValueError("Synchronous SearchR1 PPO currently requires TP=1.")
         if cfg.algorithm.get("importance_sampling_fix", False):
             raise ValueError(
                 "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
@@ -1666,6 +1704,56 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         raise ValueError(
             "SearchR1 multi-agent actors support only collocated component placement."
         )
+    return cfg
+
+
+def validate_rpent_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate RPent planner PPO or evaluation, selected by ``tools.rpent``."""
+    rpent = cfg.get("tools", {}).get("rpent")
+    if rpent is None:
+        return cfg
+
+    if not rpent.env_gpus or rpent.episodes_per_worker < 1:
+        raise ValueError(
+            "tools.rpent needs at least one env GPU and one episode per worker, got "
+            f"env_gpus={list(rpent.env_gpus)} and "
+            f"episodes_per_worker={rpent.episodes_per_worker}."
+        )
+    if rpent.keep_episodes not in ("all", "failures", "none"):
+        raise ValueError(
+            "tools.rpent.keep_episodes must be all, failures or none, got "
+            f"{rpent.keep_episodes!r}."
+        )
+    agentloop = cfg.agentloop
+    if (
+        agentloop.toolcall_parser != "qwen3.5"
+        or agentloop.agentic_tokenizer != "qwen3_5"
+    ):
+        raise ValueError(
+            "RPent renders and parses Qwen3.5 chats: set agentloop.toolcall_parser="
+            "qwen3.5 and agentloop.agentic_tokenizer=qwen3_5, got "
+            f"{agentloop.toolcall_parser} and {agentloop.agentic_tokenizer}."
+        )
+    max_new_tokens = cfg.algorithm.sampling_params.max_new_tokens
+    if not 0 < agentloop.minimum_output_tokens <= max_new_tokens:
+        raise ValueError(
+            "agentloop.minimum_output_tokens must be between 1 and "
+            f"sampling_params.max_new_tokens={max_new_tokens}, "
+            f"got {agentloop.minimum_output_tokens}."
+        )
+    if agentloop.max_infra_retries < 0 or not 0 <= agentloop.max_infra_retry_rate <= 1:
+        raise ValueError(
+            "agentloop.max_infra_retries must be nonnegative and "
+            "agentloop.max_infra_retry_rate between 0 and 1, got "
+            f"{agentloop.max_infra_retries} and {agentloop.max_infra_retry_rate}."
+        )
+
+    if cfg.runner.task_type == "reasoning":
+        if not cfg.critic.get("use_critic_model", False):
+            raise ValueError(
+                "RPent trains with PPO and needs critic.use_critic_model=True."
+            )
+        validate_agent_ppo_cfg(cfg, "RPent")
     return cfg
 
 
@@ -1822,7 +1910,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_coding_online_rl_cfg(cfg)
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
-        return cfg
+        return validate_rpent_cfg(cfg)
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
     elif cfg.runner.task_type == "offline":
@@ -1884,6 +1972,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.runner.task_type == "reasoning":
         cfg = validate_searchr1_cfg(cfg)
+        cfg = validate_rpent_cfg(cfg)
 
     return cfg
 

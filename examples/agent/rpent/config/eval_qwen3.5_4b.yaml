@@ -1,0 +1,149 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+# Node 0: SGLang serves the evaluated policy on its eight GPUs. Node 1: the
+# agent workers run the RPent episodes next to the simulators (tools.rpent).
+cluster:
+  num_nodes: 2
+  component_placement:
+    rollout,reward: 0-7
+    agentloop:
+      node_group: node
+      placement: "1:0-7"
+
+
+runner:
+  task_type: reasoning_eval
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  # Longest planner history plus one response, in tokens.
+  seq_length: 65536
+
+  resume_dir: null
+  experiment_name: rpent-qwen3.5-4b-eval
+  output_dir: ./logs
+
+
+algorithm:
+  # Episodes per task.
+  group_size: 1
+  val_rollout_batch_size_per_gpu: 1
+
+  sampling_params:
+    do_sample: true
+    temperature: 0.7
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: 2048
+    min_new_tokens: 1
+
+
+data:
+  type: reasoning
+  max_prompt_length: 1792
+  val_rollout_batch_size: null
+  num_workers: 0
+  prompt_key: prompt
+  answer_key: answer
+  apply_chat_template: false
+  validation_shuffle: false
+  seed: 1234
+  # One RPent task per row, in the format of the training task file.
+  val_data_paths: ["/path/to/rpent/holdout.jsonl"]
+
+
+agentloop:
+  group_name: AgentLoopGroup
+  toolcall_parser: qwen3.5
+  agentic_tokenizer: qwen3_5
+  chat_template_kwargs:
+    enable_thinking: false
+  is_dynamic_rollout_batch: true
+  print_outputs: false
+  max_turns: 24
+  model_request_timeout_s: 600
+  episode_timeout_s: 1800
+  minimum_output_tokens: 1024
+  merge_prefix_turns: true
+  # The planner's native compaction. It counts message text only, so the
+  # trigger leaves room for tool schemas and template tokens; the policy
+  # endpoint rejects any request that still exceeds runner.seq_length.
+  history_compaction:
+    max_messages: 49
+    keep_messages: 18
+    context_window: ${runner.seq_length}
+    max_fraction: 0.9
+    preserve_first_user_message: true
+    receipts: false
+  max_infra_retries: 1
+  max_infra_retry_rate: 0.05
+
+
+tools:
+  rpent:
+    # Interpreter of the RPent environment on node 1; each episode runs as
+    # `python -m robots.libero.rl_episode` in its own process.
+    python: /path/to/rpent/.venv/bin/python
+    # Pi0.5 and SAM3 services on node 1, started before this job.
+    vla_endpoint: http://127.0.0.1:8100
+    sam3_endpoint: http://127.0.0.1:8101
+    libero_type: pro
+    max_episode_steps: 1200
+    frozen_memory_dir: /path/to/rpent-memory/libero/GPT_5.5_xhigh
+    # Node-1 GPUs that render the simulators, and the episodes each agent worker
+    # runs at once.
+    env_gpus: [0, 1, 2, 3, 4, 5]
+    episodes_per_worker: 8
+    # Episode artifacts on node 1; failed episodes keep theirs.
+    output_dir: /path/to/rpent-episodes
+    keep_episodes: failures
+    # Stops an episode process that outlives its planner and environment limits.
+    process_timeout_s: 3600
+
+
+rollout:
+  group_name: RolloutGroup
+  gpu_memory_utilization: 0.8
+  model:
+    # A policy written by `checkpoint.py export`, or the served base model.
+    model_path: /path/to/exported/policy
+    model_type: qwen3_5
+    precision: bf16
+  enforce_eager: false
+  distributed_executor_backend: mp
+  disable_log_stats: false
+  detokenize: false
+  padding: null
+  eos: null
+  return_logprobs: false
+  replica_affinity: true
+
+  rollout_backend: sglang
+  sglang:
+    attention_backend: triton
+    decode_log_interval: 500000
+    use_torch_compile: false
+    torch_compile_max_bs: 128
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 12
+  cuda_graph_max_bs: 4
+  validate_weight: false
+  validate_save_dir: null
+  print_outputs: false

@@ -64,6 +64,81 @@ class Qwen25ToolCallParser:
         return content, function_calls
 
 
+@register_toolcall_parser("qwen3.5")
+class Qwen35ToolCallParser:
+    """Parse Qwen's complete XML-style calls without coercing invalid arguments.
+
+    This is the function/parameter grammar used by the Qwen3.5 chat template,
+    not general XML: string parameters can contain unescaped angle brackets.
+    The tool executor owns schema validation. Unlike permissive serving parsers,
+    invalid numbers and booleans remain strings so validation can reject them.
+    """
+
+    _call = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+    _function = re.compile(r"\s*<function=([^<>\s]+)>(.*?)</function>\s*", re.DOTALL)
+    _parameter = re.compile(r"\s*<parameter=([^<>\s]+)>(.*?)</parameter>", re.DOTALL)
+
+    @staticmethod
+    def _argument(value: str, schema: dict):
+        value = value.removeprefix("\n").removesuffix("\n")
+        types = schema.get("type", [])
+        if isinstance(types, str):
+            types = [types]
+        for branch in schema.get("anyOf", []):
+            kind = branch.get("type")
+            if isinstance(kind, str):
+                types = [*types, kind]
+        if not types or "string" in types:
+            return value
+        if "boolean" in types and value.lower() in {"true", "false"}:
+            return value.lower() == "true"
+        if "null" in types and value in {"null", "None"}:
+            return None
+        try:
+            parsed = json.loads(value)
+            json.dumps(parsed, allow_nan=False)
+            return parsed
+        except ValueError:
+            return value
+
+    async def __call__(
+        self, response_text: str, *, tools: list[dict] | None = None
+    ) -> tuple[str, list[ToolRequest]]:
+        schemas = {
+            tool["function"]["name"]: tool["function"].get("parameters", {})
+            for tool in tools or []
+            if tool.get("type") == "function"
+        }
+        calls = []
+        matches = list(self._call.finditer(response_text))
+        remainder = self._call.sub("", response_text)
+        if "<tool_call>" in remainder or "</tool_call>" in remainder:
+            return response_text, []
+        for match in matches:
+            function = self._function.fullmatch(match.group(1))
+            if function is None:
+                return response_text, []
+            name, body = function.groups()
+            properties = schemas.get(name, {}).get("properties", {})
+            arguments = {}
+            position = 0
+            while body[position:].strip():
+                parameter = self._parameter.match(body, position)
+                if parameter is None:
+                    return response_text, []
+                key, value = parameter.groups()
+                if key in arguments:
+                    return response_text, []
+                arguments[key] = self._argument(value, properties.get(key, {}))
+                position = parameter.end()
+            calls.append(
+                ToolRequest(
+                    name=name, arguments=json.dumps(arguments, ensure_ascii=False)
+                )
+            )
+        return remainder, calls
+
+
 @register_toolcall_parser("searchr1-qwen")
 class Searchr1QwenToolCallParser:
     def __init__(self) -> None:

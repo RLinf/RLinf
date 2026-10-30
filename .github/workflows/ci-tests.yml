@@ -179,6 +179,17 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              # Unit tests import these agentic, Megatron actor and runner
+              # modules, and load the RPent checkpoint tool and configs.
+              - 'rlinf/agents/rpent/**'
+              - 'rlinf/agents/tokenization/**'
+              - 'rlinf/agents/tool_call/parsers.py'
+              - 'rlinf/workers/agent/agent_loop.py'
+              - 'rlinf/workers/agent/openai_session_server.py'
+              - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
+              - 'rlinf/runners/reasoning_runner.py'
+              - 'examples/agent/rpent/checkpoint.py'
+              - 'examples/agent/rpent/config/**'
               - 'rlinf/robotics/**'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay

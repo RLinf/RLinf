@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the agentic tokenizer.
+"""Unit tests for the agentic tokenizer and the Qwen3.5 tool-call parser.
 
 No real model is loaded: a stub tokenizer maps a small vocab, and the
 reasoning marker ids are set on the instance to bypass the sglang
 registry lookup.
 """
+
+import asyncio
+import json
 
 import pytest
 
@@ -233,3 +236,136 @@ def test_get_agentic_tokenizer_unknown_type():
     assert "nope" in msg
     for valid in ("default", "qwen", "glm47"):
         assert valid in msg
+
+
+# ---------------------------------------------------------------------------
+# Qwen3.5: increments after an assistant turn
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def qwen35(monkeypatch):
+    from _qwen35_chat import qwen35_agentic_tokenizer
+
+    return qwen35_agentic_tokenizer(monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "new_messages",
+    [
+        [
+            {"role": "tool", "tool_call_id": "c", "content": "seen"},
+            {"role": "user", "content": "observation"},
+        ],
+        [{"role": "user", "content": "next"}],
+        [
+            {"role": "tool", "tool_call_id": "c", "content": "a"},
+            {"role": "tool", "tool_call_id": "d", "content": "b"},
+        ],
+    ],
+)
+@pytest.mark.parametrize("stopped_on_eos", [True, False])
+def test_qwen35_appends_new_messages_as_the_template_renders_them(
+    qwen35, new_messages, stopped_on_eos
+):
+    conversation = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "done"},
+        *new_messages,
+    ]
+    full = qwen35.apply_chat_template(
+        conversation, tokenize=False, add_generation_prompt=True
+    )
+    # The template ends the reply with "<|im_end|>\n" before the new messages.
+    after_reply = full.split("done<|im_end|>", 1)[1]
+    sampled = "<|im_start|>assistant\n<think>\n\n</think>\n\ndone"
+    prefix_ids = qwen35.tokenizer(sampled + "<|im_end|>" * stopped_on_eos)["input_ids"]
+    ids = qwen35.build_native_tool_response(prefix_ids, new_messages)
+    assert ids[: len(prefix_ids)] == prefix_ids
+    assert qwen35.tokenizer.decode(ids) == sampled + "<|im_end|>" + after_reply
+
+
+def test_qwen35_tool_calls_round_trip_through_the_chat_template():
+    from _qwen35_chat import Qwen35ToyTokenizer
+
+    from rlinf.algorithms.registry import get_toolcall_parser
+
+    properties = {
+        "text": {"type": "string"},
+        "enabled": {"type": "boolean"},
+        "count": {"type": "integer"},
+        "position": {"type": "array", "items": {"type": "number"}},
+        "optional": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    }
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "move",
+                "parameters": {"type": "object", "properties": properties},
+            },
+        }
+    ]
+    arguments = [
+        {
+            "text": "向前 < 2米\n\nthen stop",
+            "enabled": True,
+            "count": 2,
+            "position": [1, -2.5],
+            "optional": None,
+        },
+        {"text": "null", "enabled": False, "count": 0, "position": [], "optional": 1.5},
+    ]
+    reply = {
+        "role": "assistant",
+        "content": "Check position.",
+        "tool_calls": [
+            {"type": "function", "function": {"name": "move", "arguments": args}}
+            for args in arguments
+        ],
+    }
+    rendered = Qwen35ToyTokenizer().apply_chat_template(
+        [{"role": "user", "content": "Move."}, reply], tools=tools
+    )
+    response = rendered.split("<|im_start|>assistant\n", 1)[1]
+    response = response.split("</think>\n\n")[-1].removesuffix("<|im_end|>\n")
+    text, calls = asyncio.run(get_toolcall_parser("qwen3.5")(response, tools=tools))
+    assert "Check position." in text
+    assert [json.loads(call.arguments) for call in calls] == arguments
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<parameter=x>1",
+        "<parameter=x>1</parameter><parameter=x>2</parameter>",
+        "unparsed text<parameter=x>1</parameter>",
+    ],
+)
+def test_malformed_qwen35_calls_stay_visible_as_text(body):
+    from rlinf.algorithms.registry import get_toolcall_parser
+
+    response = f"<tool_call><function=move>{body}</function></tool_call>"
+    text, calls = asyncio.run(get_toolcall_parser("qwen3.5")(response))
+    assert text == response and calls == []
+
+
+def test_invalid_qwen35_arguments_are_not_coerced():
+    from rlinf.algorithms.registry import get_toolcall_parser
+
+    properties = {"enabled": {"type": "boolean"}, "position": {"type": "array"}}
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "move",
+                "parameters": {"type": "object", "properties": properties},
+            },
+        }
+    ]
+    response = (
+        "<tool_call><function=move><parameter=enabled>maybe</parameter>"
+        "<parameter=position>[NaN]</parameter></function></tool_call>"
+    )
+    _, calls = asyncio.run(get_toolcall_parser("qwen3.5")(response, tools=tools))
+    assert json.loads(calls[0].arguments) == {"enabled": "maybe", "position": "[NaN]"}

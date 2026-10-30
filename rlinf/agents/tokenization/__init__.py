@@ -18,6 +18,7 @@ from rlinf.agents.tokenization.agentic_tokenizer import (
     AgenticTokenizer,
     AgenticTokenizerType,
     GLMAgenticTokenizer,
+    Qwen35AgenticTokenizer,
     QwenAgenticTokenizer,
     get_agentic_tokenizer,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "AgenticTokenizer",
     "AgenticTokenizerType",
     "GLMAgenticTokenizer",
+    "Qwen35AgenticTokenizer",
     "QwenAgenticTokenizer",
     "get_agentic_tokenizer",
 ]

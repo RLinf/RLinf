@@ -134,6 +134,25 @@ def get_specs(spec_name, transformer_config=None, use_te=False):
     return name_spec_dict[spec_name]
 
 
+def parameter_group_rates(optimizer) -> list[tuple]:
+    """Return each parameter group's scheduled ``max_lr`` and ``min_lr``."""
+    return [
+        (group.get("max_lr"), group.get("min_lr")) for group in optimizer.param_groups
+    ]
+
+
+def restore_parameter_group_rates(optimizer, scheduler, rates: list[tuple]) -> None:
+    """Give restored parameter groups the configured rates and reschedule them.
+
+    Megatron schedules each group from its own ``max_lr`` and ``min_lr``, which a
+    checkpoint restores; ``override_opt_param_scheduler`` alone resets only the
+    scheduler's values, so the restored rates would stay in effect.
+    """
+    for group, (max_lr, min_lr) in zip(optimizer.param_groups, rates, strict=True):
+        group["max_lr"], group["min_lr"] = max_lr, min_lr
+    scheduler.step(increment=0)
+
+
 # copied from verl
 class LinearForLastLayer(torch.nn.Linear):
     def __init__(
@@ -305,7 +324,9 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
+        # These bridges set architecture fields (attention variants, gates,
+        # layer patterns) that generic TransformerConfig defaults would replace.
+        if _model_type in ("deepseek_v3", "glm4_moe_lite", "qwen3_5"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -338,6 +359,12 @@ class MegatronModelManager:
         provider.position_embedding_type = position_embedding_type
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
+        if _model_type == "qwen3_5":
+            # RL scores next tokens only; exported policies carry no MTP weights.
+            provider.mtp_num_layers = None
+        if self.is_dedicated_critic_model:
+            # Runs after the bridge hook that loads the language model weights.
+            provider.register_pre_wrap_hook(self._attach_value_head)
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(
@@ -457,16 +484,32 @@ class MegatronModelManager:
             )
 
         if self.is_dedicated_critic_model and post_process:
-            # replace lm head with value head if this is a critic model
-            model.output_layer = LinearForLastLayer(
-                input_size=self._cfg.model.hidden_size,
-                output_size=1,
-                sequence_parallel=self._cfg.model.sequence_parallel,
-                weight_init=self._cfg.get("value_head_init", "normal"),
-                init_std=self._cfg.model.get("init_method_std", 0.02),
+            model.output_layer = self._value_head(
+                self._cfg.model.hidden_size, self._cfg.model.sequence_parallel
             )
 
         return model
+
+    def _value_head(self, hidden_size: int, sequence_parallel: bool) -> torch.nn.Module:
+        """Return the scalar projection that replaces a critic's language-model head."""
+        return LinearForLastLayer(
+            input_size=hidden_size,
+            output_size=1,
+            sequence_parallel=sequence_parallel,
+            weight_init=self._cfg.get("value_head_init", "normal"),
+            init_std=self._cfg.model.get("init_method_std", 0.02),
+        )
+
+    def _attach_value_head(self, model_chunks: list) -> list:
+        """Replace the language-model head of bridge-built critic chunks."""
+        for chunk in model_chunks:
+            if chunk.post_process:
+                # A value head never shares the input embedding weights.
+                chunk.share_embeddings_and_output_weights = False
+                chunk.output_layer = self._value_head(
+                    chunk.config.hidden_size, chunk.config.sequence_parallel
+                ).to(next(chunk.parameters()).device)
+        return model_chunks
 
     def optimizer_step(self, increment):
         success, grad_norm, num_zeros_in_grad = self.optimizer.step()
@@ -601,7 +644,8 @@ class MegatronModelManager:
             return
 
         with self.ensure_onloaded_and_then_offload():
-            if self.mbridge:
+            # A value head has no Hugging Face counterpart to export.
+            if self.mbridge and not self.is_dedicated_critic_model:
                 # save mbridge checkpoint to hf checkpoint
                 hf_save_path = os.path.join(save_path, "hf_checkpoint")
                 self.bridge.save_hf_pretrained(
@@ -631,6 +675,11 @@ class MegatronModelManager:
             args.load = load_path
             if self.mbridge:
                 args.phase_transition_iterations = None
+            override_rates = self.optimizer is not None and self._cfg.get(
+                "lr_sched", {}
+            ).get("override_opt_param_scheduler", False)
+            if override_rates:
+                configured_rates = parameter_group_rates(self.optimizer)
             # [torch>=2.6 defaults torch.load to weights_only=True
             original_torch_load = torch.load
 
@@ -648,6 +697,10 @@ class MegatronModelManager:
                 )
             finally:
                 torch.load = original_torch_load
+            if override_rates:
+                restore_parameter_group_rates(
+                    self.optimizer, self.lr_scheduler, configured_rates
+                )
 
     def load_state_dict(self, state_dict, strict=True):
         if len(self.model) == 1:

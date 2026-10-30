@@ -60,8 +60,10 @@ Key points
 * **Optimizer / RNG state** – *both* the Adam parameters
   (``distrib_optim.pt``) *and* random-number generators are captured,
   guaranteeing bit-for-bit reproducibility after resume.
-* **Data sampler** – ``data.pt`` stores dataloader, so no
-  samples are skipped or repeated.
+* **Data sampler** – ``data.pt`` stores the dataloader position. Reasoning and
+  agent runners replay the completed epochs' sampler indices before restoring
+  that position, preserving shuffled order across epoch boundaries. Keep the
+  dataset, ``data.seed``, shuffle setting and rollout batch size unchanged.
 
 
 

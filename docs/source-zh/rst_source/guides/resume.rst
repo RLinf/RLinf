@@ -55,7 +55,7 @@ Megatron检查点文件结构如下：
 
 * **分片权重** —— ``mp_rank_*`` 中的文件遵循 Megatron 的张量并行布局；每个 GPU 只会重新加载属于自己的分片。  
 * **优化器 / RNG 状态** —— *同时* 保存了 Adam 参数（``distrib_optim.pt``）和随机数生成器，确保恢复后可以比特级复现。  
-* **数据采样器** —— ``data.pt`` 存储了 dataloader，保证不会遗漏或重复样本。  
+* **数据采样器** —— ``data.pt`` 保存 dataloader 的位置。Reasoning 和 agent runner 恢复时先重建已完成 epoch 的采样索引，再恢复批次位置，保持跨 epoch 的 shuffle 顺序。请保持数据集、``data.seed``、shuffle 设置和 rollout batch size 不变。
 
 FSDP/FSDP2 检查点
 ~~~~~~~~~~~~~~~~~~

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+from contextlib import nullcontext
 from typing import Optional
 
 import torch
@@ -30,9 +31,17 @@ from rlinf.algorithms.registry import (
     get_loss_scales,
     policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import (
+    behavior_logprob_metrics,
+    kl_penalty,
+    truncated_importance_weights,
+)
 from rlinf.data.schema.reasoning_requests import get_seq_length
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.hybrid_engines.megatron.utils import (
+    output_layer_positions,
+    preprocess_packed_seqs,
+)
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -62,6 +71,25 @@ from rlinf.workers.actor.megatron_actor_worker import (
 )
 
 
+def _at_positions(logits_processor, positions: torch.Tensor):
+    """Run ``logits_processor`` on logits computed only at packed ``positions``.
+
+    Labels are selected at the same positions, and each output is scattered
+    back to the packed layout with zeros elsewhere.
+    """
+
+    def processor(logits, label, label_mask):
+        outputs = logits_processor(
+            logits, label[:, positions], label_mask[:, positions]
+        )
+        return {
+            key: value.new_zeros(label.shape).index_copy(1, positions, value)
+            for key, value in outputs.items()
+        }
+
+    return processor
+
+
 class MAMegatronActor(MegatronActor):
     """The class for running the actor training using Megatron."""
 
@@ -84,6 +112,39 @@ class MAMegatronActor(MegatronActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+        # Long agent rows would otherwise materialize vocabulary logits for every
+        # history token; this scores only the positions of response tokens.
+        self.response_only_logits = self.cfg.actor.get("response_only_logits", False)
+        if self.response_only_logits and (
+            parallel_state.get_context_parallel_world_size() > 1
+        ):
+            raise ValueError(
+                "actor.response_only_logits requires context_parallel_size=1"
+            )
+
+    def _scored_positions(
+        self, batch: dict[str, torch.Tensor], attention_mask: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Packed positions predicting a response token, or None to score all.
+
+        Positions index the THD layout that ``custom_forward`` builds.
+        """
+        if not self.response_only_logits:
+            return None
+        scored = torch.zeros_like(attention_mask)
+        scored[:, :-1] = batch["response_mask"][:, 1:]
+        packed = preprocess_packed_seqs(scored, attention_mask)[0][0]
+        positions = packed.nonzero(as_tuple=True)[0]
+        # Loss-free balancing rows still evaluate one output row.
+        return positions if len(positions) else positions.new_zeros(1)
+
+    @staticmethod
+    def _output_positions(model, positions: torch.Tensor | None):
+        """Restrict the output layer to ``positions`` on the last pipeline stage."""
+        module = unwrap_model(model)
+        if positions is None or not module.post_process:
+            return nullcontext()
+        return output_layer_positions(module, positions)
 
     def get_batch(
         self, channel: Channel
@@ -164,16 +225,20 @@ class MAMegatronActor(MegatronActor):
 
             logits_processor_args = {"label": label, "label_mask": label_mask}
 
-            output = self.custom_forward(
-                model,
-                input_ids,
-                attention_mask,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-            )
+            positions = self._scored_positions(batch, attention_mask)
+            if positions is not None:
+                logits_processor = _at_positions(logits_processor, positions)
+            with self._output_positions(model, positions):
+                output = self.custom_forward(
+                    model,
+                    input_ids,
+                    attention_mask,
+                    position_ids,
+                    sequence_parallel=self.transformer_config.sequence_parallel,
+                    logits_processor=logits_processor,
+                    logits_processor_args=logits_processor_args,
+                    temperature=self.cfg.algorithm.sampling_params.temperature,
+                )
 
             if not self.return_loss:
 
@@ -206,14 +271,11 @@ class MAMegatronActor(MegatronActor):
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    assert False, (
-                        "importance_sampling_fix is not supported for dynamic rollout batch"
-                    )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch.get("recomputed_logprobs")
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
+                    advantages = advantages * truncated_importance_weights(
+                        batch["recomputed_logprobs"],
+                        batch["rollout_logprobs"],
+                        batch["response_mask"],
+                        self.cfg.algorithm.importance_sampling_clip,
                     )
 
                 mask = batch["response_mask"]
@@ -432,6 +494,17 @@ class MAMegatronActor(MegatronActor):
 
         # metrics
         rollout_metrics = self._compute_rollout_metrics(batch)
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            # A collective over the data parallel group: every rank computes it.
+            behavior_metrics = behavior_logprob_metrics(
+                batch["recomputed_logprobs"],
+                batch["rollout_logprobs"],
+                batch["response_mask"],
+                self.cfg.algorithm.importance_sampling_clip,
+                group=parallel_state.get_data_parallel_group(),
+            )
+            if rollout_metrics is not None:
+                rollout_metrics.update(behavior_metrics)
 
         # pack traj
         scale_context = {

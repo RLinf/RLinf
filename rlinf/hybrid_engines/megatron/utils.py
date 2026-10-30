@@ -12,16 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
 from typing import Optional
 
 import torch
 
 try:
-    from megatron.core import parallel_state
+    from megatron.core import parallel_state, tensor_parallel
     from megatron.core.packed_seq_params import PackedSeqParams
 
 except (ImportError, ModuleNotFoundError) as e:
     raise ImportError("Megatron core was not found.") from e
+
+
+@contextmanager
+def output_layer_positions(module: torch.nn.Module, positions: torch.Tensor):
+    """Evaluate ``module.output_layer`` only at ``positions`` of a packed sequence.
+
+    The output layer receives hidden states as [tokens, batch, hidden] in its
+    first argument and returns one logit row per selected position. With
+    sequence parallelism, hidden states are gathered before selection and the
+    selected rows are scattered back for the output layer's own SP collectives.
+    Context parallelism is not supported.
+    """
+
+    sequence_parallel = getattr(module.output_layer, "sequence_parallel", False)
+
+    def select_positions(_, args, kwargs):
+        hidden, *rest = args
+        if sequence_parallel:
+            # The output layer already sums vocabulary-shard gradients. This
+            # gather's backward must only split, rather than sum them again.
+            hidden = tensor_parallel.gather_from_sequence_parallel_region(
+                hidden, tensor_parallel_output_grad=False
+            )
+        hidden = hidden.index_select(0, positions)
+        if sequence_parallel:
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            padding = -len(positions) % tp_size
+            if padding:
+                hidden = torch.cat(
+                    [hidden, hidden.new_zeros(padding, *hidden.shape[1:])]
+                )
+            hidden = tensor_parallel.scatter_to_sequence_parallel_region(hidden)
+        return (hidden, *rest), kwargs
+
+    def trim_padding(_, args, output):
+        logits, bias = output
+        return logits[: len(positions)], bias
+
+    hook = module.output_layer.register_forward_pre_hook(
+        select_positions, with_kwargs=True
+    )
+    output_hook = (
+        module.output_layer.register_forward_hook(trim_padding)
+        if sequence_parallel
+        else None
+    )
+    try:
+        yield
+    finally:
+        hook.remove()
+        if output_hook is not None:
+            output_hook.remove()
 
 
 def preprocess_packed_seqs(

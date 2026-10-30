@@ -26,6 +26,8 @@ def get_tp_gather_fn(model_type: str):
         return tp_gather_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
         return tp_gather_fn_qwen3_dense
+    elif model_type == SupportedModel.QWEN3_5:
+        return tp_gather_fn_qwen3_5
     elif model_type == SupportedModel.QWEN3_MOE:
         return tp_gather_fn_qwen3_moe
     elif model_type in (SupportedModel.DEEPSEEK_V3,):
@@ -322,6 +324,81 @@ def tp_gather_fn_qwen3_dense(
             v, dim, tp_group, cat, tp_gather_is_identity
         )
 
+    return full_state_dict
+
+
+# Gated DeltaNet (linear attention) parameters of Qwen3.5.
+_QWEN3_5_GDN_PARAMS = (
+    "self_attention.in_proj.",
+    "self_attention.conv1d.",
+    "self_attention.A_log",
+    "self_attention.dt_bias",
+    "self_attention.out_norm.",
+    "self_attention.out_proj.",
+)
+
+
+def tp_gather_fn_qwen3_5(
+    model_state_dict,
+    tp_group,
+    cat,
+    split_fc1=True,
+    tp_gather_is_identity=False,
+    model_config=None,
+):
+    """Gather Qwen3.5: Qwen3 dense layers plus Gated DeltaNet layers.
+
+    Gated DeltaNet shards fuse local Q/K/V/Z/B/A projections. Gather each
+    projection separately before restoring the global fused layout.
+    """
+    tp_size = torch.distributed.get_world_size(tp_group)
+    if tp_size > 1 and model_config is None:
+        raise ValueError("Qwen3.5 TP gathering requires the model configuration.")
+    gdn = {
+        key: value
+        for key, value in model_state_dict.items()
+        if any(param in key for param in _QWEN3_5_GDN_PARAMS)
+    }
+    full_state_dict = tp_gather_fn_qwen3_dense(
+        {key: value for key, value in model_state_dict.items() if key not in gdn},
+        tp_group,
+        cat,
+        split_fc1=split_fc1,
+        tp_gather_is_identity=tp_gather_is_identity,
+    )
+    for key, value in gdn.items():
+        if tp_size == 1 or key.endswith(("layer_norm_weight", "out_norm.weight")):
+            full_state_dict[key] = (value.clone(), None)
+        elif key.endswith(("in_proj.weight", "conv1d.weight", "conv1d.bias")):
+            qk = (
+                model_config.linear_key_head_dim
+                * model_config.linear_num_key_heads
+                // tp_size
+            )
+            v = (
+                model_config.linear_value_head_dim
+                * model_config.linear_num_value_heads
+                // tp_size
+            )
+            heads = model_config.linear_num_value_heads // tp_size
+            sizes = (
+                [qk, qk, v, v, heads, heads]
+                if key.endswith("in_proj.weight")
+                else [qk, qk, v]
+            )
+            full_state_dict[key] = (
+                torch.cat(
+                    [
+                        all_gather_tensor(part.contiguous(), 0, tp_group)
+                        for part in value.split(sizes, dim=0)
+                    ],
+                    dim=0,
+                ),
+                None,
+            )
+        else:
+            dim = 1 if key.endswith("out_proj.weight") else 0
+            full_state_dict[key] = (all_gather_tensor(value, dim, tp_group), None)
     return full_state_dict
 
 

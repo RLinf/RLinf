@@ -276,17 +276,76 @@ class GLMAgenticTokenizer(AgenticTokenizer):
         return prefix + incremental
 
 
+class Qwen35AgenticTokenizer(AgenticTokenizer):
+    """Qwen3.5 subclass.
+
+    Its chat template rejects a conversation without a user message and drops
+    the reasoning of assistant turns before the latest user message, so the
+    base dummy context does not render. Increments are rendered after an anchor
+    user/assistant exchange and cut at the anchor's end of turn instead.
+    """
+
+    reasoning_parser = "qwen3"
+    tool_call_parser = "qwen3_coder"
+    _ANCHOR = "\x00rlinf-anchor\x00"
+    _ANCHOR_TURNS = (
+        {"role": "user", "content": "."},
+        {"role": "assistant", "content": _ANCHOR},
+    )
+
+    def __init__(
+        self,
+        tokenizer,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ):
+        super().__init__(tokenizer, chat_template_kwargs)
+        rendered = self.apply_chat_template(
+            list(self._ANCHOR_TURNS), tokenize=False, add_generation_prompt=False
+        )
+        # Text the template writes after an assistant message's content.
+        self._end_of_turn = rendered[
+            rendered.rindex(self._ANCHOR) + len(self._ANCHOR) :
+        ]
+        self._end_of_turn_ids = self.tokenizer(
+            self._end_of_turn, add_special_tokens=False
+        )["input_ids"]
+
+    def render_incremental(self, tool_messages: list[dict]) -> list[int]:
+        text = self.apply_chat_template(
+            [*self._ANCHOR_TURNS, *tool_messages],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        _, found, increment = text.partition(self._ANCHOR + self._end_of_turn)
+        if not found:
+            raise ValueError("the chat template rewrote the anchor assistant turn")
+        return self.tokenizer(increment, add_special_tokens=False)["input_ids"]
+
+    def build_native_tool_response(
+        self, prefix_ids: list[int], tool_messages: list[dict]
+    ) -> list[int]:
+        # A response that stopped on EOS already holds the end of turn's first token.
+        overlap = int(bool(prefix_ids) and prefix_ids[-1] == self._end_of_turn_ids[0])
+        return [
+            *prefix_ids,
+            *self._end_of_turn_ids[overlap:],
+            *self.render_incremental(tool_messages),
+        ]
+
+
 class AgenticTokenizerType(str, Enum):
     """Registry keys for get_agentic_tokenizer."""
 
     DEFAULT = "default"
     QWEN = "qwen"
+    QWEN3_5 = "qwen3_5"
     GLM47 = "glm47"
 
 
 AGENTIC_TOKENIZER_REGISTRY: dict[AgenticTokenizerType, type[AgenticTokenizer]] = {
     AgenticTokenizerType.DEFAULT: AgenticTokenizer,
     AgenticTokenizerType.QWEN: QwenAgenticTokenizer,
+    AgenticTokenizerType.QWEN3_5: Qwen35AgenticTokenizer,
     AgenticTokenizerType.GLM47: GLMAgenticTokenizer,
 }
 
@@ -321,6 +380,7 @@ def agentic_tokenizer_tool_call_parser(tokenizer_type: str = "default") -> str |
 __all__ = [
     "AgenticTokenizer",
     "QwenAgenticTokenizer",
+    "Qwen35AgenticTokenizer",
     "GLMAgenticTokenizer",
     "AgenticTokenizerType",
     "get_agentic_tokenizer",
