@@ -52,8 +52,8 @@ class SO101Leader(TeleopDevice):
     Args:
         port: Serial device the leader's servo bus is on.
         calibration_id: lerobot calibration identifier for this leader.
-        movement_epsilon: Radians of leader motion, summed over the joints,
-            below which the operator counts as not driving.
+        movement_epsilon: Joint-norm or normalized gripper change below which
+            the operator counts as not driving.
         align_fps: Command frequency used while aligning the leader.
         manual_start_hold_seconds: Seconds to hold the reset pose before
             releasing the leader to the operator.
@@ -114,6 +114,7 @@ class SO101Leader(TeleopDevice):
         self._manual_release_pending = False
         self._manual_release_reference: np.ndarray | None = None
         self._last_valid_observation: Observation | None = None
+        self._last_action_grip: float | None = None
 
     @classmethod
     def from_config(
@@ -160,6 +161,7 @@ class SO101Leader(TeleopDevice):
         self._manual_release_pending = False
         self._manual_release_reference = None
         self._last_valid_observation = None
+        self._last_action_grip = None
         try:
             from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
         except ImportError:  # pragma: no cover - older lerobot
@@ -219,15 +221,25 @@ class SO101Leader(TeleopDevice):
     def _release(self, device: Any) -> None:
         """lerobot spells this ``disconnect``, which the base does not try."""
         with self._serial_lock:
+            release_error: BaseException | None = None
             if self._reset_prepared or self._torque_enabled:
-                self._set_torque(False)
+                try:
+                    self._set_torque(False)
+                except BaseException as exc:  # noqa: BLE001 - disconnect still runs
+                    release_error = exc
                 self._reset_prepared = False
             try:
                 device.disconnect()
+            except BaseException as exc:  # noqa: BLE001 - preserve first failure
+                if release_error is None:
+                    release_error = exc
             finally:
                 self._manual_release_pending = False
                 self._manual_release_reference = None
                 self._last_valid_observation = None
+                self._last_action_grip = None
+            if release_error is not None:
+                raise release_error
 
     @property
     def observation_features(self) -> Features:
@@ -267,6 +279,7 @@ class SO101Leader(TeleopDevice):
         """Move to the reset state while the follower executes its reset."""
         self._manual_release_pending = False
         self._manual_release_reference = None
+        self._last_action_grip = None
         joints = np.asarray(context["reset_joint_positions"], dtype=float).reshape(-1)
         configured_grip = context["reset_gripper_position"]
         if configured_grip is None:
@@ -310,6 +323,7 @@ class SO101Leader(TeleopDevice):
             # rather than comparing that settling pose with the follower pose.
             self._manual_release_pending = True
             self._manual_release_reference = None
+            self._last_action_grip = None
 
     def hold_for_reset(self, context: Mapping[str, Any]) -> None:
         """Hold the current leader pose before the robot is reset or parked."""
@@ -325,6 +339,7 @@ class SO101Leader(TeleopDevice):
             self._reset_prepared = True
             self._manual_release_pending = False
             self._manual_release_reference = None
+            self._last_action_grip = None
 
     def abort_reset(self, context: Mapping[str, Any]) -> None:
         """Release the leader after an incomplete reset."""
@@ -335,6 +350,7 @@ class SO101Leader(TeleopDevice):
             self._reset_prepared = False
             self._manual_release_pending = False
             self._manual_release_reference = None
+            self._last_action_grip = None
 
     def _move_to(
         self,
@@ -451,9 +467,15 @@ class SO101Leader(TeleopDevice):
                 > self.MOVEMENT_EPSILON
             )
         else:
-            # The follower and leader have independent gripper readings.  A
-            # gripper mismatch alone must not make an idle leader intervene.
-            moved = float(np.linalg.norm(target - current)) > self.MOVEMENT_EPSILON
+            joint_moved = (
+                float(np.linalg.norm(target - current)) > self.MOVEMENT_EPSILON
+            )
+            grip_moved = (
+                self._last_action_grip is not None
+                and abs(float(grip[0]) - self._last_action_grip) > self.MOVEMENT_EPSILON
+            )
+            moved = joint_moved or grip_moved
+        self._last_action_grip = float(grip[0])
         if not moved:
             parts = self.hold(context)
             return TeleopAction(

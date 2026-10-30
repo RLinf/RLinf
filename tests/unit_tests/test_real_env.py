@@ -570,16 +570,12 @@ def test_gim_arm_reopens_the_existing_camera_after_a_stall(monkeypatch):
     assert frames["wrist_1"].shape == (4, 4, 3)
 
 
-@pytest.mark.parametrize("max_age", [0.0, 0.5])
-def test_so101_camera_fallback_respects_frame_age(max_age):
-    """Bound retries and retain the timestamp of a reused frame."""
+def test_so101_camera_failure_uses_camera_retry_policy():
+    """Let BaseCamera own retries instead of keeping a second stale cache."""
     from rlinf.envs.real.so101.base import SO101Env
 
     env = SO101Env.__new__(SO101Env)
-    env.config = SimpleNamespace(camera_max_age=max_age)
-    env._last_camera_frame = {"wrist_1": np.zeros((4, 4, 3), dtype=np.uint8)}
-    captured_at = time.monotonic() - 0.1
-    env._last_camera_frame_at = {"wrist_1": captured_at}
+    env.config = SimpleNamespace(camera_max_age=0.5)
     env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
     env.observation_space = gym.spaces.Dict(
         {
@@ -602,14 +598,36 @@ def test_so101_camera_fallback_respects_frame_age(max_age):
     camera = Camera()
     env._cameras = [camera]
 
-    if max_age == 0:
-        with pytest.raises(RuntimeError, match="camera_max_age=0.000s"):
-            env._get_camera_frames()
-    else:
-        frames = env._get_camera_frames()
-        np.testing.assert_array_equal(frames["wrist_1"], np.zeros((4, 4, 3)))
-        assert env._last_camera_frame_at["wrist_1"] == captured_at
-        assert camera.calls[0]["timeout"] * camera.calls[0]["attempts"] <= max_age
+    with pytest.raises(RuntimeError, match="camera_max_age=0.500s"):
+        env._get_camera_frames()
+    assert camera.calls == [{"timeout": 0.5, "attempts": 3, "max_age": 0.5}]
+
+
+def test_so101_close_keeps_robot_for_a_retry_after_cleanup_failure():
+    from rlinf.envs.real.so101.base import SO101Env
+
+    class Robot:
+        def __init__(self):
+            self.calls = 0
+
+        def disconnect(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("disconnect failed")
+
+    env = SO101Env.__new__(SO101Env)
+    env._closed = False
+    env._cameras = []
+    env.robot = Robot()
+
+    with pytest.raises(RuntimeError, match="disconnect failed"):
+        env.close()
+    assert env.robot is not None
+    assert not env._closed
+
+    env.close()
+    assert env.robot is None
+    assert env._closed
 
 
 def test_dual_franka_reads_depth_beside_each_frame():

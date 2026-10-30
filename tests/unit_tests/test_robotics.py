@@ -5782,6 +5782,43 @@ def test_so101_leader_ignores_follower_gripper_mismatch_when_idle():
     np.testing.assert_allclose(action.info["so101_idle_hold_action"], [0.0] * 5 + [0.4])
 
 
+def test_so101_leader_detects_gripper_only_motion():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_open": np.array([0.4]),
+    }
+    leader.action({"joint_position": np.zeros(5), "grip": np.array([0.0])}, context)
+    action = leader.action(
+        {"joint_position": np.zeros(5), "grip": np.array([0.2])}, context
+    )
+
+    assert action.driving
+    np.testing.assert_allclose(action.parts["end_effector"], [0.2])
+
+
+def test_so101_leader_disconnects_after_torque_release_failure():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    leader._torque_enabled = True
+    disconnected = []
+
+    class Device:
+        def disconnect(self):
+            disconnected.append(True)
+
+    def fail_to_disable(_enabled):
+        raise RuntimeError("torque release failed")
+
+    leader._set_torque = fail_to_disable
+    with pytest.raises(RuntimeError, match="torque release failed"):
+        leader._release(Device())
+    assert disconnected == [True]
+
+
 def test_so101_leader_anchors_motion_after_manual_release():
     from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
 

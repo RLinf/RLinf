@@ -54,17 +54,10 @@ _DEFAULT_JOINT_LIMIT_HIGH = np.array([1.91, 1.75, 1.69, 1.66, 2.79])
 #: Arm joints, matching :pyattr:`SO101Arm.MOTORS`.
 _DOF = len(SO101Arm.MOTORS)
 
-# Keep camera reads shorter than the 10 Hz control period. BaseCamera reopens
-# the device between attempts, so the environment only needs one bounded read.
+# BaseCamera reopens the device between attempts and owns frame freshness. The
+# environment only supplies the per-attempt read budget.
 _CAMERA_FRAME_TIMEOUT_S = 0.5
 _CAMERA_REOPEN_ATTEMPTS = 3
-
-
-def _camera_frame_timeout(max_age: float) -> float:
-    """Keep bounded camera retries within the configured freshness window."""
-    if max_age <= 0:
-        return _CAMERA_FRAME_TIMEOUT_S
-    return min(_CAMERA_FRAME_TIMEOUT_S, max_age / _CAMERA_REOPEN_ATTEMPTS)
 
 
 def _zero_observation(space: gym.Space) -> Any:
@@ -196,8 +189,6 @@ class SO101Env(gym.Env):
         self._num_steps = 0
         self._success_hold_counter = 0
         self._last_gripper: Optional[float] = None
-        self._last_camera_frame: dict[str, np.ndarray] = {}
-        self._last_camera_frame_at: dict[str, float] = {}
         self._gripper_position = np.zeros(1, dtype=np.float32)
         self._joints = np.zeros(_DOF)
         self.robot: Optional[SO101Robot] = None
@@ -527,53 +518,32 @@ class SO101Env(gym.Env):
         return cv2.resize(frame[top : top + side, left : left + side], size)
 
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Read camera frames, reusing the latest frame during recovery.
+        """Read fresh camera frames through the camera's recovery policy.
 
-        ``BaseCamera.get_frame`` performs a bounded number of reconnect
-        attempts. Once those attempts are exhausted, an existing frame keeps
-        the control loop moving; a camera that has never produced a frame
-        fails explicitly instead of recursing forever.
+        ``BaseCamera.get_frame`` owns cached-frame freshness and bounded
+        reconnect attempts. Once those attempts are exhausted, the control
+        step fails explicitly instead of maintaining a second stale-frame
+        cache at the environment layer.
         """
         declared = self.observation_space["frames"]
         frames: dict[str, np.ndarray] = {}
         for camera in getattr(self, "_cameras", []):
             camera: BaseCamera
             name = camera.name
-            used_fallback = False
             try:
                 # Cameras deliver their native resolution; the space fixes one.
                 size = declared[name].shape[:2][::-1]
                 raw_frame = camera.get_frame(
-                    timeout=_camera_frame_timeout(self.config.camera_max_age),
+                    timeout=_CAMERA_FRAME_TIMEOUT_S,
                     attempts=_CAMERA_REOPEN_ATTEMPTS,
                     max_age=self.config.camera_max_age,
                 )
-            except queue.Empty:
-                used_fallback = True
-                raw_frame = self._last_camera_frame.get(name)
-                captured_at = self._last_camera_frame_at.get(name)
-                if (
-                    raw_frame is None
-                    or captured_at is None
-                    or self.config.camera_max_age <= 0
-                    or time.monotonic() - captured_at > self.config.camera_max_age
-                ):
-                    raise RuntimeError(
-                        f"Camera {name} did not produce a fresh frame after "
-                        f"{_CAMERA_REOPEN_ATTEMPTS} attempts or exceeded "
-                        f"camera_max_age={self.config.camera_max_age:.3f}s."
-                    ) from None
-                self._logger.warning(
-                    "Camera %s stalled after %d attempts; using the last frame.",
-                    name,
-                    _CAMERA_REOPEN_ATTEMPTS,
-                )
-
-            if not used_fallback:
-                # Keep this timestamp tied to a successful camera read. A
-                # fallback frame must not appear fresh on every control step.
-                self._last_camera_frame[name] = np.asarray(raw_frame).copy()
-                self._last_camera_frame_at[name] = time.monotonic()
+            except queue.Empty as exc:
+                raise RuntimeError(
+                    f"Camera {name} did not produce a fresh frame after "
+                    f"{_CAMERA_REOPEN_ATTEMPTS} attempts or exceeded "
+                    f"camera_max_age={self.config.camera_max_age:.3f}s."
+                ) from exc
             frames[name] = self._crop_frame(raw_frame, size)
 
         if hasattr(self, "camera_player"):
@@ -584,7 +554,6 @@ class SO101Env(gym.Env):
         """Release the cameras and disconnect the robot."""
         if getattr(self, "_closed", False):
             return
-        self._closed = True
         close_error: Optional[BaseException] = None
         if hasattr(self, "_cameras"):
             try:
@@ -598,13 +567,15 @@ class SO101Env(gym.Env):
                 if close_error is None:
                     close_error = exc
         if self.robot is not None:
-            robot = self.robot
-            self.robot = None
+            robot_disconnected = False
             try:
-                robot.disconnect()
+                self.robot.disconnect()
+                robot_disconnected = True
             except BaseException as exc:  # noqa: BLE001 - preserve first failure
                 if close_error is None:
                     close_error = exc
+            if robot_disconnected:
+                self.robot = None
         if close_error is not None:
-            self._closed = False
             raise close_error
+        self._closed = True
