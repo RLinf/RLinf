@@ -64,6 +64,8 @@ def build_openpi_transforms(
     model_path: str,
     config_name: str,
     data_kwargs: dict[str, Any] | None = None,
+    *,
+    use_sfp: bool = False,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -71,6 +73,10 @@ def build_openpi_transforms(
 
     * input:  ``[InjectDefaultPrompt(None), *data.inputs, Normalize, *model.inputs]``
     * output: ``[*model.outputs, Unnormalize, *data.outputs]``
+
+    When ``use_sfp`` is true, the normalization pair uses SFP's scale-only
+    quantile transform. ``action_states`` is removed from output statistics
+    because sampled actions do not carry that input-only field.
 
     Set ``data_kwargs["norm_stats_path"]`` (YAML ``openpi_data.norm_stats_path``)
     to pin the stats file. When it is empty, OpenPI loads
@@ -93,15 +99,44 @@ def build_openpi_transforms(
         norm_stats_path=norm_stats_path_from_data_kwargs(data_kwargs),
     )
 
+    use_quantiles = bool(data_config.use_quantile_norm)
+    if use_sfp:
+        if norm_stats is None:
+            raise FileNotFoundError(
+                "Streaming Flow Policy requires normalization statistics. Set "
+                "actor.model.openpi_data.norm_stats_path or provide the OpenPI "
+                "asset norm_stats.json."
+            )
+        if not use_quantiles:
+            raise ValueError(
+                "Streaming Flow Policy transforms require quantile normalization. "
+                "Use an SFP data config such as pi05_libero_sfp."
+            )
+        from rlinf.models.embodiment.openpi.dataconfig.sfp_transforms import (
+            SfpNormalize,
+            SfpUnnormalize,
+        )
+
+        input_normalize = SfpNormalize(norm_stats, use_quantiles=True)
+        output_stats = {
+            key: value for key, value in norm_stats.items() if key != "action_states"
+        }
+        output_unnormalize = SfpUnnormalize(output_stats, use_quantiles=True)
+    else:
+        input_normalize = transforms.Normalize(norm_stats, use_quantiles=use_quantiles)
+        output_unnormalize = transforms.Unnormalize(
+            norm_stats, use_quantiles=use_quantiles
+        )
+
     input_transforms = [
         transforms.InjectDefaultPrompt(None),
         *data_config.data_transforms.inputs,
-        transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+        input_normalize,
         *data_config.model_transforms.inputs,
     ]
     output_transforms = [
         *data_config.model_transforms.outputs,
-        transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+        output_unnormalize,
         *data_config.data_transforms.outputs,
     ]
     return input_transforms, output_transforms

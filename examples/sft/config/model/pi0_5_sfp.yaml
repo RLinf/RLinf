@@ -1,0 +1,50 @@
+model_type: "openpi"
+
+# Model-shape template for Streaming Flow Policy SFT on LIBERO. Filesystem paths
+# (model_path and the openpi_data assets) live in the experiment config
+# (libero_sft_pi05_sfp.yaml), so this template stays path-free and reusable.
+
+# OpenPI default: Gemma / SigLIP in bf16, action heads stay fp32. The SFP
+# trajectory targets are built in fp32 regardless. The experiment config binds
+# mixed_precision.* to this field (null or fp32).
+precision: null
+
+# LoRA is not used, but the shared model factory reads these keys.
+is_lora: False
+lora_rank: 32
+
+# LIBERO pi05: 7-dim env actions, 10-step chunk (action_horizon).
+num_action_chunks: 10
+action_dim: 7
+
+# Denoising steps for the flow-matching eval sampler. SFP integrates its own
+# trajectory instead, but the shared factory reads one uniform field.
+num_steps: 10
+
+# No value head in the SFT model.
+add_value_head: False
+
+openpi:
+  # SFT trains the SFP objective. Eval uses the matching trajectory sampler.
+  # RL, DAgger, and DSRL still reject use_sfp.
+  task: sft
+  # Selects the openpi TrainConfig that repacks and pads action_states, and
+  # through its name also selects the SFP SFT data loader.
+  config_name: "pi05_libero_sfp"
+
+  # Streaming Flow Policy: the action expert regresses the velocity of the
+  # action trajectory at one flow time from a single suffix token, instead of
+  # denoising a whole action chunk. Requires a dataset carrying action_states.
+  use_sfp: True
+  # Scale of the noise injected at the start of the trajectory, and the rate at
+  # which it decays along it.
+  sfp_sigma: 0.16
+  sfp_noise_decay: 4.0
+
+  # Pi0.5 model shape: padded action dim, LLM/expert variants, prompt budget.
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200
+  # Matches pi05_libero_sfp: LIBERO keeps the state out of the prompt tokens.
+  discrete_state_input: False
