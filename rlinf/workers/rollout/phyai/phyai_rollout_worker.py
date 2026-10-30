@@ -240,7 +240,14 @@ class PhyAIRolloutWorker(Worker):
 
         if self._engine is not None:
             raise RuntimeError("PhyAI engine is already initialized.")
-        self.model_cfg = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
+        if not self.only_eval:
+            rollout_model_overrides = OmegaConf.masked_copy(
+                self.cfg.rollout.model, ["model_path", "precision"]
+            )
+            self.model_cfg = OmegaConf.merge(
+                self.model_cfg,
+                rollout_model_overrides,
+            )
 
         checkpoint_dir = str(self.model_cfg.model_path)
         plugin_cfg = self._build_plugin_config(self.model_cfg)

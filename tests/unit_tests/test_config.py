@@ -23,6 +23,15 @@ from rlinf.config import validate_embodied_cfg
 
 @pytest.fixture
 def phyai_config(monkeypatch):
+    class _Placement:
+        def __init__(self, _cfg, _cluster):
+            pass
+
+        def get_world_size(self, _component):
+            return 1
+
+    monkeypatch.setattr("rlinf.config.Cluster", lambda: object())
+    monkeypatch.setattr("rlinf.config.HybridComponentPlacement", _Placement)
     config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(config_dir=str(config_dir), version_base=None):
@@ -37,7 +46,6 @@ def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch, phyai_conf
     assert cfg.rollout.model.model_type == cfg.actor.model.model_type
     assert cfg.rollout.model.openpi.config_name == cfg.actor.model.openpi.config_name
     assert cfg.rollout.model.openpi.num_images_in_input == 2
-    assert cfg.rollout.model.num_action_chunks == cfg.actor.model.num_action_chunks
     assert cfg.rollout.model.model_path == cfg.actor.model.model_path
     kernel_config = OmegaConf.to_container(
         cfg.rollout.phyai.kernel_config, resolve=True
@@ -120,7 +128,6 @@ def test_phyai_training_validates_actor_contract(phyai_config, path, value, mess
     ("path", "value", "message"),
     [
         ("pi05", False, "model.pi05=True"),
-        ("openpi.config_name", "", "non-empty model.openpi.config_name"),
         ("openpi.paligemma_variant", "gemma_3b", "paligemma_variant='gemma_2b'"),
         (
             "openpi.action_expert_variant",
@@ -136,4 +143,13 @@ def test_phyai_eval_validates_plugin_contract(phyai_config, path, value, message
     OmegaConf.update(cfg.rollout.model, path, value)
 
     with pytest.raises(AssertionError, match=message):
+        validate_embodied_cfg(cfg)
+
+
+def test_phyai_eval_requires_nonempty_openpi_config_name(phyai_config):
+    cfg = phyai_config
+    cfg.runner.only_eval = True
+    cfg.rollout.model.openpi.config_name = ""
+
+    with pytest.raises(ValueError, match="rollout.model.openpi.config_name"):
         validate_embodied_cfg(cfg)

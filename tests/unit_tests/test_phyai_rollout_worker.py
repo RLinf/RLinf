@@ -370,6 +370,7 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
                 "model": {
                     "model_path": "/rollout-checkpoint",
                     "precision": "bf16",
+                    "num_action_chunks": 10,
                 }
             },
         }
@@ -379,7 +380,7 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     worker._phyai_cfg = OmegaConf.create(
         {"params_dtype": "bf16", "kernel_config": kernel_config}
     )
-    worker.model_cfg = OmegaConf.create(
+    actor_model_cfg = OmegaConf.create(
         {
             "model_path": "/checkpoint",
             "model_type": "openpi",
@@ -402,6 +403,11 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
         }
     )
     worker.only_eval = only_eval
+    worker.model_cfg = (
+        OmegaConf.merge(actor_model_cfg, worker.cfg.rollout.model)
+        if only_eval
+        else actor_model_cfg
+    )
     worker.torch_device_type = "cpu"
     worker.per_node_train_batch_size = 2
     worker.per_node_eval_batch_size = 2
@@ -429,6 +435,7 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     assert plugin_cfg.critic_action_chunk is None
     assert plugin_cfg.add_value_head
     assert plugin_cfg.value_after_vlm
+    assert worker.model_cfg.num_action_chunks == (10 if only_eval else 5)
     assert captured["transforms"] == (
         "/rollout-checkpoint",
         "pi05_libero",
