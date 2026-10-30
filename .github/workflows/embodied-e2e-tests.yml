@@ -1615,6 +1615,37 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-robodojo-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
+          bash requirements/install.sh embodied --model openpi --env robodojo
+
+      - name: RoboDojo OpenPI Pi05 eval test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh robodojo_put_bottles_into_dustbin_pi05_eval
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+          rm -rf /tmp/tmp*
+
   embodied-dexbotic-maniskill-libero-test:
     runs-on: embodied
     steps:
