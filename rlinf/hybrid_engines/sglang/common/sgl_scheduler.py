@@ -20,7 +20,6 @@ from typing import Any, Callable, Literal
 import torch
 from omegaconf import DictConfig
 from packaging.version import parse
-
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
