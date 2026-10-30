@@ -1,0 +1,218 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 3
+  max_steps: 5
+
+  val_check_interval: 1
+  save_interval: -1
+
+  seq_length: 8192
+
+  enable_dynamic_batch_size: False
+  max_tokens_per_mbs: 8192
+
+  resume_dir: null
+  experiment_name: coding-grpo-fsdp-ascend-smoke-${now:%Y%m%d%H%M%S}
+  output_dir: /path/to/RLinf/logs
+
+
+algorithm:
+  group_size: 8
+  n_minibatches: 4
+  training_batch_size_per_gpu: 1 # micro batch size
+  rollout_batch_size_per_gpu: null # If set to null, rollout_batch_size will be evenly divided across all inference instances. You can reduce this parameter if inference consumes too much GPU memory.
+
+  # mbs to do log prob inference, can be set to
+  # lower than rollout_batch_size_per_gpu to reduce
+  # memory usage
+  logprob_forward_micro_batch_size: 1 # ${.rollout_batch_size_per_gpu}
+
+  # val rollout mbs
+  val_rollout_batch_size_per_gpu: 4 # ${.rollout_batch_size_per_gpu}
+
+  recompute_logprobs: True
+  shuffle_rollout: False
+
+  # GRPO loss params
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0 # 0.001
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: True
+  entropy_op_type: torch
+  clip_ratio_c: null # 3.0
+
+  adv_type: grpo
+  normalize_advantages: True
+  early_stop_imp_ratio: 5.0
+  use_valid_token_scale: False
+
+  # params for rollout
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+    stop_token_ids: [151659, 151661, 151662, 151663, 151664, 151643, 151645]
+
+
+data:
+  type: math
+  max_prompt_length: 7168
+  filter_prompt_by_length: True
+  rollout_batch_size: 32
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: prompt
+  answer_key: solutions
+  apply_chat_template: False
+  shuffle: True
+  validation_shuffle: True
+  seed: 1234
+  train_data_paths: ["/path/to/code-fim-v2-python-filtered/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]
+  val_data_paths: ["/path/to/code-fim-v2-python-filtered/code-fim-v2-python-filtered_formatted_test_1k.jsonl"]
+
+
+rollout:
+  group_name: "RolloutGroup"
+  gpu_memory_utilization: 0.55
+  model:
+    model_path: /path/to/Qwen2.5-Coder-1.5B # https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B
+    model_type: qwen2.5
+    precision: ${actor.model.precision} # precision for rollout model, support [fp16, bf16, fp32]
+  enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.
+  distributed_executor_backend: mp   # ray or mp
+  disable_log_stats: False
+  detokenize: False             # Whether to detokenize the output.
+  padding: null                 # will be tokenizer.pad_token_id if null. it is used to filter megatron's padding for rollout engine
+  eos: null                     # will be tokenizer.eos_token_id if null.
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  rollout_backend: sglang       # here choose which backend to rollout,support [sglang, vllm]
+  sglang:
+    attention_backend: ascend   # [flashinfer, triton] for more, see sglang's doc
+    decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
+    use_torch_compile: False    # enable torch_compile in SGLang for rollout.
+    torch_compile_max_bs: 128   # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.
+  vllm:
+    attention_backend: FLASH_ATTN #[FLASH_ATTN,XFORMERS] for more, see vllm's doc
+    enable_chunked_prefill: True # enable vllm to use chunked_prefill.
+    enable_prefix_caching: True # enable vllm to use prefix_caching.
+    enable_flash_infer_sampler: True # if True, vllm will use flashinfer to do sampling.
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_running_requests: 64      # the maximum number of running requests in the rollout engine.
+  cuda_graph_max_bs: 128        # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+
+  validate_weight_first_sync: False # avoid loading a duplicate HF model for first-sync validation.
+  validate_weight: False        # whether to send all weights at first for weight comparison.
+  validate_save_dir: null       # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
+  print_outputs: False          # whether to print the outputs (token ids, texts, etc.) of rollout engine.
+
+
+reward:
+  # online rl get reward from user judge.
+  group_name: "RewardGroup"
+  use_reward_model: False
+  reward_type: code_offline
+  reward_scale: 1.0
+  use_prompt: True
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: fsdp
+  enable_dp_load_balance: True
+  calculate_flops: False
+  seed: 1234
+  pack_traj: False
+
+  enable_offload: True
+  sync_precision: ${rollout.model.precision}
+
+  model:
+    precision: bf16
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    model_type: ${rollout.model.model_type}
+    model_path: ${rollout.model.model_path}
+    attn_implementation: ascend_fusion
+    is_lora: False
+
+  optim:
+    optimizer: adam
+    lr: 2.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-5
+    min_lr: 2.0e-7
+    weight_decay: 0.05
+    clip_grad: 0.8
+    total_training_steps: 1000
+    lr_warmup_steps_ratio: 0.01
+
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: False
+    trust_remote_code: True
+    padding_side: "right"
+
+  fsdp_config:
+    strategy: fsdp2
+    sharding_strategy: full_shard
+    gradient_checkpointing: True
+    cpu_offload: False
+    offload_pin_memory: True
+    reshard_after_forward: True
+    enable_gradient_accumulation: True
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: null
+    use_orig_params: False
+    use_liger_kernel: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+    amp_autocast:
+      enabled: False
+      precision: fp16
+    grad_scaler:
+      enabled: False
+
+critic:
+  use_critic_model: False

@@ -28,6 +28,7 @@ from transformers import AutoTokenizer
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
+from rlinf.hybrid_engines.sglang.common import GPU_MEMORY_ALL_TYPES
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
@@ -43,6 +44,9 @@ from rlinf.workers.rollout.utils import (
 )
 
 _SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
+_MEMORY_REQUEST_SUPPORTS_TAGS = "tags" in {
+    field.name for field in dataclasses.fields(ResumeMemoryOccupationReqInput)
+}
 
 
 class SGLangWorker(Worker):
@@ -362,8 +366,13 @@ class SGLangWorker(Worker):
         the actor has offloaded its model (avoids both models on GPU
         simultaneously).
         """
+        if not _MEMORY_REQUEST_SUPPORTS_TAGS:
+            return
+
         await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
+            obj=ResumeMemoryOccupationReqInput(
+                tags=[tag for tag in GPU_MEMORY_ALL_TYPES if tag != "weights"]
+            )
         )
 
     async def abort_generation(self):

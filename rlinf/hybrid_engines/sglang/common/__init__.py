@@ -11,3 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+try:
+    from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
+except ImportError:
+    # Older SGLang releases do not manage CUDA graphs as a separate memory type.
+    GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache"]
+
+__all__ = ["GPU_MEMORY_ALL_TYPES"]

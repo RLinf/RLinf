@@ -43,7 +43,6 @@ def run_rlinf_training(
     from rlinf.scheduler import Cluster
     from rlinf.scheduler.placement import PackedPlacementStrategy
     from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
-    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
     from rlinf.workers.agent.agentlightning_rollout_worker import (
         AgentLightningRolloutWorker,
     )
@@ -93,7 +92,19 @@ def run_rlinf_training(
             name=cfg.inference.group_name,
             placement_strategy=inference_placement_strategy,
         )
-    actor_worker_cls = MAMegatronActor
+    if cfg.actor.training_backend == "fsdp":
+        from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+        actor_worker_cls = MAFSDPActor
+    elif cfg.actor.training_backend == "megatron":
+        from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+        actor_worker_cls = MAMegatronActor
+    else:
+        raise ValueError(
+            "AgentLightning only supports 'fsdp' or 'megatron' actor backends, "
+            f"got {cfg.actor.training_backend!r}."
+        )
     actor_placement_strategy = component_placement.get_strategy("actor")
     actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy

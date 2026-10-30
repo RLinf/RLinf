@@ -1,0 +1,71 @@
+defaults:
+  - base_calc_x
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-qwen2.5-1.5b-enginehttp-turn
+  experiment_name: calc-x-agl-qwen2.5-1.5b-enginehttp-turn
+
+algorithm:
+  advantage_mode: turn
+
+rollout:
+  model:
+    model_path: /path/to/Qwen2.5-1.5B-Instruct
+    precision: bf16
+
+data:
+  train_data_paths: ["/path/to/train.parquet"]
+  val_data_paths: ["/path/to/test.parquet"]
+
+# FSDP2 variant of the formal Calc-X multi-turn configuration.
+# The AgentLightning runner selects MAFSDPActor for this backend.
+actor:
+  training_backend: fsdp
+  pack_traj: False
+  enable_offload: True
+  sync_precision: ${rollout.model.precision}
+
+  model:
+    model_type: ${rollout.model.model_type}
+    model_path: ${rollout.model.model_path}
+    precision: fp32
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    is_lora: False
+
+  optim:
+    optimizer: adam
+    lr: 1.0e-06
+    lr_scheduler: constant
+    total_training_steps: 662
+    lr_warmup_steps_ratio: 0.0
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    min_lr: 0.0
+    weight_decay: 0.01
+    clip_grad: 1.0
+
+  fsdp_config:
+    strategy: fsdp2
+    sharding_strategy: full_shard
+    gradient_checkpointing: True
+    cpu_offload: False
+    offload_pin_memory: True
+    reshard_after_forward: True
+    enable_gradient_accumulation: True
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: null
+    use_orig_params: False
+    use_liger_kernel: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+    amp_autocast:
+      enabled: False
+      precision: fp16
+    grad_scaler:
+      enabled: True

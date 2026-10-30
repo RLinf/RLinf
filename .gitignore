@@ -23,3 +23,6 @@ rlinf/envs/sim/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
+kernel_meta/
+fusion_result.json
+extra-info/

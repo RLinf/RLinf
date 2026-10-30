@@ -60,6 +60,8 @@
 
 先安装 RLinf，再补充本配方使用的轻量 HTTP 客户端依赖：
 
+如需在 Ascend CANN 上运行离线 FSDP2 和 SGLang 配方，请参阅 :doc:`在 Ascend CANN 上运行 RLinf <../../guides/ascend_cann>`\ 。
+
 .. code-block:: bash
 
    # 安装额外依赖
