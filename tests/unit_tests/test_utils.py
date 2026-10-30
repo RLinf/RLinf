@@ -36,10 +36,13 @@ from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_m
 from rlinf.utils.utils import warmup_optimizer_state
 
 
-@pytest.mark.parametrize("optimizer_cls", [torch.optim.Adam, torch.optim.AdamW])
+@pytest.mark.parametrize(
+    ("optimizer_cls", "weight_decay"),
+    [(torch.optim.Adam, 0.0), (torch.optim.AdamW, 0.01)],
+)
 @pytest.mark.parametrize("beta2", [0.95, 0.999])
 @pytest.mark.parametrize("device", ["cpu", "cuda", "npu"])
-def test_optimizer_warmup_preserves_updates(optimizer_cls, beta2, device):
+def test_optimizer_warmup_preserves_updates(optimizer_cls, weight_decay, beta2, device):
     """Initializing optimizer state must preserve subsequent Adam updates."""
     if device != "cpu":
         platform = getattr(torch, device, None)
@@ -48,7 +51,7 @@ def test_optimizer_warmup_preserves_updates(optimizer_cls, beta2, device):
 
     reference = torch.nn.Parameter(torch.tensor([1.0, -2.0], device=device))
     warmed = torch.nn.Parameter(reference.detach().clone())
-    kwargs = {"lr": 0.1, "betas": (0.9, beta2), "weight_decay": 0.01}
+    kwargs = {"lr": 0.1, "betas": (0.9, beta2), "weight_decay": weight_decay}
     reference_optimizer = optimizer_cls([reference], **kwargs)
     warmed_optimizer = optimizer_cls([warmed], **kwargs)
 
