@@ -118,8 +118,8 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -1055,6 +1055,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        simple) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -2617,6 +2618,30 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_psi0_model() {
+    case "$ENV_NAME" in
+        simple)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_simple_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Psi0 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local psi0_dir
+    psi0_dir=$(clone_or_reuse_repo PSI0_PATH "$VENV_DIR/Psi0" https://github.com/physical-superintelligence-lab/Psi0.git)
+    if [ -z "${PSI0_PATH:-}" ]; then
+        git -C "$psi0_dir" checkout a32e57a3fabb8590c80677f9cd3d1fc3db60eb06 >&2
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/models/psi0.txt"
+    uv pip install -e "$psi0_dir" --no-deps
+    install_flash_attn
+}
+
 install_pi0_fast_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -3178,7 +3203,7 @@ install_franka_ros_realworld_env() {
 }
 
 install_env_only() {
-    if [ "$ENV_NAME" = "d4rl" ]; then
+    if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
     fi
     create_and_sync_venv
@@ -3235,6 +3260,10 @@ install_env_only() {
             ;;
         polaris)
             install_polaris_env
+            ;;
+        simple)
+            install_common_embodied_deps
+            install_simple_env
             ;;
         libero|maniskill_libero)
             install_common_embodied_deps
@@ -3535,6 +3564,34 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_simple_env() {
+    local simple_dir
+    simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    # Checkout the fixed parent revision before initializing its gitlink-pinned
+    # submodules; this avoids ever resolving submodules from a moving default branch.
+    if [ -z "${SIMPLE_PATH:-}" ]; then
+        git -C "$simple_dir" checkout 5e3d6f84e85343e34e9bca8d157f0d7813231185 >&2
+        git -C "$simple_dir" submodule update --init --recursive
+    fi
+
+    # Isaac Sim resolves its shared extension tree through real file paths.
+    UV_LINK_MODE=hardlink uv pip install -r "$SCRIPT_DIR/embodied/envs/simple.txt"
+    uv pip install -e "$simple_dir/third_party/unitree_sdk2_python"
+    uv pip install -e "$simple_dir/third_party/gear_sonic[sim]"
+    uv pip install -e "$simple_dir/third_party/decoupled_wbc[full]"
+    uv pip install -e "$simple_dir" --no-deps
+
+    # cuRobo's Git-derived version can change after submodule initialization.
+    # Avoid stale wheels; copies survive removal of uv's temporary cache.
+    UV_NO_CACHE=1 UV_LINK_MODE=copy \
+        UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
+        bash "$simple_dir/scripts/install_curobo.sh"
 }
 
 install_isaaclab_env() {
@@ -4218,6 +4275,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                psi0)
+                    install_psi0_model
                     ;;
                 pi0_fast)
                     install_pi0_fast_model
