@@ -499,14 +499,17 @@ class Pi0RL(EnvIO, Pi0):
         else:
             log_probs = log_probs[:, 0]
 
+        # Keep the trailing dim so the recomputed values match the ``[B, 1]``
+        # ``prev_values`` that ``_predict_train`` stored during rollout; the
+        # critic loss subtracts one from the other.
         if compute_values and rl_cfg.add_value_head and rl_cfg.value_after_vlm:
             values = rl_sampler.value_from_prefix(
                 self.value_head, prefix_out, prefix_mask, mode=rl_cfg.value_vlm_mode
-            )
+            )[:, None]
         elif suffix_values:
-            values = torch.stack(suffix_values, dim=1).mean(dim=1)
+            values = torch.stack(suffix_values, dim=1).mean(dim=1, keepdim=True)
         else:
-            values = torch.zeros(B, device=device, dtype=torch.float32)
+            values = torch.zeros((B, 1), device=device, dtype=torch.float32)
 
         entropy = torch.stack(step_entropy, dim=1)
         entropy = entropy[:, :, : self.action_chunk, : self.action_env_dim]
