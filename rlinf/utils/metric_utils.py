@@ -16,6 +16,7 @@ import math
 import os
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -24,6 +25,132 @@ import torch.distributed
 
 if TYPE_CHECKING:
     from rlinf.data.schema.embodied_types import Trajectory
+
+
+@dataclass
+class VersionedTrajectoryRecord:
+    """Per-trajectory weight-version record for staleness statistics.
+
+    One record per trajectory in a training step; groups are identified by
+    `group_index` (unique within the step after the caller offsets it by rank).
+    """
+
+    group_index: int
+    earliest_version: int
+    completion_version: int
+    generated_tokens: int
+    call_count: int
+    cross_version_calls: int
+    reward: float
+    token_weighted_version_start_sum: int
+
+
+def compute_staleness_metrics(
+    records: Sequence[VersionedTrajectoryRecord], version: int
+) -> dict[str, float]:
+    """Compute weight-staleness and scheduling metrics for one training step.
+
+    `version` is the actor weight version at step start. Group earliest
+    version is the minimum earliest_version in the group, group completion
+    version the maximum completion_version; group staleness is
+    `version - group earliest version` and decomposes into
+    `version_span + queue_steps` (completion - earliest, version - completion).
+    """
+    metrics: dict[str, float] = {}
+    if not records:
+        return metrics
+
+    group_earliest: dict[int, int] = {}
+    group_completion: dict[int, int] = {}
+    group_rewards: dict[int, list[float]] = {}
+    for record in records:
+        group_earliest[record.group_index] = min(
+            group_earliest.get(record.group_index, record.earliest_version),
+            record.earliest_version,
+        )
+        group_completion[record.group_index] = max(
+            group_completion.get(record.group_index, record.completion_version),
+            record.completion_version,
+        )
+        group_rewards.setdefault(record.group_index, []).append(record.reward)
+
+    num_groups = len(group_earliest)
+    group_staleness = {
+        group_index: version - earliest
+        for group_index, earliest in group_earliest.items()
+    }
+    version_spans = [
+        group_completion[group_index] - group_earliest[group_index]
+        for group_index in group_earliest
+    ]
+    queue_steps = [
+        version - group_completion[group_index] for group_index in group_earliest
+    ]
+
+    total_generated_tokens = sum(record.generated_tokens for record in records)
+    # Keys follow the embodied `data_staleness_{diff}/ratio` naming; one
+    # entry per occurring staleness value, counted in groups not records.
+    staleness_group_counts: dict[int, int] = {}
+    staleness_tokens: dict[int, int] = {}
+    for staleness in group_staleness.values():
+        staleness_group_counts[staleness] = staleness_group_counts.get(staleness, 0) + 1
+    for record in records:
+        staleness_tokens[group_staleness[record.group_index]] = staleness_tokens.get(
+            group_staleness[record.group_index], 0
+        ) + (record.generated_tokens)
+    for k, group_count in sorted(staleness_group_counts.items()):
+        metrics[f"data_staleness_{k}/ratio"] = group_count / num_groups
+    if total_generated_tokens > 0:
+        for k, token_count in sorted(staleness_tokens.items()):
+            metrics[f"data_staleness_{k}/token_ratio"] = token_count / (
+                total_generated_tokens
+            )
+
+    metrics["data_staleness/mean"] = sum(group_staleness.values()) / num_groups
+    metrics["data_staleness/max"] = max(group_staleness.values())
+    # Token-weighted average version of the calls that produced the data,
+    # for contrast with the earliest-version based staleness above; with no
+    # generated tokens it is undefined and left out, like the token ratios.
+    if total_generated_tokens > 0:
+        token_weighted_version = (
+            sum(record.token_weighted_version_start_sum for record in records)
+            / total_generated_tokens
+        )
+        metrics["data_staleness/token_mean"] = version - token_weighted_version
+    metrics["version_span/mean"] = sum(version_spans) / num_groups
+    metrics["version_span/max"] = max(version_spans)
+    metrics["queue_steps/mean"] = sum(queue_steps) / num_groups
+    metrics["queue_steps/max"] = max(queue_steps)
+
+    total_calls = sum(record.call_count for record in records)
+    cross_version_calls = sum(record.cross_version_calls for record in records)
+    metrics["cross_version_call_ratio"] = (
+        cross_version_calls / total_calls if total_calls else 0.0
+    )
+
+    if len(records) >= 4:
+        # Quartiles over trajectories by generated tokens (q1 shortest).
+        sorted_records = sorted(records, key=lambda record: record.generated_tokens)
+        base, remainder = divmod(len(sorted_records), 4)
+        quartile_sizes = [base + (offset < remainder) for offset in range(4)]
+        quartile_start = 0
+        for quartile, size in enumerate(quartile_sizes, start=1):
+            quartile_records = sorted_records[quartile_start : quartile_start + size]
+            metrics[f"data_staleness/length_q{quartile}"] = sum(
+                version - record.earliest_version for record in quartile_records
+            ) / max(len(quartile_records), 1)
+            quartile_start += size
+
+    metrics["equal_reward_group_ratio"] = (
+        sum(1 for rewards in group_rewards.values() if len(set(rewards)) == 1)
+        / num_groups
+    )
+    metrics["zero_reward_group_ratio"] = (
+        sum(1 for rewards in group_rewards.values() if all(r == 0 for r in rewards))
+        / num_groups
+    )
+
+    return metrics
 
 
 def mean_bool_tensor_rate(

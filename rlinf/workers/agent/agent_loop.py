@@ -15,6 +15,7 @@
 import asyncio
 import copy
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -29,7 +30,11 @@ from rlinf.agents.tool_call.schema import (
 )
 from rlinf.algorithms.registry import get_toolcall_parser
 from rlinf.data.schema.reasoning_requests import RolloutRequest
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
+from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
+    DynamicRolloutResult,
+    RolloutResult,
+)
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
@@ -65,6 +70,12 @@ class AgentLoopOutput:
     extra_fields: dict[str, Any] = field(default_factory=dict)
     """Tool call information for this turn."""
     tool_call_info: Optional[dict[str, int]] = None
+    """Weight version the rollout instance had loaded when the generate
+    call producing this turn's response started, and when it ended.
+    None when the rollout did not stamp versions (synchronous training).
+    """
+    version_start: Optional[int] = None
+    version_end: Optional[int] = None
 
 
 @dataclass
@@ -77,6 +88,20 @@ class MultiAgentLoopOutput:
     trace_prints: list[Any] = field(default_factory=list)
     """Extra fields for dynamic addition."""
     extra_fields: dict[str, Any] = field(default_factory=dict)
+
+
+class GroupDiscarded(RuntimeError):
+    """A group's data is unusable, affecting only that group.
+
+    Raise this only when the task code is certain the failure spoils this
+    one group and nothing else; the continuous loop turns it into a
+    discard record and moves on. Every other exception terminates
+    training.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class AgentLoopWorker(Worker):
@@ -113,6 +138,18 @@ class AgentLoopWorker(Worker):
         self.toolcall_parser = None
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)
+
+        # State of the continuous rollout loop (run_agentloop_rollout_continuously).
+        self._agentloop_task = None
+        self._agent_metric_channel = None
+        self._producer_error = None
+        self._inflight_groups = set()
+        # Idle-time accounting for the continuous loop: seconds with no
+        # in-flight group, accumulated over the window since the last
+        # pop_idle_stats call.
+        self._idle_seconds = 0.0
+        self._idle_window_start = None
+        self._idle_since = None
 
     def init_worker(
         self,
@@ -155,6 +192,10 @@ class AgentLoopWorker(Worker):
         result = await self.generate_output_channel.get(
             channel_key, async_op=True
         ).async_wait()
+        if isinstance(result, dict) and "error" in result:
+            # The rollout side failed to generate and reported back via the
+            # channel; fail loudly instead of continuing.
+            raise RuntimeError(f"Rollout generate request failed: {result['error']}")
         return result
 
     async def state_less_tool_call_with_channel(
@@ -233,6 +274,7 @@ class AgentLoopWorker(Worker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        group_id: Optional[int] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -243,9 +285,26 @@ class AgentLoopWorker(Worker):
             task = asyncio.create_task(self.run_one_query(copy.deepcopy(input_ids)))
             rollout_tasks.append(task)
 
-        task_results = await asyncio.gather(*rollout_tasks)
-        rollout_result = self.get_rollout_result(task_results, answer)
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+        try:
+            task_results = await asyncio.gather(*rollout_tasks)
+            rollout_result = self.get_rollout_result(task_results, answer)
+            if group_id is not None:
+                rollout_result.group_id = group_id
+            await output_channel.put(rollout_result, async_op=True).async_wait()
+        except GroupDiscarded as e:
+            # Only this failure mode is per-group: record the discard and
+            # let the group end normally. The remaining trajectories of
+            # this group are pointless now; cancel them instead of
+            # letting them finish generating and throwing the data away.
+            if group_id is None:
+                raise
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            await output_channel.put(
+                DiscardedGroup(group_id=group_id, reason=e.reason),
+                async_op=True,
+            ).async_wait()
 
     async def run_agentloop_rollout(
         self, input_channel: Channel, output_channel: Channel
@@ -270,6 +329,133 @@ class AgentLoopWorker(Worker):
 
             await asyncio.gather(*send_output_tasks)
             return {}
+
+    async def run_agentloop_rollout_continuously(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        agent_metric_channel: Channel,
+    ):
+        """Serve rollout requests until stopped; used by the async runner.
+
+        Each request spawns one task per (input_ids, answer) group; finished
+        groups put `{"bucket": ..., "metrics": ...}` on
+        `agent_metric_channel`. Stops via `stop()` or a group failure, both
+        by cancelling the loop task; a clean stop returns normally, a group
+        failure re-raises here.
+        """
+        assert self._agentloop_task is None, (
+            "agent loop task is not None but the continuous loop is called."
+        )
+        self._producer_error = None
+        self._agentloop_task = asyncio.create_task(
+            self._run_agentloop_rollout_continuously(
+                input_channel, output_channel, agent_metric_channel
+            )
+        )
+        try:
+            await self._agentloop_task
+        except asyncio.CancelledError:
+            if self._producer_error is not None:
+                raise self._producer_error
+
+    async def _run_agentloop_rollout_continuously(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        agent_metric_channel: Channel,
+    ):
+        self._agent_metric_channel = agent_metric_channel
+        self._inflight_groups: set[asyncio.Task] = set()
+        self._idle_seconds = 0.0
+        self._idle_window_start = time.monotonic()
+        self._idle_since = self._idle_window_start
+        try:
+            while True:
+                request = await input_channel.get(async_op=True).async_wait()
+                group_ids = request.group_ids
+                for index, (input_ids, answer) in enumerate(
+                    zip(request.input_ids, request.answers)
+                ):
+                    group_id = group_ids[index] if group_ids is not None else None
+                    task = asyncio.create_task(
+                        self.run_agentloop_rollout_group(
+                            input_ids, answer, request.n, output_channel, group_id
+                        )
+                    )
+                    task.add_done_callback(self._on_group_done)
+                    self._mark_inflight_transition(False)
+                    self._inflight_groups.add(task)
+        finally:
+            # In-flight groups are dropped on any exit: the loop only stops
+            # when training ended or a group failed.
+            for task in self._inflight_groups:
+                task.cancel()
+            if self._inflight_groups:
+                await asyncio.gather(*self._inflight_groups, return_exceptions=True)
+
+    def _on_group_done(self, task: asyncio.Task):
+        self._inflight_groups.discard(task)
+        if not self._inflight_groups:
+            self._mark_inflight_transition(True)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            agent_metrics = task.result()
+            if agent_metrics is not None and agent_metrics:
+                # The bucket key is always None for now; the runner groups
+                # records by it before aggregating.
+                self._agent_metric_channel.put(
+                    {"bucket": None, "metrics": agent_metrics}, async_op=True
+                )
+        elif self._producer_error is None:
+            # A done callback cannot raise; record the error and cancel the
+            # loop task so it unwinds and the recorded error is raised.
+            self.log_error(f"Agent loop group failed:\n{type(exc).__name__}: {exc}")
+            self._producer_error = exc
+            self._agentloop_task.cancel()
+
+    def stop(self):
+        """Stop the continuous agent loop; in-flight groups are cancelled."""
+        if self._agentloop_task is not None and not self._agentloop_task.done():
+            self._agentloop_task.cancel()
+
+    def num_inflight_groups(self) -> int:
+        """In-flight group count."""
+        return len(self._inflight_groups)
+
+    def _mark_inflight_transition(self, now_idle: bool):
+        """Update idle accounting at an empty <-> non-empty transition.
+
+        A transition to non-empty closes the idle segment that started at
+        `_idle_since`; a transition to idle opens a new one. Transitions to
+        the state we are already in are ignored, so callers need not check.
+        """
+        if now_idle:
+            if self._idle_since is None:
+                self._idle_since = time.monotonic()
+        else:
+            if self._idle_since is not None:
+                self._idle_seconds += time.monotonic() - self._idle_since
+                self._idle_since = None
+
+    def pop_idle_stats(self) -> tuple[float, float]:
+        """Idle seconds and window seconds since the last call; resets both.
+
+        An ongoing idle segment counts up to the call time and continues
+        from there in the next window. Called between training steps, so
+        the window covers one full step.
+        """
+        now = time.monotonic()
+        window = now - self._idle_window_start if self._idle_window_start else 0.0
+        idle = self._idle_seconds
+        if self._idle_since is not None:
+            idle += now - self._idle_since
+            self._idle_since = now
+        self._idle_seconds = 0.0
+        self._idle_window_start = now
+        return idle, window
 
     def get_rollout_result(
         self, task_results: list[AgentLoopOutput], answer: str
@@ -451,6 +637,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        group_id: Optional[int] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -460,6 +647,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
             output_channel: Channel to output results
+            group_id: Id of the query group, carried on the result so the
+                receiver can route it; None in synchronous training.
         """
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
@@ -469,14 +658,32 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             )
             rollout_tasks.append(task)
 
-        task_results = await asyncio.gather(*rollout_tasks)
+        try:
+            task_results = await asyncio.gather(*rollout_tasks)
 
-        # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
-        extra_fields = self.gen_extra_fields(task_results, answer)
-        rollout_result = self.get_rollout_result(task_results, *extra_fields)
-        agent_metrics = self.get_rollout_metrics(rollout_result)
+            # For eval mode, allow multiple samples (group_size=k) to compute pass@k and avg@k
+            extra_fields = self.gen_extra_fields(task_results, answer)
+            rollout_result = self.get_rollout_result(task_results, *extra_fields)
+            if group_id is not None:
+                rollout_result.group_id = group_id
+            agent_metrics = self.get_rollout_metrics(rollout_result)
 
-        await output_channel.put(rollout_result, async_op=True).async_wait()
+            await output_channel.put(rollout_result, async_op=True).async_wait()
+        except GroupDiscarded as e:
+            # Only this failure mode is per-group: record the discard and
+            # let the group end normally. The remaining trajectories of
+            # this group are pointless now; cancel them instead of
+            # letting them finish generating and throwing the data away.
+            if group_id is None:
+                raise
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            agent_metrics = {}
+            await output_channel.put(
+                DiscardedGroup(group_id=group_id, reason=e.reason),
+                async_op=True,
+            ).async_wait()
         return agent_metrics
 
     async def run_agentloop_rollout(
@@ -631,6 +838,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs = []
         is_end = []
         rewards = []
+        version_start = []
+        version_end = []
 
         # Flatten all retained turns while keeping trajectory mapping.
         for idx, task_result in enumerate(task_results):
@@ -651,6 +860,21 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                     rollout_logprobs.append(single_turn_output.response_logprobs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
+                version_start.append(single_turn_output.version_start)
+                version_end.append(single_turn_output.version_end)
+
+        # Weight versions are either stamped on every turn or on none: mixing
+        # would silently drop the version-less turns from staleness statistics.
+        if any(v is not None for v in version_start + version_end):
+            assert all(v is not None for v in version_start) and all(
+                v is not None for v in version_end
+            ), (
+                "agent loop outputs mix turns with weight versions and turns "
+                "without (version_start/version_end)"
+            )
+        else:
+            version_start = None
+            version_end = None
 
         return DynamicRolloutResult(
             num_sequence=len(idx_to_traj),
@@ -662,6 +886,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_logprobs=rollout_logprobs,
             is_end=is_end,
             rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
             extra_fields_turn=extra_fields_turn,
             extra_fields_traj=extra_fields_traj,
             extra_fields_group=extra_fields_group,

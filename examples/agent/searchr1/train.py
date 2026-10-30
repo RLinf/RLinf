@@ -24,6 +24,7 @@ from rlinf.config import validate_cfg
 from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.agent_runner import AgentRunner
+from rlinf.runners.async_agent_runner import AsyncAgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.utils import output_redirector
@@ -32,6 +33,7 @@ from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
@@ -75,8 +77,8 @@ def main(cfg) -> None:
     )
     assert (
         len(agentloop_placement_strategy._node_ranks)
-        == component_placement.rollout_dp_size
-    ), "agentloop worker num now should be equal to rollout dp size"
+        == component_placement.rollout_num_worker_processes
+    ), "agentloop worker num now should be equal to rollout worker process num"
     agentloop_group = Searchr1AgentLoopWorker.create_group(
         cfg, component_placement
     ).launch(
@@ -120,18 +122,35 @@ def main(cfg) -> None:
         ): ToolWorkerInfo(tool_names=["search"], has_session=False),
     }
 
-    runner = AgentRunner(
-        cfg=cfg,
-        placement=component_placement,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        rollout=rollout_group,
-        inference=inference_group,
-        actor=actor_group,
-        reward=None,
-        agent_loop=agentloop_group,
-        tool_workers=tool_workers,
+    runner_cls = (
+        AsyncAgentRunner if cfg.runner.get("async_mode", False) else AgentRunner
     )
+    rollout_buffer = None
+    if cfg.runner.get("async_mode", False):
+        # The buffer worker owns the dataloader and the admission budget;
+        # one instance on the head node, like the search tool worker.
+        rollout_buffer = RolloutBufferWorker.create_group(cfg, train_ds).launch(
+            cluster,
+            name="RolloutBuffer",
+            placement_strategy=singleton_tool_placement,
+        )
+    runner_kwargs = {
+        "cfg": cfg,
+        "placement": component_placement,
+        "train_dataset": train_ds,
+        "val_dataset": val_ds,
+        "rollout": rollout_group,
+        "inference": inference_group,
+        "actor": actor_group,
+        "reward": None,
+        "agent_loop": agentloop_group,
+        "tool_workers": tool_workers,
+    }
+    if rollout_buffer is not None:
+        # Only AsyncAgentRunner takes the buffer worker that owns the
+        # dataloader and the admission budget.
+        runner_kwargs["rollout_buffer"] = rollout_buffer
+    runner = runner_cls(**runner_kwargs)
 
     runner.init_workers()
     runner.run()

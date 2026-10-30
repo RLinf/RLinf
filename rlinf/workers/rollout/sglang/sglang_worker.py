@@ -15,13 +15,10 @@
 import asyncio
 import copy
 import dataclasses
+import traceback
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
-from sglang.srt.managers.io_struct import (
-    ReleaseMemoryOccupationReqInput,
-    ResumeMemoryOccupationReqInput,
-)
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
@@ -34,10 +31,17 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.workers.rollout.sglang import Engine, io_struct
+from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang.backends import make_backend
+from rlinf.workers.rollout.sglang.rendezvous import (
+    broadcast_instance_readiness,
+    negotiate_model_instance_dist_addr,
+    signal_rollout_finished,
+    wait_for_instance_readiness,
+    wait_for_rollout_finished,
+)
 from rlinf.workers.rollout.utils import (
     MetaInfoStatsCollector,
-    RolloutEngineStats,
     RunningStatusManager,
     print_sglang_outputs,
 )
@@ -64,6 +68,25 @@ class SGLangWorker(Worker):
             config_rollout = self._cfg.rollout
         self._cfg_rollout = config_rollout
         self._placement = placement
+        # Only the entry (node_rank 0) of a model instance serves channels
+        # and the HTTP control plane; other ranks just keep their sglang
+        # subprocess alive. Always True on a single node.
+        self._is_model_instance_entry = (
+            placement.rollout_node_rank_in_model_instance(self._rank) == 0
+        )
+        # Set in init_worker(); declared here so RPC methods can check it.
+        self._backend = None
+        # Weight version of this instance (advanced training step count).
+        self._weight_version: int = 0
+        # Pause mode of the current pause, None when not paused. Remembered
+        # so continue_generation knows what to resume.
+        self._pause_mode: Optional[str] = None
+        # Drain gate for rollout_serverless: closed (cleared) while paused,
+        # so no new generate task is dispatched. Open (set) otherwise.
+        self._dispatch_gate: asyncio.Event = asyncio.Event()
+        self._dispatch_gate.set()
+        # In-flight generate_and_send tasks of rollout_serverless.
+        self._inflight_generates: set[asyncio.Task] = set()
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._cfg_rollout.model.model_path,
@@ -144,7 +167,12 @@ class SGLangWorker(Worker):
             }
         return sampling_params
 
-    def _init_engine(self):
+    def _build_server_args(self) -> dict:
+        """Build the shared sglang ServerArgs kwargs for the rollout backend.
+
+        Engine and Server backends consume the same product, so
+        version-compatibility branches live here only once.
+        """
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
         load_format = "dummy"  # dummy means randomize init weight
@@ -161,12 +189,15 @@ class SGLangWorker(Worker):
         else:
             load_format = "auto"
 
-        # moe_dp_size / moe_a2a_backend only exist on newer sglang; passing a
-        # keyword the installed version does not define is a TypeError even
-        # when the value is the default, so only forward the ones it has.
+        # Older sglang lacks some of these fields and rejects unknown
+        # kwargs even at default values; forward only those the installed
+        # ServerArgs defines.
         version_dependent_args = {
             "moe_dp_size": self._cfg_rollout.sglang.get("moe_dp_size", 1),
             "moe_a2a_backend": self._cfg_rollout.sglang.get("moe_a2a_backend", None),
+            "enable_deterministic_inference": self._cfg_rollout.sglang.get(
+                "enable_deterministic_inference", False
+            ),
         }
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
@@ -230,23 +261,58 @@ class SGLangWorker(Worker):
             **version_dependent_args,
         )
 
-        self.log_on_first_rank(f"{server_args=}")
-        self._engine = Engine(**dataclasses.asdict(server_args))
+        if self._cfg_rollout.sglang.get("backend_type", "engine") == "server":
+            # Skip sglang's HTTP warmup: the Engine backend never runs it,
+            # and the cache state it leaves makes Server outputs differ from
+            # Engine. Readiness is checked via /health.
+            server_args.skip_server_warmup = True
 
-    def stop(self):
+        self.log_on_first_rank(f"{server_args=}")
+        return dataclasses.asdict(server_args)
+
+    async def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
         # Finalize meta_info statistics collectors if they exist
         if self._collect_meta_stats:
             self.async_meta_stats_collector.finalize()
 
+        # Close the dispatch gate first: the rollout_serverless loop is
+        # still running, and requests that reached the input channel before
+        # the agent loop stopped would be picked up and dispatched into new
+        # generate tasks while the cancellation below awaits. The gate (the
+        # same one drain pauses use) parks the loop instead of dispatching.
+        self._dispatch_gate.clear()
+
+        # Cancel in-flight generate_and_send tasks before shutting the
+        # backend down: they are fire-and-forget, so nobody else cancels
+        # them, and a generate that hits the torn-down server would be
+        # logged as an ERROR (ServerDisconnected, then "http_client is not
+        # available"). CancelledError is a BaseException, so it skips the
+        # failure reporting in generate_and_send and no error payload is
+        # written to any channel. The synchronous path has no in-flight
+        # tasks and is unaffected.
+        for task in self._inflight_generates:
+            task.cancel()
+        if self._inflight_generates:
+            await asyncio.gather(*self._inflight_generates, return_exceptions=True)
+        self._inflight_generates.clear()
+
         self.log_info(f"Stopping SGLang worker {self._rank} ...")
-        self._engine.shutdown()
+        if self._backend is not None:
+            self._backend.shutdown()
         self.log_info(f"SGLang worker {self._rank} stopped.")
 
     async def _validate_weight_at_first(self):
         """
         Run a test prompt batch and print its output.
+
+        Non-entry processes of a cross-node instance skip this: the
+        entry's generate already runs on every node's TP ranks, so a
+        second validation from here would be redundant (and has no HTTP
+        client to run through).
         """
+        if not self._is_model_instance_entry:
+            return
         input_ids = self._tokenizer(self._validate_prompts).input_ids
         engine_results, _ = await self.async_generate(
             input_ids=input_ids,
@@ -269,10 +335,10 @@ class SGLangWorker(Worker):
         Asynchronously generate text using the underlying SGLang engine and return
         the engine result together with the original input_ids, answers, and idx.
 
-        This wrapper calls self._engine.async_generate(...) and forwards the provided
-        arguments. Because the SGLang engine does not include the original input_ids
-        in its response, this method returns the input_ids alongside the engine
-        result for downstream use.
+        This wrapper calls the rollout backend's async_generate(...) and forwards
+        the provided arguments. Because the backend does not include the original
+        input_ids in its response, this method returns the request_info alongside
+        the engine result for downstream use.
 
         Args:
             prompt (List[str] | str | None): Same as SGLang engine's prompt argument.
@@ -285,7 +351,7 @@ class SGLangWorker(Worker):
         Returns:
             Tuple[Dict, Any | None]: A tuple containing the engine result and the original request_info.
         """
-        result = await self._engine.async_generate(
+        result = await self._backend.async_generate(
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
@@ -297,61 +363,152 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
-        self._init_engine()
-        if self.weight_reload == "sync":
-            await self._engine.tokenizer_manager.run_task_method(
-                io_struct.TaskMethodInput(
-                    method_name="init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        self.weight_reload,
-                        self._placement,
-                        self._cfg,
-                    ),
+        assert self.weight_reload in ("sync", "cpu", None), (
+            f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
+        )
+        backend_type = self._cfg_rollout.sglang.get("backend_type", "engine")
+        model_instance_id = self._placement.rollout_model_instance_id(self._rank)
+        # A cross-node instance needs the same dist_init_addr (on the entry
+        # node) on every rank, agreed on before the backend spawns anything.
+        # Single-node layouts skip this.
+        server_multi_node_kwargs = {}
+        multi_node_server = False
+        if backend_type == "server":
+            nnodes = self._placement.rollout_nnodes_per_model_instance
+            if nnodes > 1:
+                multi_node_server = True
+                node_rank = self._placement.rollout_node_rank_in_model_instance(
+                    self._rank
                 )
-            )
-            self.log_info(f"SGLang worker {self._rank} initialized.")
+                # Cross-node: all ranks of an instance start sglang with
+                # the entry node's dist_init_addr, agreed via one broadcast.
+                # Single-node passes no multi-node kwargs.
+                host, port = await negotiate_model_instance_dist_addr(
+                    self, self._placement
+                )
+                server_multi_node_kwargs = {
+                    "dist_init_addr": f"{host}:{port}",
+                    "nnodes": nnodes,
+                    "node_rank": node_rank,
+                }
+        self._backend = make_backend(
+            backend_type,
+            server_args=self._build_server_args(),
+            rlinf_ctx=RlinfContext(
+                parent_address=self.worker_address,
+                weight_reload=self.weight_reload,
+                placement=self._placement,
+                cfg=self._cfg,
+                # One model instance spans nnodes rollout workers; every
+                # rank of the instance maps to the same id (degenerates to
+                # the worker rank on single-node).
+                model_instance_id=model_instance_id,
+            ),
+            acquire_free_port=self.acquire_free_port,
+            log_info=self.log_info,
+            log_error=self.log_error,
+            **server_multi_node_kwargs,
+        )
+        if multi_node_server:
+            # Entry broadcasts ready/failed after /health; non-entry ranks
+            # wait for it while watching their own subprocess.
+            await self._initialize_multi_node_server_backend()
+        else:
+            await self._backend.initialize()
+        self.log_info(f"SGLang worker {self._rank} initialized.")
+        if self.weight_reload == "sync":
             if self._cfg_rollout.validate_weight:
                 await self._validate_weight_at_first()
             if self._placement.is_collocated:
                 await self.offload_engine()
             if self._use_auto_scheduler:
                 asyncio.create_task(self._scheduler.main_loop())
-        elif self.weight_reload == "cpu" or self.weight_reload is None:
-            await self._engine.tokenizer_manager.run_task_method(
-                io_struct.TaskMethodInput(
-                    method_name="init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        self.weight_reload,
-                    ),
-                )
-            )
-            self.log_info(f"SGLang worker {self._rank} initialized.")
-            if self.weight_reload == "cpu" and self._placement.is_collocated:
+        elif self.weight_reload == "cpu":
+            if self._placement.is_collocated:
                 await self.offload_engine()
-        else:
-            assert False, (
-                f"weight_reload should be in ['sync', 'cpu', None], but now it's {self.weight_reload}"
+
+    async def _initialize_multi_node_server_backend(self) -> None:
+        """Server-backend init with instance-wide readiness signaling.
+
+        Entry: on failure, broadcast ``("failed", reason)``
+        best-effort (a non-entry rank may already be gone - never let the
+        signal mask the original error) and re-raise; on success, broadcast
+        ``("ready",)``. Non-entry: spawn + 2s check (inside
+        ``initialize()``), then wait for the entry's signal while polling
+        own subprocess liveness. Any failure after the subprocess is up
+        shuts the backend down first - never rely on the actor teardown
+        path to reap the sglang process tree.
+        """
+        if self._is_model_instance_entry:
+            try:
+                await self._backend.initialize()
+            except Exception as e:
+                try:
+                    await broadcast_instance_readiness(
+                        self,
+                        self._placement,
+                        ready=False,
+                        reason=repr(e),
+                        timeout_s=30.0,
+                    )
+                except Exception:
+                    self.log_warning(
+                        "Failed to signal 'failed' to the non-entry ranks of "
+                        "this model instance; they will hit their readiness "
+                        "timeout instead."
+                    )
+                raise
+            try:
+                await broadcast_instance_readiness(
+                    self, self._placement, ready=True, timeout_s=300.0
+                )
+            except BaseException:
+                self._shutdown_backend_quietly()
+                raise
+            return
+        await self._backend.initialize()
+        try:
+            await wait_for_instance_readiness(
+                self,
+                self._placement,
+                child_alive=self._backend.is_server_process_alive,
+                poll_child_failure=self._backend.poll_server_process_failure,
+            )
+        except BaseException:
+            self._shutdown_backend_quietly()
+            raise
+
+    def _shutdown_backend_quietly(self) -> None:
+        """Shut the backend down without masking the in-flight error."""
+        try:
+            self._backend.shutdown()
+        except Exception:
+            self.log_warning(
+                "Backend shutdown after an initialization failure raised; "
+                "the original error is kept."
             )
 
     async def offload_engine(self):
         """
         Release the model weights from the SGLang engine.
+
+        Non-entry process of a cross-node instance: no-op - the entry's
+        offload request reaches this node's schedulers through sglang's
+        request broadcast.
         """
+        if not self._is_model_instance_entry:
+            return
         assert self.weight_reload is not None
-        await self._engine.tokenizer_manager.release_memory_occupation(
-            obj=ReleaseMemoryOccupationReqInput()
-        )
+        await self._backend.offload()
 
     async def onload_engine(self):
         """
         Onload the model weights from cpu to the SGLang engine.
         """
+        if not self._is_model_instance_entry:
+            return
         assert self.weight_reload == "cpu"
-        await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput()
-        )
+        await self._backend.onload()
 
     async def onload_kv_cudagraph(self):
         """
@@ -362,27 +519,69 @@ class SGLangWorker(Worker):
         the actor has offloaded its model (avoids both models on GPU
         simultaneously).
         """
-        await self._engine.tokenizer_manager.resume_memory_occupation(
-            obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
-        )
+        if not self._is_model_instance_entry:
+            return
+        await self._backend.onload(tags=["kv_cache", "cuda_graph"])
 
     async def abort_generation(self):
         """Abort the generation."""
-        await self._engine.tokenizer_manager.abort_generation(
-            obj=io_struct.AbortGenerationInput()
-        )
+        if not self._is_model_instance_entry:
+            return
+        await self._backend.abort_generation()
 
-    async def sync_model_from_actor(self):
-        """Update the weights of the SGLang engine."""
-        await self._engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput()
-        )
+    async def sync_model_from_actor(self, version: Optional[int] = None):
+        """Update the weights of the SGLang engine.
+
+        Args:
+            version: Weight version to record once the sync completes. None
+                keeps the version unchanged (the synchronous training path).
+        """
+        if not self._is_model_instance_entry:
+            return
+        await self._backend.sync_weights(pause_mode=self._pause_mode)
+        if version is not None:
+            self._weight_version = version
+
+    async def pause_generation(self, mode: str):
+        """Pause this instance's generation for an async weight sync.
+
+        "in_place" / "retract" go to the backend (sglang-native). "drain" is
+        implemented here: close the rollout_serverless dispatch gate, then
+        wait for all in-flight generate calls to finish. Never touches other
+        instances - no collective calls anywhere in this method.
+        """
+        if not self._is_model_instance_entry:
+            return
+        self._pause_mode = mode
+        if mode in ("in_place", "retract"):
+            await self._backend.pause_generation(mode)
+        elif mode == "drain":
+            self._dispatch_gate.clear()
+            if self._inflight_generates:
+                await asyncio.wait(self._inflight_generates)
+        else:
+            raise ValueError(f"Unsupported pause mode: {mode!r}")
+
+    async def continue_generation(self):
+        """Resume generation after a pause (see `pause_generation`)."""
+        if not self._is_model_instance_entry:
+            return
+        mode = self._pause_mode
+        if mode in ("in_place", "retract"):
+            await self._backend.continue_generation()
+        elif mode == "drain":
+            self._dispatch_gate.set()
+        else:
+            raise RuntimeError(
+                f"continue_generation called without a preceding pause "
+                f"(current pause mode: {mode!r})"
+            )
+        self._pause_mode = None
 
     async def check_running_state(self):
-        state = await self._engine.tokenizer_manager.run_task_method(
-            io_struct.TaskMethodInput(method_name="get_scheduler_running_state")
-        )
-        state = RolloutEngineStats(**state)
+        if not self._is_model_instance_entry:
+            return None
+        state = await self._backend.get_running_state()
 
         return state
 
@@ -455,6 +654,22 @@ class SGLangWorker(Worker):
         return seq_group_info
 
     async def rollout(self, input_channel: Channel, output_channel: Channel):
+        # The device lock only covers this process's GPUs, so non-entry
+        # ranks of a cross-node instance hold theirs until the entry signals
+        # that the instance's offload is done. They do no channel I/O; their
+        # "rollout" timer spans the wait and the runner max-reduces it.
+        if not self._is_model_instance_entry:
+            if self._placement.rollout_nnodes_per_model_instance == 1:
+                with self.worker_timer("rollout"):
+                    return
+            with self.device_lock, self.worker_timer("rollout"):
+                await wait_for_rollout_finished(
+                    self,
+                    self._placement,
+                    child_alive=self._backend.is_server_process_alive,
+                    poll_child_failure=self._backend.poll_server_process_failure,
+                )
+            return
         self.log_on_first_rank("Start generation...")
         request: RolloutRequest = input_channel.get()
         groups = request.to_seq_group_infos()
@@ -515,6 +730,11 @@ class SGLangWorker(Worker):
                 if self._use_auto_scheduler:
                     await self._scheduler.report_offloaded()
 
+            # Cross-node: release the non-entry ranks' device locks. Sent on
+            # every step, even when nothing was offloaded.
+            if self._placement.rollout_nnodes_per_model_instance > 1:
+                await signal_rollout_finished(self, self._placement)
+
     async def generate_and_send(
         self,
         output_channel: Channel,
@@ -522,34 +742,73 @@ class SGLangWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
     ):
+        # Backs up rollout_serverless' entry gate: an exception in this
+        # unawaited task would be lost, so return instead of raising.
+        if not self._is_model_instance_entry:
+            return
         final_sampling_params = self._sampling_params
         if sampling_params is not None and len(sampling_params) > 0:
             final_sampling_params = copy.deepcopy(self._sampling_params)
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        result = await self._engine.async_generate(
-            input_ids=prompt_ids,
-            sampling_params=final_sampling_params,
-            return_logprob=self._return_logprobs,
-        )
-        # sglang will trim matched stop in result text, so we should only return output_ids
-        result_dict = {
-            "output_ids": result["output_ids"],
-            "finish_reason": result["meta_info"]["finish_reason"]["type"],
-        }
-        if self._return_logprobs:
-            result_dict["logprobs"] = [
-                item[0] for item in result["meta_info"]["output_token_logprobs"]
-            ]
+        # Nobody awaits this task: on any failure (generation or result
+        # parsing), put an error payload on the same channel key so the
+        # requesting agent loop raises instead of waiting forever.
+        try:
+            version_start = self._weight_version
+            result = await self._backend.async_generate(
+                input_ids=prompt_ids,
+                sampling_params=final_sampling_params,
+                image_data=None,
+                return_logprob=self._return_logprobs,
+            )
+            # sglang will trim matched stop in result text, so we should only return output_ids
+            result_dict = {
+                "output_ids": result["output_ids"],
+                "finish_reason": result["meta_info"]["finish_reason"]["type"],
+                # Weight versions this call spanned: a call queued inside
+                # sglang across a sync starts on the old version and its
+                # tokens come from the new one (start != end).
+                "version_start": version_start,
+                "version_end": self._weight_version,
+            }
+            if self._return_logprobs:
+                result_dict["logprobs"] = [
+                    item[0] for item in result["meta_info"]["output_token_logprobs"]
+                ]
+        except Exception as e:
+            self.log_error(
+                f"Rollout generate request failed (channel_key={channel_key}):\n"
+                f"{traceback.format_exc()}"
+            )
+            try:
+                await output_channel.put(
+                    {"error": f"{type(e).__name__}: {e}"},
+                    key=channel_key,
+                    async_op=True,
+                ).async_wait()
+            except Exception:
+                self.log_error(
+                    f"Failed to deliver the generate error to channel_key={channel_key}"
+                )
+            return
         await output_channel.put(
             result_dict, key=channel_key, async_op=True
         ).async_wait()
 
     async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
+        # Gate before get(): every rank consumes the same queue, and a
+        # non-entry rank would drop the requests it takes.
+        if not self._is_model_instance_entry:
+            return
         while True:
             rollout_request = await input_channel.get(async_op=True).async_wait()
-            asyncio.create_task(
+            # Drain gate: while paused in "drain" mode, hold the request here
+            # instead of dispatching it; the sync happens without the engine
+            # having in-flight requests.
+            await self._dispatch_gate.wait()
+            task = asyncio.create_task(
                 self.generate_and_send(
                     output_channel=output_channel,
                     channel_key=rollout_request["channel_key"],
@@ -557,3 +816,5 @@ class SGLangWorker(Worker):
                     sampling_params=rollout_request.get("sampling_params", None),
                 )
             )
+            self._inflight_generates.add(task)
+            task.add_done_callback(self._inflight_generates.discard)

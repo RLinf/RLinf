@@ -129,7 +129,7 @@ def main(cfg) -> None:
         and str(reward_cfg.get("worker_type", "model")).lower() == "api"
         and not api_base
     ):
-        from rlinf.workers.rollout.sglang_server import launch_sglang_api
+        from rlinf.workers.rollout.sglang import launch_sglang_api
 
         api_base, server_group, router_group = launch_sglang_api(
             config=cfg,

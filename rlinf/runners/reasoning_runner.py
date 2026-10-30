@@ -422,7 +422,7 @@ class ReasoningRunner:
 
     def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
         if split_size is None:
-            split_size = self.component_placement.rollout_dp_size
+            split_size = self.component_placement.rollout_num_model_instances
 
         requests = build_rollout_requests_from_batch(
             batch,
@@ -452,10 +452,25 @@ class ReasoningRunner:
         if self.component_placement.is_collocated or self.component_placement.is_auto:
             self.rollout.onload_kv_cudagraph().wait()
 
+    def _stop_rollouts(self):
+        """Stop rollout engines after the training loop finishes normally.
+
+        Only called on normal completion paths; on failures the rollout
+        group may be broken and a failing ``stop().wait()`` would mask the
+        original error, so this must not go into a ``finally`` block.
+        The ``hasattr`` check is a fallback for rollout workers that do
+        not implement ``stop``.
+        """
+        rollout_groups = [self.rollout, *getattr(self, "solid_rollouts", {}).values()]
+        for rollout_group in rollout_groups:
+            if hasattr(rollout_group, "stop"):
+                rollout_group.stop().wait()
+
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
+            self._stop_rollouts()
             return
 
         global_pbar = tqdm(
@@ -588,6 +603,31 @@ class ReasoningRunner:
                         run_time_exceeded=run_time_exceeded,
                     )
 
+                    # Drain this step's handles before any early return:
+                    # the rollout worker may still be offloading its engine
+                    # after the training result is consumed, and stopping
+                    # the rollout engines first would abort that offload.
+                    reward_duration = reward_handle.consume_duration()
+                    rollout_duration = rollout_handle.consume_duration()
+                    actor_training_duration = actor_handle.consume_duration()
+                    if actor_infer_handle is not None:
+                        actor_infer_handle.wait()
+                        # Inference time should be the min time across ranks, because different DP receive the rollout results differently
+                        # But at the begin of the pp schedule, there is a timer barrier
+                        # This makes all DP end at the same time, while they start at differnt times, and thus only the min time is correct
+                        actor_inference_duration = actor_infer_handle.consume_duration(
+                            reduction_type="min"
+                        )
+                    else:
+                        actor_inference_duration = None
+                    if critic_infer_handle is not None:
+                        critic_infer_handle.wait()
+                        critic_inference_duration = (
+                            critic_infer_handle.consume_duration()
+                        )
+                    else:
+                        critic_inference_duration = None
+
                     if save_model:
                         self._save_checkpoint()
 
@@ -595,32 +635,25 @@ class ReasoningRunner:
                         logging.info(
                             f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
                         )
+                        self._stop_rollouts()
                         return
 
                     if run_time_exceeded:
                         logging.info(
                             f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
                         )
+                        self._stop_rollouts()
                         return
 
                 time_metrics = self.timer.consume_durations()
 
-                time_metrics["actor/training"] = actor_handle.consume_duration()
-                time_metrics["rollout"] = rollout_handle.consume_duration()
-                time_metrics["reward"] = reward_handle.consume_duration()
-                if actor_infer_handle is not None:
-                    actor_infer_handle.wait()
-                    # Inference time should be the min time across ranks, because different DP receive the rollout results differently
-                    # But at the begin of the pp schedule, there is a timer barrier
-                    # This makes all DP end at the same time, while they start at differnt times, and thus only the min time is correct
-                    time_metrics["actor/inference"] = (
-                        actor_infer_handle.consume_duration(reduction_type="min")
-                    )
-                if critic_infer_handle is not None:
-                    critic_infer_handle.wait()
-                    time_metrics["critic/inference"] = (
-                        critic_infer_handle.consume_duration()
-                    )
+                time_metrics["actor/training"] = actor_training_duration
+                time_metrics["rollout"] = rollout_duration
+                time_metrics["reward"] = reward_duration
+                if actor_inference_duration is not None:
+                    time_metrics["actor/inference"] = actor_inference_duration
+                if critic_inference_duration is not None:
+                    time_metrics["critic/inference"] = critic_inference_duration
                 if critic_train_handle is not None:
                     time_metrics["critic/training"] = (
                         critic_train_handle.consume_duration()
@@ -667,4 +700,5 @@ class ReasoningRunner:
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
 
+        self._stop_rollouts()
         self.metric_logger.finish()

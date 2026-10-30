@@ -14,6 +14,7 @@
 
 import os
 import sys
+from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
@@ -81,6 +82,23 @@ class FakeCluster:
     @property
     def num_nodes(self) -> int:
         return len(self._nodes)
+
+    @property
+    def accelerator_ranks(self) -> list[list[int]]:
+        # Mirrors Cluster.accelerator_ranks: per-node global hardware ranks.
+        node_start_accel_rank = 0
+        node_accel_ranks = []
+        for node in self._nodes:
+            node_accel_ranks.append(
+                list(
+                    range(
+                        node_start_accel_rank,
+                        node_start_accel_rank + node.num_accelerators,
+                    )
+                )
+            )
+            node_start_accel_rank += node.num_accelerators
+        return node_accel_ranks
 
     @property
     def num_accelerators(self) -> int:
@@ -759,9 +777,706 @@ class TestModelParallelComponentPlacement:
         assert actor_placements[0].visible_accelerators == ["0"]
         rollout_strategy = placement.get_strategy("rollout")
         rollout_placements = rollout_strategy.get_placement(cluster)
+        # Each rollout process must see tp*pp GPUs (visible_accelerators,
+        # not local_world_size, which counts processes on the node).
         assert all(
-            p.local_world_size == placement.rollout_tp_size for p in rollout_placements
+            len(p.visible_accelerators) == placement.rollout_gpus_per_process
+            for p in rollout_placements
         )
+
+    def test_auto_mode_rejects_cross_node_rollout(self):
+        # Auto-scheduler + cross-node must fail at construction. 2-GPU
+        # nodes, rollout 4-9 at tp=6: one instance across 3 nodes.
+        config = DictConfig(
+            {
+                "cluster": {
+                    "num_nodes": 1,
+                    "auto_scheduler": True,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-9",
+                        "reward": "4-9",
+                    },
+                },
+                "actor": {
+                    "model": {
+                        "tensor_model_parallel_size": 4,
+                        "context_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                    }
+                },
+                "rollout": {
+                    "tensor_parallel_size": 6,
+                    "pipeline_parallel_size": 1,
+                },
+            }
+        )
+
+        cluster = create_fake_cluster(num_nodes=5, accelerators_per_node=2)
+        with pytest.raises(AssertionError, match="Auto scheduler does not support"):
+            ModelParallelComponentPlacement(config, cluster)
+
+
+class TestDisaggregatedMultiAgentPlacement:
+    """AS0 disaggregated layout for the multi-agent (searchr1) actor:
+    2x8, actor 0-7 / rollout 8-15, rollout tp1."""
+
+    def _make_config(self):
+        return DictConfig(
+            {
+                "cluster": {
+                    "num_nodes": 2,
+                    "component_placement": {
+                        "actor": "0-7",
+                        "rollout": "8-15",
+                        "reward": "8-15",
+                    },
+                },
+                "actor": {
+                    "model": {
+                        "tensor_model_parallel_size": 1,
+                        "context_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                    }
+                },
+                "rollout": {
+                    "tensor_parallel_size": 1,
+                    "pipeline_parallel_size": 1,
+                },
+            }
+        )
+
+    def test_disaggregated_2x8_layout(self):
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(self._make_config(), cluster)
+
+        assert placement.is_disaggregated
+        assert placement.actor_world_size == 8
+        assert placement.rollout_world_size == 8
+        assert placement.rollout_num_model_instances == 8
+
+    def test_actor_to_rollout_push_targets(self):
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(self._make_config(), cluster)
+
+        # Disaggregated mode: each actor rank all-gathers its TP group and
+        # slices for its target rollout ranks. With actor_tp=1 / rollout_tp=1
+        # and equal world sizes, actor rank r pushes to rollout rank r.
+        from rlinf.workers.rollout.utils import RankMapper
+
+        rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(placement)
+        assert len(rank_map) == 8
+        for actor_rank in range(8):
+            assert rank_map[actor_rank] == [(actor_rank, 0)]
+
+
+class TestSearchr1DisaggregatedValidation:
+    """validate_searchr1_cfg: the Megatron MA actor may run disaggregated,
+    the FSDP one may not."""
+
+    @staticmethod
+    def _make_cfg(training_backend):
+        return DictConfig(
+            {
+                "runner": {"task_type": "reasoning"},
+                "cluster": {
+                    "num_nodes": 2,
+                    "component_placement": {
+                        "actor": "0-7",
+                        "rollout": "8-15",
+                        "reward": "8-15",
+                    },
+                },
+                "actor": {
+                    "training_backend": training_backend,
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": {"recompute_logprobs": False},
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {},
+            }
+        )
+
+    def test_megatron_backend_allows_disaggregated(self):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = False
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            cfg_mod.validate_searchr1_cfg(self._make_cfg("megatron"))
+
+    def test_fsdp_backend_rejects_disaggregated(self):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = False
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            with pytest.raises(ValueError, match="collocated"):
+                cfg_mod.validate_searchr1_cfg(self._make_cfg("fsdp"))
+
+
+class TestSearchr1AsyncPauseModeDefaults:
+    """validate_searchr1_cfg: async runs default to pause_mode=retract and
+    warn when in_place is selected."""
+
+    @staticmethod
+    def _make_cfg(pause_mode):
+        cfg = DictConfig(
+            {
+                "runner": {"task_type": "reasoning", "async_mode": True},
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-7",
+                        "reward": "4-7",
+                    },
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": {"recompute_logprobs": False},
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {},
+            }
+        )
+        if pause_mode is not None:
+            cfg.rollout.pause_mode = pause_mode
+        return cfg
+
+    def _validate(self, cfg):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_pause_mode_defaults_to_retract(self):
+        cfg = self._validate(self._make_cfg(pause_mode=None))
+        assert cfg.rollout.pause_mode == "retract"
+
+    def test_in_place_emits_warning(self, caplog):
+        import logging as std_logging
+
+        with caplog.at_level(std_logging.WARNING, logger="root"):
+            cfg = self._validate(self._make_cfg(pause_mode="in_place"))
+        assert cfg.rollout.pause_mode == "in_place"
+        assert any(
+            "in_place keeps the prefix cache" in r.message
+            for r in caplog.records
+            if r.name == "root"
+        )
+
+
+class TestSearchr1AsyncBatchDivisibility:
+    """validate_searchr1_cfg: async runs need rollout_batch_size divisible
+    by the actor data-parallel size, or per-DP-rank takes leave groups
+    behind in rollout_channel."""
+
+    @staticmethod
+    def _make_cfg(rollout_batch_size):
+        cfg = DictConfig(
+            {
+                "runner": {"task_type": "reasoning", "async_mode": True},
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-7",
+                        "reward": "4-7",
+                    },
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": {"recompute_logprobs": False},
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {"rollout_batch_size": rollout_batch_size},
+            }
+        )
+        return cfg
+
+    def _validate(self, cfg, actor_dp_size):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        placement.actor_dp_size = actor_dp_size
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_indivisible_batch_size_is_rejected(self):
+        cfg = self._make_cfg(rollout_batch_size=6)
+        with pytest.raises(ValueError, match="divisible"):
+            self._validate(cfg, actor_dp_size=4)
+
+    def test_divisible_batch_size_passes(self):
+        cfg = self._validate(self._make_cfg(rollout_batch_size=8), actor_dp_size=4)
+        assert cfg.data.rollout_batch_size == 8
+
+
+class TestSearchr1AsyncDiscardConfig:
+    """validate_searchr1_cfg: discard-related validation of async runs."""
+
+    @staticmethod
+    def _make_cfg(rollout_batch_size=8, algorithm_extra=None, runner_extra=None):
+        algorithm = {"recompute_logprobs": False}
+        if algorithm_extra:
+            algorithm.update(algorithm_extra)
+        runner = {"task_type": "reasoning", "async_mode": True}
+        if runner_extra:
+            runner.update(runner_extra)
+        return DictConfig(
+            {
+                "runner": runner,
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": "0-3",
+                        "rollout": "4-7",
+                        "reward": "4-7",
+                    },
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                },
+                "algorithm": algorithm,
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {"rollout_batch_size": rollout_batch_size},
+            }
+        )
+
+    def _validate(self, cfg, actor_dp_size=4):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        placement.actor_dp_size = actor_dp_size
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_drop_limit_defaults_to_ten_batches(self):
+        cfg = self._validate(self._make_cfg(rollout_batch_size=8))
+        assert cfg.algorithm.max_dropped_groups_per_step == 80
+
+    def test_drop_limit_below_one_is_rejected(self):
+        cfg = self._make_cfg(algorithm_extra={"max_dropped_groups_per_step": 0})
+        with pytest.raises(ValueError, match="max_dropped_groups_per_step"):
+            self._validate(cfg)
+
+    def test_accept_staleness_below_threshold_is_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "staleness_threshold": 3,
+                "max_actor_accept_staleness": 2,
+            }
+        )
+        with pytest.raises(ValueError, match="max_actor_accept_staleness"):
+            self._validate(cfg)
+
+    def test_within_group_down_sampling_is_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {
+                        "reject_equal_reward": False,
+                        "down_sample_to_n": 4,
+                    },
+                }
+            }
+        )
+        with pytest.raises(ValueError, match="reject_equal_reward"):
+            self._validate(cfg)
+
+    def test_extra_down_sampling_options_are_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {
+                        "reject_equal_reward": True,
+                        "roc_error_ratio": True,
+                    },
+                }
+            },
+            runner_extra={"max_steps": 100},
+        )
+        with pytest.raises(ValueError, match="roc_error_ratio"):
+            self._validate(cfg)
+
+    def test_reject_equal_reward_without_max_steps_is_rejected(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {"reject_equal_reward": True},
+                }
+            }
+        )
+        with pytest.raises(ValueError, match="runner.max_steps"):
+            self._validate(cfg)
+
+    def test_reject_equal_reward_with_max_steps_passes(self):
+        cfg = self._make_cfg(
+            algorithm_extra={
+                "down_sampling": {
+                    "do_down_sampling": True,
+                    "down_sampling_config": {"reject_equal_reward": True},
+                }
+            },
+            runner_extra={"max_steps": 100},
+        )
+        cfg = self._validate(cfg)
+        assert cfg.algorithm.max_dropped_groups_per_step == 80
+
+
+class TestRolloutModelInstanceLayout:
+    """Cross-node rollout layout.
+
+    Single-node configs must keep every layout property at its
+    single-node value (degenerate equalities); cross-node layouts are
+    exercised with multi-node fake clusters.
+    """
+
+    def _make_config(
+        self, component_placement, rollout_tp, rollout_pp=1, **rollout_extra
+    ):
+        # Default to the sglang server backend so cross-node layouts are
+        # legal here (backend whitelist); negative tests override via
+        # rollout_extra.
+        rollout = {
+            "rollout_backend": "sglang",
+            "sglang": {"backend_type": "server"},
+            "tensor_parallel_size": rollout_tp,
+            "pipeline_parallel_size": rollout_pp,
+        }
+        rollout.update(rollout_extra)
+        return DictConfig(
+            {
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": component_placement,
+                },
+                "actor": {
+                    "model": {
+                        "tensor_model_parallel_size": 2,
+                        "context_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                    }
+                },
+                "rollout": rollout,
+            }
+        )
+
+    def test_cross_node_engine_backend_rejected(self):
+        # Only the sglang server backend implements the
+        # multi-node path; Engine would start tp*pp per process on a
+        # single node's visible GPUs and fail deep inside the backend.
+        config = self._make_config(
+            {"actor,rollout,reward": "0-7"},
+            rollout_tp=8,
+            sglang={"backend_type": "engine"},
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        with pytest.raises(
+            AssertionError, match="only supported by the sglang server backend"
+        ):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_cross_node_vllm_backend_rejected(self):
+        # Same whitelist, vLLM side.
+        config = self._make_config(
+            {"actor,rollout,reward": "0-7"}, rollout_tp=8, rollout_backend="vllm"
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        with pytest.raises(
+            AssertionError, match="only supported by the sglang server backend"
+        ):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_single_node_degenerate_equivalence(self):
+        config = self._make_config({"actor,rollout,reward": "0-7"}, rollout_tp=4)
+        cluster = create_fake_cluster(num_nodes=1, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        # Degenerate equalities: with one node per model instance every
+        # layout property falls back to its single-node value.
+        assert placement.rollout_nnodes_per_model_instance == 1
+        assert placement.rollout_gpus_per_process == placement.rollout_tp_size
+        assert placement.rollout_num_worker_processes == (
+            placement.rollout_num_model_instances
+        )
+        assert placement.rollout_num_model_instances == 2
+        for rank in range(placement.rollout_num_worker_processes):
+            assert placement.rollout_model_instance_id(rank) == rank
+            assert placement.rollout_node_rank_in_model_instance(rank) == 0
+        for mi_id in range(placement.rollout_num_model_instances):
+            assert placement.rollout_model_instance_entry_process_rank(mi_id) == mi_id
+
+        rollout_placements = placement.get_strategy("rollout").get_placement(cluster)
+        assert len(rollout_placements) == placement.rollout_num_worker_processes
+        # local_world_size counts processes on the node, not GPUs; the
+        # GPUs-per-process check is on visible_accelerators.
+        assert all(len(p.visible_accelerators) == 4 for p in rollout_placements)
+        assert all(p.local_world_size == 2 for p in rollout_placements)
+
+    def test_cross_node_two_processes_per_instance(self):
+        # 4 nodes x 8 GPUs, rollout tp=16: each instance spans 2 nodes,
+        # 2 instances in total => 4 rollout worker processes, 1 per node.
+        config = self._make_config({"actor,rollout,reward": "0-31"}, rollout_tp=16)
+        cluster = create_fake_cluster(num_nodes=4, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        assert placement.rollout_gpus_per_node == 8
+        assert placement.rollout_nnodes_per_model_instance == 2
+        assert placement.rollout_gpus_per_process == 8
+        assert placement.rollout_num_model_instances == 2
+        assert placement.rollout_num_worker_processes == 4
+        assert placement.rollout_model_instance_id(2) == 1
+        assert placement.rollout_node_rank_in_model_instance(2) == 0
+        assert placement.rollout_node_rank_in_model_instance(3) == 1
+        assert placement.rollout_model_instance_entry_process_rank(1) == 2
+
+        rollout_placements = placement.get_strategy("rollout").get_placement(cluster)
+        assert len(rollout_placements) == 4
+        assert all(len(p.visible_accelerators) == 8 for p in rollout_placements)
+        assert all(p.local_world_size == 1 for p in rollout_placements)
+
+    def test_two_nodes_single_instance(self):
+        # Two 4-GPU nodes: tp=8 rollout => one instance, 2 processes.
+        config = self._make_config({"actor,rollout,reward": "0-7"}, rollout_tp=8)
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        assert placement.rollout_gpus_per_node == 4
+        assert placement.rollout_nnodes_per_model_instance == 2
+        assert placement.rollout_gpus_per_process == 4
+        assert placement.rollout_num_model_instances == 1
+        assert placement.rollout_num_worker_processes == 2
+        assert placement.rollout_model_instance_id(1) == 0
+        assert placement.rollout_node_rank_in_model_instance(1) == 1
+        assert placement.rollout_model_instance_entry_process_rank(0) == 0
+
+        rollout_placements = placement.get_strategy("rollout").get_placement(cluster)
+        assert len(rollout_placements) == 2
+        assert all(len(p.visible_accelerators) == 4 for p in rollout_placements)
+        # One rollout process per node, so each is alone on its node.
+        assert all(p.local_world_size == 1 for p in rollout_placements)
+
+    def test_discontinuous_rollout_uses_flexible_placement(self):
+        # Disaggregated rollout may be discontinuous: actor
+        # 0-1, rollout 2-3,6-7 across two 4-GPU nodes
+        # => one tp=4 instance, 2 processes, one per node.
+        config = self._make_config(
+            {"actor": "0-1", "rollout": "2-3,6-7", "reward": "4"},
+            rollout_tp=4,
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        assert placement.rollout_gpus_per_node == 2
+        assert placement.rollout_nnodes_per_model_instance == 2
+        assert placement.rollout_gpus_per_process == 2
+        assert placement.rollout_num_model_instances == 1
+        assert placement.rollout_num_worker_processes == 2
+        assert placement.rollout_model_instance_id(1) == 0
+        assert placement.rollout_node_rank_in_model_instance(1) == 1
+
+        rollout_placements = placement.get_strategy("rollout").get_placement(cluster)
+        # visible_accelerators are node-local ids, so both nodes hand the
+        # process its local GPUs 2 and 3.
+        assert [p.visible_accelerators for p in rollout_placements] == [
+            ["2", "3"],
+            ["2", "3"],
+        ]
+        assert all(p.local_world_size == 1 for p in rollout_placements)
+
+    def test_cross_node_unequal_node_share_raises(self):
+        # 3 nodes x 8 GPUs; rollout 4-19 puts 4 GPUs on node 0 and 8 on the
+        # others => unequal per-node share rejected at placement time.
+        config = self._make_config(
+            {
+                "actor": "0-3",
+                "rollout": "4-19",
+                "reward": "4-19",
+            },
+            rollout_tp=16,
+        )
+        cluster = create_fake_cluster(num_nodes=3, accelerators_per_node=8)
+
+        with pytest.raises(AssertionError, match="equal GPU share"):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_discontinuous_rollout_unequal_node_share_raises(self):
+        # Discontinuous rollout 2-3,5-7 across two 4-GPU nodes:
+        # node 0 carries 2 rollout GPUs, node 1 carries 3.
+        config = self._make_config(
+            {"actor": "0-1", "rollout": "2-3,5-7", "reward": "4"},
+            rollout_tp=4,
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+
+        with pytest.raises(AssertionError, match="equal GPU share"):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_cross_node_tp_pp_not_divisible_raises(self):
+        # 2 nodes x 6 GPUs; per-node share 6 does not divide tp*pp=8, so
+        # sglang's equal per-node TP split is impossible.
+        config = self._make_config({"actor,rollout,reward": "0-11"}, rollout_tp=8)
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=6)
+
+        with pytest.raises(AssertionError, match="divisible by the per-node GPU share"):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_unequal_node_share_single_node_instances_ok(self):
+        # Shares 2 and 8 with tp=2: every share is a multiple of tp*pp, so
+        # 5 single-node instances and no equal-share requirement.
+        config = self._make_config(
+            {"actor": "0-5", "rollout": "6-15", "reward": "6-15"},
+            rollout_tp=2,
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        assert placement.rollout_nnodes_per_model_instance == 1
+        assert placement.rollout_num_model_instances == 5
+        assert placement.rollout_num_worker_processes == 5
+        assert placement.rollout_gpus_per_process == 2
+        for rank in range(5):
+            assert placement.rollout_model_instance_id(rank) == rank
+            assert placement.rollout_node_rank_in_model_instance(rank) == 0
+            assert placement.rollout_model_instance_entry_process_rank(rank) == rank
+
+        # gpus_per_node is undefined when instances do not span nodes.
+        with pytest.raises(RuntimeError, match="only defined"):
+            placement.rollout_gpus_per_node
+
+        # Packed over the contiguous 6-15 interval, 2 GPUs per process: 5
+        # processes, the first on node 0 (local GPUs 6-7), the rest on
+        # node 1 (local GPUs 0-7). visible_accelerators are node-local ids.
+        rollout_placements = placement.get_strategy("rollout").get_placement(cluster)
+        assert len(rollout_placements) == 5
+        assert [p.visible_accelerators for p in rollout_placements] == [
+            ["6", "7"],
+            ["0", "1"],
+            ["2", "3"],
+            ["4", "5"],
+            ["6", "7"],
+        ]
+        assert [p.cluster_node_rank for p in rollout_placements] == [0, 1, 1, 1, 1]
+
+    def test_unequal_share_not_multiple_of_tp_pp_raises(self):
+        # Shares 4 and 6 with tp=4: neither all multiples of tp*pp nor
+        # equal, so the error must name both fixes.
+        config = self._make_config({"actor,rollout,reward": "4-13"}, rollout_tp=4)
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=8)
+
+        with pytest.raises(AssertionError, match="whole multiple"):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_actor_weight_dst_address_cross_node(self):
+        # Send addresses use the entry process rank, not the instance id.
+        # 4 nodes of 2 GPUs, rollout 0-7, tp=4: entries 0 and 2.
+        from rlinf.workers.rollout.utils import (
+            CollocateRankMapper,
+            instance_ids_to_entry_process_ranks,
+        )
+
+        config = self._make_config({"actor,rollout,reward": "0-7"}, rollout_tp=4)
+        cluster = create_fake_cluster(num_nodes=4, accelerators_per_node=2)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        assert placement.rollout_nnodes_per_model_instance == 2
+        assert placement.rollout_num_model_instances == 2
+
+        rank_map = CollocateRankMapper.get_actor_rank_to_rollout_rank_map(
+            actor_tp_size=4,
+            actor_pp_size=1,
+            actor_world_size=8,
+            rollout_tp_size=4,
+            rollout_world_size=8,
+        )
+        for raw_dst in rank_map.values():
+            dst = instance_ids_to_entry_process_ranks(raw_dst, placement)
+            engine_id, rank_in_engine = raw_dst
+            # Scheduler child workers of instance i register under
+            # [i * nnodes, tp_rank]: entry rank 0 for instance 0, rank 2
+            # for instance 1.
+            expected = (
+                placement.rollout_model_instance_entry_process_rank(engine_id),
+                rank_in_engine,
+            )
+            assert dst == expected
+            assert dst[0] == engine_id * 2
+
+        # Disaggregated list form converts element-wise.
+        assert instance_ids_to_entry_process_ranks([(1, 3), (0, 2)], placement) == [
+            (2, 3),
+            (0, 2),
+        ]
+
+    def test_actor_weight_dst_address_single_node_degenerates(self):
+        # Single-node: entry process rank == instance id, so the conversion
+        # is the identity (degenerate case).
+        from rlinf.workers.rollout.utils import instance_ids_to_entry_process_ranks
+
+        config = self._make_config({"actor,rollout,reward": "0-7"}, rollout_tp=4)
+        cluster = create_fake_cluster(num_nodes=1, accelerators_per_node=8)
+        placement = ModelParallelComponentPlacement(config, cluster)
+
+        assert placement.rollout_nnodes_per_model_instance == 1
+        assert instance_ids_to_entry_process_ranks((1, 2), placement) == (1, 2)
+        assert instance_ids_to_entry_process_ranks([(0, 0), (1, 3)], placement) == [
+            (0, 0),
+            (1, 3),
+        ]
 
 
 class TestHeteroMultiNodeGroupPlacement:
@@ -1136,7 +1851,7 @@ def get_mock_config_reasoning():
     world_size = 16 * 8
     mock_component_placement.actor_dp_size = world_size // 2
     mock_component_placement.actor_world_size = world_size
-    mock_component_placement.rollout_dp_size = world_size
+    mock_component_placement.rollout_num_model_instances = world_size
     mock_component_placement.rollout_world_size = world_size
     mock_component_placement.inference_dp_size = world_size // 2
     mock_component_placement.inference_world_size = world_size
