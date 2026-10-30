@@ -207,8 +207,25 @@ class EnvWorker(Worker):
         self._trajectory_step = global_step
 
     def init_worker(self):
-        # This is a barrier to ensure all envs' initial setup upon import is done
-        # Essential for RealWorld env to ensure initial ROS node setup is done
+        ros_setup_modes = [
+            env_cfg.get("ros_setup", "reset")
+            for enabled, env_cfg in (
+                (self.enable_train, self.cfg.env.get("train")),
+                (self.enable_eval, self.cfg.env.get("eval")),
+            )
+            if enabled and SupportedEnvType(env_cfg.env_type) is SupportedEnvType.REAL
+        ]
+        if ros_setup_modes:
+            if any(mode != ros_setup_modes[0] for mode in ros_setup_modes):
+                raise ValueError(
+                    "Real-world train and eval environments must use the same "
+                    f"ros_setup mode, got {ros_setup_modes!r}."
+                )
+            from rlinf.envs.real.env import RealWorldEnv
+
+            RealWorldEnv.realworld_setup(ros_setup_modes[0])
+
+        # Finish ROS setup across workers before any environment opens hardware.
         self.broadcast(
             True,
             groups=[(self._group_name, list(range(self._world_size)))],
@@ -364,6 +381,7 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
+                    resume=bool(getattr(env_cfg.data_collection, "resume", False)),
                     streaming=getattr(env_cfg.data_collection, "streaming", False),
                 )
             env_list.append(env)

@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Kuavo joint-space tasks using the shared real-world wrapper stack."""
 
-from .launcher import (
-    get_sglang_api_url,
-    launch_sglang_api,
-    launch_sglang_router_and_server,
-)
-from .router_worker import SGLangRouterWorker
-from .server_worker import SGLangServerWorker
+from rlinf.envs.real.registry import register_tasks
 
-__all__ = [
-    "SGLangRouterWorker",
-    "SGLangServerWorker",
-    "get_sglang_api_url",
-    "launch_sglang_api",
-    "launch_sglang_router_and_server",
-]
+from .joint_env import KuavoJointEnv, KuavoJointEnvConfig
+
+TASKS: dict[str, type] = {"KuavoJointEnv-v1": KuavoJointEnv}
+
+_ENTRY_POINTS = register_tasks(__name__, globals(), TASKS)
+
+__all__ = ["TASKS", "KuavoJointEnv", "KuavoJointEnvConfig", *_ENTRY_POINTS]

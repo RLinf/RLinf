@@ -20,7 +20,6 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from omegaconf import DictConfig
-from transformers import AutoTokenizer
 
 from rlinf.agents.tool_call.schema import (
     ToolChannelRequest,
@@ -31,6 +30,7 @@ from rlinf.agents.tool_call.schema import (
 from rlinf.algorithms.registry import get_toolcall_parser
 from rlinf.data.schema.reasoning_requests import RolloutRequest
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
@@ -106,7 +106,10 @@ class AgentLoopWorker(Worker):
                 "agent loop worker must be MultiAgentLoopWorker if is_dynamic_rollout_batch is True"
             )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.rollout.model.model_path)
+        self.tokenizer = hf_tokenizer(
+            cfg.rollout.model.model_path,
+            trust_remote_code=cfg.rollout.model.trust_remote_code,
+        )
         self.toolcall_parser = None
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)
@@ -152,6 +155,10 @@ class AgentLoopWorker(Worker):
         result = await self.generate_output_channel.get(
             channel_key, async_op=True
         ).async_wait()
+        if isinstance(result, dict) and "error" in result:
+            # The rollout side failed to generate and reported back via the
+            # channel; fail loudly instead of continuing.
+            raise RuntimeError(f"Rollout generate request failed: {result['error']}")
         return result
 
     async def state_less_tool_call_with_channel(

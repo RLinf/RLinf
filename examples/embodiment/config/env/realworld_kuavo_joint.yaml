@@ -1,0 +1,39 @@
+env_type: real
+# Kuavo subscribes to the robot's externally managed ROS master.
+ros_setup: preserve
+
+total_num_envs: 1
+auto_reset: false
+ignore_terminations: false
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: false
+max_steps_per_rollout_epoch: 1000
+max_episode_steps: 1000
+main_image_key: head_cam_h
+no_gripper: false
+teleop: none
+keyboard_reward_wrapper: eval_control
+
+video_cfg:
+  save_video: false
+  info_on_video: true
+  video_base_dir: logs/video/eval
+
+init_params:
+  id: "KuavoJointEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "dual-arm Kuavo manipulation task"
+  # Null selects the hardware ros_rate, not control_rate.
+  step_frequency: null
+  max_num_steps: 1000
+  # Per-step joint target bound in radians; this is not a control loop.
+  max_joint_delta: 0.05
+  camera_frame_timeout_s: 1.0
+  camera_stale_timeout_s: 2.0
+  manual_episode_control_only: false

@@ -14,6 +14,7 @@
 
 """Kuavo robot composition and scheduler configuration."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ import numpy as np
 
 from ..discovery import RobotConfig
 from ..parts.base import PartGroup, RobotPart
+from ..parts.cameras import Camera, CameraInfo
 from ..robot import Robot
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -94,6 +96,10 @@ class KuavoRobot(Robot):
         joint_limits_max: list[float],
         end_effector_limits_min: list[float],
         end_effector_limits_max: list[float],
+        feedback_topics: Mapping[str, str] | None,
+        joint_state_start: int,
+        feedback_timeout_s: float,
+        feedback_stale_timeout_s: float,
         node_rank: int | None,
         name: str,
     ) -> "KuavoConnection":
@@ -108,6 +114,10 @@ class KuavoRobot(Robot):
             joint_limits_max=joint_limits_max,
             end_effector_limits_min=end_effector_limits_min,
             end_effector_limits_max=end_effector_limits_max,
+            feedback_topics=feedback_topics,
+            joint_state_start=joint_state_start,
+            feedback_timeout_s=feedback_timeout_s,
+            feedback_stale_timeout_s=feedback_stale_timeout_s,
             node_rank=node_rank,
             worker_name=name,
         )
@@ -137,6 +147,11 @@ class KuavoRobot(Robot):
         joint_limits_max: list[float] | None = None,
         end_effector_limits_min: list[float] | None = None,
         end_effector_limits_max: list[float] | None = None,
+        feedback_topics: Mapping[str, str] | None = None,
+        joint_state_start: int = 12,
+        feedback_timeout_s: float = 2.0,
+        feedback_stale_timeout_s: float = 0.5,
+        cameras: Mapping[str, CameraInfo] | None = None,
         env_idx: int = 0,
         node_rank: int | None = None,
         controller_node_rank: int | None = None,
@@ -163,12 +178,19 @@ class KuavoRobot(Robot):
                 if end_effector_limits_max is None
                 else end_effector_limits_max
             ),
+            feedback_topics=feedback_topics,
+            joint_state_start=joint_state_start,
+            feedback_timeout_s=feedback_timeout_s,
+            feedback_stale_timeout_s=feedback_stale_timeout_s,
             node_rank=(
                 node_rank if controller_node_rank is None else controller_node_rank
             ),
             name=f"KuavoConnection-{worker_rank}-{env_idx}",
         )
-        return cls(**cls.build_arms(connection, which_arm=which_arm))
+        parts = cls.build_arms(connection, which_arm=which_arm)
+        if cameras:
+            parts["cameras"] = PartGroup(**Camera.declare(cameras, node_rank=node_rank))
+        return cls(**parts)
 
 
 @dataclass
@@ -186,9 +208,6 @@ class KuavoRobotConfig(RobotConfig):
 
     only_arm: bool = True
     """Whether this allocation controls only the arms and end effectors."""
-
-    control_mode: str = "joint"
-    """RLinf currently exposes Kuavo through joint-position control."""
 
     direct_to_wbc: bool = False
     """Direct WBC control is reserved for a dedicated controller integration."""
@@ -208,6 +227,12 @@ class KuavoRobotConfig(RobotConfig):
     control_rate: int = 100
     """Robot-side command frequency in hertz."""
 
+    feedback_timeout_s: float = 2.0
+    """Maximum time to wait for valid joint and gripper feedback at connection."""
+
+    feedback_stale_timeout_s: float = 0.5
+    """Maximum receipt age of joint or gripper feedback before refusing reads."""
+
     controller_node_rank: int | None = None
     """Node that opens the SDK; ``None`` uses the environment worker node."""
 
@@ -217,14 +242,10 @@ class KuavoRobotConfig(RobotConfig):
     depth_range: list[int] = field(default_factory=lambda: [0, 1500])
     """Accepted depth interval in millimetres."""
 
-    obs_key_map: dict[str, dict[str, Any]] = field(
-        default_factory=_default_obs_key_map
-    )
+    obs_key_map: dict[str, dict[str, Any]] = field(default_factory=_default_obs_key_map)
     """ROS topic, message type, and source frequency for each observation."""
 
-    arm_state_keys: list[str] = field(
-        default_factory=lambda: ["joint_q", "gripper"]
-    )
+    arm_state_keys: list[str] = field(default_factory=lambda: ["joint_q", "gripper"])
     """Ordered state entries concatenated for each selected arm."""
 
     joint_limits_min: list[float] = field(default_factory=lambda: [-3.14] * 14)
@@ -254,8 +275,6 @@ class KuavoRobotConfig(RobotConfig):
                 f"{self.end_effector_type!r}; choose one of "
                 f"{sorted(_END_EFFECTORS)}."
             )
-        if self.control_mode != "joint":
-            raise ValueError("Kuavo currently supports control_mode='joint'.")
         if not self.only_arm:
             raise ValueError("Kuavo currently supports only_arm=true.")
         if self.direct_to_wbc:
@@ -286,6 +305,15 @@ class KuavoRobotConfig(RobotConfig):
             for rate in (self.ros_rate, self.control_rate)
         ):
             raise ValueError("Kuavo control frequencies must be positive.")
+        for name in ("feedback_timeout_s", "feedback_stale_timeout_s"):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not np.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"Kuavo {name} must be finite and positive.")
         if self.controller_node_rank is not None and not isinstance(
             self.controller_node_rank, int
         ):
@@ -298,6 +326,15 @@ class KuavoRobotConfig(RobotConfig):
 
     def _validate_obs_key_map(self) -> None:
         """Validate observation routes and attach image processing dimensions."""
+        message_types = {
+            "head_cam_h": {"Image", "CompressedImage"},
+            "wrist_cam_l": {"Image", "CompressedImage"},
+            "wrist_cam_r": {"Image", "CompressedImage"},
+            "joint_q": {"sensorsData"},
+            "leju_claw": {"lejuClawState"},
+            "qiangnao": {"JointState"},
+            "rq2f85": {"JointState"},
+        }
         required = {"head_cam_h", "joint_q", self.end_effector_type}
         if self.which_arm in {"left", "both"}:
             required.add("wrist_cam_l")
@@ -318,6 +355,11 @@ class KuavoRobotConfig(RobotConfig):
             if not route["topic"] or not route["msg_type"]:
                 raise ValueError(
                     f"Kuavo obs_key_map[{key!r}] needs a topic and message type."
+                )
+            if key in message_types and route["msg_type"] not in message_types[key]:
+                raise ValueError(
+                    f"Kuavo obs_key_map[{key!r}] msg_type must be one of "
+                    f"{sorted(message_types[key])}, got {route['msg_type']!r}."
                 )
             frequency = route["frequency"]
             if (
@@ -388,13 +430,10 @@ class KuavoRobotConfig(RobotConfig):
             raise ValueError(f"Kuavo {name} must contain {size} values.")
 
     @staticmethod
-    def _validate_numeric_values(
-        name: str, values: list[float], size: int
-    ) -> None:
+    def _validate_numeric_values(name: str, values: list[float], size: int) -> None:
         KuavoRobotConfig._validate_pair(name, values, size)
         if not all(
-            isinstance(value, (int, float)) and np.isfinite(value)
-            for value in values
+            isinstance(value, (int, float)) and np.isfinite(value) for value in values
         ):
             raise ValueError(f"Kuavo {name} values must be finite numbers.")
 
