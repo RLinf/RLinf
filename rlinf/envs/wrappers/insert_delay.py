@@ -52,6 +52,10 @@ class InsertDelay(gym.Wrapper):
     def is_start(self, value):
         setattr(self.env, "is_start", value)
 
+    def update_reset_state_ids(self):
+        if hasattr(self.env, "update_reset_state_ids"):
+            self.env.update_reset_state_ids()
+
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         self.sample_delay()

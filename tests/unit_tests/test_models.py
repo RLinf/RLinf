@@ -1188,6 +1188,32 @@ def test_is_start_reaches_the_wrapped_env(gym_base):
     assert env.is_start is True
 
 
+@pytest.mark.parametrize("gym_base", [True, False])
+def test_update_reset_state_ids_reaches_the_wrapped_env(gym_base):
+    # finish_rollout calls this on the outermost wrapper after every train
+    # rollout; gymnasium 1.x wrappers don't forward it.
+    import gymnasium as gym
+
+    class _ResettableEnv(_FakeEnv):
+        calls = 0
+
+        def update_reset_state_ids(self):
+            self.calls += 1
+
+    base = (
+        type("_GymEnv", (_ResettableEnv, gym.Env), {})()
+        if gym_base
+        else _ResettableEnv()
+    )
+    env = _delayed_env_over(base, 0.0)
+
+    env.update_reset_state_ids()
+
+    assert base.calls == 1
+    # A base env without the method is left alone, as in the other wrappers.
+    _delayed_env_over(_FakeEnv(), 0.0).update_reset_state_ids()
+
+
 class _FakeApxInfModel:
     action_horizon = 10
     action_dim = 32
