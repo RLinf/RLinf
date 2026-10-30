@@ -301,9 +301,12 @@ Known limitations
   release.
 * **Not demonstrated:** a full ``supermimic_lafan1`` paper run, the paper's
   two-GPU recipe, and multi-node runs. ``supermimic_lafan1_zita`` has
-  finished 16000 updates on one GPU with 4096 environments. The
-  update-16000 checkpoint has ``eval/normalized_return`` 0.856, with all
-  40 clips reaching the end. zita-ch reports 0.829 at update 14000. A
-  short two-GPU run on 80 GB A800s has finished on real NCCL with zero
-  parameter divergence. See the user guide for what has and has not been
-  run.
+  finished 16000 updates on one 80 GB A800 with 4096 environments: the
+  first compilation took about 30 minutes, and the 16000 updates took
+  about 4.5 hours. The update-16000 checkpoint has
+  ``eval/normalized_return`` 0.856, with all 40 clips reaching the end.
+  The update-14000 checkpoint scored 0.800, with a failure rate of 0.10
+  and 36 clips reaching the end. zita-ch reports 0.829 at update 14000,
+  so this run is 0.029 lower at the same update. A short two-GPU run on 80 GB
+  A800s has finished on real NCCL with zero parameter divergence. See
+  the user guide for what has and has not been run.

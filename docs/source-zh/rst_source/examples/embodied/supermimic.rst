@@ -274,7 +274,7 @@ smoke 只验证流程能跑通。3～5 次更新的 policy 不会跟踪动作，
 * ``algorithm.residual_frame``：``body`` 把线速度放在完整机体系，角速度按世界系增量再存回机体系；``heading`` 把位置和线速度放在偏航系，角速度直接加在机体系角速度上。论文配置写 ``heading``。
 * ``algorithm.wm_state_loss``：``running`` 把坐标系里的误差除以残差滑动标准差后对 70 维取均值；``paper`` 是不加权平方；``scaled`` 是固定分块尺度。论文配置写 ``paper``。
 
-``supermimic_lafan1_zita`` 显式写成 ``pelvis``、``running``、``body``、``running``，并覆盖基类配置。仿真器仍是 mjlab。它不能加载这四项还没写入检查点时训练出来的权重。一次单卡、4096 个环境的训练跑完 16000 次更新后，第 16000 次更新的检查点在 40 条 LAFAN1 片段上的 ``eval/normalized_return`` 为 0.856，40 条都播到了片段结束。zita-ch 报告的是第 14000 次更新的 0.829。
+``supermimic_lafan1_zita`` 显式写成 ``pelvis``、``running``、``body``、``running``，并覆盖基类配置。仿真器仍是 mjlab。它不能加载这四项还没写入检查点时训练出来的权重。一次训练用一张 80 GB A800、4096 个环境，跑完 16000 次更新。第一次编译约 30 分钟，16000 次更新约 4.5 小时。第 16000 次更新的检查点在 40 条 LAFAN1 片段上的 ``eval/normalized_return`` 为 0.856，40 条都播到了片段结束。同一次训练的第 14000 次更新是 0.800，失败率 0.10，40 条里 36 条播完。zita-ch 报告的是第 14000 次更新的 0.829，同一更新次数上这次低 0.029。
 
 .. code-block:: bash
 
@@ -283,7 +283,13 @@ smoke 只验证流程能跑通。3～5 次更新的 policy 不会跟踪动作，
        runner.logger.log_path=/data/runs/lafan1_zita \
        'runner.logger.logger_backends=[tensorboard]'
 
-评测用 ``supermimic_lafan1_zita_eval``。``eval.checkpoint`` 指向上面 ``log_path`` 下的 ``supermimic_lafan1_zita`` 目录时，会选最新的完整检查点，也可以指向某一个 ``global_step_<N>``。zita-ch 报告结果的检查点是第 14000 次更新；上面这次训练在第 16000 次更新上得到 ``eval/normalized_return`` 0.856。
+评测用 ``supermimic_lafan1_zita_eval``，单卡、不用 Ray。``eval.checkpoint`` 指向上面 ``log_path`` 下的 ``supermimic_lafan1_zita`` 目录时，会选最新的完整检查点，也可以指向某一个 ``global_step_<N>``。上面这次训练在第 16000 次更新上得到 ``eval/normalized_return`` 0.856，在第 14000 次更新上得到 0.800。zita-ch 报告的是第 14000 次更新的 0.829。评第 14000 次更新时，把检查点指到该次保存的目录：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
+       eval.checkpoint=/data/runs/lafan1_zita/supermimic_lafan1_zita/global_step_14000 \
+       eval.output_dir=/data/runs/lafan1_zita/eval_14000
 
 常用配置键
 ~~~~~~~~~~
@@ -586,6 +592,6 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 * 单卡 profiling 实测了 128 和 512 个环境的吞吐与显存。4096 个环境只做了从 512 线性外推的估计，没有实测。
 * 双卡小规模训练走真实 NCCL：两次运行的 ``train/param_divergence`` 都是 0，两边计数逐项相等，两个 rank 的检查点都完整。全局规模是 64 个环境、256 条想象 rollout，不是论文双卡配方。同样规模的速度配置短训练也完成了。
 * 同样的双卡规模上，短期学习信号跑了 12 次更新。指标有限、计数单调。归一化回报从 0.001892 到 0.001893，失败率保持为 1。这是单种子、短预算，不能据此说 policy 学会了跟踪。
-* ``supermimic_lafan1_zita`` 的一次完整训练：单卡、4096 个环境、16000 次更新。第 16000 次更新的检查点做了 40 条片段的动作评测，``eval/normalized_return`` 为 0.856，``eval/fail_rate`` 为 0，``eval/clip_end_rate`` 为 1。zita-ch 报告的对照值是第 14000 次更新的 0.829。仿真器是 mjlab。本页还没有这次训练的学习曲线。
+* ``supermimic_lafan1_zita`` 的一次完整训练：一张 80 GB A800、4096 个环境、16000 次更新。第一次编译约 30 分钟，16000 次更新约 4.5 小时。第 16000 次更新的检查点做了 40 条片段的动作评测，``eval/normalized_return`` 为 0.856，``eval/fail_rate`` 为 0，``eval/clip_end_rate`` 为 1。第 14000 次更新的检查点同样评了 40 条，``eval/normalized_return`` 为 0.800，``eval/fail_rate`` 为 0.10，``eval/clip_end_rate`` 为 0.90。zita-ch 报告的对照值是第 14000 次更新的 0.829，同一更新次数上这次低 0.029。仿真器是 mjlab。本页还没有这次训练的学习曲线。
 
 尚未运行：论文配置 ``supermimic_lafan1``（680 维 Goal、320000 次更新）、论文双卡配方、多节点、Slurm、BONES-SEED 真实数据，以及论文 §4.3 的 T-pose 恢复性能（当前入口是静止站立姿态，不能代替该项）。

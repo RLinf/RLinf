@@ -416,11 +416,14 @@ does not silently become that recipe.
 
 ``supermimic_lafan1_zita`` sets ``pelvis``, ``running``, ``body`` and
 ``running``, overriding the base config. The simulator stays mjlab. It
-refuses a checkpoint saved before those four fields were recorded. One
-single-GPU run with 4096 environments finished 16000 updates. At update
-16000, ``eval/normalized_return`` on the 40 LAFAN1 clips was 0.856, and
-every clip played through to its end. zita-ch reports 0.829 at update
-14000.
+refuses a checkpoint saved before those four fields were recorded. One run
+on a single 80 GB A800 with 4096 environments finished 16000 updates. The
+first compilation took about 30 minutes, and the 16000 updates took about
+4.5 hours. At update 16000, ``eval/normalized_return`` on the 40 LAFAN1
+clips was 0.856, and every clip played through to its end. The same run
+at update 14000 scored 0.800, with a failure rate of 0.10: 36 of the 40
+clips played through to the end. zita-ch reports 0.829 at update 14000,
+so this run is 0.029 lower at the same update.
 
 .. code-block:: bash
 
@@ -429,11 +432,19 @@ every clip played through to its end. zita-ch reports 0.829 at update
        runner.logger.log_path=/data/runs/lafan1_zita \
        'runner.logger.logger_backends=[tensorboard]'
 
-Evaluate with ``supermimic_lafan1_zita_eval``. Point ``eval.checkpoint`` at
-the ``supermimic_lafan1_zita`` directory under that ``log_path`` to use the
-newest complete checkpoint, or at one ``global_step_<N>`` directory.
-zita-ch's reported checkpoint is update 14000. The run above scored
-``eval/normalized_return`` 0.856 at update 16000.
+Evaluate with ``supermimic_lafan1_zita_eval`` on one GPU, without Ray.
+Point ``eval.checkpoint`` at the ``supermimic_lafan1_zita`` directory under
+that ``log_path`` to use the newest complete checkpoint, or at one
+``global_step_<N>`` directory. The run above scored
+``eval/normalized_return`` 0.856 at update 16000 and 0.800 at update
+14000. zita-ch reports 0.829 at update 14000. To score update 14000,
+point the checkpoint at that save:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
+       eval.checkpoint=/data/runs/lafan1_zita/supermimic_lafan1_zita/global_step_14000 \
+       eval.output_dir=/data/runs/lafan1_zita/eval_14000
 
 Common Keys
 ~~~~~~~~~~~
@@ -985,12 +996,16 @@ passed:
   finite and counters stayed monotonic. Normalized return moved from
   0.001892 to 0.001893 and the failure rate stayed at 1. One seed and a
   short budget do not show that the policy learned to track.
-* One full ``supermimic_lafan1_zita`` training run: one GPU, 4096
-  environments, 16000 updates. Motion evaluation of the update-16000
-  checkpoint on all 40 clips gave ``eval/normalized_return`` 0.856,
-  ``eval/fail_rate`` 0, and ``eval/clip_end_rate`` 1. zita-ch reports
-  0.829 at update 14000. The simulator was mjlab. This page still has no
-  learning curve for that run.
+* One full ``supermimic_lafan1_zita`` training run: one 80 GB A800, 4096
+  environments, 16000 updates. The first compilation took about 30
+  minutes, and the 16000 updates took about 4.5 hours. Motion evaluation
+  of the update-16000 checkpoint on all 40 clips gave
+  ``eval/normalized_return`` 0.856, ``eval/fail_rate`` 0, and
+  ``eval/clip_end_rate`` 1. The update-14000 checkpoint on the same 40
+  clips gave ``eval/normalized_return`` 0.800, ``eval/fail_rate`` 0.10,
+  and ``eval/clip_end_rate`` 0.90. zita-ch reports 0.829 at update 14000,
+  so this run is 0.029 lower at the same update. The simulator was
+  mjlab. This page still has no learning curve for that run.
 
 Not yet run: the paper config ``supermimic_lafan1`` (680-d goal, 320000
 updates), the paper's two-GPU recipe, multiple nodes, Slurm, real
