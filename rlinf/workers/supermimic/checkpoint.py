@@ -49,7 +49,35 @@ POLICY_KEYS = (
     "goal_encoding",
     "goal_window",
     "velocity_tracking",
+    "critic_features",
+    "wm_state_loss",
+    "reward_anchor",
+    "input_norm",
+    "residual_frame",
 )
+# Checkpoints written before these fields used the paper recipe. A missing
+# field therefore means that older recipe, not zita-ch's. A config that
+# omits the field still selects zita-ch; only the saved metadata does this.
+_MISSING_POLICY = {
+    "critic_features": "root4",
+    "wm_state_loss": "paper",
+    "reward_anchor": "torso",
+    "input_norm": "none",
+    "residual_frame": "heading",
+}
+
+
+def policy_value(meta: dict, key: str):
+    """One policy-interface field.
+
+    A checkpoint that predates a field loads as the recipe that was current
+    then: ``root4`` critic features, the unweighted state loss, a torso
+    reward anchor, no running norm, and the heading-frame residual.
+    """
+    value = meta.get(key)
+    if value is None and key in _MISSING_POLICY:
+        return _MISSING_POLICY[key]
+    return value
 
 
 def rank_file(rank: int) -> str:

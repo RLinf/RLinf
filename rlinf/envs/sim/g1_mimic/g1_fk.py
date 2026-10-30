@@ -17,10 +17,16 @@
 The tree is read from the mjlab G1 MJCF. Positions match MuJoCo ``xpos``.
 Linear velocity is the body-frame origin, and angular velocity is in the
 world frame, matching ``mj_objectVelocity`` after the COM-to-origin shift.
+
+Bodies at the same depth are one batched walk. A CUDA batch of 256 or more
+is compiled once per process so the walk is not a kernel launch per body.
+``SUPERMIMIC_FK_EAGER=1`` keeps the batched walk but skips that compile.
 """
 
 from __future__ import annotations
 
+import os
+import warnings
 from typing import TYPE_CHECKING
 
 import torch
@@ -109,6 +115,133 @@ def _quat_mul(q1: torch.Tensor, q2: torch.Tensor, table: torch.Tensor) -> torch.
     return (outer * table).sum(dim=(-3, -2))
 
 
+def _run_levels(state, table, tracked, nbody, levels):
+    """One batched walk per depth. ``levels`` is static for a given MJCF."""
+    batch = state.shape[0]
+    positions = [None] * nbody
+    quats = [None] * nbody
+    linear = [None] * nbody
+    angular = [None] * nbody
+    positions[0] = torch.zeros(batch, 3, device=state.device, dtype=state.dtype)
+    identity = torch.tensor(
+        [1.0, 0.0, 0.0, 0.0], device=state.device, dtype=state.dtype
+    )
+    quats[0] = identity.expand(batch, 4)
+    linear[0] = torch.zeros(batch, 3, device=state.device, dtype=state.dtype)
+    angular[0] = torch.zeros(batch, 3, device=state.device, dtype=state.dtype)
+    for (
+        kind,
+        body_ids,
+        parent_ids,
+        bpos,
+        bquat,
+        hinge_idx,
+        axis,
+        unit,
+        anchor,
+        has_anchor,
+    ) in levels:
+        parent_pos = torch.stack([positions[p] for p in parent_ids], 1)
+        parent_quat = torch.stack([quats[p] for p in parent_ids], 1)
+        parent_v = torch.stack([linear[p] for p in parent_ids], 1)
+        parent_w = torch.stack([angular[p] for p in parent_ids], 1)
+        if kind == "free":
+            pos = state[:, 0:3].unsqueeze(1)
+            quat = state[:, 3:7].unsqueeze(1)
+            vel = state[:, 36:39].unsqueeze(1)
+            ang = _rotate(state[:, 3:7], state[:, 39:42]).unsqueeze(1)
+        else:
+            bpos_b = bpos.unsqueeze(0)
+            bquat_b = bquat.unsqueeze(0)
+            axis_b = axis.unsqueeze(0)
+            unit_b = unit.unsqueeze(0)
+            anchor_b = anchor.unsqueeze(0)
+            pos = parent_pos + _rotate(parent_quat, bpos_b)
+            quat = _quat_mul(parent_quat, bquat_b, table)
+            vel = parent_v + torch.cross(parent_w, pos - parent_pos, dim=-1)
+            ang = parent_w
+            angle = state[:, 7 + hinge_idx]
+            rate = state[:, 42 + hinge_idx]
+            joint_quat = _axis_angle_quat(unit_b, angle)
+            if has_anchor:
+                world_anchor = pos + _rotate(quat, anchor_b)
+                quat = _quat_mul(quat, joint_quat, table)
+                pos = world_anchor - _rotate(quat, anchor_b)
+            else:
+                quat = _quat_mul(quat, joint_quat, table)
+            axis_w = _rotate(quat, axis_b)
+            rate_b = rate.unsqueeze(-1)
+            ang = ang + axis_w * rate_b
+            anchor_w = pos + _rotate(quat, anchor_b)
+            vel = vel + torch.cross(axis_w * rate_b, pos - anchor_w, dim=-1)
+        quat = quat_normalize(quat)
+        for slot, body_id in enumerate(body_ids):
+            positions[body_id] = pos[:, slot]
+            quats[body_id] = quat[:, slot]
+            linear[body_id] = vel[:, slot]
+            angular[body_id] = ang[:, slot]
+    pos_all = torch.stack(positions, 1)
+    quat_all = torch.stack(quats, 1)
+    lin_all = torch.stack(linear, 1)
+    ang_all = torch.stack(angular, 1)
+    rot = quat_to_rotmat(quat_all[:, tracked])
+    return (
+        pos_all[:, tracked],
+        rot,
+        lin_all[:, tracked],
+        ang_all[:, tracked],
+    )
+
+
+_COMPILED_LEVELS: dict = {}
+_COMPILE_FAILED = False
+_COMPILE_ANNOUNCED = False
+
+
+def _compiled_levels(state, table, tracked, nbody, levels):
+    """Compile ``_run_levels`` once per device and dtype. Falls back on failure."""
+    global _COMPILE_FAILED, _COMPILE_ANNOUNCED
+    if _COMPILE_FAILED:
+        return _run_levels(state, table, tracked, nbody, levels)
+    key = (str(state.device), state.dtype)
+    fn = _COMPILED_LEVELS.get(key)
+    if fn is None:
+        if not _COMPILE_ANNOUNCED:
+            warnings.warn(
+                "Compiling the G1 kinematic tree for CUDA. The first large "
+                "batch waits for this; later batches reuse the compiled walk.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            _COMPILE_ANNOUNCED = True
+
+        def eager(
+            state,
+            table=table,
+            tracked=tracked,
+            nbody=nbody,
+            levels=levels,
+        ):
+            return _run_levels(state, table, tracked, nbody, levels)
+
+        fn = torch.compile(eager, dynamic=True, fullgraph=True)
+        _COMPILED_LEVELS[key] = fn
+    try:
+        return fn(state)
+    except Exception as exc:
+        name = type(exc).__name__
+        module = type(exc).__module__
+        if module.startswith("torch._dynamo") or "Compiler" in name:
+            _COMPILE_FAILED = True
+            warnings.warn(
+                f"G1 kinematics stayed on the batched walk ({name}).",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            return _run_levels(state, table, tracked, nbody, levels)
+        raise
+
+
 class G1Kinematics:
     """Batched kinematics. Constants follow ``state`` to its device."""
 
@@ -193,6 +326,8 @@ class G1Kinematics:
                 f"low={self.joint_low.tolist()}, high={self.joint_high.tolist()}"
             )
         self._cache: dict[tuple, tuple] = {}
+        self._level_cache: dict[tuple, tuple] = {}
+        self._level_specs = self._build_level_specs()
 
     def _packed(self, device, dtype):
         key = (str(device), dtype)
@@ -226,6 +361,116 @@ class G1Kinematics:
             )
         return self._cache[key]
 
+    def _build_level_specs(self):
+        """Group same-depth bodies that share a joint kind. None if any body is irregular."""
+        if any(len(owned) != 1 for i, owned in enumerate(self.joints) if i > 0):
+            return None
+        depth = [0] * self.nbody
+        for i in range(1, self.nbody):
+            depth[i] = depth[self.parents[i]] + 1
+        specs = []
+        for level in range(1, max(depth) + 1):
+            ids = [i for i in range(self.nbody) if depth[i] == level]
+            groups: dict[tuple, list[int]] = {}
+            for i in ids:
+                joint = self.joints[i][0]
+                if joint[0] == "free":
+                    key = ("free", False)
+                else:
+                    key = ("hinge", bool(joint[4]))
+                groups.setdefault(key, []).append(i)
+            for (kind, has_anchor), members in groups.items():
+                parent_ids = tuple(self.parents[i] for i in members)
+                bpos = torch.stack([self.body_pos[i] for i in members])
+                bquat = torch.stack([self.body_quat[i] for i in members])
+                if kind == "free":
+                    empty = torch.zeros(len(members), 3)
+                    specs.append(
+                        (
+                            kind,
+                            tuple(members),
+                            parent_ids,
+                            bpos,
+                            bquat,
+                            torch.zeros(len(members), dtype=torch.long),
+                            empty,
+                            empty,
+                            empty,
+                            False,
+                        )
+                    )
+                    continue
+                hinge_idx = torch.tensor(
+                    [self.joints[i][0][1] for i in members], dtype=torch.long
+                )
+                axis = torch.stack([self.joints[i][0][2] for i in members])
+                anchor = torch.stack([self.joints[i][0][3] for i in members])
+                specs.append(
+                    (
+                        kind,
+                        tuple(members),
+                        parent_ids,
+                        bpos,
+                        bquat,
+                        hinge_idx,
+                        axis,
+                        axis,
+                        anchor,
+                        has_anchor,
+                    )
+                )
+        return tuple(specs)
+
+    def _level_pack(self, device, dtype):
+        key = (str(device), dtype)
+        cached = self._level_cache.get(key)
+        if cached is None:
+            _body_pos, _body_quat, tracked, _joints, table = self._packed(device, dtype)
+            moved = []
+            for spec in self._level_specs:
+                (
+                    kind,
+                    body_ids,
+                    parent_ids,
+                    bpos,
+                    bquat,
+                    hinge_idx,
+                    axis,
+                    _unit,
+                    anchor,
+                    has_anchor,
+                ) = spec
+                axis_d = axis.to(device=device, dtype=dtype)
+                unit = axis_d / axis_d.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+                moved.append(
+                    (
+                        kind,
+                        body_ids,
+                        parent_ids,
+                        bpos.to(device=device, dtype=dtype),
+                        bquat.to(device=device, dtype=dtype),
+                        hinge_idx.to(device=device),
+                        axis_d,
+                        unit,
+                        anchor.to(device=device, dtype=dtype),
+                        has_anchor,
+                    )
+                )
+            cached = (table, tracked.to(device=device), self.nbody, tuple(moved))
+            self._level_cache[key] = cached
+        return cached
+
+    def _forward_levels(self, state: torch.Tensor):
+        """Batched depth walk, without the CUDA compile."""
+        squeezed = state.dim() == 1
+        if squeezed:
+            state = state.unsqueeze(0)
+        table, tracked, nbody, levels = self._level_pack(state.device, state.dtype)
+        out = _run_levels(state, table, tracked, nbody, levels)
+        if squeezed:
+            return tuple(item.squeeze(0) for item in out)
+        return out
+
     def forward(
         self, state: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -233,8 +478,39 @@ class G1Kinematics:
 
         Shapes are ``[B, 14, ...]``. ``state`` is the 71-d simulator state.
         Root linear velocity is world-frame. Root angular velocity is body-frame,
-        which is how the free joint stores it.
+        which is how the free joint stores it. Large CUDA batches compile the
+        depth walk; the body-by-body loop remains for an irregular tree.
+        A scan that is already being compiled inlines the eager walk so the
+        two compiles do not nest.
         """
+        if torch.compiler.is_compiling():
+            if self._level_specs is not None:
+                return self._forward_levels(state)
+            return self._forward_serial(state)
+        batch = 1 if state.dim() == 1 else state.shape[0]
+        eager_only = os.environ.get("SUPERMIMIC_FK_EAGER") == "1"
+        if (
+            self._level_specs is not None
+            and state.is_cuda
+            and batch >= 256
+            and not eager_only
+        ):
+            squeezed = state.dim() == 1
+            if squeezed:
+                state = state.unsqueeze(0)
+            table, tracked, nbody, levels = self._level_pack(state.device, state.dtype)
+            out = _compiled_levels(state, table, tracked, nbody, levels)
+            if squeezed:
+                return tuple(item.squeeze(0) for item in out)
+            return out
+        if self._level_specs is not None:
+            return self._forward_levels(state)
+        return self._forward_serial(state)
+
+    def _forward_serial(
+        self, state: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Body-by-body walk. Reference for the depth-batched path."""
         squeezed = state.dim() == 1
         if squeezed:
             state = state.unsqueeze(0)

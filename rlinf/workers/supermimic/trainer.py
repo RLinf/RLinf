@@ -27,7 +27,7 @@ from types import ModuleType
 import torch
 from omegaconf import DictConfig
 
-from rlinf.algorithms.supermimic.networks import SuperMimicModels
+from rlinf.algorithms.supermimic.networks import SuperMimicModels, running_state_loss
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
     gae_targets,
@@ -36,6 +36,11 @@ from rlinf.algorithms.supermimic.objectives import (
 )
 from rlinf.algorithms.supermimic.replay import SuperMimicReplay
 from rlinf.algorithms.supermimic.reset_sampler import BinResetSampler
+from rlinf.algorithms.supermimic.scan import (
+    make_dynamics_window,
+    make_imagination,
+    run_compiled,
+)
 from rlinf.envs.sim.g1_mimic.constants import (
     DT,
     EPISODE_CONT,
@@ -44,7 +49,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     HISTORY_LEN,
 )
 from rlinf.envs.sim.g1_mimic.env import compose_end_kind, make_env
-from rlinf.envs.sim.g1_mimic.features import integrate_residual, root_error_4d
+from rlinf.envs.sim.g1_mimic.features import integrate_residual
 from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
 from rlinf.envs.sim.g1_mimic.motion import GOAL_WINDOW
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
@@ -53,6 +58,8 @@ from rlinf.envs.sim.g1_mimic.reward import (
     analytic_reward,
     compose_goal,
     failure_signals,
+    forward_kinematics_pair,
+    motion_critic_input,
     termination_head_input,
 )
 from rlinf.envs.sim.g1_mimic.velocity import (
@@ -204,6 +211,7 @@ class SuperMimicTrainer:
         # Each rank takes 1/world of them; validate checks divisibility.
         self.num_envs = int(env_cfg.num_envs) // world
         self.warmup = int(algo.warmup_sim_steps)
+        self.wm_only_updates = int(algo.get("wm_only_updates", 0))
         self.updates_per_env_step = float(algo.updates_per_env_step)
         self.wm_batches = int(algo.wm_batches)
         self.wm_window_batch = int(algo.wm_window_batch) // world
@@ -250,13 +258,26 @@ class SuperMimicTrainer:
         self.goal_encoding = str(algo.get("goal_encoding", "paper"))
         self.include_ref_ori = int(algo.obs_dim) == 99
         self.velocity = bool(algo.get("velocity_tracking", False))
+        self.critic_features = str(algo.get("critic_features", "root4"))
+        # Omitted keys follow zita-ch. supermimic_base.yaml writes the paper
+        # values, so a paper config does not inherit these defaults.
+        self.wm_state_loss = str(algo.get("wm_state_loss", "running"))
+        self.reward_anchor = str(algo.get("reward_anchor", "pelvis"))
+        self.input_norm = str(algo.get("input_norm", "running"))
+        self.residual_frame = str(algo.get("residual_frame", "body"))
+        self.scale_xi = self.input_norm == "running"
         bias_init = algo.get("termination_bias_init", None)
         self.models = SuperMimicModels(
             self.goal_dim,
             self.obs_dim,
             velocity=self.velocity,
             termination_bias_init=None if bias_init is None else float(bias_init),
+            critic_features=self.critic_features,
+            input_norm=self.scale_xi,
+            output_norm=self.wm_state_loss == "running",
         ).to(self.device)
+        matmul = str(algo.get("matmul", "tf32"))
+        self.models.set_bf16_matmul(matmul == "bf16")
         self.dp.broadcast_module(self.models)
         lr = float(algo.lr)
         self.opt_wm = torch.optim.Adam(self.models.wm_params(), lr=lr)
@@ -396,6 +417,19 @@ class SuperMimicTrainer:
         if env_ids.numel():
             self.obs_hist.fill(env_ids, self._new_frames(env_ids))
 
+    def _update_collection_norms(self, obs: torch.Tensor, goal: torch.Tensor) -> None:
+        """Update policy running norms on the frame the policy is about to see."""
+        if self.models.decoder.obs_norm is not None:
+            self.models.decoder.obs_norm.update(obs)
+        if self.models.encoder.goal_norm is None:
+            return
+        if self.velocity:
+            rows = ~self.velocity_env
+            if bool(rows.any()):
+                self.models.encoder.goal_norm.update(goal[rows])
+        else:
+            self.models.encoder.goal_norm.update(goal)
+
     def collect_steps(self, n_steps: int, accumulate: bool = True) -> dict[str, float]:
         """Step every env ``n_steps`` times and store the transitions.
 
@@ -411,6 +445,7 @@ class SuperMimicTrainer:
                 :, -1
             ]
             goal = self._goal(self.env.motion_id, self.env.motion_time, self.env.state)
+            self._update_collection_norms(current_obs, goal)
             with torch.no_grad():
                 if self.velocity:
                     self._update_commands(
@@ -446,6 +481,9 @@ class SuperMimicTrainer:
                 fall = velocity_fall(next_state)
                 failure = torch.where(self.velocity_env, fall, failure)
             end_kind = compose_end_kind(failure, result["timeout"], result["clip_end"])
+            self.models.dynamics.update_norm(
+                before, executed, xi, next_state, self.residual_frame
+            )
             reward = analytic_reward(
                 next_state,
                 result["ref_state"],
@@ -453,6 +491,7 @@ class SuperMimicTrainer:
                 self.prev_action,
                 self.joint_low,
                 self.joint_high,
+                reward_anchor=self.reward_anchor,
             )["reward"]
             if self.velocity and bool(self.velocity_env.any()):
                 reward = reward.clone()
@@ -559,7 +598,16 @@ class SuperMimicTrainer:
     def _motion_critic_value(self, state, motion_id, motion_time, xi) -> torch.Tensor:
         goal = self._goal(motion_id, motion_time, state)
         ref = self.motion.state_at(motion_id, motion_time)
-        return self.models.critic(state, goal, xi, root_error_4d(state, ref))
+        return self.models.critic(
+            motion_critic_input(
+                state,
+                goal,
+                xi,
+                ref,
+                self.critic_features,
+                scale_xi=self.scale_xi,
+            )
+        )
 
     def _critic_bootstrap(self, env_ids: torch.Tensor) -> torch.Tensor:
         """Motion critic at the terminal state and reference time.
@@ -623,36 +671,13 @@ class SuperMimicTrainer:
             weight = 0
             if batch is not None:
                 weight = int(batch["state"].shape[0])
-                pred = batch["state"][:, 0]
-                loss = pred.new_zeros(())
-                for t in range(self.k):
-                    residual = self.models.dynamics(
-                        pred, batch["action_executed"][:, t], batch["xi"]
-                    )
-                    pred = integrate_residual(pred, residual)
-                    step_loss = state_prediction_loss(pred, batch["state"][:, t + 1])
-                    if t == 0:
-                        one_step = float(step_loss.detach())
-                    if t == self.k - 1:
-                        k_step = float(step_loss.detach())
-                    loss = loss + step_loss
-                    motion_rows = batch["task_id"] == 0
-                    if self.learned_termination and bool(motion_rows.any()):
-                        height, tilt, _ = failure_signals(
-                            pred[motion_rows],
-                            self.motion.state_at(
-                                batch["motion_id"][motion_rows],
-                                batch["motion_time"][motion_rows] + t + 1,
-                            ),
-                            termination_body=self.termination_body,
-                        )
-                        logit = self.models.termination(
-                            termination_head_input(height, tilt)
-                        )
-                        loss = loss + self.bce_weight * termination_bce(
-                            logit, batch["end_kind"][motion_rows, t]
-                        )
+                if self.velocity:
+                    loss, one, last = self._world_model_open_loop(batch)
+                else:
+                    loss, one, last = self._world_model_scan(batch)
                 loss.backward()
+                one_step = float(one.detach())
+                k_step = float(last.detach())
                 last_loss = float(loss.detach())
             stepped, norm = self._dp_step(
                 self.opt_wm,
@@ -674,6 +699,93 @@ class SuperMimicTrainer:
             "wm/one_step_loss": one_step,
             "wm/k_step_loss": k_step,
         }
+
+    def _world_model_runner(self):
+        name = (
+            f"wm-{self.k}-{self.wm_state_loss}-{self.residual_frame}-"
+            f"{int(self.learned_termination)}-{self.termination_body}"
+        )
+        if getattr(self, "_wm_scan_name", None) != name:
+            self._wm_scan_name = name
+            self._wm_scan_fn = make_dynamics_window(
+                self.k,
+                self.wm_state_loss == "scaled",
+                self.learned_termination,
+                self.termination_body,
+                self.residual_frame,
+                self.wm_state_loss,
+            )
+        return name, self._wm_scan_fn
+
+    def _world_model_scan(self, batch: dict[str, torch.Tensor]):
+        """One compiled k-step window. Every row is a motion sample."""
+        if self.learned_termination:
+            refs = torch.stack(
+                [
+                    self.motion.state_at(
+                        batch["motion_id"], batch["motion_time"] + (t + 1)
+                    )
+                    for t in range(self.k)
+                ],
+                dim=1,
+            )
+        else:
+            refs = batch["state"][:, 1:]
+        name, fn = self._world_model_runner()
+        return run_compiled(
+            name,
+            fn,
+            self.models.dynamics,
+            self.models.termination,
+            batch["state"][:, 0],
+            batch["action_executed"],
+            batch["xi"],
+            batch["state"][:, 1:],
+            refs,
+            batch["end_kind"],
+            self.bce_weight,
+        )
+
+    def _world_model_open_loop(self, batch: dict[str, torch.Tensor]):
+        """Velocity mix: BCE only on motion rows, so the scan's mean would differ."""
+        pred = batch["state"][:, 0]
+        loss = pred.new_zeros(())
+        one = pred.new_zeros(())
+        last = pred.new_zeros(())
+        for t in range(self.k):
+            pred = integrate_residual(
+                pred,
+                self.models.dynamics(pred, batch["action_executed"][:, t], batch["xi"]),
+                self.residual_frame,
+            )
+            true = batch["state"][:, t + 1]
+            if self.wm_state_loss == "running":
+                step = running_state_loss(
+                    pred, true, self.models.dynamics, self.residual_frame
+                )
+            else:
+                step = state_prediction_loss(
+                    pred, true, scaled=self.wm_state_loss == "scaled"
+                )
+            if t == 0:
+                one = step
+            last = step
+            loss = loss + step
+            motion_rows = batch["task_id"] == 0
+            if self.learned_termination and bool(motion_rows.any()):
+                height, tilt, _ = failure_signals(
+                    pred[motion_rows],
+                    self.motion.state_at(
+                        batch["motion_id"][motion_rows],
+                        batch["motion_time"][motion_rows] + t + 1,
+                    ),
+                    termination_body=self.termination_body,
+                )
+                logit = self.models.termination(termination_head_input(height, tilt))
+                loss = loss + self.bce_weight * termination_bce(
+                    logit, batch["end_kind"][motion_rows, t]
+                )
+        return loss, one, last
 
     def imagine_and_update_actor(self) -> dict[str, float]:
         """Imagine H steps from replay starts, update the actor, then fit the critic."""
@@ -723,10 +835,7 @@ class SuperMimicTrainer:
             critic_metrics = self.fit_critic(*self._empty_motion_rollout())
         else:
             critic_metrics = self.fit_critic(
-                rollout["states"].detach(),
-                rollout["goals"].detach(),
-                rollout["errors"].detach(),
-                rollout["xi"].detach(),
+                rollout["features"].detach(),
                 rollout["rewards"].detach(),
                 rollout["d"].detach(),
             )
@@ -747,9 +856,84 @@ class SuperMimicTrainer:
             metrics.update(self._velocity_imagine())
         return metrics
 
+    def _imagination_runner(self):
+        name = (
+            f"imagine-{self.H}-{int(self.learned_termination)}-{self.termination_body}-"
+            f"{self.critic_features}-{int(self.include_ref_ori)}-{self.obs_dim}-"
+            f"{self.reward_anchor}-{self.residual_frame}-{int(self.scale_xi)}-"
+            f"{self.gamma}"
+        )
+        if getattr(self, "_imagine_scan_name", None) != name:
+            self._imagine_scan_name = name
+            self._imagine_scan_fn = make_imagination(
+                self.H,
+                self.learned_termination,
+                self.termination_body,
+                self.critic_features,
+                self.include_ref_ori,
+                self.obs_dim,
+                self.gamma,
+                self.reward_anchor,
+                self.residual_frame,
+                self.scale_xi,
+            )
+        return name, self._imagine_scan_fn
+
+    def _prefetch_rollout(self, motion_id: torch.Tensor, time0: torch.Tensor):
+        """Reference states and goals for times ``t .. t+H``. Goals ignore state."""
+        steps = torch.arange(self.H + 1, device=time0.device)
+        times = time0.unsqueeze(1) + steps.to(dtype=time0.dtype)
+        ids = motion_id.unsqueeze(1).expand(-1, self.H + 1)
+        flat = self.motion.state_at(ids.reshape(-1), times.reshape(-1))
+        refs = flat.view(motion_id.shape[0], self.H + 1, flat.shape[-1])
+        goals = torch.stack(
+            [self._goal(motion_id, time0 + t, None) for t in range(self.H + 1)],
+            dim=1,
+        )
+        return refs, goals
+
+    def _imagine_motion_scanned(
+        self, starts: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        """Same rollout as the open loop, one compiled scan on a large CUDA batch."""
+        motion_id = starts["motion_id"]
+        time0 = starts["motion_time"]
+        refs, goals = self._prefetch_rollout(motion_id, time0)
+        name, fn = self._imagination_runner()
+        states, goals_t, features, rewards, d_hat, objective = run_compiled(
+            name,
+            fn,
+            self.models.encoder,
+            self.models.decoder,
+            self.models.dynamics,
+            self.models.termination,
+            self.models.critic,
+            starts["state"],
+            starts["prev_action"],
+            starts["xi"],
+            starts["history"],
+            refs,
+            goals,
+            self.q0,
+            self.joint_low,
+            self.joint_high,
+        )
+        return {
+            "states": states,
+            "goals": goals_t,
+            "features": features,
+            "rewards": rewards,
+            "d": d_hat,
+            "objective": objective,
+        }
+
     def _imagine_motion(
         self, starts: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
+        # Goals that depend on the imagined state stay on the open loop.
+        # The LAFAN1 runs do not; their goals are a function of the clip only.
+        if not self.goal_anchor:
+            return self._imagine_motion_scanned(starts)
         state = starts["state"]
         prev = starts["prev_action"]
         xi = starts["xi"]
@@ -758,20 +942,52 @@ class SuperMimicTrainer:
         time0 = starts["motion_time"]
         # One rollout keeps s_0..s_H, g_0..g_H, r_1..r_H and d_1..d_H.
         # history already ends at s_0, so the policy sees it before the step.
-        states, goals, root_errs, rewards, d_hats = [], [], [], [], []
+        states, goals, features, rewards, d_hats = [], [], [], [], []
+        # The reward at step t and the critic features at step t+1 read the
+        # same predicted state and the same reference frame. One walk feeds both.
+        carried_state = None
+        carried_fk = None
         for t in range(self.H):
-            ref = self.motion.state_at(motion_id, time0 + t)
+            if carried_state is state:
+                ref, state_fk, ref_fk = carried_fk
+            else:
+                ref = self.motion.state_at(motion_id, time0 + t)
+                state_fk, ref_fk = forward_kinematics_pair(state, ref)
             goal = self._goal(motion_id, time0 + t, state)
             states.append(state)
             goals.append(goal)
-            root_errs.append(root_error_4d(state, ref))
+            features.append(
+                motion_critic_input(
+                    state,
+                    goal,
+                    xi,
+                    ref,
+                    self.critic_features,
+                    state_fk,
+                    ref_fk,
+                    scale_xi=self.scale_xi,
+                )
+            )
             # Stored frames keep the noise they were given at collection.
             # Only the frame produced by this imagined step draws new noise.
             action = self.models.policy(history, goal)
-            state = integrate_residual(state, self.models.dynamics(state, action, xi))
+            state = integrate_residual(
+                state, self.models.dynamics(state, action, xi), self.residual_frame
+            )
             ref_next = self.motion.state_at(motion_id, time0 + t + 1)
+            state_fk, ref_fk = forward_kinematics_pair(state, ref_next)
+            carried_state = state
+            carried_fk = (ref_next, state_fk, ref_fk)
             reward_pack = analytic_reward(
-                state, ref_next, action, prev, self.joint_low, self.joint_high
+                state,
+                ref_next,
+                action,
+                prev,
+                self.joint_low,
+                self.joint_high,
+                state_fk,
+                ref_fk,
+                reward_anchor=self.reward_anchor,
             )
             height, tilt, _ = failure_signals(
                 state, ref_next, termination_body=self.termination_body
@@ -788,22 +1004,36 @@ class SuperMimicTrainer:
                 history.shape
             )
             prev = action
-        ref_h = self.motion.state_at(motion_id, time0 + self.H)
+        if carried_state is state:
+            ref_h, state_fk, ref_fk = carried_fk
+        else:
+            ref_h = self.motion.state_at(motion_id, time0 + self.H)
+            state_fk, ref_fk = forward_kinematics_pair(state, ref_h)
         goal_h = self._goal(motion_id, time0 + self.H, state)
         states.append(state)
         goals.append(goal_h)
-        root_errs.append(root_error_4d(state, ref_h))
+        features.append(
+            motion_critic_input(
+                state,
+                goal_h,
+                xi,
+                ref_h,
+                self.critic_features,
+                state_fk,
+                ref_fk,
+                scale_xi=self.scale_xi,
+            )
+        )
         states_t = torch.stack(states, dim=1)
         goals_t = torch.stack(goals, dim=1)
-        err_t = torch.stack(root_errs, dim=1)
+        feat_t = torch.stack(features, dim=1)
         rewards_t = torch.stack(rewards, dim=1)
         d_t = torch.stack(d_hats, dim=1)
-        v_last = self.models.critic(states_t[:, -1], goals_t[:, -1], xi, err_t[:, -1])
+        v_last = self.models.critic(feat_t[:, -1])
         return {
             "states": states_t,
             "goals": goals_t,
-            "errors": err_t,
-            "xi": xi,
+            "features": feat_t,
             "rewards": rewards_t,
             "d": d_t,
             "objective": actor_objective(rewards_t, d_t, v_last, self.gamma),
@@ -825,13 +1055,9 @@ class SuperMimicTrainer:
         def zeros(*shape):
             return torch.zeros(0, *shape, device=self.device)
 
-        state_dim = self.buffer.state.shape[-1]
-        xi_dim = self.buffer.xi.shape[-1]
+        width = self.models.critic.net[0].in_features
         return (
-            zeros(self.H + 1, state_dim),
-            zeros(self.H + 1, self.goal_dim),
-            zeros(self.H + 1, 4),
-            zeros(xi_dim),
+            zeros(self.H + 1, width),
             zeros(self.H),
             zeros(self.H),
         )
@@ -914,7 +1140,9 @@ class SuperMimicTrainer:
                 ).detach()
                 align_terms.append((z_vel[from_ref] - z_motion[from_ref]).pow(2).mean())
             action = self.models.decoder(z_vel, history)
-            state = integrate_residual(state, self.models.dynamics(state, action, xi))
+            state = integrate_residual(
+                state, self.models.dynamics(state, action, xi), self.residual_frame
+            )
             rewards.append(
                 velocity_reward(
                     state, command, action, prev, self.joint_low, self.joint_high
@@ -1021,6 +1249,11 @@ class SuperMimicTrainer:
         batch = states_t.shape[0]
         targets = None
         if batch > 0:
+            self.models.velocity_critic.update_norm(
+                states_t.reshape(-1, states_t.shape[-1]),
+                commands_t.reshape(-1, commands_t.shape[-1]),
+                xi.unsqueeze(1).expand(-1, self.H + 1, -1).reshape(-1, xi.shape[-1]),
+            )
             with torch.no_grad():
                 flat_xi = (
                     xi.unsqueeze(1).expand(-1, self.H + 1, -1).reshape(-1, xi.shape[-1])
@@ -1058,60 +1291,51 @@ class SuperMimicTrainer:
 
     def fit_critic(
         self,
-        states_t: torch.Tensor,
-        goals_t: torch.Tensor,
-        err_t: torch.Tensor,
-        xi: torch.Tensor,
+        features_t: torch.Tensor,
         rewards_t: torch.Tensor,
         d_t: torch.Tensor,
     ) -> dict[str, float]:
-        """Regress V(s_t, g_t) onto R_t from the same imagined trajectory.
+        """Regress V onto R_t from the same imagined trajectory.
 
-        ``states_t`` is ``[B, H+1]``. Targets are ``R_0 .. R_{H-1}``.
+        ``features_t`` is ``[B, H+1, F]``. Targets are ``R_0 .. R_{H-1}``.
         ``B`` may be 0 on a rank that drew no start; it still joins every
         optimizer step.
         """
         _set_requires_grad(self.models.critic_params(), True)
         _set_requires_grad(self.models.actor_params(), False)
         _set_requires_grad(self.models.wm_params(), False)
-        if states_t.shape[1] != self.H + 1 or rewards_t.shape[1] != self.H:
+        width = self.models.critic.net[0].in_features
+        if (
+            features_t.shape[1] != self.H + 1
+            or features_t.shape[-1] != width
+            or rewards_t.shape[1] != self.H
+        ):
             raise RuntimeError(
-                "critic targets must align with s_0..s_{H-1} from one rollout"
+                "critic targets must align with s_0..s_{H-1} from one rollout, "
+                f"got features {tuple(features_t.shape)} and rewards {tuple(rewards_t.shape)}"
             )
-        batch = states_t.shape[0]
+        batch = features_t.shape[0]
         targets = None
         value_mean = target_mean = float("nan")
+        if batch > 0 and self.models.critic.norm is not None:
+            self.models.critic.norm.update(features_t.reshape(-1, width))
         if batch > 0:
             with torch.no_grad():
-                flat_xi = (
-                    xi.unsqueeze(1).expand(-1, self.H + 1, -1).reshape(-1, xi.shape[-1])
+                values = self.models.critic(features_t.reshape(-1, width)).reshape(
+                    batch, self.H + 1
                 )
-                values = self.models.critic(
-                    states_t.reshape(-1, states_t.shape[-1]),
-                    goals_t.reshape(-1, goals_t.shape[-1]),
-                    flat_xi,
-                    err_t.reshape(-1, 4),
-                ).reshape(batch, self.H + 1)
                 targets = gae_targets(rewards_t, d_t, values, self.gamma, self.lam)
                 value_mean = float(values[:, : self.H].mean())
                 target_mean = float(targets.mean())
-        state_fit = states_t[:, : self.H]
-        goal_fit = goals_t[:, : self.H]
-        err_fit = err_t[:, : self.H]
+        feat_fit = features_t[:, : self.H]
         last_loss = float("nan")
         for _ in range(self.critic_epochs):
             for idx in self._critic_chunks(batch):
                 self.opt_critic.zero_grad(set_to_none=True)
                 if idx.numel():
-                    pred = self.models.critic(
-                        state_fit[idx].reshape(-1, state_fit.shape[-1]),
-                        goal_fit[idx].reshape(-1, goal_fit.shape[-1]),
-                        xi[idx]
-                        .unsqueeze(1)
-                        .expand(-1, self.H, -1)
-                        .reshape(-1, xi.shape[-1]),
-                        err_fit[idx].reshape(-1, 4),
-                    ).reshape(idx.numel(), self.H)
+                    pred = self.models.critic(feat_fit[idx].reshape(-1, width)).reshape(
+                        idx.numel(), self.H
+                    )
                     loss = (pred - targets[idx]).pow(2).mean()
                     loss.backward()
                     last_loss = float(loss.detach())
@@ -1144,13 +1368,22 @@ class SuperMimicTrainer:
                 break
             updated = True
             metrics.update(self.fit_world_model())
-            metrics.update(self.imagine_and_update_actor())
+            # The first wm_only_updates iterations match zita-ch: the world
+            # model trains, and the actor and critic wait. Actor and critic
+            # schedulers step only with their optimizers. Over the 250k
+            # cosine those 500 steps change the rate by far less than 1%.
+            # The paper default is 0, which updates the actor every iteration.
+            actor_updated = self.global_update >= self.wm_only_updates
+            metrics["train/wm_only"] = 0.0 if actor_updated else 1.0
+            if actor_updated:
+                metrics.update(self.imagine_and_update_actor())
             self.sched_wm.step()
-            self.sched_actor.step()
-            self.sched_critic.step()
-            if self.sched_velocity is not None:
-                self.sched_velocity.step()
-                self.sched_velocity_critic.step()
+            if actor_updated:
+                self.sched_actor.step()
+                self.sched_critic.step()
+                if self.sched_velocity is not None:
+                    self.sched_velocity.step()
+                    self.sched_velocity_critic.step()
             self.global_update += 1
             self.step_acc -= 1.0
         interval = int(self.cfg.algorithm.get("param_check_interval", 100))
@@ -1236,6 +1469,12 @@ class SuperMimicTrainer:
             "goal_encoding": self.goal_encoding,
             "goal_window": list(GOAL_WINDOW[self.goal_encoding]),
             "velocity_tracking": self.velocity,
+            "critic_features": self.critic_features,
+            "wm_state_loss": self.wm_state_loss,
+            "reward_anchor": self.reward_anchor,
+            "input_norm": self.input_norm,
+            "residual_frame": self.residual_frame,
+            "matmul": "bf16" if self.models.bf16_matmul else "tf32",
             "termination_head": "learned" if self.learned_termination else "analytic",
             "termination_bias_init": self.cfg.algorithm.get(
                 "termination_bias_init", None
@@ -1305,10 +1544,11 @@ class SuperMimicTrainer:
         meta = ckpt.verify_checkpoint(path)
         expected = self._checkpoint_meta()
         for key in ckpt.POLICY_KEYS:
-            if meta.get(key) != expected[key]:
+            found = ckpt.policy_value(meta, key)
+            want = ckpt.policy_value(expected, key)
+            if found != want:
                 raise ValueError(
-                    f"checkpoint {path} has {key}={meta.get(key)!r}, "
-                    f"this config has {expected[key]!r}"
+                    f"checkpoint {path} has {key}={found!r}, this config has {want!r}"
                 )
         if int(meta["world_size"]) != self.dp.world_size:
             warnings.warn(

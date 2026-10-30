@@ -89,24 +89,24 @@ def is_episode_boundary(end_kind: torch.Tensor) -> torch.Tensor:
     return end_kind != EPISODE_CONT
 
 
-def state_prediction_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """Sum of squared scaled errors. Not a mean."""
-    pos = (pred[..., ROOT_POS] - target[..., ROOT_POS]) / STATE_LOSS_SCALES["root_pos"]
+def state_prediction_loss(
+    pred: torch.Tensor, target: torch.Tensor, *, scaled: bool = False
+) -> torch.Tensor:
+    """Mean over the batch of summed squared state errors.
+
+    The paper loss is unweighted (``scaled=False``). ``scaled=True`` divides
+    each block by ``STATE_LOSS_SCALES``. Rotation is always the relative
+    rotvec: the stored root orientation is a quaternion, and ``q`` and ``-q``
+    are the same attitude.
+    """
+    scales = STATE_LOSS_SCALES if scaled else dict.fromkeys(STATE_LOSS_SCALES, 1.0)
+    pos = (pred[..., ROOT_POS] - target[..., ROOT_POS]) / scales["root_pos"]
     # Relative SO(3) error. Subtracting two absolute rotvecs is not a rotation.
-    rot = (
-        so3_relative_rotvec(pred[..., 3:7], target[..., 3:7])
-        / STATE_LOSS_SCALES["root_rotvec"]
-    )
-    lin = (pred[..., ROOT_LIN_VEL] - target[..., ROOT_LIN_VEL]) / STATE_LOSS_SCALES[
-        "root_lin_vel"
-    ]
-    ang = (pred[..., ROOT_ANG_VEL] - target[..., ROOT_ANG_VEL]) / STATE_LOSS_SCALES[
-        "root_ang_vel"
-    ]
-    q = (pred[..., JOINT_POS] - target[..., JOINT_POS]) / STATE_LOSS_SCALES["joint_pos"]
-    qd = (pred[..., JOINT_VEL] - target[..., JOINT_VEL]) / STATE_LOSS_SCALES[
-        "joint_vel"
-    ]
+    rot = so3_relative_rotvec(pred[..., 3:7], target[..., 3:7]) / scales["root_rotvec"]
+    lin = (pred[..., ROOT_LIN_VEL] - target[..., ROOT_LIN_VEL]) / scales["root_lin_vel"]
+    ang = (pred[..., ROOT_ANG_VEL] - target[..., ROOT_ANG_VEL]) / scales["root_ang_vel"]
+    q = (pred[..., JOINT_POS] - target[..., JOINT_POS]) / scales["joint_pos"]
+    qd = (pred[..., JOINT_VEL] - target[..., JOINT_VEL]) / scales["joint_vel"]
     stacked = torch.cat((pos, rot, lin, ang, q, qd), dim=-1)
     return (stacked**2).sum(dim=-1).mean()
 

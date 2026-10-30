@@ -56,6 +56,31 @@ algorithm:
   critic_epochs: 5
   critic_minibatches: 4
   warmup_sim_steps: 40
+  # Updates that fit the world model before the first actor update.
+  # 0 is the paper loop. zita-ch used 500.
+  wm_only_updates: 0
+  # These four are written so a paper config does not follow zita-ch.
+  # Code that finds a key missing uses zita-ch: pelvis, running, body, running.
+  # torso: root and body-pose reward on torso_link. pelvis: on the pelvis.
+  reward_anchor: torso
+  # none: raw observations, goals and xi. running: Welford norm, and xi
+  # is divided by zita-ch's fixed scales before that norm.
+  input_norm: none
+  # heading: position and linear velocity in the yaw frame, body-rate
+  # angular residual. body: zita-ch's full-body linear velocity and the
+  # world-rate angular residual, stored back as a body rate.
+  residual_frame: heading
+  # paper: unweighted squared state error. Rotation is the relative
+  # rotvec at scale 1. scaled divides each block by STATE_LOSS_SCALES.
+  # running divides the frame-local error by the running residual std.
+  wm_state_loss: paper
+  # root4: invariant state, goal, xi, and a 4-d root error.
+  # zita: zita-ch's extra tracking errors, then the goal.
+  critic_features: root4
+  # tf32 keeps every matmul in float32 with tensor cores. bf16 autocasts
+  # only the linear stacks; their outputs are cast back to float32 before
+  # integration, kinematics and the losses. Adam weights stay float32.
+  matmul: tf32
   action_noise_std: 0.1
   goal_anchor: false
   goal_encoding: paper

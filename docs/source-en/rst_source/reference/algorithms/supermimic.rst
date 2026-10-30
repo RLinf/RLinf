@@ -45,19 +45,32 @@ centre-of-mass offset):
 
    \hat s_{t+1} = \hat s_t \oplus f_\omega(\phi(\hat s_t), a_t, \xi)
 
-where :math:`\oplus` adds position and velocity residuals in the heading frame
-and composes the rotation residual as a rotation vector. Its last layer is
-zero, so the initial model predicts no change. It is fit on autoregressive
+where :math:`\oplus` adds the position residual in the heading frame and
+composes the rotation residual as a rotation vector. ``residual_frame:
+heading`` also adds linear velocity in that yaw frame and adds the angular
+residual to the stored body rate. ``body`` adds linear velocity in the full
+body frame and applies the angular increment to the world rate before
+storing the body rate again. The paper yaml sets ``heading``. Omitting the
+key selects ``body``. The last layer is zero, so the initial model predicts
+no change. It is fit on autoregressive
 windows seeded at a logged state and rolled forward on logged actions
 (Eq. 1):
 
 .. math::
 
    \mathcal{L}_{WM}(\omega) = \mathbb{E}_{\mathcal{B}} \sum_{j=1}^{k}
-   \Big[ \| \hat s_j - s_j \|^2_{\Sigma} + \mathrm{BCE}(\hat d_j, d_j) \Big]
+   \Big[ \| \hat s_j - s_j \|^2 + \mathrm{BCE}(\hat d_j, d_j) \Big]
 
-The state error uses per-block scales and the relative rotation
-:math:`\log(R_{pred} R_{target}^\top)`. Reward and observation heads are
+``algorithm.wm_state_loss: paper`` leaves the state error unweighted.
+``scaled`` divides each block by a fixed scale. ``running`` writes the 70-d
+error in the true next state's frame, divides by the running standard
+deviation of one-step residual targets (with a per-component floor), and
+averages over the 70 components. The paper yaml sets ``paper``. Omitting
+the key selects ``running``. For ``paper`` and ``scaled``, rotation is
+still :math:`\log(R_{pred} R_{target}^\top)`, because the stored root
+orientation is a quaternion. ``running`` uses
+:math:`\log(R_{true}^\top R_{pred})` in that same 70-d error. Reward and
+observation heads are
 analytic: the reward is computed from the predicted state through
 differentiable forward kinematics of the G1 tree, and the observation from the
 state, the previous action, and :math:`\xi`. The termination head is a learned
@@ -85,9 +98,12 @@ Gradients are clipped to a global norm of 1.0 and then element-wise to 0.1.
 Critic and GAE
 --------------
 
-The critic :math:`V_\psi(s, g, \xi)` (plus a 4-d root error, critic only) is
+The critic defaults to :math:`V_\psi(s, g, \xi)` plus a 4-d root error. It is
 fit to GAE returns computed backward over the same imagined trajectory
-(Eq. 3), starting from :math:`\hat R_H = V_H`:
+(Eq. 3), starting from :math:`\hat R_H = V_H`.
+``algorithm.critic_features: zita`` uses zita-ch's features instead:
+the heading-invariant state, joint error, 14 body-position errors, a 3-d
+root position error, a 6-d relative orientation, :math:`\xi`, and the goal.
 
 .. math::
 
@@ -140,11 +156,13 @@ The motion reward is BeyondMimic's tracking reward without its self-collision
 penalty, with the joint-limit weight lowered to -2, all multiplied by
 :math:`\Delta t = 0.02` s (Table A.2): body position, orientation, linear and
 angular velocity over 14 tracked bodies, root position and orientation, action
-smoothness, and joint limits. As in BeyondMimic, the root terms compare
-``torso_link`` in the world frame, and the body pose terms first move the
-reference onto the robot torso's xy position and yaw (``update_relative_body_poses``),
-so global drift stays in the root terms. Body velocities are compared in the
-world frame.
+smoothness, and joint limits. The root terms stay in the world frame, and
+the body pose terms move the reference onto the anchor body's xy position
+and yaw, so global drift stays in the root terms. Body velocities are
+compared in the world frame. ``algorithm.reward_anchor: torso`` anchors on
+``torso_link``; ``pelvis`` anchors on the pelvis. The paper yaml writes
+``torso``. Omitting the key selects ``pelvis``. ``termination_body`` still
+chooses the failure body.
 
 Return-based reset sampling
 ---------------------------
@@ -188,12 +206,12 @@ Paper, community, and implementation choices
      - not specified
      - 71-d state, scaled residual, explicit integration
      - 71-d, other frames
-     - 71-d state, unscaled heading-frame residual
+     - 71-d; ``heading`` or ``body``. The paper config writes ``heading``
    * - World-model state loss
      - :math:`\|\hat s - s\|^2`
      - per-block scales
-     - --
-     - CuboiLeo's scales, SO(3) rotation error
+     - divided by a running std
+     - ``paper`` / ``scaled`` / ``running``. The paper config writes ``paper``
    * - 680-d goal window
      - ten future frames
      - :math:`m_{t+1}..m_{t+10}`
@@ -213,7 +231,7 @@ Paper, community, and implementation choices
      - BeyondMimic
      - torso
      - pelvis
-     - torso
+     - ``torso`` or ``pelvis``. The paper config writes ``torso``
    * - Termination head
      - learned or analytic
      - learned
@@ -223,7 +241,7 @@ Paper, community, and implementation choices
      - not specified
      - fixed scales
      - running normalization
-     - none
+     - ``none`` or ``running``. The paper config writes ``none``
    * - Reference velocity
      - not specified
      - central difference
@@ -245,7 +263,14 @@ and zita-ch (`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vi
 are community reproductions used as design references; no code was copied
 from them. The table describes their ``main`` branches as consulted during
 development; no commit was recorded, so later changes in those repositories
-take precedence over this table.
+take precedence over this table. ``supermimic_lafan1_zita`` trains with the
+730-d goal, the 99-d observation, the analytic termination head, 500
+world-model-only updates, the pelvis reward anchor, running input
+normalization, the body-frame residual, and a state loss divided by the
+running residual standard deviation. Its critic uses zita-ch's extra
+features. The simulator is mjlab. Omitting those four keys also selects
+zita-ch. The paper config writes ``torso``, ``none``, ``heading`` and
+``paper`` in ``supermimic_base.yaml``.
 
 Known limitations
 -----------------
@@ -260,9 +285,12 @@ Known limitations
   a 1% prior) and ``algorithm.termination_head: analytic`` remove the cold
   start and, in short local runs, gave a correctly ordered head. Both are
   experimental; the defaults are the paper setting.
-* **No network input normalization.** Joint velocities reach about 20 in the
-  observation and the calibration offsets in :math:`\xi` are about 0.01; the
-  paper does not specify normalization and none is applied.
+* **The paper config has no input normalization.** Joint velocities reach
+  about 20 in the observation and the calibration offsets in :math:`\xi`
+  are about 0.01. The paper does not specify normalization, and
+  ``supermimic_base.yaml`` writes ``input_norm: none``. ``input_norm:
+  running`` keeps a Welford mean and variance after a fixed scale on
+  :math:`\xi`.
 * **BPTT gradient spikes.** The pre-clip actor gradient norm can spike by two
   orders of magnitude; the paper's clipping bounds each step.
 * **Not implemented:** the Appendix G distillation encoder. A stationary
@@ -271,7 +299,11 @@ Known limitations
   against the §4.3 recovery times of a converged policy. A converter for the
   official BONES-SEED G1 CSV exists, and it has not been checked on a real
   release.
-* **Not demonstrated:** a tracking policy at paper scale, the paper's
-  two-GPU recipe, and multi-node runs. A short two-GPU run on 80 GB A800s
-  has finished on real NCCL with zero parameter divergence. See the user
-  guide for what has and has not been run.
+* **Not demonstrated:** a full ``supermimic_lafan1`` paper run, the paper's
+  two-GPU recipe, and multi-node runs. ``supermimic_lafan1_zita`` has
+  finished 16000 updates on one GPU with 4096 environments. The
+  update-16000 checkpoint has ``eval/normalized_return`` 0.856, with all
+  40 clips reaching the end. zita-ch reports 0.829 at update 14000. A
+  short two-GPU run on 80 GB A800s has finished on real NCCL with zero
+  parameter divergence. See the user guide for what has and has not been
+  run.

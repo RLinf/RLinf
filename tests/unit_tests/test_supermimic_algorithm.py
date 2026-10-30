@@ -24,7 +24,11 @@ import pytest
 import torch
 from torch import nn
 
-from rlinf.algorithms.supermimic.networks import DynamicsNet
+from rlinf.algorithms.supermimic.networks import (
+    DynamicsNet,
+    MotionEncoder,
+    SuperMimicModels,
+)
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
     gae_targets,
@@ -48,15 +52,19 @@ from rlinf.envs.sim.g1_mimic.constants import (
     EPISODE_TIMEOUT,
     ROOT_QUAT,
     STATE_DIM,
+    XI_DIM,
+    critic_input_dim,
 )
 from rlinf.envs.sim.g1_mimic.features import (
     default_state,
+    heading_invariant_features,
     integrate_residual,
+    root_error_4d,
     rotvec_to_quat,
     so3_relative_rotvec,
 )
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
-from rlinf.envs.sim.g1_mimic.reward import analytic_reward
+from rlinf.envs.sim.g1_mimic.reward import analytic_reward, motion_critic_input
 
 needs_mjlab = pytest.mark.skipif(
     importlib.util.find_spec("mjlab") is None,
@@ -499,6 +507,35 @@ def test_rotation_loss_respects_quaternion_sign_and_pi_branch():
     assert float(near_rot.grad.abs().max()) < 1e6
 
 
+def test_paper_state_loss_is_unweighted_and_scaled_divides_blocks():
+    pred = default_state(1, "cpu", torch.float32)
+    target = pred.clone()
+    target[..., 0] = pred[..., 0] + 0.05
+    paper = state_prediction_loss(pred, target)
+    scaled = state_prediction_loss(pred, target, scaled=True)
+    assert float(paper) == pytest.approx(0.05**2, rel=1e-5)
+    assert float(scaled) == pytest.approx(1.0, rel=1e-5)
+
+
+def test_root4_critic_input_keeps_the_historical_order():
+    state = default_state(2, "cpu", torch.float32)
+    ref = state.clone()
+    ref[..., 0] = 1.0
+    goal = torch.randn(2, 680)
+    xi = torch.randn(2, XI_DIM)
+    got = motion_critic_input(state, goal, xi, ref, "root4")
+    want = torch.cat(
+        (heading_invariant_features(state), goal, xi, root_error_4d(state, ref)),
+        dim=-1,
+    )
+    assert torch.allclose(got, want)
+    assert got.shape[-1] == critic_input_dim(680, "root4")
+    models = SuperMimicModels(680, critic_features="root4")
+    assert models.critic.net[0].in_features == got.shape[-1]
+    zita = SuperMimicModels(730, critic_features="zita")
+    assert zita.critic.net[0].in_features == critic_input_dim(730, "zita")
+
+
 def test_world_model_rollout_loss_is_finite_for_k8():
     torch.manual_seed(0)
     net = DynamicsNet()
@@ -635,3 +672,169 @@ def test_reset_finish_ignores_leftover_rewards():
     assert torch.isfinite(probs).all()
     assert float(probs.sum()) == pytest.approx(1.0)
     assert torch.all(probs > 0)
+
+
+def test_bf16_matmul_returns_float32_and_float32_gradients():
+    """The linear stack may run in bfloat16. The tensor handed back does not."""
+    torch.manual_seed(0)
+    encoder = MotionEncoder(8)
+    goal = torch.randn(4, 8)
+    fp32 = encoder(goal)
+    encoder.bf16_matmul = True
+    mixed = encoder(goal)
+    assert fp32.dtype == torch.float32
+    assert mixed.dtype == torch.float32
+    assert mixed.shape == fp32.shape
+    assert torch.isfinite(mixed).all()
+    assert float((mixed - fp32).detach().abs().max()) > 0.0
+    mixed.sum().backward()
+    weight = encoder.net[0].weight
+    assert weight.dtype == torch.float32
+    assert weight.grad is not None
+    assert weight.grad.dtype == torch.float32
+    assert torch.isfinite(weight.grad).all()
+
+
+def test_dynamics_window_matches_the_open_loop():
+    """The fused k-step loss is the same sum the trainer used to accumulate."""
+    from rlinf.algorithms.supermimic.scan import make_dynamics_window
+    from rlinf.envs.sim.g1_mimic.features import integrate_residual
+
+    torch.manual_seed(0)
+    dynamics = DynamicsNet()
+    twin = DynamicsNet()
+    twin.load_state_dict(dynamics.state_dict())
+    batch, k = 2, 3
+    state0 = torch.randn(batch, 71)
+    state0[:, 3:7] = torch.nn.functional.normalize(state0[:, 3:7], dim=-1)
+    actions = torch.randn(batch, k, 29)
+    xi = torch.randn(batch, 33)
+    targets = torch.randn(batch, k, 71)
+    targets[:, :, 3:7] = torch.nn.functional.normalize(targets[:, :, 3:7], dim=-1)
+    left = state0.detach().clone().requires_grad_(True)
+    right = state0.detach().clone().requires_grad_(True)
+
+    pred = left
+    manual = left.new_zeros(())
+    first = last = None
+    for t in range(k):
+        pred = integrate_residual(pred, dynamics(pred, actions[:, t], xi))
+        step = state_prediction_loss(pred, targets[:, t])
+        if t == 0:
+            first = step
+        last = step
+        manual = manual + step
+    window = make_dynamics_window(k, False, False, "pelvis")
+    loss, one, end = window(
+        twin, None, right, actions, xi, targets, targets, torch.zeros(batch, k), 1.0
+    )
+    assert torch.allclose(loss, manual, atol=1e-6)
+    assert torch.allclose(one, first, atol=1e-6)
+    assert torch.allclose(end, last, atol=1e-6)
+    manual.backward()
+    loss.backward()
+    assert torch.allclose(left.grad, right.grad, atol=1e-5)
+    for src, dst in zip(dynamics.parameters(), twin.parameters(), strict=True):
+        assert torch.allclose(src.grad, dst.grad, atol=1e-5)
+
+
+def test_residual_frames_round_trip_and_a_roll_splits_the_linear_velocity():
+    from rlinf.envs.sim.g1_mimic.constants import RES_LIN
+    from rlinf.envs.sim.g1_mimic.features import (
+        frame_local_error,
+        integrate_residual,
+        quat_mul,
+        residual_target,
+        rotvec_to_quat,
+    )
+
+    torch.manual_seed(0)
+    state = torch.zeros(4, 71)
+    state[:, 3] = 1.0
+    state[:, 3:7] = rotvec_to_quat(torch.tensor([0.4, 0.0, 0.2]).expand(4, 3))
+    nxt = state.clone()
+    nxt[:, 0:3] += torch.tensor([0.1, -0.2, 0.05])
+    nxt[:, 7:36] += 0.05
+    nxt[:, 36:39] += torch.tensor([0.3, -0.1, 0.2])
+    nxt[:, 39:42] += 0.1
+    nxt[:, 42:71] += 0.02
+    nxt[:, 3:7] = quat_mul(
+        state[:, 3:7], rotvec_to_quat(torch.tensor([0.0, 0.05, 0.2]).expand(4, 3))
+    )
+    zero = torch.zeros(4, 70)
+    for frame in ("heading", "body"):
+        held = integrate_residual(state, zero, frame)
+        assert torch.allclose(held, state, atol=1e-5)
+        back = integrate_residual(state, residual_target(state, nxt, frame), frame)
+        assert torch.allclose(back, nxt, atol=1e-4)
+        assert torch.allclose(frame_local_error(nxt, nxt, frame), torch.zeros(4, 70))
+    residual = torch.zeros(4, 70)
+    residual[:, RES_LIN] = torch.tensor([1.0, 0.0, 0.0])
+    heading = integrate_residual(state, residual, "heading")
+    body = integrate_residual(state, residual, "body")
+    assert not torch.allclose(heading[:, 36:39], body[:, 36:39], atol=1e-3)
+
+
+def test_running_norm_matches_welford_and_then_freezes():
+    from rlinf.algorithms.supermimic.networks import RunningNorm
+
+    norm = RunningNorm(2, max_count=2, eps=1e-2)
+    norm.update(torch.tensor([[0.0, 2.0], [2.0, 4.0]]))
+    assert torch.allclose(norm.mean, torch.tensor([1.0, 3.0]))
+    assert torch.allclose(norm.var, torch.ones(2))
+    scale = torch.sqrt(torch.tensor(1.0 + 1e-4))
+    assert torch.allclose(norm(torch.tensor([1.0, 3.0])), torch.zeros(2), atol=1e-5)
+    assert torch.allclose(norm.std(), scale.expand(2))
+    frozen = norm.mean.clone()
+    norm.update(torch.zeros(4, 2))
+    assert torch.equal(norm.mean, frozen)
+    assert float(norm.count) == 2
+
+
+def test_running_state_loss_averages_the_scaled_components():
+    from rlinf.algorithms.supermimic.networks import DynamicsNet, running_state_loss
+    from rlinf.envs.sim.g1_mimic.features import error_floor, frame_local_error
+
+    net = DynamicsNet(output_norm=True)
+    with torch.no_grad():
+        net.out_norm.var.fill_(0.25)
+    pred = torch.zeros(2, 71)
+    true = torch.zeros(2, 71)
+    pred[:, 3] = 1.0
+    true[:, 3] = 1.0
+    pred[:, 0] = 0.1
+    err = frame_local_error(pred, true, "heading")
+    scale = torch.maximum(net.out_norm.std(), error_floor(err))
+    expect = (err / scale).square().mean()
+    assert torch.allclose(running_state_loss(pred, true, net, "heading"), expect)
+    assert float(expect) < float((err / scale).square().sum(-1).mean())
+
+
+def test_running_norm_modules_are_absent_from_the_paper_state_dict():
+    plain = SuperMimicModels(8, velocity=True)
+    running = SuperMimicModels(8, velocity=True, input_norm=True, output_norm=True)
+    plain_names = set(plain.state_dict())
+    running_names = set(running.state_dict())
+    assert "dynamics.in_norm.mean" not in plain_names
+    assert "dynamics.out_norm.mean" not in plain_names
+    assert "encoder.goal_norm.mean" not in plain_names
+    assert "dynamics.in_norm.mean" in running_names
+    assert "dynamics.out_norm.mean" in running_names
+    assert "decoder.obs_norm.mean" in running_names
+    assert running.velocity_encoder.obs_norm is running.decoder.obs_norm
+    assert not any(
+        name.startswith("velocity_encoder.obs_norm") for name in running_names
+    )
+
+
+def test_normalize_xi_uses_zita_fixed_scales():
+    from rlinf.envs.sim.g1_mimic.features import normalize_xi
+
+    xi = torch.zeros(33)
+    xi[0] = 0.75
+    xi[1] = 0.01
+    xi[30] = 0.05
+    scaled = normalize_xi(xi)
+    assert float(scaled[0]) == pytest.approx(0.0)
+    assert float(scaled[1]) == pytest.approx(1.0)
+    assert float(scaled[30]) == pytest.approx(1.0)

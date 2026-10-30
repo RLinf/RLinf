@@ -365,6 +365,14 @@ several GPUs each rank takes an equal share.
    * - ``supermimic_lafan1_obs99``
      - 99-d observation: the 93-d frame plus the root orientation relative to
        the reference.
+   * - ``supermimic_lafan1_zita``
+     - zita-ch's interface and schedule: the 730-d goal together with the
+       99-d observation, an analytic termination head, 500 world-model-only
+       updates, 64 warmup steps, 16000 updates, and a checkpoint every 2000.
+       The reward anchor is the pelvis, inputs use a running norm, the
+       residual uses the body frame, and the state loss divides by the
+       running residual standard deviation. The critic uses zita-ch's extra
+       features. The simulator stays mjlab.
    * - ``supermimic_velocity``
      - Motion tracking plus a velocity-command encoder (Appendix G), half of
        the environments each.
@@ -380,6 +388,52 @@ Two experimental options change the termination head and are off by default:
 ``algorithm.termination_head: analytic`` and
 ``algorithm.termination_bias_init``. The algorithm page explains when they
 matter. The default ``algorithm.seed`` is 0; rank ``r`` uses ``seed + r``.
+``algorithm.wm_only_updates`` defaults to 0. A positive value fits only the
+world model for that many updates. ``algorithm.critic_features`` defaults to
+``root4`` (the 4-d root error); ``zita`` selects zita-ch's extra features.
+
+When the next four keys are omitted, the code follows zita-ch: a pelvis
+reward anchor, running input normalization, a body-frame residual, and a
+state loss divided by the running residual standard deviation.
+``supermimic_base.yaml`` writes the paper names, so ``supermimic_lafan1``
+does not silently become that recipe.
+
+* ``algorithm.reward_anchor``: ``pelvis`` or ``torso`` (``torso_link``).
+  The paper config writes ``torso``. ``termination_body`` still chooses the
+  failure body.
+* ``algorithm.input_norm``: ``running`` keeps a Welford mean and variance,
+  after zita-ch's fixed scale on :math:`\xi`. ``none`` leaves the raw
+  values. The paper config writes ``none``.
+* ``algorithm.residual_frame``: ``body`` puts linear velocity in the full
+  body frame and stores the world-rate angular increment back as a body
+  rate. ``heading`` puts position and linear velocity in the yaw frame and
+  adds the angular residual to the stored body rate. The paper config
+  writes ``heading``.
+* ``algorithm.wm_state_loss``: ``running`` divides the frame-local error by
+  the running residual standard deviation and averages the 70 components.
+  ``paper`` is an unweighted square. ``scaled`` uses fixed block scales.
+  The paper config writes ``paper``.
+
+``supermimic_lafan1_zita`` sets ``pelvis``, ``running``, ``body`` and
+``running``, overriding the base config. The simulator stays mjlab. It
+refuses a checkpoint saved before those four fields were recorded. One
+single-GPU run with 4096 environments finished 16000 updates. At update
+16000, ``eval/normalized_return`` on the 40 LAFAN1 clips was 0.856, and
+every clip played through to its end. zita-ch reports 0.829 at update
+14000.
+
+.. code-block:: bash
+
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+   bash examples/embodiment/run_supermimic.sh supermimic_lafan1_zita \
+       runner.logger.log_path=/data/runs/lafan1_zita \
+       'runner.logger.logger_backends=[tensorboard]'
+
+Evaluate with ``supermimic_lafan1_zita_eval``. Point ``eval.checkpoint`` at
+the ``supermimic_lafan1_zita`` directory under that ``log_path`` to use the
+newest complete checkpoint, or at one ``global_step_<N>`` directory.
+zita-ch's reported checkpoint is update 14000. The run above scored
+``eval/normalized_return`` 0.856 at update 16000.
 
 Common Keys
 ~~~~~~~~~~~
@@ -652,6 +706,8 @@ complete one is used. Eval configs per training config:
      - ``supermimic_lafan1_goal730_eval``
    * - ``supermimic_lafan1_obs99``
      - ``supermimic_lafan1_obs99_eval``
+   * - ``supermimic_lafan1_zita``
+     - ``supermimic_lafan1_zita_eval``
    * - ``supermimic_velocity``
      - ``supermimic_velocity_eval``
    * - ``supermimic_bones_seed``, ``supermimic_bones_seed_2gpu``
@@ -929,10 +985,14 @@ passed:
   finite and counters stayed monotonic. Normalized return moved from
   0.001892 to 0.001893 and the failure rate stayed at 1. One seed and a
   short budget do not show that the policy learned to track.
+* One full ``supermimic_lafan1_zita`` training run: one GPU, 4096
+  environments, 16000 updates. Motion evaluation of the update-16000
+  checkpoint on all 40 clips gave ``eval/normalized_return`` 0.856,
+  ``eval/fail_rate`` 0, and ``eval/clip_end_rate`` 1. zita-ch reports
+  0.829 at update 14000. The simulator was mjlab. This page still has no
+  learning curve for that run.
 
-Not yet run: paper-scale training (4096 environments on one GPU, and the
-paper's two-GPU recipe), multiple nodes, Slurm, real BONES-SEED data,
-paper §4.3 T-pose recovery (this entry is a standing pose and does not
-stand in for that result), and a run long enough to compare with the
-paper's metrics. This page therefore still has no learning curves or paper
-comparison; those will be added after a long run.
+Not yet run: the paper config ``supermimic_lafan1`` (680-d goal, 320000
+updates), the paper's two-GPU recipe, multiple nodes, Slurm, real
+BONES-SEED data, and paper §4.3 T-pose recovery (this entry is a standing
+pose and does not stand in for that result).

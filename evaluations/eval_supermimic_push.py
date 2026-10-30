@@ -71,10 +71,11 @@ def _criteria(eval_cfg) -> RecoveryCriteria:
 def require_matching_checkpoint(meta: dict, expected: dict) -> None:
     """Refuse a checkpoint whose policy interface is not this config's."""
     for key in ckpt.POLICY_KEYS:
-        if meta.get(key) != expected[key]:
+        found = ckpt.policy_value(meta, key)
+        want = ckpt.policy_value(expected, key)
+        if found != want:
             raise ValueError(
-                f"checkpoint has {key}={meta.get(key)!r}, "
-                f"the eval config has {expected[key]!r}"
+                f"checkpoint has {key}={found!r}, the eval config has {want!r}"
             )
 
 
@@ -82,11 +83,17 @@ def _load_models(
     cfg, checkpoint: str, device: torch.device
 ) -> tuple[SuperMimicModels, dict]:
     algo = cfg.algorithm
+    input_norm = str(algo.get("input_norm", "running"))
+    wm_state_loss = str(algo.get("wm_state_loss", "running"))
     models = SuperMimicModels(
         int(algo.goal_dim),
         int(algo.obs_dim),
         velocity=bool(algo.get("velocity_tracking", False)),
+        critic_features=str(algo.get("critic_features", "root4")),
+        input_norm=input_norm == "running",
+        output_norm=wm_state_loss == "running",
     ).to(device)
+    models.set_bf16_matmul(str(algo.get("matmul", "tf32")) == "bf16")
     models.eval()
     path = Path(checkpoint)
     meta = ckpt.verify_checkpoint(path)
@@ -98,6 +105,11 @@ def _load_models(
             "goal_encoding": str(algo.get("goal_encoding", "paper")),
             "goal_window": list(GOAL_WINDOW[str(algo.get("goal_encoding", "paper"))]),
             "velocity_tracking": bool(algo.get("velocity_tracking", False)),
+            "critic_features": str(algo.get("critic_features", "root4")),
+            "wm_state_loss": wm_state_loss,
+            "reward_anchor": str(algo.get("reward_anchor", "pelvis")),
+            "input_norm": input_norm,
+            "residual_frame": str(algo.get("residual_frame", "body")),
         },
     )
     blob = torch.load(path / ckpt.MODEL_FILE, map_location=device, weights_only=True)

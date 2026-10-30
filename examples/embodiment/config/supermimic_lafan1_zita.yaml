@@ -1,0 +1,33 @@
+# zita-ch/supermimic_vibed's LAFAN1 interface and schedule.
+# 730-d goal and 99-d observation together, analytic termination, 64
+# warmup steps, and 500 world-model-only updates. The reported checkpoint
+# is iteration 14000; 16000 covers that save and the next one.
+# The simulator stays mjlab. These four lines are zita-ch's recipe and
+# override supermimic_base.yaml: pelvis reward anchor, running input norm,
+# body-frame residual, and state loss divided by the running residual std.
+# Linear layers use bfloat16 autocast; integration, kinematics and the
+# losses stay float32. The critic input is zita-ch's extra feature layout.
+# A checkpoint trained before these four lines does not load here.
+defaults:
+  - supermimic_lafan1
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_lafan1_zita
+  save_interval: 2000
+
+algorithm:
+  goal_encoding: goal730
+  goal_frame_dim: 73
+  obs_dim: 99
+  termination_head: analytic
+  warmup_sim_steps: 64
+  wm_only_updates: 500
+  reward_anchor: pelvis
+  input_norm: running
+  residual_frame: body
+  wm_state_loss: running
+  critic_features: zita
+  matmul: bf16
+  total_updates: 16000

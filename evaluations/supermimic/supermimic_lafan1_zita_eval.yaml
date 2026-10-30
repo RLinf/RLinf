@@ -1,0 +1,16 @@
+# Evaluate a checkpoint trained with supermimic_lafan1_zita.yaml.
+defaults:
+  - supermimic_lafan1_zita
+  - supermimic_eval_common
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+runner:
+  logger:
+    experiment_name: supermimic_lafan1_zita_eval

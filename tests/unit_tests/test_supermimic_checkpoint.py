@@ -42,6 +42,15 @@ def _fake_checkpoint(directory, world_size=1, step=0):
     return ckpt.write_meta(directory, {"world_size": world_size, "global_update": step})
 
 
+def test_missing_policy_fields_mean_the_paper_recipe():
+    meta = {}
+    assert ckpt.policy_value(meta, "critic_features") == "root4"
+    assert ckpt.policy_value(meta, "wm_state_loss") == "paper"
+    assert ckpt.policy_value(meta, "reward_anchor") == "torso"
+    assert ckpt.policy_value(meta, "input_norm") == "none"
+    assert ckpt.policy_value(meta, "residual_frame") == "heading"
+
+
 def test_latest_checkpoint_skips_unfinished_and_corrupt(tmp_path):
     _fake_checkpoint(tmp_path / "global_step_5", step=5)
     _fake_checkpoint(tmp_path / "global_step_9", step=9)
@@ -234,6 +243,11 @@ def test_checkpoints_of_another_format_or_goal_window_are_refused(tmp_path):
     meta = json.loads(meta_path.read_text())
     assert meta["format"] == ckpt.FORMAT_VERSION
     assert meta["goal_window"] == list(GOAL_WINDOW["paper"]) == [0, 9]
+    # This fixture omits the four switches, so the trainer follows zita-ch.
+    assert meta["reward_anchor"] == "pelvis"
+    assert meta["input_norm"] == "running"
+    assert meta["residual_frame"] == "body"
+    assert meta["wm_state_loss"] == "running"
 
     def load_with(**changes):
         meta_path.write_text(json.dumps({**meta, **changes}))
@@ -243,6 +257,13 @@ def test_checkpoints_of_another_format_or_goal_window_are_refused(tmp_path):
 
     with pytest.raises(ValueError, match="goal_window"):
         load_with(goal_window=[1, 10])
+    with pytest.raises(ValueError, match="critic_features"):
+        load_with(critic_features="zita")
+    without_features = {
+        key: value for key, value in meta.items() if key != "critic_features"
+    }
+    meta_path.write_text(json.dumps(without_features))
+    SuperMimicTrainer(_cfg(), device=torch.device("cpu")).load_checkpoint(str(target))
     with pytest.raises(ValueError, match="format 2"):
         load_with(format=2)
     meta_path.unlink()

@@ -36,6 +36,9 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_POS,
     ROOT_QUAT,
     STATE_DIM,
+    XI_COM,
+    XI_ENCODER,
+    XI_FRICTION,
 )
 
 
@@ -189,33 +192,176 @@ def heading_invariant_features(state: torch.Tensor) -> torch.Tensor:
     return feat.squeeze(0) if squeezed else feat
 
 
-def integrate_residual(state: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
-    """Apply a 70-d residual in the heading frame. Zero residual leaves state."""
+def normalize_xi(xi: torch.Tensor) -> torch.Tensor:
+    """zita-ch's fixed ξ scale: friction, joint offsets, then the torso CoM offset.
+
+    Running normalization sees this vector, not the raw context. Friction is
+    centered at 0.75 and divided by 0.45. Joint offsets are divided by 0.01.
+    The three CoM components are divided by 0.05.
+    """
+    return torch.cat(
+        (
+            (xi[..., XI_FRICTION] - 0.75) / 0.45,
+            xi[..., XI_ENCODER] / 0.01,
+            xi[..., XI_COM] / 0.05,
+        ),
+        dim=-1,
+    )
+
+
+def _body_rotvec(q_from: torch.Tensor, q_to: torch.Tensor) -> torch.Tensor:
+    """``Log(R_from^T R_to)``, the body-frame rotation from ``q_from`` to ``q_to``."""
+    return quat_to_rotvec(quat_mul(quat_inv(q_from), q_to))
+
+
+def integrate_residual(
+    state: torch.Tensor, residual: torch.Tensor, frame: str = "heading"
+) -> torch.Tensor:
+    """Apply a 70-d residual. A zero residual leaves the state unchanged.
+
+    ``heading`` is this repository's integrator: position and linear velocity
+    live in the yaw frame, and the stored body-frame angular velocity is
+    incremented directly. ``body`` is zita-ch's integrator: position stays in
+    the yaw frame, while linear velocity and the world angular velocity are
+    incremented in the full body frame. Stored angular velocity remains the
+    body-frame value ``R^T ω_world``.
+    """
+    if frame not in {"heading", "body"}:
+        raise ValueError(f"residual frame must be heading or body, got {frame!r}")
     squeezed = state.dim() == 1
     state = _as_batch(state)
     residual = _as_batch(residual)
     quat = quat_normalize(state[..., ROOT_QUAT])
+    rot = quat_to_rotmat(quat)
     yaw = heading_yaw(quat)
     r_heading = yaw_rotation(yaw)
-    dpos_h = residual[..., RES_POS]
-    dpos_w = torch.einsum("...ij,...j->...i", r_heading, dpos_h)
-    # Linear-velocity residual is heading-frame, same frame as the network input.
-    # Angular-velocity residual stays in the body frame (added, not yaw-rotated).
-    dlin_w = torch.einsum("...ij,...j->...i", r_heading, residual[..., RES_LIN])
-    new_pos = state[..., ROOT_POS] + dpos_w
+    dpos_w = torch.einsum("...ij,...j->...i", r_heading, residual[..., RES_POS])
     new_quat = quat_normalize(quat_mul(quat, rotvec_to_quat(residual[..., RES_ROT])))
+    if frame == "heading":
+        dlin_w = torch.einsum("...ij,...j->...i", r_heading, residual[..., RES_LIN])
+        new_ang = state[..., ROOT_ANG_VEL] + residual[..., RES_ANG]
+    else:
+        dlin_w = torch.einsum("...ij,...j->...i", rot, residual[..., RES_LIN])
+        # ω_world grows by R @ dw. The stored value is the body-frame rate.
+        exp = quat_to_rotmat(rotvec_to_quat(residual[..., RES_ROT]))
+        grown = state[..., ROOT_ANG_VEL] + residual[..., RES_ANG]
+        new_ang = torch.einsum("...ji,...j->...i", exp, grown)
     next_state = torch.cat(
         (
-            new_pos,
+            state[..., ROOT_POS] + dpos_w,
             new_quat,
             state[..., JOINT_POS] + residual[..., RES_JOINT],
             state[..., ROOT_LIN_VEL] + dlin_w,
-            state[..., ROOT_ANG_VEL] + residual[..., RES_ANG],
+            new_ang,
             state[..., JOINT_VEL] + residual[..., RES_JOINT_VEL],
         ),
         dim=-1,
     )
     return next_state.squeeze(0) if squeezed else next_state
+
+
+def residual_target(
+    state: torch.Tensor, nxt: torch.Tensor, frame: str = "heading"
+) -> torch.Tensor:
+    """70-d increment from ``state`` to ``nxt`` in ``frame``.
+
+    This is the regression target of one real transition. Position is always
+    the yaw-frame displacement. ``heading`` expresses linear velocity in that
+    same yaw frame and angular velocity as a body-rate difference. ``body``
+    expresses linear velocity in the full body frame and angular velocity as
+    the body-frame change of the world rate.
+    """
+    if frame not in {"heading", "body"}:
+        raise ValueError(f"residual frame must be heading or body, got {frame!r}")
+    squeezed = state.dim() == 1
+    state = _as_batch(state)
+    nxt = _as_batch(nxt)
+    quat = quat_normalize(state[..., ROOT_QUAT])
+    rot = quat_to_rotmat(quat)
+    r_heading = yaw_rotation(heading_yaw(quat))
+    dpos = torch.einsum(
+        "...ji,...j->...i", r_heading, nxt[..., ROOT_POS] - state[..., ROOT_POS]
+    )
+    drot = _body_rotvec(quat, quat_normalize(nxt[..., ROOT_QUAT]))
+    dvel = nxt[..., ROOT_LIN_VEL] - state[..., ROOT_LIN_VEL]
+    if frame == "heading":
+        dlin = torch.einsum("...ji,...j->...i", r_heading, dvel)
+        dang = nxt[..., ROOT_ANG_VEL] - state[..., ROOT_ANG_VEL]
+    else:
+        dlin = torch.einsum("...ji,...j->...i", rot, dvel)
+        exp = quat_to_rotmat(rotvec_to_quat(drot))
+        dang = (
+            torch.einsum("...ij,...j->...i", exp, nxt[..., ROOT_ANG_VEL])
+            - state[..., ROOT_ANG_VEL]
+        )
+    out = torch.cat(
+        (
+            dpos,
+            drot,
+            nxt[..., JOINT_POS] - state[..., JOINT_POS],
+            dlin,
+            dang,
+            nxt[..., JOINT_VEL] - state[..., JOINT_VEL],
+        ),
+        dim=-1,
+    )
+    return out.squeeze(0) if squeezed else out
+
+
+def frame_local_error(
+    pred: torch.Tensor, true: torch.Tensor, frame: str = "heading"
+) -> torch.Tensor:
+    """70-d error of ``pred`` against ``true``, in ``true``'s frame.
+
+    The layout matches :func:`residual_target`. zita-ch divides this vector by
+    the running standard deviation of those one-step targets.
+    """
+    if frame not in {"heading", "body"}:
+        raise ValueError(f"residual frame must be heading or body, got {frame!r}")
+    squeezed = pred.dim() == 1
+    pred = _as_batch(pred)
+    true = _as_batch(true)
+    quat = quat_normalize(true[..., ROOT_QUAT])
+    rot = quat_to_rotmat(quat)
+    r_heading = yaw_rotation(heading_yaw(quat))
+    dpos = torch.einsum(
+        "...ji,...j->...i", r_heading, pred[..., ROOT_POS] - true[..., ROOT_POS]
+    )
+    drot = _body_rotvec(quat, quat_normalize(pred[..., ROOT_QUAT]))
+    dvel = pred[..., ROOT_LIN_VEL] - true[..., ROOT_LIN_VEL]
+    if frame == "heading":
+        dlin = torch.einsum("...ji,...j->...i", r_heading, dvel)
+        dang = pred[..., ROOT_ANG_VEL] - true[..., ROOT_ANG_VEL]
+    else:
+        dlin = torch.einsum("...ji,...j->...i", rot, dvel)
+        pred_rot = quat_to_rotmat(quat_normalize(pred[..., ROOT_QUAT]))
+        world_pred = torch.einsum("...ij,...j->...i", pred_rot, pred[..., ROOT_ANG_VEL])
+        world_true = torch.einsum("...ij,...j->...i", rot, true[..., ROOT_ANG_VEL])
+        dang = torch.einsum("...ji,...j->...i", rot, world_pred - world_true)
+    out = torch.cat(
+        (
+            dpos,
+            drot,
+            pred[..., JOINT_POS] - true[..., JOINT_POS],
+            dlin,
+            dang,
+            pred[..., JOINT_VEL] - true[..., JOINT_VEL],
+        ),
+        dim=-1,
+    )
+    return out.squeeze(0) if squeezed else out
+
+
+def error_floor(like: torch.Tensor) -> torch.Tensor:
+    """Per-component floor on zita-ch's residual standard deviation, shape ``[70]``."""
+    floor = like.new_empty(RESIDUAL_DIM)
+    floor[RES_POS] = 3e-3
+    floor[RES_ROT] = 5e-3
+    floor[RES_LIN] = 2e-2
+    floor[RES_ANG] = 5e-2
+    floor[RES_JOINT] = 3e-3
+    floor[RES_JOINT_VEL] = 5e-2
+    return floor
 
 
 def root_error_4d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:

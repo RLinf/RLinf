@@ -22,10 +22,11 @@ import re
 from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
 
+from rlinf.envs.sim.g1_mimic.constants import critic_input_dim
+
 OBS_FRAME_DIM = 93
 GOAL_FRAME_DIM = 68
 ANCHOR_DIM = 9
-CRITIC_EXTRA_DIM = 71 + 33 + 4
 
 
 def _check_number(
@@ -202,8 +203,12 @@ def validate_supermimic_cfg(
                 f"algorithm.goal_frame_dim must be 68, got {alg.goal_frame_dim}"
             )
     elif encoding == "goal730":
-        if obs_dim != OBS_FRAME_DIM or bool(alg.goal_anchor):
-            raise AssertionError("730-d goal keeps the 93-d observation and no anchor")
+        if bool(alg.goal_anchor):
+            raise AssertionError("730-d goal does not combine with the anchor goal")
+        if obs_dim not in {OBS_FRAME_DIM, 99}:
+            raise AssertionError(
+                f"730-d goal uses a 93-d or 99-d observation, got {obs_dim}"
+            )
         if int(alg.goal_frame_dim) != 73:
             raise AssertionError(f"goal730 frame must be 73, got {alg.goal_frame_dim}")
     else:
@@ -229,6 +234,36 @@ def validate_supermimic_cfg(
         raise AssertionError(
             f"algorithm.termination_head must be learned or analytic, got {termination_head!r}"
         )
+    # Omitted keys follow zita-ch. The paper yaml writes the other values.
+    wm_state_loss = str(alg.get("wm_state_loss", "running"))
+    if wm_state_loss not in {"paper", "scaled", "running"}:
+        raise AssertionError(
+            "algorithm.wm_state_loss must be paper, scaled or running, "
+            f"got {wm_state_loss!r}"
+        )
+    reward_anchor = str(alg.get("reward_anchor", "pelvis"))
+    if reward_anchor not in {"pelvis", "torso"}:
+        raise AssertionError(
+            f"algorithm.reward_anchor must be pelvis or torso, got {reward_anchor!r}"
+        )
+    input_norm = str(alg.get("input_norm", "running"))
+    if input_norm not in {"running", "none"}:
+        raise AssertionError(
+            f"algorithm.input_norm must be running or none, got {input_norm!r}"
+        )
+    residual_frame = str(alg.get("residual_frame", "body"))
+    if residual_frame not in {"body", "heading"}:
+        raise AssertionError(
+            f"algorithm.residual_frame must be body or heading, got {residual_frame!r}"
+        )
+    critic_features = str(alg.get("critic_features", "root4"))
+    if critic_features not in {"root4", "zita"}:
+        raise AssertionError(
+            f"algorithm.critic_features must be root4 or zita, got {critic_features!r}"
+        )
+    matmul = str(alg.get("matmul", "tf32"))
+    if matmul not in {"tf32", "bf16"}:
+        raise AssertionError(f"algorithm.matmul must be tf32 or bf16, got {matmul!r}")
     termination_body = str(alg.get("termination_body", "pelvis"))
     if termination_body not in {"pelvis", "torso"}:
         raise AssertionError(
@@ -243,7 +278,12 @@ def validate_supermimic_cfg(
     _check_number(alg, "G_max", float, low=0.0, low_open=True)
     for name in ("wm_batches", "critic_epochs", "critic_minibatches"):
         _check_number(alg, name, int, low=1)
-    for name in ("param_check_interval", "max_nonfinite_skips", "warmup_sim_steps"):
+    for name in (
+        "param_check_interval",
+        "max_nonfinite_skips",
+        "warmup_sim_steps",
+        "wm_only_updates",
+    ):
         _check_number(alg, name, int, low=0)
     for name in ("seed", "termination_bias_init"):
         if alg.get(name, None) is not None:
@@ -286,7 +326,7 @@ def validate_supermimic_cfg(
     else:
         goal_ref_dim = int(alg.goal_frames) * int(alg.goal_frame_dim)
         goal_dim = goal_ref_dim + (ANCHOR_DIM if bool(alg.goal_anchor) else 0)
-    critic_in_dim = goal_dim + CRITIC_EXTRA_DIM
+    critic_in_dim = critic_input_dim(goal_dim, critic_features)
 
     with open_dict(cfg):
         cfg.algorithm.world_size = world_size
@@ -295,4 +335,8 @@ def validate_supermimic_cfg(
         cfg.algorithm.goal_dim = goal_dim
         cfg.algorithm.encoder_in_dim = goal_dim
         cfg.algorithm.critic_in_dim = critic_in_dim
+        cfg.algorithm.wm_state_loss = wm_state_loss
+        cfg.algorithm.reward_anchor = reward_anchor
+        cfg.algorithm.input_norm = input_norm
+        cfg.algorithm.residual_frame = residual_frame
     return cfg

@@ -146,6 +146,7 @@ def motion_eval_rows(
                 joint_high=joint_high,
                 active=count,
                 include_ref_ori=include_ref_ori,
+                reward_anchor=str(cfg.algorithm.get("reward_anchor", "pelvis")),
             )
         )
     merged = {key: torch.cat([part[key] for part in parts], dim=0) for key in parts[0]}
@@ -205,9 +206,20 @@ class SuperMimicEvaluator:
         self.goal_encoding = str(algo.get("goal_encoding", "paper"))
         self.velocity = bool(algo.get("velocity_tracking", False))
         self.motion = build_motion_library(cfg, device)
+        self.critic_features = str(algo.get("critic_features", "root4"))
+        self.wm_state_loss = str(algo.get("wm_state_loss", "running"))
+        self.reward_anchor = str(algo.get("reward_anchor", "pelvis"))
+        self.input_norm = str(algo.get("input_norm", "running"))
+        self.residual_frame = str(algo.get("residual_frame", "body"))
         self.models = SuperMimicModels(
-            self.goal_dim, self.obs_dim, velocity=self.velocity
+            self.goal_dim,
+            self.obs_dim,
+            velocity=self.velocity,
+            critic_features=self.critic_features,
+            input_norm=self.input_norm == "running",
+            output_norm=self.wm_state_loss == "running",
         ).to(device)
+        self.models.set_bf16_matmul(str(algo.get("matmul", "tf32")) == "bf16")
         self.models.eval()
         self.goal_fn = goal_function(
             self.motion, self.goal_encoding, bool(algo.goal_anchor)
@@ -225,12 +237,19 @@ class SuperMimicEvaluator:
             "goal_encoding": self.goal_encoding,
             "goal_window": list(GOAL_WINDOW[self.goal_encoding]),
             "velocity_tracking": self.velocity,
+            "critic_features": self.critic_features,
+            "wm_state_loss": self.wm_state_loss,
+            "reward_anchor": self.reward_anchor,
+            "input_norm": self.input_norm,
+            "residual_frame": self.residual_frame,
         }
         for key in ckpt.POLICY_KEYS:
-            if meta.get(key) != expected[key]:
+            found = ckpt.policy_value(meta, key)
+            want = ckpt.policy_value(expected, key)
+            if found != want:
                 raise ValueError(
-                    f"checkpoint {path} has {key}={meta.get(key)!r}, "
-                    f"the eval config has {expected[key]!r}"
+                    f"checkpoint {path} has {key}={found!r}, "
+                    f"the eval config has {want!r}"
                 )
         blob = torch.load(
             path / ckpt.MODEL_FILE, map_location=self.device, weights_only=True
@@ -424,7 +443,10 @@ def write_eval_outputs(
         )
     if g2_rows is not None:
         tables.append(
-            ("velocity_g2.csv", _row_dicts(g2_rows, g2_names, "command_name"))
+            (
+                "velocity_g2.csv",
+                _row_dicts(g2_rows, g2_names, "command_name"),
+            )
         )
     for name, rows in tables:
         with open(out / name, "w", newline="") as handle:

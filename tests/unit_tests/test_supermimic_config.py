@@ -23,7 +23,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 from rlinf.workers.supermimic.validate import validate_supermimic_cfg
 
@@ -36,6 +36,7 @@ RUNNABLE = (
     "supermimic_smoke",
     "supermimic_lafan1_goal730",
     "supermimic_lafan1_obs99",
+    "supermimic_lafan1_zita",
     "supermimic_velocity",
     "supermimic_bones_seed",
     "supermimic_bones_seed_2gpu",
@@ -101,6 +102,13 @@ def test_hydra_resolves_paper_and_smoke_sizes(composed):
     assert lafan1.algorithm.imagine_batch == 4096
     assert lafan1.algorithm.total_updates == 320000
     assert lafan1.algorithm.warmup_sim_steps == 40
+    assert lafan1.algorithm.wm_only_updates == 0
+    assert lafan1.algorithm.wm_state_loss == "paper"
+    assert lafan1.algorithm.reward_anchor == "torso"
+    assert lafan1.algorithm.input_norm == "none"
+    assert lafan1.algorithm.residual_frame == "heading"
+    assert lafan1.algorithm.critic_features == "root4"
+    assert lafan1.algorithm.matmul == "tf32"
 
     anchor = copy.deepcopy(composed["supermimic_lafan1_anchor"])
     anchor.env.motion_path = "/tmp/lafan1_g1"
@@ -135,6 +143,30 @@ def test_hydra_resolves_paper_and_smoke_sizes(composed):
     assert obs99.algorithm.obs_history_dim == 990
     assert obs99.algorithm.goal_dim == 680
 
+    zita = copy.deepcopy(composed["supermimic_lafan1_zita"])
+    zita.env.motion_path = "/tmp/lafan1_g1"
+    zita = validate_supermimic_cfg(zita)
+    assert zita.algorithm.goal_encoding == "goal730"
+    assert zita.algorithm.goal_dim == 730
+    assert zita.algorithm.obs_dim == 99
+    assert zita.algorithm.obs_history_dim == 990
+    assert zita.algorithm.termination_head == "analytic"
+    assert zita.algorithm.wm_only_updates == 500
+    assert zita.algorithm.wm_state_loss == "running"
+    assert zita.algorithm.reward_anchor == "pelvis"
+    assert zita.algorithm.input_norm == "running"
+    assert zita.algorithm.residual_frame == "body"
+    assert zita.algorithm.critic_features == "zita"
+    assert zita.algorithm.matmul == "bf16"
+    assert zita.algorithm.critic_in_dim == 730 + 71 + 29 + 14 * 3 + 3 + 6 + 33
+    assert zita.algorithm.warmup_sim_steps == 64
+    assert zita.algorithm.total_updates == 16000
+    assert zita.runner.save_interval == 2000
+    anchored = copy.deepcopy(zita)
+    anchored.algorithm.goal_anchor = True
+    with pytest.raises(AssertionError, match="does not combine with the anchor"):
+        validate_supermimic_cfg(anchored)
+
     velocity = copy.deepcopy(composed["supermimic_velocity"])
     velocity.env.motion_path = "/tmp/lafan1_g1"
     velocity = validate_supermimic_cfg(velocity)
@@ -150,6 +182,17 @@ def test_hydra_resolves_paper_and_smoke_sizes(composed):
     assert bones.algorithm.goal_frames == 10
     assert bones.algorithm.history_len == 10
     assert bones.algorithm.updates_per_env_step > 0
+
+    omitted = copy.deepcopy(composed["supermimic_lafan1"])
+    omitted.env.motion_path = "/tmp/lafan1_g1"
+    with open_dict(omitted):
+        for key in ("reward_anchor", "input_norm", "residual_frame", "wm_state_loss"):
+            del omitted.algorithm[key]
+    omitted = validate_supermimic_cfg(omitted)
+    assert omitted.algorithm.reward_anchor == "pelvis"
+    assert omitted.algorithm.input_norm == "running"
+    assert omitted.algorithm.residual_frame == "body"
+    assert omitted.algorithm.wm_state_loss == "running"
 
 
 def test_paper_two_gpu_recipe_keeps_one_gpu_sizes_per_rank(composed):
@@ -217,6 +260,21 @@ def test_illegal_overrides_fail_before_a_model_is_built(composed):
     rejected("algorithm.critic_epochs", 0, "critic_epochs must be in")
     rejected("algorithm.critic_minibatches", 0, "critic_minibatches must be in")
     rejected("algorithm.seed", "abc", "algorithm.seed must be an integer")
+    rejected("algorithm.wm_only_updates", -1, "wm_only_updates must be in")
+    rejected(
+        "algorithm.wm_state_loss",
+        "std",
+        "wm_state_loss must be paper, scaled or running",
+    )
+    rejected("algorithm.reward_anchor", "head", "reward_anchor must be pelvis or torso")
+    rejected("algorithm.input_norm", "batch", "input_norm must be running or none")
+    rejected(
+        "algorithm.residual_frame", "world", "residual_frame must be body or heading"
+    )
+    rejected(
+        "algorithm.critic_features", "paper", "critic_features must be root4 or zita"
+    )
+    rejected("algorithm.matmul", "fp16", "matmul must be tf32 or bf16")
     rejected("algorithm.termination_bias_init", "abc", "termination_bias_init must be")
     rejected("algorithm.param_check_interval", "abc", "param_check_interval must be")
     rejected("algorithm.termination_body", "head", "pelvis or torso, got 'head'")

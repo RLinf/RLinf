@@ -33,10 +33,16 @@ from rlinf.envs.sim.g1_mimic.constants import (
     JOINT_POS,
     NUM_BODIES,
     REWARD_WEIGHTS,
+    ROOT_POS,
+    ROOT_QUAT,
 )
 from rlinf.envs.sim.g1_mimic.features import (
+    heading_invariant_features,
     heading_yaw,
+    normalize_xi,
     projected_gravity,
+    quat_to_rotmat,
+    root_error_4d,
     rotmat_to_6d,
     yaw_rotation,
 )
@@ -54,24 +60,57 @@ def differentiable_fk(
     return g1_kinematics().forward(state)
 
 
+def forward_kinematics_pair(
+    state: torch.Tensor, ref_state: torch.Tensor
+) -> tuple[
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+]:
+    """Body poses of ``state`` and ``ref_state`` from one tree walk.
+
+    The two batches stay independent. Reference rows usually have no
+    gradient; they still share the walk so the tree is not launched twice.
+    """
+    if state.shape[0] != ref_state.shape[0]:
+        return differentiable_fk(state), differentiable_fk(ref_state)
+    pos, rot, lin, ang = differentiable_fk(torch.cat((state, ref_state), dim=0))
+    n = state.shape[0]
+    return (
+        (pos[:n], rot[:n], lin[:n], ang[:n]),
+        (pos[n:], rot[n:], lin[n:], ang[n:]),
+    )
+
+
+def anchor_index(reward_anchor: str) -> int:
+    """Body index used to re-anchor the tracking reward."""
+    if reward_anchor == "torso":
+        return TORSO
+    if reward_anchor == "pelvis":
+        return PELVIS
+    raise ValueError(f"reward_anchor must be torso or pelvis, got {reward_anchor!r}")
+
+
 def reanchor_bodies(
     pos: torch.Tensor,
     rot: torch.Tensor,
     ref_pos: torch.Tensor,
     ref_rot: torch.Tensor,
+    reward_anchor: str = "torso",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Reference body poses moved onto the robot torso's xy and yaw.
+    """Reference body poses moved onto one robot body's xy and yaw.
 
-    BeyondMimic's ``update_relative_body_poses``: the shift takes the robot
-    torso's xy and the reference torso's height, and the turn is the yaw of
-    ``R_robot_torso R_ref_torso^T``. Inputs are ``[B, bodies, 3]`` positions
-    and ``[B, bodies, 3, 3]`` rotations from ``differentiable_fk``.
+    BeyondMimic's ``update_relative_body_poses``. ``torso`` uses
+    ``torso_link``. ``pelvis`` is zita-ch's anchor: the robot pelvis xy, the
+    reference pelvis height, and the yaw of ``R_pelvis R_ref_pelvis^T``.
+    Inputs are ``[B, bodies, 3]`` positions and ``[B, bodies, 3, 3]``
+    rotations from ``differentiable_fk``.
     """
+    anchor = anchor_index(reward_anchor)
     turn = yaw_rotation(
-        heading_yaw_of_matrix(rot[:, TORSO] @ ref_rot[:, TORSO].transpose(-1, -2))
+        heading_yaw_of_matrix(rot[:, anchor] @ ref_rot[:, anchor].transpose(-1, -2))
     )
-    shift = torch.cat((pos[:, TORSO, :2], ref_pos[:, TORSO, 2:3]), dim=-1)
-    offset = ref_pos - ref_pos[:, TORSO : TORSO + 1]
+    shift = torch.cat((pos[:, anchor, :2], ref_pos[:, anchor, 2:3]), dim=-1)
+    offset = ref_pos - ref_pos[:, anchor : anchor + 1]
     anchored_pos = shift.unsqueeze(1) + torch.einsum("bij,bkj->bki", turn, offset)
     anchored_rot = turn.unsqueeze(1) @ ref_rot
     return anchored_pos, anchored_rot
@@ -80,6 +119,95 @@ def reanchor_bodies(
 def heading_yaw_of_matrix(rot: torch.Tensor) -> torch.Tensor:
     """Yaw of a rotation matrix's x axis on the ground plane."""
     return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
+
+
+def zita_critic_features(
+    state: torch.Tensor,
+    ref_state: torch.Tensor,
+    xi: torch.Tensor,
+    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+    | None = None,
+    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+) -> torch.Tensor:
+    """zita-ch critic features except the goal, which is appended separately.
+
+    Layout: heading-invariant state (71), ``q_ref - q`` (29), 14 body-position
+    errors, root position error (3), relative root Rot6D (6), then ``xi``.
+    Reference bodies are shifted onto the robot pelvis xy and the reference
+    pelvis height, and yawed by ``R R_ref^T``. The error is then written in
+    the robot heading frame. ``xi`` is not normalized.
+    """
+    invariant = heading_invariant_features(state)
+    joint_err = ref_state[..., JOINT_POS] - state[..., JOINT_POS]
+    position = state[..., ROOT_POS]
+    ref_position = ref_state[..., ROOT_POS]
+    rot = quat_to_rotmat(state[..., ROOT_QUAT])
+    ref_rot = quat_to_rotmat(ref_state[..., ROOT_QUAT])
+    heading = yaw_rotation(heading_yaw(state[..., ROOT_QUAT]))
+    turn = yaw_rotation(heading_yaw_of_matrix(rot @ ref_rot.transpose(-1, -2)))
+    if state_fk is None or ref_fk is None:
+        state_fk, ref_fk = forward_kinematics_pair(state, ref_state)
+    body = state_fk[0]
+    ref_body = ref_fk[0]
+    anchor = torch.cat((position[..., :2], ref_position[..., 2:3]), dim=-1)
+    offset = ref_body - ref_position.unsqueeze(-2)
+    anchored = anchor.unsqueeze(-2) + torch.einsum("bij,bkj->bki", turn, offset)
+    delta = anchored - body
+    body_err = torch.einsum("bij,bkj->bki", heading.transpose(-1, -2), delta).flatten(
+        -2
+    )
+    root_err = torch.einsum(
+        "bij,bj->bi", heading.transpose(-1, -2), ref_position - position
+    )
+    relative = rotmat_to_6d(rot.transpose(-1, -2) @ ref_rot)
+    return torch.cat((invariant, joint_err, body_err, root_err, relative, xi), dim=-1)
+
+
+def motion_critic_input(
+    state: torch.Tensor,
+    goal: torch.Tensor,
+    xi: torch.Tensor,
+    ref_state: torch.Tensor,
+    critic_features: str,
+    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+    | None = None,
+    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+    scale_xi: bool = False,
+) -> torch.Tensor:
+    """Feature vector consumed by ``CriticNet``.
+
+    ``root4`` keeps the historical order: invariant state, goal, ``xi``, 4-d
+    root error. ``zita`` appends the goal after :func:`zita_critic_features`.
+    ``scale_xi`` applies zita-ch's fixed context scale before either layout.
+    """
+    squeezed = state.dim() == 1
+    if squeezed:
+        state = state.unsqueeze(0)
+        goal = goal.unsqueeze(0)
+        xi = xi.unsqueeze(0)
+        ref_state = ref_state.unsqueeze(0)
+    if scale_xi:
+        xi = normalize_xi(xi)
+    if critic_features == "root4":
+        out = torch.cat(
+            (
+                heading_invariant_features(state),
+                goal,
+                xi,
+                root_error_4d(state, ref_state),
+            ),
+            dim=-1,
+        )
+    elif critic_features == "zita":
+        out = torch.cat(
+            (zita_critic_features(state, ref_state, xi, state_fk, ref_fk), goal),
+            dim=-1,
+        )
+    else:
+        raise ValueError(
+            f"critic_features must be root4 or zita, got {critic_features!r}"
+        )
+    return out.squeeze(0) if squeezed else out
 
 
 def torso_anchor_9d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:
@@ -135,22 +263,35 @@ def analytic_reward(
     prev_action: torch.Tensor,
     joint_limit_low: torch.Tensor | None = None,
     joint_limit_high: torch.Tensor | None = None,
+    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+    | None = None,
+    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+    reward_anchor: str = "torso",
 ) -> dict[str, torch.Tensor]:
-    """Table A.2 terms, no self-collision, joint-limit weight -2, times dt."""
+    """Table A.2 terms, no self-collision, joint-limit weight -2, times dt.
+
+    ``reward_anchor`` selects the body whose xy and yaw snap the reference
+    for the four body terms, and whose world pose is the root position and
+    orientation error. ``torso`` is this repository's reward. ``pelvis`` is
+    zita-ch's.
+    """
     squeezed = state.dim() == 1
     if squeezed:
         state = state.unsqueeze(0)
         ref_state = ref_state.unsqueeze(0)
         action = action.unsqueeze(0)
         prev_action = prev_action.unsqueeze(0)
-    pos, rot, lin, ang = differentiable_fk(state)
-    ref_pos, ref_rot, ref_lin, ref_ang = differentiable_fk(ref_state)
+    if state_fk is None or ref_fk is None:
+        state_fk, ref_fk = forward_kinematics_pair(state, ref_state)
+    pos, rot, lin, ang = state_fk
+    ref_pos, ref_rot, ref_lin, ref_ang = ref_fk
     # Root terms stay in the world frame, so global drift stays in them.
-    # Body pose terms re-anchor the reference at the robot torso; body
+    # Body pose terms re-anchor the reference at ``reward_anchor``; body
     # velocities are compared in the world frame, as in BeyondMimic.
-    e_root_pos = (pos[:, TORSO] - ref_pos[:, TORSO]).square().sum(dim=-1)
-    e_root_ori = _rotation_angle_sq(rot[:, TORSO], ref_rot[:, TORSO])
-    apos, arot = reanchor_bodies(pos, rot, ref_pos, ref_rot)
+    anchor = anchor_index(reward_anchor)
+    e_root_pos = (pos[:, anchor] - ref_pos[:, anchor]).square().sum(dim=-1)
+    e_root_ori = _rotation_angle_sq(rot[:, anchor], ref_rot[:, anchor])
+    apos, arot = reanchor_bodies(pos, rot, ref_pos, ref_rot, reward_anchor)
     e_body_pos = (pos - apos).square().sum(dim=-1).mean(dim=-1)
     e_body_ori = _rotation_angle_sq(rot, arot).mean(dim=-1)
     e_body_lin = (lin - ref_lin).square().sum(dim=-1).mean(dim=-1)

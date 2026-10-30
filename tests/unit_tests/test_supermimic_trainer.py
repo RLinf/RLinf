@@ -315,45 +315,43 @@ def _snap_velocity_grad(module: torch.nn.Module) -> dict[str, torch.Tensor]:
 
 
 def _velocity_cfg():
-    return OmegaConf.create(
-        {
-            "algorithm": {
-                "goal_anchor": False,
-                "k": 8,
-                "H": 32,
-                "gamma": 0.99,
-                "lam": 0.95,
-                "goal_dim": 680,
-                "obs_dim": 93,
-                "goal_encoding": "paper",
-                "velocity_tracking": True,
-                "grad_diagnostics": True,
-                "warmup_sim_steps": 12,
-                "updates_per_env_step": 0.4,
-                "wm_batches": 1,
-                "wm_window_batch": 4,
-                "imagine_batch": 4,
-                "critic_epochs": 1,
-                "critic_minibatches": 1,
-                "bce_weight": 1.0,
-                "action_noise_std": 0.1,
-                "G_max": 10.0,
-                "lr": 2e-4,
-                "lr_decay_updates": 10,
-                "action_dim": 29,
-                "max_episode_seconds": 10.0,
-                "termination_body": "pelvis",
-            },
-            "env": {
-                "motion_format": "lafan1",
-                "motion_path": synthetic_clip_dir(),
-                "num_clips": 2,
-                "backend": "analytic",
-                "num_envs": 4,
-                "replay_length": 32,
-            },
-        }
-    )
+    return OmegaConf.create({
+        "algorithm": {
+            "goal_anchor": False,
+            "k": 8,
+            "H": 32,
+            "gamma": 0.99,
+            "lam": 0.95,
+            "goal_dim": 680,
+            "obs_dim": 93,
+            "goal_encoding": "paper",
+            "velocity_tracking": True,
+            "grad_diagnostics": True,
+            "warmup_sim_steps": 12,
+            "updates_per_env_step": 0.4,
+            "wm_batches": 1,
+            "wm_window_batch": 4,
+            "imagine_batch": 4,
+            "critic_epochs": 1,
+            "critic_minibatches": 1,
+            "bce_weight": 1.0,
+            "action_noise_std": 0.1,
+            "G_max": 10.0,
+            "lr": 2e-4,
+            "lr_decay_updates": 10,
+            "action_dim": 29,
+            "max_episode_seconds": 10.0,
+            "termination_body": "pelvis",
+        },
+        "env": {
+            "motion_format": "lafan1",
+            "motion_path": synthetic_clip_dir(),
+            "num_clips": 2,
+            "backend": "analytic",
+            "num_envs": 4,
+            "replay_length": 32,
+        },
+    })
 
 
 def _write_asset_pose_clip(directory: Path, frames: int = 200) -> None:
@@ -436,6 +434,7 @@ def test_velocity_episodes_never_touch_the_motion_reset_bins():
         ("paper", True, 93),
         ("paper", False, 99),
         ("goal730", False, 93),
+        ("goal730", False, 99),
     ],
 )
 def test_collection_scores_each_state_against_the_reference_of_its_time(
@@ -495,6 +494,34 @@ def test_collection_scores_each_state_against_the_reference_of_its_time(
 
 
 @needs_mjlab
+def test_wm_only_updates_fit_the_world_model_without_the_actor(tmp_path):
+    trainer = _perfect_trainer(tmp_path, wm_only_updates=2)
+    calls = {"wm": 0, "actor": 0}
+
+    def fit():
+        calls["wm"] += 1
+        return {"wm/state_loss": 0.0}
+
+    def actor():
+        calls["actor"] += 1
+        return {"actor/objective": 1.0}
+
+    trainer.fit_world_model = fit
+    trainer.imagine_and_update_actor = actor
+    trainer.buffer.num_valid_windows = lambda _k: 8
+    trainer.step_acc = 3.0
+    wm_epoch = trainer.sched_wm.last_epoch
+    actor_epoch = trainer.sched_actor.last_epoch
+    metrics = trainer.maybe_update()
+    assert calls == {"wm": 3, "actor": 1}
+    assert trainer.global_update == 3
+    assert trainer.sched_wm.last_epoch == wm_epoch + 3
+    assert trainer.sched_actor.last_epoch == actor_epoch + 1
+    assert metrics["actor/objective"] == 1.0
+    assert metrics["train/wm_only"] == 0.0
+
+
+@needs_mjlab
 def test_world_model_and_imagination_score_each_state_against_its_own_reference(
     tmp_path,
 ):
@@ -517,7 +544,7 @@ def test_world_model_and_imagination_score_each_state_against_its_own_reference(
     assert torch.allclose(
         rewards, torch.full_like(rewards, MAX_TRACKING_REWARD), atol=1e-5
     )
-    assert float(rollout["errors"].abs().max()) < 1e-4
+    assert float(rollout["features"][..., -4:].abs().max()) < 1e-4
     assert max(float(inputs[0].abs().max()) for inputs in head.inputs) < 1e-4
     mid, tau0 = starts["motion_id"], starts["motion_time"]
     length = motion.clip_length(mid)
@@ -907,9 +934,7 @@ def test_motion_and_velocity_policy_steps_touch_disjoint_parameters():
     for param in models.critic_params():
         param.requires_grad_(True)
     before = {name: _snap(module) for name, module in models.named_children()}
-    models.critic(
-        torch.randn(2, 71), goal, torch.randn(2, 33), torch.randn(2, 4)
-    ).sum().backward()
+    models.critic(torch.randn(2, models.critic.net[0].in_features)).sum().backward()
     opt_critic.step()
     assert _changed(before["critic"], models.critic)
     assert not _changed(before["velocity_critic"], models.velocity_critic)
@@ -1029,42 +1054,40 @@ def test_velocity_episode_keeps_timeout_clip_end_and_resets(tmp_path):
 
     _clip(tmp_path / "clip_000.pt", 80, 1.2)
     _clip(tmp_path / "clip_001.pt", 1, 1.2)
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {
-                "goal_anchor": False,
-                "k": 8,
-                "H": 32,
-                "gamma": 0.99,
-                "lam": 0.95,
-                "goal_dim": 680,
-                "obs_dim": 93,
-                "goal_encoding": "paper",
-                "velocity_tracking": True,
-                "warmup_sim_steps": 1,
-                "updates_per_env_step": 0.4,
-                "wm_batches": 1,
-                "wm_window_batch": 2,
-                "imagine_batch": 6,
-                "bce_weight": 1.0,
-                "action_noise_std": 0.0,
-                "G_max": 10.0,
-                "lr": 1e-4,
-                "lr_decay_updates": 10,
-                "action_dim": 29,
-                "max_episode_seconds": 10.0,
-                "termination_body": "pelvis",
-            },
-            "env": {
-                "motion_format": "lafan1",
-                "motion_path": str(tmp_path),
-                "num_clips": 2,
-                "backend": "analytic",
-                "num_envs": 6,
-                "replay_length": 16,
-            },
-        }
-    )
+    cfg = OmegaConf.create({
+        "algorithm": {
+            "goal_anchor": False,
+            "k": 8,
+            "H": 32,
+            "gamma": 0.99,
+            "lam": 0.95,
+            "goal_dim": 680,
+            "obs_dim": 93,
+            "goal_encoding": "paper",
+            "velocity_tracking": True,
+            "warmup_sim_steps": 1,
+            "updates_per_env_step": 0.4,
+            "wm_batches": 1,
+            "wm_window_batch": 2,
+            "imagine_batch": 6,
+            "bce_weight": 1.0,
+            "action_noise_std": 0.0,
+            "G_max": 10.0,
+            "lr": 1e-4,
+            "lr_decay_updates": 10,
+            "action_dim": 29,
+            "max_episode_seconds": 10.0,
+            "termination_body": "pelvis",
+        },
+        "env": {
+            "motion_format": "lafan1",
+            "motion_path": str(tmp_path),
+            "num_clips": 2,
+            "backend": "analytic",
+            "num_envs": 6,
+            "replay_length": 16,
+        },
+    })
     trainer = SuperMimicTrainer(cfg, device=torch.device("cpu"))
 
     def zeros(history, *args):
@@ -1171,22 +1194,20 @@ def test_runner_saves_and_evaluates_once_per_new_update(tmp_path):
             self.evals.append(int(self.saves[-1].rsplit("_", 1)[-1]))
             return _Result({"eval/normalized_return": 0.0})
 
-    cfg = OmegaConf.create(
-        {
-            "runner": {
-                "logger": {
-                    "log_path": str(tmp_path),
-                    "project_name": "rlinf",
-                    "experiment_name": "supermimic_smoke",
-                    "logger_backends": [],
-                },
-                "save_interval": 1,
-                "val_check_interval": 1,
-                "only_eval": False,
+    cfg = OmegaConf.create({
+        "runner": {
+            "logger": {
+                "log_path": str(tmp_path),
+                "project_name": "rlinf",
+                "experiment_name": "supermimic_smoke",
+                "logger_backends": [],
             },
-            "algorithm": {"total_updates": 3},
-        }
-    )
+            "save_interval": 1,
+            "val_check_interval": 1,
+            "only_eval": False,
+        },
+        "algorithm": {"total_updates": 3},
+    })
     worker = _Worker([0, 0, 1, 1, 2, 2, 2, 3])
     SuperMimicRunner(cfg, worker).run()
     assert [int(path.rsplit("_", 1)[-1]) for path in worker.saves] == [1, 2, 3]
@@ -1234,19 +1255,17 @@ def test_experiments_do_not_share_a_tensorboard_directory(tmp_path):
 
     def logger_for(name: str) -> tuple[MetricLogger, Path]:
         log_path = tmp_path / "results" / name
-        cfg = OmegaConf.create(
-            {
-                "runner": {
-                    "per_worker_log": False,
-                    "logger": {
-                        "log_path": str(log_path),
-                        "project_name": "rlinf",
-                        "experiment_name": name,
-                        "logger_backends": ["tensorboard"],
-                    },
-                }
+        cfg = OmegaConf.create({
+            "runner": {
+                "per_worker_log": False,
+                "logger": {
+                    "log_path": str(log_path),
+                    "project_name": "rlinf",
+                    "experiment_name": name,
+                    "logger_backends": ["tensorboard"],
+                },
             }
-        )
+        })
         return MetricLogger(cfg), log_path
 
     first, smoke = logger_for("supermimic_smoke")
@@ -1339,41 +1358,39 @@ def test_trainer_history_matches_the_phase2_list_code():
                 ).detach()
                 self.obs_hist[i] = [frame]
 
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {
-                "goal_anchor": False,
-                "k": 8,
-                "H": 32,
-                "gamma": 0.99,
-                "lam": 0.95,
-                "goal_dim": 680,
-                "obs_dim": 99,
-                "goal_encoding": "paper",
-                "warmup_sim_steps": 1,
-                "updates_per_env_step": 0.4,
-                "wm_batches": 1,
-                "wm_window_batch": 2,
-                "imagine_batch": 2,
-                "action_noise_std": 0.1,
-                "G_max": 10.0,
-                "lr": 2e-4,
-                "lr_decay_updates": 10,
-                "action_dim": 29,
-                # Short episodes, so resets happen inside the comparison.
-                "max_episode_seconds": 0.2,
-                "termination_body": "pelvis",
-            },
-            "env": {
-                "motion_format": "lafan1",
-                "motion_path": synthetic_clip_dir(),
-                "num_clips": 3,
-                "backend": "analytic",
-                "num_envs": 5,
-                "replay_length": 64,
-            },
-        }
-    )
+    cfg = OmegaConf.create({
+        "algorithm": {
+            "goal_anchor": False,
+            "k": 8,
+            "H": 32,
+            "gamma": 0.99,
+            "lam": 0.95,
+            "goal_dim": 680,
+            "obs_dim": 99,
+            "goal_encoding": "paper",
+            "warmup_sim_steps": 1,
+            "updates_per_env_step": 0.4,
+            "wm_batches": 1,
+            "wm_window_batch": 2,
+            "imagine_batch": 2,
+            "action_noise_std": 0.1,
+            "G_max": 10.0,
+            "lr": 2e-4,
+            "lr_decay_updates": 10,
+            "action_dim": 29,
+            # Short episodes, so resets happen inside the comparison.
+            "max_episode_seconds": 0.2,
+            "termination_body": "pelvis",
+        },
+        "env": {
+            "motion_format": "lafan1",
+            "motion_path": synthetic_clip_dir(),
+            "num_clips": 3,
+            "backend": "analytic",
+            "num_envs": 5,
+            "replay_length": 64,
+        },
+    })
     # Noise is drawn per env in the list code and per batch here. The two
     # draw orders differ, so the frame noise is switched off for the
     # bit-for-bit comparison. Noise-once semantics are checked above.
@@ -1411,40 +1428,38 @@ def test_trainer_history_noise_is_drawn_once_per_frame():
 
     from rlinf.workers.supermimic.trainer import SuperMimicTrainer
 
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {
-                "goal_anchor": False,
-                "k": 8,
-                "H": 32,
-                "gamma": 0.99,
-                "lam": 0.95,
-                "goal_dim": 680,
-                "obs_dim": 93,
-                "goal_encoding": "paper",
-                "warmup_sim_steps": 1,
-                "updates_per_env_step": 0.4,
-                "wm_batches": 1,
-                "wm_window_batch": 2,
-                "imagine_batch": 2,
-                "action_noise_std": 0.1,
-                "G_max": 10.0,
-                "lr": 2e-4,
-                "lr_decay_updates": 10,
-                "action_dim": 29,
-                "max_episode_seconds": 10.0,
-                "termination_body": "pelvis",
-            },
-            "env": {
-                "motion_format": "lafan1",
-                "motion_path": synthetic_clip_dir(),
-                "num_clips": 2,
-                "backend": "analytic",
-                "num_envs": 4,
-                "replay_length": 32,
-            },
-        }
-    )
+    cfg = OmegaConf.create({
+        "algorithm": {
+            "goal_anchor": False,
+            "k": 8,
+            "H": 32,
+            "gamma": 0.99,
+            "lam": 0.95,
+            "goal_dim": 680,
+            "obs_dim": 93,
+            "goal_encoding": "paper",
+            "warmup_sim_steps": 1,
+            "updates_per_env_step": 0.4,
+            "wm_batches": 1,
+            "wm_window_batch": 2,
+            "imagine_batch": 2,
+            "action_noise_std": 0.1,
+            "G_max": 10.0,
+            "lr": 2e-4,
+            "lr_decay_updates": 10,
+            "action_dim": 29,
+            "max_episode_seconds": 10.0,
+            "termination_body": "pelvis",
+        },
+        "env": {
+            "motion_format": "lafan1",
+            "motion_path": synthetic_clip_dir(),
+            "num_clips": 2,
+            "backend": "analytic",
+            "num_envs": 4,
+            "replay_length": 32,
+        },
+    })
     torch.manual_seed(0)
     trainer = SuperMimicTrainer(cfg, device=torch.device("cpu"))
     frames = trainer.obs_hist.frames

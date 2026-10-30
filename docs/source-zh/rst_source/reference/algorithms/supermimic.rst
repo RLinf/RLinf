@@ -25,14 +25,16 @@ SuperMimic 训练人形机器人全身动作跟踪 policy 的方式，是让想�
 
    \hat s_{t+1} = \hat s_t \oplus f_\omega(\phi(\hat s_t), a_t, \xi)
 
-其中 :math:`\oplus` 在朝向坐标系里叠加位置和速度残差，旋转残差按旋转向量复合。最后一层初始化为零，所以初始模型预测"状态不变"。训练时窗口从记录的状态出发，按记录的动作自回归展开（Eq.1）：
+其中 :math:`\oplus` 在 ``heading`` 下于偏航系叠加位置和线速度残差，旋转残差按旋转向量复合。最后一层初始化为零，所以初始模型预测"状态不变"。训练时窗口从记录的状态出发，按记录的动作自回归展开（Eq.1）：
 
 .. math::
 
    \mathcal{L}_{WM}(\omega) = \mathbb{E}_{\mathcal{B}} \sum_{j=1}^{k}
-   \Big[ \| \hat s_j - s_j \|^2_{\Sigma} + \mathrm{BCE}(\hat d_j, d_j) \Big]
+   \Big[ \| \hat s_j - s_j \|^2 + \mathrm{BCE}(\hat d_j, d_j) \Big]
 
-状态误差按分块缩放，旋转用相对旋转 :math:`\log(R_{pred} R_{target}^\top)`。奖励头和观测头是解析的：奖励由预测状态经 G1 运动学树的可微正运动学算出，观测由状态、上一动作和 :math:`\xi` 算出。终止头是一个学习型 MLP，输入是相对参考的高度误差、倾斜误差及其绝对值；BCE 标签只有跟踪失败才是 1。
+``algorithm.residual_frame: heading`` 把位置和线速度残差放在偏航系，角速度直接加在已存的机体系角速度上。``body`` 的位置仍在偏航系，线速度改到完整机体系，角速度按世界系增量再写回机体系。论文配置写 ``heading``。代码里省略这一项时用 ``body``。
+
+``algorithm.wm_state_loss: paper`` 是不加权平方。旋转仍用相对旋转 :math:`\log(R_{pred} R_{target}^\top)`\ ，因为状态里的根朝向是四元数。``scaled`` 把各分量除以固定尺度。``running`` 用真实下一步的坐标系写出 70 维误差（旋转是 :math:`\log(R_{true}^\top R_{pred})`\ ），除以一步残差目标的滑动标准差（每维不低于固定地板），再对 70 维和 batch 取均值。论文配置写 ``paper``。代码里省略这一项时用 ``running``。奖励头和观测头是解析的：奖励由预测状态经 G1 运动学树的可微正运动学算出，观测由状态、上一动作和 :math:`\xi` 算出。终止头是一个学习型 MLP，输入是相对参考的高度误差、倾斜误差及其绝对值；BCE 标签只有跟踪失败才是 1。
 
 Actor 目标
 ----------
@@ -49,7 +51,7 @@ Policy :math:`a_t = \pi_\theta(o_{t-9..t} + \eta_t, g_t)` 以带噪声的观测�
 Critic 与 GAE
 -------------
 
-Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根误差）拟合在同一条想象轨迹上从后往前算出的 GAE 回报（Eq.3），起点 :math:`\hat R_H = V_H`：
+Critic 默认在 :math:`V_\psi(s, g, \xi)` 上再拼一个 4 维根误差，拟合在同一条想象轨迹上从后往前算出的 GAE 回报（Eq.3），起点 :math:`\hat R_H = V_H`。``algorithm.critic_features: zita`` 改成 zita-ch 的拼接：朝向无关状态、关节误差、14 个身体的位置误差、3 维根位置误差、6 维相对朝向、:math:`\xi`\ 、Goal。
 
 .. math::
 
@@ -79,7 +81,7 @@ Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根�
 奖励
 ----
 
-动作奖励是 BeyondMimic 的跟踪奖励，去掉自碰撞惩罚，关节限位权重降到 -2，全部乘以 :math:`\Delta t = 0.02` s（表 A.2）：14 个跟踪身体的位置、朝向、线速度、角速度，根位置和根朝向，动作平滑，关节限位。和 BeyondMimic 一样，根项在世界系里比较 ``torso_link``；身体位姿项先把参考平移、旋转到机器人躯干的水平位置和偏航上（``update_relative_body_poses``），所以整体漂移只体现在根项里。身体速度在世界系里比较。
+动作奖励是 BeyondMimic 的跟踪奖励，去掉自碰撞惩罚，关节限位权重降到 -2，全部乘以 :math:`\Delta t = 0.02` s（表 A.2）：14 个跟踪身体的位置、朝向、线速度、角速度，根位置和根朝向，动作平滑，关节限位。根项留在世界系，身体位姿项把参考平移、旋转到锚点身体的水平位置和偏航上，所以整体漂移只体现在根项里。身体速度在世界系里比较。``algorithm.reward_anchor: torso`` 的锚点是 ``torso_link``，``pelvis`` 的锚点是骨盆。论文配置写 ``torso``。代码里省略这一项时用 ``pelvis``。终止判定仍看 ``termination_body``。
 
 按回报重置采样
 --------------
@@ -107,12 +109,12 @@ Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根�
      - 未规定
      - 71 维状态，缩放残差，显式积分
      - 71 维，坐标系不同
-     - 71 维状态，未缩放的朝向系残差
+     - 71 维；``heading`` 或 ``body``，论文配置写 ``heading``
    * - 世界模型状态误差
      - :math:`\|\hat s - s\|^2`
      - 分块缩放
-     - --
-     - 沿用 CuboiLeo 的缩放，旋转用 SO(3) 误差
+     - 除以滑动标准差
+     - ``paper`` / ``scaled`` / ``running``；论文配置写 ``paper``
    * - 680 维 Goal 窗口
      - 10 个未来帧
      - :math:`m_{t+1}..m_{t+10}`
@@ -132,7 +134,7 @@ Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根�
      - BeyondMimic
      - torso
      - pelvis
-     - torso
+     - ``torso`` 或 ``pelvis``；论文配置写 ``torso``
    * - 终止头
      - 学习或解析均可
      - 学习
@@ -142,7 +144,7 @@ Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根�
      - 未规定
      - 固定尺度
      - 滑动归一化
-     - 无
+     - ``none`` 或 ``running``；论文配置写 ``none``
    * - 参考速度
      - 未规定
      - 中心差分
@@ -159,13 +161,13 @@ Critic :math:`V_\psi(s, g, \xi)`\ （另加一个只给 critic 用的 4 维根�
      - --
      - G.2；试验之间仿真上下文和关节噪声不同
 
-CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_）和 zita-ch（`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_）是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。上表描述的是开发时查阅的 ``main`` 分支，当时没有记录具体 commit；这两个仓库之后若有改动，以仓库当前代码为准。
+CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_）和 zita-ch（`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_）是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。上表描述的是开发时查阅的 ``main`` 分支，当时没有记录具体 commit；这两个仓库之后若有改动，以仓库当前代码为准。``supermimic_lafan1_zita`` 把 730 维 Goal、99 维观测、解析终止头、前 500 次只更新世界模型、骨盆奖励锚、滑动输入归一化、机体系残差，以及除以滑动标准差的世界模型误差放在同一次训练里，critic 用 zita-ch 的额外特征。仿真器是 mjlab。这四项在代码里省略时也是 zita-ch 的取值；论文配置在 ``supermimic_base.yaml`` 里写成 ``torso``、``none``、``heading``、``paper``。
 
 已知限制
 --------
 
 * **终止头冷启动。** 用 PyTorch 默认初始化时终止头输出约 0.5，32 步存活权重从 :math:`10^{-9}` 量级开始，在终止头经过几百个世界模型更新步之前，actor 只能从最前面几步想象拿到梯度。失败只占记录转移的约 0.3%；在短时间训练里，终止头先学到基础率，并且给大误差的概率反而比小误差低。``algorithm.termination_bias_init``\ （例如 -4.6，对应 1% 先验）和 ``algorithm.termination_head: analytic`` 都能消除冷启动，在本机短时间训练里也得到了方向正确的终止头。两者都是实验选项，默认值是论文设定。
-* **网络没有输入归一化。** 观测里关节速度可达 20 左右，:math:`\xi` 里的零位偏差只有 0.01 左右；论文没有规定归一化，本实现也没有加。
+* **论文配置没有输入归一化。** 观测里关节速度可达 20 左右，:math:`\xi` 里的零位偏差只有 0.01 左右。论文没有规定归一化，``supermimic_base.yaml`` 写 ``input_norm: none``。``input_norm: running`` 才使用滑动均值和方差，并先按固定尺度缩放 :math:`\xi`。
 * **BPTT 梯度尖峰。** 裁剪前的 actor 梯度范数会突然升高两个数量级；论文的裁剪方式限制了每一步的幅度。
 * **没有实现：** 附录 G 的蒸馏编码器。推力恢复评测入口已经有了，协议是静止站立姿态（mjlab 屈膝关键帧），不是论文未公布关节角的 T-pose；还没有用收敛策略核对恢复时间。BONES-SEED 官方 G1 CSV 的转换器已经有了，但还没有用真实数据包核对过。
-* **尚未证明：** 论文规模下学会跟踪的 policy、论文双卡配方、多节点运行。两张 80 GB 的 A800 上已经用真实 NCCL 跑过小规模双卡短训练，参数差保持为 0。哪些已经跑过、哪些没有，见使用指南。
+* **尚未证明：** 论文配置 ``supermimic_lafan1`` 的完整训练、论文双卡配方、多节点运行。``supermimic_lafan1_zita`` 已在单卡 4096 个环境上训完 16000 次更新，第 16000 次检查点的 ``eval/normalized_return`` 为 0.856（40 条片段全部结束）。zita-ch 报告第 14000 次更新为 0.829。两张 80 GB 的 A800 上已经用真实 NCCL 跑过小规模双卡短训练，参数差保持为 0。哪些已经跑过、哪些没有，见使用指南。

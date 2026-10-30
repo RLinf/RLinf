@@ -144,3 +144,18 @@ SENSOR_NOISE_STD = {
     "gyro": 0.2,
     "gravity": 0.05,
 }
+
+
+def critic_input_dim(goal_dim: int, critic_features: str) -> int:
+    """Width of the motion-critic MLP input for one feature layout.
+
+    ``root4`` is the heading-invariant state, the goal, ``xi``, and a 4-d
+    root error. ``zita`` is zita-ch's layout: that invariant state, the joint
+    error, 14 body-position errors, a 3-d root position error, a 6-d relative
+    orientation, ``xi``, and the goal.
+    """
+    if critic_features == "root4":
+        return STATE_DIM + goal_dim + XI_DIM + CRITIC_ROOT_ERR_DIM
+    if critic_features == "zita":
+        return STATE_DIM + ACTION_DIM + NUM_BODIES * 3 + 3 + 6 + XI_DIM + goal_dim
+    raise ValueError(f"critic_features must be root4 or zita, got {critic_features!r}")

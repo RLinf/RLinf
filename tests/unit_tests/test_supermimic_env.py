@@ -34,6 +34,8 @@ from rlinf.envs.sim.g1_mimic.constants import (
     G1_JOINT_NAMES,
     JOINT_POS,
     ROOT_LIN_VEL,
+    XI_DIM,
+    critic_input_dim,
 )
 from rlinf.envs.sim.g1_mimic.env import compose_end_kind
 from rlinf.envs.sim.g1_mimic.features import (
@@ -43,6 +45,7 @@ from rlinf.envs.sim.g1_mimic.features import (
     integrate_residual,
     quat_mul,
     quat_normalize,
+    rotmat_to_6d,
     rotvec_to_quat,
     yaw_rotation,
 )
@@ -64,7 +67,9 @@ from rlinf.envs.sim.g1_mimic.reward import (
     analytic_reward,
     differentiable_fk,
     failure_signals,
+    motion_critic_input,
     reanchor_bodies,
+    zita_critic_features,
 )
 from rlinf.envs.sim.g1_mimic.velocity import (
     heading_velocity,
@@ -207,6 +212,21 @@ def test_reference_clock_holds_the_last_frame():
 
 
 @needs_mjlab
+def test_pelvis_reward_anchor_ignores_a_waist_yaw_the_torso_anchor_sees():
+    robot = default_state(1, "cpu", torch.float64)
+    ref = robot.clone()
+    waist = 7 + G1_JOINT_NAMES.index("waist_yaw_joint")
+    robot[:, waist] = 0.5
+    action = torch.zeros(1, ACTION_DIM, dtype=torch.float64)
+    torso = analytic_reward(robot, ref, action, action, reward_anchor="torso")
+    pelvis = analytic_reward(robot, ref, action, action, reward_anchor="pelvis")
+    assert float(torso["root_ori"]) < float(pelvis["root_ori"])
+    pos, rot, _, _ = differentiable_fk(robot)
+    ref_pos, ref_rot, _, _ = differentiable_fk(ref)
+    anchored, _ = reanchor_bodies(pos, rot, ref_pos, ref_rot, "pelvis")
+    assert torch.allclose(anchored[:, 0, :2], pos[:, 0, :2], atol=1e-12)
+
+
 def test_body_terms_reanchor_the_reference_at_the_robot_torso_and_keep_root_drift():
     from rlinf.envs.sim.g1_mimic.g1_fk import TRACKED_BODY_NAMES
 
@@ -333,6 +353,24 @@ def test_fk_fast_paths_match_the_reference_math():
     assert torch.equal(height, pos[:, PELVIS, 2] - ref_pos[:, PELVIS, 2])
     torso_height, _, _ = failure_signals(state, ref, "torso")
     assert torch.equal(torso_height, pos[:, TORSO, 2] - ref_pos[:, TORSO, 2])
+
+
+@needs_mjlab
+def test_level_kinematics_match_the_body_loop():
+    """Depth batching is the same map as the body-by-body walk, gradients too."""
+    kin = g1_kinematics()
+    gen = torch.Generator().manual_seed(1)
+    state = torch.randn(5, 71, generator=gen, dtype=torch.float64)
+    state[:, 3:7] = torch.nn.functional.normalize(state[:, 3:7], dim=-1)
+    left = state.clone().requires_grad_(True)
+    right = state.clone().requires_grad_(True)
+    serial = kin._forward_serial(left)
+    level = kin._forward_levels(right)
+    for got, ref in zip(level, serial, strict=True):
+        assert torch.allclose(got, ref, atol=1e-12, rtol=1e-12)
+    (sum(part.sum() for part in serial)).backward()
+    (sum(part.sum() for part in level)).backward()
+    assert torch.allclose(left.grad, right.grad, atol=1e-9, rtol=1e-9)
 
 
 def test_obs99_relative_heading_is_not_noised_and_is_differentiable():
@@ -629,3 +667,29 @@ def test_warp_step_scores_against_the_next_reference_frame(tmp_path):
     assert torch.equal(result["ref_state"], expected)
     assert float(result["ref_state"][1, 0]) == pytest.approx(0.01 * (frames - 1))
     assert result["clip_end"].tolist() == [False, True]
+
+
+@needs_mjlab
+def test_zita_critic_features_match_a_perfect_track():
+    state = default_state(2, "cpu", torch.float32)
+    state[:, JOINT_POS] = 0.2
+    ref = state.clone()
+    xi = torch.randn(2, XI_DIM)
+    feat = zita_critic_features(state, ref, xi)
+    assert feat.shape[-1] == 71 + 29 + 14 * 3 + 3 + 6 + XI_DIM
+    assert float(feat[:, 71:100].abs().max()) < 1e-5
+    assert float(feat[:, 100:142].abs().max()) < 1e-4
+    assert float(feat[:, 142:145].abs().max()) < 1e-5
+    identity = rotmat_to_6d(torch.eye(3))
+    assert torch.allclose(feat[:, 145:151], identity.expand(2, 6), atol=1e-5)
+    assert torch.allclose(feat[:, 151:], xi)
+    goal = torch.randn(2, 730)
+    full = motion_critic_input(state, goal, xi, ref, "zita")
+    assert full.shape[-1] == critic_input_dim(730, "zita")
+    assert torch.allclose(full[:, -730:], goal)
+    moved = state.clone()
+    moved[:, JOINT_POS] = state[:, JOINT_POS] + 0.1
+    changed = zita_critic_features(moved, ref, xi)
+    assert float((changed[:, 71:100] - feat[:, 71:100]).abs().max()) == pytest.approx(
+        0.1
+    )

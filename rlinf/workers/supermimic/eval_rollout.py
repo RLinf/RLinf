@@ -136,6 +136,7 @@ def run_tracking_eval(
     joint_high: torch.Tensor | None = None,
     active: int | None = None,
     include_ref_ori: bool = False,
+    reward_anchor: str = "torso",
 ) -> dict[str, torch.Tensor]:
     """Roll each active env from frame 0 until failure or the clip end.
 
@@ -152,9 +153,13 @@ def run_tracking_eval(
     ``active`` lets a short final batch use the first environments of a
     larger vector. Bodies:
 
-    * ``torso_*`` is the reward root (``torso_link``).
+    * ``torso_*`` is ``torso_link``, kept as a diagnostic even when the
+      reward anchor is the pelvis.
     * ``free_root_*`` is the floating base. On G1 that base is the pelvis,
       which is also the failure body, and it is not the torso.
+    * ``reward_anchor`` selects the body used by the return. ``torso`` is
+      the paper reward. ``pelvis`` is zita-ch's. The default here is
+      ``torso`` so a caller that omits it keeps the paper reward.
     """
     n_env = env.num_envs
     n = n_env if active is None else int(active)
@@ -206,6 +211,7 @@ def run_tracking_eval(
             prev,
             joint_low,
             joint_high,
+            reward_anchor=reward_anchor,
         )
         xy, yaw = xy_yaw_drift(next_state, ref_state)
         free_pos = (next_state[..., :3] - ref_state[..., :3]).norm(dim=-1)
