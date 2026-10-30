@@ -3,7 +3,7 @@
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂\
 操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf\
-将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 rollout、训练和评估。
+将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 rollout 和评估。
 
 概览
 ----------------------------------------
@@ -21,7 +21,7 @@
    .. grid-item-card:: 算法
       :text-align: center
 
-      PPO
+      评估（π₀.₅）
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -93,9 +93,9 @@ RLinf 使用 ``requirements/install.sh`` 和 ``requirements/embodied/envs/robodo
    * - RoboDojo runtime
      - 0.3.0 · 提交 ``6d76a0c``
    * - PyTorch
-     - 2.7.0 · CUDA 12.6 wheel
+     - 2.7.0 · 按驱动选择 wheel（默认 cu126，CUDA 12.8+ 用 cu128）
    * - TorchVision / TorchAudio
-     - 0.22.0 / 2.7.0 · CUDA 12.6 wheel
+     - 0.22.0 / 2.7.0 · 与 PyTorch 使用同一 wheel 索引
    * - Isaac Sim
      - 5.1.0
    * - IsaacLab
@@ -211,7 +211,7 @@ RoboDojo 当前支持 Linux x86_64 和 NVIDIA CUDA GPU，暂不支持纯 CPU、m
      --local-dir "$ROBODOJO_ASSETS_ROOT" \
      --include "ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/**"
 
-下载后是一个 OpenPI 检查点目录：
+下载得到的是 JAX/orbax 原始检查点：
 
 .. code-block:: text
 
@@ -222,7 +222,22 @@ RoboDojo 当前支持 Linux x86_64 和 NVIDIA CUDA GPU，暂不支持纯 CPU、m
        ├── params/
        └── train_state/
 
-``rollout.model.model_path`` 应指向 ``59999/``，``rollout.model.openpi_data.norm_stats_path`` 应指向其 ``assets/`` 下的 ``norm_stats.json``，覆盖方式见「运行」。同级的 ``joint-1``、``joint-2`` 是同一检查点的另外两次训练 run，``ckpt/RoboDojo/Pi_0/`` 下是对应的 π₀ 检查点。
+RLinf 的 OpenPI 加载器读取 OpenPI 格式的检查点（``model.safetensors``），因此需要先转换。转换器依赖 ``jax`` 和 ``orbax-checkpoint``，由 ``--model openpi`` 安装：
+
+.. code-block:: bash
+
+   export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
+   source .venv/bin/activate
+   CKPT=$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/59999
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+     --input-model "$CKPT" \
+     --input-norm-stats "$CKPT/assets/arx_x5_sim/norm_stats.json" \
+     --output-model "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5" \
+     --output-norm-stats "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5/arx_x5_sim/norm_stats.json" \
+     --action-dim 32 \
+     --action-horizon 50
+
+转换后的目录包含 ``model.safetensors`` 和 ``arx_x5_sim/norm_stats.json``。``rollout.model.model_path`` 应指向该目录，norm stats 路径会由它推导。同级的 ``joint-1``、``joint-2`` 是同一检查点的另外两次训练 run，``ckpt/RoboDojo/Pi_0/`` 下是对应的 π₀ 检查点。
 
 .. note::
 
@@ -274,10 +289,10 @@ step 和 close 后，再提高 ``env.train.total_num_envs``。
 
 策略的 ``action_dim`` 应与 ``action_dims`` 的总和一致。示例配置使用 ``[6, 6, 1, 1]``，即 14 维动作。
 
-**用 Pi_5 检查点做策略评估**
+**用 Pi_05 检查点做策略评估**
 
 ``evaluations/robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml`` 复用\
-上面的环境配置，用 OpenPI Pi_5 检查点评估 ``put_bottles_into_dustbin``。\
+上面的环境配置，用 OpenPI Pi_05 检查点评估 ``put_bottles_into_dustbin``。\
 策略依赖需要按上文一并安装：
 
 .. code-block:: bash
@@ -295,16 +310,15 @@ step 和 close 后，再提高 ``env.train.total_num_envs``。
 
 脚本会在 ``logs/<时间戳>-<配置名>/`` 下记录日志，结果写入 ``runner.logger.log_path`` 指定的目录。默认只运行一个环境；确认稳定后可以用 Hydra 覆盖提高并行度，例如 ``env.eval.total_num_envs=4`` 配合 ``cluster.component_placement.env=0-3`` 和 ``cluster.component_placement.rollout=0-3``。
 
-14 维状态/动作的布局由 ``state_action_order`` 决定。官方 Pi_5 检查点使用 ALOHA 顺序 ``[左臂, 左夹爪, 右臂, 右夹爪]``，因此评估配置设置 ``state_action_order: aloha``；训练配置保持默认的 ``native``，即运行时顺序 ``[左臂, 右臂, 左夹爪, 右夹爪]``。
+14 维状态/动作的布局由 ``state_action_order`` 决定。官方 Pi_05 检查点使用 ALOHA 顺序 ``[左臂, 左夹爪, 右臂, 右夹爪]``，因此评估配置设置 ``state_action_order: aloha``。
 
-评估配置中的 ``rollout.model.model_path`` 只是占位路径。``rollout.model.openpi_data.norm_stats_path`` 默认由它推导，但下载得到的检查点里 norm stats 位于 ``assets/arx_x5_sim/`` 下，因此两项都要覆盖：
+评估配置中的 ``rollout.model.model_path`` 只是占位路径。``rollout.model.openpi_data.norm_stats_path`` 默认由它推导，因此只需覆盖 ``model_path``：
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh robodojo \
      robodojo_put_bottles_into_dustbin_pi05_eval \
-     rollout.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/59999" \
-     rollout.model.openpi_data.norm_stats_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/59999/assets/arx_x5_sim/norm_stats.json"
+     rollout.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
 
 可视化与结果
 ----------------------------------------

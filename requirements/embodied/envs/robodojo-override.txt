@@ -1,9 +1,10 @@
 # Canonical dependency lock for the RoboDojo integration.
 #
 # Platform: Linux x86_64, NVIDIA GPU, Python 3.11.
-# Torch packages are installed from https://download.pytorch.org/whl/cu126.
-# Runtime: rlinf-robodojo-runtime 0.3.0 at
-#   6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7.
+# Torch packages are installed from the platform-selected PyTorch wheel index
+# (cu126, or cu128 on CUDA 12.8+).
+# Runtime: rlinf-robodojo-runtime 0.3.0.
+# runtime-ref: 6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7
 # Isaac Sim 5.1 and IsaacLab require conflicting exact pins. The values below
 # are the combination used by RoboDojo and validated with RLinf.
 #

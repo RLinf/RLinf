@@ -40,7 +40,8 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
-    rollout_epoch: 1
+    # One episode per saved layout: 55 layouts in seeds_path with one env.
+    rollout_epoch: 55
     total_num_envs: 1
     auto_reset: True
     ignore_terminations: True

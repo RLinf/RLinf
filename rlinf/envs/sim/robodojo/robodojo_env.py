@@ -30,7 +30,7 @@ robodojo_runtime.bridge.VectorEnv:
   matching keys (optional success: bool). Rewards are totals over the chunk.
   The bridge must not auto-reset. Terminal slots stay latched until reset.
 * check_seeds(seeds) returns one validity boolean per input seed.
-* offload(clear_cache: bool) releases simulator resources.
+* close(clear_cache: bool) releases simulator resources.
 
 The runtime converts vision.cam_head/cam_left_wrist/cam_right_wrist and state.*
 to the observation schema above, and maps policy vectors to RoboDojo's
@@ -190,6 +190,11 @@ class RoboDojoEnv(gym.Env):
                     raise ValueError(
                         "Not enough success seeds for this worker's groups."
                     )
+        if not cfg.task_config.get("random", False) and self.success_seeds is None:
+            raise ValueError(
+                "task_config.random=False replays saved layouts with ids 0..N-1, "
+                f"so env.seeds_path must list them; got seeds_path={cfg.get('seeds_path')!r}."
+            )
         self.update_reset_state_ids()
         self._elapsed_steps = torch.zeros(num_envs, dtype=torch.long)
         self.prev_step_reward = torch.zeros(num_envs)
@@ -351,19 +356,26 @@ class RoboDojoEnv(gym.Env):
             terminated.zero_()
         dones = terminated | truncated
         if auto_reset and self.auto_reset and dones.any():
-            final_obs, final_info = obs, infos
-            env_idx = dones.nonzero(as_tuple=True)[0].tolist()
-            if self.cfg.get("is_eval", False):
-                self.update_reset_state_ids(env_idx)
-            obs, infos = self.reset(env_idx)
-            infos.update(
-                final_observation=final_obs,
-                final_info=final_info,
-                _final_observation=dones,
-                _final_info=dones,
-                _elapsed_steps=dones,
-            )
+            obs, infos = self._auto_reset(dones, obs, infos)
         return obs, reward, terminated, truncated, infos
+
+    def _auto_reset(
+        self, dones: torch.Tensor, obs: dict, infos: dict
+    ) -> tuple[dict, dict]:
+        """Reset finished slots and keep their last step under ``final_info``."""
+        final_obs, final_info = obs, infos
+        env_idx = dones.nonzero(as_tuple=True)[0].tolist()
+        if self.cfg.get("is_eval", False):
+            self.update_reset_state_ids(env_idx)
+        obs, infos = self.reset(env_idx)
+        infos.update(
+            final_observation=final_obs,
+            final_info=final_info,
+            _final_observation=dones,
+            _final_info=dones,
+            _elapsed_steps=dones,
+        )
+        return obs, infos
 
     def chunk_step(
         self, chunk_actions: torch.Tensor | np.ndarray
@@ -371,8 +383,13 @@ class RoboDojoEnv(gym.Env):
         """Return one final observation and place aggregate results at chunk end."""
         if chunk_actions.ndim != 3 or chunk_actions.shape[1] == 0:
             raise ValueError("Chunk actions must have shape (N, positive horizon, A).")
-        obs, reward, terminated, truncated, infos = self.step(chunk_actions)
+        obs, reward, terminated, truncated, infos = self.step(
+            chunk_actions, auto_reset=False
+        )
         executed_action_count = infos.pop("executed_steps", None)
+        dones = terminated | truncated
+        if self.auto_reset and dones.any():
+            obs, infos = self._auto_reset(dones, obs, infos)
         shape = (self.num_envs, chunk_actions.shape[1])
         rewards = torch.zeros(shape, dtype=torch.float32)
         terminations = torch.zeros(shape, dtype=torch.bool)

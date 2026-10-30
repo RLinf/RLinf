@@ -4,7 +4,7 @@ RL with RoboDojo Benchmark
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ is an Isaac Sim-based
 benchmark for dual-arm manipulation. It includes tabletop rearrangement,
 pick-and-place, and tool-use tasks for robots such as ARX-X5. RLinf exposes
-RoboDojo as a Gym environment for VLA rollout, training, and evaluation.
+RoboDojo as a Gym environment for VLA rollout and evaluation.
 
 Overview
 --------
@@ -23,7 +23,7 @@ environment interface.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      PPO
+      Evaluation (π₀.₅)
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -106,9 +106,9 @@ is:
    * - RoboDojo runtime
      - 0.3.0 · commit ``6d76a0c``
    * - PyTorch
-     - 2.7.0 · CUDA 12.6 wheel
+     - 2.7.0 · wheel for the detected driver (cu126, cu128 on CUDA 12.8+)
    * - TorchVision / TorchAudio
-     - 0.22.0 / 2.7.0 · CUDA 12.6 wheel
+     - 0.22.0 / 2.7.0 · same wheel index as PyTorch
    * - Isaac Sim
      - 5.1.0
    * - IsaacLab
@@ -224,7 +224,7 @@ the run the example configuration evaluates:
      --local-dir "$ROBODOJO_ASSETS_ROOT" \
      --include "ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/**"
 
-The result is an OpenPI checkpoint directory:
+The download is a raw JAX/orbax checkpoint:
 
 .. code-block:: text
 
@@ -235,11 +235,28 @@ The result is an OpenPI checkpoint directory:
        ├── params/
        └── train_state/
 
-Point ``rollout.model.model_path`` at ``59999/`` and
-``rollout.model.openpi_data.norm_stats_path`` at the ``norm_stats.json`` under
-its ``assets/``; the overrides are shown under Run It. ``joint-1`` and
-``joint-2`` are the other two runs of the same checkpoint, and
-``ckpt/RoboDojo/Pi_0/`` holds the corresponding π₀ checkpoints.
+RLinf's OpenPI loader reads an OpenPI-format checkpoint
+(``model.safetensors``), so convert it. The converter imports ``jax`` and
+``orbax-checkpoint``, which the ``--model openpi`` installation provides:
+
+.. code-block:: bash
+
+   export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
+   source .venv/bin/activate
+   CKPT=$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/59999
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+     --input-model "$CKPT" \
+     --input-norm-stats "$CKPT/assets/arx_x5_sim/norm_stats.json" \
+     --output-model "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5" \
+     --output-norm-stats "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5/arx_x5_sim/norm_stats.json" \
+     --action-dim 32 \
+     --action-horizon 50
+
+The converted directory contains ``model.safetensors`` and
+``arx_x5_sim/norm_stats.json``. Point ``rollout.model.model_path`` at it; the
+norm stats path is derived from it. ``joint-1`` and ``joint-2`` are the other
+two runs of the same checkpoint, and ``ckpt/RoboDojo/Pi_0/`` holds the
+corresponding π₀ checkpoints.
 
 .. note::
 
@@ -295,11 +312,11 @@ Reference the environment preset from your training configuration:
 The policy's ``action_dim`` must equal the sum of ``action_dims``. The example
 uses ``[6, 6, 1, 1]``, which is a 14-dimensional action.
 
-**Evaluate a Pi_5 checkpoint**
+**Evaluate a Pi_05 checkpoint**
 
 ``evaluations/robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml`` reuses
 the environment preset above and evaluates ``put_bottles_into_dustbin`` with an
-OpenPI Pi_5 checkpoint. Install the policy dependencies as well:
+OpenPI Pi_05 checkpoint. Install the policy dependencies as well:
 
 .. code-block:: bash
 
@@ -321,23 +338,20 @@ default; once that is stable, raise the parallelism with Hydra overrides such as
 ``cluster.component_placement.rollout=0-3``.
 
 ``state_action_order`` selects the layout of the 14-dimensional state and action
-vectors. The official Pi_5 checkpoint was trained on the ALOHA order
+vectors. The official Pi_05 checkpoint was trained on the ALOHA order
 ``[left arm, left gripper, right arm, right gripper]``, so the evaluation
-configuration sets ``state_action_order: aloha``. Training configurations keep
-the default ``native`` order, which is the runtime order
-``[left arm, right arm, left gripper, right gripper]``.
+configuration sets ``state_action_order: aloha``.
 
 ``rollout.model.model_path`` in the evaluation configuration is a placeholder
-for the checkpoint directory. ``rollout.model.openpi_data.norm_stats_path`` is
-derived from it by default, but the downloaded checkpoint keeps its norm stats
-under ``assets/arx_x5_sim/``, so override both:
+for the converted checkpoint directory. The default
+``rollout.model.openpi_data.norm_stats_path`` is derived from it, so overriding
+``model_path`` is enough:
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh robodojo \
      robodojo_put_bottles_into_dustbin_pi05_eval \
-     rollout.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/59999" \
-     rollout.model.openpi_data.norm_stats_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05/RoboDojo-sim-arx_x5-joint-0/59999/assets/arx_x5_sim/norm_stats.json"
+     rollout.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
 
 Visualization and Results
 -------------------------

@@ -566,6 +566,23 @@ EOF
     echo "${ver%%.*} ${ver#*.}"
 }
 
+# Export TORCH_CUDA_ARCH_LIST for extensions built from source. CUDA 12.8+
+# adds Blackwell (sm_100); earlier toolkits reject that target.
+set_torch_cuda_arch_list() {
+    local cuda_mm cuda_major cuda_minor
+    cuda_mm=$(detect_cuda_major_minor) || {
+        echo "Could not detect the CUDA version; cannot build CUDA extensions." >&2
+        exit 1
+    }
+    cuda_major="${cuda_mm%% *}"
+    cuda_minor="${cuda_mm##* }"
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    else
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+    fi
+}
+
 detect_nvidia_driver_max_cuda() {
     command -v nvidia-smi &>/dev/null || return 1
     local ver maj min
@@ -2639,9 +2656,11 @@ EOF
         robodojo)
             create_and_sync_venv
             install_common_embodied_deps
-            install_robodojo_env
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
+            # Keep the RoboDojo pins and the self-check last: OpenPI declares
+            # torch==2.7.1 and its own lerobot/opencv bounds.
+            install_robodojo_env
             ;;
         isaaclab)
             create_and_sync_venv
@@ -3993,10 +4012,11 @@ install_robodojo_env() {
     fi
 
     local override_file="$SCRIPT_DIR/embodied/envs/robodojo-override.txt"
-    local runtime_ref="${ROBODOJO_RUNTIME_REF:-6d76a0c4a49a7a47bf5ee3924de2ccd7ecb8a8b7}"
-    local isaaclab_ref="afca7b09d60d8beb9c1cb28b43066499940b969b"
+    local runtime_ref="${ROBODOJO_RUNTIME_REF:-}"
+    local isaaclab_ref curobo_ref
     local isaaclab_dir
-    local assets_root="${ROBODOJO_ASSETS_ROOT:-$PWD/data/robodojo}"
+    local use_external_isaaclab=0
+    local assets_root="${ROBODOJO_ASSETS_ROOT:-$(dirname "$SCRIPT_DIR")/data/robodojo}"
     local index_args=()
     mapfile -t index_args < <(platform_index_args)
     index_args+=(--extra-index-url https://pypi.nvidia.com)
@@ -4004,6 +4024,19 @@ install_robodojo_env() {
     if [[ ! -f "${override_file}" ]]; then
         echo "Missing RoboDojo compatibility overrides: ${override_file}" >&2
         exit 1
+    fi
+    # The override file owns the source pins; bump them there only.
+    isaaclab_ref=$(sed -n 's|.*IsaacLab\.git@\([0-9a-f]\{40\}\).*|\1|p' "$override_file" | awk 'NR == 1')
+    curobo_ref=$(sed -n 's|.*curobo\.git@\([0-9a-f]\{40\}\).*|\1|p' "$override_file" | awk 'NR == 1')
+    if [[ -z "$runtime_ref" ]]; then
+        runtime_ref=$(sed -n 's/^# runtime-ref: //p' "$override_file" | awk 'NR == 1')
+    fi
+    if [[ -z "$runtime_ref" || -z "$isaaclab_ref" || -z "$curobo_ref" ]]; then
+        echo "Could not read the RoboDojo runtime/IsaacLab/cuRobo pins from ${override_file}." >&2
+        exit 1
+    fi
+    if [[ -n "${ROBODOJO_ISAACLAB_PATH:-}" ]]; then
+        use_external_isaaclab=1
     fi
 
     # Isaac Sim needs the EULA flag at import time. Keep it in the venv so
@@ -4022,50 +4055,23 @@ install_robodojo_env() {
     if grep -q '^export ROBODOJO_ASSETS_ROOT=' "$VENV_DIR/bin/activate" 2>/dev/null; then
         sed -i '/^export ROBODOJO_ASSETS_ROOT=/d' "$VENV_DIR/bin/activate"
     fi
-    echo "export ROBODOJO_ASSETS_ROOT=${escaped_assets_root}" >> "$VENV_DIR/bin/activate"
+    echo "export ROBODOJO_ASSETS_ROOT=\${ROBODOJO_ASSETS_ROOT:-${escaped_assets_root}}" >> "$VENV_DIR/bin/activate"
 
-    # Torch first: the runtime pins torch==2.7.0, and the IsaacLab extensions
-    # build against whichever Torch is already installed. TORCH_CUDA_ARCH_LIST
-    # only affects those builds.
-    #
+    # Torch comes from apply_env_default_torch (2.7.0 on the platform's wheel
+    # index) before this function runs. TORCH_CUDA_ARCH_LIST only affects the
+    # IsaacLab and cuRobo extensions built below.
+    set_torch_cuda_arch_list
+
+    # cuRobo is pinned to the revision the RoboDojo runtime was validated with.
     # ``--no-config`` keeps these installs on the runtime's own pins: the
-    # simulator stack must resolve from the upstream compatibility overrides
-    # below, not from the repository's override-dependencies.
-    local cuda_mm cuda_major cuda_minor
-    cuda_mm=$(detect_cuda_major_minor) || {
-        echo "Could not detect CUDA. RoboDojo requires a working NVIDIA CUDA driver." >&2
-        exit 1
-    }
-    cuda_major="${cuda_mm%% *}"
-    cuda_minor="${cuda_mm##* }"
-    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
-    else
-        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
-    fi
-
-    local torch_index
-    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-        torch_index="https://download.pytorch.org/whl/cu128"
-    else
-        torch_index="https://download.pytorch.org/whl/cu126"
-    fi
-    uv pip install --no-config --prerelease=allow \
-        --index-url "$torch_index" --overrides "$override_file" \
-        torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
-
-    # cuRobo and the IsaacLab fork are pinned to the revisions the RoboDojo
-    # runtime was validated with. Bump the runtime, override file, and these
-    # revisions together after revalidating.
-    #   cuRobo    yuechen0614/curobo    895c6517243f8cb091c73c018c8167192d39599a
-    #   IsaacLab  yuechen0614/IsaacLab  afca7b09d60d8beb9c1cb28b43066499940b969b
+    # simulator stack must resolve from the upstream compatibility overrides,
+    # not from the repository's override-dependencies.
     uv pip install --no-config --prerelease=allow --no-build-isolation \
         --overrides "$override_file" \
-        "nvidia-curobo[cu12] @ git+${GITHUB_PREFIX}https://github.com/yuechen0614/curobo.git@895c6517243f8cb091c73c018c8167192d39599a"
+        "nvidia-curobo[cu12] @ git+${GITHUB_PREFIX}https://github.com/yuechen0614/curobo.git@${curobo_ref}"
 
     # The runtime package pulls in the simulator stack and the Torch family it
-    # needs. Bump its ref, the override file, and the IsaacLab ref below
-    # together after revalidating.
+    # needs. Bump ``# runtime-ref`` in the override file after revalidating.
     uv pip install --no-config --prerelease=allow \
         --overrides "$override_file" "${index_args[@]}" \
         "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
@@ -4076,16 +4082,21 @@ install_robodojo_env() {
     # IsaacLab's wheel intentionally contains only isaaclab/__init__.py. The
     # extension metadata and modules live beside the source package, so the
     # runtime's three IsaacLab dependencies must be installed editable on top.
-    # The fork is pinned to the revision the runtime was validated with
-    # (yuechen0614/IsaacLab afca7b09d60d8beb9c1cb28b43066499940b969b).
+    # The fork is pinned to the revision the runtime was validated with; the
+    # commit is read from the override file above.
     isaaclab_dir=$(clone_or_reuse_repo \
         ROBODOJO_ISAACLAB_PATH \
         "$VENV_DIR/robodojo-isaaclab" \
         "https://github.com/yuechen0614/IsaacLab.git")
-    if ! git -C "$isaaclab_dir" cat-file -e "${isaaclab_ref}^{commit}" 2>/dev/null; then
-        git -C "$isaaclab_dir" fetch --depth 1 origin "$isaaclab_ref"
+    if [ "$use_external_isaaclab" -eq 0 ]; then
+        if ! git -C "$isaaclab_dir" cat-file -e "${isaaclab_ref}^{commit}" 2>/dev/null; then
+            git -C "$isaaclab_dir" fetch --depth 1 origin "$isaaclab_ref"
+        fi
+        git -C "$isaaclab_dir" checkout --detach "$isaaclab_ref"
+    elif [ "$(git -C "$isaaclab_dir" rev-parse HEAD 2>/dev/null || true)" != "$isaaclab_ref" ]; then
+        echo "ROBODOJO_ISAACLAB_PATH=$isaaclab_dir is not the RoboDojo-validated IsaacLab commit ${isaaclab_ref}; check it out or unset ROBODOJO_ISAACLAB_PATH." >&2
+        exit 1
     fi
-    git -C "$isaaclab_dir" checkout --detach "$isaaclab_ref"
     uv pip install --no-config --no-deps --no-build-isolation \
         -e "$isaaclab_dir/source/isaaclab" \
         -e "$isaaclab_dir/source/isaaclab_assets" \
@@ -4102,7 +4113,8 @@ import torch
 from robodojo_runtime import source_root
 from robodojo_runtime.bridge import VectorEnv  # noqa: F401 - RLinf's entry point
 
-assert torch.cuda.is_available(), "PyTorch cannot see a CUDA GPU."
+if not torch.cuda.is_available():
+    print("[install.sh] WARNING: PyTorch cannot see a CUDA GPU; RoboDojo needs one at runtime.")
 assert source_root().is_dir(), "RoboDojo source tree is missing."
 isaaclab = Path(os.environ["ROBODOJO_ISAACLAB_SOURCE"]) / "isaaclab/config/extension.toml"
 assert isaaclab.is_file(), "IsaacLab source tree is missing extension.toml."
@@ -4119,19 +4131,7 @@ install_robotwin_env() {
     local build_curobo_stack=0
     if [ "$PLATFORM" = "nvidia" ]; then
         build_curobo_stack=1
-        local cuda_mm cuda_major cuda_minor
-        cuda_mm=$(detect_cuda_major_minor) || {
-            echo "Could not detect CUDA version. Cannot build robotwin environment." >&2
-            exit 1
-        }
-        cuda_major="${cuda_mm%% *}"
-        cuda_minor="${cuda_mm##* }"
-        if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-            # Include Blackwell support for CUDA 12.8+
-            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
-        else
-            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
-        fi
+        set_torch_cuda_arch_list
     else
         echo "[install.sh] ${PLATFORM}: skipping pytorch3d/warp-lang/curobo (CUDA-only)."
         echo "[install.sh] Set planner_backend: mplib in the task config; curobo is unavailable."
