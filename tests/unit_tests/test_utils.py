@@ -33,6 +33,36 @@ from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+from rlinf.utils.utils import warmup_optimizer_state
+
+
+@pytest.mark.parametrize("optimizer_cls", [torch.optim.Adam, torch.optim.AdamW])
+@pytest.mark.parametrize("beta2", [0.95, 0.999])
+@pytest.mark.parametrize("device", ["cpu", "cuda", "npu"])
+def test_optimizer_warmup_preserves_updates(optimizer_cls, beta2, device):
+    """Initializing optimizer state must preserve subsequent Adam updates."""
+    if device != "cpu":
+        platform = getattr(torch, device, None)
+        if platform is None or not platform.is_available():
+            pytest.skip(f"{device} is unavailable")
+
+    reference = torch.nn.Parameter(torch.tensor([1.0, -2.0], device=device))
+    warmed = torch.nn.Parameter(reference.detach().clone())
+    kwargs = {"lr": 0.1, "betas": (0.9, beta2), "weight_decay": 0.01}
+    reference_optimizer = optimizer_cls([reference], **kwargs)
+    warmed_optimizer = optimizer_cls([warmed], **kwargs)
+
+    warmup_optimizer_state(warmed_optimizer)
+
+    torch.testing.assert_close(warmed, reference)
+    assert warmed.grad is None
+    assert warmed_optimizer.param_groups[0]["lr"] == kwargs["lr"]
+    for gradient in ([1.0, -0.5], [-0.25, 2.0], [0.5, 0.25]):
+        reference.grad = torch.tensor(gradient, device=device)
+        warmed.grad = reference.grad.clone()
+        reference_optimizer.step()
+        warmed_optimizer.step()
+        torch.testing.assert_close(warmed, reference)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
