@@ -23,7 +23,7 @@ runner:
   max_epochs: 2
   max_steps: 2
   val_check_interval: -1
-  save_interval: 2
+  save_interval: -1
   resume_dir: null
   ckpt_path: null
   rtc:
@@ -63,7 +63,6 @@ env:
     seed: 0
     group_size: ${algorithm.group_size}
     rollout_epoch: 1
-    # Two chunks exercise RTC overlap and the final unexecuted action slot.
     max_episode_steps: 47
     max_steps_per_rollout_epoch: 48
     reset_dataset:

@@ -18,7 +18,7 @@ cluster:
 runner:
   task_type: embodied_eval
   only_eval: true
-  ckpt_path: /workspace/results/simple_openoven_ppo_psi0/ci-test/checkpoints/global_step_2/actor/model_state_dict/full_weights.pt
+  ckpt_path: null
   rtc:
     enabled: false
   logger:
@@ -67,4 +67,3 @@ rollout:
   pipeline_stage_num: 1
   model:
     model_path: /workspace/dataset/psi0_simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-    add_value_head: true

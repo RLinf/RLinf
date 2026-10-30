@@ -3568,25 +3568,15 @@ EOF
 
 install_simple_env() {
     local simple_dir
-    local repo_env=SIMPLE_PATH
-    local repo_dir="$VENV_DIR/SIMPLE"
-    # SIMPLE_CACHE_DIR is a prepared checkout. Reuse it and do not fetch
-    # submodules; the upstream SSH URLs hang on hosts without a key.
-    if [ -z "${SIMPLE_PATH:-}" ] && [ -n "${SIMPLE_CACHE_DIR:-}" ]; then
-        repo_env=SIMPLE_CACHE_DIR
-        repo_dir="$SIMPLE_CACHE_DIR"
-    fi
-    simple_dir=$(clone_or_reuse_repo "$repo_env" "$repo_dir" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
     export OMNI_KIT_ACCEPT_EULA=YES
     if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
         echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
     fi
     # Checkout the fixed parent revision before initializing its gitlink-pinned
     # submodules; this avoids ever resolving submodules from a moving default branch.
-    if [ -z "${SIMPLE_PATH:-}" ] && [ -z "${SIMPLE_CACHE_DIR:-}" ]; then
+    if [ -z "${SIMPLE_PATH:-}" ]; then
         git -C "$simple_dir" checkout 5e3d6f84e85343e34e9bca8d157f0d7813231185 >&2
-    fi
-    if [ "$repo_env" != "SIMPLE_CACHE_DIR" ]; then
         git -C "$simple_dir" submodule update --init --recursive
     fi
 

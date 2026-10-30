@@ -2194,8 +2194,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          # Reuse the prepared checkout; its data/ links to the prepared assets.
-          export SIMPLE_CACHE_DIR=/workspace/dataset/psi0_simple/SIMPLE
+          export SIMPLE_PATH=/workspace/dataset/psi0_simple/SIMPLE
           bash requirements/install.sh embodied --model psi0 --env simple
 
       - name: SIMPLE OpenOven Psi0 PPO test
@@ -2205,19 +2204,15 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export HF_HOME=/workspace/dataset/.cache/huggingface
-          # This runner keeps /workspace/results across jobs. Remove the old
-          # checkpoint so the evaluation step only loads this run's checkpoint.
-          rm -rf /workspace/results/simple_openoven_ppo_psi0
           bash tests/e2e_tests/embodied/run.sh simple_openoven_ppo_psi0
 
-      - name: SIMPLE OpenOven Psi0 checkpoint evaluation test
+      - name: SIMPLE OpenOven Psi0 evaluation test
         timeout-minutes: 60
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export HF_HOME=/workspace/dataset/.cache/huggingface
-          rm -rf /workspace/results/simple_openoven_psi0_eval
           bash tests/e2e_tests/evaluations/run.sh simple_openoven_psi0_eval
 
       - name: Clean up
