@@ -21,11 +21,6 @@ import torch
 from omegaconf import DictConfig
 from packaging.version import parse
 
-try:
-    from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
-except ImportError:
-    # sglang 0.5.2/0.5.4 lack this symbol; these values are stable across versions.
-    GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache", "cuda_graph"]
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -45,6 +40,7 @@ from rlinf.workers.rollout.utils import (
     RankMapper,
 )
 
+from . import GPU_MEMORY_ALL_TYPES
 from .io_struct import (
     AbortGenerationInput,
     AbortGenerationOutput,
