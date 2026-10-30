@@ -168,6 +168,18 @@ class FSDPActor(FSDPModelManager, Worker):
         self.variable_seq_lengths = self.cfg.actor.model.get(
             "variable_seq_lengths", False
         )
+        if cfg.algorithm.loss_type == "drpo":
+            assert placement.is_collocated, (
+                "DRPO currently requires collocated placement."
+            )
+            assert cfg.data.rollout_batch_size % self._world_size == 0, (
+                "DRPO must distribute whole prompt groups to each actor rank."
+            )
+            assert (
+                self.total_batch_size_per_dp
+                % (self.n_mini_batches * self.micro_batch_size)
+                == 0
+            ), "DRPO needs equal, complete micro-batches on every actor rank."
 
     def init_worker(self) -> None:
         """
@@ -727,6 +739,13 @@ class FSDPActor(FSDPModelManager, Worker):
             clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
             clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
             fast_path_zero_loss_mask=True,
+            rewards=m_batch["rewards"],
+            group_size=self.cfg.algorithm.group_size,
+            drpo_lambda=self.cfg.algorithm.get("drpo_lambda", 0.1),
+            drpo_tau=self.cfg.algorithm.get("drpo_tau", 10.0),
+            drpo_beta=self.cfg.algorithm.get("drpo_beta", 1000.0),
+            drpo_delta=self.cfg.algorithm.get("drpo_delta", 1e-4),
+            drpo_kl_type=self.cfg.algorithm.get("drpo_kl_type", "kl"),
         )
 
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())

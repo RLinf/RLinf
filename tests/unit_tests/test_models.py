@@ -27,10 +27,16 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import torch
+from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
-from rlinf.config import SupportedModel
+from rlinf.config import (
+    SupportedModel,
+    validate_drpo_cfg,
+    validate_fsdp_cfg,
+    validate_reasoning_cfg,
+)
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
@@ -49,6 +55,71 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("algorithm.drpo_lambda", 0),
+        ("algorithm.drpo_tau", float("nan")),
+        ("algorithm.drpo_beta", -1),
+        ("algorithm.drpo_delta", -1),
+        ("algorithm.drpo_kl_type", "unknown"),
+        ("algorithm.shuffle_rollout", True),
+        ("algorithm.training_batch_size_per_gpu", 3),
+        ("algorithm.normalize_advantages", True),
+        ("runner.enable_dynamic_batch_size", True),
+        ("actor.enable_dp_load_balance", True),
+        ("actor.training_backend", "megatron"),
+        ("reward.reward_min_val", -1),
+    ],
+)
+def test_drpo_rejects_incompatible_config(key, value):
+    path = (
+        Path(__file__).parents[2]
+        / "examples/reasoning/config/math/qwen2.5-1.5b-drpo-fsdp.yaml"
+    )
+    cfg = OmegaConf.load(path)
+    validate_drpo_cfg(cfg)
+    OmegaConf.update(cfg, key, value)
+    with pytest.raises(AssertionError):
+        validate_drpo_cfg(cfg)
+
+
+def test_drpo_config_allows_evaluation_and_length_control():
+    path = (
+        Path(__file__).parents[2]
+        / "examples/reasoning/config/math/qwen2.5-1.5b-drpo-fsdp.yaml"
+    )
+    cfg = OmegaConf.load(path)
+    cfg.algorithm.drpo_lambda = 1e8
+    validate_drpo_cfg(cfg)
+    cfg.runner.task_type = "reasoning_eval"
+    cfg.algorithm.group_size = 1
+    validate_drpo_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    "directory,name",
+    [
+        ("examples/reasoning/config/math", "qwen2.5-1.5b-drpo-fsdp"),
+        ("tests/e2e_tests/reasoning", "qwen2.5-1.5b-drpo-collocated-fsdp-sgl"),
+    ],
+)
+def test_drpo_configs_compose_with_compatible_fsdp_precision(
+    monkeypatch, directory, name
+):
+    root = Path(__file__).parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    with initialize_config_dir(version_base="1.1", config_dir=str(root / directory)):
+        cfg = compose(config_name=name)
+    validate_drpo_cfg(cfg)
+    cfg = validate_reasoning_cfg(cfg)
+    cfg.actor = validate_fsdp_cfg(cfg.actor)
+    assert cfg.actor.micro_batch_size % cfg.algorithm.group_size == 0
+    assert not cfg.actor.fsdp_config.amp_autocast.enabled
+    assert cfg.data.prompt_key == "prompt" and cfg.data.answer_key == "solutions"
+    assert isinstance(cfg.data.apply_chat_template, bool)
 
 
 class _DummyModel:
