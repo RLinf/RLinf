@@ -60,17 +60,6 @@ from rlinf.utils.utils import (
 )
 
 
-def _recompute_logprob_kwargs(cfg: DictConfig) -> dict[str, float | int]:
-    """Return sampling kwargs required by a model's replay contract."""
-    model_type = SupportedModel(cfg.actor.model.model_type)
-    if model_type in (SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT):
-        return {
-            "temperature": cfg.rollout.sampling_params.temperature_train,
-            "top_k": cfg.rollout.sampling_params.top_k,
-        }
-    return {}
-
-
 def _reshape_recompute_logprob_gap(
     logprob_gap: torch.Tensor, cfg: DictConfig
 ) -> torch.Tensor:
@@ -453,7 +442,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_logprobs = self.rollout_batch["prev_logprobs"]
         rollout_size = rollout_logprobs.shape[0]
-        kwargs = _recompute_logprob_kwargs(self.cfg)
+        kwargs = {}
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+        ]:
+            kwargs = {
+                "temperature": self.cfg.rollout.sampling_params.temperature_train,
+                "top_k": self.cfg.rollout.sampling_params.top_k,
+            }
 
         recomputed_logprobs = []
         with torch.no_grad():

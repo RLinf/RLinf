@@ -104,13 +104,6 @@ rollout:
   model:
     model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
-    model_type: ${actor.model.model_type}
-    num_action_chunks: ${actor.model.num_action_chunks}
-    action_dim: ${actor.model.action_dim}
-    num_steps: ${actor.model.num_steps}
-    add_value_head: ${actor.model.add_value_head}
-    openpi: ${actor.model.openpi}
-    openpi_data: ${actor.model.openpi_data}
 
   phyai:
     plugin: pi05
@@ -130,31 +123,13 @@ actor:
 
   model:
     model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-    model_type: "openpi"
     num_action_chunks: 5 # interface for the env
-    action_dim: 7
     num_steps: 3
     add_value_head: True
     openpi:
-      task: rl
-      config_name: "pi05_libero"
       action_horizon: 10
-      num_images_in_input: 2
-      action_chunk: ${..num_action_chunks}
-      num_steps: ${..num_steps}
-      action_env_dim: ${..action_dim}
-      model_action_dim: 32
-      paligemma_variant: "gemma_2b"
-      action_expert_variant: "gemma_300m"
-      max_token_len: 200
       value_after_vlm: True
-      value_vlm_mode: "mean_token"
-      detach_critic_input: True
       joint_logprob: False
-      ignore_last: True
-      noise_level: 0.5
-      noise_method: "flow_sde"
-      train_expert_only: True
     # Keep actor preprocessing and PhyAI rollout preprocessing on the same
     # checkpoint statistics. The public LIBERO checkpoint includes this file.
     openpi_data:
@@ -174,28 +149,6 @@ actor:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
-    use_orig_params: True
-    wrappers:
-      projections:
-        module_names: ["action_*proj", "*time_mlp_*"]
-      norms:
-        module_classes: [RMSNorm]
-      vision_embedding:
-        module_names: [img, img.stem]
-    mixed_precision_policies:
-      fp32:
-        param_dtype: fp32
-        reduce_dtype: fp32
-        buffer_dtype: fp32
-      fp32_preserve_inputs:
-        param_dtype: fp32
-        reduce_dtype: fp32
-        buffer_dtype: fp32
-        cast_forward_inputs: False
-    mixed_precision_rules:
-      projections: fp32
-      norms: fp32_preserve_inputs
-      vision_embedding: fp32_preserve_inputs
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

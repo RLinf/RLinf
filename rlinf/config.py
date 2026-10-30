@@ -1129,6 +1129,28 @@ def validate_embodied_cfg(cfg):
         assert model_type == SupportedModel.OPENPI, (
             "rollout_backend='phyai' currently requires model_type='openpi'."
         )
+        openpi_cfg = model_cfg.get("openpi", {})
+        assert bool(model_cfg.get("pi05", True)), (
+            "rollout_backend='phyai' requires model.pi05=True."
+        )
+        assert str(openpi_cfg.get("config_name", "")), (
+            "rollout_backend='phyai' requires a non-empty model.openpi.config_name."
+        )
+        expected_variants = {
+            "paligemma_variant": "gemma_2b",
+            "action_expert_variant": "gemma_300m",
+        }
+        for field, expected in expected_variants.items():
+            configured = str(openpi_cfg.get(field, expected))
+            assert configured == expected, (
+                f"rollout_backend='phyai' requires model.openpi.{field}="
+                f"{expected!r}, got {configured!r}."
+            )
+        num_images = int(openpi_cfg.get("num_images_in_input", 3))
+        assert 1 <= num_images <= 3, (
+            "rollout_backend='phyai' requires "
+            f"model.openpi.num_images_in_input in [1, 3], got {num_images}."
+        )
         if not only_eval:
             loss_type = str(algorithm_cfg.get("loss_type", "")).lower()
             unsupported_loss_types = {"embodied_dagger", "rlt_ac", "rlt_td3"}
@@ -1143,9 +1165,9 @@ def validate_embodied_cfg(cfg):
             assert cfg.weight_syncer.get("type") == "bucket", (
                 "rollout_backend='phyai' requires weight_syncer.type='bucket'."
             )
-            openpi_cfg = model_cfg.get("openpi", {})
-            assert bool(model_cfg.get("pi05", True)), (
-                "PhyAI training requires actor.model.pi05=True."
+            assert num_images == 2, (
+                "PhyAI training parity requires "
+                f"actor.model.openpi.num_images_in_input=2, got {num_images}."
             )
             assert bool(model_cfg.get("add_value_head", False)), (
                 "PhyAI training requires actor.model.add_value_head=True."

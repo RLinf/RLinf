@@ -12,18 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import inspect
 from pathlib import Path
 
 import pytest
-import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from rlinf.config import validate_embodied_cfg
-from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
-from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 @pytest.fixture
@@ -44,7 +39,6 @@ def test_phyai_eval_and_actor_resolve_same_openpi_config(monkeypatch, phyai_conf
     assert cfg.rollout.model.openpi.num_images_in_input == 2
     assert cfg.rollout.model.num_action_chunks == cfg.actor.model.num_action_chunks
     assert cfg.rollout.model.model_path == cfg.actor.model.model_path
-    assert cfg.rollout.model.openpi_data == cfg.actor.model.openpi_data
     kernel_config = OmegaConf.to_container(
         cfg.rollout.phyai.kernel_config, resolve=True
     )
@@ -111,6 +105,7 @@ def test_phyai_training_rejects_unsupported_algorithms(
         ("actor.model.openpi.value_vlm_mode", "last_token", "mean_token"),
         ("actor.model.openpi.joint_logprob", True, "joint_logprob=False"),
         ("actor.model.openpi.noise_method", "flow_noise", "flow_ode or flow_sde"),
+        ("actor.model.openpi.num_images_in_input", 1, "num_images_in_input=2"),
     ],
 )
 def test_phyai_training_validates_actor_contract(phyai_config, path, value, message):
@@ -121,50 +116,24 @@ def test_phyai_training_validates_actor_contract(phyai_config, path, value, mess
         validate_embodied_cfg(cfg)
 
 
-def test_actor_weight_sync_uses_selective_state():
-    sent = []
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        ("pi05", False, "model.pi05=True"),
+        ("openpi.config_name", "", "non-empty model.openpi.config_name"),
+        ("openpi.paligemma_variant", "gemma_3b", "paligemma_variant='gemma_2b'"),
+        (
+            "openpi.action_expert_variant",
+            "gemma_1b",
+            "action_expert_variant='gemma_300m'",
+        ),
+        ("openpi.num_images_in_input", 4, "num_images_in_input in \\[1, 3\\]"),
+    ],
+)
+def test_phyai_eval_validates_plugin_contract(phyai_config, path, value, message):
+    cfg = phyai_config
+    cfg.runner.only_eval = True
+    OmegaConf.update(cfg.rollout.model, path, value)
 
-    class _SendResult:
-        async def async_wait(self):
-            return None
-
-    def broadcast(data, **_kwargs):
-        sent.append(data)
-        return _SendResult()
-
-    actor = object.__new__(EmbodiedFSDPActor)
-    actor.enable_offload = False
-    actor.weight_syncer = BucketWeightSyncer(
-        bucket_size=1024, bucket_dtype=None, bucket_device="cpu"
-    )
-    actor.param_names_need_sync = ["model.trainable", "value_head.weight"]
-    actor._is_weight_sender = True
-    actor._sync_weight_comm_options = None
-    actor._group_name = "actor"
-    actor._rollout_group_name = "rollout"
-    actor._rollout_all_ranks = [0]
-    actor.get_rollout_state_dict = lambda: {
-        "model.trainable": torch.ones(1),
-        "model.frozen": torch.ones(1),
-        "value_head.weight": torch.ones(1),
-    }
-    actor.version = 3
-    actor.get_rollout_sync_version = lambda: 7
-    actor.log_info = lambda _message: None
-    actor.broadcast = broadcast
-
-    sync = inspect.unwrap(EmbodiedFSDPActor.sync_model_to_rollout)
-    asyncio.run(sync(actor))
-    asyncio.run(sync(actor))
-
-    assert len(sent) == 2
-    for bucket in sent:
-        assert set(bucket) == {
-            "model.trainable",
-            "value_head.weight",
-            "total_buckets",
-            "syncer_version",
-        }
-        assert bucket["syncer_version"].item() == 7
-        assert torch.equal(bucket["model.trainable"], torch.ones(1))
-        assert torch.equal(bucket["value_head.weight"], torch.ones(1))
+    with pytest.raises(AssertionError, match=message):
+        validate_embodied_cfg(cfg)

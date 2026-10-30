@@ -14,6 +14,8 @@
 
 """PhyAI-backed embodied rollout worker."""
 
+from __future__ import annotations
+
 import gc
 import math
 import os
@@ -21,19 +23,11 @@ import random
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
-from phyai.engine import Engine, EngineArgs
-from phyai.engine_config import DeviceConfig, EngineConfig, KernelConfig, RuntimeConfig
-from phyai.models.pi05.configuration_pi05 import PI05Config
-from phyai.models.pi05.main_pi05 import PI05Args
-from phyai.models.pi05.scheduler_pi05 import (
-    PI05Request,
-    PI05RolloutRequest,
-)
 from tqdm import tqdm
 
 from rlinf.config import torch_dtype_from_precision
@@ -67,6 +61,11 @@ from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
 
+if TYPE_CHECKING:
+    from phyai.engine import Engine
+    from phyai.models.pi05.configuration_pi05 import PI05Config
+    from phyai.models.pi05.scheduler_pi05 import PI05Request, PI05RolloutRequest
+
 _VISION_INPUT_DTYPE = torch.float32
 
 
@@ -78,7 +77,6 @@ class _PI05SamplingPlan:
     denoise_inds: torch.Tensor
     action_chunk: int
     action_dim: int
-    joint_logprob: bool
 
 
 class _PhyAIWeightTarget(torch.nn.Module):
@@ -191,8 +189,6 @@ class PhyAIRolloutWorker(Worker):
         self.collect_transitions = bool(cfg.rollout.get("collect_transitions", False))
         self.collect_prev_infos = bool(cfg.rollout.get("collect_prev_infos", True))
         self.version = 0
-        self.finished_episodes = None
-
         self.weight_syncer = None
         self._sync_weight_comm_options = None
         if not self.only_eval:
@@ -233,12 +229,18 @@ class PhyAIRolloutWorker(Worker):
 
     def init_worker(self) -> None:
         """Construct one PhyAI engine and the shared OpenPI transforms."""
+        from phyai.engine import Engine, EngineArgs
+        from phyai.engine_config import (
+            DeviceConfig,
+            EngineConfig,
+            KernelConfig,
+            RuntimeConfig,
+        )
+        from phyai.models.pi05.main_pi05 import PI05Args
+
         if self._engine is not None:
             raise RuntimeError("PhyAI engine is already initialized.")
-        if str(self.model_cfg.get("model_type", "")) != "openpi":
-            raise NotImplementedError(
-                "PhyAIRolloutWorker requires actor.model.model_type='openpi'."
-            )
+        self.model_cfg = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
         checkpoint_dir = str(self.model_cfg.model_path)
         plugin_cfg = self._build_plugin_config(self.model_cfg)
@@ -286,21 +288,7 @@ class PhyAIRolloutWorker(Worker):
         )
         openpi_cfg = self.model_cfg.get("openpi", {})
         num_images = int(openpi_cfg.get("num_images_in_input", 3))
-        if not 1 <= num_images <= len(IMAGE_KEYS):
-            raise ValueError(
-                f"openpi.num_images_in_input must be in [1, {len(IMAGE_KEYS)}]; "
-                f"got {num_images}."
-            )
-        if not self.only_eval and num_images != 2:
-            raise ValueError(
-                "Native OpenPI pi0.5 PPO parity currently requires exactly two "
-                f"real cameras; got num_images={num_images}."
-            )
         config_name = str(openpi_cfg.get("config_name", ""))
-        if not config_name:
-            raise ValueError(
-                "actor.model.openpi.config_name is required for PhyAI preprocessing."
-            )
         data_kwargs = OmegaConf.select(self.model_cfg, "openpi_data", default=None)
         if data_kwargs is not None:
             data_kwargs = OmegaConf.to_container(data_kwargs, resolve=True)
@@ -397,23 +385,10 @@ class PhyAIRolloutWorker(Worker):
     @staticmethod
     def _build_plugin_config(model_cfg: Any) -> PI05Config:
         """Map RLinf's PI0.5 model semantics to the PhyAI plugin config."""
+        from phyai.models.pi05.configuration_pi05 import PI05Config
+
         defaults = PI05Config()
         openpi_cfg = model_cfg.get("openpi", {})
-        if not bool(model_cfg.get("pi05", True)):
-            raise ValueError("The PhyAI pi05 plugin requires actor.model.pi05=True.")
-
-        expected_variants = {
-            "paligemma_variant": "gemma_2b",
-            "action_expert_variant": "gemma_300m",
-        }
-        for field, expected in expected_variants.items():
-            configured = str(openpi_cfg.get(field, expected))
-            if configured != expected:
-                raise ValueError(
-                    f"The PhyAI pi05 plugin requires {field}={expected!r}; "
-                    f"got {configured!r}."
-                )
-
         return PI05Config(
             chunk_size=_resolve_action_horizon_and_chunk(model_cfg, openpi_cfg)[0],
             max_action_dim=int(
@@ -493,6 +468,8 @@ class PhyAIRolloutWorker(Worker):
     def _build_request(
         self, env_obs: dict[str, Any]
     ) -> tuple[PI05Request, Observation]:
+        from phyai.models.pi05.scheduler_pi05 import PI05Request
+
         assert self._engine_device is not None
         assert self._input_transform_fn is not None
         repacked = repack_env_obs(
@@ -536,6 +513,8 @@ class PhyAIRolloutWorker(Worker):
 
     def _build_rollout_plan(self, request: PI05Request) -> _PI05SamplingPlan:
         """Resolve RLinf policy choices into a sigma execution plan."""
+        from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
+
         assert self._engine_device is not None
         openpi_cfg = self.model_cfg.get("openpi", {})
         batch_size = int(request.pixel_values.shape[0])
@@ -555,29 +534,17 @@ class PhyAIRolloutWorker(Worker):
                 f"action_dim must be in [1, {model_action_dim}], got {action_dim}."
             )
 
-        joint_logprob = bool(openpi_cfg.get("joint_logprob", False))
         ignore_last = bool(openpi_cfg.get("ignore_last", False))
-        if joint_logprob:
-            denoise_inds = (
-                torch.arange(num_steps, dtype=torch.int64, device=self._engine_device)[
-                    None
-                ]
-                .expand(batch_size, -1)
-                .clone()
-            )
-        else:
-            if ignore_last and num_steps < 2:
-                raise ValueError(
-                    "ignore_last=True requires at least two denoise steps."
-                )
-            last = num_steps - 2 if ignore_last else num_steps - 1
-            selected = random.randint(0, last)
-            denoise_inds = torch.full(
-                (batch_size, num_steps),
-                selected,
-                dtype=torch.int64,
-                device=self._engine_device,
-            )
+        if ignore_last and num_steps < 2:
+            raise ValueError("ignore_last=True requires at least two denoise steps.")
+        last = num_steps - 2 if ignore_last else num_steps - 1
+        selected = random.randint(0, last)
+        denoise_inds = torch.full(
+            (batch_size, num_steps),
+            selected,
+            dtype=torch.int64,
+            device=self._engine_device,
+        )
 
         noise_method = str(openpi_cfg.get("noise_method", "flow_ode"))
         if noise_method not in ("flow_ode", "flow_sde"):
@@ -611,13 +578,10 @@ class PhyAIRolloutWorker(Worker):
             )
             denominator = torch.where(timesteps == 1, timesteps[1], timesteps)
             schedule = noise_level * torch.sqrt(timesteps / (1.0 - denominator))[:-1]
-            if joint_logprob:
-                sigmas.copy_(schedule[None])
-            else:
-                step_ids = torch.arange(num_steps, device=self._engine_device)[None]
-                sigmas.copy_(
-                    torch.where(step_ids == denoise_inds[:, :1], schedule[None], 0.0)
-                )
+            step_ids = torch.arange(num_steps, device=self._engine_device)[None]
+            sigmas.copy_(
+                torch.where(step_ids == denoise_inds[:, :1], schedule[None], 0.0)
+            )
 
         execution_request = PI05RolloutRequest(
             pixel_values=request.pixel_values,
@@ -631,22 +595,12 @@ class PhyAIRolloutWorker(Worker):
             denoise_inds=denoise_inds,
             action_chunk=action_chunk,
             action_dim=action_dim,
-            joint_logprob=joint_logprob,
-        )
-
-    @staticmethod
-    def _initial_logprob(sample: torch.Tensor) -> torch.Tensor:
-        """Return RLinf's initial-noise contribution for joint policies."""
-        return (
-            -0.5 * torch.log(torch.full_like(sample, 2.0 * torch.pi))
-            - 0.5 * sample.square()
         )
 
     # Raw PhyAI execution results are reduced into the Actor replay contract.
 
-    @classmethod
+    @staticmethod
     def _reduce_rollout_outputs(
-        cls,
         plan: _PI05SamplingPlan,
         rollout_result: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
@@ -677,15 +631,9 @@ class PhyAIRolloutWorker(Worker):
         cropped = rollout_result.transition_logprobs[
             :, :, : plan.action_chunk, : plan.action_dim
         ]
-        if plan.joint_logprob:
-            initial = cls._initial_logprob(
-                chains[:, 0, : plan.action_chunk, : plan.action_dim]
-            )
-            prev_logprobs = torch.cat([initial[:, None], cropped], dim=1).mean(dim=1)
-        else:
-            selected = plan.denoise_inds[:, 0].to(device=cropped.device)
-            batch_indices = torch.arange(batch_size, device=cropped.device)
-            prev_logprobs = cropped[batch_indices, selected]
+        selected = plan.denoise_inds[:, 0].to(device=cropped.device)
+        batch_indices = torch.arange(batch_size, device=cropped.device)
+        prev_logprobs = cropped[batch_indices, selected]
         prev_logprobs = prev_logprobs.to(torch.float32).contiguous()
 
         raw_values = rollout_result.raw_values
@@ -1120,10 +1068,6 @@ class PhyAIRolloutWorker(Worker):
             self._engine.abort_weight_update()
             raise
         self.version = applied_version
-        if self.finished_episodes is None:
-            self.finished_episodes = (
-                self.version * self.total_num_train_envs * self.rollout_epoch
-            )
         self.log_info(
             "PhyAI hot weight update applied: "
             f"version={self.version}, loaded={len(report.loaded)}."
@@ -1134,14 +1078,3 @@ class PhyAIRolloutWorker(Worker):
     def set_global_step(self, global_step: int) -> None:
         """PhyAI sampling has no global-step-dependent schedule."""
         del global_step
-
-    def shutdown(self) -> None:
-        """Release the PhyAI entry and its process-local distributed state."""
-        if self._engine is None:
-            return
-        self.log_info(f"Shutting down PhyAI engine on rollout rank {self._rank}.")
-        self._engine.close()
-        self._engine = None
-        self._weight_target = None
-        self._input_transform_fn = None
-        self._output_transform_fn = None

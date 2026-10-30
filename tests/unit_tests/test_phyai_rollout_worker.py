@@ -27,20 +27,19 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
+from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
 from rlinf.scheduler import Worker
+from rlinf.workers.rollout.phyai import phyai_rollout_worker
+from rlinf.workers.rollout.phyai.phyai_rollout_worker import (
+    PhyAIRolloutWorker,
+    _PhyAIWeightTarget,
+)
 
 _HAS_PHYAI = importlib.util.find_spec("phyai") is not None
-pytestmark = pytest.mark.skipif(not _HAS_PHYAI, reason="PhyAI is not installed")
+requires_phyai = pytest.mark.skipif(not _HAS_PHYAI, reason="PhyAI is not installed")
 
 if _HAS_PHYAI:
     from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
-
-    from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
-    from rlinf.workers.rollout.phyai import phyai_rollout_worker
-    from rlinf.workers.rollout.phyai.phyai_rollout_worker import (
-        PhyAIRolloutWorker,
-        _PhyAIWeightTarget,
-    )
 
 
 class _FakeEngine:
@@ -97,9 +96,6 @@ def _make_rollout_worker(*, fail: bool = False):
     worker._weight_sync_rollout_ranks = [0]
     worker._weight_sync_is_sender = False
     worker._sync_weight_comm_options = None
-    worker.finished_episodes = None
-    worker.total_num_train_envs = 4
-    worker.rollout_epoch = 2
     worker.version = 0
     worker.torch_platform = SimpleNamespace(empty_cache=lambda: None)
     worker.log_info = lambda _message: None
@@ -167,7 +163,6 @@ def test_sync_model_from_actor_commits_only_complete_updates():
     assert event_names == ["begin", "update", "finish"]
     assert engine.events[-1] == ("finish", 7)
     assert worker.version == 7
-    assert worker.finished_episodes == 56
 
     worker, engine = _make_rollout_worker(fail=True)
     with pytest.raises(RuntimeError, match="sync failed"):
@@ -301,6 +296,7 @@ def test_phyai_rollout_worker_rejects_unknown_plugin(monkeypatch):
         },
     ],
 )
+@requires_phyai
 def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     monkeypatch, only_eval, kernel_config
 ):
@@ -334,12 +330,16 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
         assert weights_only
         return {"model.state_proj.weight": trained_weight}
 
-    monkeypatch.setattr(phyai_rollout_worker, "RuntimeConfig", SimpleNamespace)
-    monkeypatch.setattr(phyai_rollout_worker, "DeviceConfig", SimpleNamespace)
-    monkeypatch.setattr(phyai_rollout_worker, "EngineConfig", SimpleNamespace)
-    monkeypatch.setattr(phyai_rollout_worker, "PI05Args", SimpleNamespace)
-    monkeypatch.setattr(phyai_rollout_worker, "EngineArgs", SimpleNamespace)
-    monkeypatch.setattr(phyai_rollout_worker, "Engine", _InitializedEngine)
+    import phyai.engine
+    import phyai.engine_config
+    import phyai.models.pi05.main_pi05
+
+    monkeypatch.setattr(phyai.engine_config, "RuntimeConfig", SimpleNamespace)
+    monkeypatch.setattr(phyai.engine_config, "DeviceConfig", SimpleNamespace)
+    monkeypatch.setattr(phyai.engine_config, "EngineConfig", SimpleNamespace)
+    monkeypatch.setattr(phyai.models.pi05.main_pi05, "PI05Args", SimpleNamespace)
+    monkeypatch.setattr(phyai.engine, "EngineArgs", SimpleNamespace)
+    monkeypatch.setattr(phyai.engine, "Engine", _InitializedEngine)
     monkeypatch.setattr(torch, "load", load_checkpoint)
 
     def input_transform(sample):
@@ -363,7 +363,17 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     )
 
     worker = object.__new__(PhyAIRolloutWorker)
-    worker.cfg = OmegaConf.create({"runner": {"ckpt_path": "/trained.pt"}})
+    worker.cfg = OmegaConf.create(
+        {
+            "runner": {"ckpt_path": "/trained.pt"},
+            "rollout": {
+                "model": {
+                    "model_path": "/rollout-checkpoint",
+                    "precision": "bf16",
+                }
+            },
+        }
+    )
     worker._engine = None
     worker._phyai_plugin = "pi05"
     worker._phyai_cfg = OmegaConf.create(
@@ -412,14 +422,18 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     plugin_args = engine_args.plugin_args
     plugin_cfg = plugin_args.config
     assert engine_args.config.device.params_dtype is torch.bfloat16
-    assert plugin_args.checkpoint_dir == "/checkpoint"
+    assert plugin_args.checkpoint_dir == "/rollout-checkpoint"
     assert plugin_cfg.chunk_size == 10
     assert plugin_cfg.max_action_dim == 32
     assert plugin_cfg.num_inference_steps == 3
     assert plugin_cfg.critic_action_chunk is None
     assert plugin_cfg.add_value_head
     assert plugin_cfg.value_after_vlm
-    assert captured["transforms"] == ("/checkpoint", "pi05_libero", None)
+    assert captured["transforms"] == (
+        "/rollout-checkpoint",
+        "pi05_libero",
+        None,
+    )
     assert worker._input_transform_fn is input_transform
     assert worker._output_transform_fn is output_transform
     assert captured["events"][0] == "begin"
@@ -428,6 +442,7 @@ def test_init_worker_loads_runner_checkpoint_and_passes_engine_config(
     assert captured["events"][2] == "finish"
 
 
+@requires_phyai
 def test_phyai_preprocessing_builds_canonical_request():
     env_obs = _make_env_obs()
     worker = object.__new__(PhyAIRolloutWorker)
@@ -461,6 +476,7 @@ def test_phyai_preprocessing_builds_canonical_request():
     assert request.pixel_values.is_contiguous()
 
 
+@requires_phyai
 def test_training_predict_returns_actor_replay_contract(monkeypatch):
     batch_size = 2
     env_obs = _make_env_obs(batch_size)
@@ -570,6 +586,7 @@ def test_training_predict_returns_actor_replay_contract(monkeypatch):
         )
 
 
+@requires_phyai
 def test_rollout_plan_uses_actor_sampling_defaults():
     worker = object.__new__(PhyAIRolloutWorker)
     worker._engine_device = torch.device("cpu")
@@ -593,31 +610,3 @@ def test_rollout_plan_uses_actor_sampling_defaults():
     plan = worker._build_rollout_plan(request)
 
     assert plan.request.sigmas.eq(0).all()
-
-
-def test_joint_initial_logprob_uses_realized_chain():
-    request = PI05RolloutRequest(
-        pixel_values=torch.empty(1, 2, 3, 4, 4),
-        input_ids=torch.empty(1, 2, dtype=torch.int64),
-        lang_lens=torch.ones(1, dtype=torch.int64),
-        sigmas=torch.zeros(1, 2),
-        compute_values=False,
-    )
-    plan = phyai_rollout_worker._PI05SamplingPlan(
-        request=request,
-        denoise_inds=torch.tensor([[0, 1]]),
-        action_chunk=1,
-        action_dim=1,
-        joint_logprob=True,
-    )
-    rollout_result = SimpleNamespace(
-        chains=torch.tensor([[[[2.0]], [[0.0]], [[0.0]]]]),
-        transition_logprobs=torch.zeros(1, 2, 1, 1),
-        raw_values=None,
-    )
-
-    actual, values = PhyAIRolloutWorker._reduce_rollout_outputs(plan, rollout_result)
-
-    expected = (-0.5 * math.log(2 * math.pi) - 2.0) / 3
-    torch.testing.assert_close(actual, torch.full((1, 1, 1), expected))
-    assert values is None
