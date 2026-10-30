@@ -22,6 +22,7 @@ from omegaconf import OmegaConf
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import policy_loss
+from rlinf.algorithms.utils import apply_importance_sampling_correction
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -35,6 +36,25 @@ class _ReplayModel:
         self.batch_sizes.append(expected.shape[0])
         self.kwargs.append(kwargs)
         return {"logprobs": expected + 0.25}
+
+
+def test_importance_sampling_correction_is_shared_across_training_backends():
+    advantages = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    rollout_logprobs = torch.zeros(2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [math.log(2.0), math.log(4.0)], dtype=torch.float32
+    )
+
+    corrected, weights, log_ratios = apply_importance_sampling_correction(
+        advantages,
+        recomputed_logprobs,
+        rollout_logprobs,
+        clip=3.0,
+    )
+
+    torch.testing.assert_close(corrected, torch.tensor([2.0, 6.0]))
+    torch.testing.assert_close(weights, torch.tensor([2.0, 4.0]))
+    torch.testing.assert_close(log_ratios, recomputed_logprobs)
 
 
 @pytest.mark.parametrize("importance_sampling_fix", [False, True])

@@ -17,7 +17,7 @@ from typing import Callable, Optional
 import torch
 
 from rlinf.algorithms.registry import register_policy_loss
-from rlinf.algorithms.utils import huber_loss
+from rlinf.algorithms.utils import apply_importance_sampling_correction, huber_loss
 from rlinf.utils.metric_utils import (
     compute_critic_explained_variance_stats,
 )
@@ -260,16 +260,18 @@ def compute_ppo_actor_loss(
         assert rollout_logprobs.dtype == torch.float32, (
             "rollout_logprobs must be float32 to keep numerical stability"
         )
-        assert rollout_logprobs.shape == old_logprobs.shape, (
-            "rollout_logprobs and old_logprobs must have the same shape"
+        if importance_sampling_clip is None:
+            raise ValueError(
+                "importance_sampling_clip is required with rollout_logprobs"
+            )
+        advantages, importance_sampling_weight, log_importance_ratio = (
+            apply_importance_sampling_correction(
+                advantages,
+                old_logprobs,
+                rollout_logprobs,
+                importance_sampling_clip,
+            )
         )
-        assert importance_sampling_clip is not None and importance_sampling_clip > 0
-        log_importance_ratio = old_logprobs - rollout_logprobs
-        importance_sampling_weight = torch.exp(log_importance_ratio)
-        clipped_importance_sampling_weight = torch.clamp(
-            importance_sampling_weight, max=importance_sampling_clip
-        )
-        advantages = advantages * clipped_importance_sampling_weight.detach()
 
         importance_sampling_mask = loss_mask
         if importance_sampling_mask.shape != importance_sampling_weight.shape:

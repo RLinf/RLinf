@@ -23,7 +23,7 @@ from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
 from rlinf.algorithms.registry import policy_loss
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import apply_importance_sampling_correction, kl_penalty
 from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
@@ -223,11 +223,11 @@ class MegatronActor(MegatronWorker):
                         raise ValueError(
                             "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
                         )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch["recomputed_logprobs"]
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
+                    advantages, _, _ = apply_importance_sampling_correction(
+                        advantages,
+                        batch["recomputed_logprobs"],
+                        batch["rollout_logprobs"],
+                        self.cfg.algorithm.importance_sampling_clip,
                     )
 
                 mask = batch["response_mask"][:, -response_len:]

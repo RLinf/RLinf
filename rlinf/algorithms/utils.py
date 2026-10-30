@@ -19,6 +19,32 @@ import torch
 from rlinf.utils.utils import masked_mean
 
 
+def apply_importance_sampling_correction(
+    advantages: torch.Tensor,
+    recomputed_logprobs: torch.Tensor,
+    rollout_logprobs: torch.Tensor,
+    clip: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Correct advantages for a recomputed-to-rollout policy mismatch.
+
+    Returns the corrected advantages, the unclipped importance weights, and
+    their log ratios so callers can report task-specific metrics.
+    """
+    if recomputed_logprobs.shape != rollout_logprobs.shape:
+        raise ValueError(
+            "recomputed_logprobs and rollout_logprobs must have the same shape"
+        )
+    if clip <= 0:
+        raise ValueError(f"importance_sampling_clip must be positive, got {clip}.")
+
+    log_ratio = recomputed_logprobs - rollout_logprobs
+    importance_weight = log_ratio.exp()
+    corrected_advantages = (
+        advantages * torch.clamp(importance_weight, max=clip).detach()
+    )
+    return corrected_advantages, importance_weight, log_ratio
+
+
 def huber_loss(error: torch.Tensor, delta: float) -> torch.Tensor:
     return torch.where(
         error.abs() < delta, 0.5 * error**2, delta * (error.abs() - 0.5 * delta)
