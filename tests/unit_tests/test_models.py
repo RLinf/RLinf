@@ -596,6 +596,188 @@ def test_wan_npu_patches_rebind_the_dit_operators_on_every_build(wan_dit, monkey
         assert _wan_operators(wan_dit) == kernels
 
 
+_DREAMZERO_NPU_PATCHES = "rlinf.models.embodiment.dreamzero.patch.npu_patches"
+
+
+@pytest.fixture
+def dreamzero_npu_patches(monkeypatch) -> ModuleType:
+    """DreamZero's NPU operators, loaded without the DreamZero (groot) package.
+
+    The dreamzero package ``__init__`` builds the model and imports groot; the
+    replacement operators only need torch.
+    """
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "rlinf/models/embodiment/dreamzero/patch/npu_patches.py"
+    )
+    spec = importlib.util.spec_from_file_location(_DREAMZERO_NPU_PATCHES, path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, _DREAMZERO_NPU_PATCHES, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _complex_rope_params(max_seq_len: int, dim: int) -> torch.Tensor:
+    """DreamZero's CUDA RoPE table: complex128 rotations per channel pair."""
+    angles = torch.outer(
+        torch.arange(max_seq_len),
+        1.0 / torch.pow(10000, torch.arange(0, dim, 2).to(torch.float64).div(dim)),
+    )
+    return torch.polar(torch.ones_like(angles), angles)
+
+
+def _complex_rope_apply(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
+    batch, seq_len, heads, _ = x.shape
+    pairs = torch.view_as_complex(x.double().reshape(batch, seq_len, heads, -1, 2))
+    return torch.view_as_real(pairs * freqs.unsqueeze(0)).flatten(3).float()
+
+
+def _video_rope_freqs(tables: list[torch.Tensor], f: int, h: int, w: int):
+    """Concatenate the frame/height/width tables per token, as the DiT does."""
+    return torch.cat(
+        [
+            tables[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+            tables[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+            tables[2][:w].view(1, 1, w, -1).expand(f, h, w, -1),
+        ],
+        dim=-1,
+    ).reshape(f * h * w, 1, -1)
+
+
+def test_dreamzero_npu_rope_matches_the_complex_cuda_rope(dreamzero_npu_patches):
+    ops = dreamzero_npu_patches
+    head_dim, f, h, w = 128, 3, 4, 5
+    num_action, num_state, blocks = 16, 1, 2
+    splits = [head_dim - 4 * (head_dim // 6), 2 * (head_dim // 6), 2 * (head_dim // 6)]
+    video = _video_rope_freqs([ops.rope_params(1024, d) for d in splits], f, h, w)
+    video_ref = _video_rope_freqs(
+        [_complex_rope_params(1024, d) for d in splits], f, h, w
+    )
+    action, action_ref = (
+        ops.rope_params(10240, head_dim),
+        _complex_rope_params(10240, head_dim),
+    )
+    state, state_ref = (
+        ops.rope_params(1024, head_dim),
+        _complex_rope_params(1024, head_dim),
+    )
+    torch.manual_seed(0)
+
+    x = torch.randn(2, f * h * w, 4, head_dim)
+    torch.testing.assert_close(
+        ops.rope_apply(x, None, video), _complex_rope_apply(x, video_ref)
+    )
+
+    # Training appends every action block, then every state block.
+    register = blocks * (num_action + num_state)
+    x = torch.randn(2, f * h * w + register, 4, head_dim)
+    expected = torch.cat(
+        [
+            video_ref,
+            action_ref[: blocks * num_action].unsqueeze(1),
+            state_ref[: blocks * num_state].unsqueeze(1),
+        ]
+    )
+    torch.testing.assert_close(
+        ops.rope_action_apply(x, video, action, state, register, num_action, num_state),
+        _complex_rope_apply(x, expected),
+    )
+
+    # A cached rollout block uses the offsets of its own action/state index.
+    x = torch.randn(2, f * h * w + num_action + num_state, 4, head_dim)
+    expected = torch.cat(
+        [
+            video_ref,
+            action_ref[num_action : 2 * num_action].unsqueeze(1),
+            state_ref[num_state : 2 * num_state].unsqueeze(1),
+        ]
+    )
+    torch.testing.assert_close(
+        ops.causal_rope_action_apply(
+            x, video, action, state, num_action + num_state, num_action, num_state, 1
+        ),
+        _complex_rope_apply(x, expected),
+    )
+
+    # FP32 angles drift ~3e-5 from FP64 at t=999; the DiT casts the embedding
+    # to bf16 right after, whose rounding is ~100x coarser.
+    timesteps = torch.tensor([0.0, 17.0, 999.0])
+    angles = torch.outer(
+        timesteps.double(),
+        torch.pow(10000, -torch.arange(128, dtype=torch.float64).div(128)),
+    )
+    torch.testing.assert_close(
+        ops.sinusoidal_embedding_1d(256, timesteps),
+        torch.cat([angles.cos(), angles.sin()], dim=1).float(),
+        atol=1e-4,
+        rtol=0,
+    )
+
+
+def _masked_attention(q, k, v, mask):
+    """Attention over [B, L, H, D] tensors with an explicit [B, Lq, Lk] mask."""
+    q, k, v = q.float(), k.float(), v.float()
+    scores = torch.einsum("bqhd,bkhd->bhqk", q, k) / q.shape[-1] ** 0.5
+    scores = scores.masked_fill(~mask[:, None], float("-inf"))
+    return torch.einsum("bhqk,bkhd->bqhd", scores.softmax(-1), v).nan_to_num(0.0)
+
+
+def test_dreamzero_npu_attention_aligns_masks_like_flash_attention(
+    dreamzero_npu_patches,
+):
+    attention = dreamzero_npu_patches.flash_attention
+    torch.manual_seed(0)
+    q = torch.randn(2, 6, 2, 8, dtype=torch.bfloat16)
+    k = torch.randn(2, 10, 2, 8, dtype=torch.bfloat16)
+    v = torch.randn(2, 10, 2, 8, dtype=torch.bfloat16)
+    rows, cols = torch.arange(6)[:, None], torch.arange(10)[None]
+    # FlashAttention aligns causal and window masks to the bottom-right corner,
+    # so query i of 6 sees key i + 4 of 10, not key i as in SDPA's is_causal.
+    diagonal = rows + 4
+    lengths = torch.tensor([10, 7])
+    cases = {
+        "causal": ({"causal": True}, cols <= diagonal),
+        "window": (
+            {"window_size": (3, 0)},
+            (cols >= diagonal - 3) & (cols <= diagonal),
+        ),
+        "k_lens": ({"k_lens": lengths}, cols < lengths[:, None, None]),
+    }
+    for name, (kwargs, mask) in cases.items():
+        expected = _masked_attention(q, k, v, mask.expand(2, 6, 10))
+        actual = attention(q, k, v, **kwargs)
+        assert actual.dtype == torch.bfloat16, name
+        torch.testing.assert_close(actual.float(), expected, atol=2e-2, rtol=2e-2)
+
+    # Padded query rows have no keys to attend to and come back as zeros.
+    q_lens = torch.tensor([6, 4])
+    actual = attention(q, k, v, q_lens=q_lens, k_lens=lengths)
+    assert actual[1, 4:].abs().max() == 0
+    torch.testing.assert_close(
+        actual[1, :4].float(),
+        _masked_attention(q, k, v, (cols < 7).expand(2, 6, 10))[1, :4],
+        atol=2e-2,
+        rtol=2e-2,
+    )
+
+
+def test_dreamzero_npu_patches_leave_torch_alone_off_npu(
+    dreamzero_npu_patches, monkeypatch
+):
+    from rlinf.scheduler import AcceleratorType
+    from rlinf.utils.patcher import Patcher
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NV_GPU)
+    Patcher.clear()
+    dreamzero_npu_patches.apply_npu_patches(Patcher)
+    # Nothing is registered, so applying never imports DreamZero.
+    Patcher.apply()
+    Patcher.clear()
+
+    assert not torch._dynamo.config.disable
+    assert "torch_npu.contrib.transfer_to_npu" not in sys.modules
+
+
 def _history_cfg():
     return OmegaConf.create(
         {
@@ -1498,3 +1680,183 @@ def test_gspo_and_token_clipping_produce_different_updates():
     token_gradient = torch.autograd.grad(token_loss, current)[0]
     assert token_gradient[0, 0] == 0
     assert token_gradient[0, 1] != gradient[0, 1]
+
+
+@pytest.mark.parametrize("step", [0, 4, 9])
+def test_lingbotvlav2_sde_has_finite_first_and_last_step_density(step):
+    from rlinf.models.embodiment.lingbotvlav2.utils import (
+        flow_sde_transition,
+        gaussian_logprob,
+    )
+
+    x = torch.zeros(2, 50, 55)
+    velocity = torch.ones_like(x, requires_grad=True)
+    times = torch.linspace(1, 0, 11)
+    time, delta = times[step], times[step] - times[step + 1]
+    mean, std = flow_sde_transition(x, velocity, time, delta, 0.3)
+    assert torch.isfinite(mean).all() and std > 0
+    sample = (mean + std).detach()
+    score = gaussian_logprob(sample, mean, std)
+    expected = -0.5 - std.log() - 0.5 * np.log(2 * np.pi)
+    torch.testing.assert_close(
+        score, torch.full_like(score, expected), atol=1e-5, rtol=0
+    )
+    score.sum().backward()
+    assert torch.isfinite(velocity.grad).all()
+
+
+def test_lingbotvlav2_zero_noise_recovers_flow_ode():
+    from rlinf.models.embodiment.lingbotvlav2.utils import (
+        flow_sde_transition,
+    )
+
+    x, velocity = torch.randn(2, 50, 55), torch.randn(2, 50, 55)
+    mean, std = flow_sde_transition(
+        x, velocity, torch.tensor(0.5), torch.tensor(0.1), 0
+    )
+    torch.testing.assert_close(mean, x - 0.1 * velocity)
+    assert std == 0
+
+
+def test_lingbotvlav2_replay_reproduces_the_sampled_sde_step():
+    from rlinf.models.embodiment.lingbotvlav2.utils import (
+        sample_with_one_sde_step,
+        score_sde_step,
+    )
+
+    weight = torch.nn.Parameter(torch.tensor(0.5))
+
+    def velocity_fn(x, time):
+        return weight * x + time.view(-1, 1, 1)
+
+    torch.manual_seed(0)
+    times = torch.linspace(1, 0, 11)
+    noise = torch.randn(3, 50, 55)
+    sde_steps = torch.tensor([0, 4, 9])
+    with torch.no_grad():
+        _, states, logprobs = sample_with_one_sde_step(
+            noise, velocity_fn, times, 0.3, sde_steps
+        )
+        # The ODE over the first nine steps reaches the last step's input.
+        before_last, _, _ = sample_with_one_sde_step(
+            noise, velocity_fn, times[:10], 0.3, None
+        )
+    torch.testing.assert_close(states[0, 0], noise[0], rtol=0, atol=0)
+    torch.testing.assert_close(states[2, 0], before_last[2], rtol=0, atol=0)
+
+    replay = score_sde_step(states, velocity_fn, times, sde_steps, 0.3)
+    torch.testing.assert_close(replay, logprobs, rtol=0, atol=0)
+    replay.sum().backward()
+    assert weight.grad is not None and torch.isfinite(weight.grad)
+
+
+def test_lingbotvlav2_rl_trains_the_action_expert_but_not_its_routers():
+    from rlinf.models.embodiment.lingbotvlav2.utils import is_rl_trainable
+
+    layer = "model.qwenvl_with_expert.qwen_expert.model.layers.3.mlp"
+    assert not is_rl_trainable(f"{layer}.gate.weight")
+    assert is_rl_trainable(f"{layer}.experts.gate_proj")
+    assert is_rl_trainable(f"{layer}.shared_expert.gate_proj.weight")
+    assert is_rl_trainable("model.action_out_proj.weight")
+    assert not is_rl_trainable(
+        "model.qwenvl_with_expert.qwenvl.model.layers.0.mlp.gate_proj.weight"
+    )
+
+
+def _lingbotvlav2_ppo_cfg(overrides: dict):
+    """The PPO settings LingBot-VLA V2 accepts, with dotted-key overrides."""
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied", "only_eval": False},
+            "actor": {
+                "model": {"model_type": "lingbotvlav2", "precision": "fp32"},
+                "fsdp_config": {
+                    "strategy": "fsdp2",
+                    "mixed_precision": {
+                        "param_dtype": "bf16",
+                        "cast_forward_inputs": False,
+                    },
+                },
+            },
+            "rollout": {"model": {"precision": "bf16"}},
+            "algorithm": {"logprob_type": "token_level", "reward_type": "chunk_level"},
+        }
+    )
+    for key, value in overrides.items():
+        OmegaConf.update(cfg, key, value)
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "key,value,message",
+    [
+        ("algorithm.reward_type", "action_level", "reward_type=chunk_level"),
+        ("actor.fsdp_config.strategy", "fsdp", "strategy=fsdp2"),
+        ("actor.model.precision", "bf16", "actor.model.precision=fp32"),
+        ("actor.fsdp_config.mixed_precision.param_dtype", "fp32", "param_dtype=bf16"),
+        (
+            "actor.fsdp_config.mixed_precision.cast_forward_inputs",
+            True,
+            "cast_forward_inputs",
+        ),
+        ("rollout.model.precision", "fp32", "rollout.model.precision=bf16"),
+    ],
+)
+def test_lingbotvlav2_rejects_unsupported_ppo_settings(key, value, message):
+    from rlinf.config import validate_embodied_cfg
+
+    with pytest.raises(ValueError, match=message):
+        validate_embodied_cfg(_lingbotvlav2_ppo_cfg({key: value}))
+
+
+def test_lingbotvlav2_treats_a_missing_cast_forward_inputs_as_the_fsdp_default():
+    from rlinf.config import validate_embodied_cfg
+
+    cfg = _lingbotvlav2_ppo_cfg({})
+    del cfg.actor.fsdp_config.mixed_precision["cast_forward_inputs"]
+    with pytest.raises(ValueError, match="cast_forward_inputs"):
+        validate_embodied_cfg(cfg)
+
+
+def test_lingbotvlav2_eval_rejects_fp32_rollout_weights():
+    from rlinf.config import validate_embodied_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied_eval", "only_eval": True},
+            "rollout": {
+                "model": {
+                    "model_type": "lingbotvlav2",
+                    "num_action_chunks": 50,
+                    "precision": "fp32",
+                }
+            },
+        }
+    )
+    with pytest.raises(ValueError, match="rollout.model.precision=bf16"):
+        validate_embodied_cfg(cfg)
+
+
+def test_lingbotvlav2_smoke_config_composes(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", "/explicit/asset")
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", "/explicit/lingbot-vla-v2")
+    with initialize_config_dir(
+        config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_ppo_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+    assert dict(cfg.cluster.component_placement) == {"actor, env, rollout": "0-1"}
+    assert cfg.actor.model.model_type == "lingbotvlav2"
+    assert cfg.actor.model.action_dim == 14
+    assert cfg.actor.model.num_action_chunks == 50
+    assert cfg.actor.model.precision == "fp32" and cfg.rollout.model.precision == "bf16"
+    assert not cfg.actor.fsdp_config.mixed_precision.cast_forward_inputs
+    assert cfg.actor.model.lingbotvlav2.stats_path.startswith(
+        "/explicit/lingbot-vla-v2/"
+    )
+    assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
+    assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4

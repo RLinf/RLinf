@@ -1,7 +1,7 @@
 ARG BUILD_TARGET=embodied
 ARG TARGETARCH
 # Hardware platform for the install: nvidia (default), amd (ROCm), ascend (CANN),
-# musa (Moore Threads) or kunlun (Kunlunxin).
+# musa (Moore Threads), kunlun (Kunlunxin), or metax (MetaX MACA).
 ARG PLATFORM=nvidia
 # Per-platform runtime versions. Override these for common CUDA/ROCm/CANN bumps, or
 # override the full base-image args below for a different image family/Ubuntu.
@@ -10,7 +10,7 @@ ARG ROCM_VER=7.2
 ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.1.1-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
-ARG KUNLUN_VER=v1.7.2
+ARG KUNLUN_VER=v1.8.1
 ARG UBUNTU_VER=22.04
 # Reason-image only. A venv carries one flash-attention variant: FA2 and FA4
 # share the flash_attn package. FA4 backward is sm90+ and Docker builds cannot
@@ -29,7 +29,11 @@ ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
 # KUNLUN lives on the Kunlunxin registry, not Docker Hub.
 ARG KUNLUN_BASE_IMAGE=hub.kunlunxin.com/public/kunlita/xav-rlinf:${KUNLUN_VER}
-
+# MetaX lives on the MetaX registry (e.g. mxcr.io), not Docker Hub. The base
+# image must carry the MACA stack with a CUDA-compatible MACA build of torch
+# preinstalled, mirroring the MUSA flow. Replace the default namespace with
+# your registry's image when building.
+ARG METAX_BASE_IMAGE=cr.metax-tech.com/opensource/public-library/maca-pytorch:3.8.3.3-torch2.10-py312-ubuntu24.04-amd64
 
 ##################################################################################################
 # Platform base resolution (NVIDIA, AMD/ROCm, Ascend/CANN, Moore Threads/MUSA)
@@ -48,6 +52,15 @@ FROM ${MUSA_BASE_IMAGE} AS base-image-platform-musa
 ENV MTHREADS_VISIBLE_DEVICES=all
 ENV MTHREADS_DRIVER_CAPABILITIES=all
 FROM ${KUNLUN_BASE_IMAGE} AS base-image-platform-kunlun
+FROM ${METAX_BASE_IMAGE} AS base-image-platform-metax
+# MACA environment variables follow the MetaX MACA container conventions
+# (see e.g. the modelscope Metax Dockerfiles for reference). MACA_VISIBLE_DEVICES
+# is deliberately left to the runtime: this MACA stack does not honour "all"
+# and only accepts explicit device indices, so the launcher sets it per run.
+ENV MACA_MPS_MODE=1
+# mcPyTorch otherwise materialises 4D tensors in NHWC layout, which
+# breaks the P2P contiguity assumption in the collective layer.
+ENV PYTORCH_DEFAULT_NCHW=1
 
 ##################################################################################################
 # Base images for different build targets — all derive from the platform base
@@ -112,10 +125,17 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
                 /etc/apt/sources.list; \
         fi; \
     fi
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git vim libibverbs-dev liblz4-dev libzstd-dev openssh-server sudo runit runit-systemd tmux \
-    build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
-    wget unzip curl
+# The runit integration package depends on the base distribution's repositories.
+RUN apt-get update && \
+    if apt-cache show runit-systemd >/dev/null 2>&1; then \
+        RUNIT_PKG=runit-systemd; \
+    else \
+        RUNIT_PKG=runit-run; \
+    fi && \
+    apt-get install -y --no-install-recommends \
+            git vim libibverbs-dev liblz4-dev libzstd-dev openssh-server sudo runit tmux \
+            build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
+            wget unzip curl "${RUNIT_PKG}"
 
 
 ##################################################################################################
@@ -385,10 +405,11 @@ RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft, openpi, and lingbotvla envs
+# Install openvla-oft, openpi, lingbotvla, and lingbotvlav2 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env robotwin && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvlav2 --model lingbotvlav2 --env robotwin
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets

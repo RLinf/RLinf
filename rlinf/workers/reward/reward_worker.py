@@ -428,8 +428,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
-        if self.data_loader is None:
-            raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
 
         self.setup_model_and_optimizer()
@@ -439,8 +437,16 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
             f"{sum(p.numel() for p in self.model.parameters())} parameters"
         )
 
-    def build_dataloader(self) -> tuple[Optional[DataLoader], Optional[DataLoader]]:
-        """Build dataloaders from preprocessed train/val dataset files."""
+    def build_dataloader(self) -> tuple[DataLoader, DataLoader]:
+        """Build dataloaders from preprocessed train/val dataset files.
+
+        The train loader drops incomplete batches, and the best checkpoint is
+        chosen by validation accuracy, so both splits must be usable here.
+
+        Raises:
+            ValueError: If a rank gets fewer train samples than one micro
+                batch, or validation is enabled and the val split is empty.
+        """
         data_cfg = self.cfg.get("data", {})
         train_data_paths = data_cfg.get("train_data_paths")
         val_data_paths = data_cfg.get("val_data_paths")
@@ -451,10 +457,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         )
         train_dataset = RewardBinaryDataset(train_data_paths)
         val_dataset = RewardBinaryDataset(val_data_paths)
-
-        if len(train_dataset) == 0:
-            self.logger.warning("Training dataset is empty")
-            return None, None
 
         # Create distributed samplers
         train_sampler = DistributedSampler(
@@ -490,6 +492,21 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
             pin_memory=True,
             drop_last=False,
         )
+
+        if len(train_loader) == 0:
+            raise ValueError(
+                f"The reward training split has {len(train_dataset)} samples, "
+                f"which gives each of the {self._world_size} ranks fewer than "
+                f"micro_batch_size ({batch_size}) samples, so training has no "
+                "batch. Use a larger split or a smaller actor.micro_batch_size."
+            )
+        if self.cfg.runner.val_check_interval > 0 and len(val_dataset) == 0:
+            raise ValueError(
+                "The reward validation split is empty, so validation has no data "
+                "and no best checkpoint can be selected. Regenerate the splits "
+                "with examples/reward/preprocess_reward_dataset.py, or set "
+                "runner.val_check_interval to -1 to train without validation."
+            )
 
         self.logger.info(
             f"Created dataloaders: {len(train_dataset)} train, {len(val_dataset)} val"
@@ -571,9 +588,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     @Worker.timer("run_eval")
     def run_eval(self) -> dict[str, float]:
         """Run validation over the entire validation set."""
-        if self.val_loader is None:
-            return {}
-
         self.model.eval()
         metrics = {}
 
@@ -601,6 +615,4 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         return val_metrics
 
     def get_max_steps_per_epoch(self):
-        if self.data_loader is not None:
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        return 0
+        return max(1, len(self.data_loader) // self.gradient_accumulation)

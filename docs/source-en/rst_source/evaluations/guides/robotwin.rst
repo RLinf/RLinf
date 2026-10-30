@@ -15,7 +15,7 @@ Environment Setup
    bash requirements/install.sh embodied --model openvla-oft --env robotwin
    source .venv/bin/activate
 
-Supported models include ``openvla-oft``, ``openpi``, and ``lingbotvla`` — replace ``--model`` accordingly during installation.
+Supported models include ``openvla-oft``, ``openpi``, ``lingbotvla``, and ``lingbotvlav2`` — replace ``--model`` accordingly during installation.
 
 On AMD ROCm, install with ``--platform`` and set ``planner_backend: mplib`` in the task config;
 see :ref:`Run on Different Hardware Backends <robotwin-hardware>`.
@@ -80,10 +80,13 @@ Available under ``evaluations/robotwin/``:
      - π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
-     - LingBotVLA
+     - LingbotVLA 1.0
    * - ``robotwin_click_bell_lingbotvla_eval.yaml``
      - click_bell
-     - LingBotVLA
+     - LingbotVLA 1.0
+   * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
+     - click_bell
+     - LingbotVLA 2.0
 
 If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
 
@@ -199,11 +202,18 @@ OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ , demo_clean protocol)
 - ``rollout.model.openpi.config_name``: ``pi0_aloha_robotwin`` or ``pi05_aloha_robotwin``
 - Recommend ``env.enable_offload: True`` and ``rollout.enable_offload: True`` to reduce GPU memory use
 
-LingBotVLA
+LingbotVLA 1.0
 
 - Besides ``rollout.model.model_path``, also set ``tokenizer_path`` and ``rollout.model.lingbotvla.config_path``
 - ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400`` (e.g. ``click_bell``, ``place_shoe``)
 - ``use_custom_reward: False`` (disable custom reward during evaluation)
+
+LingbotVLA 2.0
+
+- Fill in the paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``, which the eval config shares with training
+- ``rollout.model.precision: bf16``; fp32 weights belong only to the PPO actor
+- ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
+- ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
 
 Covering the full test set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

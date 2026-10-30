@@ -1,5 +1,8 @@
 ## gr00t_n1d7 is the RLinf entrypoint for Isaac-GR00T N1.7.
 ## av 16.1.0 conflicts with lerobot==0.4.4 (<16), so we pin av 15.0.0 here.
+## GR00T is installed with --no-deps, so its own pandas pin is skipped.
+## pandas 3.1+ imports only with numpy>=2.0.2; this stack stays on numpy 1.26.
+pandas==2.2.3
 diffusers==0.35.1
 av==15.0.0
 pydantic==2.12.5

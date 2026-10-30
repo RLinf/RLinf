@@ -7,6 +7,7 @@
 
 - :doc:`../examples/embodied/franka` — RealSense + Franka 夹爪的标准真机流程
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED 相机 + Robotiq 夹爪的异构双节点部署
+- :doc:`../examples/embodied/franka_orbbec` — Orbbec 相机及对齐深度
 
 Ray 集群的基础启动步骤（``RLINF_NODE_RANK``、``ray start``、代码同步等）见 :doc:`multi_node`；
 ``node_groups`` / ``component_placement`` 的通用语义见 :doc:`hetero`。
