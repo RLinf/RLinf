@@ -113,7 +113,11 @@ FA4_KEPT=0
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 USE_MIRRORS=0
-GITHUB_PREFIX=""
+# GitHub proxy prefix for clones and release downloads. Read from the
+# environment so a caller (e.g. the Docker build arg of the same name) can pick
+# a proxy that is fast on its network. It only takes effect with --use-mirror,
+# where it defaults to https://gh-proxy.com/ (see setup_mirror).
+GITHUB_PREFIX="${GITHUB_PREFIX:-}"
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
@@ -175,7 +179,9 @@ Common options:
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
                            or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
-    --use-mirror           Use mirrors for faster downloads.
+    --use-mirror           Use mirrors for faster downloads. GitHub downloads go through
+                           the proxy in the GITHUB_PREFIX environment variable
+                           (default https://gh-proxy.com/).
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support
@@ -413,6 +419,23 @@ amd_gfx_is_cdna() {
         gfx908|gfx90a|gfx940|gfx941|gfx942|gfx950) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Whether flash-attn needs its Triton backend on these AMD targets. The ROCm
+# flash-attn wheels install_flash_attn selects carry Composable Kernel code for
+# gfx90a and gfx942 only; on any other ISA the default backend crashes on the
+# first call. $1 is the detected ISA; without a visible GPU (a docker build)
+# the targets come from PYTORCH_ROCM_ARCH. Unknown targets keep the default.
+amd_flash_attn_needs_triton() {
+    local archs="${1:-${PYTORCH_ROCM_ARCH:-}}" arch
+    [ -n "$archs" ] || return 1
+    for arch in ${archs//;/ }; do
+        case "$arch" in
+            gfx90a|gfx942) ;;
+            *) return 0 ;;
+        esac
+    done
+    return 1
 }
 
 # Find a torch version on the PyTorch wheel index that has a +rocm<rocm_ver>
@@ -709,6 +732,11 @@ configure_amd() {
             "export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
             "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
         )
+    fi
+    # flash-attn selects its backend at import time from this variable.
+    if amd_flash_attn_needs_triton "$gfx_arch"; then
+        echo "[install.sh] flash-attn will use its Triton backend on ${gfx_arch:-${PYTORCH_ROCM_ARCH}}."
+        PLATFORM_VENV_EXPORTS+=("export FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE")
     fi
     PLATFORM_FLASH_ATTN_INSTALL=1
     PLATFORM_FLASH_ATTN_PREBUILT=1
@@ -1802,6 +1830,9 @@ setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
         export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
+        # Every user appends a URL to the prefix, so add the trailing slash if
+        # it is missing: https://gh-proxy.org works like https://gh-proxy.org/.
+        export GITHUB_PREFIX="${GITHUB_PREFIX%/}/"
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
@@ -1811,6 +1842,8 @@ setup_mirror() {
         export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
         export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
         export GIT_CONFIG_COUNT=$((idx + 1))
+    else
+        GITHUB_PREFIX=""
     fi
 }
 
@@ -3768,7 +3801,9 @@ install_robotwin_env() {
         echo "[install.sh] Set planner_backend: mplib in the task config; curobo is unavailable."
     fi
 
-    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai "$SAPIEN_SPEC"
+    # RoboTwin imports trimesh and h5py directly. curobo also depends on trimesh,
+    # but curobo is installed on NVIDIA only.
+    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai trimesh h5py "$SAPIEN_SPEC"
 
     if [ "$build_curobo_stack" -eq 1 ]; then
         uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation

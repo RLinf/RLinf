@@ -171,6 +171,8 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 下载完成后，请将 ``env.train.assets_path`` 和 ``env.eval.assets_path``
 设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
+RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。该值对应 RoboTwin 环境配置中的 ``camera_near``，设为 ``null`` 即沿用 RoboTwin 自身的取值。
+
 下载模型
 ----------------------------------------
 
@@ -292,7 +294,30 @@ AMD ROCm
 
    bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
 
-RLinf 未发布 ROCm 版 RoboTwin 镜像，因此上面的 Docker 步骤仅适用于 CUDA 宿主机。
+如需从当前代码构建 ROCm 版 RoboTwin 镜像，在宿主机运行以下命令，并将 ``ROCM_ARCHS`` 设置为 GPU 的 ``gfx`` 架构（Radeon PRO W7900 为 ``gfx1100``）：
+
+.. code-block:: bash
+
+   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile \
+      --build-arg PLATFORM=amd \
+      --build-arg ROCM_VER=7.2 \
+      --build-arg ROCM_ARCHS=gfx1100 \
+      --build-arg BUILD_TARGET=embodied-robotwin \
+      -t rlinf:embodied-robotwin-rocm7.2 .
+
+使用 AMD 内核与渲染设备启动容器：
+
+.. code-block:: bash
+
+   docker run -it --rm \
+      --device=/dev/kfd --device=/dev/dri --group-add video \
+      --ipc=host --shm-size 32g --network host \
+      -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
+      rlinf:embodied-robotwin-rocm7.2 bash
+
+.. warning::
+
+   ``ROCM_ARCHS`` 必须与目标 GPU 匹配。Docker 构建期间可能无法访问设备，``flash-attn`` 等扩展需要显式指定架构。在 ``gfx90a`` 与 ``gfx942`` 以外的 GPU 上，安装脚本还会将 ``flash-attn`` 切换到 Triton 后端。
 
 可视化与结果
 ----------------------------------------

@@ -26,6 +26,9 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 enable_offload: False
+# Camera near plane in meters; null keeps RoboTwin's 0.1, which hides the
+# gripper fingers from the wrist cameras under SAPIEN 3.0.1.
+camera_near: 0.01
 
 task_config:
   task_name: place_container_plate
