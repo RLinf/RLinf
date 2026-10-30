@@ -1,5 +1,5 @@
 env_type: world_model
-backend: wan
+backend: wan                   # `remote` serves frames elsewhere and ignores the paths below
 task_suite_name: libero_spatial
 wm_env_type: libero
 
@@ -50,6 +50,19 @@ chunk: 8                     # should be same as chunk in VLA
 condition_frame_length: 5    # condition frame length of world model
 image_size: [256, 256]       # output image size of world model
 num_frames: 13               # total number of frames to encode = condition_frame_length + chunk
+
+# Read when backend: remote
+remote:
+  server_url: null
+  model: null                  # the served model id, as the endpoint spells it
+  transport: videos_sync
+  num_inference_steps: 50
+  fps: 24
+  prompt: ""
+  request_timeout_s: 300
+  warmup_timeout_s: 1800       # first request per output shape only; it pays a kernel build
+  max_retries: 2
+  step_budget_s: 900           # wall-clock bound on a step, retry count is not enough
 
 reward_model:
   type: ResnetRewModel
