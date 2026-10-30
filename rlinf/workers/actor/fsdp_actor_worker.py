@@ -284,7 +284,7 @@ class FSDPActor(FSDPModelManager, Worker):
             if bucket_idx == 0:
                 buffer["bucket_length"] = torch.tensor(
                     [len(model_bucket_list)],
-                    device=torch.cuda.current_device(),
+                    device=self.device,
                 )
 
             for send_handle in send_handles:
