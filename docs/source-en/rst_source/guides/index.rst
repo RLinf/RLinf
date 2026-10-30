@@ -44,7 +44,7 @@ Choose a Workflow
       :link: rollout-engines/index
       :link-type: doc
 
-      Configure embodied rollout backends and expose a unified inference interface.
+      Launch SGLang servers and routers, or run PhyAI as an in-process embodied rollout backend.
 
 .. toctree::
    :hidden:
