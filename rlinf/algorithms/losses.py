@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Callable, Optional
 
 import torch
@@ -22,6 +23,59 @@ from rlinf.utils.metric_utils import (
     compute_critic_explained_variance_stats,
 )
 from rlinf.utils.utils import masked_mean, masked_mean_ratio, masked_reduce
+
+
+@register_policy_loss("dis")
+def compute_dis_actor_loss(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    clip_ratio_low: float,
+    clip_ratio_high: float,
+    loss_mask: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
+    """SAO score-function loss with detached, strictly bounded behavior ratios."""
+    if not 0 <= clip_ratio_low < 1 or clip_ratio_high < 0:
+        raise ValueError(
+            "DIS requires 0 <= clip_ratio_low < 1 and clip_ratio_high >= 0."
+        )
+    mask = (
+        torch.ones_like(logprobs, dtype=torch.bool)
+        if loss_mask is None
+        else loss_mask.bool()
+    )
+    delta = (logprobs.float() - old_logprobs.float()).detach()
+    keep = (
+        mask
+        & (delta > math.log1p(-clip_ratio_low))
+        & (delta < math.log1p(clip_ratio_high))
+    )
+    # Rejected ratios are never exponentiated, including padding and nonfinite logits.
+    ratios = torch.where(keep, delta, 0.0).exp().masked_fill(~keep, 0.0)
+    scores = torch.where(keep, logprobs.float(), 0.0)
+    weights = torch.where(keep, advantages.float().detach(), 0.0)
+    loss = -(ratios * weights * scores).sum() / mask.sum().clamp_min(1)
+    metrics = {
+        "actor/policy_loss": loss.detach(),
+        "actor/ratio": masked_mean(ratios, mask),
+        "actor/clip_fraction": masked_mean((~keep).float(), mask),
+        "actor/approx_kl": -masked_mean(torch.where(mask, delta, 0.0), mask),
+    }
+    return loss, metrics
+
+
+def compute_sao_critic_loss(
+    values: torch.Tensor,
+    returns: torch.Tensor,
+    loss_mask: torch.Tensor,
+) -> tuple[torch.Tensor, dict]:
+    """Regress unnormalized Monte Carlo returns on generated action states."""
+    error = torch.where(loss_mask, values.float() - returns.float(), 0.0)
+    loss = error.square().sum() / loss_mask.sum().clamp_min(1)
+    metrics = {"critic/value_loss": loss.detach()}
+    metrics.update(compute_critic_explained_variance_stats(returns, values, loss_mask))
+    return loss, {key: value.detach() for key, value in metrics.items()}
 
 
 def compute_decoupled_ppo_actor_loss(
@@ -369,6 +423,21 @@ def compute_ppo_actor_loss(
                 }
             )
     return policy_loss, metrics_data
+
+
+def compute_critic_loss(
+    values: torch.Tensor,
+    returns: torch.Tensor,
+    loss_mask: torch.Tensor,
+    loss_type: str = "ppo",
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
+    """Compute PPO clipped Huber loss or SAO squared-error loss."""
+    if loss_type == "ppo":
+        return compute_ppo_critic_loss(values, returns, loss_mask=loss_mask, **kwargs)
+    if loss_type == "sao":
+        return compute_sao_critic_loss(values, returns, loss_mask)
+    raise ValueError(f"Expected critic loss_type 'ppo' or 'sao', got {loss_type!r}.")
 
 
 def compute_ppo_critic_loss(

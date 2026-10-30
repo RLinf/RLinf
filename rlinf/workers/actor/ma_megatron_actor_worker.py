@@ -77,8 +77,10 @@ class MAMegatronActor(MegatronActor):
         )
         self.placement = placement
 
-        assert self.placement_mode == PlacementMode.COLLOCATED, (
-            "Only collocated placement is supported for multi-agent actor"
+        assert self.placement_mode == PlacementMode.COLLOCATED or (
+            not self.is_pipeline and self.cfg.critic.use_critic_model
+        ), (
+            "Multi-agent actor requires collocated placement or shared PPO training devices."
         )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
@@ -234,7 +236,7 @@ class MAMegatronActor(MegatronActor):
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
                     ),
-                    fast_path_zero_loss_mask=True,
+                    fast_path_zero_loss_mask=not self.cfg.algorithm.use_valid_token_scale,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -268,6 +270,15 @@ class MAMegatronActor(MegatronActor):
                         f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
                     )
                     loss = loss * 0.0
+
+                if self.cfg.algorithm.use_valid_token_scale:
+                    loss_scale = (
+                        mask.sum()
+                        / self.global_valid_token
+                        * parallel_state.get_data_parallel_world_size()
+                        * self.num_microbatches
+                    )
+                    loss *= loss_scale.item()
 
                 # add to log
                 metrics_data.update(
@@ -403,6 +414,7 @@ class MAMegatronActor(MegatronActor):
         batch = DynamicRolloutResult.merge_batches(
             batches, self.cfg.algorithm.group_size
         )
+        fixed_ppo_targets = self.cfg.critic.use_critic_model and "returns" in batch
         assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         # Compute advantages and returns
         batch = self.compute_advantages_and_returns(batch)
@@ -410,7 +422,7 @@ class MAMegatronActor(MegatronActor):
             ~batch["response_mask"], 0
         )
         # Advantage normalization
-        if self.cfg.algorithm.normalize_advantages:
+        if self.cfg.algorithm.normalize_advantages and not fixed_ppo_targets:
             assert False, "not implemented in multi-agent"
             mask = batch["response_mask"][:, -self.response_len :]
             batch["advantages"] = masked_normalization(
@@ -437,6 +449,9 @@ class MAMegatronActor(MegatronActor):
             batch = loss_scale_fn(scale_context, batch)
         if self.pack_traj:
             batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
+            if fixed_ppo_targets:
+                # PPO weights action tokens equally across folded turns.
+                batch["loss_scales"] = batch["response_mask"].float()
         for key in list(batch.keys()):
             if key == "idx_to_traj" or key.startswith("extra:"):
                 batch.pop(key, None)
@@ -451,9 +466,8 @@ class MAMegatronActor(MegatronActor):
             batch_pad = DynamicRolloutResult.get_batch_pad(
                 self.cfg.actor.model.encoder_seq_length, batch.keys()
             )
-            batch = self._dp_load_balance_dynamic(
-                batch, batch_pad, self.cfg.actor.micro_batch_size
-            )
+            split_fix_chunk = self.num_train_steps * self.cfg.actor.micro_batch_size
+            batch = self._dp_load_balance_dynamic(batch, batch_pad, split_fix_chunk)
 
         global_batches = get_iterator_k_split(
             batch,
@@ -469,6 +483,8 @@ class MAMegatronActor(MegatronActor):
         with self.worker_timer("run_training"):
             training_metrics_list = []
             for idx, global_batch in enumerate(global_batches):
+                if self.cfg.algorithm.use_valid_token_scale:
+                    self._setup_valid_token_scale(global_batch)
                 if global_batch["input_ids"].shape == torch.Size([0]):
                     continue
                 global_batch_size_per_dp = global_batch["input_ids"].shape[0]
@@ -486,6 +502,9 @@ class MAMegatronActor(MegatronActor):
 
         # Gather weights if overlap_param_gather before the next weight sync
         self._gather_weights_among_dp()
+
+        if fixed_ppo_targets:
+            clear_memory()
 
         return rollout_metrics, training_metrics_list
 

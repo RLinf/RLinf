@@ -1,0 +1,13 @@
+defaults:
+  - qwen2.5-1.5b-sao-shared
+  - _self_
+
+runner:
+  experiment_name: searchr1-sao-split-ci
+
+cluster:
+  component_placement:
+    actor: 4-7
+    critic: 4-7
+    rollout: 0-3
+    reward: 0-3

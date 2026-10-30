@@ -7,7 +7,8 @@ Reproduce the experiments from
 in RLinf, training LLMs to answer questions by invoking search tools.
 
 This page covers the environment and the local wiki retrieval server shared by
-all models. Choose a model below for its training recipe and results.
+all models. Choose a model below for its GRPO recipe and results, or use
+:doc:`ppo` for synchronous and asynchronous PPO on Qwen2.5-3B-Instruct.
 
 .. raw:: html
 
@@ -86,7 +87,7 @@ and build the index
 
    bash examples/agent/tools/search_local_server_faiss/build_index.sh
 
-Write the paths to the previously downloaded wiki files and the index into examples/agent/searchr1/launch_local_server.sh
+Use the downloaded corpus, index, and retriever paths to start the FAISS server:
 
 .. code-block:: bash
 
@@ -102,7 +103,7 @@ Write the paths to the previously downloaded wiki files and the index into examp
    retriever_name=e5
    retriever_path=path/to/intfloat/e5-base-v2
 
-   python3  ./local_retrieval_server.py --index_path $index_file \
+   python3 examples/agent/tools/search_local_server_faiss/local_retrieval_server.py --index_path $index_file \
                                                --corpus_path $corpus_file \
                                                --pages_path $pages_file \
                                                --topk 3 \
@@ -110,8 +111,8 @@ Write the paths to the previously downloaded wiki files and the index into examp
                                                --retriever_model $retriever_path \
                                                --faiss_gpu --port 8000
 
-Run `launch_local_server.sh` to start the Local Wiki Server.
-Wait until server IP information is printed — indicating successful startup.
+Wait for the server to report its listening address, then set
+``tools.search.server_addr`` in the training configuration to that address.
 
 (Optional) Using Qdrant as Local Wiki Server
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -170,3 +171,4 @@ Asearcher: https://github.com/inclusionAI/ASearcher
 
    Qwen2.5-3B Search-R1 <qwen2.5>
    GLM-4.7-Flash Search-R1 <glm4.7_flash>
+   Synchronous and Asynchronous PPO <ppo>

@@ -512,6 +512,53 @@ class TestHybridComponentPlacement:
 
 
 class TestModelParallelComponentPlacement:
+    @pytest.mark.parametrize(
+        "actor,critic,rollout",
+        [("0-7", "0-7", "0-7"), ("4-7", "4-7", "0-3"), ("4-5", "6-7", "0-3")],
+    )
+    @pytest.mark.parametrize("synchronous", [True, False])
+    @pytest.mark.parametrize("reward_type", ["searchr1", "math"])
+    def test_ppo_placement(self, actor, critic, rollout, synchronous, reward_type):
+        config = DictConfig(
+            {
+                "runner": {"synchronous": synchronous},
+                "reward": {"reward_type": reward_type},
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {
+                        "actor": actor,
+                        "critic": critic,
+                        "rollout": rollout,
+                        "reward": rollout,
+                    },
+                },
+                "actor": {
+                    "model": {
+                        "tensor_model_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                        "context_parallel_size": 1,
+                    }
+                },
+                "critic": {
+                    "model": {
+                        "tensor_model_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                        "context_parallel_size": 1,
+                    }
+                },
+                "rollout": {"tensor_parallel_size": 1, "pipeline_parallel_size": 1},
+                "algorithm": {"recompute_logprobs": True},
+            }
+        )
+        placement = ModelParallelComponentPlacement(config, create_fake_cluster(1, 8))
+        assert placement.is_pipeline == (not synchronous and actor != critic)
+        for role in ("actor", "critic", "rollout"):
+            assert isinstance(placement.get_strategy(role), PackedPlacementStrategy)
+        assert placement.actor_world_size == len(placement.get_hardware_ranks("actor"))
+        assert placement.critic_world_size == len(
+            placement.get_hardware_ranks("critic")
+        )
+
     def test_collocated_mode(self):
         config = DictConfig(
             {

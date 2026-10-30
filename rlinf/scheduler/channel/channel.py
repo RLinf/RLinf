@@ -666,6 +666,24 @@ class Channel:
             else:
                 return async_channel_work.wait()
 
+    def peek_all(self, key: Any = DEFAULT_KEY) -> list[Any]:
+        """Snapshot a key's shared queue without consuming its items.
+
+        Args:
+            key (Any): The shared queue to snapshot.
+
+        Returns:
+            list[Any]: Queued payloads in FIFO order, excluding pending puts.
+
+        """
+        if self._local_channel is not None:
+            items = self._local_channel.peek_all(key)
+        else:
+            target_rank = self._get_channel_rank_by_key(key)
+            target_actor = self._get_channel_actor(target_rank)
+            items = ray.get(target_actor.peek_all.remote(key=key))
+        return [item.item for item in items]
+
     def __str__(self, key: Any = DEFAULT_KEY) -> str:
         """Get a all the items in the channel queue as a string.
 

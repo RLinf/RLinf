@@ -29,6 +29,7 @@ from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolChannelInfo, ToolWorker, ToolWorkerInfo
+from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 
@@ -55,6 +56,7 @@ class AgentRunner(ReasoningRunner):
         agent_loop: AgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
+        critic: MAMegatronCritic | None = None,
     ):
         super().__init__(
             cfg,
@@ -65,6 +67,7 @@ class AgentRunner(ReasoningRunner):
             inference,
             actor,
             reward,
+            critic=critic,
         )
         all_tool_calls = list(
             itertools.chain(
@@ -155,9 +158,11 @@ class AgentRunner(ReasoningRunner):
             self.solid_generate_input_channels,
         ).wait()
 
-    def _sync_weights(self):
-        super()._sync_weights()
-        if not self.is_pipeline:
+    def _sync_weights(
+        self, do_offload: bool = True, weight_version: int | None = None
+    ) -> None:
+        super()._sync_weights(do_offload=do_offload, weight_version=weight_version)
+        if do_offload and not self.is_pipeline:
             onload_handles = []
             for solid_rollout in self.solid_rollouts.values():
                 onload_handles.append(solid_rollout.onload_engine())

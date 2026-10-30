@@ -214,7 +214,6 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             load_format=load_format,
-            # disable_overlap_schedule=True,
             dtype=torch_dtype_from_precision(self._cfg_rollout.model.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
@@ -222,7 +221,7 @@ class SGLangWorker(Worker):
             # sglang will print statistics every decode_log_interval decode steps.
             decode_log_interval=self._cfg_rollout.sglang.decode_log_interval,
             attention_backend=self._cfg_rollout.sglang.attention_backend,
-            log_level="info",
+            log_level="warning",
             max_running_requests=self._cfg_rollout.max_running_requests,
             dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
             tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
@@ -297,6 +296,7 @@ class SGLangWorker(Worker):
         return result, request_info
 
     async def init_worker(self):
+        """Initialize the engine and its existing actor weight transport."""
         self._init_engine()
         if self.weight_reload == "sync":
             await self._engine.tokenizer_manager.run_task_method(
@@ -372,10 +372,29 @@ class SGLangWorker(Worker):
             obj=io_struct.AbortGenerationInput()
         )
 
-    async def sync_model_from_actor(self):
+    async def sync_model_from_actor(self, weight_version: int | None = None) -> None:
         """Update the weights of the SGLang engine."""
         await self._engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput()
+            obj=io_struct.SyncHFWeightInput(weight_version=weight_version)
+        )
+
+    async def pause_generation(self) -> dict[str, Any]:
+        """Retract unfinished requests and wait until their GPU work has drained."""
+        return await self._engine.tokenizer_manager.pause_for_weight_update()
+
+    async def resume_generation(self) -> dict[str, Any]:
+        """Resume unfinished requests after weight publication and memory restoration."""
+        return await self._engine.tokenizer_manager.resume_after_weight_update()
+
+    async def get_async_rollout_state(
+        self, include_requests: bool = False
+    ) -> dict[str, Any]:
+        """Read rollout counters or paused prefixes for verification."""
+        return await self._engine.tokenizer_manager.run_task_method(
+            io_struct.TaskMethodInput(
+                method_name="get_async_rollout_state",
+                kwargs={"include_requests": include_requests},
+            )
         )
 
     async def check_running_state(self):
@@ -542,18 +561,36 @@ class SGLangWorker(Worker):
             result_dict["logprobs"] = [
                 item[0] for item in result["meta_info"]["output_token_logprobs"]
             ]
+        if "rollout_weight_versions" in result["meta_info"]:
+            result_dict["weight_versions"] = result["meta_info"][
+                "rollout_weight_versions"
+            ]
         await output_channel.put(
             result_dict, key=channel_key, async_op=True
         ).async_wait()
 
-    async def rollout_serverless(self, input_channel: Channel, output_channel: Channel):
-        while True:
-            rollout_request = await input_channel.get(async_op=True).async_wait()
-            asyncio.create_task(
-                self.generate_and_send(
-                    output_channel=output_channel,
-                    channel_key=rollout_request["channel_key"],
-                    prompt_ids=rollout_request["prompt_ids"],
-                    sampling_params=rollout_request.get("sampling_params", None),
+    async def rollout_serverless(
+        self, input_channel: Channel, output_channel: Channel
+    ) -> None:
+        """Serve requests concurrently until the owning runner stops generation."""
+        from anyio import create_task_group
+
+        self._serverless_input_channel = input_channel
+        async with create_task_group() as self._serverless_group:
+            while True:
+                rollout_request = await input_channel.get(async_op=True).async_wait()
+                if rollout_request is None:
+                    break
+                self._serverless_group.start_soon(
+                    self.generate_and_send,
+                    output_channel,
+                    rollout_request["channel_key"],
+                    rollout_request["prompt_ids"],
+                    rollout_request.get("sampling_params", None),
                 )
-            )
+
+    async def stop_serverless(self) -> None:
+        """Stop this consumer and cancel its unfinished engine calls."""
+        self._serverless_group.cancel_scope.cancel()
+        # Cancellation alone cannot unblock a Channel wait in its executor thread.
+        await self._serverless_input_channel.put(None, async_op=True).async_wait()

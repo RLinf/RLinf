@@ -1,0 +1,28 @@
+defaults:
+  - qwen2.5-1.5b-ppo-shared
+  - _self_
+
+runner:
+  synchronous: false
+  experiment_name: searchr1-sao-shared-ci
+
+algorithm:
+  recompute_logprobs: false
+  loss_type: dis
+  adv_type: sao_gae
+  clip_ratio_low: 0.3
+  clip_ratio_high: 5.0
+  gae_lambda_alpha: 1.5
+
+agentloop:
+  truncate_response: false
+
+rollout:
+  return_logprobs: true
+  max_weight_staleness: null
+  max_in_flight_rollouts: null
+  rollout_buffer_capacity: null
+
+critic:
+  loss_type: sao
+  update_epochs: 2

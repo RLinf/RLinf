@@ -419,9 +419,13 @@ class MegatronActor(MegatronWorker):
         )
         return model_bucket_list
 
-    def sync_model_to_rollout(self):
+    def sync_model_to_rollout(self, do_offload: bool = True) -> None:
         """
         Sync the model's full state dict to the rollout worker.
+
+        Args:
+            do_offload: Release enabled training state during synchronization.
+                False leaves residency under the runner's ownership.
         """
         if self.recreate_nccl_groups:
             nccl_group_recreate()
@@ -447,7 +451,8 @@ class MegatronActor(MegatronWorker):
                 "error the self.sync_model_bucket_length is 0"
             )
 
-        self.model_state_offload_optimizer_and_grad()
+        if do_offload:
+            self.model_state_offload_optimizer_and_grad()
 
         # send bucket size
         # Bucket-outer, target-inner: gather once per bucket, then narrow
@@ -524,7 +529,7 @@ class MegatronActor(MegatronWorker):
         # Release the last bucket's full_sd, now that its sends are done.
         del send_handles, prev_full_sd
 
-        if (
+        if do_offload and (
             self.placement_mode == PlacementMode.COLLOCATED
             or self.use_pre_process_policy
         ):
@@ -550,6 +555,7 @@ class MegatronActor(MegatronWorker):
         else:
             assert self.placement_mode in [
                 PlacementMode.DISAGGREGATED,
+                PlacementMode.HYBRID,
                 PlacementMode.AUTO,
             ], "Unsupported placement mode for sending weights."
             assert isinstance(self._weight_dst_rank_in_rollout, list), (
