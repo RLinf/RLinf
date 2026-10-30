@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -1094,18 +1095,18 @@ _fake_gym = MagicMock()
 _fake_gym.Env = _FakeGymEnv
 _fake_gym.Wrapper = _FakeGymWrapper
 
-if "gymnasium" not in sys.modules:
-    sys.modules["gymnasium"] = _fake_gym
-if "imageio" not in sys.modules:
-    sys.modules["imageio"] = MagicMock()
-
 
 def _delayed_env(delay: float):
-    from rlinf.envs.wrappers import InsertDelay
+    # Keep optional-dependency shims local so other model imports see real modules.
+    modules = {"gymnasium": _fake_gym}
+    if importlib.util.find_spec("imageio") is None:
+        modules["imageio"] = MagicMock()
+    with patch.dict(sys.modules, modules):
+        from rlinf.envs.wrappers import InsertDelay
 
-    return InsertDelay(
-        _FakeEnv(), OmegaConf.create({"type": "constant", "delay": delay})
-    )
+        return InsertDelay(
+            _FakeEnv(), OmegaConf.create({"type": "constant", "delay": delay})
+        )
 
 
 def test_chunk_step_does_not_block_the_caller():
@@ -1720,3 +1721,440 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+
+
+def _sglang_pi05_config():
+    return OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_type": "openpi",
+                    "pi05": True,
+                    "openpi": {"backend": "sglang"},
+                }
+            },
+            "rollout": {"rollout_backend": "sglang", "model": {}},
+            "algorithm": {"loss_type": "actor_critic", "adv_type": "gae"},
+            "runner": {},
+        }
+    )
+
+
+def test_sglang_pi05_native_backend_accepts_ppo():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    validate_sglang_pi05_cfg(_sglang_pi05_config(), only_eval=False)
+
+
+def test_sglang_pi05_backend_validation_preserves_other_models():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    cfg.actor.model.model_type = "cosmos3"
+    del cfg.actor.model.openpi
+    validate_sglang_pi05_cfg(cfg, only_eval=False)
+
+
+def test_sglang_pi05_training_configs_compose(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    directory = root / "examples/embodiment/config"
+    name = "libero_spatial_ppo_sglang_pi05"
+    with initialize_config_dir(config_dir=str(directory), version_base="1.1"):
+        cfg = compose(config_name=name)
+    validate_sglang_pi05_cfg(cfg, only_eval=False)
+    assert cfg.actor.model.openpi.task == "rl"
+    assert cfg.actor.fsdp_config.use_orig_params
+    rollout_model = OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    assert rollout_model.openpi.backend == "sglang"
+    assert rollout_model.model_path == cfg.actor.model.model_path
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("rollout.model.openpi.backend", "openpi"),
+        ("rollout.rollout_backend", "huggingface"),
+        ("algorithm.loss_type", "embodied_dagger"),
+        ("algorithm.adv_type", "opd"),
+        ("actor.sync_weight_no_wait", True),
+        ("actor.model.is_lora", True),
+        ("rollout.enable_torch_compile", True),
+    ],
+)
+def test_sglang_pi05_native_backend_rejects_incompatible_training(key, value):
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    OmegaConf.update(cfg, key, value, force_add=True)
+    with pytest.raises(ValueError):
+        validate_sglang_pi05_cfg(cfg, only_eval=False)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"train_expert_only": False},
+        {"noise_method": "flow_ode"},
+        {"noise_method": "flow_noise"},
+        {"noise_level": 0},
+        {"noise_method": "flow_cps", "ignore_last": False},
+    ],
+)
+def test_sglang_pi05_invalid_sampler_fails_before_loading_network(kwargs):
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.sglang_model import SGLangPi05RL
+    from rlinf.models.embodiment.openpi.tasks.rl import Pi0RLConfig
+
+    options = {
+        "train_expert_only": True,
+        "noise_method": "flow_sde",
+        "noise_level": 0.5,
+    }
+    options.update(kwargs)
+    with pytest.raises(ValueError):
+        SGLangPi05RL(Pi0Config(pi05=True), rl_cfg=Pi0RLConfig(**options))
+
+
+def _sglang_pi05_small_checkpoint_target():
+    # A real module with the checkpoint consumer's fused projection shapes.
+    from torch import nn
+
+    target = nn.Module()
+    target.core_model = nn.Module()
+    target.core_model.layer = nn.Module()
+    target.core_model.layer.self_attn = nn.Module()
+    target.core_model.layer.self_attn.qkv_proj = nn.Linear(4, 8, bias=False)
+    return target
+
+
+def test_sglang_pi05_checkpoint_fuses_every_qkv_shard_and_rejects_partial_weights():
+    from rlinf.models.embodiment.openpi.checkpoint import convert_pi05_weights
+
+    pytest.importorskip("sglang.multimodal_gen.runtime.models.vlas.pi05_policy")
+    target = _sglang_pi05_small_checkpoint_target()
+    state = {
+        "layer.self_attn.q_proj.weight": torch.full((4, 4), 1.0),
+        "layer.self_attn.k_proj.weight": torch.full((2, 4), 2.0),
+        "layer.self_attn.v_proj.weight": torch.full((2, 4), 3.0),
+    }
+    converted = convert_pi05_weights(state, target)
+    target.load_state_dict(converted)
+    torch.testing.assert_close(
+        target.core_model.layer.self_attn.qkv_proj.weight,
+        torch.cat(list(state.values())),
+    )
+    del state["layer.self_attn.k_proj.weight"]
+    with pytest.raises(ValueError, match="Incomplete"):
+        convert_pi05_weights(state, target)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("RLINF_PI05_CHECKPOINT"),
+    reason="Set RLINF_PI05_CHECKPOINT to run the full policy training test",
+)
+@pytest.mark.parametrize(
+    "graphs,checkpointing", [(False, False), (False, True), (True, False)]
+)
+def test_sglang_pi05_full_policy_ppo_and_weight_sync(
+    monkeypatch, checkpointing, graphs
+):
+    """Real weights, transforms, PPO backward, and bucket reload on one accelerator."""
+    import dataclasses
+    import random
+
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.algorithms.registry import policy_loss
+    from rlinf.hybrid_engines.weight_syncer import BucketWeightSyncer
+    from rlinf.models.embodiment.openpi import get_model
+    from rlinf.scheduler import Worker
+
+    if not Worker.torch_platform.is_available():
+        pytest.skip("An accelerator is required for the full Pi0.5 checkpoint")
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        cfg = compose(config_name="libero_spatial_ppo_sglang_pi05")
+    cfg.actor.model.model_path = os.environ["RLINF_PI05_CHECKPOINT"]
+    # Official RLinf Pi05 checkpoints use horizon 10; LeRobot usually uses 50.
+    if "RLINF_PI05_HORIZON" in os.environ:
+        OmegaConf.update(
+            cfg.actor.model,
+            "openpi.action_horizon",
+            int(os.environ["RLINF_PI05_HORIZON"]),
+            force_add=True,
+        )
+    cfg.actor.model.openpi.reuse_rollout_observations = False
+    device = Worker.torch_device_type
+    torch.manual_seed(17)
+    model = get_model(cfg.actor.model).to(device).eval()
+    env_obs = {
+        "main_images": torch.randint(0, 256, (1, 224, 224, 3), dtype=torch.uint8),
+        "wrist_images": torch.randint(0, 256, (1, 224, 224, 3), dtype=torch.uint8),
+        "states": torch.zeros(1, 8),
+        "task_descriptions": ["pick up the black bowl"],
+    }
+
+    def predict(seed):
+        random.seed(seed)
+        torch.manual_seed(seed)
+        return model.predict_action_batch(env_obs, mode="train")
+
+    actions, rollout = predict(51)
+    legacy_observation = model._observation_from_forward_inputs(
+        rollout["forward_inputs"]
+    )
+    model.rl_cfg = dataclasses.replace(model.rl_cfg, reuse_rollout_observations=True)
+    reused_actions, reused = predict(51)
+    torch.testing.assert_close(reused_actions, actions, rtol=0, atol=0)
+    for key in ("prev_logprobs", "prev_values", "model_actions"):
+        torch.testing.assert_close(reused[key], rollout[key], rtol=0, atol=0)
+    assert not any(k.startswith("observation/") for k in reused["forward_inputs"])
+    reused["forward_inputs"] = dict(reversed(list(reused["forward_inputs"].items())))
+    with monkeypatch.context() as patch:
+
+        def unexpected_transform(*args, **kwargs):
+            raise AssertionError(
+                "Prepared actor observations must not rerun input transforms"
+            )
+
+        patch.setattr(model, "input_transform", unexpected_transform)
+        prepared = model._observation_from_forward_inputs(reused["forward_inputs"])
+        assert list(prepared.images) == list(legacy_observation.images)
+        assert list(prepared.image_masks) == list(legacy_observation.image_masks)
+        for name in legacy_observation.images:
+            torch.testing.assert_close(
+                prepared.images[name], legacy_observation.images[name], rtol=0, atol=0
+            )
+            torch.testing.assert_close(
+                prepared.image_masks[name],
+                legacy_observation.image_masks[name],
+                rtol=0,
+                atol=0,
+            )
+        torch.testing.assert_close(
+            prepared.state, legacy_observation.state, rtol=0, atol=0
+        )
+    actions, rollout = reused_actions, reused
+    if graphs:
+        if device != "cuda":
+            pytest.skip("CUDA Graph validation requires NVIDIA CUDA")
+        eager_actions, eager_rollout = actions.clone(), rollout
+        eager_rng = Worker.torch_platform.get_rng_state()
+        eager_python_rng = random.getstate()
+        model.capture_cuda_graph(1, 1)
+        actions, rollout = predict(51)
+        assert random.getstate() == eager_python_rng
+        torch.testing.assert_close(
+            Worker.torch_platform.get_rng_state(), eager_rng, rtol=0, atol=0
+        )
+        info = model._rollout_graph.cache_info()
+        assert info.captures == 1 and info.failures == 0
+        torch.testing.assert_close(actions, eager_actions, rtol=0, atol=1e-5)
+        for key in ("prev_logprobs", "prev_values", "model_actions"):
+            torch.testing.assert_close(
+                rollout[key], eager_rollout[key], rtol=0, atol=1e-5
+            )
+        for key in ("chains", "denoise_inds"):
+            torch.testing.assert_close(
+                rollout["forward_inputs"][key],
+                eager_rollout["forward_inputs"][key],
+                rtol=0,
+                atol=1e-5,
+            )
+        retained = rollout["model_actions"].clone()
+        _, next_rollout = predict(52)
+        assert not torch.equal(next_rollout["model_actions"], retained)
+        torch.testing.assert_close(rollout["model_actions"], retained, rtol=0, atol=0)
+        assert model._rollout_graph.cache_info().hits > 0
+        model.to_bfloat16_for_selected_params()
+        assert model._rollout_graph is None
+    assert actions.shape == (1, 5, 7)
+    assert rollout["prev_logprobs"].shape == actions.shape
+    assert rollout["forward_inputs"]["chains"].shape[1] == model.num_steps + 1
+    model.train()
+    rollout["forward_inputs"] = dict(reversed(list(rollout["forward_inputs"].items())))
+    if checkpointing:
+        model.gradient_checkpointing_enable()
+    replay = model(forward_inputs=rollout["forward_inputs"])
+    torch.testing.assert_close(
+        replay["logprobs"], rollout["prev_logprobs"], rtol=0, atol=1e-5
+    )
+    torch.testing.assert_close(
+        replay["values"], rollout["prev_values"].flatten(), rtol=0, atol=1e-5
+    )
+    trainable = {name: p for name, p in model.named_parameters() if p.requires_grad}
+    before = {name: p.detach().cpu().clone() for name, p in trainable.items()}
+    optimizer = torch.optim.AdamW(trainable.values(), lr=5e-6)
+    loss, metrics = policy_loss(
+        loss_type="actor_critic",
+        task_type="embodied",
+        logprob_type="chunk_level",
+        reward_type="chunk_level",
+        single_action_dim=7,
+        logprobs=replay["logprobs"],
+        old_logprobs=rollout["prev_logprobs"],
+        values=replay["values"],
+        prev_values=rollout["prev_values"],
+        advantages=torch.ones(1, 1, device=device),
+        returns=rollout["prev_values"] + 1,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        value_clip=0.2,
+        huber_delta=10.0,
+    )
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert all(
+        p.grad is not None and torch.isfinite(p.grad).all() for p in trainable.values()
+    )
+    torch.nn.utils.clip_grad_norm_(trainable.values(), 1.0)
+    optimizer.step()
+    updated = {name: p.detach().cpu().clone() for name, p in trainable.items()}
+    assert not torch.equal(
+        before["core_model.action_out_proj.weight"],
+        updated["core_model.action_out_proj.weight"],
+    )
+    assert not torch.equal(
+        before["value_head.mlp.0.weight"], updated["value_head.mlp.0.weight"]
+    )
+    optimizer.zero_grad(set_to_none=True)
+    model.eval()
+    with torch.no_grad():
+        expected = model(forward_inputs=rollout["forward_inputs"])
+    model.load_state_dict(before, strict=False)
+    syncer = BucketWeightSyncer(
+        bucket_size=16 * 1024**2, bucket_dtype=None, bucket_device="cpu"
+    )
+
+    async def synchronize():
+        queue = asyncio.Queue()
+        await syncer.init_sender(updated, list(updated), queue.put)
+        await syncer.init_receiver(model.state_dict(), queue.get)
+        await syncer.sync(updated, queue.put, version=1)
+        return await syncer.apply(model, queue.get)
+
+    assert asyncio.run(synchronize()) == 1
+    with torch.no_grad():
+        synced = model(forward_inputs=rollout["forward_inputs"])
+    torch.testing.assert_close(synced["logprobs"], expected["logprobs"], rtol=0, atol=0)
+    torch.testing.assert_close(synced["values"], expected["values"], rtol=0, atol=0)
+    assert not torch.equal(synced["logprobs"], rollout["prev_logprobs"])
+    if graphs:
+        model._rollout_graph_enabled = False
+        expected_actions, expected_rollout = predict(61)
+        model.capture_cuda_graph(1, 1)
+        model.to("cpu").to(device).eval()
+        assert model._rollout_graph is None
+        captured_actions, captured_rollout = predict(61)
+        assert model._rollout_graph.cache_info().captures == 1
+        assert model._rollout_graph.cache_info().failures == 0
+        torch.testing.assert_close(
+            captured_actions, expected_actions, rtol=0, atol=1e-5
+        )
+        torch.testing.assert_close(
+            captured_rollout["prev_logprobs"],
+            expected_rollout["prev_logprobs"],
+            rtol=0,
+            atol=1e-5,
+        )
+
+
+def test_sglang_pi05_native_backend_accepts_rollout_graphs():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    cfg.rollout.enable_cuda_graph = True
+    validate_sglang_pi05_cfg(cfg, only_eval=False)
+
+
+def test_sglang_pi05_native_backend_accepts_actor_graphs():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    cfg.actor.enable_cuda_graph = True
+    cfg.actor.fsdp_config = {
+        "strategy": "fsdp",
+        "sharding_strategy": "no_shard",
+        "use_orig_params": True,
+    }
+    validate_sglang_pi05_cfg(cfg, only_eval=False)
+    cfg.actor.fsdp_config.sharding_strategy = "full_shard"
+    with pytest.raises(ValueError, match="no_shard"):
+        validate_sglang_pi05_cfg(cfg, only_eval=False)
+
+
+def test_sglang_pi05_native_backend_rejects_graphs_for_standalone_deterministic_eval():
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    cfg.rollout.model = cfg.actor.model
+    cfg.rollout.enable_cuda_graph = True
+    with pytest.raises(ValueError, match="stochastic training rollout"):
+        validate_sglang_pi05_cfg(cfg, only_eval=True)
+
+
+@pytest.mark.parametrize("method", ["flow_sde", "flow_cps", "flow_ode"])
+def test_sglang_pi05_rollout_sampler_cuda_graph_uses_current_inputs(method):
+    from rlinf.models.embodiment.openpi.sampling.rl_sampler import sample_mean_var
+    from rlinf.scheduler import Worker
+
+    if Worker.torch_device_type != "cuda" or not Worker.torch_platform.is_available():
+        pytest.skip("CUDA Graph validation requires NVIDIA CUDA")
+    graph_module = pytest.importorskip("sglang.multimodal_gen.runtime.vla.cuda_graph")
+    if not hasattr(graph_module, "VLATensorGraphRunner"):
+        pytest.skip("Install the SGLang Pi0.5 action-training branch")
+    runner = graph_module.VLATensorGraphRunner(
+        "sampler_test", enabled=True, max_entries=1
+    )
+    state = torch.randn(2, 5, 7, device=Worker.torch_device_type)
+    velocity = torch.randn_like(state)
+    indices = torch.arange(2, device=Worker.torch_device_type)
+
+    def sample(x, v, step):
+        return sample_mean_var(
+            x, v, step, noise_method=method, noise_level=0.5, num_steps=3
+        )
+
+    with torch.no_grad():
+        for _ in range(2):
+            expected = sample(state, velocity, indices)
+            actual = runner.run(sample, (state, velocity, indices))
+            torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+            state.add_(1)
+    assert runner.cache_info().captures == 1
+    assert runner.cache_info().failures == 0
+    assert runner.cache_info().hits == 1
+    runner.clear()
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("fsdp_config.gradient_checkpointing", True),
+        ("fsdp_config.amp_autocast.enabled", True),
+        ("fsdp_config.grad_scaler.enabled", True),
+        ("fsdp_config.mixed_precision.param_dtype", "bf16"),
+        ("fsdp_config.cpu_offload", True),
+        ("optim.critic_warmup_steps", 1),
+    ],
+)
+def test_sglang_pi05_actor_graph_rejects_incompatible_training(key, value):
+    from rlinf.models.embodiment.openpi.sglang_config import validate_sglang_pi05_cfg
+
+    cfg = _sglang_pi05_config()
+    cfg.actor.enable_cuda_graph = True
+    cfg.actor.fsdp_config = {
+        "strategy": "fsdp",
+        "sharding_strategy": "no_shard",
+        "use_orig_params": True,
+    }
+    OmegaConf.update(cfg.actor, key, value, force_add=True)
+    with pytest.raises(ValueError, match="Actor CUDA Graph"):
+        validate_sglang_pi05_cfg(cfg, only_eval=False)

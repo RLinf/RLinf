@@ -73,6 +73,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.stage_num = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self._opd_teacher_model = None
+        self._actor_graph = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
         self.loss_agg_func = get_loss_agg_func(
             self.cfg.algorithm.get("loss_agg_func", "token-mean")
@@ -605,6 +606,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         """
         Run the training process using the received rollout batch.
         """
+        try:
+            return self._run_training()
+        finally:
+            if self._actor_graph is not None:
+                self._actor_graph.clear()
+                self._actor_graph = None
+
+    def _run_training(self) -> dict:
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
         if self.is_optimizer_offloaded:
@@ -624,6 +633,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
         self.model.train()
+        if self.cfg.actor.get("enable_cuda_graph", False):
+            from rlinf.hybrid_engines.fsdp.actor_graph import FSDPActorGraph
+
+            self._actor_graph = FSDPActorGraph(self.model)
+        if self.cfg.actor.get("profile_memory", False):
+            self.torch_platform.reset_peak_memory_stats()
         rollout_size = (
             self.rollout_batch["prev_logprobs"].shape[0]
             * self.rollout_batch["prev_logprobs"].shape[1]
@@ -670,7 +685,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     train_global_batch_size // self.cfg.actor.micro_batch_size,
                 )
 
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad(
+                    set_to_none=self._actor_graph is None
+                    or self._actor_graph.captures == 0
+                )
                 for idx, batch in enumerate(train_micro_batch):
                     self.train_micro_batch(
                         micro_batch=batch,
@@ -708,6 +726,23 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 compute_critic_explained_variance_from_stats(reduced_stats).item()
             )
 
+        if self._actor_graph is not None:
+            mean_metric_dict.update(
+                {
+                    "actor/graph_captures": self._actor_graph.captures,
+                    "actor/graph_forward_replays": self._actor_graph.forward_replays,
+                    "actor/graph_backward_replays": self._actor_graph.backward_replays,
+                }
+            )
+        if self.cfg.actor.get("profile_memory", False):
+            mean_metric_dict.update(
+                {
+                    "actor/peak_allocated_mib": self.torch_platform.max_memory_allocated()
+                    / 1024**2,
+                    "actor/peak_reserved_mib": self.torch_platform.max_memory_reserved()
+                    / 1024**2,
+                }
+            )
         return mean_metric_dict
 
     def train_micro_batch(
@@ -755,15 +790,32 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.cfg.algorithm.entropy_bonus > 0
             or self.cfg.algorithm.get("log_entropy_metrics", False)
         )
-        with self.amp_context:
-            output_dict = self.model(
-                forward_inputs=forward_inputs,
+
+        def forward(inputs):
+            return self.model(
+                forward_inputs=inputs,
                 compute_logprobs=True,
                 compute_entropy=compute_entropy,
                 compute_values=compute_values,
                 use_cache=False,
                 **kwargs,
             )
+
+        with self.amp_context:
+            if self._actor_graph is None:
+                output_dict = forward(forward_inputs)
+            else:
+                forward_inputs, full_attention = self.model.prepare_actor_graph_inputs(
+                    forward_inputs
+                )
+                kwargs.update(
+                    prepared_actor_inputs=True, prefix_full_attention=full_attention
+                )
+                output_dict = self._actor_graph.forward(
+                    forward,
+                    forward_inputs,
+                    key=(full_attention, compute_values, compute_entropy),
+                )
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
@@ -858,6 +910,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         loss /= self.gradient_accumulation
         with backward_ctx:
             self.grad_scaler.scale(loss).backward()
+        if self._actor_graph is not None:
+            self._actor_graph.backward(output_dict)
 
         metrics_data["actor/total_loss"] = loss.detach().item()
         append_to_dict(metrics, metrics_data)

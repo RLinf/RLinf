@@ -434,6 +434,59 @@ OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``。
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
+使用 SGLang 训练 Pi0.5
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用 ``libero_spatial_ppo_sglang_pi05`` 配置，让 Actor 和 rollout 都运行 SGLang 原生 Pi0.5 网络。RLinf 负责 PPO、FSDP、优化器和权重同步。视觉语言前缀保持冻结，梯度更新动作专家和 value head。rollout worker 在自己的进程内加载模型，使用下面的 embodied 训练入口启动。
+
+Pi0.5 通过 flow matching 生成连续动作。训练时，RLinf 的随机 flow sampler 保存去噪轨迹、采样步和转移 logprob。Actor 用同一套 SGLang 网络重算该步的概率，得到 PPO ratio。这里的 logprob 是 sampler 的转移概率，不是语言模型的 token 概率，也不是最终动作的精确边缘概率密度。
+
+准备包含 RLinf OpenPI transforms、LIBERO 和兼容 SGLang 版本的环境。SGLang 源码需要提供 ``Pi05CoreModel(..., action_training=True)`` 和 ``forward_suffix``；此 RLinf 后端对应 ``yufoo1/SGLang-for-RLinf`` 的 ``diffusion/pi05-rl-training`` 分支。将该源码安装到准备好的环境中：
+
+.. code-block:: bash
+
+   python -m pip install --no-deps -e /path/to/sglang/python
+
+该命令让 Python 使用修改后的 SGLang 源码，并保留当前环境的依赖。准备环境时需要核对 SGLang 的 PyTorch 和 Transformers 版本要求；只有标准 OpenPI 环境还不够。
+
+将 YAML 中的 ``actor.model.model_path`` 改为 checkpoint 路径，然后启动训练：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+该配置使用 eager 执行、``flow_sde`` 噪声、同步权重更新和开启参数 offload 的单 GPU 部署，并要求 ``actor.model.openpi.train_expert_only=True``。此后端暂不支持 LoRA、NFT 和 RTC。动作 horizon 和归一化统计必须与 checkpoint 匹配：若 horizon 不同于选用的 OpenPI 配置，设置 ``actor.model.openpi.action_horizon``；需要指定统计文件时，设置 ``actor.model.openpi_data.norm_stats_path``。
+
+在 NVIDIA CUDA 上，可通过以下配置为训练中的随机 rollout 启用 CUDA Graph：
+
+.. code-block:: yaml
+
+   rollout:
+     enable_cuda_graph: true
+
+首个 observation 会触发捕获，覆盖前缀编码、去噪循环、转移 logprob 和 value 计算。后续相同形状的 observation 复用 graph，每次传入新的输入和随机噪声。确定性评估仍使用 eager 执行。参数 offload、加载新权重或推进 policy 版本时会释放已捕获的 graph，下次训练 rollout 再次捕获。比较整轮训练速度时应包含这些捕获开销，尤其是单卡上的短 rollout。
+
+该配置还设置了 ``actor.model.openpi.reuse_rollout_observations=True``。rollout 保存采样时实际使用的归一化图像、掩码和状态，Actor 直接读取这些张量，避免重算 NumPy 输入变换以及将 observation 从 GPU 搬回 CPU。保存后的图像比原始字节图像占用更多空间，评测时应计入 rollout 数据传输和显存成本。设置为 ``False`` 可对照原始 observation 重算路径。
+
+在单张 NVIDIA GPU 上，设置 ``actor.enable_cuda_graph=True`` 可捕获 Actor 网络的前向与反向。该模式要求 FSDP1 ``no_shard``、``use_orig_params=True``、固定的 microbatch 输入形状，并关闭 FSDP 参数精度转换、AMP、gradient checkpointing 和 critic-only warmup。rollout 与训练之间的显式参数 offload 仍受支持。第一个 microbatch 捕获两个 graph，后续 microbatch 在固定梯度缓冲区中累积。PPO loss、梯度裁剪和 AdamW 更新在 graph 外执行。每次训练调用结束后释放 graph，下次更新重新捕获，整轮计时应包含这些开销。
+
+比较 microbatch 1、2、4 时，保持 ``actor.global_batch_size`` 不变。设置 ``actor.profile_memory=True`` 可记录 Actor 的峰值 allocated 和 reserved 显存；启用 graph 后，在 TensorBoard 中检查 ``train/actor/graph_forward_replays`` 和 ``train/actor/graph_backward_replays``。同时比较整轮耗时和 Actor 耗时，因为增大 microbatch 和保存 graph 都可能影响同卡 rollout worker 可用的显存。
+
+设置 checkpoint 路径后，先使用同一配置检查两轮训练：
+
+.. code-block:: bash
+
+   STEPS=2 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+该命令在两次更新后停止，并关闭 checkpoint 保存。若只需检查 logprob 重算、梯度、优化器更新和权重同步，可跳过模拟器，运行模型测试：
+
+.. code-block:: bash
+
+   RLINF_PI05_CHECKPOINT=/path/to/checkpoint \
+     python -m pytest -q tests/unit_tests/test_models.py -k sglang_pi05
+
+checkpoint 的动作 horizon 为 50 时，设置 ``RLINF_PI05_HORIZON=50``。未设置 ``RLINF_PI05_CHECKPOINT`` 时，需要真实权重的测试会跳过，采样器配置检查仍可运行。
+
 .. _pi0-hardware:
 
 在不同硬件后端上运行

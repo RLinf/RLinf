@@ -47,6 +47,9 @@ def main(cfg) -> None:
     # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    native_pi05 = (
+        OmegaConf.select(cfg, "rollout.model.openpi.backend", default=None) == "sglang"
+    )
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
     if rollout_backend == "apxinf":
@@ -57,7 +60,7 @@ def main(cfg) -> None:
             name=cfg.rollout.group_name,
             placement_strategy=rollout_placement,
         )
-    elif rollout_backend == "sglang":
+    elif rollout_backend == "sglang" and not native_pi05:
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
         rollout_group = (
@@ -69,7 +72,7 @@ def main(cfg) -> None:
                 placement_strategy=rollout_placement,
             )
         )
-    elif rollout_backend == "huggingface":
+    elif rollout_backend == "huggingface" or native_pi05:
         if cfg.runner.get("rtc", {}).get("enabled", False):
             from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
             from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
@@ -95,7 +98,7 @@ def main(cfg) -> None:
     )
 
     # launch the sglang server
-    if rollout_backend == "sglang":
+    if rollout_backend == "sglang" and not native_pi05:
         from rlinf.workers.rollout.sglang_server import (
             launch_sglang_router_and_server,
         )

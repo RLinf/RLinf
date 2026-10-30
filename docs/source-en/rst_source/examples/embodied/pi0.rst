@@ -470,6 +470,110 @@ the LIBERO environment, run:
 
 --------------
 
+Train Pi0.5 With SGLang
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``libero_spatial_ppo_sglang_pi05`` to run both Actor and rollout with the
+native SGLang Pi0.5 network. RLinf manages PPO, FSDP, the optimizer, and weight
+synchronization. The visual-language prefix stays frozen; gradients update the
+action expert and value head. The rollout worker loads the model in its own
+process, so use the embodied training entry point below.
+
+Pi0.5 generates continuous actions through flow matching. During training,
+RLinf's stochastic flow sampler records the denoising chain, sampled step, and
+transition log probabilities. Actor replays that transition with the same
+SGLang network to compute the PPO ratio. These are the sampler's transition
+probabilities, rather than language-model token probabilities or the exact
+marginal density of the final action.
+
+Prepare an environment containing RLinf's OpenPI transforms, LIBERO, and a
+compatible SGLang installation. The SGLang checkout must provide
+``Pi05CoreModel(..., action_training=True)`` and ``forward_suffix``; use the
+``diffusion/pi05-rl-training`` branch of ``yufoo1/SGLang-for-RLinf`` with this
+RLinf backend. Install that checkout into your prepared environment:
+
+.. code-block:: bash
+
+   python -m pip install --no-deps -e /path/to/sglang/python
+
+This selects the edited SGLang source while retaining the environment's
+dependencies. Check SGLang's PyTorch and Transformers requirements when preparing
+the environment: the standard OpenPI environment alone is insufficient.
+
+Set ``actor.model.model_path`` in the YAML to your checkpoint, then launch:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+The recipe uses eager execution, ``flow_sde`` noise, synchronous weight updates,
+and one GPU with parameter offloading. It requires
+``actor.model.openpi.train_expert_only=True``. LoRA, NFT, and RTC
+are unsupported by this backend. Match the checkpoint's action horizon and
+normalization statistics: set ``actor.model.openpi.action_horizon`` when it
+differs from the selected OpenPI config and
+``actor.model.openpi_data.norm_stats_path`` for an explicit stats file.
+
+On NVIDIA CUDA, enable graphs for the stochastic training rollout by setting:
+
+.. code-block:: yaml
+
+   rollout:
+     enable_cuda_graph: true
+
+The first observation captures prefix encoding, the denoising loop, transition
+log probabilities, and values. Subsequent observations with the same shapes
+reuse the graph with fresh inputs and random noise. Deterministic evaluation
+keeps eager execution. Parameter offload, loading new
+weights, or advancing the policy version releases the captured graphs; the next
+training rollout captures them again. Include this capture cost when comparing
+whole training iterations, especially for short rollouts on one GPU.
+
+The recipe also sets ``actor.model.openpi.reuse_rollout_observations=True``.
+Rollout retains the normalized images, masks, and state used for sampling, and
+Actor consumes those tensors directly. This avoids repeating the NumPy input
+transforms and transferring observations from GPU back to CPU during replay.
+The retained images use more storage than raw byte images; include rollout
+transport and memory use when measuring the change. Set this option to
+``False`` to compare with raw-observation replay.
+
+For a single NVIDIA GPU, capture the Actor network's forward and backward by
+setting ``actor.enable_cuda_graph=True``. This requires FSDP1 ``no_shard``,
+``use_orig_params=True``, fixed microbatch input shapes, and no FSDP parameter
+casting, AMP, gradient checkpointing, or critic-only warmup. Explicit parameter
+offload between rollout and training remains supported. The first microbatch
+captures both graphs; later microbatches accumulate gradients in persistent
+buffers. PPO loss calculation, gradient clipping, and AdamW stay outside the
+graphs. Each training call releases the graphs before the next offload, so the
+reported iteration time includes capture again on the next update.
+
+Keep ``actor.global_batch_size`` fixed while comparing microbatch sizes 1, 2,
+and 4. Enable ``actor.profile_memory=True`` to record Actor peak allocated and
+reserved memory, and check ``train/actor/graph_forward_replays`` and
+``train/actor/graph_backward_replays`` in TensorBoard when using graphs. Compare full iteration time
+as well as Actor time: larger microbatches and graph storage may change the
+memory available to the colocated rollout worker.
+
+After setting the checkpoint path, check two training iterations before a
+longer run:
+
+.. code-block:: bash
+
+   STEPS=2 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_sglang_pi05
+
+This uses the same recipe, stops after two updates, and disables checkpoint
+saving. To check replay log probabilities, gradients, optimizer updates, and
+weight synchronization without a simulator, run the model tests:
+
+.. code-block:: bash
+
+   RLINF_PI05_CHECKPOINT=/path/to/checkpoint \
+     python -m pytest -q tests/unit_tests/test_models.py -k sglang_pi05
+
+Set ``RLINF_PI05_HORIZON=50`` when testing a checkpoint with that action horizon.
+The tests requiring real weights are skipped when ``RLINF_PI05_CHECKPOINT`` is
+unset; sampler/configuration checks remain runnable without the checkpoint.
+
 .. _pi0-hardware:
 
 Run on Different Hardware Backends
