@@ -64,24 +64,50 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size: int) -> DeviceMesh:
-    """Build the 1-D device mesh that FSDP shards over.
+def create_device_mesh(
+    world_size: int,
+    sharding_strategy: str = "full_shard",
+    hybrid_shard_size: Optional[int] = None,
+) -> DeviceMesh:
+    """Build a sharding mesh, with an outer replica dimension for hybrid sharding.
 
-    The default process group is created here rather than left to
-    ``init_device_mesh``. When no default group exists, ``init_device_mesh``
-    falls back to a bare ``init_process_group()``, which pins the group -- and
-    therefore every FSDP collective, since a mesh dimension that spans the whole
-    world reuses the default group -- to whatever watchdog timeout the backend
-    ships with: 30 minutes for NCCL and Gloo, around 60 for HCCL. All of them are
-    shorter than the timeout RLinf applies to its own inter-worker groups, and
-    none can be raised from the outside.
+    New process groups use RLinf's collective timeout. Existing default groups
+    keep their original timeout.
 
     Args:
         world_size (int): Number of ranks participating in FSDP.
+        sharding_strategy (str): FSDP sharding strategy.
+        hybrid_shard_size (Optional[int]): Ranks per shard group. Required for
+            hybrid sharding; each group contains consecutive actor ranks.
 
     Returns:
-        DeviceMesh: A 1-D mesh over ``world_size`` ranks named ``fsdp``.
+        DeviceMesh: A mesh named ``fsdp``, or ``(ddp, fsdp)`` for hybrid sharding.
+
+    Raises:
+        ValueError: If the shard size is invalid or does not divide world size.
     """
+    if sharding_strategy == "hybrid_shard":
+        if (
+            type(hybrid_shard_size) is not int
+            or hybrid_shard_size <= 0
+            or world_size % hybrid_shard_size != 0
+        ):
+            raise ValueError(
+                "hybrid_shard_size must be a positive integer dividing the actor "
+                f"world size; got hybrid_shard_size={hybrid_shard_size!r}, "
+                f"world_size={world_size}."
+            )
+        mesh_shape = (world_size // hybrid_shard_size, hybrid_shard_size)
+        mesh_dim_names = ("ddp", "fsdp")
+    else:
+        if hybrid_shard_size is not None:
+            raise ValueError(
+                "hybrid_shard_size requires sharding_strategy='hybrid_shard'; "
+                f"got sharding_strategy={sharding_strategy!r}."
+            )
+        mesh_shape = (world_size,)
+        mesh_dim_names = ("fsdp",)
+
     if torch.distributed.is_initialized():
         get_logger().warning(
             "The default process group already exists, so FSDP collectives keep "
@@ -92,8 +118,25 @@ def create_device_mesh(world_size: int) -> DeviceMesh:
         # No backend is passed, so torch still resolves the per-device backend
         # it would have picked on its own; only the timeout changes.
         torch.distributed.init_process_group(timeout=Cluster.get_collective_timeout())
-    return init_device_mesh(
-        Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+    if sharding_strategy != "hybrid_shard":
+        return init_device_mesh(
+            Worker.torch_device_type,
+            mesh_shape=mesh_shape,
+            mesh_dim_names=mesh_dim_names,
+        )
+
+    # Explicit groups keep RLINF_TIMEOUT on both mesh dimensions across torch versions.
+    rank_mesh = torch.arange(world_size, device="cpu").reshape(mesh_shape)
+    groups = []
+    for dim in range(2):
+        for ranks in rank_mesh.movedim(dim, -1).reshape(-1, mesh_shape[dim]).tolist():
+            group = torch.distributed.new_group(
+                ranks=ranks, timeout=Cluster.get_collective_timeout()
+            )
+            if torch.distributed.get_rank() in ranks:
+                groups.append(group)
+    return DeviceMesh.from_group(
+        groups, Worker.torch_device_type, mesh=rank_mesh, mesh_dim_names=mesh_dim_names
     )
 
 

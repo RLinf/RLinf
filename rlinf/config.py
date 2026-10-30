@@ -534,12 +534,31 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             )
             assert sharding == "no_shard" or (
                 cfg.fsdp_config.strategy == "fsdp"
-                and sharding in ("shard_grad_op", "full_shard")
+                and sharding in ("shard_grad_op", "full_shard", "hybrid_shard")
             ), (
                 "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
-                "and sharding_strategy in ['shard_grad_op', 'full_shard']; "
+                "and sharding_strategy in ['shard_grad_op', 'full_shard', 'hybrid_shard']; "
                 f"got strategy={cfg.fsdp_config.strategy!r}, "
                 f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
+            )
+
+        hybrid_shard_size = cfg.fsdp_config.get("hybrid_shard_size")
+        if cfg.fsdp_config.sharding_strategy == "hybrid_shard":
+            if cfg.fsdp_config.strategy != "fsdp":
+                raise ValueError(
+                    "hybrid_shard requires fsdp_config.strategy='fsdp'; "
+                    f"got strategy={cfg.fsdp_config.strategy!r}."
+                )
+            if type(hybrid_shard_size) is not int or hybrid_shard_size <= 0:
+                raise ValueError(
+                    "hybrid_shard requires a positive integer "
+                    "fsdp_config.hybrid_shard_size; "
+                    f"got hybrid_shard_size={hybrid_shard_size!r}."
+                )
+        elif hybrid_shard_size is not None:
+            raise ValueError(
+                "hybrid_shard_size requires sharding_strategy='hybrid_shard'; "
+                f"got sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
             )
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
