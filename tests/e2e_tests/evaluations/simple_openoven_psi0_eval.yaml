@@ -18,11 +18,11 @@ cluster:
 runner:
   task_type: embodied_eval
   only_eval: true
-  ckpt_path: ${oc.env:PSI0_PPO_CHECKPOINT}
+  ckpt_path: /workspace/results/simple_openoven_ppo_psi0/ci-test/checkpoints/global_step_2/actor/model_state_dict/full_weights.pt
   rtc:
     enabled: false
   logger:
-    log_path: ${oc.env:PSI0_TEST_LOG_DIR}
+    log_path: /workspace/results/simple_openoven_psi0_eval
     project_name: rlinf
     experiment_name: ci-test
     logger_backends: null
@@ -41,7 +41,7 @@ env:
     max_steps_per_rollout_epoch: 48
     rollout_epoch: 1
     reset_dataset:
-      path: ${oc.env:SIMPLE_RESET_DIR}
+      path: /workspace/dataset/psi0_simple/reset-states/G1WholebodyOpenOvenTeleop-v0
       format: lerobot
       dr_level: 0
       episode_start: 0
@@ -66,5 +66,5 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model:
-    model_path: ${oc.env:PSI0_RUN_DIR}
+    model_path: /workspace/dataset/psi0_simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
     add_value_head: true

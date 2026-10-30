@@ -17,11 +17,9 @@
 from __future__ import annotations
 
 import itertools
-import logging
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -42,61 +40,6 @@ def use_pip_isaac_sim() -> None:
     # Isaac Sim must start non-interactively in a Ray actor.
     os.environ.setdefault("ACCEPT_EULA", "Y")
     os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
-
-
-def install_data_path_lock() -> None:
-    """Guard the upstream resolver before importing SIMPLE runtime modules.
-
-    Hugging Face locks only the download. SIMPLE subsequently extracts and
-    deletes the archive, so callers must share a lock for the whole operation.
-    Even an existing target must be checked under the lock: another worker may
-    have created that directory without finishing extraction yet.
-
-    This changes only the SIMPLE resolver in the current worker process. All
-    RLinf SIMPLE workers sharing its data directory use the same lock file.
-    """
-    import simple.utils as simple_utils
-
-    original = simple_utils.resolve_data_path
-    if getattr(original, "_rlinf_data_path_lock", False):
-        return
-
-    lock_path = str(
-        Path(simple_utils.get_data_dir()) / ".cache" / "rlinf" / "resolve-data.lock"
-    )
-
-    def keep_log(record: logging.LogRecord) -> bool:
-        # Suppress only this lock's DEBUG chatter, not other locks or warnings.
-        return not (
-            record.levelno == logging.DEBUG
-            and isinstance(record.args, tuple)
-            and lock_path in record.args
-        )
-
-    logging.getLogger("filelock").addFilter(keep_log)
-
-    @wraps(original)
-    def resolve_data_path(
-        rel_path: str | None = None,
-        create_if_not_exist: bool = False,
-        auto_download: bool = False,
-    ) -> str:
-        if not rel_path:
-            return original(rel_path, create_if_not_exist, auto_download)
-
-        Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
-        # Separate from HF's download lock to avoid recursively acquiring it.
-        # Never unlink this file: waiters must keep locking the same inode.
-        with FileLock(lock_path).acquire(poll_interval=0.5):
-            resolved = original(rel_path, create_if_not_exist, auto_download)
-            if not Path(resolved).exists():
-                raise FileNotFoundError(
-                    f"SIMPLE asset preparation did not create {resolved}."
-                )
-            return resolved
-
-    resolve_data_path._rlinf_data_path_lock = True
-    simple_utils.resolve_data_path = resolve_data_path
 
 
 def install_articulation_reuse_guard(native_env: Any) -> None:
@@ -194,7 +137,7 @@ class IsaacFrameGate:
 
 
 def resolve_hssd_scene_dir(state: dict[str, Any]) -> Path | None:
-    """Resolve the HSSD scene directory used by relative USD references."""
+    """Resolve the preinstalled HSSD scene used by relative USD references."""
     scene = state.get("dr_state_dict", {}).get("scene", {})
     if not str(scene.get("uid", "")).startswith("hssd:"):
         return None
@@ -205,7 +148,7 @@ def resolve_hssd_scene_dir(state: dict[str, Any]) -> Path | None:
 
     from simple.utils import resolve_data_path
 
-    scene_dir = Path(resolve_data_path(data_dir, auto_download=True))
+    scene_dir = Path(resolve_data_path(data_dir, auto_download=False))
     props_dir = scene_dir / "props"
     if not props_dir.is_dir():
         raise FileNotFoundError(

@@ -160,33 +160,21 @@ download_simple_assets() {
 			echo "[download_assets] SIMPLE ${zip_name} already unpacked at ${data_dir}/${marker}, skipping."
 			continue
 		fi
-		retry_cmd python -c '
-import sys
-import zipfile
-from pathlib import Path
-
-from huggingface_hub import snapshot_download
-
-data_dir = Path(sys.argv[1])
-zip_name = sys.argv[2]
-marker = data_dir / sys.argv[3]
-print(f"[download_assets] Downloading {zip_name} into {data_dir}")
-snapshot_download(
-    repo_id="USC-PSI-Lab/SIMPLE",
-    allow_patterns=[zip_name],
-    local_dir=data_dir,
-    repo_type="dataset",
-)
-zip_path = data_dir / zip_name
-if not zip_path.is_file():
-    raise SystemExit(f"[download_assets] Download did not materialize {zip_path}")
-with zipfile.ZipFile(zip_path) as archive:
-    archive.extractall(data_dir)
-zip_path.unlink()
-if not marker.exists():
-    raise SystemExit(f"[download_assets] Extracted {zip_name} but {marker} is missing")
-print(f"[download_assets] Extracted {zip_name}")
-' "$data_dir" "$zip_name" "$marker"
+		echo "[download_assets] Downloading ${zip_name} into ${data_dir}"
+		retry_cmd hf download USC-PSI-Lab/SIMPLE "$zip_name" \
+			--repo-type dataset \
+			--local-dir "$data_dir"
+		if [ ! -f "${data_dir}/${zip_name}" ]; then
+			echo "[download_assets] Download did not materialize ${data_dir}/${zip_name}" >&2
+			return 1
+		fi
+		unzip -o -q "${data_dir}/${zip_name}" -d "$data_dir"
+		rm -f "${data_dir}/${zip_name}"
+		if [ ! -e "${data_dir}/${marker}" ]; then
+			echo "[download_assets] Extracted ${zip_name} but ${data_dir}/${marker} is missing" >&2
+			return 1
+		fi
+		echo "[download_assets] Extracted ${zip_name}"
 	done
 }
 

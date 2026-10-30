@@ -41,7 +41,6 @@ from rlinf.envs.sim.simple.runtime import (
     IsaacFrameGate,
     anchor_hssd_material_references,
     install_articulation_reuse_guard,
-    install_data_path_lock,
     link_kit_cache,
     resolve_hssd_scene_dir,
     use_pip_isaac_sim,
@@ -108,8 +107,6 @@ class SimpleProcess(gym.Env):
         initial_dataset_index = int(seed_offset) % len(self._dataset)
         self._dataset_index = initial_dataset_index - 1
         initial_state, _ = self._dataset.load(initial_dataset_index)
-        # Install before any SIMPLE asset modules capture the resolver by import.
-        install_data_path_lock()
         self._hssd_scene_dir = resolve_hssd_scene_dir(initial_state)
         self._hssd_scene_layer = None
         self._kit_cache_lock = None

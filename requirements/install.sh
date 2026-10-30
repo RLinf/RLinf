@@ -2210,30 +2210,6 @@ clone_or_reuse_repo() {
     printf '%s\n' "$(realpath "$target_dir")"
 }
 
-ensure_psi0_simple_repo_revision() {
-    # Require pinned revisions for user checkouts; only move clean
-    # installer-owned checkouts to the requested revision.
-    local env_var_name="$1"
-    local repo_dir="$2"
-    local revision="$3"
-    local actual
-    actual=$(git -C "$repo_dir" rev-parse HEAD)
-    if [ "$actual" = "$revision" ]; then
-        return 0
-    fi
-    if [ -n "$(printenv "$env_var_name" 2>/dev/null || true)" ]; then
-        echo "$env_var_name=$repo_dir is at $actual; expected pinned revision $revision." >&2
-        echo "Use a checkout at the pinned revision or unset $env_var_name." >&2
-        exit 1
-    fi
-    if [ -n "$(git -C "$repo_dir" status --porcelain)" ]; then
-        echo "Installer-owned checkout $repo_dir has local changes; refusing to switch revisions." >&2
-        exit 1
-    fi
-    git -C "$repo_dir" fetch origin "$revision"
-    git -C "$repo_dir" checkout --detach "$revision"
-}
-
 #=======================EMBODIED INSTALLERS=======================
 assert_transformers_version() {
     local expected="$1"
@@ -2658,7 +2634,9 @@ install_psi0_model() {
 
     local psi0_dir
     psi0_dir=$(clone_or_reuse_repo PSI0_PATH "$VENV_DIR/Psi0" https://github.com/physical-superintelligence-lab/Psi0.git)
-    ensure_psi0_simple_repo_revision PSI0_PATH "$psi0_dir" a32e57a3fabb8590c80677f9cd3d1fc3db60eb06
+    if [ -z "${PSI0_PATH:-}" ]; then
+        git -C "$psi0_dir" checkout a32e57a3fabb8590c80677f9cd3d1fc3db60eb06 >&2
+    fi
     uv pip install -r "$SCRIPT_DIR/embodied/models/psi0.txt"
     uv pip install -e "$psi0_dir" --no-deps
     install_flash_attn
@@ -3568,7 +3546,6 @@ EOF
 
 install_simple_env() {
     local simple_dir
-    local revision=5e3d6f84e85343e34e9bca8d157f0d7813231185
     local repo_env=SIMPLE_PATH
     local repo_dir="$VENV_DIR/SIMPLE"
     # SIMPLE_CACHE_DIR is a prepared checkout. Reuse it and do not fetch
@@ -3577,14 +3554,16 @@ install_simple_env() {
         repo_env=SIMPLE_CACHE_DIR
         repo_dir="$SIMPLE_CACHE_DIR"
     fi
-    # Checkout the fixed parent revision before initializing its gitlink-pinned
-    # submodules; this avoids ever resolving submodules from a moving default branch.
     simple_dir=$(clone_or_reuse_repo "$repo_env" "$repo_dir" https://github.com/physical-superintelligence-lab/SIMPLE.git)
     export OMNI_KIT_ACCEPT_EULA=YES
     if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
         echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
     fi
-    ensure_psi0_simple_repo_revision "$repo_env" "$simple_dir" "$revision"
+    # Checkout the fixed parent revision before initializing its gitlink-pinned
+    # submodules; this avoids ever resolving submodules from a moving default branch.
+    if [ -z "${SIMPLE_PATH:-}" ] && [ -z "${SIMPLE_CACHE_DIR:-}" ]; then
+        git -C "$simple_dir" checkout 5e3d6f84e85343e34e9bca8d157f0d7813231185 >&2
+    fi
     if [ "$repo_env" != "SIMPLE_CACHE_DIR" ]; then
         git -C "$simple_dir" submodule update --init --recursive
     fi

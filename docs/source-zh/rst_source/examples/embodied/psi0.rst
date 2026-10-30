@@ -30,7 +30,7 @@ Psi0
    .. grid-item-card:: 任务
       :text-align: center
 
-      8 个人形机器人 Teleop 任务
+      G1 OpenOven Teleop 任务
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -74,6 +74,7 @@ Psi0 + SIMPLE 的准备分为五步。第 1–4 步由所有 SIMPLE 任务共用
 
 .. code-block:: bash
 
+   # 中国大陆用户可以添加 --use-mirror 加速下载。
    bash requirements/install.sh embodied --model psi0 --env simple
    source .venv/bin/activate
 
@@ -85,12 +86,6 @@ Psi0 + SIMPLE 的准备分为五步。第 1–4 步由所有 SIMPLE 任务共用
    # Inside the container:
    source switch_env psi0
 
-两种方式都固定了
-`Psi0 <https://github.com/physical-superintelligence-lab/Psi0/tree/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06>`_
-和
-`SIMPLE <https://github.com/physical-superintelligence-lab/SIMPLE/tree/5e3d6f84e85343e34e9bca8d157f0d7813231185>`_
-代码版本，且都不包含仿真资源。系统依赖见 :doc:`安装指南 </rst_source/start/installation>`。
-
 .. _psi0-qwen-metadata:
 
 2. 下载 Qwen Metadata
@@ -101,6 +96,7 @@ tokenizer 和 processor：
 
 .. code-block:: bash
 
+   # 中国大陆用户可以设置 HF_ENDPOINT=https://hf-mirror.com，使用代理加速下载。
    export HF_HOME=/path/to/hf-cache
    hf download Qwen/Qwen3-VL-2B-Instruct \
      chat_template.json config.json generation_config.json merges.txt \
@@ -123,10 +119,8 @@ tokenizer 和 processor：
 .. code-block:: bash
 
    export SIMPLE_ASSETS_DIR=/path/to/simple_assets
+   # 中国大陆用户可以添加 --use-mirror，使用代理加速下载。
    bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
-
-脚本会把每个包解压到 ``SIMPLE_ASSETS_DIR``，删掉 zip，并跳过已经解压的包。
-如果希望使用镜像，请传入 ``--use-mirror``。
 
 .. _simple-link-assets:
 
@@ -142,7 +136,9 @@ SIMPLE 从其代码目录下的 ``data/`` 读取资源，安装脚本把代码�
    rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
    ln -s "${SIMPLE_ASSETS_DIR}" "${VIRTUAL_ENV}/SIMPLE/data"
 
-如果安装时设置了 ``SIMPLE_PATH``，请改为链接 ``${SIMPLE_PATH}/data``。
+.. note::
+
+   ``VIRTUAL_ENV`` 是第 1 步激活的虚拟环境，默认位于 ``/path/to/rlinf/.venv``；使用 Docker 时位于 ``/opt/venv/psi0``。
 
 .. _psi0-model-download:
 
@@ -180,18 +176,26 @@ SIMPLE 从其代码目录下的 ``data/`` 读取资源，安装脚本把代码�
    unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
    rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
 
-``PSI0_RUN_DIR`` 是 run 目录，目录内的配置决定模型结构和预处理 transform，
-联合 checkpoint 包含 System-2 和 System-1 权重。训练配置通过 ``PSI0_RUN_DIR``
-读取 actor 和 rollout 的模型，通过 ``SIMPLE_RESET_DIR`` 读取 reset 数据。
-``scenes_hssd_102344280`` 是 OpenOven 使用的场景 ``hssd:scene1``，
-缺失时 SIMPLE 会在第一次 rollout 时自动下载。
-
 .. _psi0-ppo-training:
 
 运行
 ----
 
-导出资产路径后，启动 OpenOven 训练配置：
+在 ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml`` 中，将
+``rollout.model.model_path`` 设为第 5 步的 ``PSI0_RUN_DIR``，将
+``env.train.reset_dataset.path`` 设为 ``SIMPLE_RESET_DIR``。actor 使用同一个模型路径：
+
+.. code-block:: yaml
+
+   env:
+     train:
+       reset_dataset:
+         path: /path/to/psi0-simple-artifacts/reset-states/G1WholebodyOpenOvenTeleop-v0
+   rollout:
+     model:
+       model_path: /path/to/psi0-simple-artifacts/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+
+然后启动 OpenOven 训练：
 
 .. code-block:: bash
 
@@ -201,16 +205,20 @@ SIMPLE 从其代码目录下的 ``data/`` 读取资源，安装脚本把代码�
 默认四卡四环境、DR0、600 步 horizon。每轮通过 8 轮 rollout 采集 32 条轨迹，
 ``global_batch_size=200``、``update_epoch=1``，执行 4 次优化器更新。
 
-切换其他 Teleop 任务时，按 :ref:`SIMPLE 任务表 <simple-tasks>` 将 ``PSI0_RUN_DIR``
-和 ``SIMPLE_RESET_DIR`` 指向对应资产。在
-``examples/embodiment/config/simple_openoven_ppo_psi0.yaml`` 中修改
-``env.train.init_params.task_id``、``env.train.max_episode_steps`` 和
-``env.train.max_steps_per_rollout_epoch``，并让 ``actor.global_batch_size``
-整除每轮采样的 chunk 数。训练脚本从 YAML 读取这些设置。
-
 .. note::
 
-   请将 ``actor.model.psi0.plan_horizon`` / ``actor.model.num_action_chunks`` / ``actor.model.psi0.overlap_horizon`` 保持为 ``30`` / ``24`` / ``6``，默认值位于 ``examples/embodiment/config/model/psi0.yaml``。每个 rollout worker 只运行一个环境，因此请将 ``rollout.pipeline_stage_num`` 保持为 ``1``。
+   请保持以下设置不变。RTC 参数的默认值位于 ``examples/embodiment/config/model/psi0.yaml``；每个 rollout worker 只运行一个环境，因此 ``rollout.pipeline_stage_num`` 需保持为 ``1``。
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          num_action_chunks: 24
+          psi0:
+            plan_horizon: 30
+            overlap_horizon: 6
+      rollout:
+        pipeline_stage_num: 1
 
 可视化与结果
 ------------

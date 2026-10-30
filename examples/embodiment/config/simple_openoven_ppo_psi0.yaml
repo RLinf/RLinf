@@ -66,7 +66,7 @@ env:
     max_episode_steps: 600
     max_steps_per_rollout_epoch: 600
     reset_dataset:
-      path: ${oc.env:SIMPLE_RESET_DIR}
+      path: "/path/to/G1WholebodyOpenOvenTeleop-v0-reset-states"
       format: lerobot
       dr_level: 0
       episode_start: 0
@@ -91,7 +91,7 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model:
-    model_path: ${oc.env:PSI0_RUN_DIR}
+    model_path: "/path/to/Psi0-SIMPLE-OpenOven"
     precision: ${actor.model.precision}
 
 actor:
@@ -102,7 +102,7 @@ actor:
   seed: 42
   enable_offload: true
   model:
-    model_path: ${oc.env:PSI0_RUN_DIR}
+    model_path: ${rollout.model.model_path}
     precision: fp32
     add_value_head: true
     psi0:

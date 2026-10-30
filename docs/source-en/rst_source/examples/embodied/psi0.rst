@@ -31,7 +31,7 @@ Fine-tune the official OpenOven checkpoint with PPO.
    .. grid-item-card:: Tasks
       :text-align: center
 
-      8 humanoid Teleop tasks
+      G1 OpenOven Teleop task
 
    .. grid-item-card:: Hardware
       :text-align: center
@@ -76,6 +76,7 @@ From the RLinf repository root, install and activate the Psi0 + SIMPLE runtime:
 
 .. code-block:: bash
 
+   # Add --use-mirror for faster downloads in mainland China.
    bash requirements/install.sh embodied --model psi0 --env simple
    source .venv/bin/activate
 
@@ -87,13 +88,6 @@ Alternatively, build the Docker image and switch to its Psi0 environment:
    # Inside the container:
    source switch_env psi0
 
-Both pin
-`Psi0 <https://github.com/physical-superintelligence-lab/Psi0/tree/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06>`_
-and
-`SIMPLE <https://github.com/physical-superintelligence-lab/SIMPLE/tree/5e3d6f84e85343e34e9bca8d157f0d7813231185>`_,
-and neither includes the simulation assets.
-See :doc:`Installation </rst_source/start/installation>` for system prerequisites.
-
 .. _psi0-qwen-metadata:
 
 2. Download the Qwen Metadata
@@ -104,6 +98,7 @@ the Qwen configuration, tokenizer, and processor by model ID:
 
 .. code-block:: bash
 
+   # In mainland China, set HF_ENDPOINT=https://hf-mirror.com to download through a proxy.
    export HF_HOME=/path/to/hf-cache
    hf download Qwen/Qwen3-VL-2B-Instruct \
      chat_template.json config.json generation_config.json merges.txt \
@@ -128,11 +123,8 @@ the download.
 .. code-block:: bash
 
    export SIMPLE_ASSETS_DIR=/path/to/simple_assets
+   # In mainland China, add --use-mirror to download through a proxy.
    bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
-
-The script unpacks each package into ``SIMPLE_ASSETS_DIR``, removes the zip,
-and skips packages that are already unpacked. If you want to use a mirror, pass
-the ``--use-mirror`` flag.
 
 .. _simple-link-assets:
 
@@ -148,7 +140,9 @@ README and download helper. Replace it with a link to the assets:
    rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
    ln -s "${SIMPLE_ASSETS_DIR}" "${VIRTUAL_ENV}/SIMPLE/data"
 
-If you installed with ``SIMPLE_PATH``, link ``${SIMPLE_PATH}/data`` instead.
+.. note::
+
+   ``VIRTUAL_ENV`` is the virtual environment activated in step 1. It is ``/path/to/rlinf/.venv`` by default, or ``/opt/venv/psi0`` when using Docker.
 
 .. _psi0-model-download:
 
@@ -187,19 +181,27 @@ OpenOven reset data, and the OpenOven HSSD scene:
    unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
    rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
 
-``PSI0_RUN_DIR`` is the run directory. Its configuration supplies the model
-architecture and preprocessing transforms; the joint checkpoint contains both
-System-2 and System-1 weights. The training configuration reads
-``PSI0_RUN_DIR`` for both actor and rollout models, and ``SIMPLE_RESET_DIR``
-for reset data. ``scenes_hssd_102344280`` is the OpenOven scene
-``hssd:scene1``. If it is missing, SIMPLE downloads it on the first rollout.
-
 .. _psi0-ppo-training:
 
 Run It
 ------
 
-With the asset paths exported, launch the OpenOven training configuration:
+In ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml``, set
+``rollout.model.model_path`` to ``PSI0_RUN_DIR`` from step 5 and
+``env.train.reset_dataset.path`` to ``SIMPLE_RESET_DIR``. The actor uses the
+same model path:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       reset_dataset:
+         path: /path/to/psi0-simple-artifacts/reset-states/G1WholebodyOpenOvenTeleop-v0
+   rollout:
+     model:
+       model_path: /path/to/psi0-simple-artifacts/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+
+Then launch OpenOven training:
 
 .. code-block:: bash
 
@@ -211,20 +213,22 @@ on four GPUs with DR0 and a 600-step horizon. Each iteration collects 32
 trajectories over 8 rollout epochs and performs 4 optimizer steps with
 ``global_batch_size=200`` and ``update_epoch=1``.
 
-To train another Teleop task, set ``PSI0_RUN_DIR`` and ``SIMPLE_RESET_DIR`` to its
-assets from the :ref:`SIMPLE task table <simple-tasks>`. In
-``examples/embodiment/config/simple_openoven_ppo_psi0.yaml``, update
-``env.train.init_params.task_id``, ``env.train.max_episode_steps``, and
-``env.train.max_steps_per_rollout_epoch``. Choose ``actor.global_batch_size`` to
-divide the number of sampled chunks per update. The launcher reads these
-settings from YAML.
-
 .. note::
 
-   Keep ``actor.model.psi0.plan_horizon`` / ``actor.model.num_action_chunks`` /
-   ``actor.model.psi0.overlap_horizon`` at ``30`` / ``24`` / ``6``. Their defaults
-   are in ``examples/embodiment/config/model/psi0.yaml``. Each rollout worker
-   runs one environment, so keep ``rollout.pipeline_stage_num`` at ``1``.
+   Keep the following settings unchanged. The RTC defaults are in
+   ``examples/embodiment/config/model/psi0.yaml``. Each rollout worker runs one
+   environment, so keep ``rollout.pipeline_stage_num`` at ``1``.
+
+   .. code-block:: yaml
+
+      actor:
+        model:
+          num_action_chunks: 24
+          psi0:
+            plan_horizon: 30
+            overlap_horizon: 6
+      rollout:
+        pipeline_stage_num: 1
 
 Visualization and Results
 -------------------------

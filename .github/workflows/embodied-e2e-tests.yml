@@ -2166,36 +2166,23 @@ jobs:
       - name: SIMPLE OpenOven Psi0 PPO test
         timeout-minutes: 60
         run: |
-          set -euo pipefail
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export HF_HOME=/workspace/dataset/.cache/huggingface
-          export PSI0_RUN_DIR=/workspace/dataset/psi0_simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-          export SIMPLE_RESET_DIR=/workspace/dataset/psi0_simple/reset-states/G1WholebodyOpenOvenTeleop-v0
-          export PSI0_TEST_ROOT=${RUNNER_TEMP}/psi0-simple-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
-          export PSI0_TEST_LOG_DIR=${PSI0_TEST_ROOT}/train
-          mkdir -p "${PSI0_TEST_ROOT}"
-          # Refuse stale outputs so an old checkpoint cannot pass this run.
-          mkdir "${PSI0_TEST_LOG_DIR}"
-
+          # This runner keeps /workspace/results across jobs. Remove the old
+          # checkpoint so the evaluation step only loads this run's checkpoint.
+          rm -rf /workspace/results/simple_openoven_ppo_psi0
           bash tests/e2e_tests/embodied/run.sh simple_openoven_ppo_psi0
 
       - name: SIMPLE OpenOven Psi0 checkpoint evaluation test
         timeout-minutes: 60
         run: |
-          set -euo pipefail
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export HF_HOME=/workspace/dataset/.cache/huggingface
-          export PSI0_RUN_DIR=/workspace/dataset/psi0_simple/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-          export SIMPLE_RESET_DIR=/workspace/dataset/psi0_simple/reset-states/G1WholebodyOpenOvenTeleop-v0
-          export PSI0_TEST_ROOT=${RUNNER_TEMP}/psi0-simple-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
-          export PSI0_TEST_LOG_DIR=${PSI0_TEST_ROOT}/eval
-          export PSI0_PPO_CHECKPOINT=${PSI0_TEST_ROOT}/train/ci-test/checkpoints/global_step_2/actor/model_state_dict/full_weights.pt
-          test -s "${PSI0_PPO_CHECKPOINT}"
-          mkdir "${PSI0_TEST_LOG_DIR}"
+          rm -rf /workspace/results/simple_openoven_psi0_eval
           bash tests/e2e_tests/evaluations/run.sh simple_openoven_psi0_eval
 
       - name: Clean up
