@@ -145,8 +145,9 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
-    --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
-                           (default: sglang, vllm, phyai). One venv holds one engine -- they pin the
+    --engine <name>        Rollout engine: sglang or vllm for target=agentic (default: sglang),
+                           or phyai for target=embodied (requires --model openpi --env libero).
+                           One venv holds one engine -- they pin the
                            same kernel libraries to different versions, so run install.sh
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the

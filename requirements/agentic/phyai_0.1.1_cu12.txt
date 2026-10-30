@@ -8,4 +8,3 @@ nvidia-cudnn-frontend==1.28.0
 nvidia-cutlass-dsl==4.7.1
 cuda-tile==1.6.0
 nccl4py==0.5.0
-flash_attn @ https://github.com/RLinf/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.11cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
