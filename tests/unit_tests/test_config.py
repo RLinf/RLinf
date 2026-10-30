@@ -113,6 +113,16 @@ def test_phyai_training_rejects_unsupported_algorithms(
         ("actor.model.openpi.value_vlm_mode", "last_token", "mean_token"),
         ("actor.model.openpi.joint_logprob", True, "joint_logprob=False"),
         ("actor.model.openpi.noise_method", "flow_noise", "flow_ode or flow_sde"),
+        (
+            "actor.model.openpi.noise_level",
+            -0.1,
+            "noise_level.*finite and non-negative",
+        ),
+        (
+            "actor.model.openpi.noise_level",
+            float("nan"),
+            "noise_level.*finite and non-negative",
+        ),
         ("actor.model.openpi.num_images_in_input", 1, "num_images_in_input=2"),
     ],
 )

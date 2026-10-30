@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
@@ -1186,6 +1187,11 @@ def validate_embodied_cfg(cfg):
                 "flow_ode",
                 "flow_sde",
             }, "The current openpi Actor supports flow_ode or flow_sde."
+            noise_level = float(openpi_cfg.get("noise_level", 0.0))
+            assert math.isfinite(noise_level) and noise_level >= 0, (
+                "The current openpi Actor requires openpi.noise_level to be "
+                "finite and non-negative."
+            )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval

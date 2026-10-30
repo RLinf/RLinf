@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import gc
-import math
 import os
 import random
 from collections.abc import Mapping
@@ -554,15 +553,7 @@ class PhyAIRolloutWorker(Worker):
         )
 
         noise_method = str(openpi_cfg.get("noise_method", "flow_ode"))
-        if noise_method not in ("flow_ode", "flow_sde"):
-            raise ValueError(
-                f"noise_method must be 'flow_ode' or 'flow_sde', got {noise_method!r}."
-            )
         noise_level = float(openpi_cfg.get("noise_level", 0.0))
-        if not math.isfinite(noise_level) or noise_level < 0:
-            raise ValueError(
-                f"noise_level must be finite and non-negative, got {noise_level}."
-            )
         sigmas = torch.zeros(
             batch_size,
             num_steps,
