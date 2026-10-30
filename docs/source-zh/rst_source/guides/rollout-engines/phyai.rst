@@ -25,7 +25,7 @@ PhyAI 具身 Rollout 后端
      --engine phyai
    source .venv/bin/activate
 
-安装器检测 NVIDIA 驱动并选择兼容的 Torch CUDA build，同时保留 OpenPI 已安装的 Torch 和 Transformers 版本。随后，安装器为同一 CUDA 线选择 ``requirements/agentic/phyai_0.1.1_cu12.txt`` 或 ``requirements/agentic/phyai_0.1.1_cu13.txt``，再使用 ``--no-deps`` 从官方 PhyAI wheel index 安装三个 PhyAI 包。若所选 CUDA 线与 ``torch.version.cuda`` 的主版本不同，安装器会在安装 PhyAI 前停止。
+安装器检测 NVIDIA 驱动并选择兼容的 Torch CUDA build，同时保留 OpenPI 已安装的 Torch 和 Transformers 版本。随后，安装器为同一 CUDA 线选择 ``requirements/agentic/phyai_0.2.0rc1_cu12.txt`` 或 ``requirements/agentic/phyai_0.2.0rc1_cu13.txt``，再使用 ``--no-deps`` 从官方 PhyAI wheel index 安装三个 PhyAI 包。若所选 CUDA 线与 ``torch.version.cuda`` 的主版本不同，安装器会在安装 PhyAI 前停止。
 
 配置 Checkpoint 与后端
 ----------------------

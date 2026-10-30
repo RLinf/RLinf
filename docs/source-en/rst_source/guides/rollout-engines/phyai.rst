@@ -34,8 +34,8 @@ the same virtual environment, then activate it:
 
 The installer detects the NVIDIA driver, selects a compatible Torch CUDA build,
 and retains the Torch and Transformers versions installed for OpenPI. It then
-selects ``requirements/agentic/phyai_0.1.1_cu12.txt`` or
-``requirements/agentic/phyai_0.1.1_cu13.txt`` for the same CUDA line and installs
+selects ``requirements/agentic/phyai_0.2.0rc1_cu12.txt`` or
+``requirements/agentic/phyai_0.2.0rc1_cu13.txt`` for the same CUDA line and installs
 the three PhyAI packages with ``--no-deps`` from the official PhyAI wheel index.
 It stops before installing PhyAI when the selected CUDA line and
 ``torch.version.cuda`` have different major versions.

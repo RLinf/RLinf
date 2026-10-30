@@ -2652,8 +2652,7 @@ EOF
 }
 
 install_phyai_runtime() {
-    local phyai_version="0.1.1"
-    local phyai_version_spec=">=0.1.1.dev0,<0.1.2"
+    local phyai_version="0.2.0rc1"
     local cuda_line expected_cuda_major cudart_lib
     cuda_line=$(agentic_cuda_line)
     case "$cuda_line" in
@@ -2692,11 +2691,10 @@ PYEOF
 
     install_engine_requirements "$(agentic_requirements_file phyai "$phyai_version")"
     env -u UV_TORCH_BACKEND uv pip install --no-deps \
-        "phyai${phyai_version_spec}" \
-        "phyai-kernel${phyai_version_spec}" \
-        "phyai-ext${phyai_version_spec}" \
-        --index https://mingti-org.github.io/phyai/simple/ \
-        --prerelease=allow
+        "phyai==${phyai_version}" \
+        "phyai-kernel==${phyai_version}" \
+        "phyai-ext==${phyai_version}" \
+        --index https://mingti-org.github.io/phyai/simple/
 
     export CUDNN_FRONTEND_CUDART_LIB_NAME="$cudart_lib"
     if grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then

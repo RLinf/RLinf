@@ -1,4 +1,4 @@
-# Common runtime dependencies for RLinf's in-process PhyAI 0.1.1 PI0.5 backend.
+# Common runtime dependencies for RLinf's in-process PhyAI 0.2.0rc1 PI0.5 backend.
 # PhyAI packages are installed separately with --no-deps so their metadata
 # cannot replace the RLinf/OpenPI Torch and Transformers stack.
 
