@@ -382,6 +382,19 @@ Choose the model and environment combination you need, then follow the correspon
 **SOTA RL Training Reproduction:** RLinf provides end-to-end recipes that reproduce or match **state-of-the-art (SOTA) RL results** out of the box—users can directly run our configs and scripts to obtain SOTA performance without custom engineering. Check out our [example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) for more details.
 
 
+### Kuavo ROS Startup
+
+To connect Kuavo to existing ROS services, run this on the driver, environment, controller, and camera nodes before starting Python or Ray:
+
+```bash
+export RLINF_ROS_SETUP=preserve
+```
+
+> [!WARNING]
+> This process-wide setting skips ROS cleanup. If unset or set to `reset`, the original cleanup can run before YAML is read. Keep all tasks sharing the ROS master in `preserve` mode.
+
+Start the robot's ROS services before the task. See the [Kuavo setup guide](docs/source-en/rst_source/guides/realworld_robot.rst) and [environment config](examples/embodiment/config/env/realworld_kuavo_joint.yaml).
+
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:
 - [Qwen-VLA](https://github.com/QwenLM/Qwen-VLA): A unified vision-language-action model that uses RLinf for reinforcement learning to optimize closed-loop task success.
