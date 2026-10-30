@@ -1,0 +1,135 @@
+defaults:
+  - env/bwm_robotwin_adjust_bottle@env.train
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor, env, rollout: 0-7
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "bwm_robotwin_ppo_openpi_pi05"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  # 4 critic-only steps (critic_warmup_steps below), then 10 joint updates.
+  max_steps: 14
+
+  only_eval: False
+  # Training runs in the world model; score checkpoints in the RoboTwin simulator
+  # with evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml
+  # (overrides in docs/source-en/rst_source/examples/embodied/bwm.rst).
+  val_check_interval: -1
+  save_interval: 14
+
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: True
+  kl_penalty: kl
+  group_size: 1
+  reward_coef: 1.0
+
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+
+  update_epoch: 2
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  # The episode-level reward arrives on the last step; do not discount it away.
+  gamma: 1.0
+  gae_lambda: 0.95
+
+  filter_rewards: False
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+
+env:
+  group_name: "EnvGroup"
+  train:
+    rollout_epoch: 2
+    total_num_envs: 48
+    reward_coef: ${algorithm.reward_coef}
+    group_size: ${algorithm.group_size}
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: True
+  pipeline_stage_num: 1
+  model:
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 384
+  seed: 1234
+  enable_offload: True
+
+  model:
+    # A single-view pi0.5 SFT checkpoint: the world model returns the head view only.
+    model_path: "/path/to/robotwin_adjust_bottle_pi05_single_view_sft"
+    num_action_chunks: 50
+    action_dim: 14
+    add_value_head: True
+    num_steps: 4
+    openpi:
+      config_name: "pi05_aloha_robotwin"
+      num_images_in_input: 1
+      value_after_vlm: True
+      # The width this recipe was tuned with; the value_after_vlm default is 1024/512/256.
+      value_head_hidden_sizes: [512, 256, 128]
+      detach_critic_input: True
+    openpi_data:
+      # The checkpoint is trained in RoboTwin's joint convention.
+      adapt_to_pi: false
+      norm_stats_path: "/path/to/robotwin_adjust_bottle_pi05_single_view_sft/assets/robotwin_clean"
+
+  optim:
+    lr: 5.6e-6
+    value_lr: 1.1e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    # Optimizer steps: 4 training steps x update_epoch 2.
+    critic_warmup_steps: 8
+
+  fsdp_config:
+    sharding_strategy: "no_shard" # openpi supports no_shard only
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

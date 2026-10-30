@@ -33,3 +33,4 @@ This category collects examples for training and fine-tuning world models in RLi
 
    OpenSora <embodied/opensora>
    Wan <embodied/wan>
+   BWM <embodied/bwm>
