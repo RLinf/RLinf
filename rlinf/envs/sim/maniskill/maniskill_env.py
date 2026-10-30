@@ -220,6 +220,7 @@ class ManiskillEnv(gym.Env):
             reward += info["is_src_obj_grasped"] * 0.1
             reward += info["consecutive_grasp"] * 0.1
             reward += (info["success"] & info["is_src_obj_grasped"]) * 1.0
+        reward = torch.as_tensor(reward, dtype=torch.float32, device=self.device)
         # diff
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward
@@ -324,7 +325,7 @@ class ManiskillEnv(gym.Env):
             extracted_obs, infos = self._handle_auto_reset(dones, extracted_obs, infos)
         return extracted_obs, step_reward, terminations, truncations, infos
 
-    def chunk_step(self, chunk_actions):
+    def chunk_step(self, chunk_actions, stop_on_done=False):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
         obs_list = []
@@ -332,17 +333,44 @@ class ManiskillEnv(gym.Env):
         chunk_rewards = []
         raw_chunk_terminations = []
         raw_chunk_truncations = []
+        active = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+        terminal_obs = {}
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
+            if stop_on_done and (~active).any():
+                if isinstance(actions, torch.Tensor):
+                    actions = actions.clone()
+                    actions[~active.to(actions.device)] = 0
+                else:
+                    actions = np.array(actions, copy=True)
+                    actions[(~active).detach().cpu().numpy()] = 0
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            if stop_on_done and infos_list:
+                # Preserve episode metrics at the first terminal substep.
+                for key, value in infos["episode"].items():
+                    value[~active] = infos_list[-1]["episode"][key][~active]
             obs_list.append(extracted_obs)
             infos_list.append(infos)
 
-            chunk_rewards.append(step_reward)
-            raw_chunk_terminations.append(terminations)
-            raw_chunk_truncations.append(truncations)
+            step_terminations = terminations & active if stop_on_done else terminations
+            step_truncations = truncations & active if stop_on_done else truncations
+            step_dones = step_terminations | step_truncations
+            if stop_on_done and step_dones.any():
+                for key, value in extracted_obs.items():
+                    if isinstance(value, torch.Tensor):
+                        saved = terminal_obs.setdefault(key, torch.empty_like(value))
+                        saved[step_dones] = value[step_dones]
+            chunk_rewards.append(
+                step_reward * active.to(step_reward.dtype)
+                if stop_on_done
+                else step_reward
+            )
+            raw_chunk_terminations.append(step_terminations)
+            raw_chunk_truncations.append(step_truncations)
+            if stop_on_done:
+                active &= ~step_dones
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
@@ -366,6 +394,11 @@ class ManiskillEnv(gym.Env):
 
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
+        if stop_on_done:
+            infos_list[-1]["_raw_chunk_terminations"] = raw_chunk_terminations
+            infos_list[-1]["_raw_chunk_truncations"] = raw_chunk_truncations
+            infos_list[-1]["_terminal_observation"] = terminal_obs
+
         return (
             obs_list,
             chunk_rewards,

@@ -52,6 +52,7 @@ class EnvWorker(Worker):
     _obs_split_fn = None
     _policy_input_split_fn = None
     collect_final_values = True
+    _is_ogpo = False
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -74,6 +75,10 @@ class EnvWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
+        self._is_ogpo = (
+            OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+            == "embodied_ogpo"
+        )
         self.enable_rlt = OmegaConf.select(
             self.cfg, "algorithm.loss_type", default=""
         ) in {"rlt_ac", "rlt_td3"}
@@ -176,6 +181,10 @@ class EnvWorker(Worker):
             ]
         if self.enable_eval:
             self.eval_prev_done: list[torch.Tensor] = [
+                torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
+                for _ in range(self.stage_num)
+            ]
+            self.eval_finished: list[torch.Tensor] = [
                 torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
             ]
@@ -423,8 +432,15 @@ class EnvWorker(Worker):
             chunk_actions = exec_actions
         env_info = {}
 
+        if self._is_ogpo:
+            chunk_step_result = self.env_list[stage_id].chunk_step(
+                chunk_actions,
+                stop_on_done=bool(self.cfg.env.train.get("stop_on_done", False)),
+            )
+        else:
+            chunk_step_result = self.env_list[stage_id].chunk_step(chunk_actions)
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
-            self.env_list[stage_id].chunk_step(chunk_actions)
+            chunk_step_result
         )
         extracted_obs = obs_list
         infos = infos_list
@@ -465,6 +481,24 @@ class EnvWorker(Worker):
                 for key in final_info["episode"]:
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
 
+        if self._is_ogpo:
+            raw_chunk_terminations = infos.pop("_raw_chunk_terminations", None)
+            raw_chunk_truncations = infos.pop("_raw_chunk_truncations", None)
+            terminal_obs = infos.pop("_terminal_observation")
+            if raw_chunk_terminations is None or raw_chunk_truncations is None:
+                raise RuntimeError(
+                    "OGPO requires raw per-step termination data from ManiSkill"
+                )
+            episode_info = infos.get("final_info", infos).get("episode", {})
+            success = (
+                torch.as_tensor(
+                    episode_info.get("success_once", torch.zeros(chunk_dones.shape[0]))
+                )
+                .bool()
+                .reshape(-1)
+                .cpu()
+            )
+
         intervene_actions = (
             infos["intervene_action"] if "intervene_action" in infos else None
         )
@@ -499,6 +533,19 @@ class EnvWorker(Worker):
             "infos_list": infos_list,
             "valid_action_mask": valid_action_mask,
         }
+        if self._is_ogpo:
+            episode_infos = [{} for _ in obs_list]
+            episode_infos[-1]["terminal_obs"] = terminal_obs
+            chunk_step_payload = clone_nested_to_cpu(
+                {
+                    "chunk_actions": exec_actions,
+                    "obs_list": obs_list,
+                    "terminations": raw_chunk_terminations,
+                    "truncations": raw_chunk_truncations,
+                    "infos_list": episode_infos,
+                    "valid_action_mask": success,
+                }
+            )
         return env_output, env_info, chunk_step_payload
 
     def env_evaluate_step(
@@ -519,8 +566,14 @@ class EnvWorker(Worker):
         )
         env_info = {}
 
+        if self._is_ogpo:
+            chunk_step_result = self.eval_env_list[stage_id].chunk_step(
+                chunk_actions, stop_on_done=True
+            )
+        else:
+            chunk_step_result = self.eval_env_list[stage_id].chunk_step(chunk_actions)
         obs_list, _, chunk_terminations, chunk_truncations, infos_list = (
-            self.eval_env_list[stage_id].chunk_step(chunk_actions)
+            chunk_step_result
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
@@ -538,7 +591,15 @@ class EnvWorker(Worker):
         )
 
         current_dones = chunk_dones.any(dim=1)  # [num_envs] bool
-        if self.cfg.env.eval.auto_reset:
+        single_trajectory_per_env = self._is_ogpo and bool(
+            self.cfg.env.eval.get("single_trajectory_per_env", False)
+        )
+        if single_trajectory_per_env:
+            finished = self.eval_finished[stage_id].to(current_dones.device)
+            newly_done = current_dones & ~finished
+            self.eval_finished[stage_id] = finished | current_dones
+            self.eval_prev_done[stage_id] = torch.zeros_like(current_dones)
+        elif self.cfg.env.eval.auto_reset:
             newly_done = current_dones
         else:
             prev = self.eval_prev_done[stage_id].to(current_dones.device)
@@ -844,7 +905,9 @@ class EnvWorker(Worker):
         return env_output.transition.with_trajectory_data(
             reward_model_output=reward_model_output,
             reward_assign_lengths=reward_assign_lengths,
-            episode_data=chunk_step_data if self.enable_online_lerobot else None,
+            episode_data=(
+                chunk_step_data if self.enable_online_lerobot or self._is_ogpo else None
+            ),
         )
 
     def _build_policy_input(
@@ -1245,11 +1308,21 @@ class EnvWorker(Worker):
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
+        single_trajectory_per_env = self._is_ogpo and bool(
+            self.cfg.env.eval.get("single_trajectory_per_env", False)
+        )
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
-            if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
+            if (
+                single_trajectory_per_env
+                or not self.cfg.env.eval.auto_reset
+                or eval_rollout_epoch == 0
+            ):
                 for stage_id in range(self.stage_num):
                     self.eval_env_list[stage_id].is_start = True
                     self.eval_prev_done[stage_id] = torch.zeros(
+                        self.eval_num_envs_per_stage, dtype=torch.bool
+                    )
+                    self.eval_finished[stage_id] = torch.zeros(
                         self.eval_num_envs_per_stage, dtype=torch.bool
                     )
                     extracted_obs, infos = self.eval_env_list[stage_id].reset()

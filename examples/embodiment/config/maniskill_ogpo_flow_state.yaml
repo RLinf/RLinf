@@ -1,0 +1,185 @@
+defaults:
+  - env/maniskill_pick_cube@env.train
+  - env/maniskill_pick_cube@env.eval
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0
+
+runner:
+  task_type: embodied
+  ckpt_path: /path/to/ogpo_bc.pt
+  ckpt_allowed_missing_prefixes: ["q_head.", "action_scale", "action_bias"]
+  use_training_pipeline: False
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "maniskill_ogpo_flow_state"
+    logger_backends: ["tensorboard"]
+  max_epochs: 8000
+  max_steps: -1
+  only_eval: False
+  val_check_interval: 100
+  save_interval: 20000
+
+algorithm:
+  loss_type: embodied_ogpo
+  adv_type: raw
+  reward_type: action_level
+  logprob_type: action_level
+  entropy_type: action_level
+  loss_agg_func: token-mean
+  group_size: 32
+  update_epoch: 8
+  gamma: 0.99
+  replay_buffer:
+    enable_cache: True
+    cache_size: 200000
+    sample_window_size: 200000
+    min_buffer_size: 100
+    auto_save: False
+    save_buffer_checkpoint: False
+  ogpo:
+    constant_noise_std: 0.005
+    clip_randn: True
+    randn_clip_value: 3.0
+    use_tapered_noise: False
+    ignore_last: False
+    error_correct_sde_to_ode: True
+    clip_intermediate_actions: True
+    ode_clip_intermediate_actions: False
+    denoised_clip_value: 1.0
+    normalize_denoising_horizon: True
+    normalize_action_dimension: True
+    advantage_q_strategy: conservative
+    normalize_group: True
+    advantage_min: null
+    clip_epsilon: 0.01
+    entropy_coeff: 0.0
+    bc_coeff: 0.1
+    td_q_aggregation: mean
+    td_q_subsample_size: 2
+    q_loss_type: mse
+    q_huber_delta: 1.0
+    q_warmup_steps: 100
+    q_utd: 8
+    pi_utd: 2
+    actor_tau: 0.005
+    critic_tau: 0.01
+    actor_target_update_freq: 1
+    critic_target_update_freq: 1
+
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 32
+    init_params:
+      reward_mode: "sparse"
+    auto_reset: True
+    ignore_terminations: False
+    stop_on_done: True
+    use_fixed_reset_state_ids: False
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 32
+    init_params:
+      reward_mode: "sparse"
+    auto_reset: True
+    ignore_terminations: False
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    use_fixed_reset_state_ids: False
+    single_trajectory_per_env: True
+    group_size: 32
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_prev_infos: False
+  collect_transitions: True
+  collect_final_values: False
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.0
+    top_k: 50
+    top_p: 1.0
+    max_new_tokens: 7
+  model:
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 512
+  global_batch_size: 512
+  seed: 1234
+  enable_offload: False
+  model:
+    model_type: flow_policy
+    input_type: state
+    policy_setup: panda-ee-dpos
+    obs_dim: 42
+    action_dim: 4
+    num_action_chunks: 4
+    use_state_encoder: False
+    precision: "32"
+    add_value_head: False
+    add_q_head: True
+    num_q_heads: 10
+    q_head_type: default
+    q_hidden_dims: [512, 512, 512, 512]
+    q_activation: gelu
+    q_layer_norm: True
+    q_initializer: xavier_uniform
+    flow_actor_type: OGPOFlowActor
+    denoising_steps: 10
+    flow_mlp_hidden_dims: [512, 512, 512, 512]
+    flow_mlp_activation: gelu
+    flow_mlp_layer_norm: False
+    time_embedding_type: sinusoidal
+    time_embedding_dim: 32
+    use_batch_norm: False
+    noise_std_head: False
+    noise_std_train: 0.3
+    noise_std_rollout: 0.005
+    is_lora: False
+  optim:
+    clip_grad: 10.0
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 1.0
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

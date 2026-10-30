@@ -16,6 +16,24 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 
+def load_state_dict(model, state_dict, allowed_missing_prefixes=()) -> None:
+    """Load a checkpoint while allowing selected new model components."""
+    if not allowed_missing_prefixes:
+        model.load_state_dict(state_dict)
+        return
+    incompatible = model.load_state_dict(state_dict, strict=False)
+    invalid_missing = [
+        key
+        for key in incompatible.missing_keys
+        if not key.startswith(tuple(allowed_missing_prefixes))
+    ]
+    if invalid_missing or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "Checkpoint mismatch: "
+            f"missing={invalid_missing}, unexpected={incompatible.unexpected_keys}"
+        )
+
+
 class ForwardType(Enum):
     DEFAULT = "default"
     SFT = "sft"
@@ -27,6 +45,9 @@ class ForwardType(Enum):
     IQL_CRITIC = "iql_critic"
     IQL_VALUE = "iql_value"
     NFT = "nft"
+    OGPO_SAMPLE = "ogpo_sample"
+    OGPO_LOG_PROB = "ogpo_log_prob"
+    OGPO_BC = "ogpo_bc"
 
 
 class BasePolicy(ABC):
