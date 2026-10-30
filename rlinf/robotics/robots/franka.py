@@ -239,7 +239,7 @@ class FrankaConfig(RobotConfig):
     """List of camera serial numbers associated with the robot."""
 
     camera_type: str = "realsense"
-    """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
+    """Camera backend: ``"realsense"``, ``"zed"``, ``"lumos"``, or ``"orbbec"``."""
 
     gripper_type: str = "franka"
     """Registered gripper alias, resolved for the selected arm backend."""

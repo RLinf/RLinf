@@ -434,6 +434,25 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
+部署下方任一 reward 方法前，先使用 ManiSkill 稠密环境奖励预热 MLP policy，采用 ``maniskill_ppo_mlp`` 并保持 ``reward.use_reward_model: false``。本地 VLM Trend、本地 Success + Potential 和 SGLang API 推理都需要完成这一步。使用同一组 1,024 个固定 reset state、每条 50 步的 episode 评估保存的 checkpoint，选择 ``eval/success_at_end`` 约为 50% 的权重，再开始使用 reward model 的 PPO 训练：
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+该命令每 5 个 PPO step 保存并评估一次 checkpoint。如果尚未达到目标，可增大 ``runner.max_steps`` 继续预热；按实测成功率选择权重，而不是按固定训练步数选择。为后续部署命令设置选中的 policy 权重路径：
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+Trend 启动命令通过 ``runner.ckpt_path`` 传入该路径；Success + Potential 则将同一路径填写到 ``vlm_trend_paths.policy_checkpoint``。
+
 标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
 Success + Potential 配置的本地推理使用 ``model_type: shaped_vlm``。
@@ -501,25 +520,12 @@ API 推理仍只支持 ``buffered_vlm``。
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
-
-先使用 ManiSkill 原有的稠密环境奖励预热 MLP policy。这里直接复用未修改的
-``maniskill_ppo_mlp``，预热阶段不要启用 reward overlay。使用同一组 1,024 个
-固定 reset state 评估保存的 checkpoint，并选择 ``success_once`` 非零且接近
-5%（约 3--7%）的一个；正式 PPO 不要从零成功率 checkpoint 开始：
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp \
-     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
-     env.eval.total_num_envs=1024
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
-然后使用选中的低成功率 checkpoint 和上述三个 reward 产物启动双输出分支。
-该配置基于现有 VLM Trend 配置，使用 1,024 个环境，每 5 个 PPO step 评估一次，
-关闭环境奖励，默认训练 160 个 step：
+Success + Potential 使用上方选好的 warmup checkpoint 和三个 reward 产物。该配置基于现有 VLM Trend 配置，使用 1,024 个环境，每 5 个 PPO step 评估一次，关闭环境奖励，默认训练 160 个 step：
 
 在
 ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``
@@ -528,7 +534,7 @@ API 推理仍只支持 ``buffered_vlm``。
 .. code-block:: yaml
 
    vlm_trend_paths:
-     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
      model_path: /path/to/Qwen3-VL-4B-Instruct
      success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
      potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
@@ -614,7 +620,10 @@ SGLang 路径额外说明：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 4. 总结
 ^^^^^^^^^^^^
