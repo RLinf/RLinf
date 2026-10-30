@@ -15,7 +15,6 @@
 import copy
 import os
 import pathlib
-import threading
 import time
 from functools import partial
 from typing import Any, Mapping, Optional, OrderedDict, Union
@@ -49,9 +48,6 @@ StepResult = tuple[Observation, Tensor, Tensor, Tensor, EnvInfos]
 ChunkStepResult = tuple[
     list[Observation], list[Tensor], list[Tensor], list[Tensor], list[EnvInfos]
 ]
-
-_ros_setup_state: tuple[int, str] | None = None
-_ros_setup_lock = threading.Lock()
 
 
 class RealWorldEnv(gym.Env):
@@ -88,7 +84,6 @@ class RealWorldEnv(gym.Env):
             self.override_cfg.get("manual_episode_control_only", False)
         )
 
-        self.realworld_setup(cfg.get("ros_setup", "reset"))
         self._init_env()
 
         self._is_start = True
@@ -120,43 +115,34 @@ class RealWorldEnv(gym.Env):
         return env
 
     @staticmethod
-    def realworld_setup(ros_setup: str = "reset") -> None:
-        """Apply the ROS startup policy once per environment process.
+    def realworld_setup() -> None:
+        """Run node-level setup before creating real-world environments.
 
-        ``reset`` retains the default cleanup before opening hardware.
-        ``preserve`` leaves an externally managed ROS master untouched.
-        All environments in a process must use the same policy; workers
-        sharing a ROS master must also be configured consistently.
+        Set ``RLINF_ROS_SETUP=preserve`` before launching Python to use an
+        externally managed ROS master. Otherwise, setup is serialized and
+        existing ROS core processes are stopped before environments start.
         """
-        global _ros_setup_state
+        ros_setup = os.environ.get("RLINF_ROS_SETUP", "reset")
         if ros_setup not in ("reset", "preserve"):
             raise ValueError(
-                f"ros_setup must be 'reset' or 'preserve', got {ros_setup!r}."
+                f"RLINF_ROS_SETUP must be 'reset' or 'preserve', got {ros_setup!r}."
             )
-        pid = os.getpid()
-        with _ros_setup_lock:
-            if _ros_setup_state is not None and _ros_setup_state[0] == pid:
-                if _ros_setup_state[1] != ros_setup:
-                    raise RuntimeError(
-                        "Cannot mix ros_setup modes in one process: "
-                        f"already using {_ros_setup_state[1]!r}, got {ros_setup!r}."
-                    )
-                return
+        if ros_setup == "preserve":
+            return
 
-            if ros_setup == "reset":
-                # Serialize cleanup across environment processes on the same node.
-                node_lock_file = "/tmp/.realworld.lock"
-                if not os.path.exists(os.path.dirname(node_lock_file)):
-                    node_lock_file = os.path.join(
-                        pathlib.Path.home(), ".realworld.lock"
-                    )
-                with FileLock(node_lock_file):
-                    ros_proc_names = ["roscore", "rosmaster", "rosout"]
-                    for proc in psutil.process_iter():
-                        if proc.name() in ros_proc_names:
-                            proc.kill()
-                            time.sleep(0.5)
-            _ros_setup_state = (pid, ros_setup)
+        # Serialize setup across environment processes on the same node.
+        node_lock_file = "/tmp/.realworld.lock"
+        # Fall back to the user directory if the temporary path is unavailable.
+        if not os.path.exists(os.path.dirname(node_lock_file)):
+            node_lock_file = os.path.join(pathlib.Path.home(), ".realworld.lock")
+        node_lock = FileLock(node_lock_file)
+
+        with node_lock:
+            ros_proc_names = ["roscore", "rosmaster", "rosout"]
+            for proc in psutil.process_iter():
+                if proc.name() in ros_proc_names:
+                    proc.kill()
+                    time.sleep(0.5)
 
     def _init_env(self) -> None:
         env_fns = [

@@ -365,17 +365,29 @@ feedback also prevents that hold command; a zero target is never substituted.
    Keep the robot's physical emergency stop available. The one-shot hold attempt
    is not an emergency-stop mechanism and cannot guarantee that a robot stops.
 
-   Start the robot's ROS services before the task and keep
-   ``ros_setup: preserve`` in every environment config sharing that ROS master,
-   including train and eval workers. The Kuavo environment config selects this
-   mode: startup leaves the ROS processes untouched, and ``ROSCamera`` subscribes
-   to the existing master. RLinf real-world workers and ``RealWorldEnv`` default
-   to ``reset``, which stops existing ROS core processes once per process before
-   the first environment is created. Direct ``gym.make`` calls apply this policy
-   only when ``ros_setup`` is explicitly configured. Importing or registering
-   tasks does not run cleanup.
-   Mixing the two modes in one process raises an error; separate processes must
-   be configured consistently by the operator.
+   Before launching Python or starting the relevant Ray nodes, set:
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   Apply this setting to the driver, environment, controller, and camera nodes
+   that use the existing ROS master. Start the robot's ROS services before the
+   task; Kuavo and ``ROSCamera`` connect to those services without starting or
+   stopping them. Starting ``roscore`` alone does not start the robot controller
+   or camera publishers.
+
+   The setting applies to the whole process, not just Kuavo. Without it, or with
+   ``reset``, RLinf keeps its existing cleanup behavior: loading real-world tasks
+   stops ROS core processes, and explicit calls to ``realworld_setup()`` repeat
+   that cleanup. Some data-collection scripts load tasks before reading YAML,
+   so setting a YAML field cannot replace the launch-time environment variable.
+   The Kuavo constructor rejects a missing ``preserve`` setting, but cannot undo
+   cleanup that an earlier import already performed.
+
+   Do not change this setting during a run. After an initialization error, fix
+   the launch environment and restart the process. Configure every task sharing
+   the master consistently; a separate task using ``reset`` can still stop it.
 
 For a dual-arm GR00T N1.7 checkpoint, start from
 ``examples/embodiment/config/model/gr00t_n1d7_kuavo.yaml``. This model config

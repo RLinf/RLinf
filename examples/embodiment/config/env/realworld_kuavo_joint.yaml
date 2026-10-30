@@ -1,6 +1,6 @@
 env_type: real
+# Set RLINF_ROS_SETUP=preserve before launching Python and the relevant Ray nodes.
 # Kuavo subscribes to the robot's externally managed ROS master.
-ros_setup: preserve
 
 total_num_envs: 1
 auto_reset: false

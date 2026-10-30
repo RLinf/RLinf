@@ -55,9 +55,11 @@ def load_tasks() -> None:
     global _loaded
     if _loaded:
         return
+    _loaded = True
     for module in _ROBOT_PACKAGES:
         importlib.import_module(module, __name__)
-    _loaded = True
+    env_module = importlib.import_module(".env", __name__)
+    env_module.RealWorldEnv.realworld_setup()
 
 
 def __getattr__(name: str) -> Any:

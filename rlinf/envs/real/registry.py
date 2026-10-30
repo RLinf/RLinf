@@ -34,11 +34,6 @@ def task_factory(env_cls: type) -> Callable[..., gym.Env]:
         env_idx: int,
         env_cfg: Mapping[str, Any],
     ) -> gym.Env:
-        # Preserve legacy direct callers unless they opt into a startup policy.
-        if "ros_setup" in env_cfg:
-            from .env import RealWorldEnv
-
-            RealWorldEnv.realworld_setup(env_cfg["ros_setup"])
         env = env_cls(
             override_cfg=override_cfg,
             worker_info=worker_info,

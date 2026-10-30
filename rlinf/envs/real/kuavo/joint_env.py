@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -116,6 +117,11 @@ class KuavoJointEnv(gym.Env):
         env_idx: int = 0,
     ) -> None:
         super().__init__()
+        if os.environ.get("RLINF_ROS_SETUP") != "preserve":
+            raise RuntimeError(
+                "Kuavo requires RLINF_ROS_SETUP=preserve before launching Python "
+                "and the relevant Ray nodes. Configure it and restart the process."
+            )
         self.config = KuavoJointEnvConfig(**dict(override_cfg or {}))
         self.hardware = get_hardware_config(
             KuavoRobotConfig, robot_info, is_dummy=self.config.is_dummy

@@ -298,7 +298,17 @@ step 期间读取观测或下发动作失败时，环境会尝试根据有效的
 
    保持机器人的物理急停装置可用。单次保持命令不属于急停机制，也不能保证机器人停止运动。
 
-   启动任务前，先启动机器人的 ROS 服务。共享该 ROS master 的所有环境配置都应设置 ``ros_setup: preserve``，包括 train 和 eval worker。Kuavo 环境配置已选择此模式，初始化会保留已有 ROS 进程，``ROSCamera`` 订阅已有 master。RLinf 真机 worker 和 ``RealWorldEnv`` 默认使用 ``reset``，在每个进程首次创建环境前清理已有 ROS core 进程；直接调用 ``gym.make`` 时，只有显式配置 ``ros_setup`` 才会应用此规则。导入或注册任务时不执行清理。同一进程混用两种模式会报错，不同进程之间则需要操作者保证配置一致。
+   在启动 Python 和相关节点的 Ray 进程前，设置：
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   连接已有 ROS master 的 driver、环境、控制器和相机节点都应设置此变量。先启动机器人的 ROS 服务，再启动任务；Kuavo 和 ``ROSCamera`` 连接已有服务，不负责启动或停止这些服务。仅启动 ``roscore`` 不会启动机器人控制器和相机发布节点。
+
+   此设置作用于整个进程，并非只作用于 Kuavo。未设置或设置为 ``reset`` 时，RLinf 保持原有清理行为：加载真机任务时停止 ROS core 进程，每次显式调用 ``realworld_setup()`` 也会再次清理。有些采集脚本会在读取 YAML 前加载任务，因此 YAML 字段不能替代这个启动前的环境变量。Kuavo 构造函数会拒绝未设置 ``preserve`` 的启动，但无法撤销此前导入已经执行的清理。
+
+   运行期间不要切换此变量。初始化出错后，应修正启动环境并重启进程。共享同一 master 的所有任务都需保持设置一致；另一个使用 ``reset`` 的任务仍可能停止该 master。
 
 对于双臂 GR00T N1.7 checkpoint，可从 ``examples/embodiment/config/model/gr00t_n1d7_kuavo.yaml`` 开始配置。这个模型配置选择 Kuavo 输入输出转换器，state 和 action 都按 16 维排列：左臂 7 个关节、左夹爪、右臂 7 个关节、右夹爪。动作使用弧度表示的绝对关节目标和 ``0..1`` 的夹爪目标。``KuavoJointEnv-v1`` 按头部、左腕、右腕的顺序提供 RGB 图像，并附带任务文本。运行 policy 还需要匹配的 checkpoint、processor 和 backbone 文件。
 

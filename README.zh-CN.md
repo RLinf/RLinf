@@ -382,6 +382,19 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 **SOTA RL 训练复现：** RLinf 提供了端到端的配置和脚本，可以直接运行，无需额外工程改造，即可复现业界领先的训练效果。请参考[示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html)了解更多细节。
 
 
+### Kuavo ROS 启动
+
+让 Kuavo 连接已有 ROS 服务时，在启动 Python 和 Ray 前，先在 driver、环境、控制器和相机节点执行：
+
+```bash
+export RLINF_ROS_SETUP=preserve
+```
+
+> [!WARNING]
+> 此设置对整个进程生效，用于跳过 ROS 清理。未设置或设为 `reset` 时，原有清理可能在读取 YAML 前执行。共享同一 ROS master 的所有任务都应使用 `preserve`。
+
+先启动机器人的 ROS 服务，再启动任务。配置详见 [Kuavo 设置指南](docs/source-zh/rst_source/guides/realworld_robot.rst)和[环境配置](examples/embodiment/config/env/realworld_kuavo_joint.yaml)。
+
 ## 基于 RLinf 的社区项目精选
 我们非常高兴地看到围绕RLinf构建或集成的项目生态系统正在蓬勃发展，涵盖具身智能、机器人技术以及长时序代理系统等领域。以下是一些优秀的社区项目：
 - [Qwen-VLA](https://github.com/QwenLM/Qwen-VLA): 一个统一的视觉-语言-动作模型，使用 RLinf 进行强化学习，以优化闭环任务成功率。
