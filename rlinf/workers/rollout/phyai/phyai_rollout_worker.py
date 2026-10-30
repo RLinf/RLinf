@@ -186,6 +186,7 @@ class PhyAIRolloutWorker(Worker):
             else 0
         )
         self.collect_transitions = bool(cfg.rollout.get("collect_transitions", False))
+        self.enable_rlt = cfg.algorithm.get("loss_type") in {"rlt_ac", "rlt_td3"}
         self.collect_prev_infos = bool(cfg.rollout.get("collect_prev_infos", True))
         self.version = 0
         self.weight_syncer = None
@@ -223,6 +224,11 @@ class PhyAIRolloutWorker(Worker):
                 "rollout Ray actor (PhyAI world_size=1); got "
                 f"{self.global_accelerator_ids}."
             )
+
+    @property
+    def collect_raw_transition_obs(self) -> bool:
+        """Return whether Actor training requires raw transition observations."""
+        return self.collect_transitions and not self.enable_rlt
 
     # Configuration and engine setup.
 
@@ -833,7 +839,7 @@ class PhyAIRolloutWorker(Worker):
                 final_prev_values = values.cpu().contiguous()
         actor_channel.put(
             env_part.complete(
-                next_obs=(next_obs if self.collect_transitions else None),
+                next_obs=(next_obs if self.collect_raw_transition_obs else None),
                 next_rlt_obs=None,
                 final_prev_values=final_prev_values,
             ),
@@ -853,7 +859,7 @@ class PhyAIRolloutWorker(Worker):
         needs_policy_obs = any(
             part is not None
             and (
-                self.collect_transitions
+                self.collect_raw_transition_obs
                 or (part.requires_inference and part.next_obs is None)
             )
             for part in policy_input.env_parts
@@ -912,7 +918,9 @@ class PhyAIRolloutWorker(Worker):
                     actions, result = self.predict(policy_input.obs, mode="train")
                     policy_output = self._build_policy_output(result)
                 self._send_actions(output_channel, actions.contiguous(), stage_id)
-                transition_obs = policy_input.obs if self.collect_transitions else {}
+                transition_obs = (
+                    policy_input.obs if self.collect_raw_transition_obs else {}
+                )
                 if policy_input.requires_inference:
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,

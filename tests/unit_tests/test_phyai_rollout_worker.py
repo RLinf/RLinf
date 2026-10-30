@@ -171,6 +171,25 @@ def test_sync_model_from_actor_commits_only_complete_updates():
     assert worker.version == 0
 
 
+@pytest.mark.parametrize(
+    ("collect_transitions", "enable_rlt", "expected"),
+    [
+        (False, False, False),
+        (False, True, False),
+        (True, False, True),
+        (True, True, False),
+    ],
+)
+def test_collect_raw_transition_obs_matches_shared_rollout_protocol(
+    collect_transitions, enable_rlt, expected
+):
+    worker = object.__new__(PhyAIRolloutWorker)
+    worker.collect_transitions = collect_transitions
+    worker.enable_rlt = enable_rlt
+
+    assert worker.collect_raw_transition_obs is expected
+
+
 def test_evaluate_preserves_channel_contract():
     class _AsyncResult:
         def __init__(self, value):
