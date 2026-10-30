@@ -74,46 +74,48 @@ def _spawn(case, *args, world: int = 2) -> None:
 
 
 def _cfg(world: int, velocity: bool = False):
-    return OmegaConf.create({
-        "algorithm": {
-            "goal_anchor": False,
-            "k": 8,
-            "H": 4,
-            "gamma": 0.99,
-            "lam": 0.95,
-            "goal_dim": 680,
-            "obs_dim": 93,
-            "goal_encoding": "paper",
-            "velocity_tracking": velocity,
-            "warmup_sim_steps": 12,
-            "updates_per_env_step": 0.4,
-            "wm_batches": 2,
-            "wm_window_batch": 4,
-            "imagine_batch": 4,
-            "critic_epochs": 1,
-            "critic_minibatches": 1,
-            "bce_weight": 1.0,
-            "action_noise_std": 0.1,
-            "G_max": 10.0,
-            "lr": 2e-4,
-            "lr_decay_updates": 10,
-            "action_dim": 29,
-            "max_episode_seconds": 10.0,
-            "termination_body": "pelvis",
-            "seed": 0,
-            "max_nonfinite_skips": 1,
-            "param_check_interval": 1,
-            "world_size": world,
-        },
-        "env": {
-            "motion_format": "lafan1",
-            "motion_path": synthetic_clip_dir(),
-            "num_clips": 2,
-            "backend": "analytic",
-            "num_envs": 4,
-            "replay_length": 32,
-        },
-    })
+    return OmegaConf.create(
+        {
+            "algorithm": {
+                "goal_anchor": False,
+                "k": 8,
+                "H": 4,
+                "gamma": 0.99,
+                "lam": 0.95,
+                "goal_dim": 680,
+                "obs_dim": 93,
+                "goal_encoding": "paper",
+                "velocity_tracking": velocity,
+                "warmup_sim_steps": 12,
+                "updates_per_env_step": 0.4,
+                "wm_batches": 2,
+                "wm_window_batch": 4,
+                "imagine_batch": 4,
+                "critic_epochs": 1,
+                "critic_minibatches": 1,
+                "bce_weight": 1.0,
+                "action_noise_std": 0.1,
+                "G_max": 10.0,
+                "lr": 2e-4,
+                "lr_decay_updates": 10,
+                "action_dim": 29,
+                "max_episode_seconds": 10.0,
+                "termination_body": "pelvis",
+                "seed": 0,
+                "max_nonfinite_skips": 1,
+                "param_check_interval": 1,
+                "world_size": world,
+            },
+            "env": {
+                "motion_format": "lafan1",
+                "motion_path": synthetic_clip_dir(),
+                "num_clips": 2,
+                "backend": "analytic",
+                "num_envs": 4,
+                "replay_length": 32,
+            },
+        }
+    )
 
 
 def _rows(rank_rows: list[int], width: int, seed: int = 7) -> list[tuple]:
