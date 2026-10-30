@@ -525,6 +525,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
             SupportedModel.PSI0,
+            SupportedModel.LINGBOTVLAV2,
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
