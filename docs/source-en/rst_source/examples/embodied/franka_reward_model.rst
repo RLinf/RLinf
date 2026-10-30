@@ -264,7 +264,7 @@ Where:
 
 - ``reward_mode`` controls whether the reward model runs inference at every step or only on terminal frames.
 - ``standalone_realworld`` uses the reward model to directly determine task success and trigger environment resets.
-- ``reward_threshold`` applies threshold filtering on the success probability output by the reward model; values below the threshold are set to ``0``.
+- ``reward_threshold`` converts ResNet probabilities to binary rewards when non-negative: ``1`` at or above the threshold, otherwise ``0``. If omitted, ``null``, or negative, the Worker returns raw probabilities.
 - ``model_path`` points to the reward model checkpoint used for online inference.
 
 Run It

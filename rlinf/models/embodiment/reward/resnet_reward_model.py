@@ -292,12 +292,6 @@ class ResNetRewardModel(BaseRewardModel):
             # Return probabilities for binary classification
             rewards = torch.sigmoid(logits)
 
-        # Optional thresholding: keep consistent with prior worker behavior.
-        threshold = self.cfg.get("reward_threshold", None)
-        if threshold is not None:
-            thr = float(threshold)
-            rewards = torch.where(rewards > thr, rewards, torch.zeros_like(rewards))
-
         return rewards
 
     def load_from_path(self, model_path: str) -> None:
