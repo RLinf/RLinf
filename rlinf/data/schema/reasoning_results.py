@@ -842,6 +842,8 @@ class DynamicRolloutResult:
     is_end: list[bool]
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[torch.Tensor] = None
+    values: Optional[torch.Tensor] = None
+    returns: Optional[torch.Tensor] = None
 
     # extra fields used in training for custom process
     extra_fields_train: dict[str, list] = field(default_factory=dict)
@@ -946,30 +948,33 @@ class DynamicRolloutResult:
             pad_token=pad_token,
         )
 
+        device = Worker.torch_device_type
         batch = {
             "idx_to_traj": self.idx_to_traj,
-            "input_ids": input_ids.cuda(),
-            "attention_mask": attention_mask.cuda(),
-            "response_mask": response_mask.cuda(),
-            "position_ids": position_ids.cuda(),
-            "is_end": is_end.cuda(),
-            "prompt_lengths": prompt_lengths.cuda(),
-            "response_lengths": response_lengths.cuda(),
+            "input_ids": input_ids.to(device),
+            "attention_mask": attention_mask.to(device),
+            "response_mask": response_mask.to(device),
+            "position_ids": position_ids.to(device),
+            "is_end": is_end.to(device),
+            "prompt_lengths": prompt_lengths.to(device),
+            "response_lengths": response_lengths.to(device),
             **{
-                f"extra:{k}": torch.as_tensor(v).cuda()
+                f"extra:{k}": torch.as_tensor(v).to(device)
                 for k, v in self.extra_fields_train.items()
             },
         }
 
         if self.advantages is not None:
-            batch["advantages"] = self.advantages.cuda()
+            batch["advantages"] = self.advantages.to(device)
 
         if self.rewards is not None:
             if isinstance(self.rewards, torch.Tensor):
-                batch["rewards"] = self.rewards.cuda()
+                batch["rewards"] = self.rewards.to(device)
             else:
                 batch["rewards"] = (
-                    torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
+                    torch.as_tensor(self.rewards, dtype=torch.float)
+                    .to(device)
+                    .flatten()
                 )
 
         if self.rollout_logprobs is not None:
@@ -983,12 +988,17 @@ class DynamicRolloutResult:
                 max_batch_len=seq_length,
                 pad_token=0,
             )
-            batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
+            batch["rollout_logprobs"] = logprobs.to(device)
 
         if self.recomputed_logprobs is not None:
-            batch["recomputed_logprobs"] = self.recomputed_logprobs.cuda()
+            batch["recomputed_logprobs"] = self.recomputed_logprobs.to(device)
         if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.cuda()
+            batch["ref_logprobs"] = self.ref_logprobs.to(device)
+
+        for name in ("values", "returns"):
+            value = getattr(self, name)
+            if value is not None:
+                batch[name] = value.to(device)
 
         return batch
 
@@ -1039,6 +1049,12 @@ class DynamicRolloutResult:
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
             "loss_scales": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "values": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
+            "returns": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
         }
@@ -1155,7 +1171,7 @@ class DynamicRolloutResult:
                         batch["response_mask"][left],
                         batch["response_mask"][right],
                     )
-                    if mask_overlap.sum().item() > 1:
+                    if mask_overlap.any():
                         continue
                     left_ids = batch["input_ids"][left][
                         : prompt_lengths[left] + response_lengths[left]
@@ -1184,6 +1200,8 @@ class DynamicRolloutResult:
             "ref_logprobs",
             "rewards",
             "advantages",
+            "values",
+            "returns",
             "loss_scales",
             *(k for k in batch.keys() if k.startswith("extra:")),
         ]
@@ -1202,8 +1220,14 @@ class DynamicRolloutResult:
             assert len(idxes) >= 2
             assert len({split_params["rewards"][idx].item() for idx in idxes}) == 1
 
-            # Merge additive token-level stats over response tokens only.
-            for key in ["recomputed_logprobs", "rollout_logprobs", "advantages"]:
+            # Copy fixed token targets at each turn's disjoint action positions.
+            for key in [
+                "recomputed_logprobs",
+                "rollout_logprobs",
+                "advantages",
+                "values",
+                "returns",
+            ]:
                 if key not in split_params:
                     continue
                 value = [
@@ -1215,18 +1239,19 @@ class DynamicRolloutResult:
                 split_params[key][suffix] = torch.stack(value).sum(dim=0)
 
             # Re-scale loss_scales to preserve total per-turn contribution.
-            masked_counts = [
-                split_params["response_mask"][idx].sum().item() for idx in idxes
-            ]
-            masked_count_all = sum(masked_counts)
-            value = [
-                split_params["loss_scales"][idx].masked_fill(
-                    ~split_params["response_mask"][idx], 0
-                )
-                * (masked_count_all / masked_counts[i])
-                for i, idx in enumerate(idxes)
-            ]
-            split_params["loss_scales"][suffix] = torch.stack(value).sum(dim=0)
+            if "loss_scales" in split_params:
+                masked_counts = [
+                    split_params["response_mask"][idx].sum().item() for idx in idxes
+                ]
+                masked_count_all = sum(masked_counts)
+                value = [
+                    split_params["loss_scales"][idx].masked_fill(
+                        ~split_params["response_mask"][idx], 0
+                    )
+                    * (masked_count_all / masked_counts[i])
+                    for i, idx in enumerate(idxes)
+                ]
+                split_params["loss_scales"][suffix] = torch.stack(value).sum(dim=0)
 
             response_mask = [split_params["response_mask"][idx] for idx in idxes]
             split_params["response_mask"][suffix] = (
@@ -1259,7 +1284,7 @@ class DynamicRolloutResult:
             packed_batch[k] = torch.cat(v, dim=0)
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
-        folding_scale = context["folding_scale"]
+        folding_scale = context.get("folding_scale", [])
         if "group_level" in folding_scale:
             packed_batch["loss_scales"] *= num_sequence_after / num_sequence
 
@@ -1330,6 +1355,15 @@ class DynamicRolloutResult:
                     )
                 else:
                     raise ValueError(f"Wrong type of rewards {type(res.rewards)}")
+
+            for name in ("values", "returns"):
+                value = getattr(res, name)
+                if value is not None:
+                    setattr(
+                        merged_result,
+                        name,
+                        merge_tensor(getattr(merged_result, name), value),
+                    )
 
             if res.advantages is not None:
                 if isinstance(res.advantages, torch.Tensor):
@@ -1413,6 +1447,15 @@ class DynamicRolloutResult:
                 response_lengths=split_response_lengths,
                 is_end=split_is_end,
                 rewards=split_rewards,
+                advantages=rollout_result.advantages[start_idx:end_idx]
+                if rollout_result.advantages is not None
+                else None,
+                values=rollout_result.values[start_idx:end_idx]
+                if rollout_result.values is not None
+                else None,
+                returns=rollout_result.returns[start_idx:end_idx]
+                if rollout_result.returns is not None
+                else None,
                 extra_fields_train=split_extra_fields_train,
             )
 

@@ -5,6 +5,8 @@ Train Qwen2.5-3B-Instruct to answer questions by calling a search tool. Set up
 the RLinf environment and the local wiki retrieval server first, as described
 in :doc:`index`.
 
+For synchronous PPO with an independent critic, see :doc:`ppo`.
+
 Overview
 --------
 

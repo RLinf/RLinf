@@ -182,6 +182,15 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             )
             self._placement_mode = PlacementMode.COLLOCATED
             logging.info("Running in collocated mode")
+        elif (
+            self._config.get("runner", {}).get("synchronous", False)
+            and self._critic_gpus == self._actor_gpus
+            and set(self._actor_gpus).isdisjoint(self._rollout_gpus)
+            and self._inference_gpus is None
+            and self._critic_inference_gpus is None
+        ):
+            self._placement_mode = PlacementMode.HYBRID
+            logging.info("Running with shared actor/critic and dedicated rollout GPUs")
         elif self._is_disaggregated():
             if self._inference_gpus is not None:
                 assert self.inference_tp_size <= self.inference_world_size, (
@@ -300,7 +309,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 self._placements["critic"] = PackedPlacementStrategy(
                     self._critic_gpus[0], self._critic_gpus[-1]
                 )
-        elif self._placement_mode == PlacementMode.DISAGGREGATED:
+        elif self._placement_mode in (
+            PlacementMode.DISAGGREGATED,
+            PlacementMode.HYBRID,
+        ):
             num_gpus_per_rollout_dp = len(self._rollout_gpus) // self.rollout_dp_size
             self._placements["rollout"] = PackedPlacementStrategy(
                 self._rollout_gpus[0],
@@ -384,7 +396,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def is_pipeline(self):
-        return self.is_disaggregated or self.is_auto
+        return (self.is_disaggregated or self.is_auto) and not self._config.get(
+            "runner", {}
+        ).get("synchronous", False)
 
     def has_dedicated_inference_for_role(self, role):
         if role == "actor":

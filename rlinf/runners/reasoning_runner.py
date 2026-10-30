@@ -38,7 +38,7 @@ if typing.TYPE_CHECKING:
     from rlinf.utils.placement import ModelParallelComponentPlacement
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
     from rlinf.workers.actor.megatron_actor_worker import MegatronActor
-    from rlinf.workers.actor.megatron_critic_worker import MegatronCritic
+    from rlinf.workers.critic.megatron_critic_worker import MegatronCritic
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
     from rlinf.workers.inference.megatron_inference_worker import (
         MegatronActorInference,
@@ -433,7 +433,8 @@ class ReasoningRunner:
         for request in requests:
             self.dataloader_channel.put(request, async_op=True)
 
-    def _sync_weights(self):
+    def _sync_weights(self, do_offload: bool = True) -> None:
+        """Sync weights; do_offload=False leaves residency under caller control."""
         if self.has_dedicated_actor_inference:
             self.actor.sync_model_to_inference()
             self.actor_inference.sync_model_from_actor().wait()
@@ -444,12 +445,17 @@ class ReasoningRunner:
 
         # self.rollout here is always 'sync' mode (cpu/None weight_reload is only
         # used by separate judge/eval rollouts), so this is unconditional.
-        self.actor.sync_model_to_rollout()
+        if do_offload:
+            self.actor.sync_model_to_rollout()
+        else:
+            self.actor.sync_model_to_rollout(do_offload=False)
         self.rollout.sync_model_from_actor().wait()
         self.actor.del_reshard_state_dict().wait()
         # KV cache + cudagraph were deferred (only weights resumed) to avoid OOM;
         # mirrors the offload condition — pure disaggregated never offloads them.
-        if self.component_placement.is_collocated or self.component_placement.is_auto:
+        if do_offload and (
+            self.component_placement.is_collocated or self.component_placement.is_auto
+        ):
             self.rollout.onload_kv_cudagraph().wait()
 
     def run(self):
