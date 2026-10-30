@@ -99,6 +99,7 @@ def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
         assert "rollout_logprobs" not in worker.rollout_batch
     assert torch.equal(worker.rollout_batch["prev_logprobs"], expected + 0.25)
     assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(11.75)
+    assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(87.0)
 
 
 @pytest.mark.parametrize(

@@ -494,7 +494,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             mask = mask.expand_as(log_ratio)
         joint_log_ratio = (
             log_ratio if mask is None else log_ratio.masked_fill(~mask, 0)
-        ).sum(dim=tuple(range(1, log_ratio.ndim)))
+        ).sum(dim=(-2, -1))
         joint_gap = joint_log_ratio.abs().max().item()
         metrics = {
             "actor/rollout_train_logprob_gap": masked_mean(
