@@ -101,19 +101,22 @@ CUDA 设备 0 通常\ **并不是** EGL 设备 0。
 `WARNING` for the silent mis-render. Only the first blocks a PR, but a doc PR
 touching a Chinese page should leave no new warnings either.
 
-### Hard-wrapped Chinese prose
+### Wrapped Chinese prose
 
-reStructuredText joins source lines inside a paragraph with a space. Hard-wrapping
-Chinese prose therefore inserts a visible gap even when no space was typed:
+reStructuredText joins source lines inside a paragraph with a space, so a hard
+wrap inside Chinese prose inserts a visible gap even when no space was typed:
 
 ```rst
 定义奖励、成功条件
 或复位吗？
 ```
 
-This renders as `成功条件 或复位`. Keep each Chinese prose paragraph and prose
-list item on one source line. Preserve newlines that define headings, directives,
-tables, and code blocks.
+This renders as `成功条件 或复位`. Either keep each Chinese prose paragraph and
+prose list item on one source line, or end every wrapped line with `\`, which
+removes the newline and inserts nothing. Judge the rendered result, not the
+source line count. Preserve newlines that define headings, directives, tables,
+and code blocks, and never put `\` on a line whose successor starts with inline
+markup.
 
 Note that inline markup does **not** nest — `` **stuck in ``reach``** `` is a
 strong containing literal backtick characters, not a nested literal, and is
@@ -127,7 +130,7 @@ perfectly legal.
 - [ ] `python3 .agents/skills/docs-check/build_docs.py` is clean for **both** `en` and `zh`
 - [ ] `python3 .agents/skills/docs-check/check_rst_markup.py` reports no new findings
 - [ ] Changed ZH pages have no ` `` ` or `**` touching `（`, `《` or a CJK character
-- [ ] Changed ZH prose has no hard wrap that creates a space between CJK characters
+- [ ] Changed ZH prose renders without an inserted space between CJK characters (one source line, or `\`-continued lines with no inline markup at the start of the next line)
 
 ### Doc vs Code
 - [ ] Every config name in docs exists under `examples/embodiment/config/` or `env/`
