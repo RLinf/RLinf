@@ -438,15 +438,14 @@ class WorldModelEnv:
 
         # If episode_indices not provided, randomly select
         if episode_indices is None:
-            # Set random seed if provided
             if seed is not None:
-                if isinstance(seed, list):
-                    np.random.seed(seed[0])
-                else:
-                    np.random.seed(seed)
-
-            episode_indices = np.random.choice(
-                len(self.dataset), size=num_slots, replace=False
+                self._generator.manual_seed(
+                    int(seed[0]) if isinstance(seed, list) else int(seed)
+                )
+            episode_indices = (
+                torch.randperm(len(self.dataset), generator=self._generator)[:num_slots]
+                .cpu()
+                .numpy()
             )
         else:
             # Convert to numpy if tensor
@@ -497,7 +496,7 @@ class WorldModelEnv:
             init_actions=torch.stack(
                 [window[1] for window in condition_windows], dim=0
             ).to(self.device),
-            seeds=[0] * num_slots,
+            seeds=[self.seed] * num_slots,
         )
 
         self._reset_metrics(env_idx=None if env_idx is None else target_slots)

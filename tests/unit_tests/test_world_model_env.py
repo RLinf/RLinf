@@ -41,6 +41,7 @@ class _BlankFrameBackend:
 
     def __init__(self, cfg, device):
         self.chunk = cfg.chunk
+        self.last_seeds = None
 
     @staticmethod
     def load_reward_model(cfg):
@@ -50,7 +51,7 @@ class _BlankFrameBackend:
         return None
 
     def open_session(self, env_ids, init_frames, init_actions, seeds):
-        pass
+        self.last_seeds = list(seeds)
 
     def generate(self, env_ids, actions):
         return torch.zeros(len(env_ids), 3, self.chunk, *self.image_size)
@@ -152,8 +153,14 @@ def test_world_model_env_episode_reward_pays_the_window_peak_at_the_limit(
 def test_world_model_env_echoes_the_last_command_as_state(tmp_path, monkeypatch):
     rest = [0.0] * 6 + [1.0] + [0.0] * 6 + [1.0]
     env = _blank_world_model_env(
-        tmp_path, monkeypatch, reward=0.0, state_from_last_action=True, rest_action=rest
+        tmp_path,
+        monkeypatch,
+        reward=0.0,
+        seed=11,
+        state_from_last_action=True,
+        rest_action=rest,
     )
+    assert env.backend.last_seeds == [11, 11]
     rest_states = torch.tensor([rest, rest])
     actions = torch.arange(2 * 2 * 14, dtype=torch.float32).reshape(2, 2, 14)
 
