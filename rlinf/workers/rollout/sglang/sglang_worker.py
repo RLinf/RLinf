@@ -15,6 +15,7 @@
 import asyncio
 import copy
 import dataclasses
+import sys
 import traceback
 from typing import Any, Literal, Optional
 
@@ -581,7 +582,8 @@ class SGLangWorker(Worker):
     async def rollout(self, input_channel: Channel, output_channel: Channel):
         # The device lock only covers this process's GPUs, so non-entry
         # ranks of a cross-node instance hold theirs until the entry signals
-        # that the instance's offload is done. They do no channel I/O; their
+        # that the step is done - on success after offload, on failure when
+        # the entry's rollout() raises. They do no channel I/O; their
         # "rollout" timer spans the wait and the runner max-reduces it.
         if not self._is_model_instance_entry:
             if self._placement.rollout_nnodes_per_model_instance == 1:
@@ -596,69 +598,85 @@ class SGLangWorker(Worker):
                 )
             return
         self.log_on_first_rank("Start generation...")
-        request: RolloutRequest = input_channel.get()
-        groups = request.to_seq_group_infos()
-        async_wait_type = (
-            asyncio.FIRST_COMPLETED
-            if self._placement.is_pipeline
-            else asyncio.ALL_COMPLETED
-        )
-        with self.device_lock, self.worker_timer():
-            num_residual = self.status_manager.num_seq_group
-            assert num_residual == 0, (
-                f"There are {num_residual} "
-                f"sequence group{'' if num_residual == 1 else 's'} before rollout."
+        cross_node = self._placement.rollout_nnodes_per_model_instance > 1
+        try:
+            request: RolloutRequest = input_channel.get()
+            groups = request.to_seq_group_infos()
+            async_wait_type = (
+                asyncio.FIRST_COMPLETED
+                if self._placement.is_pipeline
+                else asyncio.ALL_COMPLETED
             )
+            with self.device_lock, self.worker_timer():
+                num_residual = self.status_manager.num_seq_group
+                assert num_residual == 0, (
+                    f"There are {num_residual} "
+                    f"sequence group{'' if num_residual == 1 else 's'} before rollout."
+                )
 
-            for group in groups:
-                task = asyncio.create_task(self._async_generate_group(group))
-                self.status_manager.add_task(group, task)
+                for group in groups:
+                    task = asyncio.create_task(self._async_generate_group(group))
+                    self.status_manager.add_task(group, task)
 
-            all_rollout_results = []
-            while pending := self.status_manager.get_running_tasks():
-                done, pending = await asyncio.wait(pending, return_when=async_wait_type)
-                returned_seq_groups: list[SeqGroupInfo] = [
-                    task.result() for task in done
-                ]
-                for group in returned_seq_groups:
-                    if group.all_completed:
-                        rollout_result = RolloutResult.from_sglang_seq_group(
-                            group,
-                            self._return_logprobs,
-                        )
-                        all_rollout_results.append(rollout_result)
-                        await output_channel.put(
-                            item=rollout_result, async_op=True
-                        ).async_wait()
-                        self.status_manager.mark_done(group)
-                    else:
-                        self.status_manager.mark_aborted(group)
+                all_rollout_results = []
+                while pending := self.status_manager.get_running_tasks():
+                    done, pending = await asyncio.wait(
+                        pending, return_when=async_wait_type
+                    )
+                    returned_seq_groups: list[SeqGroupInfo] = [
+                        task.result() for task in done
+                    ]
+                    for group in returned_seq_groups:
+                        if group.all_completed:
+                            rollout_result = RolloutResult.from_sglang_seq_group(
+                                group,
+                                self._return_logprobs,
+                            )
+                            all_rollout_results.append(rollout_result)
+                            await output_channel.put(
+                                item=rollout_result, async_op=True
+                            ).async_wait()
+                            self.status_manager.mark_done(group)
+                        else:
+                            self.status_manager.mark_aborted(group)
 
-                if (
-                    self._use_auto_scheduler
-                    and self.status_manager.num_seq_group_running == 0
+                    if (
+                        self._use_auto_scheduler
+                        and self.status_manager.num_seq_group_running == 0
+                    ):
+                        # rollout should not exit immediately when using auto scheduler
+                        # because there might be migrations
+                        # if so, `pending` will not be empty in while loop condition
+                        await self.status_manager.wait_notification()
+
+                self.status_manager.clear()
+
+                if self._collect_meta_stats:
+                    self._collect_stats(all_rollout_results)
+
+                if self.weight_reload is not None and (
+                    self._placement.is_collocated or self._placement.is_auto
                 ):
-                    # rollout should not exit immediately when using auto scheduler
-                    # because there might be migrations
-                    # if so, `pending` will not be empty in while loop condition
-                    await self.status_manager.wait_notification()
-
-            self.status_manager.clear()
-
-            if self._collect_meta_stats:
-                self._collect_stats(all_rollout_results)
-
-            if self.weight_reload is not None and (
-                self._placement.is_collocated or self._placement.is_auto
-            ):
-                await self.offload_engine()
-                if self._use_auto_scheduler:
-                    await self._scheduler.report_offloaded()
-
+                    await self.offload_engine()
+                    if self._use_auto_scheduler:
+                        await self._scheduler.report_offloaded()
+        finally:
             # Cross-node: release the non-entry ranks' device locks. Sent on
-            # every step, even when nothing was offloaded.
-            if self._placement.rollout_nnodes_per_model_instance > 1:
-                await signal_rollout_finished(self, self._placement)
+            # every step, on success and on failure; on the success path the
+            # entry has already offloaded (and released its own lock) when
+            # this fires, which non-entry ranks may observe a few ms later.
+            if cross_node:
+                in_flight = sys.exc_info()[0] is not None
+                try:
+                    await signal_rollout_finished(self, self._placement)
+                except Exception as e:
+                    if not in_flight:
+                        raise
+                    self.log_error(
+                        f"Failed to signal rollout-finished after a rollout "
+                        f"failure; non-entry ranks of this instance may have "
+                        f"already exited: {e!r}"
+                    )
 
     async def generate_and_send(
         self,

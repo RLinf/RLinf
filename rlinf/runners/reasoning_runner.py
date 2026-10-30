@@ -461,10 +461,8 @@ class ReasoningRunner:
         The ``hasattr`` check is a fallback for rollout workers that do
         not implement ``stop``.
         """
-        rollout_groups = [self.rollout, *getattr(self, "solid_rollouts", {}).values()]
-        for rollout_group in rollout_groups:
-            if hasattr(rollout_group, "stop"):
-                rollout_group.stop().wait()
+        if hasattr(self.rollout, "stop"):
+            self.rollout.stop().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)

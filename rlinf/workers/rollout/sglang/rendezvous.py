@@ -313,18 +313,35 @@ async def wait_for_instance_readiness(
 async def signal_rollout_finished(
     worker: Worker,
     placement: _Placement,
+    *,
+    timeout_s: float = 60.0,
 ) -> None:
     """Entry side: tell the non-entry ranks this step's rollout is done.
 
-    Sent on every step after offload, or without it when nothing is
-    offloaded. No timeout: every rank of the instance enters ``rollout()``
-    on every step.
+    It is sent from a ``finally`` around the entry's rollout body: at the
+    end of every step - after offload when it happens, otherwise without
+    it - and also when ``rollout()`` raises, so non-entry ranks release
+    their device lock instead of waiting on a rank that is already
+    failing.
+
+    Raises RuntimeError on timeout: some rank of the instance is not in
+    the broadcast, which means it has likely already exited; the entry's
+    own failure (if any) is the more useful error, so callers forwarding
+    an existing exception log this instead of raising it.
     """
-    groups, src, _ = _instance_comm_group(worker, placement)
+    groups, src, model_instance_id = _instance_comm_group(worker, placement)
     work = worker.broadcast(
         object=(_ROLLOUT_DONE,), groups=groups, src=src, async_op=True
     )
-    await work.async_wait()
+    try:
+        await asyncio.wait_for(work.async_wait(), timeout=timeout_s)
+    except asyncio.TimeoutError as e:
+        raise RuntimeError(
+            f"Rollout-finished signal for model instance {model_instance_id} "
+            f"timed out after {timeout_s}s; another rank of the instance is "
+            f"not participating in the broadcast and has likely already "
+            f"exited."
+        ) from e
 
 
 async def wait_for_rollout_finished(
@@ -336,10 +353,11 @@ async def wait_for_rollout_finished(
 ) -> None:
     """Non-entry side: wait for the entry's rollout-finished signal.
 
-    No timeout, since a step's rollout has no reliable upper bound; a
-    failing entry surfaces through Ray. Watching this rank's own sglang
-    subprocess reports a local server death within seconds, which the
-    entry would only see later as a stuck collective.
+    No timeout on the wait itself, since a step's rollout has no reliable
+    upper bound; a failing entry sends the signal from its ``finally``
+    (or surfaces through Ray). Watching this rank's own sglang subprocess
+    reports a local server death within seconds, which the entry would
+    only see later as a stuck collective.
     """
     _, _, model_instance_id = _instance_comm_group(worker, placement)
 

@@ -1,41 +1,7 @@
-# Search-R1 (GRPO) training on GLM-4.7-Flash via the AgenticTokenizer,
-# on a 2-node cluster using the sglang server rollout backend with one
-# model instance spanning both nodes.
-#
-# Data format: GLM needs message-list samples ({"messages": [system, user]})
-# and data.apply_chat_template: True -- the HF `RLinf/Search-R1-Data` release
-# is pre-rendered with the Qwen chat template and cannot be used as-is.
-#
-# Layout in this example (2 nodes, 8 GPUs each, homogeneous):
-#   - actor (megatron) + rollout (sglang server) + reward are collocated on
-#     hardware ranks 0-15: global hardware ranks 0-7 are node 0, 8-15 are
-#     node 1.
-#   - the rollout model instance spans both nodes: tp=16 ranks are split as
-#     8 on node 0 + 8 on node 1, with dp attention (dp=4, attention tp=4)
-#     and EP=16. Requires rollout.sglang.backend_type: server.
-#     Every node must carry the same rollout GPU share, and tp*pp (16) must
-#     be divisible by it (8); with sglang dp_size > 1 across nodes, dp
-#     attention (enable_dp_attention: true) is required.
-#   - actor  (megatron): TP=4 (20 attn heads / 4 = 5), EP=8, ETP=1, DP=4
-#     (the EP group stays within one node; MoE all-to-all never crosses
-#     nodes)
-#   - adjust tp / dp / ep and component_placement the same way for other
-#     cluster sizes, under the same constraints.
-#
-# Cluster prerequisites (on every node, BEFORE `ray start`):
-#   - RLinf multi-node setup requires a unique RLINF_NODE_RANK per node,
-#     0 on the head.
-#   - Head node: ray start --head --port=6379 --node-ip-address=<head_ip>
-#     Worker node: ray start --address=<head_ip>:6379
-#   - Launch the training entry script from any node of the cluster:
-#     bash examples/agent/searchr1/run_train.sh train_glm4.7_flash_2node_server
-#   - The search tool worker runs on node 0 (the entry script pins it
-#     there), so the retrieval server at tools.search.server_addr only
-#     needs to be reachable from node 0.
-#   - If NCCL stalls on cross-node transfers over RoCE/IB, make sure the GPUs
-#     on each side use NICs in the same subnet (e.g. restrict NCCL_IB_HCA).
-#     With full 8-GPU nodes and matching local GPU indices on both sides, no
-#     NCCL_IB_HCA setting is needed.
+# Search-R1 (GRPO) training on GLM-4.7-Flash on two 8-GPU nodes, with one
+# sglang server rollout instance (tp=16) spanning both nodes.
+# Cluster setup, launch command and layout constraints: see "Multi-Node
+# Training" in docs/source-en/rst_source/examples/agentic/searchr1/glm4.7_flash.rst.
 
 defaults:
   - override hydra/job_logging: stdout
@@ -181,7 +147,7 @@ rollout:
 
   rollout_backend: sglang       # here choose which backend to rollout,support [sglang, vllm]
   sglang:
-    backend_type: server        # cross-node model instances require the server backend; `engine` (default) keeps everything on one node
+    backend_type: server        # cross-node instances require the server backend
     attention_backend: triton   # [flashinfer, triton] for more, see sglang's doc
     decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
     use_torch_compile: False    # enable torch_compile in SGLang for rollout.
@@ -205,7 +171,7 @@ rollout:
     max_num_batched_tokens: null # the maximum number of tokens to be batched together in vllm. If set to null, vllm will use its default value.
     torch_profiler_dir: null    # if not null, vllm will enable torch profiler and save the result to the specified directory.
 
-  tensor_parallel_size: 16  # one cross-node instance: 8 ranks on each node. tp*pp (16) must be divisible by the per-node GPU share (8).
+  tensor_parallel_size: 16  # one cross-node instance: 8 ranks on each node
   pipeline_parallel_size: 1
 
   validate_weight_first_sync: True # validate the weight norm between load model and first sync.

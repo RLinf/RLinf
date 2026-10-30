@@ -880,6 +880,33 @@ class TestRolloutModelInstanceLayout:
         ):
             ModelParallelComponentPlacement(config, cluster)
 
+    def test_cross_node_dp_without_dp_attention_rejected(self):
+        # sglang rejects a multi-node instance with dp_size>1 but DP
+        # attention disabled only deep inside server startup; placement
+        # catches it up front.
+        config = self._make_config(
+            {"actor,rollout,reward": "0-7"},
+            rollout_tp=8,
+            sglang={"backend_type": "server", "dp_size": 2},
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        with pytest.raises(AssertionError, match="require DP attention"):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_cross_node_dp_with_dp_attention_ok(self):
+        config = self._make_config(
+            {"actor,rollout,reward": "0-7"},
+            rollout_tp=8,
+            sglang={
+                "backend_type": "server",
+                "dp_size": 2,
+                "enable_dp_attention": True,
+            },
+        )
+        cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=4)
+        placement = ModelParallelComponentPlacement(config, cluster)
+        assert placement.rollout_nnodes_per_model_instance == 2
+
     def test_single_node_degenerate_equivalence(self):
         config = self._make_config({"actor,rollout,reward": "0-7"}, rollout_tp=4)
         cluster = create_fake_cluster(num_nodes=1, accelerators_per_node=8)
@@ -1012,6 +1039,19 @@ class TestRolloutModelInstanceLayout:
         cluster = create_fake_cluster(num_nodes=2, accelerators_per_node=6)
 
         with pytest.raises(AssertionError, match="divisible by the per-node GPU share"):
+            ModelParallelComponentPlacement(config, cluster)
+
+    def test_cross_node_total_gpu_count_not_divisible_raises(self):
+        # 3 nodes x 8 GPUs with rollout 0-23 and tp*pp=16: equal shares of
+        # 8 are legal, but the total 24 is not a multiple of 16, so some
+        # instance would end up with a partial GPU set.
+        config = self._make_config({"actor,rollout,reward": "0-23"}, rollout_tp=16)
+        cluster = create_fake_cluster(num_nodes=3, accelerators_per_node=8)
+
+        with pytest.raises(
+            AssertionError,
+            match="Rollout GPU count \\(24\\).*tp\\*pp \\(16\\).*\\[8, 8, 8\\]",
+        ):
             ModelParallelComponentPlacement(config, cluster)
 
     def test_unequal_node_share_single_node_instances_ok(self):

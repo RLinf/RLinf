@@ -147,6 +147,13 @@ Cross-node rollout instances have these requirements:
 - With SGLang `dp_size` greater than 1 across nodes, DP attention
   (`enable_dp_attention: True`) is required.
 
+In this example the rollout instance enables DP attention (`dp_size: 4`, so the
+attention tensor-parallel size is 4) and expert parallelism of 16; the actor uses
+tensor parallel 4, expert parallel 8, and data parallel 4, with the expert-parallel
+group kept within one node so MoE all-to-all never crosses nodes. Scale tp / dp /
+ep and `component_placement` the same way for other cluster sizes, under the same
+constraints.
+
 If NCCL stalls on cross-node transfers over RoCE/IB, make sure the GPUs on both
 nodes use NICs in the same subnet, for example by restricting `NCCL_IB_HCA`.
 Two full 8-GPU nodes with matching local GPU indices need no such setting.

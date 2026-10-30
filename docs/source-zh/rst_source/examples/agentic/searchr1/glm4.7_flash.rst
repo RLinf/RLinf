@@ -109,7 +109,7 @@ HuggingFace 上发布的 `RLinf/Search-R1-Data` 是按 Qwen 的 chat template �
 `examples/agent/searchr1/config/train_glm4.7_flash_2node_server.yaml` 在两台 8 卡
 机器上运行同样的训练配置，一个 SGLang 模型实例（张量并行 16，每台机器 8 卡）跨越
 两台机器。按 :doc:`多机训练指南 </rst_source/guides/multi_node>` 搭建 Ray 集群：
-在 `ray start` 之前，每台机器设置互不相同的 `RLINF_NODE_RANK`（head 节点为 0），并
+在 `ray start` 之前，每台机器设置互不相同的 `RLINF_NODE_RANK`\ （head 节点为 0），并
 激活 RLinf 环境，使 Ray 拉起的进程也能在 `PATH` 中找到其中的工具。然后在集群中任一
 节点上启动训练：
 
@@ -126,6 +126,10 @@ HuggingFace 上发布的 `RLinf/Search-R1-Data` 是按 Qwen 的 chat template �
 - 每台机器承载相同数量的 rollout 卡，且 tp×pp 能被单机卡数整除（此处为 16 和 8）。
 - SGLang 的 `dp_size` 大于 1 且跨机时，必须开启 DP attention
   （`enable_dp_attention: True`）。
+
+本样例的 rollout 实例开启了 DP attention（`dp_size: 4`，即 attention 张量并行为 4）
+和 16 路 EP；actor 使用 TP4、EP8、DP4，EP 组限定在单机内，MoE 的 all-to-all 不跨机。
+其他规模的集群按同样的约束调整 tp / dp / ep 与 `component_placement`。
 
 如果 NCCL 跨机传输（RoCE/IB）卡住，请确认两台机器上的 GPU 使用同一子网的网卡，
 例如限定 `NCCL_IB_HCA`。两台机器都用满 8 卡、本地卡号一致时无需此设置。

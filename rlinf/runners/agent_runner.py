@@ -110,6 +110,13 @@ class AgentRunner(ReasoningRunner):
         if self.recompute_logprobs:
             self.inference_channel = Channel.create("Inference", local=True)
 
+    def _stop_rollouts(self):
+        """Stop the main and solid rollout engines after training finishes."""
+        super()._stop_rollouts()
+        for solid_rollout in self.solid_rollouts.values():
+            if hasattr(solid_rollout, "stop"):
+                solid_rollout.stop().wait()
+
     def init_rollout_workers(self):
         """init rollout workers, tool workers and agent loop worker."""
         rollout_handles = [self.rollout.init_worker()]

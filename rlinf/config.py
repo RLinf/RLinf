@@ -295,15 +295,6 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"backend_type=server; the server backend is only implemented for "
             f"the default serving worker (leave serving_mode unset)."
         )
-        # Pre-flight sglang's own multi-node constraint (server_args) so the
-        # error is readable at config time instead of deep inside server startup.
-        nnodes = cfg.get("nnodes", 1)
-        dp_size = cfg.get("dp_size", 1)
-        enable_dp_attention = cfg.get("enable_dp_attention", False)
-        assert not (nnodes > 1 and dp_size > 1 and not enable_dp_attention), (
-            "sglang multi-node rollout (nnodes>1) with dp_size>1 requires "
-            "enable_dp_attention=true (sglang server_args constraint)."
-        )
         return cfg
 
     def validate_vllm_cfg(cfg):

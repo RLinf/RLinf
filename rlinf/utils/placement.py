@@ -116,7 +116,9 @@ def _derive_rollout_node_layout(
        each node simply hosts whole instances.
     2. Otherwise the layout is treated as cross-node: every node must carry
        an EQUAL share, and tp*pp must be divisible by that share because
-       sglang splits an instance's ranks evenly across its nodes.
+       sglang splits an instance's ranks evenly across its nodes. The total
+       rollout GPU count must then be divisible by tp*pp, so every model
+       instance gets a full set of GPUs.
     """
     shares = [len(group) for group in rollout_gpu_groups]
     assert shares, "Rollout GPUs must cover at least one accelerator."
@@ -145,6 +147,12 @@ def _derive_rollout_node_layout(
         f"span nodes, or make each node's share a whole multiple of tp*pp "
         f"so model instances stay within one node."
     )
+    total_rollout_gpus = sum(shares)
+    assert total_rollout_gpus % tp_pp == 0, (
+        f"Rollout GPU count ({total_rollout_gpus}) must be divisible by "
+        f"tp*pp ({tp_pp}) so every model instance gets a full set of GPUs; "
+        f"per-node shares: {shares}."
+    )
     return _RolloutNodeLayout(
         cross_node=True,
         gpus_per_node=share,
@@ -172,11 +180,13 @@ def rollout_backend_supports_cross_node_instances(rollout_cfg: DictConfig) -> bo
 def _assert_cross_node_backend_supported(
     rollout_cfg: DictConfig, layout: _RolloutNodeLayout
 ) -> None:
-    """Readable startup-time rejection of cross-node-incapable backends.
+    """Startup-time checks for cross-node rollout model instances.
 
-    Without this, e.g. the sglang Engine backend or vLLM would start every
+    Without these, e.g. the sglang Engine backend or vLLM would start every
     rollout process with tp*pp GPUs that a single node cannot see and fail
-    deep inside the backend with a cryptic error.
+    deep inside the backend with a cryptic error; and sglang itself rejects
+    a multi-node instance with dp_size>1 but DP attention disabled only
+    deep inside server startup.
     """
     if layout.nnodes_per_model_instance <= 1:
         return
@@ -190,6 +200,17 @@ def _assert_cross_node_backend_supported(
         f"(configured: rollout_backend={backend!r}"
         + (f", sglang.backend_type={backend_type!r}" if backend == "sglang" else "")
         + ")."
+    )
+    dp_size = sglang_cfg.get("dp_size", 1) if sglang_cfg else 1
+    enable_dp_attention = (
+        sglang_cfg.get("enable_dp_attention", False) if sglang_cfg else False
+    )
+    assert dp_size == 1 or enable_dp_attention, (
+        f"Cross-node rollout model instances "
+        f"(nnodes_per_model_instance={layout.nnodes_per_model_instance}) with "
+        f"dp_size={dp_size} require DP attention; set "
+        f"rollout.sglang.enable_dp_attention: True (sglang server_args "
+        f"constraint)."
     )
 
 
