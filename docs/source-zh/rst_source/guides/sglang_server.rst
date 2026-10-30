@@ -49,7 +49,7 @@ SGLang Server 与 Router
 组件名（``rollout`` 这个 key）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``cluster.component_placement`` 下的 key（上面的 ``rollout``）**只是一个标签**，
+``cluster.component_placement`` 下的 key（上面的 ``rollout``）\ **只是一个标签**，
 按 runner 的习惯起名即可。Launcher 不会按固定名字去查找这个 key；**驱动脚本**
 负责挑选名字，并在三处使用 *同一字符串*：
 
@@ -66,7 +66,7 @@ SGLang Server 与 Router
    from omegaconf import DictConfig
 
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
    placement = ComponentPlacement(cfg, cluster)
 
@@ -152,7 +152,7 @@ SGLang Server 与 Router
    仓库已在
    ``examples/embodiment/config/hybrid_engines/sglang_router_server.yaml``
    中提供了一份默认配置。可通过 Hydra 的 ``defaults`` 列表引用它，然后只覆盖
-   你需要改动的字段——通常是 ``model_path``（以及 ``server`` / ``router`` 里的
+   你需要改动的字段——通常是 ``model_path``\ （以及 ``server`` / ``router`` 里的
    个别项）：
 
    .. code-block:: yaml
@@ -182,7 +182,7 @@ server 的 ``host``/``port``/``dist_init_addr``，以及 router 的 ``port``，�
 Launcher 如何使用这份配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:func:`rlinf.workers.rollout.sglang_server.launch_sglang_router_and_server`
+:func:`rlinf.workers.rollout.sglang.launch_sglang_router_and_server`
 顺序做了以下事情：
 
 1. 将扁平的 ``rollout_hardware_ranks`` 重新打包成
@@ -211,7 +211,7 @@ Launcher 如何使用这份配置
 
    from rlinf.scheduler import Cluster
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
 
    @hydra.main(version_base="1.1", config_path="config", config_name="my_config")
@@ -303,7 +303,7 @@ group；launcher 会原样把列表交给 placement strategy。
 .. code-block:: python
 
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
    placement = ComponentPlacement(cfg, cluster)
    component_name = "rollout"

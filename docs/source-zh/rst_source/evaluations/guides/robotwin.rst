@@ -15,7 +15,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    bash requirements/install.sh embodied --model openvla-oft --env robotwin
    source .venv/bin/activate
 
-支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``、``lingbotvlav2``，安装时替换 ``--model`` 参数即可。
 
 在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，
 详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
@@ -35,7 +35,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。
 下载完成后，请将 ``env.eval.assets_path``
-设置为 ``/path/to/RoboTwin``（即 ``assets/`` 的上一级目录）。
+设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
 **环境变量**
 
@@ -81,10 +81,13 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
      - π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
-     - LingBotVLA
+     - LingbotVLA 1.0
    * - ``robotwin_click_bell_lingbotvla_eval.yaml``
      - click_bell
-     - LingBotVLA
+     - LingbotVLA 1.0
+   * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
+     - click_bell
+     - LingbotVLA 2.0
 
 若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
@@ -200,11 +203,18 @@ OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ，demo_clean 协议）
 - ``rollout.model.openpi.config_name``：``pi0_aloha_robotwin`` 或 ``pi05_aloha_robotwin``
 - 建议 ``env.enable_offload: True``、``rollout.enable_offload: True`` 以降低显存占用
 
-LingBotVLA
+LingbotVLA 1.0
 
 - 除 ``rollout.model.model_path`` 外，还须配置 ``tokenizer_path`` 与 ``rollout.model.lingbotvla.config_path``
 - ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400`` （``click_bell``、``place_shoe`` 等）
 - ``use_custom_reward: False`` （须关闭自定义奖励）
+
+LingbotVLA 2.0
+
+- 填写 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中的路径，评测配置与训练共用该文件
+- ``rollout.model.precision: bf16``；fp32 权重仅用于 PPO actor
+- ``task_config.embodiment: [aloha-agilex]`` 且 ``task_config.camera.collect_wrist_camera: true``；模型需要左右两个腕部相机
+- ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400``
 
 覆盖完整测试集
 ~~~~~~~~~~~~~~

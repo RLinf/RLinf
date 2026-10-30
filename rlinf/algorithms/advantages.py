@@ -330,8 +330,9 @@ def compute_reinpp_advantages(
     # first group baseline for reinforce++ baseline
     if use_reinpp_baseline:
         grouped_rewards = rewards.view(-1, group_size)  # [num_prompt, group_size]
-        grouped_rewards -= grouped_rewards.mean(dim=1, keepdims=True)
-        rewards = grouped_rewards.view(-1)  # [B]
+        # Subtract out of place: rewards can be a view of the caller's batch.
+        centered = grouped_rewards - grouped_rewards.mean(dim=1, keepdim=True)
+        rewards = centered.view_as(rewards)  # [1, B]
 
     # build the reward matrix
     r_matrix = torch.zeros_like(loss_mask).float()  # [L, B]

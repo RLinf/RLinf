@@ -70,7 +70,7 @@ the YAML key and this single Python constant:
    from omegaconf import DictConfig
 
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
    placement = ComponentPlacement(cfg, cluster)
 
@@ -192,7 +192,7 @@ node IP back to the router.
 How the launcher uses them
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:func:`rlinf.workers.rollout.sglang_server.launch_sglang_router_and_server`
+:func:`rlinf.workers.rollout.sglang.launch_sglang_router_and_server`
 does the following, in order:
 
 1. Repacks the flat list of ``rollout_hardware_ranks`` into a
@@ -225,7 +225,7 @@ config above:
 
    from rlinf.scheduler import Cluster
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
 
    @hydra.main(version_base="1.1", config_path="config", config_name="my_config")
@@ -324,7 +324,7 @@ path and hand a strategy directly. The strategy must already encode
 .. code-block:: python
 
    from rlinf.scheduler.placement import ComponentPlacement
-   from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
+   from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
    placement = ComponentPlacement(cfg, cluster)
    component_name = "rollout"
