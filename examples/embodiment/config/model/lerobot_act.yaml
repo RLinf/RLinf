@@ -1,0 +1,8 @@
+model_type: "lerobot_act"
+
+model_path: "" # LeRobot ACT checkpoint: local dir or Hugging Face repo id
+precision: "32"
+num_action_chunks: 100 # executed actions per policy call, at most the checkpoint's chunk_size
+action_dim: 14
+
+is_lora: False
