@@ -39,10 +39,12 @@ LeKiwi 移动底盘配置与控制
 .. code-block:: bash
 
    # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env lekiwi
+   bash requirements/install.sh embodied --env lekiwi --install-rlinf
+   # On a computer without a CUDA GPU, such as the robot's own Raspberry Pi,
+   # add --no-flash-attn as well.
    source .venv/bin/activate
 
-安装脚本包含 LeRobot 及 Feetech 支持和 OpenCV，并会安装下文使用的三个 ``rlinf-lekiwi-*`` 命令，因此激活环境后即可完成全部检查。平台要求见 :doc:`安装 </rst_source/start/installation>`。
+安装脚本包含 LeRobot 及 Feetech 支持和 OpenCV。``--install-rlinf`` 会安装 RLinf 本身，下文使用的三个 ``rlinf-lekiwi-*`` 命令即由它提供；不加该参数时只安装依赖。``--no-flash-attn`` 会跳过需要 CUDA 才能构建的包。平台要求见 :doc:`安装 </rst_source/start/installation>`。
 
 找到舵机串口
 ------------

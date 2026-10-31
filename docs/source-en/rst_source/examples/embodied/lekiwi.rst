@@ -57,12 +57,16 @@ Install the robot dependencies from the repository root:
 .. code-block:: bash
 
    # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env lekiwi
+   bash requirements/install.sh embodied --env lekiwi --install-rlinf
+   # On a computer without a CUDA GPU, such as the robot's own Raspberry Pi,
+   # add --no-flash-attn as well.
    source .venv/bin/activate
 
-The installer includes LeRobot with Feetech support and OpenCV. It also
-installs the three ``rlinf-lekiwi-*`` commands used below, so an activated
-environment is all you need for the checks. Platform prerequisites are in
+The installer includes LeRobot with Feetech support and OpenCV.
+``--install-rlinf`` installs RLinf itself, which is what provides the three
+``rlinf-lekiwi-*`` commands used below; without it the installer installs only
+dependencies. ``--no-flash-attn`` skips a package that needs CUDA to build.
+Platform prerequisites are in
 :doc:`Installation </rst_source/start/installation>`.
 
 Find the servo port
