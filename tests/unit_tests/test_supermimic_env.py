@@ -374,6 +374,23 @@ def test_level_kinematics_match_the_body_loop():
     assert torch.allclose(left.grad, right.grad, atol=1e-9, rtol=1e-9)
 
 
+@needs_mjlab
+def test_cached_reference_kinematics_match_the_online_walk():
+    clip = default_state(6, "cpu", torch.float32)
+    for i in range(6):
+        clip[i, 0] = float(i)
+        clip[i, 3:7] = torch.tensor([1.0, 0.0, 0.0, 0.0])
+    library = MotionLibrary([clip])
+    motion_id = torch.tensor([0, 0, 0])
+    time = torch.tensor([0, 3, 9])
+    cached = library.kinematics_at(motion_id, time)
+    online = differentiable_fk(library.state_at(motion_id, time))
+    for got, ref in zip(cached, online, strict=True):
+        assert torch.allclose(got, ref, atol=1e-5, rtol=1e-5)
+    again = library.kinematics_at(motion_id, time)
+    assert torch.equal(again[0], cached[0])
+
+
 def test_obs99_relative_heading_is_not_noised_and_is_differentiable():
     state = default_state(1, "cpu", torch.float32)
     ref = rotvec_to_quat(torch.tensor([[0.0, 0.0, 0.4]]))

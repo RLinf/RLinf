@@ -42,6 +42,18 @@ from rlinf.envs.sim.g1_mimic.features import (
 )
 
 
+def _batch_rows(values: torch.Tensor) -> int:
+    """Rows of ``values`` once the leading dimensions are flattened."""
+    if values.numel() == 0:
+        return 0
+    return int(values.reshape(-1, values.shape[-1]).shape[0])
+
+
+def _as_count(value: torch.Tensor, host: float | None) -> float:
+    """Python count. ``host`` avoids reading a CUDA scalar back to the CPU."""
+    return float(value) if host is None else host
+
+
 def _chan_merge(
     n_a: torch.Tensor,
     mean_a: torch.Tensor,
@@ -49,13 +61,15 @@ def _chan_merge(
     n_b: torch.Tensor,
     mean_b: torch.Tensor,
     var_b: torch.Tensor,
+    host_a: float | None = None,
+    host_b: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Merge two population-variance batches. A non-positive count is skipped."""
     n_a = n_a.reshape(())
     n_b = n_b.reshape(())
-    if float(n_b) <= 0.0:
+    if _as_count(n_b, host_b) <= 0.0:
         return n_a, mean_a, var_a
-    if float(n_a) <= 0.0:
+    if _as_count(n_a, host_a) <= 0.0:
         return n_b, mean_b, var_b
     total = n_a + n_b
     delta = mean_b - mean_a
@@ -124,6 +138,15 @@ class RunningNorm(nn.Module):
         self.register_buffer("count", torch.zeros(()))
         self.max_count = float(max_count)
         self.eps = float(eps)
+        # Mirror of ``count`` kept on the CPU. The buffer is the checkpoint
+        # value; this copy is what the freeze check reads, so a hot update
+        # does not wait for the GPU to finish the previous kernel.
+        self._count_cpu = 0.0
+
+        def _restore_cpu_count(module, _incompatible) -> None:
+            module._count_cpu = float(module.count.detach().cpu())
+
+        self.register_load_state_dict_post_hook(_restore_cpu_count)
 
     def batch_stats(
         self, values: torch.Tensor
@@ -142,34 +165,61 @@ class RunningNorm(nn.Module):
             flat.var(0, unbiased=False),
         )
 
+    def frozen(self) -> bool:
+        """Whether ``max_count`` samples have already been folded."""
+        return self._count_cpu >= self.max_count
+
     @torch.no_grad()
     def update(self, values: torch.Tensor) -> None:
         """Fold one local batch into the running statistics."""
+        if self.frozen():
+            return
+        rows = _batch_rows(values)
+        if rows == 0:
+            return
         count, mean, var = self.batch_stats(values)
-        self.update_from_stats(count, mean, var)
+        self.update_from_stats(count, mean, var, host_count=float(rows))
 
     @torch.no_grad()
     def update_from_stats(
-        self, count: torch.Tensor, mean: torch.Tensor, var: torch.Tensor
+        self,
+        count: torch.Tensor,
+        mean: torch.Tensor,
+        var: torch.Tensor,
+        host_count: float | None = None,
     ) -> None:
         """Fold one batch given its count, mean, and population variance.
 
         A count of 0 leaves the buffers unchanged. At ``max_count`` the fold
-        is skipped, as in ``update``.
+        is skipped, as in ``update``. ``host_count`` is that count already
+        known on the CPU; without it the count tensor is read back once.
         """
-        if float(self.count) >= self.max_count:
+        if self.frozen():
+            return
+        if host_count is None:
+            host_count = float(count)
+        if host_count <= 0.0:
             return
         count = count.detach().to(device=self.count.device, dtype=self.count.dtype)
-        if float(count) <= 0.0:
-            return
         mean = mean.detach().to(device=self.mean.device, dtype=self.mean.dtype)
         var = var.detach().to(device=self.var.device, dtype=self.var.dtype)
         total, new_mean, new_var = _chan_merge(
-            self.count, self.mean, self.var, count, mean, var
+            self.count,
+            self.mean,
+            self.var,
+            count,
+            mean,
+            var,
+            host_a=self._count_cpu,
+            host_b=host_count,
         )
         self.mean.copy_(new_mean)
         self.var.copy_(new_var)
         self.count.copy_(total.reshape(()))
+        added = torch.tensor(self._count_cpu, dtype=self.count.dtype) + torch.tensor(
+            host_count, dtype=self.count.dtype
+        )
+        self._count_cpu = float(added)
 
     def std(self) -> torch.Tensor:
         """Standard deviation including ``eps``."""

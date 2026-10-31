@@ -57,8 +57,8 @@ from rlinf.envs.sim.g1_mimic.reward import (
     analytic_failure_prob,
     analytic_reward,
     compose_goal,
+    differentiable_fk,
     failure_signals,
-    forward_kinematics_pair,
     motion_critic_input,
     termination_head_input,
 )
@@ -938,18 +938,31 @@ class SuperMimicTrainer:
             )
         return name, self._imagine_scan_fn
 
+    def _body_fk(self, state, motion_id, motion_time):
+        """Predicted FK with grad, and cached FK of the reference frame."""
+        return differentiable_fk(state), self.motion.kinematics_at(motion_id, motion_time)
+
     def _prefetch_rollout(self, motion_id: torch.Tensor, time0: torch.Tensor):
-        """Reference states and goals for times ``t .. t+H``. Goals ignore state."""
+        """Reference states, goals and body poses for times ``t .. t+H``.
+
+        Goals ignore the predicted state. One batched query covers every
+        future frame; the Python loop over the horizon is not repeated.
+        """
         steps = torch.arange(self.H + 1, device=time0.device)
         times = time0.unsqueeze(1) + steps.to(dtype=time0.dtype)
         ids = motion_id.unsqueeze(1).expand(-1, self.H + 1)
-        flat = self.motion.state_at(ids.reshape(-1), times.reshape(-1))
+        flat_id = ids.reshape(-1)
+        flat_time = times.reshape(-1)
+        flat = self.motion.state_at(flat_id, flat_time)
         refs = flat.view(motion_id.shape[0], self.H + 1, flat.shape[-1])
-        goals = torch.stack(
-            [self._goal(motion_id, time0 + t, None) for t in range(self.H + 1)],
-            dim=1,
+        goal = self._goal(flat_id, flat_time, None)
+        goals = goal.reshape(motion_id.shape[0], self.H + 1, goal.shape[-1])
+        kin = self.motion.kinematics_at(flat_id, flat_time)
+        kin = tuple(
+            part.reshape(motion_id.shape[0], self.H + 1, *part.shape[1:]).contiguous()
+            for part in kin
         )
-        return refs, goals
+        return refs, goals, kin
 
     def _imagine_motion_scanned(
         self, starts: dict[str, torch.Tensor]
@@ -957,7 +970,7 @@ class SuperMimicTrainer:
         """Same rollout as the open loop, one compiled scan on a large CUDA batch."""
         motion_id = starts["motion_id"]
         time0 = starts["motion_time"]
-        refs, goals = self._prefetch_rollout(motion_id, time0)
+        refs, goals, ref_kin = self._prefetch_rollout(motion_id, time0)
         name, fn = self._imagination_runner()
         states, goals_t, features, rewards, d_hat, objective = run_compiled(
             name,
@@ -973,6 +986,7 @@ class SuperMimicTrainer:
             starts["history"],
             refs,
             goals,
+            *ref_kin,
             self.q0,
             self.joint_low,
             self.joint_high,
@@ -1011,7 +1025,7 @@ class SuperMimicTrainer:
                 ref, state_fk, ref_fk = carried_fk
             else:
                 ref = self.motion.state_at(motion_id, time0 + t)
-                state_fk, ref_fk = forward_kinematics_pair(state, ref)
+                state_fk, ref_fk = self._body_fk(state, motion_id, time0 + t)
             goal = self._goal(motion_id, time0 + t, state)
             states.append(state)
             goals.append(goal)
@@ -1034,7 +1048,7 @@ class SuperMimicTrainer:
                 state, self.models.dynamics(state, action, xi), self.residual_frame
             )
             ref_next = self.motion.state_at(motion_id, time0 + t + 1)
-            state_fk, ref_fk = forward_kinematics_pair(state, ref_next)
+            state_fk, ref_fk = self._body_fk(state, motion_id, time0 + t + 1)
             carried_state = state
             carried_fk = (ref_next, state_fk, ref_fk)
             reward_pack = analytic_reward(
@@ -1067,7 +1081,7 @@ class SuperMimicTrainer:
             ref_h, state_fk, ref_fk = carried_fk
         else:
             ref_h = self.motion.state_at(motion_id, time0 + self.H)
-            state_fk, ref_fk = forward_kinematics_pair(state, ref_h)
+            state_fk, ref_fk = self._body_fk(state, motion_id, time0 + self.H)
         goal_h = self._goal(motion_id, time0 + self.H, state)
         states.append(state)
         goals.append(goal_h)

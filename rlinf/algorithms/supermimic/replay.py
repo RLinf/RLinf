@@ -29,6 +29,94 @@ from rlinf.envs.sim.g1_mimic.constants import (
 from rlinf.envs.sim.g1_mimic.obs import analytic_obs
 
 
+class _PackedIndex:
+    """Valid ``(env, physical)`` slots, revised one write at a time.
+
+    Sampling draws uniformly from this list. ``add`` inserts and deletes the
+    few slots a new frame can change, instead of scanning every candidate.
+    """
+
+    def __init__(self, num_envs: int, capacity: int, device: torch.device):
+        self.device = device
+        self.ok = torch.zeros(num_envs, capacity, dtype=torch.bool, device=device)
+        self.at = torch.full((num_envs, capacity), -1, dtype=torch.long, device=device)
+        self.env = torch.empty(0, dtype=torch.long, device=device)
+        self.phys = torch.empty(0, dtype=torch.long, device=device)
+        self.count = 0
+
+    def fill(self, env_i: torch.Tensor, phys_i: torch.Tensor) -> None:
+        """Replace the list with one full scan."""
+        self.count = int(env_i.shape[0])
+        self.env = env_i.detach().to(device=self.device, dtype=torch.long).clone()
+        self.phys = phys_i.detach().to(device=self.device, dtype=torch.long).clone()
+        self.ok.zero_()
+        self.at.fill_(-1)
+        if self.count == 0:
+            return
+        slots = torch.arange(self.count, device=self.device)
+        self.ok[self.env, self.phys] = True
+        self.at[self.env, self.phys] = slots
+
+    def entries(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Packed env ids and physical slots. Invalidated by the next edit."""
+        return self.env[: self.count], self.phys[: self.count]
+
+    def remove(self, env: torch.Tensor, phys: torch.Tensor) -> None:
+        """Drop slots. Missing slots are ignored."""
+        if env.numel() == 0:
+            return
+        pos = torch.unique(self.at[env, phys])
+        pos = pos[pos >= 0]
+        self.ok[env, phys] = False
+        self.at[env, phys] = -1
+        if pos.numel() == 0:
+            return
+        removed = int(pos.shape[0])
+        n = self.count
+        tail = torch.arange(n - removed, n, device=self.device)
+        sources = tail[~torch.isin(tail, pos)]
+        dests = pos[pos < n - removed]
+        if int(sources.shape[0]) != int(dests.shape[0]):
+            raise RuntimeError(
+                "replay index remove lost a slot "
+                f"({int(sources.shape[0])} sources, {int(dests.shape[0])} holes)"
+            )
+        if dests.numel():
+            moved_env = self.env[sources]
+            moved_phys = self.phys[sources]
+            self.env[dests] = moved_env
+            self.phys[dests] = moved_phys
+            self.at[moved_env, moved_phys] = dests
+        self.count = n - removed
+
+    def insert(self, env: torch.Tensor, phys: torch.Tensor) -> None:
+        """Append slots that are not already present."""
+        if env.numel() == 0:
+            return
+        fresh = ~self.ok[env, phys]
+        env = env[fresh]
+        phys = phys[fresh]
+        added = int(env.shape[0])
+        if added == 0:
+            return
+        need = self.count + added
+        if self.env.shape[0] < need:
+            new_cap = max(need, max(self.env.shape[0] * 2, 1))
+            env_buf = torch.empty(new_cap, dtype=torch.long, device=self.device)
+            phys_buf = torch.empty(new_cap, dtype=torch.long, device=self.device)
+            if self.count:
+                env_buf[: self.count] = self.env[: self.count]
+                phys_buf[: self.count] = self.phys[: self.count]
+            self.env = env_buf
+            self.phys = phys_buf
+        slots = torch.arange(self.count, self.count + added, device=self.device)
+        self.env[slots] = env
+        self.phys[slots] = phys
+        self.at[env, phys] = slots
+        self.ok[env, phys] = True
+        self.count += added
+
+
 class SuperMimicReplay:
     """Stores transitions written *before* any reset of a finished env.
 
@@ -95,10 +183,11 @@ class SuperMimicReplay:
             num_envs, capacity, dtype=torch.long, device=device
         )
         self.next_episode_id = torch.zeros(num_envs, dtype=torch.long, device=device)
-        # Legal windows do not change until the next ``add``. One update
-        # draws many batches from the same buffer, so the scan is reused.
-        self._window_cache: tuple | None = None
-        self._start_cache: tuple | None = None
+        # Packed legal windows and imagination starts. The first query scans
+        # the ring once. Later writes revise only the slots that write touches.
+        self._windows: _PackedIndex | None = None
+        self._win_k: int | None = None
+        self._starts: _PackedIndex | None = None
 
     def add(
         self,
@@ -125,6 +214,7 @@ class SuperMimicReplay:
         observation; the remaining optional fields default to the motion task.
         """
         idx = self.cursor[env_ids]
+        count_before = self.count[env_ids].clone()
         if prev_action is None:
             prev_action = torch.zeros_like(action_policy)
         if obs_noisy is None:
@@ -164,8 +254,7 @@ class SuperMimicReplay:
         finished = end_kind != EPISODE_CONT
         if finished.any():
             self.next_episode_id[env_ids[finished]] += 1
-        self._window_cache = None
-        self._start_cache = None
+        self._revise_indexes(env_ids, idx, count_before)
 
     def _live_physical(self) -> torch.Tensor:
         """Physical index of each logical slot. Shape ``[num_envs, capacity]``."""
@@ -195,17 +284,98 @@ class SuperMimicReplay:
         return env_i, phys[env_i, logical_i]
 
     def _cached_windows(self, k: int) -> tuple[torch.Tensor, torch.Tensor]:
-        cached = self._window_cache
-        if cached is not None and cached[0] == k:
-            return cached[1], cached[2]
-        env_i, phys_i = self._window_env_phys(k)
-        self._window_cache = (k, env_i, phys_i)
-        return env_i, phys_i
+        if self._windows is None or self._win_k != k:
+            env_i, phys_i = self._window_env_phys(k)
+            self._windows = _PackedIndex(self.num_envs, self.capacity, self.device)
+            self._windows.fill(env_i, phys_i)
+            self._win_k = k
+        return self._windows.entries()
 
     def _cached_starts(self) -> tuple[torch.Tensor, torch.Tensor]:
-        if self._start_cache is None:
-            self._start_cache = self._consistent_starts()
-        return self._start_cache
+        if self._starts is None:
+            env_i, phys_i = self._consistent_starts()
+            self._starts = _PackedIndex(self.num_envs, self.capacity, self.device)
+            self._starts.fill(env_i, phys_i)
+        return self._starts.entries()
+
+    def _revise_indexes(
+        self, env_ids: torch.Tensor, written: torch.Tensor, count_before: torch.Tensor
+    ) -> None:
+        """Update packed indexes after ``written`` was stored for ``env_ids``."""
+        if env_ids.numel() == 0:
+            return
+        if self._windows is not None and self._win_k is not None:
+            self._revise_windows(env_ids, written, count_before, self._win_k)
+        if self._starts is not None:
+            self._revise_starts(env_ids, written, count_before)
+
+    def _revise_windows(
+        self,
+        env_ids: torch.Tensor,
+        written: torch.Tensor,
+        count_before: torch.Tensor,
+        k: int,
+    ) -> None:
+        # Overwriting the oldest frame drops only the window that started
+        # there. Every later window keeps its physical start. The new frame
+        # adds at most one window, ending on the slot just written.
+        full = count_before == self.capacity
+        assert self._windows is not None
+        self._windows.remove(env_ids[full], written[full])
+        start = torch.remainder(written - (k - 1), self.capacity)
+        live = self.count[env_ids] >= k
+        offsets = torch.arange(k, device=self.device)
+        pos = torch.remainder(start.unsqueeze(1) + offsets, self.capacity)
+        env = env_ids.unsqueeze(1).expand_as(pos)
+        episode = self.episode_id[env, pos]
+        moment = self.time_in_episode[env, pos]
+        same_ep = (episode == episode[:, :1]).all(dim=-1)
+        same_time = (moment == moment[:, :1] + offsets).all(dim=-1)
+        ok = live & same_ep & same_time
+        self._windows.insert(env_ids[ok], start[ok])
+
+    def _revise_starts(
+        self, env_ids: torch.Tensor, written: torch.Tensor, count_before: torch.Tensor
+    ) -> None:
+        full = count_before == self.capacity
+        if HISTORY_LEN > self.capacity:
+            self._starts = None
+            return
+        self._revise_start_group(env_ids[~full], written[~full], 1)
+        # Dropping the oldest frame changes the history check of the next
+        # HISTORY_LEN slots, including the slot that now holds the new frame.
+        self._revise_start_group(env_ids[full], written[full], HISTORY_LEN)
+
+    def _revise_start_group(
+        self, env: torch.Tensor, written: torch.Tensor, span: int
+    ) -> None:
+        if env.numel() == 0:
+            return
+        offsets = torch.arange(span, device=self.device)
+        phys = torch.remainder(written.unsqueeze(1) + offsets, self.capacity)
+        flat_env = env.unsqueeze(1).expand_as(phys).reshape(-1)
+        flat_phys = phys.reshape(-1)
+        ok = self._start_slot_ok(flat_env, flat_phys)
+        assert self._starts is not None
+        was = self._starts.ok[flat_env, flat_phys]
+        self._starts.remove(flat_env[was & ~ok], flat_phys[was & ~ok])
+        self._starts.insert(flat_env[ok & ~was], flat_phys[ok & ~was])
+
+    def _start_slot_ok(self, env: torch.Tensor, phys: torch.Tensor) -> torch.Tensor:
+        """Whether these live slots still have a consecutive in-buffer prefix."""
+        newest = torch.remainder(self.cursor[env] - 1, self.capacity)
+        dist = torch.remainder(newest - phys, self.capacity)
+        ok = dist < self.count[env]
+        moment = self.time_in_episode[env, phys]
+        episode = self.episode_id[env, phys]
+        for age in range(1, HISTORY_LEN):
+            prev = torch.remainder(phys - age, self.capacity)
+            need = moment >= age
+            match = (self.episode_id[env, prev] == episode) & (
+                self.time_in_episode[env, prev] == moment - age
+            )
+            ok = ok & (~need | match)
+        return ok
 
     def num_valid_windows(self, k: int) -> int:
         """Number of ``k``-step windows that stay inside one episode."""

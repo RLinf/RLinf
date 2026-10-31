@@ -473,6 +473,87 @@ def test_window_sampling_does_not_scan_candidates_in_python():
     assert again is not None and again["state"].shape[0] == 64
 
 
+def _sorted_slots(env, phys, capacity):
+    return torch.sort(env * capacity + phys).values
+
+
+def test_replay_index_stays_equal_to_a_full_scan():
+    """Writes revise the packed lists. The uniform set of slots stays the same."""
+    num_envs, capacity, k = 2, 12, 4
+    buf = SuperMimicReplay(num_envs, capacity, torch.device("cpu"))
+    env_ids = torch.arange(num_envs)
+    state = torch.zeros(num_envs, STATE_DIM)
+    action = torch.zeros(num_envs, ACTION_DIM)
+    ep_time = torch.zeros(num_envs, dtype=torch.long)
+    q0 = torch.zeros(ACTION_DIM)
+
+    def matches():
+        got_env, got_phys = buf._cached_windows(k)
+        exp_env, exp_phys = buf._window_env_phys(k)
+        assert torch.equal(
+            _sorted_slots(got_env, got_phys, capacity),
+            _sorted_slots(exp_env, exp_phys, capacity),
+        )
+        got_env, got_phys = buf._cached_starts()
+        exp_env, exp_phys = buf._consistent_starts()
+        assert torch.equal(
+            _sorted_slots(got_env, got_phys, capacity),
+            _sorted_slots(exp_env, exp_phys, capacity),
+        )
+
+    for step in range(20):
+        end = torch.full((num_envs,), EPISODE_CONT)
+        if step == 6:
+            end[0] = EPISODE_FAILURE
+        elif step == 14:
+            end[1] = EPISODE_FAILURE
+        targets = env_ids if step != 11 else env_ids[:1]
+        buf.add(
+            targets,
+            state[targets],
+            state[targets],
+            action[targets],
+            action[targets],
+            torch.zeros(targets.shape[0]),
+            end[targets],
+            torch.zeros(targets.shape[0], XI_DIM),
+            torch.zeros(targets.shape[0], dtype=torch.long),
+            ep_time[targets],
+            ep_time[targets],
+        )
+        ep_time[targets] = ep_time[targets] + 1
+        if step == 6:
+            ep_time[0] = 0
+        elif step == 14:
+            ep_time[1] = 0
+        if step == 8:
+            assert buf.num_valid_windows(k) > 0
+            assert buf.sample_starts(4, q0) is not None
+        if step >= 8:
+            matches()
+
+    def _forbid(*_args, **_kwargs):
+        raise AssertionError("a later write rescanned the ring")
+
+    buf._window_env_phys = _forbid
+    buf._consistent_starts = _forbid
+    buf.add(
+        env_ids,
+        state,
+        state,
+        action,
+        action,
+        torch.zeros(num_envs),
+        torch.full((num_envs,), EPISODE_CONT),
+        torch.zeros(num_envs, XI_DIM),
+        torch.zeros(num_envs, dtype=torch.long),
+        ep_time,
+        ep_time,
+    )
+    assert buf.sample_windows(k, 2) is not None
+    assert buf.sample_starts(2, q0) is not None
+
+
 def test_imagination_noise_does_not_stop_the_state_gradient():
     state = default_state(2, "cpu", torch.float32).requires_grad_(True)
     obs = analytic_obs(state, torch.zeros(2, ACTION_DIM), torch.zeros(2, 33))
@@ -798,6 +879,11 @@ def test_running_norm_matches_welford_and_then_freezes():
     assert float(norm.count) == 2
     norm.update(torch.zeros(0, 2))
     assert float(norm.count) == 2
+    assert norm._count_cpu == float(norm.count)
+    restored = RunningNorm(2, max_count=2, eps=1e-2)
+    restored.load_state_dict(norm.state_dict())
+    assert restored._count_cpu == float(restored.count)
+    assert torch.equal(restored.mean, frozen)
     one = RunningNorm(2)
     one.update(torch.tensor([[4.0, -1.0]]))
     assert torch.equal(one.mean, torch.tensor([4.0, -1.0]))

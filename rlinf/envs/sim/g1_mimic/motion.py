@@ -91,6 +91,10 @@ class MotionLibrary:
         self.offsets = torch.cumsum(self.lengths, dim=0) - self.lengths
         self.frames = torch.cat([c.float() for c in clips], dim=0)
         self._index_cache: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = {}
+        # Body position, rotation, linear and angular velocity of every frame.
+        # The reference clip does not change, so training gathers these instead
+        # of walking the kinematic tree again. Built on first use per device.
+        self._kin_cache: dict[torch.device, tuple[torch.Tensor, ...]] = {}
         # Source name per clip, for per-clip evaluation rows.
         self.clip_names = [f"clip_{i:03d}" for i in range(len(clips))]
         self.q0 = (
@@ -146,6 +150,63 @@ class MotionLibrary:
         if out.device != query_device:
             out = out.to(device=query_device)
         return out.squeeze(0) if squeezed else out
+
+    def _kinematics(
+        self, device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        cached = self._kin_cache.get(device)
+        if cached is None:
+            cached = self._build_kinematics(device)
+            self._kin_cache[device] = cached
+        return cached
+
+    def _build_kinematics(
+        self, device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
+
+        kin = g1_kinematics()
+        # The eager depth walk, not ``forward``. A 4096-row ``forward`` on
+        # CUDA would compile the tree, and the training scan inlines the
+        # walk itself, so that compile would never be reused.
+        walk = (
+            kin._forward_levels
+            if kin._level_specs is not None
+            else kin._forward_serial
+        )
+        parts: list[tuple[torch.Tensor, ...]] = []
+        frames = self.frames
+        with torch.no_grad():
+            for start in range(0, int(frames.shape[0]), 4096):
+                batch = frames[start : start + 4096].to(
+                    device=device, dtype=torch.float32
+                )
+                parts.append(tuple(item.detach() for item in walk(batch)))
+        return tuple(torch.cat([part[i] for part in parts], dim=0) for i in range(4))
+
+    def kinematics_at(
+        self, motion_id: torch.Tensor, time: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Tracked-body pose and velocity of the reference frames.
+
+        Same index rules as :meth:`state_at`. The tensors are detached: the
+        reference clip has no gradient. Predicted states still run FK online.
+        """
+        squeezed = motion_id.dim() == 0
+        if squeezed:
+            motion_id = motion_id.unsqueeze(0)
+            time = time.unsqueeze(0)
+        query_device = motion_id.device
+        pos, rot, lin, ang = self._kinematics(query_device)
+        offsets, lengths = self._index(query_device)
+        mid = motion_id.long()
+        index = time.to(device=query_device).long().clamp_min(0)
+        index = torch.minimum(index, lengths[mid] - 1)
+        flat = offsets[mid] + index
+        out = (pos[flat], rot[flat], lin[flat], ang[flat])
+        if squeezed:
+            out = tuple(item.squeeze(0) for item in out)
+        return out
 
     def goal_ref(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
         """680-d reference: frames t .. t+9, last frame held past the clip end."""

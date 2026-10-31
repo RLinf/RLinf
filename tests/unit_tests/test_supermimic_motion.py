@@ -318,6 +318,30 @@ def test_resampled_yaw_rate_matches_the_pose_change():
     )
 
 
+def test_batched_goal_matches_one_time_at_a_time():
+    clip = default_state(12, "cpu", torch.float32)
+    for i in range(12):
+        clip[i, 0] = float(i)
+    library = MotionLibrary([clip])
+    motion_id = torch.zeros(3, dtype=torch.long)
+    time0 = torch.tensor([0, 2, 4])
+    steps = torch.arange(5)
+    times = time0.unsqueeze(1) + steps
+    ids = motion_id.unsqueeze(1).expand_as(times)
+    flat_id = ids.reshape(-1)
+    flat_time = times.reshape(-1)
+    goal = library.goal730(flat_id, flat_time).reshape(3, 5, 730)
+    loop = torch.stack(
+        [library.goal730(motion_id, time0 + t) for t in range(5)], dim=1
+    )
+    assert torch.allclose(goal, loop)
+    ref = library.goal_ref(flat_id, flat_time).reshape(3, 5, -1)
+    ref_loop = torch.stack(
+        [library.goal_ref(motion_id, time0 + t) for t in range(5)], dim=1
+    )
+    assert torch.allclose(ref, ref_loop)
+
+
 def test_goal730_uses_future_frames_and_holds_the_last():
     clip = default_state(4, "cpu", torch.float32)
     for i in range(4):

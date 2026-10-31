@@ -39,8 +39,8 @@ from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
 from rlinf.envs.sim.g1_mimic.reward import (
     analytic_failure_prob,
     analytic_reward,
+    differentiable_fk,
     failure_signals,
-    forward_kinematics_pair,
     motion_critic_input,
     termination_head_input,
 )
@@ -183,6 +183,10 @@ def make_imagination(
         history,
         refs,
         goals,
+        ref_pos,
+        ref_rot,
+        ref_lin,
+        ref_ang,
         q0,
         joint_low,
         joint_high,
@@ -191,7 +195,14 @@ def make_imagination(
         features = []
         rewards = []
         d_hats = []
-        state_fk, ref_fk = forward_kinematics_pair(state, refs[:, 0])
+        # Goals ignore the predicted state, so the encoder runs once for every
+        # future frame. Reference body poses are gathered from the clip cache.
+        # The predicted state still walks the tree, and that walk keeps grad.
+        step_goals = goals[:, :horizon]
+        latents = encoder(step_goals.reshape(-1, step_goals.shape[-1]))
+        latents = latents.reshape(step_goals.shape[0], horizon, -1)
+        state_fk = differentiable_fk(state)
+        ref_fk = (ref_pos[:, 0], ref_rot[:, 0], ref_lin[:, 0], ref_ang[:, 0])
         for t in range(horizon):
             ref = refs[:, t]
             goal = goals[:, t]
@@ -208,12 +219,18 @@ def make_imagination(
                     scale_xi=scale_xi,
                 )
             )
-            action = decoder(encoder(goal), history)
+            action = decoder(latents[:, t], history)
             state = integrate_residual(
                 state, dynamics(state, action, xi), residual_frame
             )
             ref_next = refs[:, t + 1]
-            state_fk, ref_fk = forward_kinematics_pair(state, ref_next)
+            state_fk = differentiable_fk(state)
+            ref_fk = (
+                ref_pos[:, t + 1],
+                ref_rot[:, t + 1],
+                ref_lin[:, t + 1],
+                ref_ang[:, t + 1],
+            )
             reward = analytic_reward(
                 state,
                 ref_next,

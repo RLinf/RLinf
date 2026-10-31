@@ -215,12 +215,21 @@ class DataParallel:
 
     def update_norm(self, norm: torch.nn.Module | None, values: torch.Tensor) -> None:
         """Fold ``values`` into a running norm after merging every rank's batch."""
-        if norm is None:
+        if norm is None or norm.frozen():
+            return
+        if values.numel() == 0:
+            rows = 0
+        else:
+            rows = int(values.reshape(-1, values.shape[-1]).shape[0])
+        if rows == 0 and not self.enabled:
             return
         count, mean, var = norm.batch_stats(values)
         if self.enabled:
             count, mean, var = self.merge_batch_stats(count, mean, var)
-        norm.update_from_stats(count, mean, var)
+            host = float(count)
+        else:
+            host = float(rows)
+        norm.update_from_stats(count, mean, var, host_count=host)
 
     def broadcast_module(self, module: torch.nn.Module, src: int = 0) -> None:
         """Copy parameters and buffers from ``src`` to every rank."""
