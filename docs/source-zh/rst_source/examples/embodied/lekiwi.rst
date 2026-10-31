@@ -20,6 +20,8 @@ LeKiwi 移动底盘配置与控制
      - 安装在底盘前方的 UVC 摄像头，与舵机控制板连接到同一台计算机。
    * - 控制主机
      - 带 USB 接口的 Linux 计算机。常用选择是底盘上的树莓派，不需要 GPU。
+   * - 键盘主机
+     - 可选。同一网络内的任意计算机（macOS 也可），只需一个装好 RLinf 运行时依赖和 pynput 的 Python 环境，无需安装 RLinf。
 
 各部分如何协作
 --------------
@@ -172,6 +174,16 @@ LeKiwi 移动底盘配置与控制
    rlinf-lekiwi-teleoperate --remote <机器人 IP>
 
 按键与速度档位完全相同。两端默认使用 TCP 端口 5555，可用 ``--remote-port`` 修改。``--listen`` 还接受 ``--fps``、``--wheel-radius``、``--base-radius``、``--max-raw`` 和 ``--dry-run``，``--connect-timeout`` 决定 ``--remote`` 持续重试多久。接收端监视发送端的心跳：发送端被杀、网络断开或笔记本休眠时，它会把车轮归零并等待新的发送端。用 Ctrl+C 停止发送端；接收端关闭时它也会退出。
+
+按上文安装好的机器已经带有 pynput，它由 LeRobot 引入。若一台机器只有一个含 RLinf 运行时依赖（``torch`` 和 ``omegaconf``，例如现成的 RLinf 虚拟环境）的 Python 环境，则装好 pynput 后直接在仓库里运行发送端即可，既不需要安装脚本，也不需要安装 RLinf。macOS 走这条路，因为 ``install.sh`` 不支持 macOS。
+
+.. code-block:: bash
+
+   cd <RLinf 仓库路径>
+   pip install pynput
+   PYTHONPATH=$PWD python -m toolkits.lekiwi.teleop --remote <机器人 IP>
+
+最后一条命令与 ``rlinf-lekiwi-teleoperate`` 脚本执行的是同一个。macOS 还需在“系统设置 > 隐私与安全性”中为终端打开“辅助功能”和“输入监控”，然后重启终端；否则发送端能连上并持续发送心跳，但按键不会到达机器人。
 
 驱动环境
 --------

@@ -31,6 +31,10 @@ What you need
    * - Controller computer
      - Linux computer with a USB port for the servo controller. A Raspberry Pi
        on the robot is the usual choice; it needs no GPU.
+   * - Keyboard computer
+     - Optional. Any computer on the same network, macOS included, with a
+       Python environment that has RLinf's runtime dependencies and pynput.
+       It does not need an RLinf install.
 
 How the pieces fit
 ------------------
@@ -229,6 +233,24 @@ change it with ``--remote-port``. ``--listen`` also takes ``--fps``,
 watches the sender's heartbeat: if the sender is killed, the network drops, or
 the laptop sleeps, it zeroes the wheels and waits for a new sender. Stop the
 sender with Ctrl+C; it also exits when the listener closes.
+
+A machine installed as above already has pynput, which LeRobot brings in. A
+machine that has only a Python environment with RLinf's runtime dependencies,
+``torch`` and ``omegaconf`` — an existing RLinf virtual environment, for
+example — adds pynput and runs the sender from a checkout: no installer and no
+RLinf install. That is the route on macOS, which ``install.sh`` does not
+support.
+
+.. code-block:: bash
+
+   cd <path to the RLinf checkout>
+   pip install pynput
+   PYTHONPATH=$PWD python -m toolkits.lekiwi.teleop --remote <robot-ip>
+
+The last command is the same one the ``rlinf-lekiwi-teleoperate`` script runs.
+On macOS, also allow the terminal in System Settings under Privacy & Security
+in Accessibility and Input Monitoring, then restart it; without that the
+sender connects and sends heartbeats, but no key reaches the robot.
 
 The drive environment
 ---------------------
