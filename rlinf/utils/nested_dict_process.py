@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable, Iterator
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -100,30 +102,148 @@ def _split_list_by_sizes(value: list, split_sizes: list[int] | int) -> list[list
     return out
 
 
-def split_dict_to_chunk(data: dict, split_size, dim=0):
-    splited_list = [{} for _ in range(split_size)]
+def _chunk_bounds(length: int, num_chunks: int, index: int) -> tuple[int, int]:
+    # Same sizes as torch.tensor_split: the first length % num_chunks chunks
+    # get one extra element.
+    size, remainder = divmod(length, num_chunks)
+    start = index * size + min(index, remainder)
+    return start, start + size + (1 if index < remainder else 0)
+
+
+def _dict_chunk(data: dict, num_chunks: int, index: int, dim: int) -> dict:
+    chunk = {}
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
-            split_vs = [
-                chunk.contiguous()
-                for chunk in torch.tensor_split(value, split_size, dim=dim)
-            ]
+            start, end = _chunk_bounds(value.shape[dim], num_chunks, index)
+            chunk[key] = value.narrow(dim, start, end - start).contiguous()
         elif isinstance(value, list):
             assert dim == 0, f"List field only supports dim=0, got {dim}."
-            split_vs = _split_list_by_sizes(value, split_size)
+            start, end = _chunk_bounds(len(value), num_chunks, index)
+            chunk[key] = value[start:end]
         elif value is None:
-            split_vs = [None for _ in range(split_size)]
+            chunk[key] = None
         elif isinstance(value, dict):
-            split_vs = split_dict_to_chunk(value, split_size, dim)
+            chunk[key] = _dict_chunk(value, num_chunks, index, dim)
         else:
             raise ValueError(f"{key=}, {type(value)} is not supported.")
-        for split_id in range(split_size):
-            splited_list[split_id][key] = (
-                split_vs[split_id].contiguous()
-                if isinstance(split_vs[split_id], torch.Tensor)
-                else split_vs[split_id]
-            )
-    return splited_list
+    return chunk
+
+
+def iter_dict_chunks(data: dict, num_chunks: int, dim: int = 0) -> Iterator[dict]:
+    """Yield the chunks of :func:`split_dict_to_chunk` one at a time.
+
+    Each chunk is built when requested, so a consumer that drops a chunk
+    before asking for the next keeps no reference to it.
+
+    Args:
+        data: Nested dict of tensors, lists, and ``None`` values.
+        num_chunks: Number of chunks to yield.
+        dim: Tensor dimension to split along.
+
+    Yields:
+        Nested dicts with the same keys as ``data``, in order.
+    """
+    assert num_chunks > 0, f"Expected a positive number of chunks, got {num_chunks}."
+    for index in range(num_chunks):
+        yield _dict_chunk(data, num_chunks, index, dim)
+
+
+def split_dict_to_chunk(data: dict, split_size, dim=0):
+    return list(iter_dict_chunks(data, split_size, dim))
+
+
+def _alloc_on_device(data, device, copies: list):
+    """Mirror ``data`` with empty device tensors and queue the pinned sources."""
+    if isinstance(data, torch.Tensor):
+        if data.device.type != "cpu":
+            return data.to(device=device).contiguous()
+        src = data.contiguous()
+        if not src.is_pinned():
+            src = src.pin_memory()
+        dst = torch.empty_like(src, device=device)
+        copies.append((dst, src))
+        return dst
+    if isinstance(data, dict):
+        return {
+            key: _alloc_on_device(value, device, copies) for key, value in data.items()
+        }
+    if isinstance(data, (list, tuple)):
+        return type(data)(_alloc_on_device(value, device, copies) for value in data)
+    return data
+
+
+def prefetch_to_device(
+    batches: Iterable[Any],
+    device: torch.device | int | str,
+    torch_platform: Any | None,
+) -> Iterator[Any]:
+    """Yield ``put_tensor_device(batch, device)`` for each batch, one batch ahead.
+
+    With an accelerator ``torch_platform`` (``Worker.torch_platform``), the copy
+    of the next batch is issued on a side stream before the current batch is
+    yielded, so it overlaps the caller's work on the current batch. CPU tensors
+    that are not pinned are pinned first, because only pinned copies run
+    asynchronously. Destination memory is allocated on the current stream, which
+    waits for a batch's copy before the batch is yielded, so the tensors need no
+    ``record_stream`` and can be used on the current stream like any other.
+    Without a platform or for a CPU device, batches are moved one at a time.
+
+    Args:
+        batches: Nested tensor containers, as accepted by ``put_tensor_device``.
+        device: Target device, as accepted by ``Tensor.to``.
+        torch_platform: Accelerator module such as ``torch.cuda``, or ``None``.
+
+    Yields:
+        Each batch on ``device``, in order. Device tensors are contiguous.
+    """
+    on_cpu = not isinstance(device, int) and torch.device(device).type == "cpu"
+    if torch_platform is None or on_cpu:
+        # map keeps no reference to a yielded batch, so the caller can free it.
+        yield from map(partial(put_tensor_device, device=device), batches)
+        return
+
+    copy_stream = torch_platform.Stream(device=device)
+    current_stream = torch_platform.current_stream(device)
+
+    def start_copy(batch):
+        copies = []
+        staged = _alloc_on_device(batch, device, copies)
+        # Destination blocks may have been freed by work still queued on the
+        # current stream.
+        copy_stream.wait_stream(current_stream)
+        try:
+            with torch_platform.stream(copy_stream):
+                for dst, src in copies:
+                    dst.copy_(src, non_blocking=True)
+                done = torch_platform.Event()
+                done.record(copy_stream)
+        except BaseException:
+            # Queued copies must finish before their destinations are freed.
+            copy_stream.synchronize()
+            raise
+        return staged, done
+
+    batch_iter = iter(batches)
+    pending = None
+    try:
+        for batch in batch_iter:
+            pending = start_copy(batch)
+            del batch
+            break
+        while pending is not None:
+            ready = [pending[0]]
+            current_stream.wait_event(pending[1])
+            pending = None
+            for batch in batch_iter:
+                pending = start_copy(batch)
+                del batch
+                break
+            # Yield without keeping a reference, so the caller can free the batch.
+            yield ready.pop()
+    finally:
+        # A batch dropped mid-copy must not hand its memory back early.
+        if pending is not None:
+            current_stream.wait_event(pending[1])
 
 
 def concat_batch(data1, data2):
@@ -277,7 +397,12 @@ def process_nested_dict_for_adv(nested_dict, rollout_epoch):
     return ret_dict
 
 
-def process_nested_dict_for_train(nested_dict, shuffle_id):
+def process_nested_dict_for_train(nested_dict, shuffle_id, pin_memory=False):
+    """Flatten ``[T, B, ...]`` tensors to ``[T * B, ...]`` and reorder by ``shuffle_id``.
+
+    With ``pin_memory``, CPU results are gathered straight into pinned host
+    memory, so later host-to-device copies can run asynchronously.
+    """
     ret_dict = {}
     for key, value in nested_dict.items():
         if key in ["dones", "terminations", "truncations", "prev_values"]:
@@ -287,9 +412,18 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
         if value is None:
             ret_dict[key] = None
         if isinstance(value, torch.Tensor):
-            ret_dict[key] = value.reshape(-1, *value.shape[2:])[shuffle_id]
+            value = value.reshape(-1, *value.shape[2:])
+            if pin_memory and value.device.type == "cpu":
+                out = torch.empty(
+                    (shuffle_id.numel(), *value.shape[1:]),
+                    dtype=value.dtype,
+                    pin_memory=True,
+                )
+                ret_dict[key] = torch.index_select(value, 0, shuffle_id, out=out)
+            else:
+                ret_dict[key] = value[shuffle_id]
         elif isinstance(value, dict):
-            ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
+            ret_dict[key] = process_nested_dict_for_train(value, shuffle_id, pin_memory)
     return ret_dict
 
 

@@ -327,6 +327,9 @@ actor
      - 用于可复现性的全局随机种子。
    * - ``actor.enable_offload``
      - 卸载 Actor 模型以降低内存占用。
+   * - ``actor.prefetch_micro_batches``
+     - 在当前训练微批次计算的同时，从打乱后 rollout 批次的锁页内存副本中将下一个微批次拷贝到加速器。默认
+       ``True``；设为 ``False`` 时逐个微批次同步拷贝。
 
 **模型配置**
 

@@ -69,6 +69,7 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.scheduler import Worker
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -77,7 +78,12 @@ from rlinf.scheduler.cluster.utils import (
     unpack_dataclass_tensors,
 )
 from rlinf.utils.env_helpers import SmoothInterveneController
-from rlinf.utils.nested_dict_process import split_dict_to_chunk
+from rlinf.utils.nested_dict_process import (
+    iter_dict_chunks,
+    prefetch_to_device,
+    process_nested_dict_for_train,
+    split_dict_to_chunk,
+)
 from rlinf.utils.obs_compression import (
     _CODEC_KEY,
     compress_obs,
@@ -555,6 +561,69 @@ def test_split_dict_to_chunk_returns_requested_number_of_chunks():
     assert len(chunks) == 4
     assert [chunk["values"].tolist() for chunk in chunks] == [[0], [1], [], []]
     assert [chunk["sample_ids"] for chunk in chunks] == [["a"], ["b"], [], []]
+
+
+def _micro_batches(num_batches: int) -> list[dict]:
+    rollout = {
+        "obs": {"images": torch.arange(num_batches * 4 * 6).reshape(-1, 2, 3)},
+        "advantages": torch.randn(
+            num_batches * 4, 1, generator=torch.Generator().manual_seed(0)
+        ),
+        "sample_ids": list(range(num_batches * 4)),
+        "returns": None,
+    }
+    return list(iter_dict_chunks(rollout, num_batches))
+
+
+def _assert_same_batches(actual: list[dict], expected: list[dict]) -> None:
+    assert len(actual) == len(expected)
+    for got, want in zip(actual, expected):
+        assert torch.equal(got["obs"]["images"].cpu(), want["obs"]["images"])
+        assert torch.equal(got["advantages"].cpu(), want["advantages"])
+        assert got["sample_ids"] == want["sample_ids"]
+        assert got["returns"] is None
+
+
+def test_prefetch_without_accelerator_yields_every_batch_in_order():
+    expected = _micro_batches(5)
+
+    actual = list(prefetch_to_device(iter(_micro_batches(5)), "cpu", None))
+
+    _assert_same_batches(actual, expected)
+
+
+@pytest.mark.skipif(
+    Worker.torch_platform is None or not Worker.torch_platform.is_available(),
+    reason="Requires an accelerator",
+)
+def test_prefetch_copies_pinned_and_pageable_batches_to_the_accelerator():
+    platform = Worker.torch_platform
+    device = torch.device(Worker.torch_device_type, platform.current_device())
+    expected = _micro_batches(5)
+    shuffle_id = torch.randperm(20)
+    rollout = {"values": torch.randn(4, 5, 3), "ids": {"step": torch.arange(20)}}
+    rollout["ids"]["step"] = rollout["ids"]["step"].reshape(4, 5)
+
+    pinned = process_nested_dict_for_train(rollout, shuffle_id, pin_memory=True)
+    pageable = process_nested_dict_for_train(rollout, shuffle_id)
+    actual = list(prefetch_to_device(iter(_micro_batches(5)), device, platform))
+    from_pinned = list(
+        prefetch_to_device(iter_dict_chunks(pinned, 4), device, platform)
+    )
+
+    stopped_early = prefetch_to_device(iter(_micro_batches(5)), device, platform)
+    first = next(stopped_early)
+    stopped_early.close()
+
+    _assert_same_batches(actual, expected)
+    _assert_same_batches([first], expected[:1])
+    assert all(batch["advantages"].device == device for batch in actual)
+    assert pinned["values"].is_pinned() and not pageable["values"].is_pinned()
+    assert torch.equal(pinned["values"], pageable["values"])
+    assert torch.equal(pinned["ids"]["step"], pageable["ids"]["step"])
+    for got, want in zip(from_pinned, iter_dict_chunks(pageable, 4)):
+        assert torch.equal(got["values"].cpu(), want["values"])
+        assert torch.equal(got["ids"]["step"].cpu(), want["ids"]["step"])
 
 
 class _LegacyDataset:
