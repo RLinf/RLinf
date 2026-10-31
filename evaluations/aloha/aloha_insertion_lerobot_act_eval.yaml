@@ -1,0 +1,58 @@
+defaults:
+  - env/aloha_insertion@env.eval
+  - model/lerobot_act@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "aloha_insertion_lerobot_act_eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # 50 episodes; LeRobot reports success over 500 (rollout_epoch: 50).
+    rollout_epoch: 5
+    total_num_envs: 10
+    auto_reset: true
+    ignore_terminations: true
+    max_episode_steps: 300
+    max_steps_per_rollout_epoch: 300
+    group_size: 1
+    is_eval: true
+    seed: 1000 # LeRobot's eval seeds start at 1000
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_path: "lerobot/act_aloha_sim_insertion_human"

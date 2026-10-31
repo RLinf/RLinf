@@ -119,6 +119,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_lerobot_act(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.lerobot_act import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_lingbotvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.lingbotvla import get_model
 
@@ -228,6 +233,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.DEXBOTIC_DM0.value,
         _build_dexbotic_dm0,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.LEROBOT_ACT.value,
+        _build_lerobot_act,
         category="embodied",
         force=True,
     )
