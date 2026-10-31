@@ -115,10 +115,11 @@ class DataParallel:
                 for p in params:
                     p.grad = None
                 return 0.0, True
-            for p in params:
-                if p.grad is not None and not bool(torch.isfinite(p.grad).all()):
-                    finite = False
-                    break
+            grads = [
+                p.grad.detach().reshape(-1) for p in params if p.grad is not None
+            ]
+            if grads:
+                finite = bool(torch.isfinite(torch.cat(grads)).all())
             return weight, finite
         start = time.perf_counter()
         scale = weight if mean else 1.0
@@ -133,9 +134,13 @@ class DataParallel:
             + [torch.tensor([weight], device=params[0].device, dtype=parts[0].dtype)]
         )
         dist.all_reduce(flat, op=dist.ReduceOp.SUM)
-        total = float(flat[-1])
+        summary = torch.stack(
+            (flat[-1].detach(), torch.isfinite(flat).all().to(dtype=flat.dtype))
+        )
+        total_value, finite_value = summary.tolist()
+        total = float(total_value)
         offset = 0
-        finite = bool(torch.isfinite(flat).all()) if total > 0 else True
+        finite = bool(finite_value) if total > 0 else True
         divisor = total if mean else 1.0
         for p in params:
             n = p.numel()

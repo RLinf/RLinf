@@ -465,6 +465,13 @@ def test_window_sampling_does_not_scan_candidates_in_python():
     assert batch["state"].shape[0] == 64
     assert elapsed < 1.0
 
+    def _forbid_rescan(*_args, **_kwargs):
+        raise AssertionError("a later batch scanned the buffer again")
+
+    buf._window_env_phys = _forbid_rescan
+    again = buf.sample_windows(k, 64)
+    assert again is not None and again["state"].shape[0] == 64
+
 
 def test_imagination_noise_does_not_stop_the_state_gradient():
     state = default_state(2, "cpu", torch.float32).requires_grad_(True)

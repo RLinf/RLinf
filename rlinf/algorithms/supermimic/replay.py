@@ -95,6 +95,10 @@ class SuperMimicReplay:
             num_envs, capacity, dtype=torch.long, device=device
         )
         self.next_episode_id = torch.zeros(num_envs, dtype=torch.long, device=device)
+        # Legal windows do not change until the next ``add``. One update
+        # draws many batches from the same buffer, so the scan is reused.
+        self._window_cache: tuple | None = None
+        self._start_cache: tuple | None = None
 
     def add(
         self,
@@ -160,6 +164,8 @@ class SuperMimicReplay:
         finished = end_kind != EPISODE_CONT
         if finished.any():
             self.next_episode_id[env_ids[finished]] += 1
+        self._window_cache = None
+        self._start_cache = None
 
     def _live_physical(self) -> torch.Tensor:
         """Physical index of each logical slot. Shape ``[num_envs, capacity]``."""
@@ -188,14 +194,27 @@ class SuperMimicReplay:
         env_i, logical_i = mask.nonzero(as_tuple=True)
         return env_i, phys[env_i, logical_i]
 
+    def _cached_windows(self, k: int) -> tuple[torch.Tensor, torch.Tensor]:
+        cached = self._window_cache
+        if cached is not None and cached[0] == k:
+            return cached[1], cached[2]
+        env_i, phys_i = self._window_env_phys(k)
+        self._window_cache = (k, env_i, phys_i)
+        return env_i, phys_i
+
+    def _cached_starts(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._start_cache is None:
+            self._start_cache = self._consistent_starts()
+        return self._start_cache
+
     def num_valid_windows(self, k: int) -> int:
         """Number of ``k``-step windows that stay inside one episode."""
-        env_i, _ = self._window_env_phys(k)
+        env_i, _ = self._cached_windows(k)
         return int(env_i.shape[0])
 
     def valid_window_starts(self, k: int) -> list[tuple[int, int]]:
         """``(env, slot)`` of every valid ``k``-step window start."""
-        env_i, phys_i = self._window_env_phys(k)
+        env_i, phys_i = self._cached_windows(k)
         return list(zip(env_i.tolist(), phys_i.tolist(), strict=True))
 
     def _predecessor_ok(self, env: int, physical: int) -> bool:
@@ -271,7 +290,7 @@ class SuperMimicReplay:
 
     def sample_windows(self, k: int, batch: int) -> dict[str, torch.Tensor] | None:
         """Up to ``batch`` random ``k``-step windows, or ``None`` before any exist."""
-        env_all, phys_all = self._window_env_phys(k)
+        env_all, phys_all = self._cached_windows(k)
         if env_all.numel() == 0:
             return None
         choice = torch.randint(
@@ -316,7 +335,7 @@ class SuperMimicReplay:
 
         ``task`` keeps only motion (0) or velocity (1) rows.
         """
-        env_all, phys_all = self._consistent_starts()
+        env_all, phys_all = self._cached_starts()
         if task is not None and env_all.numel():
             keep = self.task_id[env_all, phys_all] == int(task)
             env_all = env_all[keep]

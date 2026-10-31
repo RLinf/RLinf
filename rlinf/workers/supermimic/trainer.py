@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import os
 import shutil
 import sys
 import time
@@ -129,19 +130,36 @@ def _set_requires_grad(params, flag: bool) -> None:
         param.requires_grad_(flag)
 
 
-def _clip_actor_grads(params) -> float:
+def _clip_actor_grads(params) -> torch.Tensor:
     norm = torch.nn.utils.clip_grad_norm_(params, 1.0)
     for param in params:
         if param.grad is not None:
             param.grad.clamp_(-0.1, 0.1)
-    return float(norm)
+    return norm
 
 
-def _grad_norm(params) -> float:
+def _grad_norm(params) -> torch.Tensor:
     grads = [param.grad for param in params if param.grad is not None]
     if not grads:
-        return 0.0
-    return float(torch.linalg.vector_norm(torch.stack([g.norm() for g in grads])))
+        return torch.zeros(())
+    return torch.linalg.vector_norm(torch.stack([g.detach().norm() for g in grads]))
+
+
+def _host_floats(values: list[torch.Tensor | float]) -> list[float]:
+    """Read several scalars into Python with one device synchronization."""
+    tensors = [value for value in values if torch.is_tensor(value)]
+    if not tensors:
+        return [float(value) for value in values]
+    device = next(
+        (value.device for value in tensors if value.is_cuda), tensors[0].device
+    )
+    ready = []
+    for value in values:
+        if torch.is_tensor(value):
+            ready.append(value.detach().reshape(()).float().to(device))
+        else:
+            ready.append(torch.tensor(float(value), device=device))
+    return [float(item) for item in torch.stack(ready).tolist()]
 
 
 def _term_grad_norm(term: torch.Tensor, params) -> float:
@@ -376,6 +394,9 @@ class SuperMimicTrainer:
         return self.motion.state_at(motion_id, motion_time)[..., 3:7]
 
     def _sync(self) -> None:
+        """Wait for the device. Off unless ``SUPERMIMIC_PROFILE=1``."""
+        if os.environ.get("SUPERMIMIC_PROFILE") != "1":
+            return
         if self.device.type != "cpu":
             self.platform.synchronize(self.device)
 
@@ -556,12 +577,19 @@ class SuperMimicTrainer:
         valid = self.buffer.num_valid_windows(self.k)
         self.time_sim = sim_s
         bins = self.reset_sampler.bin_return
+        reward_mean, bin_mean, bin_min = _host_floats(
+            [
+                reward_total / max(n_steps * self.num_envs, 1),
+                bins.mean(),
+                bins.min(),
+            ]
+        )
         return {
             "sim/terminal_rate": failures / max(n_steps * self.num_envs, 1),
-            "sim/reward_mean": float(reward_total) / max(n_steps * self.num_envs, 1),
+            "sim/reward_mean": reward_mean,
             "sim/episodes_finished": float(episodes),
-            "reset/bin_return_mean": float(bins.mean()),
-            "reset/bin_return_min": float(bins.min()),
+            "reset/bin_return_mean": bin_mean,
+            "reset/bin_return_min": bin_min,
             "buffer/valid_windows": float(valid),
             "time/sim_s": float(sim_s),
         }
@@ -663,9 +691,10 @@ class SuperMimicTrainer:
         update_s = 0.0
         _set_requires_grad(self.models.wm_params(), True)
         last_loss = float("nan")
-        last_norm = 0.0
+        last_norm: torch.Tensor | float = 0.0
         one_step = float("nan")
         k_step = float("nan")
+        held_loss: torch.Tensor | None = None
         for _ in range(self.wm_batches):
             t_sample = time.perf_counter()
             batch = self.buffer.sample_windows(self.k, self.wm_window_batch)
@@ -681,14 +710,12 @@ class SuperMimicTrainer:
                 else:
                     loss, one, last = self._world_model_scan(batch)
                 loss.backward()
-                one_step = float(one.detach())
-                k_step = float(last.detach())
-                last_loss = float(loss.detach())
+                held_loss = torch.stack([loss.detach(), one.detach(), last.detach()])
             stepped, norm = self._dp_step(
                 self.opt_wm,
                 self.models.wm_params(),
                 weight,
-                lambda params: float(torch.nn.utils.clip_grad_norm_(params, 1.0)),
+                lambda params: torch.nn.utils.clip_grad_norm_(params, 1.0),
                 "world model",
             )
             if stepped:
@@ -696,6 +723,14 @@ class SuperMimicTrainer:
                 last_norm = norm
             self._sync()
             update_s += time.perf_counter() - t_update
+        if held_loss is not None:
+            pieces: list[torch.Tensor | float] = [
+                held_loss[0],
+                held_loss[1],
+                held_loss[2],
+                last_norm,
+            ]
+            last_loss, one_step, k_step, last_norm = _host_floats(pieces)
         self.time_replay_sample = sample_s
         self.time_world_model = update_s
         return {
@@ -847,14 +882,33 @@ class SuperMimicTrainer:
         self.time_critic = time.perf_counter() - t_critic
         if rollout is not None:
             d_t = rollout["d"].detach()
+            (
+                objective,
+                grad_norm,
+                encoder_norm,
+                decoder_norm,
+                survival,
+                termination_prob,
+                reward_mean,
+            ) = _host_floats(
+                [
+                    rollout["objective"].detach(),
+                    grad_norm,
+                    norms["encoder"],
+                    norms["decoder"],
+                    (1.0 - d_t).prod(dim=1).mean(),
+                    d_t.mean(),
+                    rollout["rewards"].detach().mean(),
+                ]
+            )
             metrics = {
-                "actor/objective": float(rollout["objective"].detach()),
+                "actor/objective": objective,
                 "actor/grad_norm": grad_norm,
-                "actor/encoder_grad_norm": norms["encoder"],
-                "actor/decoder_grad_norm": norms["decoder"],
-                "imagination/survival": float((1.0 - d_t).prod(dim=1).mean()),
-                "imagination/termination_prob": float(d_t.mean()),
-                "imagination/reward": float(rollout["rewards"].detach().mean()),
+                "actor/encoder_grad_norm": encoder_norm,
+                "actor/decoder_grad_norm": decoder_norm,
+                "imagination/survival": survival,
+                "imagination/termination_prob": termination_prob,
+                "imagination/reward": reward_mean,
             }
         metrics.update(critic_metrics)
         if self.velocity:
@@ -1213,19 +1267,36 @@ class SuperMimicTrainer:
         _set_requires_grad(self.models.actor_params(), True)
         planar, yaw_rate = heading_velocity(states_t[:, 1:].detach())
         commands_next = commands_t[:, 1:].detach()
+        (
+            objective_v,
+            grad_norm,
+            align_v,
+            survival,
+            fall_prob,
+            reward_v,
+            lin_err,
+            yaw_err,
+        ) = _host_floats(
+            [
+                objective.detach(),
+                grad_norm,
+                align.detach(),
+                (1.0 - d_t.detach()).prod(dim=1).mean(),
+                d_t.detach().mean(),
+                rewards_t.detach().mean(),
+                (planar - commands_next[..., :2]).norm(dim=-1).mean(),
+                (yaw_rate - commands_next[..., 2]).abs().mean(),
+            ]
+        )
         return {
-            "velocity/objective": float(objective.detach()),
+            "velocity/objective": objective_v,
             "velocity/grad_norm": grad_norm,
-            "velocity/align": float(align.detach()),
-            "velocity/survival": float((1.0 - d_t.detach()).prod(dim=1).mean()),
-            "velocity/fall_prob": float(d_t.detach().mean()),
-            "velocity/reward": float(rewards_t.detach().mean()),
-            "velocity/imagined_lin_err": float(
-                (planar - commands_next[..., :2]).norm(dim=-1).mean()
-            ),
-            "velocity/imagined_yaw_err": float(
-                (yaw_rate - commands_next[..., 2]).abs().mean()
-            ),
+            "velocity/align": align_v,
+            "velocity/survival": survival,
+            "velocity/fall_prob": fall_prob,
+            "velocity/reward": reward_v,
+            "velocity/imagined_lin_err": lin_err,
+            "velocity/imagined_yaw_err": yaw_err,
             **diagnostics,
         }
 
@@ -1288,7 +1359,7 @@ class SuperMimicTrainer:
                     self.opt_velocity_critic,
                     self.models.velocity_critic_params(),
                     idx.numel(),
-                    lambda params: float(torch.nn.utils.clip_grad_norm_(params, 1.0)),
+                    lambda params: torch.nn.utils.clip_grad_norm_(params, 1.0),
                     "velocity critic",
                 )
                 if stepped:
@@ -1323,6 +1394,7 @@ class SuperMimicTrainer:
         batch = features_t.shape[0]
         targets = None
         value_mean = target_mean = float("nan")
+        held_stats: torch.Tensor | None = None
         if self.models.critic.norm is not None:
             self.dp.update_norm(self.models.critic.norm, features_t.reshape(-1, width))
         if batch > 0:
@@ -1331,10 +1403,10 @@ class SuperMimicTrainer:
                     batch, self.H + 1
                 )
                 targets = gae_targets(rewards_t, d_t, values, self.gamma, self.lam)
-                value_mean = float(values[:, : self.H].mean())
-                target_mean = float(targets.mean())
+                held_stats = torch.stack([values[:, : self.H].mean(), targets.mean()])
         feat_fit = features_t[:, : self.H]
         last_loss = float("nan")
+        held_loss: torch.Tensor | None = None
         for _ in range(self.critic_epochs):
             for idx in self._critic_chunks(batch):
                 self.opt_critic.zero_grad(set_to_none=True)
@@ -1344,16 +1416,29 @@ class SuperMimicTrainer:
                     )
                     loss = (pred - targets[idx]).pow(2).mean()
                     loss.backward()
-                    last_loss = float(loss.detach())
+                    held_loss = loss.detach()
                 stepped, _ = self._dp_step(
                     self.opt_critic,
                     self.models.critic_params(),
                     idx.numel(),
-                    lambda params: float(torch.nn.utils.clip_grad_norm_(params, 1.0)),
+                    lambda params: torch.nn.utils.clip_grad_norm_(params, 1.0),
                     "critic",
                 )
                 if stepped:
                     self.critic_optimizer_steps += 1
+        pieces: list[torch.Tensor | float] = []
+        if held_loss is not None:
+            pieces.append(held_loss)
+        if held_stats is not None:
+            pieces.extend([held_stats[0], held_stats[1]])
+        if pieces:
+            hosted = _host_floats(pieces)
+            cursor = 0
+            if held_loss is not None:
+                last_loss = hosted[cursor]
+                cursor += 1
+            if held_stats is not None:
+                value_mean, target_mean = hosted[cursor], hosted[cursor + 1]
         self._sync()
         _set_requires_grad(self.models.actor_params(), True)
         return {
