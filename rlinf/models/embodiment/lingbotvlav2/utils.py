@@ -47,6 +47,73 @@ def is_rl_trainable(name: str) -> bool:
 VelocityFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
 
+class EvalNoiseSampler:
+    """Keep evaluation noise independent of model initialization and training RNGs.
+
+    The initial flow-matching latent changes the actions, and the global RNG
+    state depends on prior work such as value-head initialization, so global
+    ``torch.randn`` gives checkpoints different noise on the same environment
+    seeds. Each device has a private generator seeded by
+    ``rollout.model.eval_seed``: draws advance within a run and repeat exactly
+    across runs. Noise is drawn per device in batch order, so paired comparisons
+    also need the same worker placement and batch size. Training and rollout
+    keep the global RNG for exploration.
+    """
+
+    def __init__(self, seed: int):
+        self.seed = seed
+        self.generators: dict[torch.device, torch.Generator] = {}
+
+    def sample(self, shape: tuple[int, ...], device: torch.device) -> torch.Tensor:
+        device = torch.device(device)
+        if device not in self.generators:
+            self.generators[device] = torch.Generator(device=device).manual_seed(
+                self.seed
+            )
+        return torch.randn(
+            shape, device=device, dtype=torch.float32, generator=self.generators[device]
+        )
+
+
+def sample_flow_matching_inputs(
+    actions: torch.Tensor,
+    sample_time: Callable[[int, torch.device], torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Draw the SFT noise and time for ``actions``, noise first.
+
+    Both draws consume the global RNG, so this order is what a seeded SFT run
+    reproduces; swapping it trains on a different noise stream at the same loss.
+    """
+    noise = torch.randn_like(actions)
+    time = sample_time(len(actions), actions.device).float()
+    return noise, time
+
+
+def flow_matching_loss(
+    actions: torch.Tensor,
+    mask: torch.Tensor,
+    velocity_fn: VelocityFn,
+    time: torch.Tensor,
+    noise: torch.Tensor,
+) -> torch.Tensor:
+    """Return the flow-matching MSE averaged over the coordinates ``mask`` keeps.
+
+    The latent at ``time`` interpolates from ``actions`` at 0 to ``noise`` at 1,
+    the path :func:`sample_with_one_sde_step` integrates from 1 to 0, so the
+    target velocity is ``noise - actions``. ``actions``, ``mask``, and ``noise``
+    are shaped ``[batch, horizon, dim]`` and ``time`` is shaped ``[batch]``.
+    """
+    if mask.shape != actions.shape or noise.shape != actions.shape:
+        raise ValueError(
+            f"Expected actions, mask, and noise with one shape, got "
+            f"{tuple(actions.shape)}, {tuple(mask.shape)}, {tuple(noise.shape)}"
+        )
+    weight = time.view(-1, 1, 1)
+    x_t = weight * noise + (1 - weight) * actions
+    errors = velocity_fn(x_t, time).float() - (noise - actions)
+    return (errors.square() * mask).sum() / mask.sum().clamp_min(1)
+
+
 def flow_sde_transition(
     x: torch.Tensor,
     velocity: torch.Tensor,

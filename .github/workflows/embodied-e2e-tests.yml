@@ -2256,7 +2256,21 @@ jobs:
           export LINGBOT_VLA_V2_PATH="/workspace/dataset/lingbot-vla-v2"
           bash tests/e2e_tests/embodied/run.sh robotwin_ppo_lingbotvlav2
 
+      - name: RoboTwin-LingBotVLA V2 GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
+          export ROBOTWIN_ASSETS_PATH="/workspace/dataset/RoboTwin"
+          export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
+          export LINGBOT_VLA_V2_PATH="/workspace/dataset/lingbot-vla-v2"
+          bash tests/e2e_tests/embodied/run.sh robotwin_grpo_lingbotvlav2
+
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           uv cache prune

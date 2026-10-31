@@ -9,9 +9,13 @@ num_action_chunks: 50
 action_dim: 14
 is_lora: false
 num_steps: 10
-# Keep the MoE/GEMM batch shape identical in rollout and actor likelihood replay.
+# Samples per MoE/GEMM call. A BF16 grouped GEMM gives a different result at a
+# different batch size, so rollout and actor replay must score at one shape:
+# keep this a divisor of actor.micro_batch_size and of each worker's env count.
 forward_micro_batch_size: 1
 noise_level: 0.3
+# Seeds the initial evaluation noise; training noise stays random.
+eval_seed: 0
 add_value_head: true
 value_type: chunk_level
 value_head:

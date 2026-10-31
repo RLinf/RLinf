@@ -9,7 +9,7 @@ RL on LingbotVLA 2.0 Models
 
 Fine-tune the action expert of
 `LingbotVLA 2.0 <https://huggingface.co/robbyant/lingbot-vla-v2-6b-robotwin>`__
-with PPO on RoboTwin 2.0. RLinf loads the released RoboTwin checkpoint
+with SFT, PPO, or GRPO on RoboTwin 2.0. RLinf loads the released RoboTwin checkpoint
 **natively** and starts training from it. LingbotVLA 2.0 is a
 vision-language-action model built on a Qwen3-VL backbone. Its mixture-of-experts
 action expert generates 50-step action chunks by flow matching in a 55-dimensional
@@ -20,7 +20,7 @@ action expert's MoE routers stay frozen.
 Overview
 --------
 
-Train LingbotVLA 2.0 with PPO on the RoboTwin 2.0 ``click_bell`` task.
+Train LingbotVLA 2.0 with demonstrations or task rewards on the RoboTwin 2.0 ``click_bell`` task.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -33,7 +33,7 @@ Train LingbotVLA 2.0 with PPO on the RoboTwin 2.0 ``click_bell`` task.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      PPO
+      SFT, PPO, GRPO
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -183,6 +183,11 @@ Configuration Files
 
 * **PPO (Reinforcement Learning)**:
   ``examples/embodiment/config/robotwin_click_bell_ppo_lingbotvlav2.yaml``
+* **GRPO (Reinforcement Learning)**:
+  ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvlav2.yaml``
+* **SFT (Demonstrations)**:
+  ``examples/sft/config/robotwin_sft_lingbotvlav2.yaml`` and
+  ``examples/sft/config/model/lingbotvlav2.yaml``
 * **Model defaults**, shared with standalone evaluation:
   ``examples/embodiment/config/model/lingbotvlav2.yaml``
 
@@ -231,6 +236,41 @@ log-probability of any sample differs between rollout and actor by more than
 this value; ``actor/rollout_train_joint_logprob_gap_max`` logs the largest
 difference.
 
+Train from Demonstrations
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use SFT to fit recorded action chunks with flow matching. Set the asset paths
+in ``examples/sft/config/model/lingbotvlav2.yaml`` and point
+``data.train_data_paths`` in the SFT config to one local LeRobot dataset.
+Its camera, state, and action features must match the robot configuration.
+The loader uses the same image preprocessing, robot transform, and normalization
+statistics as PPO and GRPO.
+
+.. code-block:: bash
+
+    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+
+This trains the action expert with the frozen backbone and routers. Watch
+``train/flow_mse`` and ``train/grad_norm``; evaluate saved checkpoints on RoboTwin
+to measure task success separately from the demonstration loss.
+
+Train with Grouped Rewards
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use GRPO to compare sampled returns within groups of eight rollouts. The GRPO
+config uses ``algorithm.adv_type: grpo`` and ``algorithm.loss_type: actor`` with
+``actor.model.add_value_head: false``. It shares PPO's task, initial model paths,
+64 training environments, action horizon, and actor learning rate.
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvlav2
+
+Export the RoboTwin variables from `Launch Commands`_ before running this command.
+Check that grouped rollouts produce different returns and nonzero advantages;
+equal returns within a group provide no policy learning signal. Compare PPO and
+GRPO checkpoints with the same evaluation seeds and trajectory count.
+
 Launch Commands
 ~~~~~~~~~~~~~~~
 
@@ -256,7 +296,7 @@ Standalone Evaluation
 ---------------------
 
 Run standalone evaluation through the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`
-with the ``robotwin_click_bell_lingbotvlav2_eval`` config. In a new shell, first
+with the ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_eval.yaml`` config. In a new shell, first
 export the three variables from `Launch Commands`_. To evaluate a PPO checkpoint
 instead of the released weights, pass its full weights file:
 
@@ -264,6 +304,9 @@ instead of the released weights, pass its full weights file:
 
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+
+For an SFT or GRPO checkpoint, also pass ``rollout.model.add_value_head=false``
+so strict loading uses the architecture saved during training.
 
 Visualization and Results
 -------------------------
@@ -276,3 +319,30 @@ Launch TensorBoard from the RLinf repo root:
 
 The key signal is ``env/success_once``. For every logged metric, see
 :doc:`Training metrics <../../reference/metrics>`.
+
+On four A100 80 GB GPUs, every checkpoint was evaluated on the same 64 fixed
+environment seeds with a limit of 400 steps per trajectory and
+``rollout.model.eval_seed=0``:
+
+.. list-table:: LingbotVLA 2.0 Evaluation Results on RoboTwin (n=64)
+   :header-rows: 1
+
+   * - Task
+     - Released Weights
+     - SFT (Step 600)
+     - RLinf-GRPO (Step 100)
+     - RLinf-PPO (Step 100)
+   * - ``click_bell``
+     - 76.56%
+     - 85.94% – 87.50%
+     - **100.00%**
+     - **100.00%**
+
+Two SFT runs of this configuration scored 87.50% and 85.94%, one episode apart:
+the loss curves start identically but FSDP reductions are not bit-reproducible
+over 600 steps. Released weights and both RL columns are bit-reproducible and
+were each confirmed by a repeated evaluation.
+
+To compare checkpoints, keep environment seeds, worker placement, batch sizes, and
+``rollout.model.eval_seed`` identical. ``eval_seed`` sets the initial evaluation
+noise independently of model initialization.

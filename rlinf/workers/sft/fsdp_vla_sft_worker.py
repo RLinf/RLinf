@@ -52,6 +52,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_lingbot_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
+        elif model_type == SupportedModel.LINGBOTVLAV2:
+            from rlinf.models.embodiment.lingbotvlav2.sft_builder import (
+                build_lingbotvlav2_sft_dataloader,
+            )
+
+            return build_lingbotvlav2_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths
+            )
         elif model_type == SupportedModel.DREAMZERO:
             from rlinf.data.datasets.dreamzero import (
                 build_dreamzero_sft_dataloader,
