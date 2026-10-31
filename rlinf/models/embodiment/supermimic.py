@@ -387,6 +387,10 @@ class CriticNet(nn.Module):
         """Value ``[B]`` from ``motion_critic_input`` features."""
         if self.norm is not None:
             features = self.norm(features)
+        return self.value_mlp(features)
+
+    def value_mlp(self, features: torch.Tensor) -> torch.Tensor:
+        """MLP value. The caller applies ``self.norm`` when that module exists."""
         return _mlp_forward(self, self.net, features).squeeze(-1)
 
 

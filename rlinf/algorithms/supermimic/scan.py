@@ -41,7 +41,7 @@ from rlinf.envs.sim.g1_mimic.reward import (
     analytic_reward,
     differentiable_fk,
     failure_signals,
-    motion_critic_input,
+    rollout_critic_feature,
     termination_head_input,
 )
 from rlinf.models.embodiment.supermimic import running_state_loss
@@ -198,6 +198,8 @@ def make_imagination(
         # Goals ignore the predicted state, so the encoder runs once for every
         # future frame. Reference body poses are gathered from the clip cache.
         # The predicted state still walks the tree, and that walk keeps grad.
+        # Features before the last state do not: the actor reads only the
+        # terminal value, and those features go back detached.
         step_goals = goals[:, :horizon]
         latents = encoder(step_goals.reshape(-1, step_goals.shape[-1]))
         latents = latents.reshape(step_goals.shape[0], horizon, -1)
@@ -208,7 +210,7 @@ def make_imagination(
             goal = goals[:, t]
             states.append(state)
             features.append(
-                motion_critic_input(
+                rollout_critic_feature(
                     state,
                     goal,
                     xi,
@@ -261,23 +263,23 @@ def make_imagination(
             )
             prev = action
         states.append(state)
-        features.append(
-            motion_critic_input(
-                state,
-                goals[:, horizon],
-                xi,
-                refs[:, horizon],
-                critic_features,
-                state_fk,
-                ref_fk,
-                scale_xi=scale_xi,
-            )
+        terminal = rollout_critic_feature(
+            state,
+            goals[:, horizon],
+            xi,
+            refs[:, horizon],
+            critic_features,
+            state_fk,
+            ref_fk,
+            scale_xi=scale_xi,
+            keep_grad=True,
         )
+        features.append(terminal.detach())
         states_t = torch.stack(states, dim=1)
         feat_t = torch.stack(features, dim=1)
         rewards_t = torch.stack(rewards, dim=1)
         d_t = torch.stack(d_hats, dim=1)
-        objective = actor_objective(rewards_t, d_t, critic(feat_t[:, -1]), gamma)
+        objective = actor_objective(rewards_t, d_t, critic(terminal), gamma)
         return states_t, goals, feat_t, rewards_t, d_t, objective
 
     return run

@@ -60,6 +60,7 @@ from rlinf.envs.sim.g1_mimic.reward import (
     differentiable_fk,
     failure_signals,
     motion_critic_input,
+    rollout_critic_feature,
     termination_head_input,
 )
 from rlinf.envs.sim.g1_mimic.velocity import (
@@ -123,6 +124,43 @@ def gpu_memory_metrics(
                 warp.get_mempool_used_mem_high(name)
             )
     return out
+
+
+def _adam(
+    params,
+    lr: float,
+    device: torch.device,
+    betas: tuple[float, float] = (0.9, 0.999),
+) -> torch.optim.Adam:
+    """Adam. CUDA uses the fused kernel; the moments stay FP32."""
+    if device.type == "cuda":
+        return torch.optim.Adam(params, lr=lr, betas=betas, fused=True)
+    return torch.optim.Adam(params, lr=lr, betas=betas)
+
+
+def _restore_fused_adam(
+    opt: torch.optim.Optimizer | None, device: torch.device
+) -> None:
+    """A checkpoint saved without fused Adam clears the flag on load.
+
+    Fused Adam keeps its step counter on the parameter device. A foreach
+    checkpoint left that counter on CPU, so move it before the next step.
+    """
+    if opt is None or device.type != "cuda":
+        return
+    for group in opt.param_groups:
+        group["fused"] = True
+        if group.get("foreach"):
+            group["foreach"] = False
+        for param in group["params"]:
+            state = opt.state.get(param)
+            if not state:
+                continue
+            step = state.get("step")
+            if torch.is_tensor(step) and step.device != param.device:
+                state["step"] = step.detach().to(
+                    device=param.device, dtype=torch.float32
+                )
 
 
 def _set_requires_grad(params, flag: bool) -> None:
@@ -298,19 +336,19 @@ class SuperMimicTrainer:
         self.models.set_bf16_matmul(matmul == "bf16")
         self.dp.broadcast_module(self.models)
         lr = float(algo.lr)
-        self.opt_wm = torch.optim.Adam(self.models.wm_params(), lr=lr)
-        self.opt_actor = torch.optim.Adam(
-            self.models.actor_params(), lr=lr, betas=(0.9, 0.95)
+        self.opt_wm = _adam(self.models.wm_params(), lr, self.device)
+        self.opt_actor = _adam(
+            self.models.actor_params(), lr, self.device, betas=(0.9, 0.95)
         )
-        self.opt_critic = torch.optim.Adam(self.models.critic_params(), lr=lr)
+        self.opt_critic = _adam(self.models.critic_params(), lr, self.device)
         self.opt_velocity = None
         self.opt_velocity_critic = None
         if self.velocity:
-            self.opt_velocity = torch.optim.Adam(
-                self.models.velocity_actor_params(), lr=lr, betas=(0.9, 0.95)
+            self.opt_velocity = _adam(
+                self.models.velocity_actor_params(), lr, self.device, betas=(0.9, 0.95)
             )
-            self.opt_velocity_critic = torch.optim.Adam(
-                self.models.velocity_critic_params(), lr=lr
+            self.opt_velocity_critic = _adam(
+                self.models.velocity_critic_params(), lr, self.device
             )
         decay = int(algo.lr_decay_updates)
 
@@ -1030,7 +1068,7 @@ class SuperMimicTrainer:
             states.append(state)
             goals.append(goal)
             features.append(
-                motion_critic_input(
+                rollout_critic_feature(
                     state,
                     goal,
                     xi,
@@ -1085,24 +1123,24 @@ class SuperMimicTrainer:
         goal_h = self._goal(motion_id, time0 + self.H, state)
         states.append(state)
         goals.append(goal_h)
-        features.append(
-            motion_critic_input(
-                state,
-                goal_h,
-                xi,
-                ref_h,
-                self.critic_features,
-                state_fk,
-                ref_fk,
-                scale_xi=self.scale_xi,
-            )
+        terminal = rollout_critic_feature(
+            state,
+            goal_h,
+            xi,
+            ref_h,
+            self.critic_features,
+            state_fk,
+            ref_fk,
+            scale_xi=self.scale_xi,
+            keep_grad=True,
         )
+        features.append(terminal.detach())
         states_t = torch.stack(states, dim=1)
         goals_t = torch.stack(goals, dim=1)
         feat_t = torch.stack(features, dim=1)
         rewards_t = torch.stack(rewards, dim=1)
         d_t = torch.stack(d_hats, dim=1)
-        v_last = self.models.critic(feat_t[:, -1])
+        v_last = self.models.critic(terminal)
         return {
             "states": states_t,
             "goals": goals_t,
@@ -1390,7 +1428,8 @@ class SuperMimicTrainer:
 
         ``features_t`` is ``[B, H+1, F]``. Targets are ``R_0 .. R_{H-1}``.
         ``B`` may be 0 on a rank that drew no start; it still joins every
-        optimizer step.
+        optimizer step. Running-norm statistics are folded once; this batch
+        is then normalized once and reused for GAE and every minibatch.
         """
         _set_requires_grad(self.models.critic_params(), True)
         _set_requires_grad(self.models.actor_params(), False)
@@ -1409,13 +1448,15 @@ class SuperMimicTrainer:
         targets = None
         value_mean = target_mean = float("nan")
         held_stats: torch.Tensor | None = None
-        if self.models.critic.norm is not None:
-            self.dp.update_norm(self.models.critic.norm, features_t.reshape(-1, width))
+        norm = self.models.critic.norm
+        if norm is not None:
+            self.dp.update_norm(norm, features_t.reshape(-1, width))
+            features_t = norm(features_t).detach()
         if batch > 0:
             with torch.no_grad():
-                values = self.models.critic(features_t.reshape(-1, width)).reshape(
-                    batch, self.H + 1
-                )
+                values = self.models.critic.value_mlp(
+                    features_t.reshape(-1, width)
+                ).reshape(batch, self.H + 1)
                 targets = gae_targets(rewards_t, d_t, values, self.gamma, self.lam)
                 held_stats = torch.stack([values[:, : self.H].mean(), targets.mean()])
         feat_fit = features_t[:, : self.H]
@@ -1425,9 +1466,9 @@ class SuperMimicTrainer:
             for idx in self._critic_chunks(batch):
                 self.opt_critic.zero_grad(set_to_none=True)
                 if idx.numel():
-                    pred = self.models.critic(feat_fit[idx].reshape(-1, width)).reshape(
-                        idx.numel(), self.H
-                    )
+                    pred = self.models.critic.value_mlp(
+                        feat_fit[idx].reshape(-1, width)
+                    ).reshape(idx.numel(), self.H)
                     loss = (pred - targets[idx]).pow(2).mean()
                     loss.backward()
                     held_loss = loss.detach()
@@ -1692,6 +1733,14 @@ class SuperMimicTrainer:
             self.reset_sampler.load_state_dict(blob["reset_sampler"])
         else:
             self.reset_sampler.reset_statistics()
+        for opt in (
+            self.opt_wm,
+            self.opt_actor,
+            self.opt_critic,
+            self.opt_velocity,
+            self.opt_velocity_critic,
+        ):
+            _restore_fused_adam(opt, self.device)
         rank_path = path / ckpt.rank_file(self.dp.rank)
         if int(meta["world_size"]) == self.dp.world_size:
             rank_blob = torch.load(rank_path, map_location="cpu", weights_only=True)

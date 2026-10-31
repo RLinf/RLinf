@@ -59,8 +59,13 @@ from rlinf.envs.sim.g1_mimic.features import (
     so3_relative_rotvec,
 )
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
-from rlinf.envs.sim.g1_mimic.reward import analytic_reward, motion_critic_input
+from rlinf.envs.sim.g1_mimic.reward import (
+    analytic_reward,
+    motion_critic_input,
+    rollout_critic_feature,
+)
 from rlinf.models.embodiment.supermimic import (
+    CriticNet,
     DynamicsNet,
     MotionEncoder,
     SuperMimicModels,
@@ -981,3 +986,142 @@ def test_normalize_xi_uses_zita_fixed_scales():
     assert float(scaled[0]) == pytest.approx(0.0)
     assert float(scaled[1]) == pytest.approx(1.0)
     assert float(scaled[30]) == pytest.approx(1.0)
+
+
+def test_critic_value_mlp_reuses_one_normalization():
+    """GAE and later minibatches see the same norm as one forward each."""
+    critic = CriticNet(6, input_norm=True)
+    feat = torch.randn(4, 3, 6)
+    critic.norm.update(feat.reshape(-1, 6))
+    per_call = critic(feat.reshape(-1, 6)).reshape(4, 3)
+    once = critic.value_mlp(critic.norm(feat).reshape(-1, 6)).reshape(4, 3)
+    assert torch.allclose(per_call, once)
+    sl = feat[:, :2]
+    assert torch.allclose(
+        critic(sl.reshape(-1, 6)),
+        critic.value_mlp(critic.norm(feat)[:, :2].reshape(-1, 6)),
+    )
+    bare = CriticNet(6, input_norm=False)
+    raw = torch.randn(3, 6)
+    assert torch.allclose(bare(raw), bare.value_mlp(raw))
+
+
+def test_detached_rollout_features_match_and_drop_the_state_gradient():
+    state = default_state(2, "cpu", torch.float32).requires_grad_(True)
+    ref = default_state(2, "cpu", torch.float32)
+    goal = torch.randn(2, 8)
+    xi = torch.zeros(2, XI_DIM)
+    fk = (state, state, state, state)
+    live = rollout_critic_feature(
+        state, goal, xi, ref, "root4", fk, fk, keep_grad=True
+    )
+    dead = rollout_critic_feature(state, goal, xi, ref, "root4", fk, fk)
+    assert torch.allclose(live, dead)
+    assert live.requires_grad
+    assert not dead.requires_grad
+    live.sum().backward()
+    assert state.grad is not None
+    assert float(state.grad.abs().sum()) > 0.0
+
+
+def test_cuda_adam_uses_the_fused_kernel():
+    from rlinf.workers.supermimic.trainer import _adam, _restore_fused_adam
+
+    weight = nn.Parameter(torch.zeros(3))
+    cpu = _adam([weight], 1e-3, torch.device("cpu"))
+    assert not cpu.param_groups[0].get("fused")
+    _restore_fused_adam(cpu, torch.device("cpu"))
+    assert not cpu.param_groups[0].get("fused")
+    if not torch.cuda.is_available():
+        return
+    cuda_weight = nn.Parameter(torch.zeros(3, device="cuda"))
+    cuda = _adam([cuda_weight], 1e-3, torch.device("cuda"), betas=(0.9, 0.95))
+    assert cuda.param_groups[0]["fused"] is True
+    assert cuda.param_groups[0]["betas"] == (0.9, 0.95)
+    cuda.param_groups[0]["fused"] = None
+    cuda.param_groups[0]["foreach"] = True
+    cuda.state[cuda_weight]["step"] = torch.zeros(())
+    cuda.state[cuda_weight]["exp_avg"] = torch.zeros_like(cuda_weight)
+    cuda.state[cuda_weight]["exp_avg_sq"] = torch.zeros_like(cuda_weight)
+    _restore_fused_adam(cuda, torch.device("cuda"))
+    assert cuda.param_groups[0]["fused"] is True
+    assert cuda.param_groups[0]["foreach"] is False
+    assert cuda.state[cuda_weight]["step"].device.type == "cuda"
+    cuda_weight.sum().backward()
+    cuda.step()
+
+
+@needs_mjlab
+def test_imagination_keeps_the_terminal_value_gradient():
+    """Earlier critic features leave the graph. Rewards and V(s_H) stay on it."""
+    from rlinf.algorithms.supermimic.scan import make_imagination
+    from rlinf.envs.sim.g1_mimic.constants import HISTORY_LEN, OBS_DIM
+    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+
+    torch.manual_seed(0)
+    batch, horizon = 2, 2
+    models = SuperMimicModels(680, input_norm=True)
+    seen: dict[str, torch.Tensor] = {}
+
+    def _capture(_module, inputs, output):
+        seen["feat"] = inputs[0]
+        seen["value"] = output
+
+    hook = models.critic.register_forward_hook(_capture)
+    state = default_state(batch, "cpu", torch.float32)
+    prev = torch.zeros(batch, ACTION_DIM)
+    xi = torch.zeros(batch, XI_DIM)
+    history = torch.zeros(batch, HISTORY_LEN * OBS_DIM)
+    refs = state.unsqueeze(1).expand(batch, horizon + 1, -1).contiguous()
+    goals = torch.randn(batch, horizon + 1, 680)
+    kin = differentiable_fk(state)
+    ref_kin = tuple(
+        part.unsqueeze(1).expand(batch, horizon + 1, *part.shape[1:]).contiguous()
+        for part in kin
+    )
+    run = make_imagination(
+        horizon, False, "pelvis", "root4", False, OBS_DIM, 0.99, scale_xi=True
+    )
+    _states, _goals, feats, rewards, d_hat, objective = run(
+        models.encoder,
+        models.decoder,
+        models.dynamics,
+        models.termination,
+        models.critic,
+        state,
+        prev,
+        xi,
+        history,
+        refs,
+        goals,
+        *ref_kin,
+        torch.zeros(ACTION_DIM),
+        torch.full((ACTION_DIM,), -2.5),
+        torch.full((ACTION_DIM,), 2.5),
+    )
+    hook.remove()
+    assert feats.shape == (batch, horizon + 1, models.critic.net[0].in_features)
+    assert not feats.requires_grad
+    assert rewards.requires_grad
+    assert seen["feat"].requires_grad
+    with torch.no_grad():
+        rebuilt = actor_objective(rewards, d_hat, models.critic(feats[:, -1]), 0.99)
+    assert torch.allclose(rebuilt, objective)
+    # The dynamics' last layer is zero at init, so the action gets no state
+    # gradient yet. The value must still reach the dynamics weights, which
+    # only happens through the predicted state. Action rate still reaches
+    # the decoder from the reward.
+    value_only = actor_objective(rewards.detach(), d_hat.detach(), seen["value"], 0.99)
+    dyn_grads = torch.autograd.grad(
+        value_only,
+        list(models.dynamics.parameters()),
+        allow_unused=True,
+        retain_graph=True,
+    )
+    reward_grads = torch.autograd.grad(
+        rewards.sum(), list(models.decoder.parameters()), allow_unused=True
+    )
+    assert any(grad is not None and float(grad.abs().sum()) > 0 for grad in dyn_grads)
+    assert any(
+        grad is not None and float(grad.abs().sum()) > 0 for grad in reward_grads
+    )

@@ -210,6 +210,54 @@ def motion_critic_input(
     return out.squeeze(0) if squeezed else out
 
 
+def rollout_critic_feature(
+    state: torch.Tensor,
+    goal: torch.Tensor,
+    xi: torch.Tensor,
+    ref_state: torch.Tensor,
+    critic_features: str,
+    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    *,
+    scale_xi: bool = False,
+    keep_grad: bool = False,
+) -> torch.Tensor:
+    """Critic features at one imagined state.
+
+    The actor bootstraps from the terminal value only. ``keep_grad`` is for
+    that state, so the value stays on the predicted state. Earlier steps are
+    the critic's regression inputs and leave the rollout graph. Dynamics and
+    the reward keep the original tensors.
+    """
+    if not keep_grad:
+        state = state.detach()
+        goal = goal.detach()
+        xi = xi.detach()
+        ref_state = ref_state.detach()
+        state_fk = (
+            state_fk[0].detach(),
+            state_fk[1].detach(),
+            state_fk[2].detach(),
+            state_fk[3].detach(),
+        )
+        ref_fk = (
+            ref_fk[0].detach(),
+            ref_fk[1].detach(),
+            ref_fk[2].detach(),
+            ref_fk[3].detach(),
+        )
+    return motion_critic_input(
+        state,
+        goal,
+        xi,
+        ref_state,
+        critic_features,
+        state_fk,
+        ref_fk,
+        scale_xi=scale_xi,
+    )
+
+
 def torso_anchor_9d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:
     """Reference torso pose in the robot torso frame: position (3) and Rot6D (6).
 
