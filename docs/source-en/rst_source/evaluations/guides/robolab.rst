@@ -25,7 +25,7 @@ Download ``RLinf/RLinf-Pi05-RoboLab-droid-jointpos``, the PyTorch conversion of 
    hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos \
        --local-dir /path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
 
-The checkpoint directory contains ``model.safetensors``, ``config.json``, and ``assets/droid/norm_stats.json``. Set ``rollout.model.model_path`` in ``evaluations/robolab/pi05_droid_jointpos.yaml`` to that directory.
+The checkpoint directory contains ``model.safetensors``, ``config.json``, and ``assets/droid/norm_stats.json``. Set ``rollout.model.model_path`` in ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` to that directory.
 
 Find the Benchmark Tasks
 ------------------------
@@ -36,12 +36,36 @@ Use the task export script to list the benchmark tasks in your installed RoboLab
 
    python -m toolkits.standalone_eval_scripts.robolab.export_tasks
 
-The script creates ``robolab_tasks.tsv`` in the repository root with task names, native step limits (``max_steps``), difficulty labels, capability attributes, instructions, and source filenames. Use ``--output /path/to/tasks.tsv`` to choose another destination. Task implementations are under ``robolab/tasks/<filename>`` in the installed RoboLab checkout.
+The script creates ``robolab_tasks.tsv`` in the repository root with task names, native step limits (``max_steps``), difficulty labels, capability attributes, instructions, and source filenames. Use ``--output /path/to/tasks.tsv`` to choose another destination.
+
+The table below shows the TSV header and two example rows. In the YAML, copy ``task`` to ``env.eval.init_params.task`` and the same row's ``max_steps`` to both ``env.eval.max_episode_steps`` and ``env.eval.max_steps_per_rollout_epoch``.
+
+.. list-table::
+   :header-rows: 1
+
+   * - ``task``
+     - ``max_steps``
+     - ``difficulty``
+     - ``attributes``
+     - ``instruction``
+     - ``filename``
+   * - ``BowlStackingLeftOnRightTask``
+     - ``300``
+     - ``simple``
+     - ``spatial``
+     - ``Stack the left bowl on the right bowl``
+     - ``benchmark/bowl_stacking_left_on_right.py``
+   * - ``BananaInBowlTask``
+     - ``750``
+     - ``simple``
+     - ``semantics``
+     - ``Pick up the banana and place it in the bowl``
+     - ``benchmark/banana_in_bowl_task.py``
 
 Configure the Evaluation
 ------------------------
 
-Edit ``evaluations/robolab/pi05_droid_jointpos.yaml`` before launching an experiment. It defaults to ten episodes of ``BowlStackingLeftOnRightTask`` with a native limit of 300 control steps. For this default task, only the checkpoint path needs to be changed. Configure other tasks using the following fields:
+Edit ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` before launching an experiment. It defaults to ten episodes of ``BowlStackingLeftOnRightTask`` with a native limit of 300 control steps. For this default task, only the checkpoint path needs to be changed. Configure other tasks using the following fields:
 
 .. list-table::
    :header-rows: 1
@@ -75,7 +99,7 @@ After saving the YAML configuration, launch the evaluation from the repository r
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh robolab pi05_droid_jointpos
+   bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
 
 With the default task and episode settings, this runs ten episodes of ``BowlStackingLeftOnRightTask``. The remaining policy and environment defaults are already set in the YAML.
 
@@ -87,7 +111,7 @@ After exporting the TSV and setting the checkpoint path in the YAML, keep ``tota
 .. code-block:: bash
 
    while IFS=$'\t' read -r task max_steps rest; do
-       bash evaluations/run_eval.sh robolab pi05_droid_jointpos \
+       bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
            "env.eval.init_params.task=${task}" \
            "env.eval.max_episode_steps=${max_steps}" \
            "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
@@ -99,7 +123,7 @@ The loop stops on a failed command. It does not implement automatic resume; remo
 Read the Results
 ----------------
 
-The terminal and TensorBoard report the completed episodes. ``evaluations/run_eval.sh`` saves console logs and, by default, TensorBoard events under ``logs/<timestamp>-pi05_droid_jointpos/``. ``env.eval.init_params.output_dir`` controls RoboLab's task configuration and ``run_<index>.hdf5`` trajectory files separately.
+The terminal and TensorBoard report the completed episodes. ``evaluations/run_eval.sh`` saves console logs and, by default, TensorBoard events under ``logs/<timestamp>-robolab_pi05_droid_jointpos/``. ``env.eval.init_params.output_dir`` controls RoboLab's task configuration and ``run_<index>.hdf5`` trajectory files separately.
 
 .. list-table::
    :header-rows: 1
@@ -115,5 +139,3 @@ The terminal and TensorBoard report the completed episodes. ``evaluations/run_ev
      - Number of completed episodes included in the result.
    * - ``eval/episode_len``
      - Mean number of executed control steps per episode.
-
-Aggregate success counts and episode-weighted scores across all tasks. The paper's SPARC and speed metrics are computed from recorded end-effector trajectories rather than emitted by the RLinf runner; speed measures robot motion, not inference throughput. See :doc:`../reference/results` for the shared logging conventions.

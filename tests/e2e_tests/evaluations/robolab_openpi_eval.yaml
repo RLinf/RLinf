@@ -1,5 +1,5 @@
 defaults:
-  - pi05_droid_jointpos
+  - robolab_pi05_droid_jointpos
   - _self_
 
 hydra:

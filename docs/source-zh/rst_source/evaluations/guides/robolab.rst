@@ -25,7 +25,7 @@
    hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos \
        --local-dir /path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
 
-下载目录应包含 ``model.safetensors``、``config.json`` 和 ``assets/droid/norm_stats.json``。将 ``evaluations/robolab/pi05_droid_jointpos.yaml`` 中的 ``rollout.model.model_path`` 改为该目录。
+下载目录应包含 ``model.safetensors``、``config.json`` 和 ``assets/droid/norm_stats.json``。将 ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` 中的 ``rollout.model.model_path`` 改为该目录。
 
 查询 Benchmark 任务
 -------------------
@@ -36,12 +36,36 @@
 
    python -m toolkits.standalone_eval_scripts.robolab.export_tasks
 
-脚本会在仓库根目录创建 ``robolab_tasks.tsv``，包含任务名称、原生控制步数上限（``max_steps``）、难度、能力属性、指令和源码文件名。可通过 ``--output /path/to/tasks.tsv`` 指定其他输出位置。任务实现位于已安装 RoboLab 源码目录的 ``robolab/tasks/<filename>``。
+脚本会在仓库根目录创建 ``robolab_tasks.tsv``，包含任务名称、原生控制步数上限（``max_steps``）、难度、能力属性、指令和源码文件名。可通过 ``--output /path/to/tasks.tsv`` 指定其他输出位置。
+
+下表展示 TSV 的表头和两个任务示例。配置 YAML 时，将 ``task`` 填入 ``env.eval.init_params.task``，将同一行的 ``max_steps`` 同时填入 ``env.eval.max_episode_steps`` 和 ``env.eval.max_steps_per_rollout_epoch``。
+
+.. list-table::
+   :header-rows: 1
+
+   * - ``task``
+     - ``max_steps``
+     - ``difficulty``
+     - ``attributes``
+     - ``instruction``
+     - ``filename``
+   * - ``BowlStackingLeftOnRightTask``
+     - ``300``
+     - ``simple``
+     - ``spatial``
+     - ``Stack the left bowl on the right bowl``
+     - ``benchmark/bowl_stacking_left_on_right.py``
+   * - ``BananaInBowlTask``
+     - ``750``
+     - ``simple``
+     - ``semantics``
+     - ``Pick up the banana and place it in the bowl``
+     - ``benchmark/banana_in_bowl_task.py``
 
 配置评估
 --------
 
-运行前编辑 ``evaluations/robolab/pi05_droid_jointpos.yaml``。默认配置使用 ``BowlStackingLeftOnRightTask``，原生上限为 300 个控制步，共评测 10 个回合。使用默认任务时，只需修改 checkpoint 路径；选择其他任务时，按下表设置：
+运行前编辑 ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml``。默认配置使用 ``BowlStackingLeftOnRightTask``，原生上限为 300 个控制步，共评测 10 个回合。使用默认任务时，只需修改 checkpoint 路径；选择其他任务时，按下表设置：
 
 .. list-table::
    :header-rows: 1
@@ -75,7 +99,7 @@
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh robolab pi05_droid_jointpos
+   bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
 
 使用默认任务和回合设置时，该命令评测 ``BowlStackingLeftOnRightTask`` 的 10 个回合。其余 policy 和环境默认设置已写入 YAML。
 
@@ -87,7 +111,7 @@
 .. code-block:: bash
 
    while IFS=$'\t' read -r task max_steps rest; do
-       bash evaluations/run_eval.sh robolab pi05_droid_jointpos \
+       bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
            "env.eval.init_params.task=${task}" \
            "env.eval.max_episode_steps=${max_steps}" \
            "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
@@ -99,7 +123,7 @@
 查看结果
 --------
 
-终端和 TensorBoard 会记录已完成回合的指标。``evaluations/run_eval.sh`` 将控制台日志以及默认的 TensorBoard 事件保存到 ``logs/<timestamp>-pi05_droid_jointpos/``。``env.eval.init_params.output_dir`` 单独指定 RoboLab 任务配置和 ``run_<index>.hdf5`` 轨迹文件的保存目录。
+终端和 TensorBoard 会记录已完成回合的指标。``evaluations/run_eval.sh`` 将控制台日志以及默认的 TensorBoard 事件保存到 ``logs/<timestamp>-robolab_pi05_droid_jointpos/``。``env.eval.init_params.output_dir`` 单独指定 RoboLab 任务配置和 ``run_<index>.hdf5`` 轨迹文件的保存目录。
 
 .. list-table::
    :header-rows: 1
@@ -115,5 +139,3 @@
      - 本次结果包含的已完成回合数。
    * - ``eval/episode_len``
      - 每回合实际执行控制步数的均值。
-
-跨任务汇总时，累加成功回合数，并按回合数加权计算得分。论文中的 SPARC 和速度需要从记录的末端轨迹计算，RLinf runner 不直接输出这两项指标；这里的速度是机器人运动速度。日志的通用用法见 :doc:`../reference/results`。

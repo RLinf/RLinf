@@ -31,7 +31,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml``、``polaris/polaris_movelattecup_openpi_eval.yaml``
    * - RoboLab
      - 120 个 DROID joint-position 操作任务
-     - ``robolab/pi05_droid_jointpos.yaml``
+     - ``robolab/robolab_pi05_droid_jointpos.yaml``
    * - RoboTwin
      - ``robotwin_place_empty_cup``、``robotwin_adjust_bottle``、``robotwin_place_shoe``、``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml`` 等

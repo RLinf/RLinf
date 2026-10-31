@@ -3545,8 +3545,6 @@ install_robolab_env() {
     uv pip install -e ".[isaac50]"
     popd >/dev/null
     uv pip install openpi-client
-
-    python -c "import isaacsim"
 }
 
 install_isaaclab_env() {

@@ -2100,12 +2100,6 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env robolab
 
-      - name: Download RoboLab checkpoint
-        run: |
-          source .venv/bin/activate
-          hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos \
-            --local-dir /workspace/dataset/RLinf-Pi05-RoboLab-droid-jointpos
-
       - name: RoboLab OpenPI Pi05 evaluation
         timeout-minutes: 30
         run: |
@@ -2135,16 +2129,6 @@ jobs:
           python tests/e2e_tests/evaluations/check_robolab_results.py \
             --log-dir logs/robolab_openpi_truncation_eval --num-envs 2 \
             --rollout-epochs 2 --max-episode-steps 17
-
-      - name: Upload RoboLab evaluation logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: robolab-openpi-eval-logs
-          path: |
-            logs/robolab_openpi*/**/*.log
-            logs/robolab_openpi*/**/*.json
-            logs/robolab_openpi*/**/events.out.tfevents.*
 
       - name: Clean up
         if: always()

@@ -31,7 +31,7 @@ The table below lists benchmarks that have example configs under ``evaluations/`
      - ``polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml``, ``polaris/polaris_movelattecup_openpi_eval.yaml``
    * - RoboLab
      - 120 DROID joint-position manipulation tasks
-     - ``robolab/pi05_droid_jointpos.yaml``
+     - ``robolab/robolab_pi05_droid_jointpos.yaml``
    * - RoboTwin
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml``, etc.
