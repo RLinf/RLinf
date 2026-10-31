@@ -143,9 +143,7 @@ class MjlabG1Env:
         # One line per world when the solver stops at iterations=10 or
         # ls_iterations=20. The caps stay. Clear both before the step graph
         # is recaptured below.
-        solver_warn = (
-            mjwarp.OverflowType.ITERATIONS | mjwarp.OverflowType.LS_ITERATIONS
-        )
+        solver_warn = mjwarp.OverflowType.ITERATIONS | mjwarp.OverflowType.LS_ITERATIONS
         self.sim.wp_model.opt.warn_overflow &= ~solver_warn
         scene.initialize(self.sim.mj_model, self.sim.model, self.sim.data)
         self.robot = scene["robot"]
