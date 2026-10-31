@@ -31,6 +31,7 @@ import torch.nn.functional as F
 
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, siglip
+from rlinf.models.embodiment.openpi.modules.short_memory import ShortMemoryVisionEncoder
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
@@ -125,6 +126,14 @@ class Pi0(model.BaseModel):
             use_gradient_checkpointing=False,
             dtype_mm=config.dtype,
         )
+        self.short_memory_encoder = (
+            ShortMemoryVisionEncoder(
+                temporal_layers=config.short_memory_temporal_layers,
+                drop_history_layer=config.short_memory_drop_history_layer,
+            )
+            if config.short_memory
+            else None
+        )
 
         action_expert_width = action_expert_config.width
         self.action_dim = config.action_dim
@@ -208,14 +217,22 @@ class Pi0(model.BaseModel):
         image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
         image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
         for name in image_names:
-            image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
+            image_mask = obs.image_masks[name]
+            if self.short_memory_encoder is None:
+                image_tokens, _ = self.img(obs.images[name])
+            else:
+                image_tokens = self.short_memory_encoder(
+                    self.img,
+                    obs.images[name],
+                    frame_mask=image_mask,
+                    time_offsets=obs.history_time_offsets,
+                )
+                image_mask = image_mask[:, -1]
             tokens.append(image_tokens)
 
             # Image tokens use bidirectional attention
             input_mask.append(
-                einops.repeat(
-                    obs.image_masks[name], "b -> b s", s=image_tokens.shape[1]
-                )
+                einops.repeat(image_mask, "b -> b s", s=image_tokens.shape[1])
             )
             ar_mask += [False] * image_tokens.shape[1]
 
@@ -734,6 +751,7 @@ class Pi0(model.BaseModel):
             token_ar_mask=_move(observation.token_ar_mask),
             token_loss_mask=_move(observation.token_loss_mask),
             pcd_xyz=_move(observation.pcd_xyz),
+            history_time_offsets=_move(observation.history_time_offsets),
         )
 
     def _actions_to_device(self, actions: Any) -> torch.Tensor:

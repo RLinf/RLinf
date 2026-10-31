@@ -27,6 +27,9 @@ from rlinf.models.embodiment.openpi.transforms.apply import (
     apply_output_transform,
 )
 from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
+from rlinf.models.embodiment.openpi.transforms.pipeline import (
+    split_short_memory_transforms,
+)
 
 
 class EnvIO:
@@ -49,6 +52,10 @@ class EnvIO:
 
         self._input_transform_fn = compose(transforms)
         self._output_transform_fn = compose(output_transforms)
+        if self._config.short_memory:
+            self._history_frame_transform, self._history_current_transform = (
+                split_short_memory_transforms(transforms)
+            )
 
     def _ensure_transforms(self) -> None:
         if self._input_transform_fn is None or self._output_transform_fn is None:
@@ -123,11 +130,14 @@ class EnvIO:
             token_ar_mask=_move(obs.token_ar_mask),
             token_loss_mask=_move(obs.token_loss_mask),
             pcd_xyz=_move(obs.pcd_xyz),
+            history_time_offsets=_move(obs.history_time_offsets),
         )
 
     def env_obs_to_observation(self, env_obs: dict[str, Any]) -> Observation:
         """Repack env obs through the transform pipeline onto this device."""
         self._ensure_transforms()
+        if self._config.short_memory:
+            return self._history_env_obs_to_observation(env_obs)
         repacked = repack_env_obs(
             self.config_name,
             env_obs,
@@ -135,6 +145,44 @@ class EnvIO:
         )
         processed = self.input_transform(repacked, transpose=False)
         return self._observation_dict_to_device(processed)
+
+    def _history_env_obs_to_observation(self, env_obs: dict[str, Any]) -> Observation:
+        """Transform camera history framewise, keeping the current state and prompt."""
+        main_images = env_obs["history_main_images"]
+        batch_size, num_frames = main_images.shape[:2]
+        history_obs = {
+            "main_images": main_images.flatten(0, 1),
+            "wrist_images": env_obs["history_wrist_images"].flatten(0, 1),
+            "states": env_obs["states"].repeat_interleave(num_frames, dim=0),
+            "task_descriptions": [
+                prompt
+                for prompt in env_obs["task_descriptions"]
+                for _ in range(num_frames)
+            ],
+        }
+        repacked = repack_env_obs(
+            self.config_name,
+            history_obs,
+            select_state=self._select_configured_state,
+        )
+        processed = apply_input_transform(self._history_frame_transform, repacked)
+        prompts = processed.pop("prompt")
+        from torch.utils._pytree import tree_map
+
+        current = tree_map(lambda value: value[num_frames - 1 :: num_frames], processed)
+        current["prompt"] = prompts[num_frames - 1 :: num_frames]
+        current = apply_input_transform(self._history_current_transform, current)
+        frame_mask = env_obs["history_frame_mask"].bool()
+        current["image"] = {
+            key: value.reshape(batch_size, num_frames, *value.shape[1:])
+            for key, value in processed["image"].items()
+        }
+        current["image_mask"] = {
+            key: value.reshape(batch_size, num_frames).bool() & frame_mask
+            for key, value in processed["image_mask"].items()
+        }
+        current["history_time_offsets"] = env_obs["history_time_offsets"]
+        return self._observation_dict_to_device(current)
 
     def _predict_eval(
         self,

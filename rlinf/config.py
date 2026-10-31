@@ -546,12 +546,9 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             sharding = (
                 str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
             )
-            assert sharding == "no_shard" or (
-                cfg.fsdp_config.strategy == "fsdp"
-                and sharding in ("shard_grad_op", "full_shard")
-            ), (
-                "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
-                "and sharding_strategy in ['shard_grad_op', 'full_shard']; "
+            assert sharding in ("no_shard", "shard_grad_op", "full_shard"), (
+                "openpi training requires sharding_strategy in "
+                "['no_shard', 'shard_grad_op', 'full_shard']; "
                 f"got strategy={cfg.fsdp_config.strategy!r}, "
                 f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
             )
@@ -569,6 +566,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         if (
             model_type is not None
             and str(model_type) == SupportedModel.OPENPI.value
+            and cfg.fsdp_config.strategy == "fsdp"
             and not cfg.fsdp_config.use_orig_params
         ):
             # Dual-expert Gemma packs frozen VLM (expert-0) and trainable

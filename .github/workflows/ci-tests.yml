@@ -178,6 +178,7 @@ jobs:
             unit_test_filter: &unit
               - *shared
               - 'rlinf/robotics/**'
+              - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.

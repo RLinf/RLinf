@@ -76,7 +76,11 @@ def apply_input_transform(
         transformed = list(ex.map(transform_fn, batch_samples))
 
     recombined = tree_map(
-        lambda *xs: torch.from_numpy(np.asarray(xs).copy()),
+        lambda *xs: (
+            list(xs)
+            if isinstance(xs[0], str)
+            else torch.from_numpy(np.asarray(xs).copy())
+        ),
         *transformed,
     )
     if not first_process:

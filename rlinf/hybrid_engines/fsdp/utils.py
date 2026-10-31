@@ -510,7 +510,7 @@ def apply_fsdp2_to_model(
         )
         module_classes_to_wrap = None
         no_split_names = getattr(module, "_no_split_names", None)
-        assert (
+        assert config.get("wrappers") or (
             len(fsdp_transformer_layer_cls_to_wrap) > 0
             and fsdp_transformer_layer_cls_to_wrap[0] is not None
         )
@@ -542,17 +542,57 @@ def apply_fsdp2_to_model(
         ):
             modules_to_shard.append((name, submodule, "transformer_or_embedding"))
 
-    # named_modules() returns submodules outermost-first, but fully_shard should
-    # be applied inside-out. Reversing ensures child modules are wrapped first,
-    # so the parent only shards the remaining (non-wrapped) parameters.
-    for name, submodule, module_type in reversed(modules_to_shard):
-        fully_shard(
-            submodule,
-            mesh=device_mesh,
-            mp_policy=mp_policy,
-            offload_policy=offload_policy,
-            reshard_after_forward=reshard_after_forward,
+    from rlinf.hybrid_engines.fsdp.mixed_precision import get_fsdp2_wrap_plan
+
+    wrap_plan = get_fsdp2_wrap_plan(
+        module, config, {submodule for _, submodule, _ in modules_to_shard}
+    )
+    policies = dict.fromkeys(wrap_plan, mp_policy)
+    for submodule, precision in wrap_plan.items():
+        if precision is not None:
+            if precision.keep_low_precision_grads:
+                raise ValueError("FSDP2 does not support keep_low_precision_grads=true")
+            policies[submodule] = MixedPrecisionPolicy(
+                param_dtype=precision.param_dtype,
+                reduce_dtype=precision.reduce_dtype,
+                cast_forward_inputs=precision.cast_forward_inputs,
+            )
+
+    # FSDP2 leaves buffers to the caller. Apply each explicit boundary's buffer
+    # policy only to the buffers it owns, excluding nested sharding units.
+    if config.get("mixed_precision_rules"):
+        from rlinf.utils.precision import torch_dtype_from_precision
+
+        default_buffer_dtype = torch_dtype_from_precision(
+            config["mixed_precision"].get("buffer_dtype")
         )
+
+        def cast_buffers(current, buffer_dtype):
+            if current in wrap_plan:
+                precision = wrap_plan[current]
+                buffer_dtype = (
+                    precision.buffer_dtype
+                    if precision is not None
+                    else default_buffer_dtype
+                )
+            for name, buffer in current.named_buffers(recurse=False):
+                if buffer_dtype is not None and buffer.is_floating_point():
+                    current._buffers[name] = buffer.to(dtype=buffer_dtype)
+            for child in current.children():
+                cast_buffers(child, buffer_dtype)
+
+        cast_buffers(module, default_buffer_dtype)
+
+    # Resolve before mutation, then shard children before their owning parents.
+    for submodule in reversed(list(module.modules())):
+        if submodule is not module and submodule in wrap_plan:
+            fully_shard(
+                submodule,
+                mesh=device_mesh,
+                mp_policy=policies[submodule],
+                offload_policy=offload_policy,
+                reshard_after_forward=reshard_after_forward,
+            )
 
     root_kwargs = {
         "mesh": device_mesh,

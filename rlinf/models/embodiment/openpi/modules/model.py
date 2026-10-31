@@ -109,6 +109,8 @@ class Observation:
     token_ar_mask: torch.Tensor | None = None
     token_loss_mask: torch.Tensor | None = None
     pcd_xyz: torch.Tensor | None = None
+    # Short-memory cameras are [B, K, H, W, C], with [B, K] image masks.
+    history_time_offsets: torch.Tensor | None = None
 
     @classmethod
     def from_observation_like(cls, observation: Any) -> Observation:
@@ -160,6 +162,7 @@ class Observation:
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
             pcd_xyz=data.get("pcd_xyz"),
+            history_time_offsets=data.get("history_time_offsets"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -198,6 +201,7 @@ def _observation_to_dtype(obs: Observation, dtype: torch.dtype) -> Observation:
         token_ar_mask=_tensor_to_dtype(obs.token_ar_mask, dtype),
         token_loss_mask=_tensor_to_dtype(obs.token_loss_mask, dtype),
         pcd_xyz=_tensor_to_dtype(obs.pcd_xyz, dtype),
+        history_time_offsets=obs.history_time_offsets,
     )
 
 
@@ -229,6 +233,9 @@ def preprocess_observation(
     out_images = {}
     for key in image_keys:
         image = observation.images[key]
+        history_shape = image.shape[:2] if image.ndim == 5 else None
+        if history_shape is not None:
+            image = image.flatten(0, 1)
 
         # Standardize to (B, H, W, C) format if input is (B, C, H, W)
         if image.shape[-1] <= 4 and image.shape[1] > 4:
@@ -244,17 +251,20 @@ def preprocess_observation(
 
             # Convert from [-1, 1] to [0, 1] for augmentations
             image = image / 2.0 + 0.5
-            # image is in (B, H, W, C) format
-            # Apply augmentations per image in batch
-            B = image.shape[0]
+            # Keep matching patches aligned by sharing augmentation across time.
+            augmentation_images = (
+                image.reshape(*history_shape, *image.shape[1:])
+                if history_shape is not None
+                else image
+            )
+            B = augmentation_images.shape[0]
             augmented = []
             for i in range(B):
-                aug_image = image[i]  # (H, W, C)
-                aug_image = aug_image.permute(2, 0, 1)  # (C, H, W) for torchvision
+                aug_image = augmentation_images[i].movedim(-1, -3)
 
                 if "wrist" not in key:
                     # Random crop (95% of size) then resize back
-                    h, w = aug_image.shape[1], aug_image.shape[2]
+                    h, w = aug_image.shape[-2:]
                     crop_h, crop_w = int(h * 0.95), int(w * 0.95)
                     # generator=None draws from the global torch RNG
                     top = torch.randint(0, h - crop_h + 1, (1,), generator=rng).item()
@@ -275,20 +285,31 @@ def preprocess_observation(
                 aug_image = TF.adjust_contrast(aug_image, 1.0 + c)
                 aug_image = TF.adjust_saturation(aug_image, 1.0 + s)
 
-                aug_image = aug_image.permute(1, 2, 0)  # back to (H, W, C)
+                aug_image = aug_image.movedim(-3, -1)
                 augmented.append(aug_image)
             image = torch.stack(augmented, dim=0)
+            if history_shape is not None:
+                image = image.flatten(0, 1)
 
             # Back to [-1, 1]
             image = image * 2.0 - 1.0
 
-        out_images[key] = image
+        out_images[key] = (
+            image.reshape(*history_shape, *image.shape[1:])
+            if history_shape is not None
+            else image
+        )
 
     # Build masks
     out_masks = {}
     for key in out_images:
         if key not in observation.image_masks:
-            out_masks[key] = torch.ones(batch_shape, dtype=torch.bool)
+            mask_shape = (
+                out_images[key].shape[:2] if out_images[key].ndim == 5 else batch_shape
+            )
+            out_masks[key] = torch.ones(
+                mask_shape, dtype=torch.bool, device=out_images[key].device
+            )
         else:
             mask = observation.image_masks[key]
             if not isinstance(mask, torch.Tensor):
@@ -304,6 +325,7 @@ def preprocess_observation(
         token_ar_mask=observation.token_ar_mask,
         token_loss_mask=observation.token_loss_mask,
         pcd_xyz=observation.pcd_xyz,
+        history_time_offsets=observation.history_time_offsets,
     )
 
 

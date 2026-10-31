@@ -40,6 +40,18 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
+from rlinf.models.embodiment.openpi.modules.model import (
+    Observation,
+    preprocess_observation,
+)
+from rlinf.models.embodiment.openpi.modules.short_memory import (
+    ShortMemoryVisionEncoder,
+)
+from rlinf.models.embodiment.openpi.modules.siglip import (
+    Encoder,
+    Encoder1DBlock,
+    SigLIPViT,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -140,6 +152,131 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
     assert wrap_policy is not None
     assert wrap_policy(module=model.block, recurse=False, nonwrapped_numel=0)
     assert wrap_policy(module=model.head, recurse=False, nonwrapped_numel=0)
+
+
+@pytest.fixture
+def short_memory_vision():
+    torch.manual_seed(0)
+    vision = SigLIPViT(variant="mu/32", pool_type="none")
+    vision.encoder = Encoder(vision.width, 3, vision.num_heads, vision.mlp_dim)
+    return vision
+
+
+@pytest.mark.parametrize("num_frames", [1, 3, 8])
+def test_openpi_short_memory_current_only_matches_image_encoder(
+    short_memory_vision, num_frames
+):
+    vision = short_memory_vision.eval()
+    memory = ShortMemoryVisionEncoder(temporal_layers=(0, 1), drop_history_layer=1)
+    images = torch.randn(2, num_frames, 224, 224, 3)
+    frame_mask = torch.zeros(2, num_frames, dtype=torch.bool)
+    frame_mask[:, -1] = True
+    time_offsets = torch.arange(1 - num_frames, 1).float().expand(2, -1)
+
+    with torch.no_grad():
+        expected = vision(images[:, -1])[0]
+        actual = memory(
+            vision, images, frame_mask=frame_mask, time_offsets=time_offsets
+        )
+
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("num_frames,gradient_checkpointing", [(3, False), (8, True)])
+def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
+    short_memory_vision, num_frames, gradient_checkpointing
+):
+    vision = short_memory_vision.train()
+    vision.encoder.gradient_checkpointing = gradient_checkpointing
+    memory = ShortMemoryVisionEncoder(temporal_layers=(0, 1), drop_history_layer=1)
+    images = torch.randn(2, num_frames, 224, 224, 3, requires_grad=True)
+    frame_mask = torch.ones(2, num_frames, dtype=torch.bool)
+    frame_mask[0, :-1] = False
+    frame_mask[1, 0] = False
+    time_offsets = torch.arange(1 - num_frames, 1).float().expand(2, -1)
+    calls = []
+
+    def record_call(module, args):
+        calls.append((module, args[0].ndim))
+
+    owners = [vision, vision.stem, vision.encoder, *vision.encoder.layers]
+    handles = [owner.register_forward_pre_hook(record_call) for owner in owners]
+    tokens = memory(vision, images, frame_mask=frame_mask, time_offsets=time_offsets)
+    for handle in handles:
+        handle.remove()
+
+    # FSDP hooks must see one shared call path even when batch histories differ.
+    assert calls == list(zip(owners, [5, 4, 4, 4, 4, 3]))
+    assert tokens.shape == (2, 49, vision.width)
+    changed_padding = images.detach().clone()
+    changed_padding[~frame_mask] = torch.randn_like(changed_padding[~frame_mask]) * 100
+    with torch.no_grad():
+        changed_tokens = memory(
+            vision,
+            changed_padding,
+            frame_mask=frame_mask,
+            time_offsets=time_offsets,
+        )
+    torch.testing.assert_close(changed_tokens, tokens, rtol=0, atol=0)
+
+    (tokens * torch.randn_like(tokens)).sum().backward()
+    assert torch.isfinite(images.grad).all()
+    assert torch.count_nonzero(images.grad[~frame_mask]) == 0
+    assert images.grad[1, 1:-1].abs().sum() > 0
+    assert vision.stem.weight.grad.abs().sum() > 0
+
+
+def test_openpi_short_memory_temporal_attention_cannot_read_future_frames():
+    torch.manual_seed(0)
+    block = Encoder1DBlock(dim=32, num_heads=2).eval()
+    tokens = torch.randn(1, 4, 3, 32)
+    frame_mask = torch.ones(1, 4, dtype=torch.bool)
+    time_offsets = torch.tensor([[-3.0, -2.0, -1.0, 0.0]])
+    changed_tokens = tokens.clone()
+    changed_tokens[:, -1] += torch.randn_like(changed_tokens[:, -1]) * 100
+
+    with torch.no_grad():
+        original = block(tokens, frame_mask=frame_mask, time_offsets=time_offsets)
+        changed = block(
+            changed_tokens, frame_mask=frame_mask, time_offsets=time_offsets
+        )
+
+    torch.testing.assert_close(changed[:, :-1], original[:, :-1], rtol=0, atol=0)
+    assert not torch.allclose(changed[:, -1], original[:, -1])
+
+
+def test_openpi_short_memory_augmentation_keeps_frames_aligned():
+    generator = torch.Generator().manual_seed(0)
+    image_keys = ("base_0_rgb", "left_wrist_0_rgb")
+    images = {
+        key: torch.rand(2, 16, 16, 3, generator=generator) * 2 - 1 for key in image_keys
+    }
+    time_offsets = torch.tensor([[-2.0, -1.0, 0.0]]).expand(2, -1)
+    current = Observation(images=images, image_masks={}, state=torch.zeros(2, 8))
+    history = Observation(
+        images={
+            key: image[:, None].expand(-1, 3, -1, -1, -1)
+            for key, image in images.items()
+        },
+        image_masks={},
+        state=current.state,
+        history_time_offsets=time_offsets,
+    )
+    outputs = [
+        preprocess_observation(
+            observation,
+            train=True,
+            image_keys=image_keys,
+            image_resolution=(16, 16),
+            rng=torch.Generator().manual_seed(7),
+        )
+        for observation in (current, history)
+    ]
+
+    for key in image_keys:
+        expected = outputs[0].images[key][:, None].expand_as(outputs[1].images[key])
+        torch.testing.assert_close(outputs[1].images[key], expected, rtol=0, atol=0)
+    torch.testing.assert_close(outputs[1].history_time_offsets, time_offsets)
 
 
 def _make_model(*, prefix_seq_len: int = 5) -> RLTTokenTransformer:

@@ -1704,6 +1704,16 @@ class EnvOutput:
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
+            **{
+                key: obs[key]
+                for key in (
+                    "history_main_images",
+                    "history_wrist_images",
+                    "history_frame_mask",
+                    "history_time_offsets",
+                )
+                if key in obs
+            },
         }
 
     def to_dict(self) -> dict[str, Any]:

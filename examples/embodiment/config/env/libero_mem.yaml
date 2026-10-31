@@ -1,0 +1,12 @@
+defaults:
+  - libero_spatial
+  - _self_
+
+task_suite_name: libero_mem
+max_steps_per_rollout_epoch: 700
+max_episode_steps: 700
+
+short_memory:
+  num_frames: 8
+  stride: 70
+  fps: 20.0

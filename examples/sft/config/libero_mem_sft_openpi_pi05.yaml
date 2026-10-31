@@ -1,0 +1,84 @@
+defaults:
+  - model/pi0_5@actor.model
+  - hybrid_engines/openpi_fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: libero_mem_pi05_short_memory_sft
+    logger_backends: [tensorboard]
+  max_epochs: -1
+  max_steps: 12750
+  val_check_interval: -1
+  save_interval: 2125
+
+data:
+  train_data_paths: /path/to/libero-mem-lerobot
+  num_workers: 2
+  short_memory:
+    num_frames: 8
+    stride: 70
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 4
+  global_batch_size: 128
+  seed: 42
+  model:
+    precision: fp32
+    model_path: /path/to/libero10_pi05_sft_checkpoint
+    num_action_chunks: 10
+    openpi:
+      task: sft
+      config_name: pi05_libero
+      embed_dtype: bf16
+      discrete_state_input: False
+      train_expert_only: False
+      short_memory: True
+      short_memory_temporal_layers: [3, 7, 11, 15]
+      short_memory_drop_history_layer: 15
+    openpi_data:
+      norm_stats_path: /path/to/libero-mem-lerobot/norm_stats.json
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    total_training_steps: 12750
+    lr_warmup_steps: 798
+    lr_scheduler: openpi_cosine
+    min_lr: 1.0e-6
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: full_shard
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: False
+critic:
+  use_critic_model: False

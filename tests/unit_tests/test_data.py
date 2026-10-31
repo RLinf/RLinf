@@ -65,6 +65,7 @@ from rlinf.data.schema.embodied_types import (
     split_episode_data,
 )
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
+from rlinf.data.storage.lerobot.compat import index_episode_subset_by_id
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
@@ -721,6 +722,21 @@ def test_episode_boundaries_agree_across_formats(dataset_cls):
     assert all(isinstance(x, int) for x in starts + ends)
 
 
+@pytest.mark.parametrize("episodes", [[3], [4, 1]])
+def test_episode_boundaries_preserve_subset_order_after_indexing(episodes):
+    starts = [position * 3 for position in range(len(episodes))]
+    ends = [start + 3 for start in starts]
+    dataset = _V21Dataset(starts, ends)
+    dataset.episodes = episodes
+
+    index_episode_subset_by_id(dataset)
+    index_episode_subset_by_id(dataset)
+
+    assert episode_boundaries(dataset) == (starts, ends)
+    assert dataset.episode_data_index["from"][episodes].tolist() == starts
+    assert dataset.episode_data_index["to"][episodes].tolist() == ends
+
+
 def test_episode_boundaries_reports_an_unknown_layout():
     class _Alien:
         episode_data_index = None
@@ -739,6 +755,97 @@ def test_episode_boundaries_rejects_v30_meta_without_the_columns():
 
     with pytest.raises(RuntimeError, match="Cannot determine episode boundaries"):
         episode_boundaries(_Partial())
+
+
+@pytest.mark.parametrize("num_frames", [1, 3])
+def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_frames):
+    from datasets import Dataset
+
+    from rlinf.data.datasets.openpi.short_memory_sft_data_loader import (
+        ShortMemoryDataset,
+        collate_short_memory_items,
+    )
+
+    # A LeRobot episode subset retains global indices, with clamped pad frames.
+    indices = torch.tensor([104] if num_frames == 1 else [101, 102, 104])
+    padding = torch.tensor([False] if num_frames == 1 else [True, False, False])
+    cameras = indices[:, None, None, None].expand(-1, 2, 2, 3).float()
+    raw = {
+        "index": indices,
+        "index_is_pad": padding,
+        "camera": cameras[0] if num_frames == 1 else cameras,
+        "state": np.array([4.0, 5.0], dtype=np.float32),
+        "prompt": "current task",
+        "actions": np.array([[1.0], [2.0]], dtype=np.float32),
+    }
+    lerobot = mock.MagicMock()
+    lerobot.meta.camera_keys = ["camera"]
+    lerobot.hf_dataset = Dataset.from_dict(
+        {"timestamp": [10.0, 10.051, 10.102, 10.155, 10.207]}
+    )
+    lerobot.__getitem__.return_value = raw
+    transformed_indices, tokenized_prompts = [], []
+
+    def frame_transform(frame):
+        transformed_indices.append(int(frame["index"]))
+        return {
+            "image": {"base_0_rgb": np.asarray(frame["camera"])},
+            "image_mask": {"base_0_rgb": True},
+            "state": frame["state"],
+            "prompt": frame["prompt"],
+            "actions": frame["actions"],
+        }
+
+    def sample_transform(frame):
+        tokenized_prompts.append(frame.pop("prompt"))
+        frame["tokenized_prompt"] = np.array([7, 8])
+        frame["tokenized_prompt_mask"] = np.array([True, True])
+        return frame
+
+    dataset = ShortMemoryDataset(
+        lerobot, frame_transform, sample_transform, num_frames=num_frames
+    )
+    sample = dataset[3]
+
+    assert transformed_indices == ([104] if num_frames == 1 else [102, 104])
+    assert tokenized_prompts == ["current task"]
+    np.testing.assert_array_equal(sample["state"], raw["state"])
+    np.testing.assert_array_equal(sample["actions"], raw["actions"])
+    np.testing.assert_array_equal(sample["image_mask"]["base_0_rgb"], ~padding)
+    np.testing.assert_array_equal(
+        sample["image"]["base_0_rgb"][:, 0, 0, 0],
+        [104] if num_frames == 1 else [0, 102, 104],
+    )
+    np.testing.assert_allclose(
+        sample["history_time_offsets"],
+        [0.0] if num_frames == 1 else [0.0, -0.104, 0.0],
+        atol=1e-6,
+    )
+    observation, actions = collate_short_memory_items([sample])
+    torch.testing.assert_close(observation.state, torch.from_numpy(raw["state"])[None])
+    torch.testing.assert_close(actions, torch.from_numpy(raw["actions"])[None])
+    torch.testing.assert_close(
+        observation.history_time_offsets,
+        torch.from_numpy(sample["history_time_offsets"])[None],
+    )
+    baseline, baseline_actions = collate_short_memory_items(
+        [sample], include_history=False
+    )
+    assert baseline.images["base_0_rgb"].shape == (1, 2, 2, 3)
+    assert baseline.image_masks["base_0_rgb"].shape == (1,)
+    assert baseline.history_time_offsets is None
+    torch.testing.assert_close(
+        baseline.images["base_0_rgb"], observation.images["base_0_rgb"][:, -1]
+    )
+    torch.testing.assert_close(
+        baseline.image_masks["base_0_rgb"],
+        observation.image_masks["base_0_rgb"][:, -1],
+    )
+    for field in ("state", "tokenized_prompt", "tokenized_prompt_mask"):
+        torch.testing.assert_close(
+            getattr(baseline, field), getattr(observation, field)
+        )
+    torch.testing.assert_close(baseline_actions, actions)
 
 
 # Skip codec round-trip tests when the optional backends are not installed.
@@ -947,6 +1054,28 @@ def test_env_output_composes_one_transition_object():
         "final_obs",
         "env_infos",
     }
+
+
+def test_env_output_transports_current_and_terminal_visual_history():
+    def observation(value):
+        return {
+            "states": torch.full((2, 3), value),
+            "history_main_images": torch.full((2, 3, 2, 2, 3), value),
+            "history_wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
+            "history_frame_mask": torch.tensor([[False, True, True]] * 2),
+            "history_time_offsets": torch.tensor([[0.0, -3.5, 0.0]] * 2),
+        }
+
+    output = EnvOutput(obs=observation(1), final_obs=observation(7))
+    payload = output.to_dict()
+
+    for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
+        for key, value in original.items():
+            torch.testing.assert_close(payload[name][key], value)
+    assert not any(
+        key.startswith("history_")
+        for key in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
+    )
 
 
 def test_removed_duplicate_types_are_not_schema_api():

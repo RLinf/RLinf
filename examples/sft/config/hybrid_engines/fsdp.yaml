@@ -23,7 +23,7 @@ mixed_precision:            # mixed precision settings for fsdp/fsdp2
   reduce_dtype: null
   buffer_dtype: null
 
-# FSDP1: select named wrappers, define complete precision policies, then bind
+# Select named wrappers, define complete precision policies, then bind
 # wrapper_name: policy_name. wrap_mode: individual (default), subtree, or combined.
 wrappers: {}
 mixed_precision_policies: {}

@@ -18,6 +18,7 @@ import importlib
 import os
 import re
 import sys
+from collections import deque
 from typing import Optional, Union
 
 import gym
@@ -153,6 +154,7 @@ class LiberoEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
         self.is_eval = cfg.get("is_eval", False)
+        self.is_memory_suite = cfg.task_suite_name.lower() == "libero_mem"
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
@@ -169,6 +171,32 @@ class LiberoEnv(gym.Env):
             self._eval_reset_pool = np.array([], dtype=np.int64)
         self.update_reset_state_ids()
         self._init_task_and_trial_ids()
+        self.skip_intermediate_renders = bool(
+            OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
+        )
+        self.short_memory = cfg.get("short_memory")
+        if self.short_memory is not None:
+            self.history_length = int(self.short_memory.num_frames)
+            self.history_stride = int(self.short_memory.stride)
+            self.history_fps = float(self.short_memory.fps)
+            if (
+                self.history_length < 1
+                or self.history_stride < 1
+                or self.history_fps <= 0
+            ):
+                raise ValueError(
+                    "short_memory requires num_frames >= 1, stride >= 1, and fps > 0."
+                )
+            if self.skip_intermediate_renders:
+                raise ValueError(
+                    "short_memory requires skip_intermediate_renders=False "
+                    "to record every control step."
+                )
+            capacity = (self.history_length - 1) * self.history_stride + 1
+            self._observation_history = [
+                deque(maxlen=capacity) for _ in range(self.num_envs)
+            ]
+
         self._init_env()
 
         self.prev_step_reward = np.zeros(self.num_envs)
@@ -180,9 +208,6 @@ class LiberoEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
-        self.skip_intermediate_renders = bool(
-            OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
-        )
 
     def _log_evaluation_mode(self):
         """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
@@ -193,12 +218,14 @@ class LiberoEnv(gym.Env):
         elif libero_type == "plus":
             suffix = os.environ.get("LIBERO_SUFFIX", "all")
             logger.info(f"Evaluation Mode: LIBERO-PLUS | Suffix: {suffix}")
+        elif self.cfg.task_suite_name.lower() == "libero_mem":
+            logger.info("Evaluation Mode: LIBERO-Mem | Ordered full-task success")
         else:
             logger.info("Evaluation Mode: Standard LIBERO")
 
     def _init_env(self):
         env_fns = self.get_env_fns()
-        self.env = ReconfigureSubprocEnv(env_fns)
+        self.env = ReconfigureSubprocEnv(env_fns, memory_suite=self.is_memory_suite)
 
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
@@ -446,8 +473,8 @@ class LiberoEnv(gym.Env):
                     "seed": self.seed,
                 }
             )
-            # LIBERO-PRO: use selected BDDL language (not original suite task.language)
-            # and remember the perturbation folder for pruned_init loading.
+            # Keep the perturbation folder for LIBERO-PRO reset states.
+            # LIBERO-Mem uses the BDDL prompt without filename task indices.
             pert_folder = os.path.basename(os.path.dirname(os.path.abspath(final_path)))
             pert_init_folders.append(pert_folder)
             if variant == "pro":
@@ -466,6 +493,9 @@ class LiberoEnv(gym.Env):
                         bddl_goal,
                         final_path,
                     )
+            elif self.is_memory_suite:
+                bddl_lang, _ = _read_bddl_language_and_goal(final_path)
+                task_descriptions.append(bddl_lang)
             else:
                 task_descriptions.append(task.language)
 
@@ -756,8 +786,10 @@ class LiberoEnv(gym.Env):
 
     def _extract_image_and_state(self, obs):
         return {
-            "full_image": get_libero_image(obs),
-            "wrist_image": get_libero_wrist_image(obs),
+            "full_image": get_libero_image(obs, memory_suite=self.is_memory_suite),
+            "wrist_image": get_libero_wrist_image(
+                obs, memory_suite=self.is_memory_suite
+            ),
             "state": np.concatenate(
                 [
                     obs["robot0_eef_pos"],
@@ -777,22 +809,60 @@ class LiberoEnv(gym.Env):
             list_of_dict_to_dict_of_list(images_and_states_list)
         )
 
-        full_image_tensor = torch.stack(
-            [value.clone() for value in images_and_states["full_image"]]
-        )
-        wrist_image_tensor = torch.stack(
-            [value.clone() for value in images_and_states["wrist_image"]]
-        )
-
         states = images_and_states["state"]
 
         obs = {
-            "main_images": full_image_tensor,
-            "wrist_images": wrist_image_tensor,
+            "main_images": images_and_states["full_image"],
+            "wrist_images": images_and_states["wrist_image"],
             "states": states,
             "task_descriptions": self.task_descriptions,
         }
         return obs
+
+    def _append_history(self, obs, env_idx):
+        for index in env_idx:
+            self._observation_history[index].append(
+                (
+                    obs["main_images"][index].clone(),
+                    obs["wrist_images"][index].clone(),
+                    int(self.elapsed_steps[index]),
+                )
+            )
+
+    def _history_observation(self):
+        """Sample oldest to current frames, with masked left padding."""
+        history = {
+            "history_main_images": [],
+            "history_wrist_images": [],
+            "history_frame_mask": [],
+            "history_time_offsets": [],
+        }
+        for frames in self._observation_history:
+            selected = list(frames)[:: -self.history_stride][: self.history_length]
+            selected.reverse()
+            missing = self.history_length - len(selected)
+            current = selected[-1]
+            for key, image_index in (
+                ("history_main_images", 0),
+                ("history_wrist_images", 1),
+            ):
+                padding = [torch.zeros_like(current[image_index])] * missing
+                history[key].append(
+                    torch.stack(padding + [frame[image_index] for frame in selected])
+                )
+            history["history_frame_mask"].append(
+                torch.tensor([False] * missing + [True] * len(selected))
+            )
+            history["history_time_offsets"].append(
+                torch.tensor(
+                    [0.0] * missing
+                    + [
+                        (frame[2] - current[2]) / self.history_fps for frame in selected
+                    ],
+                    dtype=torch.float32,
+                )
+            )
+        return {key: torch.stack(value) for key, value in history.items()}
 
     def _reconfigure(self, reset_state_ids, env_idx):
         reconfig_env_idx = []
@@ -861,8 +931,15 @@ class LiberoEnv(gym.Env):
         for i, idx in enumerate(env_idx):
             self.current_raw_obs[idx] = raw_obs[i]
 
-        obs = self._wrap_obs(self.current_raw_obs)
         self._reset_metrics(env_idx)
+        if self.is_memory_suite:
+            self.env.reset_memory_progress(id=env_idx)
+        obs = self._wrap_obs(self.current_raw_obs)
+        if self.short_memory is not None:
+            for index in env_idx:
+                self._observation_history[index].clear()
+            self._append_history(obs, env_idx)
+            obs.update(self._history_observation())
         infos = {}
         return obs, infos
 
@@ -899,7 +976,14 @@ class LiberoEnv(gym.Env):
             depth=depth,
         )
 
-    def step(self, actions=None, auto_reset=True, _skip_obs_wrap=False):
+    def step(
+        self,
+        actions=None,
+        auto_reset=True,
+        _skip_obs_wrap=False,
+        *,
+        _include_history=True,
+    ):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
@@ -910,10 +994,24 @@ class LiberoEnv(gym.Env):
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = None if _skip_obs_wrap else self._wrap_obs(raw_obs)
+        if self.short_memory is not None:
+            self._append_history(obs, range(self.num_envs))
+            if _include_history:
+                obs.update(self._history_observation())
 
         step_reward = self._calc_step_reward(terminations)
 
         infos = self._record_metrics(step_reward, terminations, infos)
+        if self.is_memory_suite:
+            for key in (
+                "strict_success",
+                "subgoals_completed",
+                "subgoals_total",
+                "subgoal_progress",
+                "overshot",
+            ):
+                infos["episode"][key] = to_tensor(np.asarray(infos[key]))
+            infos["episode"]["success_at_end"] = to_tensor(terminations.copy())
         if self.ignore_terminations:
             infos["episode"]["success_at_end"] = to_tensor(terminations)
             terminations[:] = False
@@ -960,7 +1058,10 @@ class LiberoEnv(gym.Env):
                 actions = chunk_actions[:, i]
                 extracted_obs, step_reward, terminations, truncations, infos = (
                     self.step(
-                        actions, auto_reset=False, _skip_obs_wrap=not should_render
+                        actions,
+                        auto_reset=False,
+                        _skip_obs_wrap=not should_render,
+                        _include_history=i == chunk_size - 1,
                     )
                 )
                 obs_list.append(extracted_obs)
@@ -1053,6 +1154,7 @@ class LiberoEnv(gym.Env):
             self.num_envs,
             self._eval_seen_trials,
             self._task_success_stats,
+            success_key="strict_success" if self.is_memory_suite else "success_once",
         )
 
         new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
