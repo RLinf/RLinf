@@ -3,7 +3,7 @@ LeKiwi 移动底盘配置与控制
 
 本文从拆箱开始，带你配置 LeKiwi 全向移动底盘与前置摄像头，直到跑起 ``LeKiwiDriveEnv-v1`` 环境。文中先安装环境，再为轮电机编号，用一条命令检查每个部件，最后给出把底盘交给策略或控制器的配置。
 
-请按顺序完成这三项检查。每项只验证一个部件，因此后续步骤出错时，你已经知道车轮、摄像头和键盘都是好的。组装步骤见 `LeKiwi 组装指南 <https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_；LeRobot 的 `LeKiwi 指南 <https://huggingface.co/docs/lerobot/en/lekiwi>`_ 介绍同一款机器人在其自身框架中的用法。
+请按顺序完成这三项检查。每项只验证一个部件，因此后续步骤出错时，你已经知道车轮、摄像头和键盘都是好的。
 
 准备工作
 --------
@@ -23,10 +23,12 @@ LeKiwi 移动底盘配置与控制
    * - 键盘主机
      - 可选。同一网络内的任意计算机（macOS 也可），只需一个装好 RLinf 运行时依赖和 pynput 的 Python 环境，无需安装 RLinf。
 
+本文不介绍组装：步骤见 `LeKiwi 组装指南 <https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_，同一款机器人在其自身框架中的用法见 LeRobot 的 `LeKiwi 指南 <https://huggingface.co/docs/lerobot/en/lekiwi>`_。
+
 各部分如何协作
 --------------
 
-底盘是三个互成 120 度的轮电机，挂在同一条串口总线上，硬件只认识每个轮子的速度。RLinf 把机体速度 ``[x, y, theta]``（单位分别为 m/s、m/s、deg/s）换算成各轮速度；当某个轮子超出上限时，所有轮子按同一比例缩小，因此达不到满速的方向会变慢，但行进方向不变。机器人层用底盘和摄像头组装 ``LeKiwiRobot``，环境层再把它包装成 ``LeKiwiDriveEnv-v1``。
+底盘是三个互成 120 度的轮电机，挂在同一条串口总线上，硬件只认识每个轮子的速度。RLinf 把机体速度 ``[x, y, theta]``（单位分别为 m/s、m/s、deg/s）换算成各轮速度；当某个轮子超出上限时，所有轮子按同一比例缩小，因此达不到满速的方向会变慢，但行进方向不变。机器人层用底盘和摄像头组装 ``LeKiwiRobot``，环境层再把它包装成 ``LeKiwiDriveEnv-v1``。各部件的观测与动作契约见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
 安装环境
 --------
@@ -238,32 +240,45 @@ LeKiwi 移动底盘配置与控制
 
 奖励恒为零，回合也不会提前终止：任务成功与否由任务本身判定，参见 :doc:`新真机任务 </rst_source/extending/new_task>`。
 
-在自己的程序中使用底盘
-----------------------
+RPent 部署
+----------
 
-要在实验之外使用底盘，直接用机器人层组装 ``LeKiwiRobot`` 并调用各部件；速度换算与限幅完全一致：
+基于 RLinf 构建的智能体框架 RPent 通过其 LeKiwi 扩展控制这台底盘：机器人计算机用 HTTP 提供环境服务，智能体计算机运行规划器，由规划器调用 ``drive(velocity, duration_s)``、``stop()`` 和只读的 ``view_env_state(step)``。机器人计算机上不运行 Ray 集群。
 
-.. code-block:: python
+在两台机器上都安装带 ``lekiwi`` 可选依赖的 RPent；机器人计算机上同时指向本 RLinf 仓库：
 
-   from rlinf.robotics.parts.cameras import CameraInfo
-   from rlinf.robotics.robots import LeKiwiRobot
+.. code-block:: bash
 
-   robot = LeKiwiRobot.build(
-       port="/dev/ttyACM0",
-       node_rank=None,  # 在本进程中直接打开硬件。
-       cameras={
-           "front": CameraInfo(
-               name="front",
-               serial_number="<摄像头序列号>",
-               camera_type="webcam",
-               resolution=(320, 240),
-           )
-       },
-   )
-   robot.connect()
-   try:
-       robot.send_action({"base": {"velocity": [0.1, 0.0, 0.0]}})
-   finally:
-       robot.disconnect()
+   # 机器人计算机，在 RPent 仓库中：
+   uv pip install --torch-backend cpu -e '.[lekiwi]' -e /path/to/RLinf
 
-各部件的观测与动作契约见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
+   # 智能体计算机，在 RPent 仓库中：
+   uv pip install -e '.[lekiwi]'
+
+用检测脚本按硬件生成站点 YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动：
+
+.. code-block:: bash
+
+   python -m robots.lekiwi.detect --output /path/to/lekiwi-site.yaml
+
+在机器人计算机上启动环境服务，然后在智能体计算机上运行任务或 Dashboard：
+
+.. code-block:: bash
+
+   # 机器人计算机：
+   python -m robots.lekiwi.env_server \
+     --robot-config /path/to/lekiwi-site.yaml \
+     --transport http --host 0.0.0.0 --port 8120
+
+   # 智能体计算机，运行任务 0（drive_smoke_test），使用 API 规划器：
+   rpent --robot lekiwi --task-id 0 \
+     --env-endpoint http://<机器人 IP>:8120 \
+     --robot-config /path/to/lekiwi-site.yaml \
+     --planner api --model <模型 ID>
+
+   # 智能体计算机，在浏览器中手动驾驶：
+   rpent --robot lekiwi --dashboard --planner manual \
+     --env-endpoint http://<机器人 IP>:8120 \
+     --robot-config /path/to/lekiwi-site.yaml
+
+任务 1 ``room_survey`` 在房间里分段行驶并报告摄像头看到的画面。站点 YAML 各字段、Dashboard 用法和故障排查见 `RPent LeKiwi 说明 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/real_world_robots/lekiwi.rst>`_。

@@ -8,10 +8,7 @@ config that hands the base to a policy or a controller.
 
 Work through the three checks in order. Each one covers a single part, so when
 a later step fails you already know the wheels, the camera, and the keyboard
-work. For assembly, follow the `LeKiwi assembly guide
-<https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_; LeRobot's
-`LeKiwi guide <https://huggingface.co/docs/lerobot/en/lekiwi>`_ covers the same
-robot for its own stack.
+work.
 
 What you need
 -------------
@@ -36,6 +33,11 @@ What you need
        Python environment that has RLinf's runtime dependencies and pynput.
        It does not need an RLinf install.
 
+Assembly is not covered here: follow the `LeKiwi assembly guide
+<https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_, and
+LeRobot's `LeKiwi guide <https://huggingface.co/docs/lerobot/en/lekiwi>`_ for
+the same robot in its own stack.
+
 How the pieces fit
 ------------------
 
@@ -45,7 +47,9 @@ only per-wheel velocities reach the hardware. RLinf converts a body velocity
 wheel by the same factor when one would exceed its limit, so a direction the
 base cannot reach at full speed runs slower but still in a straight line. The
 robotics layer composes ``LeKiwiRobot`` from the base and the cameras; the env
-layer wraps that robot as ``LeKiwiDriveEnv-v1``.
+layer wraps that robot as ``LeKiwiDriveEnv-v1``. Each part's observation and
+action contracts are in :doc:`Robotics Interface
+</rst_source/concepts/robotics>`.
 
 Install the environment
 -----------------------
@@ -321,35 +325,56 @@ The reward is always zero and the episode never terminates early: a task
 decides success itself, as
 :doc:`New Real-World Tasks </rst_source/extending/new_task>` describes.
 
-Drive the base from your own program
-------------------------------------
+RPent Deployment
+----------------
 
-To use the base outside an experiment, build ``LeKiwiRobot`` from the robotics
-layer and call the parts directly; the same velocity conversion and limits
-apply:
+RPent, the agent framework built on RLinf, drives this base through its LeKiwi
+extension: the robot computer serves the environment over HTTP, and the agent
+machine runs a planner that calls ``drive(velocity, duration_s)``, ``stop()``,
+and the read-only ``view_env_state(step)``. No Ray cluster runs on the robot
+computer.
 
-.. code-block:: python
+Install RPent with the ``lekiwi`` extra on both machines, pointing at this
+RLinf checkout on the robot computer:
 
-   from rlinf.robotics.parts.cameras import CameraInfo
-   from rlinf.robotics.robots import LeKiwiRobot
+.. code-block:: bash
 
-   robot = LeKiwiRobot.build(
-       port="/dev/ttyACM0",
-       node_rank=None,  # Open the hardware in this process.
-       cameras={
-           "front": CameraInfo(
-               name="front",
-               serial_number="<camera-serial>",
-               camera_type="webcam",
-               resolution=(320, 240),
-           )
-       },
-   )
-   robot.connect()
-   try:
-       robot.send_action({"base": {"velocity": [0.1, 0.0, 0.0]}})
-   finally:
-       robot.disconnect()
+   # Robot computer, in the RPent checkout:
+   uv pip install --torch-backend cpu -e '.[lekiwi]' -e /path/to/RLinf
 
-See :doc:`Robotics Interface </rst_source/concepts/robotics>` for the
-observation and action contracts of each part.
+   # Agent machine, in the RPent checkout:
+   uv pip install -e '.[lekiwi]'
+
+Write the site YAML from the hardware the detection script finds; it takes the
+servo port and the camera identifier from the checks above and never commands
+motion:
+
+.. code-block:: bash
+
+   python -m robots.lekiwi.detect --output /path/to/lekiwi-site.yaml
+
+Start the environment server on the robot computer, then run a task or the
+Dashboard from the agent machine:
+
+.. code-block:: bash
+
+   # Robot computer:
+   python -m robots.lekiwi.env_server \
+     --robot-config /path/to/lekiwi-site.yaml \
+     --transport http --host 0.0.0.0 --port 8120
+
+   # Agent machine, task 0 (drive_smoke_test) with an API planner:
+   rpent --robot lekiwi --task-id 0 \
+     --env-endpoint http://<robot-ip>:8120 \
+     --robot-config /path/to/lekiwi-site.yaml \
+     --planner api --model <model-id>
+
+   # Agent machine, hands-on driving from the browser:
+   rpent --robot lekiwi --dashboard --planner manual \
+     --env-endpoint http://<robot-ip>:8120 \
+     --robot-config /path/to/lekiwi-site.yaml
+
+Task 1, ``room_survey``, moves around the room and reports what the camera
+sees. The `RPent LeKiwi instructions
+<https://github.com/RLinf/RPent/blob/main/docs/source-en/rst_source/real_world_robots/lekiwi.rst>`_
+cover the site YAML fields, the Dashboard, and troubleshooting.
