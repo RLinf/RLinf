@@ -1,0 +1,16 @@
+model_type: activevln
+model_path: /path/to/activevln
+precision: bf16
+load_to_device: True
+num_action_chunks: 1
+action_dim: 64
+is_lora: False
+activevln:
+  max_new_tokens: 64
+  max_context: 4096
+  max_image_tokens: 2048
+  max_images: 32
+  min_pixels: 3136
+  max_pixels: 76800
+  action_space: r2r
+  train_last_n_layers: 2

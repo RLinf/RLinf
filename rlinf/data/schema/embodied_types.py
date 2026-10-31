@@ -1698,13 +1698,20 @@ class EnvOutput:
             else None
         )
 
-        return {
+        prepared = {
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
         }
+        # Navigation policies consume the full multimodal conversation rather
+        # than a single image/state. Preserve these batched lists in both the
+        # normal and final observation paths.
+        for key in ("messages", "images"):
+            if key in obs:
+                prepared[key] = obs[key]
+        return prepared
 
     def to_dict(self) -> dict[str, Any]:
         return {

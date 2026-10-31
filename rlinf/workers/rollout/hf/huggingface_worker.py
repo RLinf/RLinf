@@ -511,6 +511,11 @@ class MultiStepRolloutWorker(Worker):
         )
 
         model_type = SupportedModel(self.model_cfg.model_type)
+        if model_type == SupportedModel.ACTIVEVLN:
+            kwargs = dict(kwargs)
+            kwargs["repetition_penalty"] = self.cfg.rollout.sampling_params.get(
+                "repetition_penalty", 1.0
+            )
         if model_type in [
             SupportedModel.OPENPI,
             SupportedModel.PI0_FAST,
@@ -645,6 +650,8 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
+        if hasattr(self.hf_model, "clear_rollout_runtime"):
+            self.hf_model.clear_rollout_runtime()
 
         async def recv_func() -> Any:
             return await self.broadcast(
