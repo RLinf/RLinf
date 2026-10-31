@@ -26,6 +26,7 @@ from omegaconf.dictconfig import DictConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
+from rlinf.algorithms.sac_policy_utils import resolve_sac_q_head_type
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
@@ -1748,6 +1749,18 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_embodied_sac_q_head_before_cluster(cfg: DictConfig) -> None:
+    """Validate the FSDP SAC Q-head before cluster startup."""
+    if cfg.runner.get("task_type") != "embodied":
+        return
+    if cfg.algorithm.get("loss_type") != "embodied_sac":
+        return
+    if cfg.actor.get("training_backend") != "fsdp":
+        return
+
+    resolve_sac_q_head_type(cfg.algorithm, cfg.actor.model)
+
+
 def adv_requires_group_baseline(
     adv_type: Optional[str], use_reinpp_baseline: bool = False
 ) -> bool:
@@ -1809,6 +1822,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                 cfg.runner.logger.experiment_name,
                 "trace/trace_events.jsonl",
             )
+
+    _validate_embodied_sac_q_head_before_cluster(cfg)
 
     # Init cluster
     Cluster(
