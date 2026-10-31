@@ -554,7 +554,11 @@ def test_mjlab_warp_step_keeps_the_terminal_state(tmp_path):
         max_episode_seconds=10.0,
         eval_mode=True,
     )
+    import mujoco_warp as mjwarp
+
     assert abs(float(env.sim.mj_model.opt.timestep) - PHYSICS_DT) < 1e-8
+    linesearch_warn = int(mjwarp.OverflowType.LS_ITERATIONS)
+    assert not int(env.sim.wp_model.opt.warn_overflow) & linesearch_warn
     assert DECIMATION == 4
     assert float(env.action_scale.max() - env.action_scale.min()) > 0.0
     assert tuple(env.robot.joint_names) == G1_JOINT_NAMES

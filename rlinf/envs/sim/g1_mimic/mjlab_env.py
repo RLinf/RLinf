@@ -88,6 +88,7 @@ class MjlabG1Env:
         eval_mode: bool = False,
     ):
         import mujoco
+        import mujoco_warp as mjwarp
         from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
             G1_ACTION_SCALE,
             get_g1_robot_cfg,
@@ -139,6 +140,9 @@ class MjlabG1Env:
             model=compiled,
             device=sim_device,
         )
+        # One line per world when the 20-step linesearch stops. The cap stays
+        # 20. expand_model_fields recaptures the step graph, so clear this first.
+        self.sim.wp_model.opt.warn_overflow &= ~mjwarp.OverflowType.LS_ITERATIONS
         scene.initialize(self.sim.mj_model, self.sim.model, self.sim.data)
         self.robot = scene["robot"]
         self.sim.expand_model_fields(("geom_friction", "body_ipos"))
