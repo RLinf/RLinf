@@ -155,6 +155,10 @@ class AgentLoopWorker(Worker):
         result = await self.generate_output_channel.get(
             channel_key, async_op=True
         ).async_wait()
+        if isinstance(result, dict) and "error" in result:
+            # The rollout side failed to generate and reported back via the
+            # channel; fail loudly instead of continuing.
+            raise RuntimeError(f"Rollout generate request failed: {result['error']}")
         return result
 
     async def state_less_tool_call_with_channel(
