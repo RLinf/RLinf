@@ -357,7 +357,8 @@ included, so install it again afterwards. Quote the extras: an unquoted
 
 Write the site YAML from the hardware the detection script finds; it takes the
 servo port and the camera identifier from the checks above and never commands
-motion:
+motion. Edit it where it does not fit, and copy it to the agent machine, which
+reads it with ``--robot-config`` as well:
 
 .. code-block:: bash
 
@@ -369,7 +370,7 @@ Dashboard from the agent machine:
 .. code-block:: bash
 
    # Robot computer:
-   python -m robots.lekiwi.env_server \
+   rpent-lekiwi-server \
      --robot-config /path/to/lekiwi-site.yaml \
      --transport http --host 0.0.0.0 --port 8120
 

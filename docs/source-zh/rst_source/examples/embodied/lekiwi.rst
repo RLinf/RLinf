@@ -258,7 +258,7 @@ RPent 部署
 
 ``uv pip check`` 会报告安装过程中改动的共享依赖：固定的修订版本会替换该环境中以可编辑方式安装的 RLinf，因此之后对本地源码的修改在该环境中不再生效。之后再运行 ``install.sh`` 会以 ``uv sync`` 结束，它会移除 RLinf 未声明的包（包括 RPent），因此在重装 RLinf 之后需要再装一次 RPent。可选依赖要加引号：未加引号的 ``[lekiwi]`` 会被 zsh 当作通配符展开。
 
-用检测脚本按硬件生成站点 YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动：
+用检测脚本按硬件生成站点 YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动。与实际不符时直接修改这个文件，并把它复制到智能体计算机——两端都用 ``--robot-config`` 读取它：
 
 .. code-block:: bash
 
@@ -269,7 +269,7 @@ RPent 部署
 .. code-block:: bash
 
    # 机器人计算机：
-   python -m robots.lekiwi.env_server \
+   rpent-lekiwi-server \
      --robot-config /path/to/lekiwi-site.yaml \
      --transport http --host 0.0.0.0 --port 8120
 
