@@ -119,6 +119,7 @@ def _assert_legacy_transition(env) -> None:
             "FrankaEnv",
             {"step_frequency": 10000.0},
         ),
+        ("rlinf.envs.real.lekiwi", "LeKiwiDriveEnv", {}),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
     ],
 )
@@ -162,6 +163,100 @@ def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, overri
 
     assert np.array_equal(observe(7), observe(7)), "the same seed must repeat"
     assert not np.array_equal(observe(7), observe(8)), "a different seed must differ"
+
+
+def test_lekiwi_step_drives_for_one_period_then_stops():
+    """A step commands velocity for one period, then stops the wheels.
+
+    The stop-after-step contract is the dead-man's grip: a base whose
+    controller stops stepping must stop moving.
+    """
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    with mocked_sdks() as made:
+        env = LeKiwiDriveEnv(
+            {
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 1000.0,
+                "camera_names": {"0": "front"},
+                "frame_size": [64, 48],
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=_robot_info(
+                LeKiwiConfig(
+                    node_rank=None,
+                    port="/dev/ttyACM0",
+                    camera_serials=["0"],
+                    camera_type="webcam",
+                )
+            ),
+        )
+        try:
+            observation, _ = env.reset()
+            # A named camera reports under its configured frame name.
+            assert set(observation["frames"]) == {"front"}
+            assert observation["frames"]["front"].shape == (48, 64, 3)
+            np.testing.assert_allclose(
+                observation["state"]["velocity"], np.zeros(3), atol=1e-6
+            )
+
+            observation, reward, terminated, truncated, _ = env.step(
+                np.array([0.1, 0.0, 0.0])
+            )
+            # The reward is nominal: a task, not the env, decides success.
+            assert reward == 0.0
+            assert not terminated and not truncated
+            np.testing.assert_allclose(
+                observation["state"]["velocity"], [0.1, 0.0, 0.0], atol=0.02
+            )
+
+            bus = made["lerobot.motors.feetech"].FeetechMotorsBus.instances[-1]
+            # The step's wheel commands, then the dead-man stop.
+            assert any(bus.commands[-2].values())
+            assert not any(bus.commands[-1].values())
+
+            # A command beyond the limits is clipped, never passed through.
+            observation, *_ = env.step(np.array([9.0, 9.0, 900.0]))
+            limits = np.array([0.5, 0.5, 90.0])
+            assert np.all(np.abs(observation["state"]["velocity"]) <= limits + 1e-6)
+        finally:
+            env.close()
+        assert not bus.is_connected
+
+
+def test_lekiwi_rejects_duplicate_frame_names():
+    """Two cameras mapped to one frame name would overwrite each other."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    with mocked_sdks():
+        # The names are resolved while the robot is composed, before any
+        # connection opens.
+        with pytest.raises(ValueError, match="frame names must be unique"):
+            LeKiwiDriveEnv(
+                {
+                    "is_dummy": False,
+                    "enable_camera_player": False,
+                    "camera_names": {"0": "front", "1": "front"},
+                },
+                worker_info=None,
+                env_idx=0,
+                robot_info=_robot_info(
+                    LeKiwiConfig(
+                        node_rank=None,
+                        port="/dev/ttyACM0",
+                        camera_serials=["0", "1"],
+                        camera_type="webcam",
+                    )
+                ),
+            )
 
 
 def test_a_franka_observation_comes_from_one_snapshot():

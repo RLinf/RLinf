@@ -558,6 +558,117 @@ def lerobot() -> dict[str, types.ModuleType]:
         made["lerobot"].__path__ = list(installed.submodule_search_locations)
     # The driver gates on the Feetech SDK, which lerobot's feetech extra brings.
     made["scservo_sdk"] = module("scservo_sdk")
+
+    class FakeMotor:
+        """A motor entry; the bus keys it by name and stores its id."""
+
+        def __init__(self, motor_id: int, model: str, norm_mode: Any) -> None:
+            self.id = motor_id
+            self.model = model
+            self.norm_mode = norm_mode
+
+    class _MotorNormMode:
+        RANGE_M100_100 = "RANGE_M100_100"
+        RANGE_M1_1 = "RANGE_M1_1"
+
+    class FakeFeetechMotorsBus:
+        """Feetech serial bus that holds per-wheel velocity in raw units.
+
+        Raw velocity values are stored and read back unchanged, so a test can
+        assert that the driver converts between body and wheel frames rather
+        than passing values through.
+        """
+
+        instances: list[Any] = []
+        fail_connect = False
+        fail_read = False
+        fail_write = False
+
+        def __init__(self, port: str, motors: dict[str, Any], calibration: Any = None):
+            type(self).instances.append(self)
+            self.port = port
+            self.motors = dict(motors)
+            self._connected = False
+            self.velocity = dict.fromkeys(self.motors, 0)
+            self.mode = dict.fromkeys(self.motors, 0)
+            self.torque = dict.fromkeys(self.motors, False)
+            self.commands: list[dict[str, int]] = []
+            self.writes: list[tuple[str, str, int]] = []
+            self.disable_calls = 0
+            self.enable_calls = 0
+
+        @property
+        def is_connected(self) -> bool:
+            return self._connected
+
+        def connect(self, handshake: bool = True) -> None:
+            if type(self).fail_connect:
+                raise OSError("simulated USB open failure")
+            self._connected = True
+
+        def disconnect(self, disable_torque: bool = True) -> None:
+            self._connected = False
+
+        def read(self, data_name: str, motor: str, **kwargs: Any) -> int:
+            if type(self).fail_read:
+                raise OSError("simulated read failure")
+            if data_name != "Present_Velocity":
+                raise KeyError(data_name)
+            return self.velocity[motor]
+
+        def sync_read(
+            self, data_name: str, motors: Any = None, **kwargs: Any
+        ) -> dict[str, int]:
+            if type(self).fail_read:
+                raise OSError("simulated read failure")
+            if data_name != "Present_Velocity":
+                raise KeyError(data_name)
+            names = list(self.motors) if motors is None else motors
+            return {name: self.velocity[name] for name in names}
+
+        def write(self, data_name: str, motor: str, value: int, **kwargs: Any) -> None:
+            if type(self).fail_write:
+                raise OSError("simulated write failure")
+            self.writes.append((data_name, motor, value))
+            if data_name == "Goal_Velocity":
+                self.velocity[motor] = value
+            elif data_name == "Operating_Mode":
+                self.mode[motor] = value
+
+        def sync_write(
+            self, data_name: str, values: dict[str, int], **kwargs: Any
+        ) -> None:
+            if type(self).fail_write:
+                raise OSError("simulated write failure")
+            if data_name == "Goal_Velocity":
+                self.commands.append(dict(values))
+                self.velocity.update(values)
+
+        def enable_torque(self, motors: Any = None, num_retry: int = 0) -> None:
+            self.enable_calls += 1
+            for name in self._names(motors):
+                self.torque[name] = True
+
+        def disable_torque(self, motors: Any = None, num_retry: int = 0) -> None:
+            self.disable_calls += 1
+            for name in self._names(motors):
+                self.torque[name] = False
+
+        def _names(self, motors: Any) -> list[str]:
+            if motors is None:
+                return list(self.motors)
+            return list(motors) if isinstance(motors, (list, tuple)) else [motors]
+
+    motors = module(
+        "lerobot.motors",
+        Motor=FakeMotor,
+        MotorNormMode=_MotorNormMode,
+    )
+    feetech = module("lerobot.motors.feetech", FeetechMotorsBus=FakeFeetechMotorsBus)
+    motors.feetech = feetech
+    made["lerobot.motors"] = motors
+    made["lerobot.motors.feetech"] = feetech
+    made["lerobot"].motors = motors
     return made
 
 
