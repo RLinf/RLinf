@@ -27,7 +27,6 @@ from types import ModuleType
 import torch
 from omegaconf import DictConfig
 
-from rlinf.algorithms.supermimic.networks import SuperMimicModels, running_state_loss
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
     gae_targets,
@@ -72,6 +71,7 @@ from rlinf.envs.sim.g1_mimic.velocity import (
     velocity_fall_soft,
     velocity_reward,
 )
+from rlinf.models.embodiment.supermimic import SuperMimicModels, running_state_loss
 from rlinf.workers.supermimic import checkpoint as ckpt
 from rlinf.workers.supermimic.distributed import DataParallel
 from rlinf.workers.supermimic.eval_rollout import (
@@ -418,17 +418,17 @@ class SuperMimicTrainer:
             self.obs_hist.fill(env_ids, self._new_frames(env_ids))
 
     def _update_collection_norms(self, obs: torch.Tensor, goal: torch.Tensor) -> None:
-        """Update policy running norms on the frame the policy is about to see."""
-        if self.models.decoder.obs_norm is not None:
-            self.models.decoder.obs_norm.update(obs)
+        """Update policy running norms on the frame the policy is about to see.
+
+        Every rank joins the merge. A velocity rank with no motion rows still
+        contributes a zero-count goal batch.
+        """
+        self.dp.update_norm(self.models.decoder.obs_norm, obs)
         if self.models.encoder.goal_norm is None:
             return
         if self.velocity:
-            rows = ~self.velocity_env
-            if bool(rows.any()):
-                self.models.encoder.goal_norm.update(goal[rows])
-        else:
-            self.models.encoder.goal_norm.update(goal)
+            goal = goal[~self.velocity_env]
+        self.dp.update_norm(self.models.encoder.goal_norm, goal)
 
     def collect_steps(self, n_steps: int, accumulate: bool = True) -> dict[str, float]:
         """Step every env ``n_steps`` times and store the transitions.
@@ -482,7 +482,12 @@ class SuperMimicTrainer:
                 failure = torch.where(self.velocity_env, fall, failure)
             end_kind = compose_end_kind(failure, result["timeout"], result["clip_end"])
             self.models.dynamics.update_norm(
-                before, executed, xi, next_state, self.residual_frame
+                before,
+                executed,
+                xi,
+                next_state,
+                self.residual_frame,
+                parallel=self.dp,
             )
             reward = analytic_reward(
                 next_state,
@@ -1248,12 +1253,13 @@ class SuperMimicTrainer:
         _set_requires_grad(self.models.velocity_critic_params(), True)
         batch = states_t.shape[0]
         targets = None
+        self.models.velocity_critic.update_norm(
+            states_t.reshape(-1, states_t.shape[-1]),
+            commands_t.reshape(-1, commands_t.shape[-1]),
+            xi.unsqueeze(1).expand(-1, states_t.shape[1], -1).reshape(-1, xi.shape[-1]),
+            parallel=self.dp,
+        )
         if batch > 0:
-            self.models.velocity_critic.update_norm(
-                states_t.reshape(-1, states_t.shape[-1]),
-                commands_t.reshape(-1, commands_t.shape[-1]),
-                xi.unsqueeze(1).expand(-1, self.H + 1, -1).reshape(-1, xi.shape[-1]),
-            )
             with torch.no_grad():
                 flat_xi = (
                     xi.unsqueeze(1).expand(-1, self.H + 1, -1).reshape(-1, xi.shape[-1])
@@ -1317,8 +1323,8 @@ class SuperMimicTrainer:
         batch = features_t.shape[0]
         targets = None
         value_mean = target_mean = float("nan")
-        if batch > 0 and self.models.critic.norm is not None:
-            self.models.critic.norm.update(features_t.reshape(-1, width))
+        if self.models.critic.norm is not None:
+            self.dp.update_norm(self.models.critic.norm, features_t.reshape(-1, width))
         if batch > 0:
             with torch.no_grad():
                 values = self.models.critic(features_t.reshape(-1, width)).reshape(

@@ -19,7 +19,10 @@ optimizer step the gradients of that optimizer's parameters are summed
 across ranks, weighted by the local sample count, and divided by the global
 count. Clipping and the non-finite check happen after the reduction, so all
 ranks see the same gradient, take the same step, and keep identical
-parameters and Adam state.
+parameters and Adam state. Running-norm buffers are not parameters.
+``update_norm`` merges each rank's batch before folding it, so those
+buffers stay identical too. Averaging an already-updated variance would
+count the shared history twice.
 
 This is not DDP: one SuperMimic update has five optimizers, freezes
 different parameters per phase, and backpropagates through a frozen world
@@ -174,6 +177,48 @@ class DataParallel:
         self.comm_seconds += time.perf_counter() - start
         return tensor
 
+    def merge_batch_stats(
+        self, count: torch.Tensor, mean: torch.Tensor, var: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Chan-merge one batch's count, mean, and population variance.
+
+        World size 1 returns the inputs. Every rank must call this, including
+        a rank whose count is 0.
+        """
+        if not self.enabled:
+            return count, mean, var
+        from rlinf.models.embodiment.supermimic import merge_welford_batches
+
+        start = time.perf_counter()
+        device = self._collective_device()
+        count_l = count.detach().reshape(1).to(device=device, dtype=torch.float64)
+        mean_l = mean.detach().to(device=device, dtype=torch.float64)
+        var_l = var.detach().to(device=device, dtype=torch.float64)
+        counts = [torch.empty_like(count_l) for _ in range(self.world_size)]
+        means = [torch.empty_like(mean_l) for _ in range(self.world_size)]
+        variances = [torch.empty_like(var_l) for _ in range(self.world_size)]
+        dist.all_gather(counts, count_l)
+        dist.all_gather(means, mean_l)
+        dist.all_gather(variances, var_l)
+        merged_n, merged_mean, merged_var = merge_welford_batches(
+            counts, means, variances
+        )
+        self.comm_seconds += time.perf_counter() - start
+        return (
+            merged_n.to(dtype=count.dtype, device=count.device),
+            merged_mean.to(dtype=mean.dtype, device=mean.device),
+            merged_var.to(dtype=var.dtype, device=var.device),
+        )
+
+    def update_norm(self, norm: torch.nn.Module | None, values: torch.Tensor) -> None:
+        """Fold ``values`` into a running norm after merging every rank's batch."""
+        if norm is None:
+            return
+        count, mean, var = norm.batch_stats(values)
+        if self.enabled:
+            count, mean, var = self.merge_batch_stats(count, mean, var)
+        norm.update_from_stats(count, mean, var)
+
     def broadcast_module(self, module: torch.nn.Module, src: int = 0) -> None:
         """Copy parameters and buffers from ``src`` to every rank."""
         if not self.enabled:
@@ -186,15 +231,18 @@ class DataParallel:
                     tensor.data.copy_(work.to(tensor.device))
 
     def param_divergence(self, module: torch.nn.Module) -> float:
-        """Max minus min over ranks of a float64 checksum of all parameters.
+        """Max minus min over ranks of a checksum of parameters and buffers.
 
-        Ranks that took identical steps give exactly 0.
+        Ranks that took identical steps and applied the same running-norm
+        update give exactly 0. Buffers are included so split normalization
+        statistics are visible here.
         """
         with torch.no_grad():
+            tensors = list(module.parameters()) + list(module.buffers())
             checksum = sum(
-                float(p.detach().double().sum())
-                + 1e-3 * float(p.detach().double().abs().sum())
-                for p in module.parameters()
+                float(t.detach().double().sum())
+                + 1e-3 * float(t.detach().double().abs().sum())
+                for t in tensors
             )
         if not self.enabled:
             return 0.0

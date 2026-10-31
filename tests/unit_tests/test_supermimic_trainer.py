@@ -26,8 +26,8 @@ from _supermimic_support import AnalyticG1Env, synthetic_clip_dir, synthetic_cli
 from omegaconf import OmegaConf
 from torch import nn
 
-from rlinf.algorithms.supermimic.networks import SuperMimicModels
 from rlinf.algorithms.supermimic.reset_sampler import RETURN_EMA, BinResetSampler
+from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     EPISODE_CLIP_END,
@@ -52,9 +52,9 @@ from rlinf.envs.sim.g1_mimic.features import (
 from rlinf.envs.sim.g1_mimic.motion import load_motion_library
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, pad_history
 from rlinf.envs.sim.g1_mimic.reward import analytic_reward, failure_signals
+from rlinf.models.embodiment.supermimic import SuperMimicModels
 from rlinf.workers.supermimic.eval_rollout import RollingHistory
 from rlinf.workers.supermimic.trainer import SuperMimicTrainer
-from rlinf.workers.supermimic.validate import validate_supermimic_cfg
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
 
@@ -70,7 +70,7 @@ needs_warp = pytest.mark.skipif(
 
 
 def _analytic_cfg(**algorithm):
-    from rlinf.workers.supermimic.validate import validate_supermimic_cfg
+    from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 
     cfg = OmegaConf.merge(
         *(
@@ -696,7 +696,7 @@ def test_termination_bias_init_sets_the_failure_prior_of_the_learned_head(tmp_pa
 
 @needs_mjlab
 def test_tracking_eval_gives_a_perfect_tracker_full_return(tmp_path):
-    from rlinf.algorithms.supermimic.networks import SuperMimicModels
+    from rlinf.models.embodiment.supermimic import SuperMimicModels
     from rlinf.workers.supermimic.evaluator import goal_function, motion_eval_rows
 
     lengths = (40, 70)

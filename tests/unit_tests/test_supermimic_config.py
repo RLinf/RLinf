@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf, open_dict
 
-from rlinf.workers.supermimic.validate import validate_supermimic_cfg
+from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
 
@@ -306,7 +306,7 @@ def test_illegal_overrides_fail_before_a_model_is_built(composed):
 
 
 def test_eval_options_are_checked_before_a_checkpoint_loads():
-    from rlinf.workers.supermimic.validate import validate_supermimic_eval_cfg
+    from rlinf.algorithms.supermimic.validate import validate_supermimic_eval_cfg
 
     common = OmegaConf.load(
         CONFIG_DIR.parents[2]

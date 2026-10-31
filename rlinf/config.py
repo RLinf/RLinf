@@ -26,6 +26,7 @@ from omegaconf.dictconfig import DictConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
+from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
@@ -37,7 +38,6 @@ from rlinf.utils.placement import (
 from rlinf.utils.precision import (
     torch_dtype_from_precision as torch_dtype_from_precision,
 )
-from rlinf.workers.supermimic.validate import validate_supermimic_cfg
 
 if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig

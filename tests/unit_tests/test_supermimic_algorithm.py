@@ -24,11 +24,6 @@ import pytest
 import torch
 from torch import nn
 
-from rlinf.algorithms.supermimic.networks import (
-    DynamicsNet,
-    MotionEncoder,
-    SuperMimicModels,
-)
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
     gae_targets,
@@ -65,6 +60,11 @@ from rlinf.envs.sim.g1_mimic.features import (
 )
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
 from rlinf.envs.sim.g1_mimic.reward import analytic_reward, motion_critic_input
+from rlinf.models.embodiment.supermimic import (
+    DynamicsNet,
+    MotionEncoder,
+    SuperMimicModels,
+)
 
 needs_mjlab = pytest.mark.skipif(
     importlib.util.find_spec("mjlab") is None,
@@ -776,7 +776,7 @@ def test_residual_frames_round_trip_and_a_roll_splits_the_linear_velocity():
 
 
 def test_running_norm_matches_welford_and_then_freezes():
-    from rlinf.algorithms.supermimic.networks import RunningNorm
+    from rlinf.models.embodiment.supermimic import RunningNorm
 
     norm = RunningNorm(2, max_count=2, eps=1e-2)
     norm.update(torch.tensor([[0.0, 2.0], [2.0, 4.0]]))
@@ -789,11 +789,61 @@ def test_running_norm_matches_welford_and_then_freezes():
     norm.update(torch.zeros(4, 2))
     assert torch.equal(norm.mean, frozen)
     assert float(norm.count) == 2
+    norm.update(torch.zeros(0, 2))
+    assert float(norm.count) == 2
+    one = RunningNorm(2)
+    one.update(torch.tensor([[4.0, -1.0]]))
+    assert torch.equal(one.mean, torch.tensor([4.0, -1.0]))
+    assert torch.equal(one.var, torch.zeros(2))
+
+
+def test_running_norm_merges_split_batches_like_one_batch():
+    from rlinf.models.embodiment.supermimic import RunningNorm, merge_welford_batches
+    from rlinf.workers.supermimic.distributed import DataParallel
+
+    torch.manual_seed(0)
+    prior = torch.randn(5, 3)
+    values = torch.randn(7, 3)
+    parts = (values[:2], values[2:2], values[2:])
+    whole = RunningNorm(3)
+    whole.update(prior)
+    whole.update(values)
+    probe = RunningNorm(3)
+    counts, means, variances = zip(*(probe.batch_stats(part) for part in parts))
+    count, mean, var = merge_welford_batches(list(counts), list(means), list(variances))
+    split = RunningNorm(3)
+    split.update(prior)
+    split.update_from_stats(count, mean, var)
+    assert torch.allclose(split.mean, whole.mean, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(split.var, whole.var, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(split.count, whole.count)
+
+    local = RunningNorm(3)
+    synced = RunningNorm(3)
+    local.update(values)
+    DataParallel(1, 0, torch.device("cpu")).update_norm(synced, values)
+    assert torch.equal(synced.mean, local.mean)
+    assert torch.equal(synced.var, local.var)
+    assert torch.equal(synced.count, local.count)
+    DataParallel(1, 0, torch.device("cpu")).update_norm(synced, torch.zeros(0, 3))
+    assert torch.equal(synced.count, local.count)
+
+
+def test_dynamics_running_norm_accepts_an_empty_transition():
+    from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, STATE_DIM, XI_DIM
+
+    net = DynamicsNet(input_norm=True, output_norm=True)
+    state = torch.zeros(0, STATE_DIM)
+    action = torch.zeros(0, ACTION_DIM)
+    xi = torch.zeros(0, XI_DIM)
+    net.update_norm(state, action, xi, state, "body")
+    assert float(net.in_norm.count) == 0
+    assert float(net.out_norm.count) == 0
 
 
 def test_running_state_loss_averages_the_scaled_components():
-    from rlinf.algorithms.supermimic.networks import DynamicsNet, running_state_loss
     from rlinf.envs.sim.g1_mimic.features import error_floor, frame_local_error
+    from rlinf.models.embodiment.supermimic import DynamicsNet, running_state_loss
 
     net = DynamicsNet(output_norm=True)
     with torch.no_grad():

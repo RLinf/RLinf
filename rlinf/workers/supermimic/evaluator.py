@@ -30,7 +30,6 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
-from rlinf.algorithms.supermimic.networks import SuperMimicModels
 from rlinf.envs.sim.g1_mimic.bones import load_bones_library
 from rlinf.envs.sim.g1_mimic.constants import DT
 from rlinf.envs.sim.g1_mimic.env import make_env
@@ -42,6 +41,7 @@ from rlinf.envs.sim.g1_mimic.motion import (
 )
 from rlinf.envs.sim.g1_mimic.reward import compose_goal
 from rlinf.envs.sim.g1_mimic.velocity import step_test_commands
+from rlinf.models.embodiment.supermimic import SuperMimicModels
 from rlinf.workers.supermimic import checkpoint as ckpt
 from rlinf.workers.supermimic.eval_rollout import (
     aggregate_step_test,

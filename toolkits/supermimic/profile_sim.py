@@ -68,12 +68,12 @@ def _tensor_bytes(obj) -> int:
 def run_one(args) -> dict:
     import torch
 
+    from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
     from rlinf.workers.supermimic.trainer import (
         SuperMimicTrainer,
         _host_rss_bytes,
         gpu_memory_metrics,
     )
-    from rlinf.workers.supermimic.validate import validate_supermimic_cfg
 
     overrides = [
         f"env.num_envs={args.single}",

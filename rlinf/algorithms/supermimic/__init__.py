@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SuperMimic objectives (Eq. 1-3), networks, replay, and reset sampling.
+"""SuperMimic objectives (Eq. 1-3), replay, and reset sampling.
 
-The G1 simulator, reference motion, and reward live in
-``rlinf.envs.sim.g1_mimic``; the training loop in ``rlinf.workers.supermimic``.
+Networks live in ``rlinf.models.embodiment.supermimic``. The G1 simulator,
+reference motion, and reward live in ``rlinf.envs.sim.g1_mimic``; the
+training loop in ``rlinf.workers.supermimic``.
 """

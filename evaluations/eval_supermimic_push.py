@@ -30,7 +30,7 @@ import torch
 from omegaconf import OmegaConf
 
 from evaluations.eval_supermimic import resolve_checkpoint
-from rlinf.algorithms.supermimic.networks import SuperMimicModels
+from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs.sim.g1_mimic.env import make_env
 from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
 from rlinf.envs.sim.g1_mimic.motion import GOAL_WINDOW
@@ -50,11 +50,11 @@ from rlinf.envs.sim.g1_mimic.push_recovery import (
     trial_plan,
     write_push_outputs,
 )
+from rlinf.models.embodiment.supermimic import SuperMimicModels
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.logging import get_logger
 from rlinf.workers.supermimic import checkpoint as ckpt
 from rlinf.workers.supermimic.evaluator import goal_function
-from rlinf.workers.supermimic.validate import validate_supermimic_cfg
 
 
 def _criteria(eval_cfg) -> RecoveryCriteria:

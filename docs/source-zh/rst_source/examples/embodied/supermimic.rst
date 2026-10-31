@@ -390,7 +390,7 @@ smoke 只验证流程能跑通。3～5 次更新的 policy 不会跟踪动作，
 多卡训练
 --------
 
-``cluster.component_placement.supermimic`` 列出使用的 GPU，每张 GPU 一个 rank。各 rank 做同步数据并行：各自步进自己的环境、维护自己的 replay、采自己那份批量，在裁剪之前按样本数加权 all-reduce 梯度，所以每个 rank 做完全相同的更新。rank 0 广播初始权重并负责评测。``train/param_divergence`` 每 ``algorithm.param_check_interval`` 次更新检查一次各 rank 权重是否一致。
+``cluster.component_placement.supermimic`` 列出使用的 GPU，每张 GPU 一个 rank。各 rank 做同步数据并行：各自步进自己的环境、维护自己的 replay、采自己那份批量，在裁剪之前按样本数加权 all-reduce 梯度，所以每个 rank 做完全相同的更新。rank 0 广播初始权重并负责评测。``train/param_divergence`` 每 ``algorithm.param_check_interval`` 次更新检查一次各 rank 的权重和 buffer 是否一致。running 归一化先把各 rank 这一批的样本量、均值和方差合并，再写入同一份滑动统计。
 
 多用几张 GPU 有两种方式：
 

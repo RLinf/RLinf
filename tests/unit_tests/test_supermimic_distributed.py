@@ -463,6 +463,66 @@ def test_nonfinite_gradient_on_one_rank_is_skipped_everywhere(tmp_path):
         assert torch.load(tmp_path / f"rank{rank}.pt") == expected
 
 
+# ---- running norm: merged batch, identical buffers -------------------------
+
+
+def _norm_rows():
+    prior = torch.tensor([[1.0, 1.0], [3.0, 5.0]])
+    local = [
+        torch.tensor([[0.0, 0.0], [0.0, 0.0]]),
+        torch.tensor([[2.0, 4.0], [2.0, 4.0]]),
+    ]
+    extra = [torch.zeros(0, 2), torch.tensor([[4.0, 0.0]])]
+    return prior, local, extra
+
+
+def _norm_case(dp: DataParallel, out: str) -> None:
+    from rlinf.models.embodiment.supermimic import RunningNorm
+
+    prior, local, extra = _norm_rows()
+    split = RunningNorm(2)
+    split.update(prior)
+    split.update(local[dp.rank])
+    diverged = dp.param_divergence(split)
+    synced = RunningNorm(2)
+    synced.update(prior)
+    dp.update_norm(synced, local[dp.rank])
+    dp.update_norm(synced, extra[dp.rank])
+    torch.save(
+        {
+            "diverged": diverged,
+            "synced_divergence": dp.param_divergence(synced),
+            "mean": synced.mean,
+            "var": synced.var,
+            "count": synced.count,
+        },
+        Path(out) / f"rank{dp.rank}.pt",
+    )
+
+
+@needs_gloo
+def test_running_norm_merge_matches_one_batch_on_two_ranks(tmp_path):
+    """Different rows, including an empty rank, become one shared Welford state."""
+    from rlinf.models.embodiment.supermimic import RunningNorm
+
+    _spawn(_norm_case, str(tmp_path))
+    r0 = torch.load(tmp_path / "rank0.pt")
+    r1 = torch.load(tmp_path / "rank1.pt")
+    assert r0["diverged"] > 0.0 and r1["diverged"] > 0.0
+    assert r0["synced_divergence"] == 0.0 and r1["synced_divergence"] == 0.0
+    assert torch.equal(r0["mean"], r1["mean"])
+    assert torch.equal(r0["var"], r1["var"])
+    assert torch.equal(r0["count"], r1["count"])
+    prior, local, extra = _norm_rows()
+    ref = RunningNorm(2)
+    ref.update(prior)
+    ref.update(torch.cat(local))
+    ref.update(extra[1])
+    assert torch.allclose(r0["mean"], ref.mean, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(r0["var"], ref.var, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(r0["count"], ref.count)
+
+
 # ---- reset sampler: pooled bin returns -------------------------------------
 
 

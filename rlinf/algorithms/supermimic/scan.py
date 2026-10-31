@@ -28,7 +28,6 @@ import warnings
 
 import torch
 
-from rlinf.algorithms.supermimic.networks import running_state_loss
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
     state_prediction_loss,
@@ -45,6 +44,7 @@ from rlinf.envs.sim.g1_mimic.reward import (
     motion_critic_input,
     termination_head_input,
 )
+from rlinf.models.embodiment.supermimic import running_state_loss
 
 _COMPILED: dict = {}
 _FAILED: set[str] = set()

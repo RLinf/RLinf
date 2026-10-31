@@ -588,8 +588,10 @@ Ranks run synchronous data parallelism: each steps its own environments,
 keeps its own replay, samples its share of each batch, and all-reduces
 gradients weighted by its sample count before clipping, so every rank applies
 the same update. Rank 0 broadcasts the initial weights and evaluates.
-``train/param_divergence`` checks that ranks hold identical weights every
-``algorithm.param_check_interval`` updates.
+``train/param_divergence`` checks that ranks hold identical weights and
+buffers every ``algorithm.param_check_interval`` updates. Running
+normalization merges each rank's batch count, mean, and variance before
+updating the shared statistics.
 
 There are two ways to use more GPUs:
 

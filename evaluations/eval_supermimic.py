@@ -31,6 +31,10 @@ import hydra
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.supermimic.validate import (
+    validate_supermimic_cfg,
+    validate_supermimic_eval_cfg,
+)
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -39,10 +43,6 @@ from rlinf.workers.supermimic.evaluator import (
     SuperMimicEvaluator,
     json_metrics,
     write_eval_outputs,
-)
-from rlinf.workers.supermimic.validate import (
-    validate_supermimic_cfg,
-    validate_supermimic_eval_cfg,
 )
 
 

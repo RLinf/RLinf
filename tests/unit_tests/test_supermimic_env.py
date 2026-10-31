@@ -227,6 +227,7 @@ def test_pelvis_reward_anchor_ignores_a_waist_yaw_the_torso_anchor_sees():
     assert torch.allclose(anchored[:, 0, :2], pos[:, 0, :2], atol=1e-12)
 
 
+@needs_mjlab
 def test_body_terms_reanchor_the_reference_at_the_robot_torso_and_keep_root_drift():
     from rlinf.envs.sim.g1_mimic.g1_fk import TRACKED_BODY_NAMES
 
