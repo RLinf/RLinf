@@ -334,16 +334,24 @@ machine runs a planner that calls ``drive(velocity, duration_s)``, ``stop()``,
 and the read-only ``view_env_state(step)``. No Ray cluster runs on the robot
 computer.
 
-Install RPent with the ``lekiwi`` extra on both machines, pointing at this
-RLinf checkout on the robot computer:
+Install RPent with the ``lekiwi`` extra on both machines. On the robot
+computer, install it into the environment built above rather than creating a
+second one: ``lekiwi`` is the extra that does not pull RLinf, so the source
+install stays in use and RLinf is not installed again.
 
 .. code-block:: bash
 
-   # Robot computer, in the RPent checkout:
-   uv pip install --torch-backend cpu -e '.[lekiwi]' -e /path/to/RLinf
+   # Robot computer, in the environment built above:
+   source .venv/bin/activate
+   uv pip install -e '/path/to/RPent[lekiwi]'
 
-   # Agent machine, in the RPent checkout:
-   uv pip install -e '.[lekiwi]'
+   # Agent machine, in the RPent checkout; it needs no RLinf:
+   uv pip install -e '/path/to/RPent[lekiwi]'
+
+``uv pip check`` reports any shared package the install moved. A later
+``install.sh`` run ends in ``uv sync``, which removes packages RLinf does not
+declare, RPent included, so install it again afterwards. Quote the extras: an
+unquoted ``[lekiwi]`` is a glob to zsh.
 
 Write the site YAML from the hardware the detection script finds; it takes the
 servo port and the camera identifier from the checks above and never commands
