@@ -60,13 +60,14 @@ Install the robot dependencies from the repository root:
    bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root
    source .venv/bin/activate
 
-The installer includes LeRobot with Feetech support and OpenCV.
-``--install-rlinf`` installs RLinf itself, which is what provides the three
-``rlinf-lekiwi-*`` commands used below; without it the installer installs only
-dependencies. ``--no-root`` skips the system libraries the installer would
-otherwise add with sudo: the checks below use only the serial port, OpenCV and
-LeRobot, so a base computer needs none of them. Drop the flag if you also train
-or run simulators on this computer. Platform prerequisites are in
+The installer includes LeRobot with Feetech support and OpenCV's headless
+build, which captures frames without the system GL libraries a camera window
+needs. ``--install-rlinf`` installs RLinf itself, which is what provides the
+three ``rlinf-lekiwi-*`` commands used below; without it the installer installs
+only dependencies. ``--no-root`` skips the system libraries the installer would
+otherwise add with sudo: the checks below use only the serial port and that
+headless build, so a base computer needs none of them. Drop the flag if you also
+train or run simulators on this computer. Platform prerequisites are in
 :doc:`Installation </rst_source/start/installation>`.
 
 Find the servo port

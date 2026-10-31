@@ -365,6 +365,17 @@ use_opencv_gui_wheel() {
     uv pip install --no-deps "opencv-python==${ver}"
 }
 
+# The GUI wheel above links libGL, which a robot computer that only captures
+# frames does not need and may not have. Restore the headless build lerobot
+# resolved, at the same version.
+use_opencv_headless_wheel() {
+    local ver
+    ver=$(uv pip show opencv-python 2>/dev/null | sed -n 's/^Version: //p') || true
+    [ -n "$ver" ] || return 0
+    uv pip uninstall opencv-python opencv-python-headless
+    uv pip install --no-deps "opencv-python-headless==${ver}"
+}
+
 #=======================PLATFORM CONFIG=======================
 # Per-platform runtime env-var configuration. Each configure_<platform> runs
 # before any uv operation, so set everything that affects how dependencies
@@ -3737,8 +3748,10 @@ install_so101_env() {
 
 install_lekiwi_env() {
     # Feetech wheel motors over lerobot and OpenCV cameras: the same
-    # dependency set the SO-101 uses.
+    # dependency set the SO-101 uses, keeping the headless OpenCV build
+    # because the base captures frames and never opens a window.
     install_so101_env
+    use_opencv_headless_wheel
 }
 
 install_xsquare_turtle2_env() {
