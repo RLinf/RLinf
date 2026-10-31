@@ -245,7 +245,7 @@ RPent 部署
 
 基于 RLinf 构建的智能体框架 RPent 通过其 LeKiwi 扩展控制这台底盘：机器人计算机用 HTTP 提供环境服务，智能体计算机运行规划器，由规划器调用 ``drive(velocity, duration_s)``、``stop()`` 和只读的 ``view_env_state(step)``。机器人计算机上不运行 Ray 集群。
 
-在两台机器上都安装带 ``lekiwi`` 可选依赖的 RPent。机器人计算机直接装进上面建好的环境，不必再建一个：``lekiwi`` 是唯一不引入 RLinf 的可选依赖，因此从源码安装的 RLinf 保持生效，无需重装。
+在两台机器上都安装带 ``lekiwi`` 可选依赖的 RPent。该可选依赖固定到包含 LeKiwi 环境层的 RLinf 修订版本，因此安装 RPent 时会一并安装 RLinf。机器人计算机直接装进上面建好的环境，不必再建一个。
 
 .. code-block:: bash
 
@@ -253,16 +253,16 @@ RPent 部署
    source .venv/bin/activate
    uv pip install -e '/path/to/RPent[lekiwi]'
 
-   # 智能体计算机，在 RPent 仓库中；它不需要 RLinf：
+   # 智能体计算机，在 RPent 仓库中：
    uv pip install -e '/path/to/RPent[lekiwi]'
 
-``uv pip check`` 会报告安装过程中改动的共享依赖。之后再运行 ``install.sh`` 会以 ``uv sync`` 结束，它会移除 RLinf 未声明的包（包括 RPent），因此在重装 RLinf 之后需要再装一次 RPent。可选依赖要加引号：未加引号的 ``[lekiwi]`` 会被 zsh 当作通配符展开。
+``uv pip check`` 会报告安装过程中改动的共享依赖：固定的修订版本会替换该环境中以可编辑方式安装的 RLinf，因此之后对本地源码的修改在该环境中不再生效。之后再运行 ``install.sh`` 会以 ``uv sync`` 结束，它会移除 RLinf 未声明的包（包括 RPent），因此在重装 RLinf 之后需要再装一次 RPent。可选依赖要加引号：未加引号的 ``[lekiwi]`` 会被 zsh 当作通配符展开。
 
 用检测脚本按硬件生成站点 YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动：
 
 .. code-block:: bash
 
-   python -m robots.lekiwi.detect --output /path/to/lekiwi-site.yaml
+   rpent-lekiwi-detect --output /path/to/lekiwi-site.yaml
 
 在机器人计算机上启动环境服务，然后在智能体计算机上运行任务或 Dashboard：
 
