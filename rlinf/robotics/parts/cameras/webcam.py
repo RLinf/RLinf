@@ -117,8 +117,7 @@ class WebcamCamera(BaseCamera):
         ``camera_info.serial_number``.
         """
         if sys.platform.startswith("linux"):
-            devices = glob.glob("/dev/v4l/by-id/*") or glob.glob("/dev/video*")
-            return {os.path.basename(device) for device in devices}
+            return {os.path.basename(device) for device in cls._linux_devices()}
         import cv2
 
         found: set[str] = set()
@@ -129,3 +128,15 @@ class WebcamCamera(BaseCamera):
                 found.add(identifier)
                 capture.release()
         return found
+
+    @staticmethod
+    def _linux_devices() -> list[str]:
+        """List V4L2 nodes, one per camera, falling back to every node.
+
+        A camera has one node per stream under ``/dev/v4l/by-id``, and index 0
+        is the one this driver reads; the higher indexes are metadata or extra
+        streams and never yield a frame.
+        """
+        by_id = sorted(glob.glob("/dev/v4l/by-id/*"))
+        captures = [device for device in by_id if device.endswith("-video-index0")]
+        return captures or by_id or sorted(glob.glob("/dev/video*"))

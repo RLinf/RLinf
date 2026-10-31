@@ -4356,6 +4356,29 @@ def test_a_webcam_opens_a_by_id_serial_from_discover(monkeypatch):
         assert made["cv2"].opens == [by_id]
 
 
+def test_a_webcam_discovery_lists_one_node_per_camera(monkeypatch):
+    from rlinf.robotics.parts.cameras import webcam
+
+    # Each camera exports its frames on index 0 and a metadata node beside it.
+    nodes = [
+        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0",
+        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index1",
+        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index0",
+        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index1",
+    ]
+    monkeypatch.setattr(webcam.glob, "glob", lambda _pattern: nodes)
+
+    assert webcam.WebcamCamera._linux_devices() == [
+        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index0",
+        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0",
+    ]
+
+    # A camera that exposes only a higher index is still listed.
+    only_higher = ["/dev/v4l/by-id/usb-Odd_Cam_1-video-index1"]
+    monkeypatch.setattr(webcam.glob, "glob", lambda _pattern: only_higher)
+    assert webcam.WebcamCamera._linux_devices() == only_higher
+
+
 def test_a_real_arm_runs_against_a_faked_sdk():
     from robot_mocks import mocked_sdks
 
