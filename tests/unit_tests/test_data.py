@@ -3295,6 +3295,38 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
 
 
+@pytest.mark.parametrize("mode", ["train", "eval"])
+def test_rollout_passes_mode_and_sampling_params_to_starvla(mode):
+    # StarVLA's continuous heads sample from the Gaussian only in train mode,
+    # and its FAST head still needs the temperature of the requested mode.
+    calls = []
+
+    class RecordingPolicy:
+        def predict_action_batch(self, env_obs, **kwargs):
+            calls.append(kwargs)
+            return torch.zeros(1, 1), {"forward_inputs": {}}
+
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.model_cfg = OmegaConf.create({"model_type": "starvla"})
+    rollout.algorithm_cfg = OmegaConf.create({})
+    rollout.enable_dagger = False
+    rollout.expert_model = None
+    rollout.hf_model = RecordingPolicy()
+    rollout._train_sampling_params = {"do_sample": True, "temperature": 1.0}
+    rollout._eval_sampling_params = {"do_sample": True, "temperature": 0.3}
+
+    inspect.unwrap(MultiStepRolloutWorker.predict)(
+        rollout, {"states": torch.zeros(1, 4)}, mode=mode
+    )
+
+    sampling_params = (
+        rollout._train_sampling_params
+        if mode == "train"
+        else rollout._eval_sampling_params
+    )
+    assert calls == [{**sampling_params, "mode": mode}]
+
+
 def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
     pytest.importorskip("transformers.video_utils")
     from transformers.video_utils import VideoMetadata

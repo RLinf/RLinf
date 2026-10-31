@@ -525,10 +525,11 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
             SupportedModel.LINGBOTVLAV2,
+            SupportedModel.STARVLA,
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
-            elif model_type == SupportedModel.PI0_FAST:
+            elif model_type in [SupportedModel.PI0_FAST, SupportedModel.STARVLA]:
                 kwargs = dict(kwargs)
                 kwargs["mode"] = mode
             else:
