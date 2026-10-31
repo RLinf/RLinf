@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import multiprocessing
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -52,7 +53,7 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
     ) -> None:
         self.dataset = dataset
         self.timestamps = dataset.hf_dataset.select_columns("timestamp").with_format(
-            "numpy"
+            None
         )
         self.frame_transform = frame_transform
         self.sample_transform = sample_transform
@@ -113,11 +114,19 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
 
 def collate_short_memory_items(
     items: list[dict[str, Any]],
+    *,
+    include_history: bool = True,
 ) -> tuple[Observation, torch.Tensor]:
-    """Stack transformed samples into the local Observation used by FSDP."""
+    """Stack samples, exposing current frames when the model has no memory."""
     from torch.utils.data import default_collate
 
     batch = default_collate(items)
+    if not include_history:
+        batch["image"] = {key: image[:, -1] for key, image in batch["image"].items()}
+        batch["image_mask"] = {
+            key: mask[:, -1] for key, mask in batch["image_mask"].items()
+        }
+        batch.pop("history_time_offsets")
     return Observation.from_dict(batch), batch["actions"]
 
 
@@ -145,7 +154,8 @@ def build_short_memory_sft_dataloader(
     config = build_official_openpi_sft_config(cfg, world_size, data_paths, eval_dataset)
     data_config = config.data.create(config.assets_dirs, config.model)
     memory_config = cfg.data.short_memory
-    num_frames = int(memory_config.num_frames)
+    include_history = bool(cfg.actor.model.openpi.get("short_memory", False))
+    num_frames = int(memory_config.num_frames) if include_history else 1
     stride = int(memory_config.stride)
     if num_frames < 1 or stride < 1:
         raise ValueError(
@@ -213,7 +223,7 @@ def build_short_memory_sft_dataloader(
             multiprocessing.get_context("spawn") if config.num_workers else None
         ),
         persistent_workers=config.num_workers > 0,
-        collate_fn=collate_short_memory_items,
+        collate_fn=partial(collate_short_memory_items, include_history=include_history),
         drop_last=True,
         generator=torch.Generator().manual_seed(config.seed + rank),
     )

@@ -14,6 +14,8 @@
 
 """Utils for evaluating policies in LIBERO simulation environments."""
 
+from __future__ import annotations
+
 import math
 import os
 from typing import TYPE_CHECKING, Union
@@ -36,63 +38,33 @@ def get_libero_type() -> str:
 
 libero_type = get_libero_type()
 
-if libero_type == "pro":
-    try:
-        import liberopro.liberopro.benchmark as benchmark
-        from liberopro.liberopro.benchmark import Benchmark
-    except ImportError:
-        print(
-            "[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'."
-        )
-        import libero.libero.benchmark as benchmark
-        from libero.libero.benchmark import Benchmark
 
-elif libero_type == "plus":
-    try:
-        import liberoplus.liberoplus.benchmark as benchmark
-        from liberoplus.liberoplus.benchmark import Benchmark
-    except ImportError:
-        print(
-            "[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'."
-        )
-        import libero.libero.benchmark as benchmark
-        from libero.libero.benchmark import Benchmark
-
-else:
-    try:
-        import libero.libero.benchmark as benchmark
-        from libero.libero.benchmark import Benchmark
-    except ImportError:
-        try:
-            import liberopro.liberopro.benchmark as benchmark
-            from liberopro.liberopro.benchmark import Benchmark
-        except ImportError:
-            try:
-                import liberoplus.liberoplus.benchmark as benchmark
-                from liberoplus.liberoplus.benchmark import Benchmark
-            except ImportError:
-                raise ImportError(
-                    "No valid LIBERO package (libero, liberopro, or liberoplus) found."
-                )
-
-
-def get_libero_image(obs: dict[str, np.ndarray]) -> np.ndarray:
+def get_libero_image(
+    obs: dict[str, np.ndarray], *, memory_suite: bool = False
+) -> np.ndarray:
     """
     Extracts image from observations and preprocesses it.
 
     Args:
         obs: Observation dictionary from LIBERO environment
+        memory_suite: Match LIBERO-Mem's demonstration image orientation.
 
     Returns:
         Preprocessed image as numpy array
     """
-    img = obs["agentview_image"]
-    img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
-    return img
+    return _orient_libero_image(obs["agentview_image"], memory_suite=memory_suite)
+
+
+def _orient_libero_image(img: np.ndarray, *, memory_suite: bool) -> np.ndarray:
+    # LIBERO-Mem refinement flips columns before rotating both cameras by 180 degrees.
+    return img[::-1] if memory_suite else img[::-1, ::-1]
 
 
 def get_libero_wrist_image(
-    obs: dict[str, np.ndarray], resize_size: Union[int, tuple[int, int]] = 224
+    obs: dict[str, np.ndarray],
+    resize_size: Union[int, tuple[int, int]] = 224,
+    *,
+    memory_suite: bool = False,
 ) -> np.ndarray:
     """
     Extracts wrist camera image from observations and preprocesses it.
@@ -100,13 +72,14 @@ def get_libero_wrist_image(
     Args:
         obs: Observation dictionary from LIBERO environment
         resize_size: Target size for resizing
+        memory_suite: Match LIBERO-Mem's demonstration image orientation.
 
     Returns:
         Preprocessed wrist camera image as numpy array
     """
-    img = obs["robot0_eye_in_hand_image"]
-    img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
-    return img
+    return _orient_libero_image(
+        obs["robot0_eye_in_hand_image"], memory_suite=memory_suite
+    )
 
 
 def quat2axisangle(quat: np.ndarray) -> np.ndarray:
@@ -136,7 +109,7 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
-def get_benchmark_overridden(benchmark_name) -> Benchmark:
+def get_benchmark_overridden(benchmark_name: str) -> type[Benchmark]:
     """
     Return the Benchmark class for a given name.
     For "libero_130": return a dynamically aggregated class from all suites.
@@ -148,6 +121,45 @@ def get_benchmark_overridden(benchmark_name) -> Benchmark:
     Returns:
         Benchmark class
     """
+    if libero_type == "pro":
+        try:
+            import liberopro.liberopro.benchmark as benchmark
+            from liberopro.liberopro.benchmark import Benchmark
+        except ImportError:
+            print(
+                "[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'."
+            )
+            import libero.libero.benchmark as benchmark
+            from libero.libero.benchmark import Benchmark
+
+    elif libero_type == "plus":
+        try:
+            import liberoplus.liberoplus.benchmark as benchmark
+            from liberoplus.liberoplus.benchmark import Benchmark
+        except ImportError:
+            print(
+                "[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'."
+            )
+            import libero.libero.benchmark as benchmark
+            from libero.libero.benchmark import Benchmark
+
+    else:
+        try:
+            import libero.libero.benchmark as benchmark
+            from libero.libero.benchmark import Benchmark
+        except ImportError:
+            try:
+                import liberopro.liberopro.benchmark as benchmark
+                from liberopro.liberopro.benchmark import Benchmark
+            except ImportError:
+                try:
+                    import liberoplus.liberoplus.benchmark as benchmark
+                    from liberoplus.liberoplus.benchmark import Benchmark
+                except ImportError:
+                    raise ImportError(
+                        "No valid LIBERO package (libero, liberopro, or liberoplus) found."
+                    )
+
     name = str(benchmark_name).lower()
     if name == "libero_mem" and name not in benchmark.BENCHMARK_MAPPING:
         raise ImportError(

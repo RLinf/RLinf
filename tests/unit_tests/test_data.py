@@ -828,6 +828,24 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_fram
         observation.history_time_offsets,
         torch.from_numpy(sample["history_time_offsets"])[None],
     )
+    baseline, baseline_actions = collate_short_memory_items(
+        [sample], include_history=False
+    )
+    assert baseline.images["base_0_rgb"].shape == (1, 2, 2, 3)
+    assert baseline.image_masks["base_0_rgb"].shape == (1,)
+    assert baseline.history_time_offsets is None
+    torch.testing.assert_close(
+        baseline.images["base_0_rgb"], observation.images["base_0_rgb"][:, -1]
+    )
+    torch.testing.assert_close(
+        baseline.image_masks["base_0_rgb"],
+        observation.image_masks["base_0_rgb"][:, -1],
+    )
+    for field in ("state", "tokenized_prompt", "tokenized_prompt_mask"):
+        torch.testing.assert_close(
+            getattr(baseline, field), getattr(observation, field)
+        )
+    torch.testing.assert_close(baseline_actions, actions)
 
 
 # Skip codec round-trip tests when the optional backends are not installed.

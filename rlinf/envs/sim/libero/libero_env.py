@@ -473,8 +473,8 @@ class LiberoEnv(gym.Env):
                     "seed": self.seed,
                 }
             )
-            # LIBERO-PRO: use selected BDDL language (not original suite task.language)
-            # and remember the perturbation folder for pruned_init loading.
+            # Keep the perturbation folder for LIBERO-PRO reset states.
+            # LIBERO-Mem uses the BDDL prompt without filename task indices.
             pert_folder = os.path.basename(os.path.dirname(os.path.abspath(final_path)))
             pert_init_folders.append(pert_folder)
             if variant == "pro":
@@ -493,6 +493,9 @@ class LiberoEnv(gym.Env):
                         bddl_goal,
                         final_path,
                     )
+            elif self.is_memory_suite:
+                bddl_lang, _ = _read_bddl_language_and_goal(final_path)
+                task_descriptions.append(bddl_lang)
             else:
                 task_descriptions.append(task.language)
 
@@ -783,8 +786,10 @@ class LiberoEnv(gym.Env):
 
     def _extract_image_and_state(self, obs):
         return {
-            "full_image": get_libero_image(obs),
-            "wrist_image": get_libero_wrist_image(obs),
+            "full_image": get_libero_image(obs, memory_suite=self.is_memory_suite),
+            "wrist_image": get_libero_wrist_image(
+                obs, memory_suite=self.is_memory_suite
+            ),
             "state": np.concatenate(
                 [
                     obs["robot0_eef_pos"],
@@ -804,14 +809,11 @@ class LiberoEnv(gym.Env):
             list_of_dict_to_dict_of_list(images_and_states_list)
         )
 
-        full_image_tensor = torch.stack(images_and_states["full_image"])
-        wrist_image_tensor = torch.stack(images_and_states["wrist_image"])
-
         states = images_and_states["state"]
 
         obs = {
-            "main_images": full_image_tensor,
-            "wrist_images": wrist_image_tensor,
+            "main_images": images_and_states["full_image"],
+            "wrist_images": images_and_states["wrist_image"],
             "states": states,
             "task_descriptions": self.task_descriptions,
         }

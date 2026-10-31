@@ -283,6 +283,20 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.decode_log_interval = cfg.get("decode_log_interval", 500000)
         cfg.use_torch_compile = cfg.get("use_torch_compile", False)
         cfg.torch_compile_max_bs = cfg.get("torch_compile_max_bs", 128)
+
+        serving_mode = cfg.get("serving_mode", None)
+        backend_type = cfg.get("backend_type", "engine")
+        assert backend_type in ("engine", "server"), (
+            f"rollout.sglang.backend_type must be 'engine' or 'server', "
+            f"but got {backend_type!r}."
+        )
+        # Only SGLangWorker (serving_mode unset) reads backend_type; the
+        # embodied / worker_http workers would silently ignore 'server'.
+        assert not (serving_mode is not None and backend_type == "server"), (
+            f"rollout.sglang.serving_mode={serving_mode!r} does not support "
+            f"backend_type=server; the server backend is only implemented for "
+            f"the default serving worker (leave serving_mode unset)."
+        )
         return cfg
 
     def validate_vllm_cfg(cfg):

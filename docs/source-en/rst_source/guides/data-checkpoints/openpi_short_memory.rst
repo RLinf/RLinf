@@ -46,6 +46,8 @@ layer 15. These settings are configurable through
 ``openpi.short_memory_drop_history_layer``. They reuse the vision weights without
 adding learned parameters or increasing the language model's visual token count.
 With ``short_memory: false`` (the default), OpenPI uses its ordinary image path.
+For evaluation without history, set both
+``rollout.model.openpi.short_memory=False`` and ``env.eval.short_memory=null``.
 
 Prepare the Environment and Weights
 -----------------------------------
@@ -105,6 +107,11 @@ or LeRobot repository ID. Historical camera queries stay within each episode;
 the current state, prompt and forward action window follow the usual OpenPI
 transforms. Prompt tokenization runs once per sample.
 
+For a current-frame training control, keep ``data.short_memory`` and set
+``actor.model.openpi.short_memory=False``. This selects the same resumable loader
+and sampler while returning only the current camera frames. Without
+``data.short_memory``, a model with short memory disabled uses its existing loader.
+
 Launch the SFT entry point directly so that Hydra overrides reach the recipe:
 
 .. code-block:: bash
@@ -143,8 +150,8 @@ Resume Training
 ---------------
 
 The short-memory loader uses ``StatefulDataLoader`` with a distributed sampler.
-SFT checkpoints save each rank's loader state in ``actor/data.pt`` and RNG state
-in ``actor/rng.pt`` alongside the training checkpoint. Keep these files when
+SFT checkpoints save each rank's loader state and sampler epoch in ``actor/data.pt``
+and RNG state in ``actor/rng.pt`` alongside the training checkpoint. Keep these files when
 continuing a run.
 
 Append ``+runner.resume_dir=/path/to/checkpoints/global_step_2125`` to the SFT

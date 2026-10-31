@@ -431,6 +431,8 @@ Use LIBERO-Mem to evaluate tasks whose ordered subgoals require remembering
 previous interactions. It contains 10 tasks and reuses RLinf's ``libero``
 environment, camera observations, and 7-dimensional action space. The OpenPI
 recipe uses a 700-control-step episode limit.
+LIBERO-Mem reads task instructions from BDDL and vertically flips both cameras
+to match its demonstrations. Standard LIBERO keeps its existing camera convention.
 
 Installation
 ~~~~~~~~~~~~

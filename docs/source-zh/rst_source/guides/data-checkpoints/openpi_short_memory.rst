@@ -51,12 +51,16 @@ OpenPI Short Memory 评测与训练
 
 该配置使用 ``env_type: libero``、``task_suite_name: libero_mem``、20 个并行环境和 700-step horizon。模型每次预测 10 个动作，执行其中五个，使用五步去噪。历史按每个 control step 记录，也包含 action chunk 内的中间步骤。启用历史时保持 ``env.eval.skip_intermediate_renders=False``。
 
+不使用历史进行评测时，同时设置 ``rollout.model.openpi.short_memory=False`` 和 ``env.eval.short_memory=null``。
+
 如需调整帧数与间隔，可在命令后添加 ``env.eval.short_memory.num_frames=3 env.eval.short_memory.stride=35``。比较评测结果时，应采用 checkpoint 训练时的历史配置。输出说明见 :doc:`LIBERO 评测 </rst_source/evaluations/guides/libero>`，LIBERO-Mem 成功条件见 LIBERO 页面。
 
 通过 FSDP 微调
 --------------
 
 训练需要 map-style LeRobot LIBERO-Mem 数据集，包含 task prompt、state、actions 和两个相机。将 ``data.train_data_paths`` 设为本地数据根目录或 LeRobot repository ID。历史相机查询限制在同一 episode 内，当前 state、prompt 和向前的 action window 沿用 OpenPI transforms。每个 sample 只执行一次 prompt tokenization。
+
+训练仅使用当前帧的对照模型时，保留 ``data.short_memory``，并设置 ``actor.model.openpi.short_memory=False``。这样会使用相同的可恢复 loader 和 sampler，只返回当前相机帧。未配置 ``data.short_memory`` 且模型关闭 short memory 时，沿用原有 loader。
 
 直接运行 SFT 入口，使 Hydra overrides 传入配置：
 
@@ -81,6 +85,6 @@ OpenPI Short Memory 评测与训练
 恢复训练
 --------
 
-Short-memory loader 使用 ``StatefulDataLoader`` 与 distributed sampler。SFT checkpoint 会在训练状态之外，将各 rank 的 loader state 保存为 ``actor/data.pt``，RNG state 保存为 ``actor/rng.pt``。继续训练时保留这些文件。
+Short-memory loader 使用 ``StatefulDataLoader`` 与 distributed sampler。SFT checkpoint 会在训练状态之外，将各 rank 的 loader state 和 sampler epoch 保存为 ``actor/data.pt``，RNG state 保存为 ``actor/rng.pt``。继续训练时保留这些文件。
 
 在 SFT 命令后添加 ``+runner.resume_dir=/path/to/checkpoints/global_step_2125``，恢复完整 checkpoint。保持数据集、历史配置、worker 数量、world size 和训练配置与保存时一致。Checkpoint 布局与通用恢复方式见 :doc:`恢复训练 <../resume>`。
