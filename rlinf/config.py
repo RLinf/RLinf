@@ -93,6 +93,7 @@ SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+SupportedModel.ACTIVEVLN = SupportedModel.register("activevln", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
@@ -141,6 +142,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
+        SupportedModel.ACTIVEVLN,
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
@@ -1068,6 +1070,123 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     )
 
 
+def validate_activevln_cfg(cfg):
+    """Validate ActiveVLN backends and replay settings before starting workers."""
+    only_eval = (
+        cfg.runner.get("only_eval", False)
+        or cfg.runner.get("task_type") == "embodied_eval"
+    )
+    model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
+    algorithm_cfg = cfg.get("algorithm", {}) or {}
+    if model_cfg.get("is_lora", False):
+        raise ValueError(
+            "ActiveVLN uses direct language-layer training; is_lora must be False"
+        )
+    if (
+        model_cfg.num_action_chunks != 1
+        or model_cfg.action_dim != model_cfg.activevln.max_new_tokens
+    ):
+        raise ValueError(
+            "ActiveVLN requires num_action_chunks=1 and action_dim=max_new_tokens"
+        )
+    if not only_eval:
+        if (
+            algorithm_cfg.get("adv_type") != "grpo"
+            or algorithm_cfg.get("logprob_type") != "sequence_token_level"
+        ):
+            raise ValueError(
+                "ActiveVLN requires GRPO with sequence_token_level logprobs"
+            )
+        if cfg.actor.fsdp_config.strategy != "fsdp":
+            raise ValueError("ActiveVLN requires the FSDP1 strategy: fsdp")
+        if not cfg.actor.fsdp_config.get("use_orig_params", False):
+            raise ValueError(
+                "ActiveVLN's frozen and trainable parameters require FSDP use_orig_params=True"
+            )
+        if cfg.actor.fsdp_config.get("wrap_policy") or cfg.actor.fsdp_config.get(
+            "wrappers"
+        ):
+            raise ValueError(
+                "ActiveVLN requires root FSDP wrapping; omit custom wrap_policy"
+            )
+        if cfg.actor.fsdp_config.get("gradient_checkpointing", False):
+            raise ValueError(
+                "Use actor.model.activevln.gradient_checkpointing for ActiveVLN"
+            )
+        if cfg.env.train.group_size != algorithm_cfg.group_size:
+            raise ValueError(
+                "ActiveVLN environment and algorithm group_size must match"
+            )
+    actor_backend = model_cfg.get("model_backend", "huggingface")
+    rollout_backend = cfg.rollout.get("generation_backend", "huggingface")
+    if actor_backend not in ("huggingface", "sglang"):
+        raise ValueError("ActiveVLN model_backend must be huggingface or sglang")
+    if rollout_backend not in ("huggingface", "sglang"):
+        raise ValueError("ActiveVLN generation_backend must be huggingface or sglang")
+    if actor_backend == "sglang" and rollout_backend != "sglang":
+        raise ValueError("ActiveVLN sglang actor requires generation_backend=sglang")
+    if (
+        not only_eval
+        and cfg.rollout.model.get("model_backend", actor_backend) != actor_backend
+    ):
+        raise ValueError(
+            "Configure model_backend in actor.model; rollout uses the same weights"
+        )
+    if not only_eval and not algorithm_cfg.get("recompute_logprobs", False):
+        raise ValueError(
+            "ActiveVLN requires recompute_logprobs=True before actor updates"
+        )
+    sampling = cfg.rollout.sampling_params
+    if (
+        sampling.get("top_k", 0) not in (0, -1)
+        or sampling.get("top_p", 1.0) != 1.0
+        or sampling.get("repetition_penalty", 1.0) != 1.0
+    ):
+        raise ValueError(
+            "ActiveVLN requires untruncated sampling: top_k=0, top_p=1, repetition_penalty=1"
+        )
+    if not only_eval and (
+        not sampling.get("do_sample", True)
+        or sampling.get("temperature_train", 1.0) <= 0
+    ):
+        raise ValueError(
+            "ActiveVLN GRPO requires stochastic sampling with temperature_train > 0"
+        )
+    if sampling.max_new_tokens != model_cfg.activevln.max_new_tokens:
+        raise ValueError(
+            "rollout sampling max_new_tokens must match actor.model.activevln.max_new_tokens"
+        )
+    if cfg.rollout.get("collect_final_values", False):
+        raise ValueError("ActiveVLN GRPO requires collect_final_values=False")
+    if cfg.rollout.get("expert_model") or cfg.rollout.get("rlt_feature_model"):
+        raise ValueError(
+            "ActiveVLN rollout does not support expert_model or rlt_feature_model"
+        )
+    if not only_eval and cfg.rollout.model.get("activevln"):
+        raise ValueError(
+            "Configure ActiveVLN once in actor.model.activevln; rollout uses the same layout"
+        )
+    reserved = {
+        "model_path",
+        "dtype",
+        "context_length",
+        "tp_size",
+        "base_gpu_id",
+        "enable_memory_saver",
+        "enable_weights_cpu_backup",
+    }
+    if reserved.intersection(cfg.rollout.get("sglang", {})):
+        raise ValueError(
+            "SRT model path, dtype, context, TP=1, GPU and memory saver are owned by the ActiveVLN worker"
+        )
+    if cfg.rollout.get("enable_cuda_graph", False) or cfg.rollout.get(
+        "enable_torch_compile", False
+    ):
+        raise ValueError(
+            "Configure native CUDA Graph and compile options under rollout.sglang"
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1078,6 +1197,12 @@ def validate_embodied_cfg(cfg):
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
+    if model_type == SupportedModel.ACTIVEVLN:
+        validate_activevln_cfg(cfg)
+    elif cfg.rollout.get("generation_backend") == "sglang":
+        raise ValueError(
+            "Native SRT embodied rollout currently supports ActiveVLN only"
+        )
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
@@ -1131,9 +1256,10 @@ def validate_embodied_cfg(cfg):
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
             SupportedModel.LINGBOTVLAV2,
+            SupportedModel.ACTIVEVLN,
         ], (
             f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.LINGBOTVLAV2.value]}, "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.LINGBOTVLAV2.value, SupportedModel.ACTIVEVLN.value]}, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (

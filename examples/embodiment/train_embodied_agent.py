@@ -22,6 +22,7 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
@@ -108,7 +109,16 @@ def main(cfg) -> None:
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+    rollout_worker_cls = MultiStepRolloutWorker
+    native_activevln = (
+        cfg.rollout.get("generation_backend") == "sglang"
+        and cfg.actor.model.model_type == "activevln"
+    )
+    if native_activevln:
+        from rlinf.workers.rollout.activevln_worker import ActiveVLNRolloutWorker
+
+        rollout_worker_cls = ActiveVLNRolloutWorker
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
 
@@ -168,8 +178,15 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        if native_activevln:
+            try:
+                rollout_group.shutdown().wait()
+            except Exception as error:
+                get_logger().warning("ActiveVLN rollout cleanup failed: %s", error)
 
     if reward_group is not None:
         reward_group.stop().wait()

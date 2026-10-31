@@ -1,0 +1,27 @@
+defaults:
+  - activevln_r2r_grpo
+  - _self_
+
+runner:
+  logger:
+    experiment_name: activevln_r2r_grpo_sglang
+actor:
+  model:
+    model_backend: sglang
+rollout:
+  generation_backend: sglang
+  # Native SRT options; actor replay uses differentiable SDPA.
+  sglang:
+    attention_backend: flashinfer
+    mm_attention_backend: triton_attn
+    mem_fraction_static: 0.60
+    max_running_requests: 16
+    max_total_tokens: 8192
+    cuda_graph_max_bs_decode: 16
+    cuda_graph_bs_decode: [1, 2, 4, 8, 16]
+    enable_torch_compile: True
+    torch_compile_max_bs: 16
+    speculative_algorithm: NGRAM
+    speculative_num_draft_tokens: 12
+    random_seed: 42
+    log_level: warning

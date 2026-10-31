@@ -1698,13 +1698,18 @@ class EnvOutput:
             else None
         )
 
-        return {
+        prepared = {
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
         }
+        # Preserve navigation histories in normal and final observations.
+        for key in ("messages", "images"):
+            if key in obs:
+                prepared[key] = obs[key]
+        return prepared
 
     def to_dict(self) -> dict[str, Any]:
         return {

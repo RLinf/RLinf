@@ -54,6 +54,13 @@ def register_model(
 
 
 def _register_builtin_models():
+    def _build_activevln(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.activevln import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    register_model(SupportedModel.ACTIVEVLN.value, _build_activevln, force=True)
+
     def _build_openvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openvla import get_model
 
