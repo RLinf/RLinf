@@ -37,6 +37,20 @@ _SHARED_KEYS = {
     "train/nonfinite_skips",
     "train/param_divergence",
 }
+_LOG_EVERY = 100
+
+
+def report_training_step(step: int, total: int, every: int = _LOG_EVERY) -> bool:
+    """Whether this update is printed. Every ``every`` updates, and the last one.
+
+    A run of 278 updates prints 100, 200 and 278. Update 0 stays in TensorBoard
+    only.
+    """
+    if step <= 0:
+        return False
+    if step >= total:
+        return True
+    return every > 0 and step % every == 0
 
 
 def aggregate_rank_metrics(
@@ -182,11 +196,16 @@ class SuperMimicRunner:
             updated = int(last.get("train/global_update", self.global_step))
             # UTD can collect several times before global_update moves.
             # Save and eval run once, on the iteration that advances it.
-            # Update 0 is not a completed training update. A fresh run logs
-            # its warmup at step 0; a resumed run already logged its step.
+            # Update 0 is not a completed training update. TensorBoard records
+            # it; the terminal line waits for the 100-update marks and the end.
             advanced = updated != self.global_step
-            if advanced or (first and self.global_step == 0):
+            # TensorBoard still records every update. The terminal line is
+            # every 100 updates, and also the last update when it is not a
+            # multiple of 100.
+            show = report_training_step(updated, self.max_steps)
+            if (advanced or (first and self.global_step == 0)) and show:
                 self._logger().info(f"supermimic metrics {last}")
+            if advanced or (first and self.global_step == 0):
                 self.metric_logger.log(last, step=updated)
             first = False
             self.global_step = updated

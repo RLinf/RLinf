@@ -1170,6 +1170,14 @@ def test_velocity_episode_keeps_timeout_clip_end_and_resets(tmp_path):
     assert int(trainer.env.time_in_episode[3]) == 0
 
 
+def test_terminal_metrics_print_on_hundreds_and_the_final_update():
+    from rlinf.runners.supermimic_runner import report_training_step
+
+    printed = [step for step in range(279) if report_training_step(step, 278)]
+    assert printed == [100, 200, 278]
+    assert [step for step in range(101) if report_training_step(step, 100)] == [100]
+
+
 def test_runner_saves_and_evaluates_once_per_new_update(tmp_path):
     from rlinf.runners.supermimic_runner import SuperMimicRunner
 
