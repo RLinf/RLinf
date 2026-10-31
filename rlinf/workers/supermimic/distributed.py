@@ -115,9 +115,7 @@ class DataParallel:
                 for p in params:
                     p.grad = None
                 return 0.0, True
-            grads = [
-                p.grad.detach().reshape(-1) for p in params if p.grad is not None
-            ]
+            grads = [p.grad.detach().reshape(-1) for p in params if p.grad is not None]
             if grads:
                 finite = bool(torch.isfinite(torch.cat(grads)).all())
             return weight, finite
