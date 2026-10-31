@@ -44,6 +44,7 @@ infer_benchmark() {
         realworld_*|realworld-* ) echo "realworld" ;;
         maniskill_*|maniskill-* ) echo "maniskill" ;;
         metaworld_*|metaworld-* ) echo "metaworld" ;;
+        aloha_*|aloha-* ) echo "aloha" ;;
         calvin_*|calvin-* ) echo "calvin" ;;
         robocasa365_*|robocasa365-* ) echo "robocasa365" ;;
         robocasa_*|robocasa-* ) echo "robocasa" ;;

@@ -378,6 +378,9 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.ALOHA:
+        # gym-aloha takes absolute 14-dim joint targets, as ACT predicts them.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.CALVIN:
         chunk_actions = prepare_actions_for_calvin(
             raw_chunk_actions=raw_chunk_actions,

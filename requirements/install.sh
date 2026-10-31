@@ -118,8 +118,8 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang" "lerobot_act")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "aloha")
 
 #=======================Utility Functions=======================
 
@@ -2660,6 +2660,23 @@ EOF
     esac
 }
 
+install_lerobot_act_model() {
+    case "$ENV_NAME" in
+        aloha)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_aloha_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for the LeRobot ACT model." >&2
+            exit 1
+            ;;
+    esac
+    # The pinned LeRobot loads the ACT checkpoints on the Hub as they are
+    # (normalization stats inside model.safetensors).
+    install_lerobot
+}
+
 install_molmoact2_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -3197,6 +3214,10 @@ install_env_only() {
         dummy)
             install_dummy_env
             ;;
+        aloha)
+            install_common_embodied_deps
+            install_aloha_env
+            ;;
         franka)
             install_franka_franky_env
             ;;
@@ -3499,6 +3520,10 @@ install_behavior_env() {
 install_metaworld_env() {
     # Meta-World 3.0.0 writes an 11-wide weld row. MuJoCo 3.17.0 widened eq_data to 12.
     uv pip install metaworld==3.0.0 "mujoco==3.16.0"
+}
+
+install_aloha_env() {
+    uv pip install "gym-aloha>=0.1.5,<0.2.0"
 }
 
 install_calvin_env() {
@@ -4224,6 +4249,9 @@ main() {
                     ;;
                 molmoact2)
                     install_molmoact2_model
+                    ;;
+                lerobot_act)
+                    install_lerobot_act_model
                     ;;
                 starvla)
                     install_starvla_model
