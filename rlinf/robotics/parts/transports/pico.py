@@ -100,7 +100,9 @@ class PicoExpert:
         hand: str = "right",
         control_trigger: str = "grip",
         control_threshold: float = 0.9,
-        gripper_trigger: str = "trigger",
+        # An analog control that closes the gripper while squeezed and opens it
+        # on release; off unless a config names one, such as "trigger".
+        gripper_trigger: Optional[str] = None,
         gripper_close_threshold: float = 0.5,
         gripper_close_button: str = "A",
         gripper_open_button: str = "B",
@@ -155,6 +157,9 @@ class PicoExpert:
         self.auto_calibrate_on_start = bool(
             calibration_cfg.get("auto_calibrate_on_start", True)
         )
+        self.auto_calibrate_on_grip = bool(
+            calibration_cfg.get("auto_calibrate_on_grip", False)
+        )
         self.require_calibration = bool(
             calibration_cfg.get("required", self.calibration_enabled)
         )
@@ -179,6 +184,7 @@ class PicoExpert:
         self._lock = threading.Lock()
         self._latest_data: Optional[dict[str, Any]] = None
         self._last_update_time = 0.0
+        self._last_timestamp_ns: Optional[int] = None
 
         self._context = None
         self._socket = None
@@ -186,8 +192,11 @@ class PicoExpert:
         self._thread: Optional[threading.Thread] = None
 
         self._active = False
+        self._grip_epoch = 0
         self._ref_controller_pos: Optional[np.ndarray] = None
         self._ref_controller_rot: Optional[R] = None
+        self._prev_gripper_trigger_closed = False
+        self._last_reading: dict[str, Any] = {}
 
         self._calibrated = False
         self._calibration_rot = R.identity()
@@ -195,6 +204,11 @@ class PicoExpert:
         self._prev_calibration_button = False
 
         self.start()
+
+    @property
+    def last_reading(self) -> dict[str, Any]:
+        """Return a copy of what the latest :meth:`get_reading` reported."""
+        return dict(self._last_reading)
 
     @property
     def ready(self) -> bool:
@@ -251,39 +265,109 @@ class PicoExpert:
             Held state, relative motion, gripper buttons, and link and
             calibration status.
         """
+        calibrated = (
+            self._calibrated
+            or not self.calibration_enabled
+            or not self.require_calibration
+        )
         idle = {
             "held": False,
             "ready": False,
             "hand": self.hand,
-            "calibrated": self._calibrated,
+            "calibrated": calibrated,
             "control_value": 0.0,
             "position_delta": np.zeros(3, dtype=np.float64),
             "rotation_delta": np.zeros(3, dtype=np.float64),
             "grip_close": False,
             "grip_open": False,
+            "axis": np.zeros(2, dtype=np.float64),
+            "trigger": 0.0,
         }
 
         data = self._snapshot()
         if data is None:
             self._deactivate()
-            return {**idle, "stale": True}
+            self._last_reading = {**idle, "stale": True}
+            return self._last_reading
+
+        controller = data.get(f"{self.hand}_controller", {})
+        raw_axis = controller.get("axis", [0.0, 0.0])
+        axis = (
+            np.asarray(raw_axis[:2], dtype=np.float64)
+            if isinstance(raw_axis, (list, tuple, np.ndarray)) and len(raw_axis) >= 2
+            else np.zeros(2, dtype=np.float64)
+        )
+        if not np.all(np.isfinite(axis)):
+            axis = np.zeros(2, dtype=np.float64)
+        trigger_val = float(controller.get("trigger", 0.0))
+
+        close_pressed = self._control_pressed(
+            data, self.hand, self.gripper_close_button, self.gripper_close_threshold
+        )
+        open_pressed = self._control_pressed(
+            data, self.hand, self.gripper_open_button, self.gripper_close_threshold
+        )
+        if self.gripper_trigger:
+            trig_closed = self._control_pressed(
+                data, self.hand, self.gripper_trigger, self.gripper_close_threshold
+            )
+            if trig_closed:
+                close_pressed = True
+            elif self._prev_gripper_trigger_closed:
+                open_pressed = True
+            self._prev_gripper_trigger_closed = trig_closed
+        if self.gripper_invert:
+            close_pressed, open_pressed = open_pressed, close_pressed
 
         self._maybe_update_calibration(data)
-        if (
-            self.calibration_enabled
-            and self.require_calibration
-            and not self._calibrated
-        ):
+        control_value = self._control_value(data, self.hand, self.control_trigger)
+        calibrated = (
+            self._calibrated
+            or not self.calibration_enabled
+            or not self.require_calibration
+        )
+        if not calibrated:
             self._deactivate()
-            return {**idle, "ready": True, "calibrated": False}
+            self._last_reading = {
+                **idle,
+                "ready": True,
+                "calibrated": False,
+                "control_value": control_value,
+                "grip_epoch": self._grip_epoch,
+                "grip_close": close_pressed,
+                "grip_open": open_pressed,
+                "axis": axis,
+                "trigger": trigger_val,
+            }
+            return self._last_reading
 
         pose = self._controller_pose(data, self.hand)
         if not _is_valid_pose(pose):
             self._deactivate()
-            return {**idle, "ready": True, "invalid_pose": True}
+            self._last_reading = {
+                **idle,
+                "ready": True,
+                "calibrated": calibrated,
+                "control_value": control_value,
+                "grip_epoch": self._grip_epoch,
+                "invalid_pose": True,
+                "grip_close": close_pressed,
+                "grip_open": open_pressed,
+                "axis": axis,
+                "trigger": trigger_val,
+            }
+            return self._last_reading
 
-        control_value = self._control_value(data, self.hand, self.control_trigger)
-        held = control_value >= self.control_threshold
+        release_threshold = max(0.05, self.control_threshold - 0.10)
+        threshold = release_threshold if self._active else self.control_threshold
+        held = control_value >= threshold
+        if (
+            held
+            and not self._active
+            and self.calibration_enabled
+            and self.auto_calibrate_on_grip
+        ):
+            self._calibrate_base(data, deactivate=False, log_calibration=False)
         position, rotation = self._transform_raw_pose_to_world(pose)
 
         if held and not self._active:
@@ -297,28 +381,25 @@ class PicoExpert:
             "held": held,
             "ready": True,
             "control_value": control_value,
-            "calibrated": self._calibrated,
+            "grip_epoch": self._grip_epoch,
+            "calibrated": calibrated,
+            "grip_close": close_pressed,
+            "grip_open": open_pressed,
+            "axis": axis,
+            "trigger": trigger_val,
         }
         if not held:
+            self._last_reading = reading
             return reading
 
         moved, turned = self._motion_since_hold(position, rotation)
-        close_pressed = self._control_pressed(
-            data, self.hand, self.gripper_close_button, self.gripper_close_threshold
-        )
-        open_pressed = self._control_pressed(
-            data, self.hand, self.gripper_open_button, self.gripper_close_threshold
-        )
-        if self.gripper_invert:
-            close_pressed, open_pressed = open_pressed, close_pressed
 
-        return {
+        self._last_reading = {
             **reading,
             "position_delta": moved,
             "rotation_delta": turned,
-            "grip_close": close_pressed,
-            "grip_open": open_pressed,
         }
+        return self._last_reading
 
     def get_buttons(self) -> dict[str, bool]:
         """Return every controller button, by its reported name.
@@ -338,9 +419,14 @@ class PicoExpert:
             try:
                 msg_bytes = self._socket.recv()
                 data = json.loads(msg_bytes.decode("utf-8"))
+                raw_ts = data.get("timestamp_ns")
+                ts_ns = int(raw_ts) if isinstance(raw_ts, (int, float)) else None
+                now = time.time()
                 with self._lock:
                     self._latest_data = data
-                    self._last_update_time = time.time()
+                    if ts_ns is None or ts_ns != self._last_timestamp_ns:
+                        self._last_timestamp_ns = ts_ns
+                        self._last_update_time = now
             except zmq.error.Again:
                 continue
             except Exception as exc:
@@ -358,6 +444,7 @@ class PicoExpert:
             return dict(self._latest_data)
 
     def _activate(self, controller_pos: np.ndarray, controller_rot: R) -> None:
+        self._grip_epoch += 1
         self._ref_controller_pos = controller_pos.copy()
         self._ref_controller_rot = controller_rot
         logger.info("PICO %s controller activated", self.hand)
@@ -399,7 +486,11 @@ class PicoExpert:
         if not self.calibration_enabled:
             return
 
-        if self.auto_calibrate_on_start and not self._calibrated:
+        if (
+            self.auto_calibrate_on_start
+            and not self._calibrated
+            and (not self._active or self.allow_calibration_while_active)
+        ):
             self._calibrate_base(data)
 
         if not self.calibration_button:
@@ -420,17 +511,26 @@ class PicoExpert:
                 )
         self._prev_calibration_button = pressed
 
-    def _calibrate_base(self, data: Mapping[str, Any]) -> bool:
+    def _calibrate_base(
+        self,
+        data: Mapping[str, Any],
+        *,
+        deactivate: bool = True,
+        log_calibration: bool = True,
+    ) -> bool:
         headset_pose = data.get("headset_pose", [0.0] * 7)
         if not _is_valid_pose(headset_pose):
             return False
 
         head_pos, head_rot = self._transform_raw_pose_to_aligned(headset_pose)
+        up = head_rot.apply([0.0, 1.0, 0.0])
+        if not deactivate and up[2] < 0.25:
+            return False
         forward = head_rot.apply(self.head_forward_axis)
         forward[2] = 0.0
 
         norm = np.linalg.norm(forward)
-        if norm < 1e-6:
+        if norm < (1e-6 if deactivate else 0.25):
             return False
 
         forward /= norm
@@ -438,12 +538,14 @@ class PicoExpert:
         self._calibration_rot = R.from_euler("z", -yaw)
         self._calibration_t = self.base_position - self._calibration_rot.apply(head_pos)
         self._calibrated = True
-        self._deactivate()
-        logger.info(
-            "PICO base calibrated: head_pos=%s, align_yaw=%.3f",
-            np.round(head_pos, 4).tolist(),
-            -yaw,
-        )
+        if deactivate:
+            self._deactivate()
+        if log_calibration:
+            logger.info(
+                "PICO base calibrated: head_pos=%s, align_yaw=%.3f",
+                np.round(head_pos, 4).tolist(),
+                -yaw,
+            )
         return True
 
     def _transform_raw_pose_to_aligned(self, pose: list[float]) -> tuple[np.ndarray, R]:

@@ -88,6 +88,7 @@ class Pico(TeleopDevice):
         self.side = int(side)
         self._config = pico_config
         self._held_from: Optional[tuple[np.ndarray, R]] = None
+        self._held_epoch: Optional[Any] = None
 
     # Hardware.
 
@@ -212,6 +213,7 @@ class Pico(TeleopDevice):
 
         if not held:
             self._held_from = None
+            self._held_epoch = None
             return pose, np.zeros(0, dtype=np.float32), False
 
         action = self._command(reading, pose, context["action_scale"])
@@ -225,11 +227,13 @@ class Pico(TeleopDevice):
         The first call after a grip anchors to ``pose``, the arm's measured
         ``xyz`` and ``xyzw`` quaternion at that edge.
         """
-        if self._held_from is None:
+        grip_epoch = reading.get("grip_epoch")
+        if self._held_from is None or grip_epoch != self._held_epoch:
             self._held_from = (
                 np.asarray(pose[:3], dtype=np.float64).copy(),
                 R.from_quat(np.asarray(pose[3:7], dtype=np.float64)),
             )
+            self._held_epoch = grip_epoch
         anchor_pos, anchor_rot = self._held_from
         target_pos = anchor_pos + np.asarray(
             reading["position_delta"], dtype=np.float64
@@ -298,6 +302,7 @@ class Pico(TeleopDevice):
     def on_reset(self, context: Mapping[str, Any] = MappingProxyType({})) -> None:
         """Clear the pose anchor from the previous episode."""
         self._held_from = None
+        self._held_epoch = None
 
 
 class PicoDelta(Pico):
@@ -502,6 +507,12 @@ class PicoJoint(Pico):
             halving the step from the measured pose.
         max_tick_s: A solution older than this when it would be sent is
             dropped, and the arm latched.
+        max_joint_lead: When set, the arm integrates its own command: each
+            tick steps from the previous command, so ``joint_step_limits``
+            bounds the command's speed however far the measured joints lag,
+            and the command stays within this many radians of them. Unset,
+            each tick steps from the measured joints, which caps the speed at
+            the step limit over the servo's lag.
         gripper: Whether this arm's action carries a gripper channel.
         side: Which arm this controller drives.
         hold_current_when_inactive: Command the held pose while the grip is
@@ -528,6 +539,7 @@ class PicoJoint(Pico):
         gripper: bool = True,
         side: int = 0,
         hold_current_when_inactive: bool = True,
+        max_joint_lead: Optional[float] = None,
         **pico_config: Any,
     ) -> None:
         super().__init__(gripper=gripper, side=side, **pico_config)
@@ -550,10 +562,18 @@ class PicoJoint(Pico):
         self.ik_backtrack_attempts = ik_backtrack_attempts
         self.max_tick_s = float(max_tick_s)
         self.hold_current_when_inactive = bool(hold_current_when_inactive)
+        if max_joint_lead is not None and not (
+            np.isfinite(float(max_joint_lead)) and float(max_joint_lead) > 0
+        ):
+            raise ValueError(
+                f"pico.max_joint_lead must be positive, but got {max_joint_lead}."
+            )
+        self.max_joint_lead = None if max_joint_lead is None else float(max_joint_lead)
         #: An idle arm keeps its held pose only when it holds one.
         self.APPLIES_WHILE_IDLE = self.hold_current_when_inactive
         self._hand = str(pico_config.get("hand", "right"))
         self._fault: Optional[str] = "release_grip"
+        self._fault_grip_released: bool = False
         # An arm is re-latched every tick its partner is held, so a reason is
         # logged once until the arm drives again.
         self._logged_fault: Optional[str] = self._fault
@@ -562,6 +582,8 @@ class PicoJoint(Pico):
         self._preserve = False
         self._grip: Optional[float] = None
         self._idle_joints: Optional[np.ndarray] = None
+        # The joints last commanded while held, when the arm integrates them.
+        self._command: Optional[np.ndarray] = None
         self._last_ik_warning = -float("inf")
         self._last_step_log = -float("inf")
         self._logger = get_logger()
@@ -582,6 +604,7 @@ class PicoJoint(Pico):
                 "joint_step_limits to bound each tick, but the env has none."
             )
         prefix = "" if drives is None else f"{drives}."
+        settings.setdefault("max_joint_lead", getattr(facts, "max_joint_lead", None))
         return cls(
             kinematics=lambda: build(drives),
             joints=facts.layout[f"{prefix}arm"],
@@ -609,10 +632,13 @@ class PicoJoint(Pico):
             )
             self._logged_fault = reason
         self._fault = reason
+        self._fault_grip_released = False
         self._preserve = False
         self._held_from = None
-        self._grip = None
-        self._idle_joints = None
+        self._held_epoch = None
+        if not reason.endswith(":unavailable"):
+            self._idle_joints = None
+        self._command = None
 
     def preserve_reference(self) -> None:
         """Keep the grip anchor across the next reset."""
@@ -623,6 +649,8 @@ class PicoJoint(Pico):
         if self._preserve:
             self._preserve = False
             return
+        self._grip = None
+        self._idle_joints = None
         self.hold_until_released("release_grip")
 
     # Mapping one reading onto joints.
@@ -635,43 +663,99 @@ class PicoJoint(Pico):
         measured = np.asarray(context["joint_positions"], dtype=np.float64).reshape(-1)
         joints = measured[self._joints].copy()
         grip = None if self._grip_at is None else float(measured[self._grip_at][0])
+        if self._grip is None:
+            self._grip = grip
         info = {**self._reported(reading), **_IK_REPORT}
 
+        grip_changed = False
+        if reading.get("grip_close", False):
+            self._grip = 0.0
+            grip_changed = True
+        elif reading.get("grip_open", False):
+            self._grip = 1.0
+            grip_changed = True
+
+        grip_released_now = (
+            not reading.get("held", False)
+            and float(reading.get("control_value", 0.0)) < 0.5
+        )
         if (
             not reading.get("ready", False)
             or not reading.get("calibrated", False)
             or reading.get("invalid_pose", False)
         ):
             self.hold_until_released(f"{self._hand}:unavailable")
-        elif self._fault is not None and not reading.get("held", False):
+            if grip_released_now:
+                self._fault_grip_released = True
+        elif self._fault is not None and (
+            not reading.get("held", False) or self._fault_grip_released
+        ):
             # A grip still squeezed after a fault must not re-engage.
             self._fault = None
-            self._idle_joints = joints.copy()
+            self._fault_grip_released = False
+            if self._idle_joints is None:
+                self._idle_joints = joints.copy()
         if self._fault is not None:
             self._held_from = None
-            return self._holding(joints, grip, info)
+            self._held_epoch = None
+            self._command = None
+            hold_joints = self._idle_joints if self._idle_joints is not None else joints
+            held_action = self._holding(hold_joints, self._grip, info)
+            if grip_changed:
+                held_action.driving = True
+            return held_action
 
         if not reading.get("held", False):
             self._held_from = None
+            self._held_epoch = None
             if self._idle_joints is None:
-                self._idle_joints = joints.copy()
-            self._grip = grip
-            return self._holding(self._idle_joints, grip, info)
-        self._idle_joints = None
+                # Hold the last command rather than the measured joints, which
+                # lag it and sag under gravity.
+                self._idle_joints = (
+                    joints.copy()
+                    if self._command is None
+                    else self._within_lead(self._command, joints)
+                )
+            self._command = None
+            held_action = self._holding(self._idle_joints, self._grip, info)
+            if grip_changed:
+                held_action.driving = True
+            return held_action
         self._logged_fault = None
-        if self._grip is None:
-            self._grip = grip
+        grip_epoch = reading.get("grip_epoch")
+        engaging = self._held_from is None or grip_epoch != self._held_epoch
+        if self.max_joint_lead is None:
+            base = joints
+        else:
+            if engaging or self._command is None:
+                # Start from the held command when the arm is still near it,
+                # so taking the grip again does not step back to the sag.
+                start = self._idle_joints
+                if (
+                    start is None
+                    or np.max(np.abs(start - joints)) > self.max_joint_lead
+                ):
+                    start = joints
+                self._command = start.copy()
+            base = self._within_lead(self._command, joints)
+        self._idle_joints = None
 
-        current = np.asarray(self._kinematics.fk(joints, grip), dtype=np.float64)
-        position, rotation = self._target(
-            reading,
-            np.concatenate([current[:3, 3], R.from_matrix(current[:3, :3]).as_quat()]),
-        )
+        if engaging:
+            current: Optional[np.ndarray] = np.asarray(
+                self._kinematics.fk(base, grip), dtype=np.float64
+            )
+            anchor_pose = np.concatenate(
+                [current[:3, 3], R.from_matrix(current[:3, :3]).as_quat()]
+            )
+        else:
+            current = None
+            anchor_pose = np.empty(0, dtype=np.float64)
+        position, rotation = self._target(reading, anchor_pose)
         target = np.eye(4)
         target[:3, 3] = position
         target[:3, :3] = rotation.as_matrix()
         result, attempts, fraction, first_fault = self._solve(
-            target, current, joints, grip
+            target, current, base, grip
         )
         info.update(
             ik_attempts=attempts,
@@ -683,14 +767,13 @@ class PicoJoint(Pico):
             ik_fault=None if result.success else result.reason,
         )
         if result.success:
-            command = self._step_toward(result.q_target, joints, info)
-            if reading.get("grip_close", False):
-                self._grip = 0.0
-            elif reading.get("grip_open", False):
-                self._grip = 1.0
+            command = self._step_toward(result.q_target, base, info)
+            if self.max_joint_lead is not None:
+                command = self._within_lead(command, joints)
+                self._command = command.copy()
         else:
-            # Hold the joints for this frame only; the gripper stays latched.
-            command = joints
+            # Hold for this frame only; the gripper stays latched.
+            command = base.copy()
             now = time.monotonic()
             if now - self._last_ik_warning >= 1.0:
                 self._logger.warning(
@@ -704,7 +787,7 @@ class PicoJoint(Pico):
             result.success and time.monotonic() - started > self.max_tick_s
         ):
             self.hold_until_released(f"{self._hand}:stale_after_ik")
-            return self._holding(joints, grip, info)
+            return self._holding(joints, self._grip, info)
         self._solved_at = started if result.success else None
         return TeleopAction(
             parts=self._parts(command, self._grip), driving=True, info=info
@@ -727,6 +810,13 @@ class PicoJoint(Pico):
         """Return the measured joints, leaving the gripper to the policy."""
         measured = np.asarray(context["joint_positions"], dtype=np.float64).reshape(-1)
         return {"arm": measured[self._joints].astype(np.float32)}
+
+    def _within_lead(self, command: np.ndarray, measured: np.ndarray) -> np.ndarray:
+        """Clip ``command`` to ``max_joint_lead`` around the measured joints."""
+        assert self.max_joint_lead is not None
+        return np.clip(
+            command, measured - self.max_joint_lead, measured + self.max_joint_lead
+        )
 
     def _parts(
         self, joints: np.ndarray, grip: Optional[float]
@@ -774,7 +864,7 @@ class PicoJoint(Pico):
     def _solve(
         self,
         target: np.ndarray,
-        current: np.ndarray,
+        current: Optional[np.ndarray],
         joints: np.ndarray,
         grip: Optional[float],
     ) -> tuple[Any, int, float, Optional[str]]:
@@ -801,6 +891,10 @@ class PicoJoint(Pico):
                 or attempts > self.ik_backtrack_attempts
             ):
                 break
+            if current is None:
+                current = np.asarray(
+                    self._kinematics.fk(joints, grip), dtype=np.float64
+                )
             if turn is None:
                 turn = R.from_matrix(target[:3, :3] @ current[:3, :3].T).as_rotvec()
             fraction *= 0.5

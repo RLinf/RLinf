@@ -20,20 +20,31 @@ here, which keeps unrelated vendor dependencies out of local import paths.
 
 from .base import (
     Action,
+    CommandBatch,
     Connection,
     ControllablePart,
+    FaultLevel,
     Features,
+    HealthStatus,
     Observation,
     PartGroup,
     RobotPart,
 )
+from .motion import JointGroupSpec, JointStream, MotionProfile, SetpointStreamer
 
 __all__ = [
     "Action",
+    "CommandBatch",
     "Connection",
     "ControllablePart",
+    "FaultLevel",
     "Features",
+    "HealthStatus",
+    "JointGroupSpec",
+    "JointStream",
+    "MotionProfile",
     "Observation",
     "PartGroup",
     "RobotPart",
+    "SetpointStreamer",
 ]

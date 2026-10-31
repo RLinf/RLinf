@@ -37,6 +37,7 @@ _ROBOT_PACKAGES = (
     ".franka",
     ".gim_arm",
     ".piper",
+    ".r2",
     ".so101",
     ".xsquare",
     ".yam",
