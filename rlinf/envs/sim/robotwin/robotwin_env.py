@@ -98,6 +98,7 @@ class RoboTwinEnv(gym.Env):
             task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),
             n_envs=self.num_envs,
             env_seeds=env_seeds,
+            instruction_type=self.cfg.get("instruction_type", "seen"),
         )
 
     @property
@@ -447,28 +448,25 @@ class RoboTwinEnv(gym.Env):
         return np.random.randn(self.num_envs, self.horizon, 14)
 
     def _init_reset_state_ids(self):
-        if self.cfg.get("seeds_path", None) is not None and os.path.exists(
-            self.cfg.seeds_path
+        success_seeds = self.cfg.get("seeds")
+        if (
+            success_seeds is None
+            and self.cfg.get("seeds_path") is not None
+            and os.path.exists(self.cfg.seeds_path)
         ):
             with open(self.cfg.seeds_path, "r") as f:
                 data = json.load(f)
-            success_seeds = data[self.task_name].get("success_seeds", None)
-            if success_seeds is not None:
-                success_seeds = torch.as_tensor(success_seeds, dtype=torch.long)
-                self.success_seeds = partition_success_seeds(
-                    success_seeds,
-                    base_seed=self.base_seed,
-                    seed_offset=self.seed_offset,
-                    total_num_processes=self.total_num_processes,
-                    num_group=self.num_group,
-                )
-                self._current_seed_index = 0
-            else:
-                self.success_seeds = None
-                self._current_seed_index = 0
-        else:
-            self.success_seeds = None
-            self._current_seed_index = 0
+            success_seeds = data[self.task_name].get("success_seeds")
+        self.success_seeds = None
+        if success_seeds is not None:
+            self.success_seeds = partition_success_seeds(
+                torch.as_tensor(list(success_seeds), dtype=torch.long),
+                base_seed=self.base_seed,
+                seed_offset=self.seed_offset,
+                total_num_processes=self.total_num_processes,
+                num_group=self.num_group,
+            )
+        self._current_seed_index = 0
 
         if not hasattr(self, "_generator"):
             self._generator = torch.Generator()

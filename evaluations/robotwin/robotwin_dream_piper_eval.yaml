@@ -1,0 +1,16 @@
+defaults:
+  - _dream_eval
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+env:
+  eval:
+    task_config:
+      embodiment: [piper, piper, 0.6]
+
+rollout:
+  dream:
+    action_hz: 30

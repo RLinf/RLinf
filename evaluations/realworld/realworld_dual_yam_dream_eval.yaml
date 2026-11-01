@@ -1,0 +1,60 @@
+defaults:
+  - env/realworld_dual_yam_joint@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout:
+      node_group: node
+      placement: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  val_check_interval: -1
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: dual_yam_dream_eval
+    logger_backends: [tensorboard]
+
+env:
+  group_name: EnvGroup
+  eval:
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 480
+    rollout_epoch: 1
+    teleop: none
+    override_cfg:
+      is_dummy: true
+      task_description: pick the red block
+      step_frequency: 20.0
+      max_num_steps: 480
+      park_on_close:
+        enabled: false
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: dream
+  pipeline_stage_num: 1
+  collect_prev_infos: false
+  model:
+    model_type: dream
+    checkpoint: dreamlabs/dream-1-beta
+    action_dim: 14
+    num_action_chunks: 48
+  dream:
+    head: joint
+    arm: yam
+    action_hz: 20
+    max_calls: 10
+    timeout_ms: 15000

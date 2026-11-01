@@ -1,0 +1,12 @@
+# @package _global_
+env:
+  eval:
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 432
+    task_config:
+      task_name: click_bell
+      step_lim: 400
+
+rollout:
+  dream:
+    max_calls: 90

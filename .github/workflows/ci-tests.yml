@@ -84,6 +84,7 @@ jobs:
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
               - 'rlinf/workers/actor/fsdp_iql_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
+              - 'rlinf/workers/**/dream*worker.py'
               - 'rlinf/runners/offline_runner.py'
               - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
               - 'rlinf/envs/**'

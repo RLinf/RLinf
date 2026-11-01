@@ -15,6 +15,7 @@
 import json
 
 import hydra
+import ray
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
@@ -24,7 +25,6 @@ from rlinf.scheduler import Cluster
 from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -49,7 +49,15 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
-    if rollout_backend == "apxinf":
+    if rollout_backend == "dream":
+        from rlinf.workers.env.dream_env_worker import DreamEnvWorker
+        from rlinf.workers.rollout.dream_worker import DreamRolloutWorker
+
+        env_worker_cls = DreamEnvWorker
+        rollout_group = DreamRolloutWorker.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+    elif rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
         rollout_group = ApxInfRolloutWorker.create_group(cfg).launch(
@@ -70,6 +78,8 @@ def main(cfg) -> None:
             )
         )
     elif rollout_backend == "huggingface":
+        from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
         if cfg.runner.get("rtc", {}).get("enabled", False):
             from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
             from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
@@ -118,8 +128,15 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    runner.init_workers()
-    runner.run()
+    try:
+        runner.init_workers()
+        runner.run()
+    finally:
+        if rollout_backend == "dream" and ray.is_initialized():
+            try:
+                rollout_group.close().wait()
+            finally:
+                env_group.close().wait()
 
 
 if __name__ == "__main__":

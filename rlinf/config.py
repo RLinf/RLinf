@@ -106,6 +106,7 @@ SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.FASTWAM = SupportedModel.register("fastwam", force=True)
 SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
+SupportedModel.DREAM = SupportedModel.register("dream", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
@@ -152,6 +153,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DREAMZERO,
         SupportedModel.FASTWAM,
         SupportedModel.COSMOS3,
+        SupportedModel.DREAM,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
@@ -1078,6 +1080,13 @@ def validate_embodied_cfg(cfg):
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
+    if (
+        model_type == SupportedModel.DREAM
+        or cfg.rollout.get("rollout_backend") == "dream"
+    ):
+        from rlinf.workers.rollout.dream_worker import validate_dream_cfg
+
+        validate_dream_cfg(cfg)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "

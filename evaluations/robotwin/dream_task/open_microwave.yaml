@@ -1,0 +1,12 @@
+# @package _global_
+env:
+  eval:
+    max_episode_steps: 1500
+    max_steps_per_rollout_epoch: 1536
+    task_config:
+      task_name: open_microwave
+      step_lim: 1500
+
+rollout:
+  dream:
+    max_calls: 320
