@@ -1,5 +1,5 @@
 Understanding Fluctuations in ``success_once``
-=============================================
+==============================================
 
 This guide explains why embodied evaluation metrics such as
 ``eval/env/success_once`` can oscillate between validation steps (for
