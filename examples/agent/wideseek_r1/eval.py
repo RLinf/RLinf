@@ -148,9 +148,9 @@ def main(cfg) -> None:
     )
     assert (
         len(agentloop_placement_strategy._node_ranks)
-        == component_placement.rollout_dp_size
+        == component_placement.rollout_num_worker_processes
     ), (
-        f"agentloop worker num {len(agentloop_placement_strategy._node_ranks)} now should be equal to rollout dp size {component_placement.rollout_dp_size}"
+        f"agentloop worker num {len(agentloop_placement_strategy._node_ranks)} now should be equal to rollout worker process num {component_placement.rollout_num_worker_processes}"
     )
 
     agentloop_group = WideSeekR1AgentLoopWorker.create_group(

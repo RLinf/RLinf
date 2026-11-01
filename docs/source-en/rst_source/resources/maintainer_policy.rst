@@ -125,14 +125,14 @@ one outcome into many PRs does not create extra credit.
    * - **1. Contributor**
      - One accepted contribution: code, tested documentation, a confirmed reproducible report, a
        useful review, or a support outcome acknowledged by an area owner.
-     - Credit on the contribution and in the contributor registry; an optional downloadable
-       contribution acknowledgement linking to the accepted work.
+     - Credit on the contribution and in the contributor registry; a verifiable “RLinf Contributor”
+       certificate; an optional downloadable contribution acknowledgement linking to the accepted work.
      - Normal public participation. No elevated repository access.
    * - **2. Recognized Contributor**
      - Normally at least **8 weeks** of participation and **3 substantive outcomes**, including
        evidence of responding to feedback and following up after acceptance. An area owner
        validates the record.
-     - Public contributor profile, a verifiable “RLinf Recognized Contributor” badge, and
+     - Public contributor profile, a verifiable “RLinf Recognized Contributor” certificate, and
        recognition in the next community update, with consent.
      - Eligibility for mentoring and issue assignment. Read access where needed; no automatic write,
        CI-trigger, or merge privileges.
@@ -141,7 +141,7 @@ one outcome into many PRs does not create extra credit.
        substantive reviews** of other people's contributions. Reviews must show technical reasoning,
        verification, and useful feedback. An area owner sponsors; a second qualified reviewer
        assesses at least 3 representative reviews.
-     - Entry in the reviewer registry with an explicit scope; “RLinf Reviewer — [area]” badge and
+     - Entry in the reviewer registry with an explicit scope; “RLinf Reviewer — [area]” certificate and
        appointment record.
      - Official review requests and review recommendations within scope. Scoped triage through
        controlled tooling when safe. Reviewer status alone does not authorize acceptance or merge.
@@ -150,8 +150,9 @@ one outcome into many PRs does not create extra credit.
        sponsors who have directly observed the work. At least one assessor must be independent of
        the candidate's institution and reporting relationships. Complete the supervised trial in
        :ref:`Section 5 <maintainer-policy-section-5>`.
-     - Public candidacy announcement with consent; mentor assignment, written midpoint feedback, and
-       a trial completion record stating the assessment outcome.
+     - Public candidacy announcement with consent; a verifiable “RLinf Area Owner Candidate — [area]”
+       certificate; mentor assignment, written midpoint feedback, and a trial completion record stating
+       the assessment outcome.
      - Lead reviews and triage under supervision. An existing authorized Area Owner remains
        responsible for acceptance and merge. No new write or release credentials.
    * - **5. Area Owner**
@@ -362,7 +363,7 @@ version-controlled registry containing:
 
 - A next review date, where applicable.
 
-RLinf issues optional badges and PDF certificates from that registry. A certificate records what the
+RLinf issues optional PDF certificates from that registry. A certificate records what the
 recipient demonstrated: for example, **“Recognized for sustained maintenance and review of RLinf's
 distributed scheduling subsystem.”** It must identify RLinf as issuer, the exact role and scope, the
 evidence record, and issue date. It is a project-issued recognition, not an accredited professional

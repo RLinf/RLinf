@@ -69,7 +69,10 @@ from rlinf.utils.utils import (
     masked_mean,
     retrieve_model_state_dict_in_cpu,
 )
-from rlinf.workers.rollout.utils import RankMapper
+from rlinf.workers.rollout.utils import (
+    RankMapper,
+    instance_ids_to_entry_process_ranks,
+)
 
 
 def compute_rollout_train_kl(
@@ -192,11 +195,18 @@ class FSDPActor(FSDPModelManager, Worker):
         self._setup_rollout_weight_dst_ranks()
 
     def _setup_rollout_weight_dst_ranks(self) -> None:
-        """Setup destination ranks for token and weight communication."""
+        """Setup destination ranks for token and weight communication.
+
+        RankMapper's ``(engine_id, rank_in_engine)`` is converted into
+        ``(entry process rank, rank_in_engine)``: scheduler
+        child workers register under the instance's entry process.
+        """
         rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
             self._component_placement
         )
-        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self._weight_dst_rank_in_rollout = instance_ids_to_entry_process_ranks(
+            rank_map[self._rank], self._component_placement
+        )
         self.log_info(
             f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
