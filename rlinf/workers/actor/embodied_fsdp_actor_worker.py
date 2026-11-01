@@ -654,6 +654,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
         metrics = {}
+        # Whether the last optimizer update of this rollout happened during the
+        # critic warmup phase (recomputed before each optimizer step, since
+        # `critic_warmup_steps` is reset inside `optimizer_step` when warmup
+        # ends). Used to skip the adaptive KL update below.
+        in_critic_warmup = self.optimizer_steps < self.critic_warmup_steps
         if self.cfg.algorithm.get("recompute_logprobs", False):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
@@ -692,6 +697,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.torch_platform.empty_cache()
 
+                in_critic_warmup = self.optimizer_steps < self.critic_warmup_steps
                 grad_norm, lr_list = self.optimizer_step()
                 data = {
                     "actor/grad_norm": grad_norm,
@@ -711,7 +717,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         # Adaptive KL control: keep the measured KL near `target_kl` by scaling
         # the penalty coefficient after each update (issue #1110).
-        if self.target_kl is not None and self.kl_beta > 0:
+        # Skip critic warmup updates: the critic/value function is not trained
+        # yet, so the measured KL does not reflect a meaningful policy update.
+        if self.target_kl is not None and self.kl_beta > 0 and not in_critic_warmup:
             measured_kl = mean_metric_dict.get("actor/approx_kl")
             if measured_kl is not None:
                 self.kl_beta = adapt_kl_coefficient(

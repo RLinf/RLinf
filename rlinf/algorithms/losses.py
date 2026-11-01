@@ -338,7 +338,11 @@ def compute_ppo_actor_loss(
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
         "actor/kl_loss": kl_loss.detach(),
-        "actor/kl_beta": torch.tensor(float(kl_beta or 0.0)),
+        # Same device/dtype as the other metrics so metric reduction
+        # (np.mean -> all_reduce_dict) never mixes CPU and CUDA tensors.
+        "actor/kl_beta": torch.tensor(
+            float(kl_beta or 0.0), device=policy_loss.device, dtype=torch.float32
+        ),
     }
     if log_logprob_diagnostics:
         with torch.no_grad():
