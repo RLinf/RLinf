@@ -79,7 +79,7 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
         )
 
     def clear_rollout_runtime(self) -> None:
-        """Drop packed weights, graph captures and KV before refit or migration."""
+        """Drop captured addresses before replacing or moving model tensors."""
         if self._runtime is not None:
             self._sampling_states[str(self._runtime.device)] = (
                 self._runtime.sampling_generator.get_state()
@@ -172,9 +172,10 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             state = self._sampling_states.get(str(self._runtime.device))
             if state is not None:
                 self._runtime.sampling_generator.set_state(state)
-        generations = self._runtime.generate(
-            self._runtime.prefill(PreparedActiveVLNBatch(tuple(turns)))
-        )
+        prepared = PreparedActiveVLNBatch(tuple(turns))
+        # Fresh full-history KV allows graphs to survive in-place weight updates.
+        self._runtime.prewarm_prepared(prepared)
+        generations = self._runtime.generate(self._runtime.prefill(prepared))
         return self.pack_rollout(
             prompts,
             [item.token_ids[0].cpu() for item in generations],

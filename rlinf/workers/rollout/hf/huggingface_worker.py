@@ -650,8 +650,6 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
-        if hasattr(self.hf_model, "clear_rollout_runtime"):
-            self.hf_model.clear_rollout_runtime()
 
         async def recv_func() -> Any:
             return await self.broadcast(
