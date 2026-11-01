@@ -377,7 +377,7 @@ CNN + PPO
 
 在 ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml`` 中，把 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设为 SFT 的 ``global_step_<N>`` 目录，并把 ``actor.model.openpi_data.norm_stats_path`` 设为 SFT 使用的统计量文件。
 
-报告中的训练从 SFT 第 5000 步开始，使用 8 张 H100 GPU，目标为 150 轮。复现时设置以下字段；把 ``runner.max_epochs`` 改为 150 时，仍将学习率调度总步数保持为 1000，与报告中的训练一致：
+报告中的训练从 SFT 第 5000 步开始，使用 8 张 H100 GPU，共训练 150 轮。复现时设置以下字段；把 ``runner.max_epochs`` 改为 150 时，仍将学习率调度总步数保持为 1000，与报告中的训练一致：
 
 .. code:: yaml
 
@@ -398,6 +398,18 @@ CNN + PPO
          torch_compile: False
      optim:
        total_training_steps: 1000
+
+已评测的 token-level 可选配方从同一个 SFT 检查点开始，只需在同一配置中改动以下两个字段：
+
+.. code:: yaml
+
+   algorithm:
+     logprob_type: token_level
+   actor:
+     optim:
+       lr: 5.0e-6
+
+查看其 `运行日志 <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-c3de8862f92d>`__ 需要 W&B 项目访问权限。设置所选配方的字段后，运行：
 
 .. code:: bash
 
@@ -448,6 +460,8 @@ CNN + PPO
          save_video: True
          video_base_dir: ${runner.logger.log_path}/video/eval
 
+下表的 PPO 结果来自检查点的独立评测。对于 π₀.₅，环境种子固定 reset 状态，动作采样则使用各进程的随机数历史。在线与独立评测的成功率曲线分别记录。
+
 .. list-table::
    :header-rows: 1
    :widths: 34 66
@@ -457,8 +471,10 @@ CNN + PPO
    * - CNN + SFT
      - 在 ``water_plant`` 上，20,000 步配方在一张 48 GB GPU 上于第 8000 步达到峰值，64 个评测回合成功 50 个（78%）；第 10,000–20,000 步保持在 66% 到 75% 之间。
    * - CNN + PPO
-     - 从 SFT 第 8000 步继续使用 action-level PPO 在 8 张 H100 GPU 上训练，第 0/10/20/40/80 轮的 64 个回合分别成功 42/40/49/48/55 个（65.6%/62.5%/76.6%/75.0%/85.9%）。训练使用 1e-5 的 policy 学习率和 1600 的全局批量。所有检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作。训练正继续运行到预定的 200 轮。
+     - 从 SFT 第 8000 步继续使用 action-level PPO 在 8 张 H100 GPU 上训练，到预定终点第 200 轮时，成功率从 42/64（65.6%）升至 59/64（92.2%）。第 0/10/20/40/80/120/150/200 轮的 64 个回合分别成功 42/40/49/48/55/57/61/59 个。训练使用 1e-5 的 policy 学习率和 1600 的全局批量。所有检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作。
    * - π₀.₅ + SFT
      - 在 ``water_plant`` 上，第 5000 步的检查点（16 张 H100 GPU，全局批量 32）在每块执行 10 个动作、5 步去噪时于 64 个评测回合中成功 50 个（78%）；执行全部 30 个预测动作并用 10 步去噪时为 30 个（47%）。
    * - π₀.₅ + PPO
-     - 从 SFT 第 5000 步继续使用 chunk-level 配方在 8 张 H100 GPU 上训练，到 PPO 第 120 轮时，成功率从 50/64（78.1%）升至 59/64（92.2%）。两个检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作，去噪 5 步。
+     - 从 SFT 第 5000 步继续使用 chunk-level 配方在 8 张 H100 GPU 上训练，在预定终点 PPO 第 150 轮达到 55/64（85.9%），初始化时为 50/64（78.1%）。第 0/10/20/28/40/60/80/91/100/120/150 轮的 64 个回合分别成功 50/48/52/48/45/52/55/56/58/59/55 个。所有检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作，去噪 5 步。
+   * - π₀.₅ + PPO（token-level）
+     - 可选的 token-level 配方从相同的 50/64（78.1%）基线出发，在第 150 轮达到 63/64（98.4%）。在相同检查点使用相同评测协议，64 个回合分别成功 50/46/49/52/56/60/62/61/62/64/63 个。

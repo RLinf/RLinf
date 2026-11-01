@@ -435,7 +435,7 @@ In ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``, set
 ``global_step_<N>`` directory, and set
 ``actor.model.openpi_data.norm_stats_path`` to the statistics used for SFT.
 
-The reported run starts from SFT step 5000 on 8 H100 GPUs and targets 150
+The reported run starts from SFT step 5000 on 8 H100 GPUs and runs for 150
 iterations. Set the fields below, keeping the learning-rate schedule at
 1000 steps when setting
 ``runner.max_epochs`` to 150; this preserves the schedule used by the run:
@@ -459,6 +459,20 @@ iterations. Set the fields below, keeping the learning-rate schedule at
          torch_compile: False
      optim:
        total_training_steps: 1000
+
+The evaluated token-level alternative starts from the same SFT checkpoint
+and changes only these two fields in the same config:
+
+.. code:: yaml
+
+   algorithm:
+     logprob_type: token_level
+   actor:
+     optim:
+       lr: 5.0e-6
+
+Its `run logs <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-c3de8862f92d>`__
+require W&B project access. Launch either recipe after setting its fields:
 
 .. code:: bash
 
@@ -523,6 +537,11 @@ Enable video in the env config when needed:
          save_video: True
          video_base_dir: ${runner.logger.log_path}/video/eval
 
+The PPO results below use standalone checkpoint evaluations. For π₀.₅, the
+environment seed fixes the reset states, while action sampling uses each
+process's RNG history. Online and standalone success curves are recorded
+separately.
+
 .. list-table::
    :header-rows: 1
    :widths: 34 66
@@ -532,8 +551,10 @@ Enable video in the env config when needed:
    * - CNN + SFT
      - On ``water_plant``, the 20,000-step recipe on one 48 GB GPU peaks at step 8000 with 50 of 64 evaluation episodes (78%); steps 10,000–20,000 stay between 66% and 75%.
    * - CNN + PPO
-     - Continuing SFT step 8000 with action-level PPO on 8 H100 GPUs gives 42/40/49/48/55 successes out of 64 at iterations 0/10/20/40/80 (65.6%/62.5%/76.6%/75.0%/85.9%). The run uses policy LR 1e-5 and global batch 1600. All checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000`` and 10-action chunks. Training is continuing toward the planned 200 iterations.
+     - Continuing SFT step 8000 with action-level PPO on 8 H100 GPUs raises success from 42/64 (65.6%) to 59/64 (92.2%) at the planned final iteration 200. Checkpoints at iterations 0/10/20/40/80/120/150/200 give 42/40/49/48/55/57/61/59 successes out of 64. The run uses policy LR 1e-5 and global batch 1600. All checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000`` and 10-action chunks.
    * - π₀.₅ + SFT
      - On ``water_plant``, the step-5000 checkpoint (16 H100 GPUs, global batch 32) succeeds in 50 of 64 evaluation episodes (78%) when the policy executes 10 actions per chunk with 5 denoising steps; executing all 30 predicted actions with 10 denoising steps gives 30 of 64 (47%).
    * - π₀.₅ + PPO
-     - Continuing SFT step 5000 with the chunk-level recipe on 8 H100 GPUs raises success from 50/64 (78.1%) to 59/64 (92.2%) at PPO iteration 120. Both checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000``, 10 executed actions per chunk, and 5 denoising steps.
+     - Continuing SFT step 5000 with the chunk-level recipe on 8 H100 GPUs reaches 55/64 (85.9%) at the planned final PPO iteration 150, compared with 50/64 (78.1%) at initialization. Checkpoints at iterations 0/10/20/28/40/60/80/91/100/120/150 give 50/48/52/48/45/52/55/56/58/59/55 successes out of 64. All checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000``, 10 executed actions per chunk, and 5 denoising steps.
+   * - π₀.₅ + PPO (token-level)
+     - The optional token-level recipe reaches 63/64 (98.4%) at iteration 150 from the same 50/64 (78.1%) baseline. At the same checkpoints and under the same evaluation protocol, it gives 50/46/49/52/56/60/62/61/62/64/63 successes out of 64.
