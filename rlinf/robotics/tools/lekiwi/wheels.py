@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import time
 from typing import TYPE_CHECKING
 
@@ -107,8 +108,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not 1 <= args.raw <= 32767:
         parser.error("--raw must be in 1..32767")
-    if not args.seconds > 0:
-        parser.error("--seconds must be greater than zero")
+    if not math.isfinite(args.seconds) or args.seconds <= 0:
+        parser.error("--seconds must be finite and greater than zero")
     return args
 
 
