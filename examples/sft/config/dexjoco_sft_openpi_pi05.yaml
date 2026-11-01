@@ -35,8 +35,8 @@ data:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 1
-  global_batch_size: 16
+  micro_batch_size: 2
+  global_batch_size: 32
   seed: 0
 
   model:

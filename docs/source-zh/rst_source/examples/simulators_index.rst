@@ -187,7 +187,7 @@
          <a href="embodied/dexjoco.html" style="text-decoration: underline; color: blue;">
            <b>基于 DexJoCo 的强化学习</b>
          </a><br>
-         支持 DexJoCo + CNN / π₀.₅ + PPO 训练
+         支持 DexJoCo + CNN / π₀.₅ + SFT 与 PPO 训练
        </p>
      </div>
 

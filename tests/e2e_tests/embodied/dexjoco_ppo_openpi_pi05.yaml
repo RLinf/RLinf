@@ -78,6 +78,7 @@ env:
     auto_reset: True
     ignore_terminations: False
     use_fixed_reset_state_ids: True
+    is_eval: True
     video_cfg:
       save_video: True
       info_on_video: True

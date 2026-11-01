@@ -37,7 +37,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``robocasa365/robocasa365_eval_openpi.yaml``
    * - DexJoCo
      - ``dexjoco`` 单臂与双臂任务
-     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 

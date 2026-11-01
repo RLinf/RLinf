@@ -80,6 +80,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_fastwam_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
+        elif model_type == SupportedModel.CNN_POLICY:
+            from rlinf.data.datasets.image_action_chunks import (
+                build_cnn_sft_dataloader,
+            )
+
+            return build_cnn_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."

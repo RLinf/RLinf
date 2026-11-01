@@ -64,6 +64,14 @@ class DexJoCoTaskEnv(gym.Wrapper):
         super().__init__(env)
         # DexJoCo sleeps in every step to pace teleoperation at 30 Hz.
         env.unwrapped.hz = float("inf")
+        # Camera readback dominates a step and the policy only sees the observation
+        # that ends a chunk, so frames refresh on the step where ``render_countdown``
+        # (set on the unwrapped env by DexJoCoEnv.chunk_step) reaches zero.
+        self._render = env.unwrapped.render
+        self._frames = None
+        self._render_now = True
+        env.unwrapped.render = self._render_cached
+        env.unwrapped.render_countdown = 0
         self._step_limit = TASK_STEP_LIMITS[task_name]
         self._state_dim = 46 if task_name.startswith("bimanual_") else 23
         # With randomize, DexJoCo renames the moved base camera to random_camera.
@@ -80,23 +88,33 @@ class DexJoCoTaskEnv(gym.Wrapper):
             # DexJoCo samples initial states from the global RNGs.
             random.seed(seed)
             np.random.seed(seed)
+        self._render_now = True
         obs, _ = self.env.reset()
         return self._extract_image_and_state(obs), {"success": False}
 
     def step(
         self, action: np.ndarray
     ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
+        self.env.unwrapped.render_countdown -= 1
+        self._render_now = self.env.unwrapped.render_countdown <= 0
         obs, reward, terminated, _, info = self.env.step(action)
         success = bool(info["succeed"])
         truncated = self.env.unwrapped.env_step >= self._step_limit
         terminated = success or (terminated and not truncated)
         info = {"success": success}
-        transformed_obs = self._extract_image_and_state(obs)
+        transformed_obs = self._extract_image_and_state(obs, self._render_now)
         return transformed_obs, reward, terminated, truncated, info
 
+    def _render_cached(self) -> list[np.ndarray]:
+        if self._render_now or self._frames is None:
+            self._frames = self._render()
+        return self._frames
+
     def _extract_image_and_state(
-        self, obs: dict[str, np.ndarray]
+        self, obs: dict[str, np.ndarray], with_images: bool = True
     ) -> dict[str, np.ndarray]:
+        if not with_images:
+            return {"state": obs["state"][: self._state_dim]}
         images = {}
         for name, key in self._image_keys.items():
             image = obs[key]
@@ -249,10 +267,12 @@ class DexJoCoEnv(gym.Env):
             "task_descriptions": [self.task_description] * self.num_envs,
         }
         if len(self.cfg.camera_names) > 1:
+            # wrist_images feeds the OpenPI transforms, extra_view_images the CNN encoders.
             wrists = [images(camera) for camera in self.cfg.camera_names[1:]]
             obs["wrist_images"] = (
                 torch.stack(wrists, dim=1) if self.dual_arm else wrists[0]
             )
+            obs["extra_view_images"] = torch.stack(wrists, dim=1)
         return obs
 
     def reset(
@@ -265,6 +285,10 @@ class DexJoCoEnv(gym.Env):
         env_idx = np.atleast_1d(env_idx)
 
         if self.is_start:
+            if self.cfg.is_eval:
+                # Every evaluation replays the same initial states.
+                self._generator = np.random.default_rng(seed=self.seed)
+                self.update_reset_state_ids()
             reset_state_ids = (
                 self.reset_state_ids if self.use_fixed_reset_state_ids else None
             )
@@ -299,7 +323,8 @@ class DexJoCoEnv(gym.Env):
                 actions[active], id=active
             )
             for i, idx in enumerate(active):
-                self.current_raw_obs[idx] = raw_obs[i]
+                # Steps without a render carry no images; keep the last rendered frames.
+                self.current_raw_obs[idx] = {**self.current_raw_obs[idx], **raw_obs[i]}
                 self.current_info_list[idx] = info_lists[i]
             self._elapsed_steps[active] += 1
             self._terminated[active] = terminated
@@ -338,6 +363,10 @@ class DexJoCoEnv(gym.Env):
     ) -> tuple[list[dict], torch.Tensor, torch.Tensor, torch.Tensor, list[dict]]:
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        if not self.video_cfg.save_video and not self.cfg.get(
+            "data_collection", {}
+        ).get("enabled", False):
+            self.env.set_env_attr("render_countdown", chunk_size)
         obs_list = []
         infos_list = []
 

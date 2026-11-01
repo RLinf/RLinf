@@ -38,11 +38,11 @@ env:
 
   eval:
     rollout_epoch: 1
-    total_num_envs: 50
+    total_num_envs: 64
     auto_reset: False
     ignore_terminations: False
     max_episode_steps: 1000
-    max_steps_per_rollout_epoch: 1020
+    max_steps_per_rollout_epoch: 1000
     is_eval: True
     seed: 42
     video_cfg:
@@ -58,9 +58,9 @@ rollout:
 
   model:
     model_path: "/path/to/dexjoco_sft_openpi_pi05/checkpoints/global_step_<N>"
-    num_action_chunks: 30
+    num_action_chunks: 10
     action_dim: 22
-    num_steps: 10
+    num_steps: 5
     openpi:
       task: eval
       config_name: "pi05_dexjoco"

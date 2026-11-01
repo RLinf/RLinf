@@ -1,0 +1,25 @@
+model_type: "cnn_policy"
+
+model_path: ""
+
+policy_setup: "panda-ee-dpos"
+image_size: [3, 128, 128]
+state_dim: 29
+action_dim: 4
+num_action_chunks: 1
+hidden_dim: 256
+
+precision: "32"
+add_value_head: False
+add_q_head: True
+backbone: resnet
+
+is_lora: False
+lora_rank: 32
+
+sharding_strategy: no_shard
+vh_mode: "q_network"
+q_network_separate_processing: True
+
+encoder_config:
+  ckpt_name: "resnet10_pretrained.pt"

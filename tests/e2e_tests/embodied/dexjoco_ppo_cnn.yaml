@@ -44,7 +44,7 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  reward_type: action_level
+  reward_type: chunk_level
   logprob_type: action_level
   entropy_type: action_level
 
@@ -116,7 +116,7 @@ actor:
   group_name: ActorGroup
   training_backend: fsdp
   micro_batch_size: 4
-  global_batch_size: 16
+  global_batch_size: 8
   seed: 1234
   enable_offload: False
 
@@ -124,9 +124,10 @@ actor:
     model_type: cnn_policy
     model_path: "/workspace/dataset/RLinf-ResNet10-pretrained"
     image_size: [3, 128, 128]
+    image_num: 2
     state_dim: 23
     action_dim: 22
-    num_action_chunks: 1
+    num_action_chunks: 2
     hidden_dim: 256
     precision: "32"
     add_value_head: True

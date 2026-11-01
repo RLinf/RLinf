@@ -37,7 +37,7 @@ The table below lists benchmarks that have example configs under ``evaluations/`
      - ``robocasa365/robocasa365_eval_openpi.yaml``
    * - DexJoCo
      - ``dexjoco`` single-arm and dual-arm tasks
-     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 

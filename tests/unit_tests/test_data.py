@@ -3610,3 +3610,66 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+def _write_image_action_chunks(root, num_frames, chunk, with_extra_views):
+    root.mkdir(parents=True)
+    rng = np.random.default_rng(0)
+    np.save(
+        root / "main_images.npy",
+        rng.integers(0, 256, (num_frames, 8, 8, 3), dtype=np.uint8),
+    )
+    if with_extra_views:
+        np.save(
+            root / "extra_view_images.npy",
+            rng.integers(0, 256, (num_frames, 1, 8, 8, 3), dtype=np.uint8),
+        )
+    np.save(
+        root / "states.npy", rng.standard_normal((num_frames, 23)).astype(np.float32)
+    )
+    np.save(
+        root / "actions.npy",
+        rng.standard_normal((num_frames, chunk, 22)).astype(np.float32),
+    )
+    (root / "meta.json").write_text(
+        json.dumps({"chunk": chunk, "cameras": ["front", "wrist"]})
+    )
+
+
+def test_image_action_chunk_dataset_items_use_the_env_observation_keys(tmp_path):
+    from rlinf.data.datasets.image_action_chunks import ImageActionChunkDataset
+
+    _write_image_action_chunks(tmp_path / "front_only", 5, 10, with_extra_views=False)
+    _write_image_action_chunks(tmp_path / "two_views", 5, 10, with_extra_views=True)
+
+    item = ImageActionChunkDataset(str(tmp_path / "front_only"))[2]
+    assert set(item) == {"main_images", "states", "action"}
+    assert item["main_images"].dtype == torch.uint8 and item["main_images"].shape == (
+        8,
+        8,
+        3,
+    )
+    assert item["states"].shape == (23,) and item["action"].shape == (10, 22)
+
+    item = ImageActionChunkDataset(str(tmp_path / "two_views"))[4]
+    assert item["extra_view_images"].shape == (1, 8, 8, 3)
+
+
+def test_cnn_sft_dataloader_shards_full_batches_across_ranks(tmp_path):
+    from rlinf.data.datasets.image_action_chunks import build_cnn_sft_dataloader
+
+    _write_image_action_chunks(tmp_path / "data", 13, 10, with_extra_views=True)
+    cfg = OmegaConf.create(
+        {"actor": {"micro_batch_size": 2, "seed": 0}, "data": {"num_workers": 0}}
+    )
+
+    loaders = [
+        build_cnn_sft_dataloader(cfg, 2, rank, [str(tmp_path / "data")])[0]
+        for rank in range(2)
+    ]
+    batches = [list(loader) for loader in loaders]
+
+    # 13 frames / 2 ranks -> 6 per rank with drop_last -> 3 full batches each.
+    assert [len(b) for b in batches] == [3, 3]
+    assert batches[0][0]["action"].shape == (2, 10, 22)
+    assert batches[0][0]["extra_view_images"].shape == (2, 1, 8, 8, 3)

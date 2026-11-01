@@ -7,10 +7,11 @@ RL with DexJoCo Benchmark
 
    Watering a plant with an Allegro hand (image: `DexJoCo <https://github.com/brave-eai/dexjoco>`__).
 
-`DexJoCo <https://github.com/brave-eai/dexjoco>`__ is a MuJoCo benchmark of
-single-arm and dual-arm dexterous manipulation with Franka arms and Allegro
-hands. You'll use RLinf to train CNN policies with PPO, or fine-tune π₀.₅ on
-the official demonstrations and continue with PPO.
+Fine-tune CNN and π₀.₅ policies on the official
+`DexJoCo <https://github.com/brave-eai/dexjoco>`__ demonstrations, then continue
+both with PPO. The MuJoCo benchmark covers single-arm and dual-arm dexterous
+manipulation with Franka arms and Allegro hands. This page walks through data
+preparation, training, and evaluation.
 
 Overview
 --------
@@ -143,9 +144,9 @@ Install the environment for the model you want to run:
 Download the Datasets
 ---------------------
 
-The π₀.₅ recipes fine-tune on the
+Both recipes start from the
 `official LeRobot demonstrations <https://huggingface.co/datasets/DexJoCo/DexJoCo-Datasets-LeRobot>`__.
-Download one task and compute its normalization statistics:
+Download one task and compute the π₀.₅ normalization statistics:
 
 .. code:: bash
 
@@ -165,6 +166,23 @@ What this does:
 For dual-arm tasks, pass ``--config-name pi05_dexjoco_dual_arm``; for
 ``click_mouse``, whose base camera is ``ego_right``, pass
 ``--config-name pi05_dexjoco_click_mouse``.
+
+The CNN recipes read the same demonstrations as image, state, and action-chunk
+arrays. Export one task at the training resolution:
+
+.. code:: bash
+
+   PYTHONPATH=$(pwd) python toolkits/lerobot/export_image_action_chunks.py \
+     --repo-id /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant \
+     --output /path/to/dexjoco/dexjoco_cnn_datasets/water_plant \
+     --cameras front wrist --image-size 128 --chunk 10 --state-dim 23
+
+What this does:
+
+1. Decodes the front and wrist videos once and resizes every frame to 128×128.
+2. Writes ``main_images``, ``extra_view_images``, ``states``, ``actions`` (the next 10 actions of each frame), and ``episode_index`` as memory-mapped ``.npy`` files next to a ``meta.json`` with the per-dimension action statistics.
+
+For dual-arm tasks, pass ``--cameras ego wrist_left wrist_right --state-dim 46``.
 
 Download the Model
 ------------------
@@ -232,6 +250,10 @@ Pick one recipe and launch training:
      - Config
      - Entrypoint
      - Command suffix
+   * - CNN + SFT
+     - ``examples/sft/config/dexjoco_sft_cnn.yaml``
+     - ``run_vla_sft.sh``
+     - ``dexjoco_sft_cnn``
    * - CNN + PPO
      - ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``
      - ``run_embodiment.sh``
@@ -261,10 +283,9 @@ What this does:
    and ``camera_names`` in both ``env.train`` and ``env.eval`` (``[front, wrist]``
    for single-arm tasks, ``[ego_right, wrist]`` for ``click_mouse``, and
    ``[ego, wrist_left, wrist_right]`` for dual-arm tasks), and set
-   ``max_episode_steps`` to the task's time limit. For the CNN recipe, also set
-   ``env.eval.max_steps_per_rollout_epoch`` to that limit; for the π₀.₅ recipes,
-   set ``max_steps_per_rollout_epoch`` in both ``env.train`` and ``env.eval`` to
-   that limit rounded up to a multiple of 30. Dual-arm tasks use 46-dim state
+   ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both ``env.train``
+   and ``env.eval`` to the task's time limit (every limit is a multiple of the
+   10-step chunk). Dual-arm tasks use 46-dim state
    and 44-dim actions: for the CNN, set ``actor.model.state_dim: 46`` and
    ``actor.model.action_dim: 44``; for π₀.₅, apply the dual-arm settings in the
    SFT section.
@@ -283,6 +304,90 @@ These ``init_params`` fields control randomization and task options:
      - ``True`` randomizes object dynamics.
    * - ``init_params.password``
      - Digits ``bimanual_unlock_ipad`` expects, default ``[1, 2, 3]``; the π₀.₅ prompt always names 123.
+
+The simulator renders the cameras only on the last step of each executed
+action chunk, which is the observation the policy acts on; with
+``video_cfg.save_video: True`` every step is rendered.
+
+CNN + SFT
+~~~~~~~~~
+
+Set these fields in ``examples/sft/config/dexjoco_sft_cnn.yaml``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 55 45
+
+   * - Field
+     - Value
+   * - ``data.train_data_paths``
+     - The exported chunk directory.
+   * - ``actor.model.model_path``
+     - The ``RLinf-ResNet10-pretrained`` directory.
+   * - ``actor.model.action_norm_stats``
+     - The exported ``meta.json``, whose per-dimension action mean and std normalize the policy's actions.
+
+.. code:: bash
+
+   bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
+
+The policy encodes the 128×128 front and wrist images with the frozen
+ResNet-10 backbone, concatenates the 23-dim proprioception, and predicts the
+next 10 actions. The loss is the Gaussian negative log-likelihood of the
+demonstrated chunk, so the per-dimension action noise that PPO later samples
+from is fitted to the demonstrations. The 20,000-step recipe takes about ten
+minutes on one 48 GB GPU and saves
+``checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
+
+For a dual-arm task, set ``actor.model.image_num: 3``,
+``actor.model.state_dim: 46``, and ``actor.model.action_dim: 44``.
+
+CNN + PPO
+~~~~~~~~~
+
+``dexjoco_ppo_cnn`` runs PPO with the same observation and action layout over
+128 environments and full 1000-step episodes, and evaluates 64 episodes every
+five iterations. Each iteration runs one PPO update epoch with action-level
+log-probabilities; the first 50 optimizer steps train the value head alone.
+Set ``runner.ckpt_path`` to an SFT ``full_weights.pt`` to
+start from the behavior-cloned policy; with ``null`` the policy starts from the
+ResNet-10 encoder alone. ``actor.model.action_norm_stats`` must name the same
+``meta.json`` as the SFT run.
+
+The reported run starts from SFT step 8000 on 8 H100 GPUs. To reproduce its
+placement and evaluation schedule, set these fields in the same config:
+
+.. code:: yaml
+
+   cluster:
+     component_placement:
+       actor,env,rollout: all
+   runner:
+     ckpt_path: /path/to/dexjoco_sft_cnn/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+     val_check_interval: 1
+     save_interval: 1
+   env:
+     train:
+       seed: 42
+     eval:
+       seed: 10000
+       video_cfg:
+         save_video: False
+   rollout:
+     enable_torch_compile: False
+     enable_cuda_graph: False
+   actor:
+     seed: 42
+
+Launch training after setting the paths and run configuration:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
+
+For standalone evaluation, use the unified :doc:`Evaluation CLI
+<../../evaluations/reference/cli>` with ``dexjoco_cnn_eval`` and set
+``runner.ckpt_path`` to the SFT or PPO ``full_weights.pt``.
 
 π₀.₅ + SFT
 ~~~~~~~~~~
@@ -330,6 +435,31 @@ In ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``, set
 ``global_step_<N>`` directory, and set
 ``actor.model.openpi_data.norm_stats_path`` to the statistics used for SFT.
 
+The reported run starts from SFT step 5000 on 8 H100 GPUs and targets 150
+iterations. Set the fields below, keeping the learning-rate schedule at
+1000 steps when setting
+``runner.max_epochs`` to 150; this preserves the schedule used by the run:
+
+.. code:: yaml
+
+   runner:
+     max_epochs: 150
+     val_check_interval: 1
+     save_interval: 1
+   env:
+     train:
+       seed: 42
+     eval:
+       seed: 10000
+       video_cfg:
+         save_video: False
+   actor:
+     model:
+       openpi:
+         torch_compile: False
+     optim:
+       total_training_steps: 1000
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_openpi_pi05
@@ -339,6 +469,12 @@ What this does:
 1. Starts the embodied training entrypoint with the selected Hydra config.
 2. Creates Ray workers for the actor, rollout, and DexJoCo env components.
 3. Runs PPO rollouts, computes sparse success rewards, and updates the OpenPI policy.
+
+Each decision executes the first 10 of the 30 predicted actions and samples
+them with 5 denoising steps, which also raises the SFT policy's own success
+rate (below). One iteration collects 128 environments × 2 rollout epochs and
+runs one PPO epoch over them; the first 50 optimizer steps train the value
+head alone (``actor.optim.critic_warmup_steps``).
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with ``dexjoco_openpi_pi05_eval``. Set
@@ -362,8 +498,20 @@ Launch TensorBoard from the RLinf repo root:
 
    tensorboard --logdir ./logs --port 6006
 
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
+Watch ``env/success_once`` for training rollouts and ``eval/success_once`` for
+evaluation episodes. For every logged metric, see :doc:`Training metrics
+<../../reference/metrics>`.
+
+To save the same metrics to Weights & Biases, sign in with ``wandb login`` and
+select both logging backends:
+
+.. code:: yaml
+
+   runner:
+     logger:
+       project_name: rlinf
+       experiment_name: dexjoco_ppo_cnn
+       logger_backends: ["tensorboard", "wandb"]
 
 Enable video in the env config when needed:
 
@@ -381,7 +529,11 @@ Enable video in the env config when needed:
 
    * - Recipe
      - Reported Behavior
+   * - CNN + SFT
+     - On ``water_plant``, the 20,000-step recipe on one 48 GB GPU peaks at step 8000 with 50 of 64 evaluation episodes (78%); steps 10,000–20,000 stay between 66% and 75%.
+   * - CNN + PPO
+     - Continuing SFT step 8000 with action-level PPO on 8 H100 GPUs gives 42/40/49/48/55 successes out of 64 at iterations 0/10/20/40/80 (65.6%/62.5%/76.6%/75.0%/85.9%). The run uses policy LR 1e-5 and global batch 1600. All checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000`` and 10-action chunks. Training is continuing toward the planned 200 iterations.
    * - π₀.₅ + SFT
-     - On ``water_plant``, the step-5000 checkpoint succeeds in 28 of 50 evaluation episodes (56%) in the setup used for the original run (16 H100 GPUs).
+     - On ``water_plant``, the step-5000 checkpoint (16 H100 GPUs, global batch 32) succeeds in 50 of 64 evaluation episodes (78%) when the policy executes 10 actions per chunk with 5 denoising steps; executing all 30 predicted actions with 10 denoising steps gives 30 of 64 (47%).
    * - π₀.₅ + PPO
-     - From that checkpoint, with 128 environments on one 8-GPU H100 node and evaluation after every iteration (``runner.val_check_interval: 1``), success over 64 evaluation episodes is 64.1% after 3 PPO iterations and 57.8% after 5.
+     - Continuing SFT step 5000 with the chunk-level recipe on 8 H100 GPUs raises success from 50/64 (78.1%) to 59/64 (92.2%) at PPO iteration 120. Both checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000``, 10 executed actions per chunk, and 5 denoising steps.

@@ -3239,6 +3239,15 @@ install_env_only() {
         dexjoco)
             install_common_embodied_deps
             install_dexjoco_env
+            # The CNN recipe exports the LeRobot v3 demonstrations with LeRobot 0.4.4.
+            local override_file
+            override_file=$(mktemp)
+            echo "rerun-sdk==0.22.1" > "$override_file"
+            uv pip install "lerobot==0.4.4" --override "$override_file"
+            rm -f "$override_file"
+            pushd ~ >/dev/null
+            uv pip install --no-deps "datasets==4.1.1"
+            popd >/dev/null
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2

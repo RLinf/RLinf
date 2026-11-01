@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
@@ -41,6 +42,8 @@ class CNNConfig:
     add_value_head: bool = False
     add_q_head: bool = False
     q_head_type: str = "default"
+    # Per-dimension action mean and std from the dataset.
+    action_norm_stats: Optional[str] = None
 
     state_latent_dim: int = 64
     independent_std: bool = True
@@ -129,7 +132,8 @@ class CNNPolicy(nn.Module, BasePolicy):
             init_mlp_weights(self.mix_proj, nonlinearity="tanh")
 
             self.actor_mean = layer_init(
-                nn.Linear(256, self.cfg.action_dim), std=0.01 * np.sqrt(2)
+                nn.Linear(256, self.cfg.num_action_chunks * self.cfg.action_dim),
+                std=0.01 * np.sqrt(2),
             )
 
         assert self.cfg.add_value_head + self.cfg.add_q_head <= 1
@@ -146,19 +150,23 @@ class CNNPolicy(nn.Module, BasePolicy):
                     hidden_size=hidden_size,
                     hidden_dims=hidden_dims,
                     num_q_heads=self.cfg.num_q_heads,
-                    action_feature_dim=self.cfg.action_dim,
+                    action_feature_dim=self.cfg.num_action_chunks * self.cfg.action_dim,
                 )
             elif self.cfg.q_head_type == "crossq":
                 self.q_head = MultiCrossQHead(
                     hidden_size=hidden_size,
                     hidden_dims=hidden_dims,
                     num_q_heads=self.cfg.num_q_heads,
-                    action_feature_dim=self.cfg.action_dim,
+                    action_feature_dim=self.cfg.num_action_chunks * self.cfg.action_dim,
                 )
         if self.cfg.independent_std:
-            self.actor_logstd = nn.Parameter(torch.ones(1, self.cfg.action_dim) * -0.5)
+            self.actor_logstd = nn.Parameter(
+                torch.ones(1, self.cfg.num_action_chunks * self.cfg.action_dim) * -0.5
+            )
         else:
-            self.actor_logstd = layer_init(nn.Linear(256, self.cfg.action_dim))
+            self.actor_logstd = layer_init(
+                nn.Linear(256, self.cfg.num_action_chunks * self.cfg.action_dim)
+            )
 
         if self.cfg.action_scale is not None:
             l, h = self.cfg.action_scale
@@ -170,7 +178,39 @@ class CNNPolicy(nn.Module, BasePolicy):
             )
         else:
             self.action_scale = None
+        action_norm_mean, action_norm_std = self._load_action_norm_stats()
+        persist_action_stats = self.cfg.action_norm_stats is not None
+        self.register_buffer(
+            "action_norm_mean", action_norm_mean, persistent=persist_action_stats
+        )
+        self.register_buffer(
+            "action_norm_std", action_norm_std, persistent=persist_action_stats
+        )
         self.torch_compile_enabled = False
+
+    def train(self, mode: bool = True) -> "CNNPolicy":
+        # PPO rollout and recomputation must use the same deterministic encoder.
+        super().train(mode)
+        self.encoders.eval()
+        return self
+
+    def _load_action_norm_stats(self) -> tuple[torch.Tensor, torch.Tensor]:
+        width = self.cfg.num_action_chunks * self.cfg.action_dim
+        if self.cfg.action_norm_stats is None:
+            return torch.zeros(1, width), torch.ones(1, width)
+        with open(self.cfg.action_norm_stats) as f:
+            stats = json.load(f)
+        mean = torch.tensor(stats["action_mean"], dtype=torch.float32)
+        std = torch.tensor(stats["action_std"], dtype=torch.float32).clamp_min(1e-6)
+        if mean.numel() != self.cfg.action_dim:
+            raise ValueError(
+                f"action_norm_stats must have {self.cfg.action_dim} entries per "
+                f"dimension, got {mean.numel()} in {self.cfg.action_norm_stats}."
+            )
+        return (
+            mean.repeat(self.cfg.num_action_chunks).view(1, width),
+            std.repeat(self.cfg.num_action_chunks).view(1, width),
+        )
 
     def _get_feature_from_processed_tensors(
         self,
@@ -264,7 +304,9 @@ class CNNPolicy(nn.Module, BasePolicy):
             next_obs = self.preprocess_env_obs(next_obs)
             kwargs.update({"next_obs": next_obs})
 
-        if forward_type == ForwardType.SAC:
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
+        elif forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
         elif forward_type == ForwardType.SAC_Q:
             return self.sac_q_forward(**kwargs)
@@ -276,6 +318,37 @@ class CNNPolicy(nn.Module, BasePolicy):
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def sft_forward(self, data, **kwargs):
+        # SFT is the only path that uses the encoder dropout; train() keeps it off.
+        self.encoders.train(self.training)
+        obs = self.preprocess_env_obs(
+            {
+                "main_images": data["main_images"],
+                "states": data["states"],
+                "extra_view_images": data.get("extra_view_images"),
+            }
+        )
+        target_actions = data["action"].to(obs["states"].device)
+        target_actions = target_actions.reshape(target_actions.shape[0], -1)
+        full_feature, mix_feature, action_mean, action_logstd = (
+            self._actor_forward_from_processed_tensors(
+                obs["main_images"],
+                obs["states"],
+                obs.get("extra_view_images"),
+            )
+        )
+        if action_mean.shape != target_actions.shape:
+            raise ValueError(
+                "CNN SFT targets must match the predicted action shape, "
+                f"got predicted {action_mean.shape} and target {target_actions.shape}."
+            )
+        target_actions = (target_actions - self.action_norm_mean) / self.action_norm_std
+        # Gaussian NLL also fits actor_logstd, which PPO then samples from.
+        probs = Normal(action_mean, torch.exp(action_logstd))
+        nll = -probs.log_prob(target_actions).mean()
+        mse = (action_mean.detach() - target_actions).pow(2).mean()
+        return {"loss": nll, "mse": mse}
 
     def default_forward(
         self,
@@ -384,10 +457,14 @@ class CNNPolicy(nn.Module, BasePolicy):
             chunk_logprobs = chunk_logprobs - torch.log(
                 self.action_scale * (1 - action_normalized.pow(2)) + 1e-6
             )
+            env_action = action
         else:
+            # The stored action stays normalized so default_forward scores it
+            # under the same Gaussian; only the env sees physical units.
             action = raw_action
+            env_action = raw_action * self.action_norm_std + self.action_norm_mean
 
-        chunk_actions = action.reshape(
+        chunk_actions = env_action.reshape(
             -1, self.cfg.num_action_chunks, self.cfg.action_dim
         )
         if hasattr(self, "value_head") and calculate_values:

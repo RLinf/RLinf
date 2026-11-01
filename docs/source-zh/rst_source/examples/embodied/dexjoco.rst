@@ -7,7 +7,7 @@
 
    使用 Allegro 灵巧手浇花（图片来源：`DexJoCo <https://github.com/brave-eai/dexjoco>`__）。
 
-`DexJoCo <https://github.com/brave-eai/dexjoco>`__ 是基于 MuJoCo 的灵巧操作基准，包含 Franka 机械臂与 Allegro 灵巧手的单臂和双臂任务。你将使用 RLinf 通过 PPO 训练 CNN policy，或者先在官方示范数据上微调 π₀.₅，再用 PPO 继续训练。
+使用 RLinf 在 `DexJoCo <https://github.com/brave-eai/dexjoco>`__ 官方示范数据上微调 CNN 和 π₀.₅ policy，再用 PPO 继续训练。这个 MuJoCo 基准包含 Franka 机械臂与 Allegro 灵巧手的单臂和双臂任务。本页介绍数据准备、训练和评测的完整流程。
 
 概览
 ----------------------------------------
@@ -139,7 +139,7 @@
 下载数据集
 ----------------------------------------
 
-π₀.₅ 配方在 `官方 LeRobot 示范数据 <https://huggingface.co/datasets/DexJoCo/DexJoCo-Datasets-LeRobot>`__ 上微调。下载一个任务的数据并计算归一化统计量：
+两类配方都从 `官方 LeRobot 示范数据 <https://huggingface.co/datasets/DexJoCo/DexJoCo-Datasets-LeRobot>`__ 出发。下载一个任务的数据并计算 π₀.₅ 的归一化统计量：
 
 .. code:: bash
 
@@ -157,6 +157,22 @@
 2. 在数据集目录中写入 ``norm_stats.json``，供 SFT、PPO 和评测使用。
 
 双臂任务传入 ``--config-name pi05_dexjoco_dual_arm``；``click_mouse`` 的主视角相机是 ``ego_right``，传入 ``--config-name pi05_dexjoco_click_mouse``。
+
+CNN 配方把同一份示范数据读成图像、状态和动作块数组。按训练分辨率导出一个任务：
+
+.. code:: bash
+
+   PYTHONPATH=$(pwd) python toolkits/lerobot/export_image_action_chunks.py \
+     --repo-id /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant \
+     --output /path/to/dexjoco/dexjoco_cnn_datasets/water_plant \
+     --cameras front wrist --image-size 128 --chunk 10 --state-dim 23
+
+这条命令会：
+
+1. 解码一次前视和腕部视频，并把每一帧缩放到 128×128。
+2. 把 ``main_images``、``extra_view_images``、``states``、``actions``\ （每帧之后的 10 个动作）和 ``episode_index`` 写成内存映射的 ``.npy`` 文件，并附带记录逐维动作统计量的 ``meta.json``。
+
+双臂任务传入 ``--cameras ego wrist_left wrist_right --state-dim 46``。
 
 下载模型
 ----------------------------------------
@@ -219,6 +235,10 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
      - 配置
      - 入口
      - 命令后缀
+   * - CNN + SFT
+     - ``examples/sft/config/dexjoco_sft_cnn.yaml``
+     - ``run_vla_sft.sh``
+     - ``dexjoco_sft_cnn``
    * - CNN + PPO
      - ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``
      - ``run_embodiment.sh``
@@ -240,11 +260,11 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
 1. 使用选定的 Hydra 配置启动 embodied 训练入口。
 2. 为 actor、rollout 和 DexJoCo env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算稀疏成功奖励，并更新 CNN 策略。
+3. 运行 PPO rollout，计算稀疏成功奖励，并更新 CNN policy。
 
 .. note::
 
-   这些配方默认训练 ``water_plant``。换成其他任务时，在 ``env.train`` 和 ``env.eval`` 中覆盖 ``task_name`` 和 ``camera_names``\ （单臂任务为 ``[front, wrist]``，``click_mouse`` 为 ``[ego_right, wrist]``，双臂任务为 ``[ego, wrist_left, wrist_right]``），并把 ``max_episode_steps`` 设为该任务的时间上限。CNN 配方还需要把 ``env.eval.max_steps_per_rollout_epoch`` 设为该上限；π₀.₅ 配方则把 ``env.train`` 和 ``env.eval`` 中的 ``max_steps_per_rollout_epoch`` 都设为该上限向上取整到 30 的倍数。双臂任务使用 46 维状态和 44 维动作：CNN 需设置 ``actor.model.state_dim: 46`` 和 ``actor.model.action_dim: 44``；π₀.₅ 使用 SFT 一节中的双臂设置。
+   这些配方默认训练 ``water_plant``。换成其他任务时，在 ``env.train`` 和 ``env.eval`` 中覆盖 ``task_name`` 和 ``camera_names``\ （单臂任务为 ``[front, wrist]``，``click_mouse`` 为 ``[ego_right, wrist]``，双臂任务为 ``[ego, wrist_left, wrist_right]``），并把 ``env.train`` 和 ``env.eval`` 中的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch`` 都设为该任务的时间上限（所有上限都是 10 步动作块的倍数）。双臂任务使用 46 维状态和 44 维动作：CNN 需设置 ``actor.model.state_dim: 46`` 和 ``actor.model.action_dim: 44``；π₀.₅ 使用 SFT 一节中的双臂设置。
 
 以下 ``init_params`` 字段控制随机化和任务选项：
 
@@ -260,6 +280,71 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
      - 为 ``True`` 时随机化物体动力学。
    * - ``init_params.password``
      - ``bimanual_unlock_ipad`` 的解锁数字序列，默认 ``[1, 2, 3]``；π₀.₅ 的提示词始终写 123。
+
+仿真器只在每个已执行动作块的最后一步渲染相机，供 policy 读取这帧观测并决策；设置 ``video_cfg.save_video: True`` 时每一步都会渲染。
+
+CNN + SFT
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在 ``examples/sft/config/dexjoco_sft_cnn.yaml`` 中设置以下字段：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 55 45
+
+   * - 字段
+     - 值
+   * - ``data.train_data_paths``
+     - 导出的动作块数据目录。
+   * - ``actor.model.model_path``
+     - ``RLinf-ResNet10-pretrained`` 目录。
+   * - ``actor.model.action_norm_stats``
+     - 导出的 ``meta.json``，其中逐维的动作均值和标准差用于归一化 policy 动作。
+
+.. code:: bash
+
+   bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
+
+policy 用冻结的 ResNet-10 主干编码 128×128 的前视和腕部图像，拼接 23 维本体感知，预测之后的 10 个动作。损失是示范动作块的高斯负对数似然，因此 PPO 之后采样所用的逐维动作噪声来自对示范的拟合。20,000 步的配方在一张 48 GB GPU 上约需十分钟，保存 ``checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
+
+双臂任务需设置 ``actor.model.image_num: 3``、``actor.model.state_dim: 46`` 和 ``actor.model.action_dim: 44``。
+
+CNN + PPO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``dexjoco_ppo_cnn`` 用同样的观测和动作布局运行 PPO：128 个环境、完整的 1000 步回合，每 5 轮在 64 个回合上评测。每轮执行 1 个 PPO update epoch，使用 action-level log-probability；前 50 个 optimizer step 只训练 value head。把 ``runner.ckpt_path`` 设为 SFT 的 ``full_weights.pt`` 即可从行为克隆 policy 出发；保持 ``null`` 则只从 ResNet-10 编码器开始训练。``actor.model.action_norm_stats`` 必须与 SFT 使用同一个 ``meta.json``。
+
+报告中的训练从 SFT 第 8000 步开始，使用 8 张 H100 GPU。要复现相同的 worker 分布和评测频率，在同一个配置文件中设置：
+
+.. code:: yaml
+
+   cluster:
+     component_placement:
+       actor,env,rollout: all
+   runner:
+     ckpt_path: /path/to/dexjoco_sft_cnn/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+     val_check_interval: 1
+     save_interval: 1
+   env:
+     train:
+       seed: 42
+     eval:
+       seed: 10000
+       video_cfg:
+         save_video: False
+   rollout:
+     enable_torch_compile: False
+     enable_cuda_graph: False
+   actor:
+     seed: 42
+
+设置路径和运行配置后，启动训练：
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
+
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_cnn_eval``，并把 ``runner.ckpt_path`` 设为 SFT 或 PPO 的 ``full_weights.pt``。
 
 π₀.₅ + SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -292,6 +377,28 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
 在 ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml`` 中，把 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设为 SFT 的 ``global_step_<N>`` 目录，并把 ``actor.model.openpi_data.norm_stats_path`` 设为 SFT 使用的统计量文件。
 
+报告中的训练从 SFT 第 5000 步开始，使用 8 张 H100 GPU，目标为 150 轮。复现时设置以下字段；把 ``runner.max_epochs`` 改为 150 时，仍将学习率调度总步数保持为 1000，与报告中的训练一致：
+
+.. code:: yaml
+
+   runner:
+     max_epochs: 150
+     val_check_interval: 1
+     save_interval: 1
+   env:
+     train:
+       seed: 42
+     eval:
+       seed: 10000
+       video_cfg:
+         save_video: False
+   actor:
+     model:
+       openpi:
+         torch_compile: False
+     optim:
+       total_training_steps: 1000
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_openpi_pi05
@@ -300,7 +407,9 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
 1. 使用选定的 Hydra 配置启动 embodied 训练入口。
 2. 为 actor、rollout 和 DexJoCo env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算稀疏成功奖励，并更新 OpenPI 策略。
+3. 运行 PPO rollout，计算稀疏成功奖励，并更新 OpenPI policy。
+
+每次决策执行预测的 30 个动作中的前 10 个，并用 5 步去噪采样，这也会提高 SFT policy 本身的成功率（见下文）。每轮采集 128 个环境 × 2 个 rollout epoch 的数据并对其做一个 PPO epoch；前 50 个优化器步只训练价值头（``actor.optim.critic_warmup_steps``）。
 
 独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_openpi_pi05_eval``。把 ``rollout.model.model_path`` 设为 SFT 或 PPO 检查点，把 ``rollout.model.openpi_data.norm_stats_path`` 设为训练时使用的统计量文件；评测双臂检查点时，在 ``rollout.model`` 下使用同样的双臂设置。
 
@@ -317,7 +426,17 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
    tensorboard --logdir ./logs --port 6006
 
-关键指标是 ``env/success_once``。完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
+观察 ``env/success_once`` 中的训练 rollout 成功率，以及 ``eval/success_once`` 中的评测成功率。完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
+
+若要把同一组指标保存到 Weights & Biases，先运行 ``wandb login`` 登录，再启用两个日志后端：
+
+.. code:: yaml
+
+   runner:
+     logger:
+       project_name: rlinf
+       experiment_name: dexjoco_ppo_cnn
+       logger_backends: ["tensorboard", "wandb"]
 
 如需视频，请在环境配置中启用 video：
 
@@ -335,7 +454,11 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 
    * - 配方
      - 结果描述
+   * - CNN + SFT
+     - 在 ``water_plant`` 上，20,000 步配方在一张 48 GB GPU 上于第 8000 步达到峰值，64 个评测回合成功 50 个（78%）；第 10,000–20,000 步保持在 66% 到 75% 之间。
+   * - CNN + PPO
+     - 从 SFT 第 8000 步继续使用 action-level PPO 在 8 张 H100 GPU 上训练，第 0/10/20/40/80 轮的 64 个回合分别成功 42/40/49/48/55 个（65.6%/62.5%/76.6%/75.0%/85.9%）。训练使用 1e-5 的 policy 学习率和 1600 的全局批量。所有检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作。训练正继续运行到预定的 200 轮。
    * - π₀.₅ + SFT
-     - 在原始运行使用的设置中（16 张 H100 GPU），``water_plant`` 第 5000 步的检查点在 50 个评测回合中成功 28 个（56%）。
+     - 在 ``water_plant`` 上，第 5000 步的检查点（16 张 H100 GPU，全局批量 32）在每块执行 10 个动作、5 步去噪时于 64 个评测回合中成功 50 个（78%）；执行全部 30 个预测动作并用 10 步去噪时为 30 个（47%）。
    * - π₀.₅ + PPO
-     - 从该检查点出发，在一个 8 卡 H100 节点上用 128 个环境训练并在每轮后评测（``runner.val_check_interval: 1``），64 个评测回合的成功率在第 3 轮后为 64.1%，第 5 轮后为 57.8%。
+     - 从 SFT 第 5000 步继续使用 chunk-level 配方在 8 张 H100 GPU 上训练，到 PPO 第 120 轮时，成功率从 50/64（78.1%）升至 59/64（92.2%）。两个检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作，去噪 5 步。

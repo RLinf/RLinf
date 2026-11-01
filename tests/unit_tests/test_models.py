@@ -1540,3 +1540,193 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def _cnn_policy(tmp_path, num_action_chunks, action_norm_stats=None):
+    # The encoder loads its pretrained weights from model_path; a freshly
+    # initialized ResNet10 state dict stands in for the published file.
+    import json
+
+    from rlinf.models.embodiment.cnn_policy.cnn_policy import CNNConfig, CNNPolicy
+    from rlinf.models.embodiment.modules.resnet_utils import ResNet10
+
+    torch.save(
+        ResNet10(pre_pooling=True).state_dict(), tmp_path / "resnet10_pretrained.pt"
+    )
+    config = {
+        "model_path": str(tmp_path),
+        "encoder_config": {"ckpt_name": "resnet10_pretrained.pt"},
+        "image_size": [3, 32, 32],
+        "image_num": 2,
+        "state_dim": 23,
+        "action_dim": 22,
+        "num_action_chunks": num_action_chunks,
+        "add_value_head": True,
+    }
+    if action_norm_stats is not None:
+        (tmp_path / "meta.json").write_text(json.dumps(action_norm_stats))
+        config["action_norm_stats"] = str(tmp_path / "meta.json")
+    cfg = CNNConfig()
+    cfg.update_from_dict(config)
+    return CNNPolicy(cfg)
+
+
+def _cnn_batch(batch_size, num_action_chunks):
+    generator = torch.Generator().manual_seed(0)
+    return {
+        "main_images": torch.randint(
+            0, 256, (batch_size, 32, 32, 3), dtype=torch.uint8, generator=generator
+        ),
+        "extra_view_images": torch.randint(
+            0, 256, (batch_size, 1, 32, 32, 3), dtype=torch.uint8, generator=generator
+        ),
+        "states": torch.randn(batch_size, 23, generator=generator),
+        "action": torch.randn(batch_size, num_action_chunks, 22, generator=generator),
+    }
+
+
+def test_cnn_policy_predicts_and_scores_action_chunks(tmp_path):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    torch.manual_seed(0)
+    # eval() disables the encoder dropout so the recomputed logprobs match.
+    model = _cnn_policy(tmp_path, num_action_chunks=10).eval()
+    batch = _cnn_batch(3, 10)
+
+    chunk_actions, result = model.predict_action_batch(batch, mode="train")
+    assert chunk_actions.shape == (3, 10, 22)
+    assert result["prev_logprobs"].shape == (3, 220)
+    assert result["prev_values"].shape == (3, 1)
+
+    output = model(
+        forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
+    )
+    assert output["logprobs"].shape == (3, 220)
+    torch.testing.assert_close(
+        output["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
+    )
+
+
+def test_cnn_policy_rl_logprobs_ignore_encoder_dropout_in_train_mode(tmp_path):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    torch.manual_seed(0)
+    # PPO keeps the policy in train mode to train the heads, then recomputes the
+    # rollout log-probabilities. The encoder dropout must stay off so the ratio
+    # reflects the update, not a new mask; eval() had hidden this before.
+    model = _cnn_policy(tmp_path, num_action_chunks=10).train()
+    assert not any(enc.training for enc in model.encoders)
+    batch = _cnn_batch(3, 10)
+
+    _, result = model.predict_action_batch(batch, mode="train")
+    recomputed = model(
+        forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
+    )
+    torch.testing.assert_close(
+        recomputed["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
+    )
+
+    # SFT restores the dropout while the policy is training, and turns it off again
+    # when the policy is put in eval mode for validation.
+    model(forward_type=ForwardType.SFT, data=batch)
+    assert all(enc.training for enc in model.encoders)
+    model.eval()
+    assert not any(enc.training for enc in model.encoders)
+
+
+def test_cnn_policy_sft_is_the_gaussian_nll_of_the_demonstrated_chunk(tmp_path):
+    from torch.distributions.normal import Normal
+
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    torch.manual_seed(0)
+    model = _cnn_policy(tmp_path, num_action_chunks=10).eval()
+    batch = _cnn_batch(4, 10)
+
+    output = model(forward_type=ForwardType.SFT, data=batch)
+    output["loss"].backward()
+
+    obs = model.preprocess_env_obs(batch)
+    _, _, mean, logstd = model._actor_forward_from_processed_tensors(
+        obs["main_images"], obs["states"], obs["extra_view_images"]
+    )
+    target = batch["action"].reshape(4, -1)
+    expected = -Normal(mean, logstd.exp()).log_prob(target).mean()
+    torch.testing.assert_close(output["loss"], expected.detach())
+    torch.testing.assert_close(output["mse"], (mean.detach() - target).pow(2).mean())
+    assert model.actor_logstd.grad is not None
+    assert model.actor_mean.weight.grad is not None
+
+    batch["action"] = batch["action"][:, :5]
+    with pytest.raises(ValueError, match="predicted action shape"):
+        model(forward_type=ForwardType.SFT, data=batch)
+
+
+def test_cnn_policy_normalizes_actions_with_dataset_statistics(tmp_path):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    torch.manual_seed(0)
+    mean = [0.5] * 3 + [0.0] * 3 + [0.8] * 16
+    std = [0.01] * 3 + [0.5] * 3 + [0.2] * 16
+    model = _cnn_policy(tmp_path, 10, {"action_mean": mean, "action_std": std}).eval()
+    batch = _cnn_batch(3, 10)
+
+    chunk_actions, result = model.predict_action_batch(batch, mode="train")
+    stored = result["forward_inputs"]["action"]
+    expected = stored * model.action_norm_std + model.action_norm_mean
+    torch.testing.assert_close(chunk_actions.reshape(3, -1), expected)
+    output = model(
+        forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
+    )
+    torch.testing.assert_close(
+        output["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
+    )
+
+    # SFT targets are scored in the same normalized units.
+    batch["action"] = torch.zeros(3, 10, 22) + torch.tensor(mean)
+    output = model(forward_type=ForwardType.SFT, data=batch)
+    _, _, pred_mean, _ = model._actor_forward_from_processed_tensors(
+        *[model.preprocess_env_obs(batch)[k] for k in ("main_images", "states")],
+        model.preprocess_env_obs(batch)["extra_view_images"],
+    )
+    torch.testing.assert_close(output["mse"], pred_mean.pow(2).mean())
+
+
+def test_cnn_policy_loads_legacy_checkpoint_without_action_statistics(tmp_path):
+    model = _cnn_policy(tmp_path, num_action_chunks=1).eval()
+    legacy_state = {
+        name: value
+        for name, value in model.state_dict().items()
+        if name not in {"action_norm_mean", "action_norm_std"}
+    }
+    checkpoint = tmp_path / "full_weights.pt"
+    torch.save(legacy_state, checkpoint)
+
+    restored = _cnn_policy(tmp_path, num_action_chunks=1).eval()
+    restored.load_state_dict(torch.load(checkpoint, weights_only=True), strict=True)
+
+    batch = _cnn_batch(2, 1)
+    expected, _ = model.predict_action_batch(batch, mode="eval")
+    actual, _ = restored.predict_action_batch(batch, mode="eval")
+    torch.testing.assert_close(actual, expected)
+
+
+def test_cnn_policy_checkpoint_restores_action_statistics(tmp_path):
+    stats = {"action_mean": [0.8] * 22, "action_std": [0.2] * 22}
+    model = _cnn_policy(tmp_path, num_action_chunks=10, action_norm_stats=stats).eval()
+    checkpoint = tmp_path / "full_weights.pt"
+    torch.save(model.state_dict(), checkpoint)
+
+    restored = _cnn_policy(
+        tmp_path,
+        num_action_chunks=10,
+        action_norm_stats={"action_mean": [0.0] * 22, "action_std": [1.0] * 22},
+    ).eval()
+    restored.load_state_dict(torch.load(checkpoint, weights_only=True), strict=True)
+
+    torch.testing.assert_close(restored.action_norm_mean, model.action_norm_mean)
+    torch.testing.assert_close(restored.action_norm_std, model.action_norm_std)
+    batch = _cnn_batch(2, 10)
+    expected, _ = model.predict_action_batch(batch, mode="eval")
+    actual, _ = restored.predict_action_batch(batch, mode="eval")
+    torch.testing.assert_close(actual, expected)
