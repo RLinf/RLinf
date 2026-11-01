@@ -229,6 +229,49 @@ def test_lekiwi_step_drives_for_one_period_then_stops():
         assert not bus.is_connected
 
 
+def test_lekiwi_accepts_a_zero_camera_max_age():
+    """Zero is the synchronous mode: every step waits for a fresh frame."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    robot_info = _robot_info(
+        LeKiwiConfig(
+            node_rank=None,
+            port="/dev/ttyACM0",
+            camera_serials=["0"],
+            camera_type="webcam",
+        )
+    )
+    cfg = {
+        "is_dummy": False,
+        "enable_camera_player": False,
+        "camera_names": {"0": "front"},
+    }
+    with mocked_sdks():
+        env = LeKiwiDriveEnv(
+            {**cfg, "camera_max_age": 0.0},
+            worker_info=None,
+            env_idx=0,
+            robot_info=robot_info,
+        )
+        try:
+            assert env.config.camera_max_age == 0.0
+        finally:
+            env.close()
+
+        with pytest.raises(
+            ValueError, match="camera_max_age must be finite and nonnegative"
+        ):
+            LeKiwiDriveEnv(
+                {**cfg, "camera_max_age": -0.1},
+                worker_info=None,
+                env_idx=0,
+                robot_info=robot_info,
+            )
+
+
 def test_lekiwi_rejects_duplicate_frame_names():
     """Two cameras mapped to one frame name would overwrite each other."""
     from robot_mocks import mocked_sdks

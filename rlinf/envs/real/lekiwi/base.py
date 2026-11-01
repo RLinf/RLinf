@@ -111,7 +111,6 @@ class LeKiwiEnv(gym.Env):
         self.config = config
         for name, value in (
             ("step_frequency", config.step_frequency),
-            ("camera_max_age", config.camera_max_age),
             ("max_linear_velocity", config.max_linear_velocity),
             ("max_angular_velocity", config.max_angular_velocity),
             ("frame_size[0]", config.frame_size[0]),
@@ -119,6 +118,9 @@ class LeKiwiEnv(gym.Env):
         ):
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
+        # Zero is a supported mode: every step waits for a fresh frame.
+        if not np.isfinite(config.camera_max_age) or config.camera_max_age < 0:
+            raise ValueError("camera_max_age must be finite and nonnegative.")
         self.hardware = get_hardware_config(
             LeKiwiConfig, robot_info, is_dummy=config.is_dummy
         )
