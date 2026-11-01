@@ -12,7 +12,7 @@ Prerequisites
 
 Prepare a Linux machine with NVIDIA GPUs and a PI0.5 LIBERO checkpoint. The
 installer uses Python 3.12 and Torch 2.11.0. The training path has been smoke-tested on
-two NVIDIA A800 80 GB GPUs with the RLinf PI0.5 LIBERO SFT checkpoint.
+two NVIDIA H800 80 GB GPUs with the RLinf PI0.5 LIBERO SFT checkpoint.
 
 Installation
 ------------
