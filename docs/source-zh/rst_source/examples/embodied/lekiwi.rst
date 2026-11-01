@@ -183,7 +183,7 @@ LeKiwi 移动底盘配置与控制
 
    cd <RLinf 仓库路径>
    pip install pynput
-   PYTHONPATH=$PWD python -m toolkits.lekiwi.teleop --remote <机器人 IP>
+   PYTHONPATH=$PWD python -m rlinf.robotics.tools.lekiwi.teleop --remote <机器人 IP>
 
 最后一条命令与 ``rlinf-lekiwi-teleoperate`` 脚本执行的是同一个。macOS 还需在“系统设置 > 隐私与安全性”中为终端打开“辅助功能”和“输入监控”，然后重启终端；否则发送端能连上并持续发送心跳，但按键不会到达机器人。
 
@@ -192,11 +192,10 @@ LeKiwi 移动底盘配置与控制
 
 ``LeKiwiDriveEnv-v1`` 是已注册的 Gymnasium 任务：按硬件配置组装整机，上报实测的机体速度与摄像头画面，并下发有界的速度指令。一个 step 保持该速度一个控制周期，随后停止车轮，因此只有调用方持续 step 时底盘才会移动。
 
-与其他真机任务一样，在 env 配置文件中用 ``init_params.id`` 选择任务；``examples/embodiment/config/env/so101_reach.yaml`` 是一个这样配置的机械臂示例：
+``examples/embodiment`` 下没有 LeKiwi 的配置文件：这个环境由 RPent 承载，而不是由一次训练运行承载。由自己承载该任务的配置与其他真机任务一样，用 ``init_params.id`` 选择它；``examples/embodiment/config/env/so101_reach.yaml`` 是同样写法的机械臂示例：
 
 .. code-block:: yaml
 
-   # examples/embodiment/config/env/lekiwi_drive.yaml
    env_type: real
    total_num_envs: null
    main_image_key: front
@@ -258,11 +257,11 @@ RPent 部署
 
 ``uv pip check`` 会报告安装过程中改动的共享依赖：固定的修订版本会替换该环境中以可编辑方式安装的 RLinf，因此之后对本地源码的修改在该环境中不再生效。之后再运行 ``install.sh`` 会以 ``uv sync`` 结束，它会移除 RLinf 未声明的包（包括 RPent），因此在重装 RLinf 之后需要再装一次 RPent。可选依赖要加引号：未加引号的 ``[lekiwi]`` 会被 zsh 当作通配符展开。
 
-用检测脚本按硬件生成站点 YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动。与实际不符时直接修改这个文件，并把它复制到智能体计算机——两端都用 ``--robot-config`` 读取它：
+用检测脚本按硬件生成 LeKiwi YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动。与实际不符时直接修改这个文件，并把它复制到智能体计算机——两端都用 ``--robot-config`` 读取它：
 
 .. code-block:: bash
 
-   rpent-lekiwi-detect --output /path/to/lekiwi-site.yaml
+   rpent-lekiwi-detect --output /path/to/lekiwi.yaml
 
 在机器人计算机上启动环境服务，然后在智能体计算机上运行任务或 Dashboard：
 
@@ -270,18 +269,18 @@ RPent 部署
 
    # 机器人计算机：
    rpent-lekiwi-server \
-     --robot-config /path/to/lekiwi-site.yaml \
+     --robot-config /path/to/lekiwi.yaml \
      --transport http --host 0.0.0.0 --port 8120
 
    # 智能体计算机，运行任务 0（drive_smoke_test），使用 API 规划器：
    rpent --robot lekiwi --task-id 0 \
      --env-endpoint http://<机器人 IP>:8120 \
-     --robot-config /path/to/lekiwi-site.yaml \
+     --robot-config /path/to/lekiwi.yaml \
      --planner api --model <模型 ID>
 
    # 智能体计算机，在浏览器中手动驾驶：
    rpent --robot lekiwi --dashboard --planner manual \
      --env-endpoint http://<机器人 IP>:8120 \
-     --robot-config /path/to/lekiwi-site.yaml
+     --robot-config /path/to/lekiwi.yaml
 
-任务 1 ``room_survey`` 在房间里分段行驶并报告摄像头看到的画面。站点 YAML 各字段、Dashboard 用法和故障排查见 `RPent LeKiwi 说明 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/real_world_robots/lekiwi.rst>`_。
+任务 1 ``room_survey`` 在房间里分段行驶并报告摄像头看到的画面。LeKiwi YAML 各字段和 Dashboard 用法见 `RPent LeKiwi 说明 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/real_world_robots/lekiwi.rst>`_。

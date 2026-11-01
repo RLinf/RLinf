@@ -249,7 +249,7 @@ support.
 
    cd <path to the RLinf checkout>
    pip install pynput
-   PYTHONPATH=$PWD python -m toolkits.lekiwi.teleop --remote <robot-ip>
+   PYTHONPATH=$PWD python -m rlinf.robotics.tools.lekiwi.teleop --remote <robot-ip>
 
 The last command is the same one the ``rlinf-lekiwi-teleoperate`` script runs.
 On macOS, also allow the terminal in System Settings under Privacy & Security
@@ -265,13 +265,14 @@ commands bounded velocities. A step holds the commanded velocity for one
 control period and then stops the wheels, so the base moves only while the
 caller keeps stepping.
 
-Select the task with ``init_params.id`` in an env config file, as every
-real-world task does; ``examples/embodiment/config/env/so101_reach.yaml`` shows
-an arm configured this way:
+LeKiwi ships no config under ``examples/embodiment``: RPent hosts this
+environment rather than a training run. A config that hosts the task selects
+it with ``init_params.id``, as every real-world task does, and
+``examples/embodiment/config/env/so101_reach.yaml`` is a shipped example of the
+same shape:
 
 .. code-block:: yaml
 
-   # examples/embodiment/config/env/lekiwi_drive.yaml
    env_type: real
    total_num_envs: null
    main_image_key: front
@@ -355,14 +356,14 @@ ends in ``uv sync``, which removes packages RLinf does not declare, RPent
 included, so install it again afterwards. Quote the extras: an unquoted
 ``[lekiwi]`` is a glob to zsh.
 
-Write the site YAML from the hardware the detection script finds; it takes the
+Write the LeKiwi YAML from the hardware the detection script finds; it takes the
 servo port and the camera identifier from the checks above and never commands
 motion. Edit it where it does not fit, and copy it to the agent machine, which
 reads it with ``--robot-config`` as well:
 
 .. code-block:: bash
 
-   rpent-lekiwi-detect --output /path/to/lekiwi-site.yaml
+   rpent-lekiwi-detect --output /path/to/lekiwi.yaml
 
 Start the environment server on the robot computer, then run a task or the
 Dashboard from the agent machine:
@@ -371,21 +372,21 @@ Dashboard from the agent machine:
 
    # Robot computer:
    rpent-lekiwi-server \
-     --robot-config /path/to/lekiwi-site.yaml \
+     --robot-config /path/to/lekiwi.yaml \
      --transport http --host 0.0.0.0 --port 8120
 
    # Agent machine, task 0 (drive_smoke_test) with an API planner:
    rpent --robot lekiwi --task-id 0 \
      --env-endpoint http://<robot-ip>:8120 \
-     --robot-config /path/to/lekiwi-site.yaml \
+     --robot-config /path/to/lekiwi.yaml \
      --planner api --model <model-id>
 
    # Agent machine, hands-on driving from the browser:
    rpent --robot lekiwi --dashboard --planner manual \
      --env-endpoint http://<robot-ip>:8120 \
-     --robot-config /path/to/lekiwi-site.yaml
+     --robot-config /path/to/lekiwi.yaml
 
 Task 1, ``room_survey``, moves around the room and reports what the camera
 sees. The `RPent LeKiwi instructions
 <https://github.com/RLinf/RPent/blob/main/docs/source-en/rst_source/real_world_robots/lekiwi.rst>`_
-cover the site YAML fields, the Dashboard, and troubleshooting.
+cover the LeKiwi YAML fields and the Dashboard.
