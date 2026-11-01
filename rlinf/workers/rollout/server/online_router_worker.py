@@ -66,7 +66,13 @@ class OnlineRouterWorker(Worker):
         # Configuration
         self._server_host = cfg.rollout_server.online_router.get("host", "0.0.0.0")
         self._server_port = cfg.rollout_server.online_router.get("port", 8081)
-        self._rollout_instance_num = placement.rollout_dp_size
+        self._rollout_instance_num = placement.rollout_num_model_instances
+        # execute_on() takes process ranks; route each instance to its
+        # entry process, the only one with an HTTP client.
+        self._rollout_entry_ranks = [
+            placement.rollout_model_instance_entry_process_rank(i)
+            for i in range(self._rollout_instance_num)
+        ]
         self._sampling_params = SGLangWorker.get_sampling_param_from_config(
             self._cfg.algorithm.sampling_params
         )
@@ -145,11 +151,12 @@ class OnlineRouterWorker(Worker):
         try:
             # Forward request to rollout worker
             sglang_instance_id = random.randint(0, self._rollout_instance_num - 1)
+            entry_rank = self._rollout_entry_ranks[sglang_instance_id]
             if request.stop is not None:
                 sampling_params = copy.deepcopy(self._sampling_params)
                 sampling_params["stop"] = request.stop
             generate_result = (
-                await self.rollout_worker.execute_on(sglang_instance_id)
+                await self.rollout_worker.execute_on(entry_rank)
                 .async_generate(prompt=request.prompt, sampling_params=sampling_params)
                 .async_wait()
             )

@@ -136,6 +136,10 @@ algorithm
      - 折扣因子。
    * - ``algorithm.gae_lambda``
      - GAE 平滑因子。
+   * - ``algorithm.max_recompute_logprob_gap``
+     - 开启 ``algorithm.recompute_logprobs`` 时，若某个样本的总 log-probability 在 rollout
+       与 actor 之间的差值超过该值，则停止训练。``null``\ （默认）只把最大差值记录为
+       ``actor/rollout_train_joint_logprob_gap_max``。
 
 ``algorithm.group_size``\ （每个 prompt 的回复数；GRPO 始终 > 1）为共享键，在
 :doc:`basic_config` 中说明。

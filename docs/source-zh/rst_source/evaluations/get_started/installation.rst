@@ -24,7 +24,7 @@
      - ``fastwam``
      - ``libero`` 或 ``liberoplus``
    * - RoboTwin
-     - ``openvla-oft`` / ``openpi`` / ``lingbotvla``
+     - ``openvla-oft`` / ``openpi`` / ``lingbotvla`` / ``lingbotvlav2``
      - ``robotwin``
    * - BEHAVIOR-1K
      - ``openpi``
