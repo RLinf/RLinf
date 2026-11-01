@@ -22,6 +22,7 @@ from typing import Any
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
@@ -29,12 +30,43 @@ from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 class HuggingFaceActiveVLNModel(nn.Module):
     """Keep the native checkpoint layout shared with the SGLang actor."""
 
-    def __init__(self, qwen: nn.Module) -> None:
+    def __init__(
+        self, qwen: nn.Module, *, gradient_checkpointing: bool = False
+    ) -> None:
         super().__init__()
         self.qwen = qwen
+        self.gradient_checkpointing = gradient_checkpointing
 
-    def forward(self, **kwargs) -> Any:
-        return self.qwen(**kwargs)
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+        *,
+        image_features: torch.Tensor,
+        image_token_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return full-history hidden states for response scoring."""
+        text = getattr(self.qwen.model, "language_model", self.qwen.model)
+        hidden = self.qwen.get_input_embeddings()(input_ids)
+        hidden = hidden.masked_scatter(
+            image_token_mask.unsqueeze(-1).expand_as(hidden), image_features.to(hidden)
+        )
+
+        def text_forward(embeddings):
+            return text(
+                inputs_embeds=embeddings,
+                position_ids=position_ids,
+                use_cache=False,
+                return_dict=True,
+            ).last_hidden_state
+
+        if self.gradient_checkpointing and torch.is_grad_enabled():
+            return checkpoint(text_forward, hidden, use_reentrant=False)
+        return text_forward(hidden)
+
+    def project(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Project only positions used by the response loss."""
+        return self.qwen.lm_head(hidden)
 
 
 class ActiveVLNPolicy(nn.Module, BasePolicy):
@@ -102,11 +134,10 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
                 gradient_checkpointing=options.get("gradient_checkpointing", False),
             )
         else:
-            core = HuggingFaceActiveVLNModel(qwen)
-            if options.get("gradient_checkpointing", False):
-                qwen.gradient_checkpointing_enable(
-                    gradient_checkpointing_kwargs={"use_reentrant": False}
-                )
+            core = HuggingFaceActiveVLNModel(
+                qwen,
+                gradient_checkpointing=options.get("gradient_checkpointing", False),
+            )
         qwen.requires_grad_(False)
         text = getattr(qwen.model, "language_model", qwen.model)
         count = options.get("train_last_n_layers", 2)
@@ -119,6 +150,7 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
         processor = AutoProcessor.from_pretrained(
             cfg.model_path,
             trust_remote_code=False,
+            use_fast=False,
             min_pixels=options.get("min_pixels", 3136),
             max_pixels=options.get("max_pixels", 76800),
         )
@@ -377,23 +409,10 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
             image_mask = ids == qwen.config.image_token_id
             # Sampled image-token IDs belong to the response text.
             image_mask[:, start:] = False
-            if self.model_backend == "sglang":
-                hidden = self.core(
-                    ids, positions, image_features=features, image_token_mask=image_mask
-                )
-                logits = self.core.project(hidden[:, start - 1 : -1])
-            else:
-                embeds = qwen.get_input_embeddings()(ids)
-                embeds = embeds.masked_scatter(
-                    image_mask.unsqueeze(-1).expand_as(embeds), features.to(embeds)
-                )
-                logits = self.core(
-                    inputs_embeds=embeds,
-                    position_ids=positions,
-                    use_cache=False,
-                    return_dict=True,
-                    logits_to_keep=length - start + 1,
-                ).logits[:, :-1]
+            hidden = self.core(
+                ids, positions, image_features=features, image_token_mask=image_mask
+            )
+            logits = self.core.project(hidden[:, start - 1 : -1])
             temperature, top_p, penalty, do_sample = forward_inputs["sampling"][
                 index
             ].tolist()
