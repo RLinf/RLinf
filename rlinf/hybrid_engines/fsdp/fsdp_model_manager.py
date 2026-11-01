@@ -382,10 +382,34 @@ class FSDPModelManager:
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
             self.is_optimizer_offloaded = False
+        if self.critic_warmup_steps > 0:
+            self._restore_optimizer_after_critic_warmup(load_path)
 
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
+
+    def _restore_optimizer_after_critic_warmup(self, load_path: str) -> None:
+        """
+        Rebuild the full optimizer if the checkpoint was saved after the critic warmup.
+
+        Args:
+            load_path: Directory containing the checkpoint.
+        """
+        saved_param_groups = self._strategy.count_checkpoint_param_groups(load_path)
+        if saved_param_groups is None or saved_param_groups <= len(
+            self.optimizer.param_groups
+        ):
+            return
+        self._logger.info(
+            "[FSDP] Checkpoint was saved after the critic warmup, restoring the full optimizer."
+        )
+        self.optimizer = self.build_optimizer(model=self.model)
+        self.lr_scheduler = self.build_lr_scheduler(
+            optimizer=self.optimizer, optim_config=self._cfg.optim
+        )
+        self.optimizer_steps = self.critic_warmup_steps
+        self.critic_warmup_steps = 0
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """

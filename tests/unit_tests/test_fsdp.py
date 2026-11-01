@@ -1110,3 +1110,124 @@ def test_openpi_sft_uses_activation_checkpointing(monkeypatch):
     assert model.img.stem.weight.grad is not None
     assert model.llm.layers[0].attn.q_proj[0].weight.grad is not None
     assert model.action_out_proj.weight.grad is not None
+
+
+def _dcp_checkpoint(path, state):
+    from torch.distributed import checkpoint as dcp
+
+    dcp.save({"fsdp_checkpoint": state}, checkpoint_id=str(path / "dcp_checkpoint"))
+    return str(path)
+
+
+def test_checkpoint_param_groups_are_counted_from_dcp_metadata(tmp_path):
+    from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+
+    optimizer_state = {
+        "state": {"actor.weight": {"step": torch.tensor(3.0)}},
+        "param_groups": [
+            {"params": ["actor.weight"], "lr": 1e-3, "betas": (0.9, 0.999)},
+            {"params": ["value_head.weight"], "lr": 1e-4, "betas": (0.9, 0.999)},
+        ],
+    }
+    trained = _dcp_checkpoint(
+        tmp_path / "trained", {"optimizers": optimizer_state, "fsdp_version": 1}
+    )
+    assert FSDPStrategyBase.count_checkpoint_param_groups(trained) == 2
+
+    weights_only = _dcp_checkpoint(
+        tmp_path / "weights", {"model": {"actor.weight": torch.zeros(2)}}
+    )
+    assert FSDPStrategyBase.count_checkpoint_param_groups(weights_only) is None
+
+
+def _checkpoint_manager():
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp2 import FSDP2Strategy
+
+    # Checkpoint loading also accepts CPU models outside a scheduler worker.
+    manager = FSDPModelManager.__new__(FSDPModelManager)
+    manager._cfg = OmegaConf.create(
+        {
+            "optim": {
+                "lr": 1e-3,
+                "value_lr": 2e-3,
+                "adam_beta1": 0.9,
+                "adam_beta2": 0.95,
+                "clip_grad": 1.0,
+                "lr_scheduler": "cosine",
+                "total_training_steps": 20,
+                "lr_warmup_steps": 0,
+            },
+            "fsdp_config": {"sharding_strategy": "no_shard"},
+        }
+    )
+    manager._logger = logging.getLogger(__name__)
+    manager._strategy = FSDP2Strategy(manager._cfg, world_size=1)
+    manager.model = nn.ModuleDict(
+        {"actor": nn.Linear(3, 2), "value_head": nn.Linear(3, 1)}
+    )
+    manager.store_requires_grad_param_name = []
+    manager.critic_warmup_steps = 3
+    manager.optimizer_steps = 0
+    manager.is_weight_offloaded = False
+    manager.is_optimizer_offloaded = False
+    manager.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    manager.optimizer = manager.build_optimizer(
+        manager.model, enable_critic_warmup=True
+    )
+    manager.lr_scheduler = manager.build_lr_scheduler(
+        manager.optimizer, manager._cfg.optim
+    )
+    return manager
+
+
+def _checkpoint_optimizer_step(manager):
+    manager.optimizer.zero_grad(set_to_none=True)
+    inputs = torch.tensor([[0.2, -0.4, 0.7], [0.6, 0.5, -0.3]])
+    objective = sum(layer(inputs).square().mean() for layer in manager.model.values())
+    objective.backward()
+    optimizer = manager.optimizer
+    manager.optimizer_step()
+    if manager.optimizer is optimizer:
+        manager.lr_scheduler.step()
+
+
+@pytest.mark.parametrize("after_warmup", [False, True])
+def test_checkpoint_resume_preserves_the_next_update(
+    tmp_path, single_rank_env, monkeypatch, after_warmup
+):
+    from torch.distributed import checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import StateDictOptions
+
+    from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
+    from rlinf.hybrid_engines.fsdp.utils import FSDPVersion
+
+    monkeypatch.setattr(Worker, "torch_platform", None)
+    dist.init_process_group("gloo")
+    reference = _checkpoint_manager()
+    for _ in range(5 if after_warmup else 1):
+        _checkpoint_optimizer_step(reference)
+    training_state = Checkpoint(
+        reference.model,
+        reference.optimizer,
+        reference.lr_scheduler,
+        StateDictOptions(full_state_dict=False, cpu_offload=True),
+        FSDPVersion.FSDP2,
+    )
+    dcp.save(
+        {"fsdp_checkpoint": training_state},
+        checkpoint_id=str(tmp_path / "dcp_checkpoint"),
+    )
+    resumed = _checkpoint_manager()
+    resumed.load_checkpoint(str(tmp_path))
+
+    assert len(resumed.optimizer.param_groups) == (2 if after_warmup else 1)
+    assert resumed.model.actor.weight.requires_grad == after_warmup
+    _checkpoint_optimizer_step(reference)
+    _checkpoint_optimizer_step(resumed)
+
+    torch.testing.assert_close(resumed.model.state_dict(), reference.model.state_dict())
+    torch.testing.assert_close(
+        resumed.optimizer.state_dict(), reference.optimizer.state_dict()
+    )
+    assert resumed.lr_scheduler.state_dict() == reference.lr_scheduler.state_dict()
