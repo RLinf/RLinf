@@ -2,11 +2,14 @@
 /docker @andylin-hao
 /docs @andylin-hao
 
+/examples/agent @sherlockcooper @guozhen1997 @andylin-hao
 /examples/embodiment @guozhen1997 @andylin-hao
 /examples/reasoning @guozhen1997 @andylin-hao @Lin-xs
 
 /ray_utils @Lin-xs @andylin-hao
 /requirements @andylin-hao
+
+/rlinf/agents @sherlockcooper @guozhen1997 @andylin-hao
 
 /rlinf/algorithms @guozhen1997
 
@@ -24,12 +27,15 @@
 /rlinf/robotics @andylin-hao
 
 /rlinf/runners @guozhen1997 @andylin-hao
+/rlinf/runners/agent_eval_runner.py @sherlockcooper @guozhen1997 @andylin-hao
+/rlinf/runners/agent_runner.py @sherlockcooper @guozhen1997 @andylin-hao
 
 /rlinf/scheduler @andylin-hao
 
 /rlinf/utils @guozhen1997 @Lin-xs @andylin-hao
 
 /rlinf/workers/actor @guozhen1997 @andylin-hao
+/rlinf/workers/agent @sherlockcooper @guozhen1997 @andylin-hao
 /rlinf/workers/env @guozhen1997 @andylin-hao
 /rlinf/workers/inference @andylin-hao
 /rlinf/workers/rollout/hf @guozhen1997 @andylin-hao

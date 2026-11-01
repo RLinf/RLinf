@@ -96,7 +96,7 @@ def main(cfg) -> None:
 
     # launch the sglang server
     if rollout_backend == "sglang":
-        from rlinf.workers.rollout.sglang_server import (
+        from rlinf.workers.rollout.sglang import (
             launch_sglang_router_and_server,
         )
 
