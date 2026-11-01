@@ -78,6 +78,7 @@ rollout:
     repetition_penalty: 1.0
     max_new_tokens: 64
   model:
+    model_backend: embodiinfer
     precision: bf16
     embodiinfer:
       workspace_tokens: 512

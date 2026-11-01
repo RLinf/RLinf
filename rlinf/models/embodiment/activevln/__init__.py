@@ -18,6 +18,13 @@ def get_model(cfg, torch_dtype=None):
     from rlinf.config import torch_dtype_from_precision
     from rlinf.models.embodiment.activevln.policy import ActiveVLNPolicy
 
-    return ActiveVLNPolicy.from_config(
+    policy_cls = ActiveVLNPolicy
+    if cfg.get("model_backend", "huggingface") == "embodiinfer":
+        from rlinf.models.embodiment.activevln.embodiinfer import (
+            EmbodiInferActiveVLNPolicy,
+        )
+
+        policy_cls = EmbodiInferActiveVLNPolicy
+    return policy_cls.from_config(
         cfg, torch_dtype or torch_dtype_from_precision(cfg.precision)
     )
