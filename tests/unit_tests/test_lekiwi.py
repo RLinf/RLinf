@@ -24,10 +24,14 @@ from robot_mocks.lekiwi import FakeKeyboard, FakeKeySource, FakeWheelBus
 
 from rlinf.robotics.parts.cameras.webcam import WebcamCamera
 from rlinf.robotics.parts.mobility.lekiwi import body_to_wheel_raw, limit_wheel_raw
-from toolkits.lekiwi.camera import pick_device
-from toolkits.lekiwi.remote import run_receiver
-from toolkits.lekiwi.teleop import KeyboardControl, parse_args, run_teleoperation
-from toolkits.lekiwi.wheels import report, spin_each_wheel
+from rlinf.robotics.tools.lekiwi.camera import pick_device
+from rlinf.robotics.tools.lekiwi.remote import run_receiver
+from rlinf.robotics.tools.lekiwi.teleop import (
+    KeyboardControl,
+    parse_args,
+    run_teleoperation,
+)
+from rlinf.robotics.tools.lekiwi.wheels import report, spin_each_wheel
 
 
 def wheel_command(
