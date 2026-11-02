@@ -139,7 +139,7 @@ class AgentLoopWorker(Worker):
         if cfg.agentloop.get("toolcall_parser", None) is not None:
             self.toolcall_parser = get_toolcall_parser(cfg.agentloop.toolcall_parser)
 
-        # State of the continuous rollout loop (run_agentloop_rollout_continuously).
+        # Task running run_agentloop_rollout_continuously, None while idle.
         self._agentloop_task = None
         self._agent_metric_channel = None
         self._producer_error = None
@@ -341,30 +341,14 @@ class AgentLoopWorker(Worker):
         Each request spawns one task per (input_ids, answer) group; finished
         groups put `{"bucket": ..., "metrics": ...}` on
         `agent_metric_channel`. Stops via `stop()` or a group failure, both
-        by cancelling the loop task; a clean stop returns normally, a group
-        failure re-raises here.
+        by cancelling this method's task; a clean stop returns normally, a
+        group failure re-raises here.
         """
         assert self._agentloop_task is None, (
             "agent loop task is not None but the continuous loop is called."
         )
+        self._agentloop_task = asyncio.current_task()
         self._producer_error = None
-        self._agentloop_task = asyncio.create_task(
-            self._run_agentloop_rollout_continuously(
-                input_channel, output_channel, agent_metric_channel
-            )
-        )
-        try:
-            await self._agentloop_task
-        except asyncio.CancelledError:
-            if self._producer_error is not None:
-                raise self._producer_error
-
-    async def _run_agentloop_rollout_continuously(
-        self,
-        input_channel: Channel,
-        output_channel: Channel,
-        agent_metric_channel: Channel,
-    ):
         self._agent_metric_channel = agent_metric_channel
         self._inflight_groups: set[asyncio.Task] = set()
         self._idle_seconds = 0.0
@@ -386,13 +370,23 @@ class AgentLoopWorker(Worker):
                     task.add_done_callback(self._on_group_done)
                     self._mark_inflight_transition(False)
                     self._inflight_groups.add(task)
+        except asyncio.CancelledError:
+            # Cancelled either by stop() or, via _on_group_done, by a group
+            # failure; in the latter case re-raise the recorded error.
+            if self._producer_error is not None:
+                raise self._producer_error
+            return
         finally:
             # In-flight groups are dropped on any exit: the loop only stops
-            # when training ended or a group failed.
+            # when training ended or a group failed. Keep the loop task
+            # reference until they are awaited: a group ending with a
+            # non-cancel exception after the reference is cleared would make
+            # _on_group_done cancel None and lose the original error.
             for task in self._inflight_groups:
                 task.cancel()
             if self._inflight_groups:
                 await asyncio.gather(*self._inflight_groups, return_exceptions=True)
+            self._agentloop_task = None
 
     def _on_group_done(self, task: asyncio.Task):
         self._inflight_groups.discard(task)
