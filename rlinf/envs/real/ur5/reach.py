@@ -41,12 +41,27 @@ class UR5ReachConfig(UR5EnvConfig):
     """Largest per-joint perturbation in radians when randomising."""
 
     def __post_init__(self) -> None:
-        """Validate the target against the arm's own degrees of freedom."""
+        """Validate the target against the arm's degrees of freedom and bounds."""
         super().__post_init__()
         if len(self.target_joint_qpos) != _DOF:
             raise ValueError(
                 f"A UR5 has {_DOF} arm joints, so 'target_joint_qpos' "
                 f"needs {_DOF} values, got {len(self.target_joint_qpos)}."
+            )
+        target = np.asarray(self.target_joint_qpos, dtype=np.float64)
+        if not np.all(np.isfinite(target)):
+            raise ValueError(
+                f"Expected a finite 'target_joint_qpos', got {target.tolist()}."
+            )
+        if np.any(target < self.joint_limit_low) or np.any(
+            target > self.joint_limit_high
+        ):
+            raise ValueError(
+                f"target_joint_qpos {target.tolist()} falls outside "
+                f"[{self.joint_limit_low.tolist()}, "
+                f"{self.joint_limit_high.tolist()}]; every command is "
+                "clipped to those bounds, so an out-of-bounds target would "
+                "be unreachable."
             )
 
 
@@ -63,6 +78,7 @@ class UR5ReachEnv(UR5Env):
         config = UR5ReachConfig(**override_cfg)
         super().__init__(config, worker_info, robot_info, env_idx)
         self._base_reset_qpos = list(self.config.reset_joint_qpos)
+        self._reset_rng = np.random.default_rng()
 
     @property
     def task_description(self) -> str:
@@ -74,10 +90,17 @@ class UR5ReachEnv(UR5Env):
         seed: Optional[int] = None,
         options: Optional[dict[str, Any]] = None,
     ) -> tuple[Any, dict[str, Any]]:
-        """Reset, optionally starting from a perturbed rest pose."""
+        """Reset, optionally starting from a perturbed rest pose.
+
+        An explicit ``seed`` starts a fresh, reproducible noise stream; an
+        automatic reset (``seed=None``) draws the next value from that same
+        stream instead of starting a new, unseeded one each time, so a seeded
+        episode's later resets stay reproducible too.
+        """
         if self.config.enable_random_reset:
-            rng = np.random.default_rng(seed)
-            noise = rng.uniform(
+            if seed is not None:
+                self._reset_rng = np.random.default_rng(seed)
+            noise = self._reset_rng.uniform(
                 -self.config.random_joint_noise,
                 self.config.random_joint_noise,
                 size=_DOF,

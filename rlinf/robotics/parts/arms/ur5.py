@@ -63,18 +63,26 @@ class UR5Arm(BaseArm):
             second squared.
     """
 
-    SDK = "ur_rtde"
+    #: The ``ur_rtde`` distribution installs as ``rtde_control``/``rtde_receive``,
+    #: not a top-level ``ur_rtde`` module.
+    SDK = "rtde_control"
 
     DOF: ClassVar[int] = 6
 
-    #: Travel of a UR5. The hardware allows +/- 2*pi; these conservative bench
-    #: limits keep a reach task clear of self-collision. A task may narrow them
-    #: further through its env config.
+    #: Travel of a UR5. The hardware allows +/- 2*pi; these are conservative
+    #: joint-travel limits, not a collision-safe workspace guarantee -- a task
+    #: must still validate its own workspace and safety separately. A task may
+    #: narrow them further through its env config.
     JOINT_LIMITS_LOWER: ClassVar[np.ndarray] = np.full(6, -np.pi)
     JOINT_LIMITS_UPPER: ClassVar[np.ndarray] = np.full(6, np.pi)
 
     #: The UR5 reports joints and tool pose; force sensing is left out here.
     STATE_FIELDS = ("arm_joint_position", "tcp_pose")
+
+    #: Floor on a distance-paced reset speed. A target within noise distance
+    #: of the current pose would otherwise pace at a near-zero speed, which
+    #: can stall ``moveJ`` instead of settling quickly.
+    MIN_RESET_SPEED: ClassVar[float] = np.deg2rad(2.0)
 
     def __init__(
         self,
@@ -146,16 +154,23 @@ class UR5Arm(BaseArm):
         """Disconnect both interfaces, leaving the arm holding its position.
 
         Also used to unwind a failed open, so either interface may be ``None``.
+        The receive interface is disconnected in a nested ``finally``, so a
+        control interface that raises on disconnect does not skip it -- and
+        the claim is still released even if the receive interface also
+        raises, rather than being left held for a retry that cannot happen
+        since both handles are already cleared.
         """
         try:
             if self._control is not None:
                 self._control.disconnect()
-            if self._receive is not None:
-                self._receive.disconnect()
         finally:
             self._control = None
-            self._receive = None
-            self._claim.release()
+            try:
+                if self._receive is not None:
+                    self._receive.disconnect()
+            finally:
+                self._receive = None
+                self._claim.release()
 
     def get_state(self) -> UR5RobotState:
         """Read joints and tool pose into canonical units."""
@@ -182,6 +197,37 @@ class UR5Arm(BaseArm):
         sent = self.move_joints(action["joint_position"])
         return {"joint_position": sent}
 
+    def _clip_target(self, q_target: "Sequence[float]") -> np.ndarray:
+        """Validate shape and clip to the configured travel.
+
+        A non-finite target is rejected rather than clipped: ``nan`` survives
+        ``np.clip`` unchanged, and ``inf``/``-inf`` would otherwise clip to an
+        extreme-but-finite-looking joint target instead of surfacing the bad
+        input.
+        """
+        target = np.asarray(q_target, dtype=float).reshape(-1)
+        if target.shape != (self.DOF,):
+            raise ValueError(
+                f"Expected {self.DOF} joint targets for a UR5, got shape "
+                f"{target.shape}."
+            )
+        if not np.all(np.isfinite(target)):
+            raise ValueError(
+                f"Expected finite joint targets for a UR5, got {target.tolist()}."
+            )
+        return np.clip(target, self.JOINT_LIMITS_LOWER, self.JOINT_LIMITS_UPPER)
+
+    def _move_j(self, target: np.ndarray, speed: float) -> None:
+        """Send one ``moveJ`` and raise if the controller rejected it."""
+        ok = self._control.moveJ(
+            [float(value) for value in target], speed, self._acceleration
+        )
+        if not ok:
+            raise RuntimeError(
+                f"UR5 moveJ to {target.tolist()} at speed={speed:.3f} rad/s "
+                "was refused by the controller."
+            )
+
     def move_joints(self, q_target: "Sequence[float]") -> np.ndarray:
         """Command absolute joint positions in radians.
 
@@ -192,16 +238,8 @@ class UR5Arm(BaseArm):
         Returns:
             The target actually sent, in radians.
         """
-        target = np.asarray(q_target, dtype=float).reshape(-1)
-        if target.shape != (self.DOF,):
-            raise ValueError(
-                f"Expected {self.DOF} joint targets for a UR5, got shape "
-                f"{target.shape}."
-            )
-        target = np.clip(target, self.JOINT_LIMITS_LOWER, self.JOINT_LIMITS_UPPER)
-        self._control.moveJ(
-            [float(value) for value in target], self._speed, self._acceleration
-        )
+        target = self._clip_target(q_target)
+        self._move_j(target, self._speed)
         return target
 
     def reset_joint(
@@ -215,10 +253,30 @@ class UR5Arm(BaseArm):
 
         ``moveJ`` blocks until the arm arrives, but ``wait_until_still`` guards
         against a backend that returns early, matching the other arm drivers.
-        ``duration`` and ``max_velocity`` are accepted for a uniform reset
-        signature; ur_rtde paces the move by its own ``speed``.
+        Unlike a normal step, a reset paces itself by ``max_velocity`` and
+        ``duration`` rather than the configured step ``speed``, so it is a
+        single call rather than a thin wrapper over :meth:`move_joints`.
         """
-        self.move_joints(positions)
+        duration = float(duration)
+        max_velocity = float(max_velocity)
+        if not np.isfinite(duration) or duration <= 0:
+            raise ValueError(f"duration must be finite and positive, got {duration}.")
+        if not np.isfinite(max_velocity) or max_velocity <= 0:
+            raise ValueError(
+                f"max_velocity must be finite and positive, got {max_velocity}."
+            )
+        target = self._clip_target(positions)
+        current = np.asarray(self._receive.getActualQ(), dtype=float)
+        distance = float(np.max(np.abs(target - current)))
+        # Slow enough to respect max_velocity; slower still if that still
+        # beats the minimum duration. Floored so a target within noise
+        # distance of the current pose doesn't pace at a near-zero speed.
+        reset_speed = (
+            min(max_velocity, max(distance / duration, self.MIN_RESET_SPEED))
+            if distance
+            else max_velocity
+        )
+        self._move_j(target, reset_speed)
         self.wait_until_still(duration)
 
     def is_robot_up(self) -> bool:

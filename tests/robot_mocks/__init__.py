@@ -142,7 +142,11 @@ def sdk_modules() -> dict[str, types.ModuleType]:
     made.update(cameras.modules())
     made.update(arms.modules())
     made.update(grippers.modules())
-    made.update(sdks.modules())
+    vendor_modules = sdks.modules()
+    shared_rclpy = vendor_modules["rclpy"]
+    for name, value in vars(made["rclpy"]).items():
+        vars(shared_rclpy).setdefault(name, value)
+    made.update(vendor_modules)
     made.update(teleop.modules())
     return made
 

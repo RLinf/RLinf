@@ -99,6 +99,11 @@ class PickEnv(DOSW1Env):
             self.task_success and not self.config.manual_episode_control_only
         ) or self.manual_done:
             terminated = True
+        # The base class only knows about manual completion (and omits
+        # "success" entirely in dummy mode); an automatic lift success must
+        # be folded in here, where task_success is owned, or callers that
+        # trust info["success"] over the reward never see it.
+        info["success"] = bool(info.get("success", False) or self.task_success)
         return obs, reward, terminated, truncated, info
 
     def _calc_step_reward(self, obs: dict, gripper_changed: bool = False) -> float:

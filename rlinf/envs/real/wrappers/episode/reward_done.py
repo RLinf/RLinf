@@ -36,6 +36,11 @@ class BaseKeyboardRewardDoneWrapper(KeyboardSession):
         last_intervened, updated_reward, updated_terminated = self.reward_terminated()
         if last_intervened or self.reward_mode == "always_replace":
             reward = updated_reward
+            # The inner env's info otherwise keeps reporting its own success
+            # signal, which _resolve_success_current_step prefers over the
+            # reward -- silently overriding the operator's rating with a
+            # stale or contradicting one.
+            info["success"] = reward == 1
         return observation, reward, updated_terminated, truncated, info
 
     def reward_terminated(
