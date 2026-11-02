@@ -118,7 +118,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "openwam" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "openwam" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -937,20 +937,18 @@ configure_kunlun() {
         echo "[install.sh] kunlun: environment clone script not found at '$clone_script'." >&2
         exit 1
     fi
-    if [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ] || [ ! -x "/opt/venvs/$VENV_DIR/bin/python" ]; then
+    if [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -x "$VENV_DIR/bin/python" ]; then
         echo "[install.sh] kunlun: cloning the base environment into '$VENV_DIR'."
         bash "$clone_script" "$VENV_DIR"
     else
         echo "[install.sh] kunlun: reusing existing environment at '$VENV_DIR'."
     fi
 
-    local base_python="/opt/venvs/$VENV_DIR/bin/python"
-    if [ ! -x "$base_python" ] || [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ]; then
+    local base_python="$VENV_DIR/bin/python"
+    if [ ! -x "$base_python" ] || [ ! -f "$VENV_DIR/bin/activate" ]; then
         echo "[install.sh] kunlun: cloned environment at '$VENV_DIR' is missing python/activate." >&2
         exit 1
     fi
-    VENV_DIR="/opt/venvs/$VENV_DIR"
-
 
     local image_python_mm image_torch image_torch_public
     image_python_mm=$("$base_python" - <<'EOF'
@@ -2888,6 +2886,28 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_lingbot_vla_v2_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+    # The RLinf fork's rlinf branch adds the checkpoint metadata and PPO MoE hooks.
+    local vla2_path
+    vla2_path=$(clone_or_reuse_repo LINGBOT_VLA_V2_PATH "$VENV_DIR/lingbot-vla-v2" "${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla-v2.git" -b rlinf)
+    uv pip install -e "$vla2_path" --no-deps
+
+    case "$ENV_NAME" in
+        robotwin)
+            install_robotwin_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for LingBot-VLA V2." >&2
+            exit 1
+            ;;
+    esac
+    # Model pins go last so the env install cannot move them.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/lingbotvlav2.txt"
+    install_flash_attn
+}
+
 install_abot_m0_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -3527,7 +3547,8 @@ install_behavior_env() {
 }
 
 install_metaworld_env() {
-    uv pip install metaworld==3.0.0
+    # Meta-World 3.0.0 writes an 11-wide weld row. MuJoCo 3.17.0 widened eq_data to 12.
+    uv pip install metaworld==3.0.0 "mujoco==3.16.0"
 }
 
 install_calvin_env() {
@@ -4268,6 +4289,9 @@ main() {
                     ;;
                 dexbotic)
                     install_dexbotic_model
+                    ;;
+                lingbotvlav2)
+                    install_lingbot_vla_v2_model
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 

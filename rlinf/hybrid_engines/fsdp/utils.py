@@ -766,13 +766,12 @@ def clip_grad_by_total_norm_(
     parameters: Union[list[Union[torch.Tensor, DTensor]], Union[torch.Tensor, DTensor]],
     max_grad_norm: Union[int, float],
     total_norm: float,
-    dtype: torch.dtype = torch.float32,
 ):
     """Clips gradient of an iterable of parameters by total norm.
 
     Taken and modified from: https://github.com/NVIDIA/Megatron-LM/blob/a695b2bd2a0ca9ca63385a48c41a1c5a033cdd1e/megatron/core/optimizer/clip_grads.py#L138
 
-    Note that the gradients are modified in place.
+    Note that the gradients are modified in place, in their original dtype.
 
     Args:
         parameters (Union[list[Union[torch.Tensor, DTensor]], Union[torch.Tensor, DTensor]]):
@@ -786,9 +785,7 @@ def clip_grad_by_total_norm_(
 
     # Grads.
     grads = [
-        to_local_if_dtensor(p.grad.detach()).to(dtype)
-        for p in parameters
-        if p.grad is not None
+        to_local_if_dtensor(p.grad.detach()) for p in parameters if p.grad is not None
     ]
 
     # Scale.
