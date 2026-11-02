@@ -1708,7 +1708,7 @@ class EnvOutput:
         # Navigation policies consume the full multimodal conversation rather
         # than a single image/state. Preserve these batched lists in both the
         # normal and final observation paths.
-        for key in ("messages", "images"):
+        for key in ("messages", "images", "episode_session_ids", "observation_steps"):
             if key in obs:
                 prepared[key] = obs[key]
         return prepared

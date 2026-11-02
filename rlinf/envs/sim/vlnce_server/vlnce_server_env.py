@@ -51,6 +51,9 @@ class VLNCEServerEnv:
         self._config_type = VLNCEEnvConfig
         self._ids = [str(uuid4()) for _ in range(num_envs)]
         self._created = False
+        self._created_configs = None
+        self._reuse_environments = bool(cfg.get("reuse_environments", False))
+        self._episode_session_ids = [str(uuid4()) for _ in range(num_envs)]
         self._has_reset = False
         self._cursor = seed_offset * (num_envs // self.group_size)
         self._reset_stride = total_num_processes * (num_envs // self.group_size)
@@ -103,14 +106,13 @@ class VLNCEServerEnv:
             "messages": copy.deepcopy(self._messages),
             "images": [list(x) for x in self._images],
             "task_descriptions": list(self._task_descriptions),
+            "episode_session_ids": list(self._episode_session_ids),
+            "observation_steps": self._elapsed_steps.tolist(),
         }
 
     def reset(self, env_idx=None):
         if env_idx is not None and list(env_idx) != list(range(self.num_envs)):
             raise ValueError("VLN-CE resets complete GRPO groups together")
-        if self._created:
-            self.client.close_batch(self._ids)
-            self._created = False
         configs = {}
         for index, env_id in enumerate(self._ids):
             episode = self.cfg.episode_ids[
@@ -130,8 +132,13 @@ class VLNCEServerEnv:
             )
             configs[env_id] = {"env_name": "vlnce", "env_config": asdict(config)}
         try:
-            self.client.create_environments_batch(configs)
-            self._created = True
+            reuse = self._reuse_environments and configs == self._created_configs
+            if self._created and not reuse:
+                self.close()
+            if not self._created:
+                self.client.create_environments_batch(configs)
+                self._created = True
+                self._created_configs = configs
             observations = self.client.reset_batch(
                 dict.fromkeys(self._ids, self.cfg.seed)
             )
@@ -152,6 +159,7 @@ class VLNCEServerEnv:
             self._created = False
             raise
         self._elapsed_steps.fill(0)
+        self._episode_session_ids = [str(uuid4()) for _ in range(self.num_envs)]
         self._done.fill(False)
         self._success.zero_()
         self._returns.zero_()
@@ -198,7 +206,7 @@ class VLNCEServerEnv:
                 "episode_length": torch.from_numpy(self._elapsed_steps.copy()),
             }
         }
-        if self._done.all():
+        if self._done.all() and not self._reuse_environments:
             self.close()
         return [self._obs()], rewards, terminated, truncated, [infos]
 
@@ -206,3 +214,4 @@ class VLNCEServerEnv:
         if self._created:
             self.client.close_batch(self._ids)
             self._created = False
+            self._created_configs = None

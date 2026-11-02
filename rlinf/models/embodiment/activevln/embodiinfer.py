@@ -15,11 +15,24 @@
 """EmbodiInfer rollout with the shared ActiveVLN replay format."""
 
 import hashlib
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 
 from rlinf.models.embodiment.activevln.policy import ActiveVLNPolicy
+
+
+@dataclass
+class _EpisodeState:
+    """Committed append-only observation history for one policy version."""
+
+    step: int
+    pixels: torch.Tensor
+    grids: torch.Tensor
+    prefix_ids: torch.Tensor
+    prefix_positions: torch.Tensor
+    memory: Any
 
 
 class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
@@ -34,12 +47,77 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             **kwargs,
         )
         self.runtime_options = dict(runtime_options or {})
+        self.reuse_history = self.runtime_options.pop("reuse_history", True)
         self.runtime_options.setdefault("workspace_tokens", min(512, self.max_context))
         self.runtime_options.setdefault(
             "sampling_seed", int(torch.randint(0, 2**31, ()).item())
         )
         self._sampling_states = {}
         self._runtime = None
+        self._episodes: dict[str, _EpisodeState] = {}
+        self._weight_version = None
+        self.history_stats = {
+            "cache_hits": 0,
+            "prefix_misses": 0,
+            "processed_images": 0,
+            "reused_images": 0,
+            "reused_tokens": 0,
+            "weight_invalidations": 0,
+        }
+
+    def set_global_step(self, step: int) -> None:
+        """Invalidate episode state after in-place actor weight synchronization."""
+        if step != self._weight_version:
+            self._episodes.clear()
+            self._weight_version = step
+            self.history_stats["weight_invalidations"] += 1
+
+    def _prepare_history(self, messages, images, state):
+        """Tokenize the full replay prompt, processing only newly appended images."""
+        from transformers import BatchFeature
+
+        previous_images = 0 if state is None else len(state.grids)
+        new_images = images[previous_images:]
+        if not new_images:
+            return self.prepare_observation(messages, images)
+        encoded_images = self.processor.image_processor(
+            images=new_images, return_tensors="pt"
+        )
+        pixels, grids = encoded_images.pixel_values, encoded_images.image_grid_thw
+        self.history_stats["processed_images"] += len(new_images)
+        if state is not None:
+            pixels = torch.cat((state.pixels, pixels))
+            grids = torch.cat((state.grids, grids))
+            self.history_stats["reused_images"] += previous_images
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        image_token = self.processor.image_token
+        parts = text.split(image_token)
+        if len(parts) != len(grids) + 1:
+            raise ValueError("Image placeholders must match the episode image history")
+        merge = self.processor.image_processor.merge_size**2
+        expanded = parts[0] + "".join(
+            image_token * (int(grid.prod()) // merge) + part
+            for grid, part in zip(grids, parts[1:], strict=True)
+        )
+        encoded = BatchFeature(
+            dict(
+                self.processor.tokenizer([expanded], return_tensors="pt", padding=False)
+            )
+        )
+        encoded["pixel_values"], encoded["image_grid_thw"] = pixels, grids
+        ids = encoded.input_ids
+        if ids.shape[1] + self.max_new_tokens > self.max_context:
+            raise ValueError("ActiveVLN history exceeds max_context")
+        if pixels.shape[0] > self.max_patches or len(grids) > self.max_images:
+            raise ValueError("ActiveVLN history exceeds max_image_tokens or max_images")
+        # Use the policy's CPU mRoPE builder for the complete replay history.
+        from embodiinfer.policies.activevln.processor_activevln import ProcessedTurn
+
+        turn = ProcessedTurn(ids, encoded.attention_mask, pixels, grids, text, "")
+        positions, _ = self.core._positions(turn)
+        return ids, positions, encoded
 
     @classmethod
     def from_config(cls, cfg: Any, dtype: torch.dtype):
@@ -85,6 +163,7 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
                 self._runtime.sampling_generator.get_state()
             )
         self._runtime = None
+        self._episodes.clear()
         self.core.clear_cuda_graphs()
 
     def _apply(self, fn, recurse=True):
@@ -139,46 +218,86 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
         self.core.temperature = temperature if do_sample else 1.0
         self.core.top_p = top_p if do_sample else 1.0
         self.core.repetition_penalty = repetition_penalty
-        prompts, turns = [], []
+        prompts, turns, states = [], [], []
         parameter = next(self.core.parameters())
-        for messages, images in zip(
-            env_obs["messages"], env_obs["images"], strict=True
+        count = len(env_obs["messages"])
+        if self._runtime is None or self._runtime.batch_size != count:
+            self.clear_rollout_runtime()
+            self._runtime = self.core.create_batched_runtime(
+                batch_size=count, **self.runtime_options
+            )
+            sampling_state = self._sampling_states.get(str(self._runtime.device))
+            if sampling_state is not None:
+                self._runtime.sampling_generator.set_state(sampling_state)
+        session_ids = env_obs.get("episode_session_ids", [None] * count)
+        steps = env_obs.get("observation_steps", [None] * count)
+        if len(session_ids) != count or len(steps) != count:
+            raise ValueError(
+                "Episode identifiers and steps must align with observations"
+            )
+        active_ids = {key for key in session_ids if key is not None}
+        self._episodes = {k: v for k, v in self._episodes.items() if k in active_ids}
+        for messages, images, key, step in zip(
+            env_obs["messages"], env_obs["images"], session_ids, steps, strict=True
         ):
-            ids, positions, encoded = self.prepare_observation(messages, images)
+            state = self._episodes.get(key) if self.reuse_history else None
+            if state is not None and (
+                step != state.step + 1 or len(images) <= len(state.grids)
+            ):
+                state = None
+            if self.reuse_history and key is not None:
+                ids, positions, encoded = self._prepare_history(messages, images, state)
+            else:
+                ids, positions, encoded = self.prepare_observation(messages, images)
+                self.history_stats["processed_images"] += len(images)
             prompts.append((ids, positions, encoded))
+            memory, start, image_start, patch_start = None, 0, 0, 0
+            if state is not None:
+                length = state.prefix_ids.shape[1]
+                if (
+                    length < ids.shape[1]
+                    and torch.equal(ids[:, :length], state.prefix_ids)
+                    and torch.equal(positions[:, :, :length], state.prefix_positions)
+                ):
+                    memory, start = state.memory, length
+                    image_start, patch_start = len(state.grids), len(state.pixels)
+                    self.history_stats["cache_hits"] += 1
+                    self.history_stats["reused_tokens"] += start
+                else:
+                    self.history_stats["prefix_misses"] += 1
             text = self.processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
             turn = ProcessedTurn(
-                ids,
-                encoded.attention_mask,
-                encoded.pixel_values,
-                encoded.image_grid_thw,
+                ids[:, start:],
+                encoded.attention_mask[:, start:],
+                encoded.pixel_values[patch_start:],
+                encoded.image_grid_thw[image_start:],
                 text,
                 hashlib.sha256(text.encode()).hexdigest(),
             ).to(parameter.device, parameter.dtype)
             turns.append(
                 PreparedActiveVLNTurn(
-                    turn, positions.to(parameter.device), None, int(positions.max()) + 1
+                    turn,
+                    positions[:, :, start:].to(parameter.device),
+                    memory,
+                    int(positions.max()) + 1,
                 )
             )
+            states.append((key, step, encoded, ids, positions))
         if not turns:
             raise ValueError("ActiveVLN requires a nonempty observation batch")
-        if self._runtime is None or self._runtime.batch_size != len(turns):
-            self.clear_rollout_runtime()
-            self._runtime = self.core.create_batched_runtime(
-                batch_size=len(turns), **self.runtime_options
-            )
-            state = self._sampling_states.get(str(self._runtime.device))
-            if state is not None:
-                self._runtime.sampling_generator.set_state(state)
         prepared = PreparedActiveVLNBatch(tuple(turns))
-        # Fresh full-history KV allows graphs to survive in-place weight updates.
-        self._runtime.prewarm_prepared(prepared)
-        generations = self._runtime.generate(self._runtime.prefill(prepared))
-        return self.pack_rollout(
+        try:
+            self._runtime.prewarm_prepared(prepared)
+            generations = self._runtime.generate(self._runtime.prefill(prepared))
+        except Exception:
+            self._episodes.clear()
+            raise
+        responses = [item.token_ids[0].cpu() for item in generations]
+        output = self.pack_rollout(
             prompts,
-            [item.token_ids[0].cpu() for item in generations],
+            responses,
             [item.token_logprobs[0].cpu() for item in generations],
             sampling=(
                 self.core.temperature,
@@ -187,3 +306,20 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
                 float(do_sample),
             ),
         )
+        for (key, step, encoded, ids, positions), generation, response in zip(
+            states, generations, responses, strict=True
+        ):
+            if self.reuse_history and key is not None:
+                next_position = int(positions.max()) + 1
+                response_positions = torch.arange(
+                    next_position, next_position + response.numel()
+                )[None, None].expand(3, 1, -1)
+                self._episodes[key] = _EpisodeState(
+                    step,
+                    encoded.pixel_values,
+                    encoded.image_grid_thw,
+                    torch.cat((ids, response[None]), dim=1),
+                    torch.cat((positions, response_positions), dim=2),
+                    generation.memory,
+                )
+        return output
