@@ -435,44 +435,15 @@ In ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``, set
 ``global_step_<N>`` directory, and set
 ``actor.model.openpi_data.norm_stats_path`` to the statistics used for SFT.
 
-The reported run starts from SFT step 5000 on 8 H100 GPUs and runs for 150
-iterations. Set the fields below, keeping the learning-rate schedule at
-1000 steps when setting
-``runner.max_epochs`` to 150; this preserves the schedule used by the run:
+The default recipe uses token-level log-probabilities, policy learning rate
+5e-6, and value-head learning rate 2e-4. The reported run starts from SFT
+step 5000 on 8 H100 GPUs and trains for 150 iterations, evaluating and saving
+a checkpoint every iteration. The learning-rate schedule spans 1000 steps
+(``actor.optim.total_training_steps``), independently of the 150-iteration
+training budget. Training uses seed 42; evaluation uses seed 10000, with
+video recording and Torch compilation disabled.
 
-.. code:: yaml
-
-   runner:
-     max_epochs: 150
-     val_check_interval: 1
-     save_interval: 1
-   env:
-     train:
-       seed: 42
-     eval:
-       seed: 10000
-       video_cfg:
-         save_video: False
-   actor:
-     model:
-       openpi:
-         torch_compile: False
-     optim:
-       total_training_steps: 1000
-
-The evaluated token-level alternative starts from the same SFT checkpoint
-and changes only these two fields in the same config:
-
-.. code:: yaml
-
-   algorithm:
-     logprob_type: token_level
-   actor:
-     optim:
-       lr: 5.0e-6
-
-Its `run logs <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-c3de8862f92d>`__
-require W&B project access. Launch either recipe after setting its fields:
+After setting the model and statistics paths, launch training:
 
 .. code:: bash
 
@@ -484,11 +455,11 @@ What this does:
 2. Creates Ray workers for the actor, rollout, and DexJoCo env components.
 3. Runs PPO rollouts, computes sparse success rewards, and updates the OpenPI policy.
 
-Each decision executes the first 10 of the 30 predicted actions and samples
-them with 5 denoising steps, which also raises the SFT policy's own success
-rate (below). One iteration collects 128 environments × 2 rollout epochs and
-runs one PPO epoch over them; the first 50 optimizer steps train the value
-head alone (``actor.optim.critic_warmup_steps``).
+Each decision executes the first 10 of the 30 predicted actions, sampled
+with 5 denoising steps. One iteration collects 128 environments × 2 rollout
+epochs and runs one PPO epoch with global batch 1024 and micro batch 64.
+The first 50 optimizer steps train the value head alone
+(``actor.optim.critic_warmup_steps``).
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with ``dexjoco_openpi_pi05_eval``. Set
@@ -496,6 +467,12 @@ For standalone evaluation, use the unified :doc:`Evaluation CLI
 ``rollout.model.openpi_data.norm_stats_path`` to the statistics used for
 training; for a dual-arm checkpoint, apply the dual-arm settings under
 ``rollout.model``.
+
+The reported curve uses 64 episodes on 8 workers with
+``env.eval.seed: 10000``, 10 executed actions per chunk, 5 denoising steps,
+and ``max_token_len: 200``. Episodes are capped at 1000 environment steps;
+the evaluation rollout budget is 1020. The environment seed fixes reset
+states, while action sampling uses each process's RNG history.
 
 .. note::
 
@@ -537,10 +514,16 @@ Enable video in the env config when needed:
          save_video: True
          video_base_dir: ${runner.logger.log_path}/video/eval
 
-The PPO results below use standalone checkpoint evaluations. For π₀.₅, the
-environment seed fixes the reset states, while action sampling uses each
-process's RNG history. Online and standalone success curves are recorded
-separately.
+.. figure:: /_static/image/dexjoco_pi05_sft_ppo.png
+   :align: center
+   :width: 100%
+   :alt: Success rate through 5000 SFT steps and 150 PPO iterations on water_plant.
+
+   π₀.₅ SFT + PPO on ``water_plant`` (64 evaluation episodes).
+
+The `SFT + PPO report <https://forge.coreweave.com/matthewmzy-peking-university/rlinf-dexjoco/reports/DexJoCo-water_plant:-pi0.5-SFT-to-PPO-B-with-one-evaluation-protocol--VmlldzoxODI0MDM2Nw==>`__
+contains the evaluation curves and source logs. The PPO results below use
+standalone checkpoint evaluations.
 
 .. list-table::
    :header-rows: 1
@@ -553,8 +536,6 @@ separately.
    * - CNN + PPO
      - Continuing SFT step 8000 with action-level PPO on 8 H100 GPUs raises success from 42/64 (65.6%) to 59/64 (92.2%) at the planned final iteration 200. Checkpoints at iterations 0/10/20/40/80/120/150/200 give 42/40/49/48/55/57/61/59 successes out of 64. The run uses policy LR 1e-5 and global batch 1600. All checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000`` and 10-action chunks.
    * - π₀.₅ + SFT
-     - On ``water_plant``, the step-5000 checkpoint (16 H100 GPUs, global batch 32) succeeds in 50 of 64 evaluation episodes (78%) when the policy executes 10 actions per chunk with 5 denoising steps; executing all 30 predicted actions with 10 denoising steps gives 30 of 64 (47%).
+     - On ``water_plant``, SFT step 5000 reaches 44/64 (68.75%) after training on 16 H100 GPUs with global batch 32.
    * - π₀.₅ + PPO
-     - Continuing SFT step 5000 with the chunk-level recipe on 8 H100 GPUs reaches 55/64 (85.9%) at the planned final PPO iteration 150, compared with 50/64 (78.1%) at initialization. Checkpoints at iterations 0/10/20/28/40/60/80/91/100/120/150 give 50/48/52/48/45/52/55/56/58/59/55 successes out of 64. All checkpoints use the same 64-episode evaluation on 8 workers, with ``env.eval.seed: 10000``, 10 executed actions per chunk, and 5 denoising steps.
-   * - π₀.₅ + PPO (token-level)
-     - The optional token-level recipe reaches 63/64 (98.4%) at iteration 150 from the same 50/64 (78.1%) baseline. At the same checkpoints and under the same evaluation protocol, it gives 50/46/49/52/56/60/62/61/62/64/63 successes out of 64.
+     - Token-level PPO on 8 H100 GPUs reaches 63/64 (98.44%) at the planned final iteration 150, with a peak of 64/64 (100%) at iteration 120.

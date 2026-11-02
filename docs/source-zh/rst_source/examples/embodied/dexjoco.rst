@@ -377,39 +377,9 @@ CNN + PPO
 
 在 ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml`` 中，把 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设为 SFT 的 ``global_step_<N>`` 目录，并把 ``actor.model.openpi_data.norm_stats_path`` 设为 SFT 使用的统计量文件。
 
-报告中的训练从 SFT 第 5000 步开始，使用 8 张 H100 GPU，共训练 150 轮。复现时设置以下字段；把 ``runner.max_epochs`` 改为 150 时，仍将学习率调度总步数保持为 1000，与报告中的训练一致：
+默认配方使用 token-level log-probability，policy 学习率为 5e-6，value head 学习率为 2e-4。报告中的训练从 SFT 第 5000 步开始，使用 8 张 H100 GPU，共训练 150 轮，每轮评测并保存检查点。学习率调度总步数（``actor.optim.total_training_steps``）为 1000，独立于 150 轮的训练预算。训练种子为 42，评测种子为 10000，并关闭视频录制和 Torch 编译。
 
-.. code:: yaml
-
-   runner:
-     max_epochs: 150
-     val_check_interval: 1
-     save_interval: 1
-   env:
-     train:
-       seed: 42
-     eval:
-       seed: 10000
-       video_cfg:
-         save_video: False
-   actor:
-     model:
-       openpi:
-         torch_compile: False
-     optim:
-       total_training_steps: 1000
-
-已评测的 token-level 可选配方从同一个 SFT 检查点开始，只需在同一配置中改动以下两个字段：
-
-.. code:: yaml
-
-   algorithm:
-     logprob_type: token_level
-   actor:
-     optim:
-       lr: 5.0e-6
-
-查看其 `运行日志 <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-c3de8862f92d>`__ 需要 W&B 项目访问权限。设置所选配方的字段后，运行：
+设置模型和统计量路径后，启动训练：
 
 .. code:: bash
 
@@ -421,9 +391,11 @@ CNN + PPO
 2. 为 actor、rollout 和 DexJoCo env 组件创建 Ray worker。
 3. 运行 PPO rollout，计算稀疏成功奖励，并更新 OpenPI policy。
 
-每次决策执行预测的 30 个动作中的前 10 个，并用 5 步去噪采样，这也会提高 SFT policy 本身的成功率（见下文）。每轮采集 128 个环境 × 2 个 rollout epoch 的数据并对其做一个 PPO epoch；前 50 个优化器步只训练价值头（``actor.optim.critic_warmup_steps``）。
+每次决策执行预测的 30 个动作中的前 10 个，用 5 步去噪采样。每轮采集 128 个环境 × 2 个 rollout epoch 的数据，执行一个 PPO epoch，全局批量为 1024，微批量为 64。前 50 个优化器步只训练 value head（``actor.optim.critic_warmup_steps``）。
 
 独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_openpi_pi05_eval``。把 ``rollout.model.model_path`` 设为 SFT 或 PPO 检查点，把 ``rollout.model.openpi_data.norm_stats_path`` 设为训练时使用的统计量文件；评测双臂检查点时，在 ``rollout.model`` 下使用同样的双臂设置。
+
+报告中的曲线使用 8 个 worker 评测 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作，去噪 5 步，``max_token_len: 200``。每个回合上限为 1000 个环境步，评测 rollout 预算为 1020 步。环境种子固定 reset 状态，动作采样使用各进程的随机数历史。
 
 .. note::
 
@@ -460,7 +432,14 @@ CNN + PPO
          save_video: True
          video_base_dir: ${runner.logger.log_path}/video/eval
 
-下表的 PPO 结果来自检查点的独立评测。对于 π₀.₅，环境种子固定 reset 状态，动作采样则使用各进程的随机数历史。在线与独立评测的成功率曲线分别记录。
+.. figure:: /_static/image/dexjoco_pi05_sft_ppo.png
+   :align: center
+   :width: 100%
+   :alt: π₀.₅ 在 water_plant 上经过 5000 步 SFT 和 150 轮 PPO 的成功率。
+
+   π₀.₅ 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测回合）。
+
+`SFT + PPO 报告 <https://forge.coreweave.com/matthewmzy-peking-university/rlinf-dexjoco/reports/DexJoCo-water_plant:-pi0.5-SFT-to-PPO-B-with-one-evaluation-protocol--VmlldzoxODI0MDM2Nw==>`__ 包含评测曲线和原始日志。下表的 PPO 结果来自检查点的独立评测。
 
 .. list-table::
    :header-rows: 1
@@ -473,8 +452,6 @@ CNN + PPO
    * - CNN + PPO
      - 从 SFT 第 8000 步继续使用 action-level PPO 在 8 张 H100 GPU 上训练，到预定终点第 200 轮时，成功率从 42/64（65.6%）升至 59/64（92.2%）。第 0/10/20/40/80/120/150/200 轮的 64 个回合分别成功 42/40/49/48/55/57/61/59 个。训练使用 1e-5 的 policy 学习率和 1600 的全局批量。所有检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作。
    * - π₀.₅ + SFT
-     - 在 ``water_plant`` 上，第 5000 步的检查点（16 张 H100 GPU，全局批量 32）在每块执行 10 个动作、5 步去噪时于 64 个评测回合中成功 50 个（78%）；执行全部 30 个预测动作并用 10 步去噪时为 30 个（47%）。
+     - 在 ``water_plant`` 上，使用 16 张 H100 GPU、全局批量 32 训练到 SFT 第 5000 步，成功率达到 44/64（68.75%）。
    * - π₀.₅ + PPO
-     - 从 SFT 第 5000 步继续使用 chunk-level 配方在 8 张 H100 GPU 上训练，在预定终点 PPO 第 150 轮达到 55/64（85.9%），初始化时为 50/64（78.1%）。第 0/10/20/28/40/60/80/91/100/120/150 轮的 64 个回合分别成功 50/48/52/48/45/52/55/56/58/59/55 个。所有检查点均使用 8 个 worker 评测相同的 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作，去噪 5 步。
-   * - π₀.₅ + PPO（token-level）
-     - 可选的 token-level 配方从相同的 50/64（78.1%）基线出发，在第 150 轮达到 63/64（98.4%）。在相同检查点使用相同评测协议，64 个回合分别成功 50/46/49/52/56/60/62/61/62/64/63 个。
+     - 使用 token-level PPO 在 8 张 H100 GPU 上训练，在预定终点第 150 轮达到 63/64（98.44%），第 120 轮达到峰值 64/64（100%）。

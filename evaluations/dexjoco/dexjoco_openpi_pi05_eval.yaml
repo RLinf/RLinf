@@ -42,11 +42,11 @@ env:
     auto_reset: False
     ignore_terminations: False
     max_episode_steps: 1000
-    max_steps_per_rollout_epoch: 1000
+    max_steps_per_rollout_epoch: 1020
     is_eval: True
-    seed: 42
+    seed: 10000
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
@@ -64,5 +64,6 @@ rollout:
     openpi:
       task: eval
       config_name: "pi05_dexjoco"
+      torch_compile: False
     openpi_data:
       norm_stats_path: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json"

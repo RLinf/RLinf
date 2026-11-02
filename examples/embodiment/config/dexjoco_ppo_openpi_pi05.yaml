@@ -26,12 +26,12 @@ runner:
     experiment_name: "dexjoco_ppo_openpi_pi05"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1000
+  max_epochs: 150
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 5
-  save_interval: 10
+  val_check_interval: 1
+  save_interval: 1
 
   resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
   ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
@@ -43,7 +43,7 @@ algorithm:
   reward_coef: 1.0
 
   reward_type: chunk_level
-  logprob_type: chunk_level
+  logprob_type: token_level
   entropy_type: token_level
 
   update_epoch: 1
@@ -69,6 +69,7 @@ env:
 
   # Override the default values in env/dexjoco
   train:
+    seed: 42
     rollout_epoch: 2
     total_num_envs: 128
     max_episode_steps: 1000
@@ -81,9 +82,9 @@ env:
     max_episode_steps: 1000
     max_steps_per_rollout_epoch: 1000
     is_eval: True
-    seed: 42
+    seed: 10000
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
@@ -118,11 +119,12 @@ actor:
       config_name: "pi05_dexjoco"
       num_images_in_input: 2
       value_after_vlm: True
+      torch_compile: False
     openpi_data:
       norm_stats_path: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json"
 
   optim:
-    lr: 3.0e-6
+    lr: 5.0e-6
     value_lr: 2.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
@@ -130,7 +132,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
     critic_warmup_steps: 50
-    total_training_steps: ${runner.max_epochs}
+    total_training_steps: 1000
     lr_warmup_steps: -1
     lr_scheduler: "cosine" # Learning rate scheduler type. Choices: ["constant", "cosine"]. Default: "constant".
     num_cycles: 0.5
