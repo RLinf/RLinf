@@ -475,6 +475,8 @@ def zed(width: int = 64, height: int = 48) -> dict[str, types.ModuleType]:
 #: Native dimensions and format required by the LUMOS driver.
 _LUMOS_W = _LUMOS_H = 1280
 _YU12 = 0x32315559
+#: OpenCV backend id the LUMOS driver passes; a generic webcam uses the default.
+_CAP_V4L2 = 200
 
 
 def opencv() -> types.ModuleType:
@@ -491,8 +493,10 @@ def opencv() -> types.ModuleType:
         def __init__(self, path: Any, api: Any = None):
             opens.append(path)
             self.path = path
+            self.api = api
             self.released = False
             self._properties: dict[int, float] = {}
+            self._count = 0
 
         def isOpened(self):
             return not self.released
@@ -502,20 +506,32 @@ def opencv() -> types.ModuleType:
             return True
 
         def get(self, prop):
-            # Report back what the device really supports, not what was asked
-            # for: the driver checks these and refuses a mismatch.
-            fixed = {
-                _Props.FOURCC: float(_YU12),
-                _Props.FRAME_WIDTH: float(_LUMOS_W),
-                _Props.FRAME_HEIGHT: float(_LUMOS_H),
-            }
-            return fixed.get(prop, self._properties.get(prop, 0.0))
+            # The LUMOS driver opens with CAP_V4L2 and checks the native YU12
+            # format, so report that fixed stream. A generic webcam reports
+            # back whatever was asked for.
+            if self.api == _CAP_V4L2:
+                fixed = {
+                    _Props.FOURCC: float(_YU12),
+                    _Props.FRAME_WIDTH: float(_LUMOS_W),
+                    _Props.FRAME_HEIGHT: float(_LUMOS_H),
+                }
+                return fixed.get(prop, self._properties.get(prop, 0.0))
+            return self._properties.get(prop, 0.0)
 
         def read(self):
             if self.released:
                 return False, None
-            # One I420 plane set, flat, exactly as V4L2 delivers it.
-            return True, np.zeros(_LUMOS_W * _LUMOS_H * 3 // 2, dtype=np.uint8)
+            if self.api == _CAP_V4L2:
+                # One I420 plane set, flat, exactly as V4L2 delivers it.
+                return True, np.zeros(_LUMOS_W * _LUMOS_H * 3 // 2, dtype=np.uint8)
+            # A generic webcam returns BGR at the requested size; the first
+            # pixel advances so tests can detect a fresh frame.
+            self._count += 1
+            width = int(self._properties.get(_Props.FRAME_WIDTH, 64))
+            height = int(self._properties.get(_Props.FRAME_HEIGHT, 48))
+            frame = np.zeros((height, width, 3), dtype=np.uint8)
+            frame[0, 0, 0] = self._count % 256
+            return True, frame
 
         def release(self):
             self.released = True

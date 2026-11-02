@@ -48,6 +48,7 @@ from rlinf.robotics import (
     FrankaRobot,
     GimArmConfig,
     LegacyObservationAdapter,
+    LeKiwiConfig,
     MethodArm,
     MethodEndEffector,
     PartGroup,
@@ -483,6 +484,7 @@ def test_all_builtin_configs_construct_from_a_node_rank_alone():
     configs = [
         GimArmConfig(node_rank=0),
         DOSW1RobotConfig(node_rank=0),
+        LeKiwiConfig(node_rank=0),
         Turtle2Config(node_rank=0),
     ]
 
@@ -4289,6 +4291,94 @@ def test_orbbec_camera_has_local_remote_observation_parity(node_rank):
         assert not camera.is_connected
 
 
+def test_a_webcam_runs_against_a_faked_sdk():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.cameras.base import CameraInfo
+        from rlinf.robotics.parts.cameras.webcam import WebcamCamera
+
+        camera = WebcamCamera(
+            CameraInfo(
+                name="webcam",
+                serial_number="0",
+                camera_type="webcam",
+                fps=10,
+                resolution=(64, 48),
+            )
+        )
+        assert not camera.is_connected
+        camera.connect()
+        assert camera.is_connected
+
+        frame = camera.get_observation()["frame"]
+        assert frame.shape == (48, 64, 3)
+        assert frame.dtype == np.uint8
+
+        camera.disconnect()
+        assert not camera.is_connected
+
+
+def test_a_webcam_opens_a_by_id_serial_from_discover(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.cameras.base import CameraInfo
+        from rlinf.robotics.parts.cameras.webcam import WebcamCamera
+
+        # A basename from WebcamCamera.discover() on Linux, where /dev/v4l
+        # nodes are not stable and detection reports by-id names.
+        basename = "usb-USB_Camera_USB_Camera_2505280051-video-index0"
+        by_id = f"/dev/v4l/by-id/{basename}"
+
+        def exists(path, _real=os.path.exists):
+            return path == by_id or _real(path)
+
+        monkeypatch.setattr(os.path, "exists", exists)
+
+        camera = WebcamCamera(
+            CameraInfo(
+                name="webcam",
+                serial_number=basename,
+                camera_type="webcam",
+                fps=10,
+                resolution=(64, 48),
+            )
+        )
+        camera.connect()
+        try:
+            frame = camera.get_observation()["frame"]
+            assert frame.shape == (48, 64, 3)
+        finally:
+            camera.disconnect()
+        # The by-id basename must reach cv2 as a full device path, not the
+        # bare name, which would fail to open on the robot.
+        assert made["cv2"].opens == [by_id]
+
+
+def test_a_webcam_discovery_lists_one_node_per_camera(monkeypatch):
+    from rlinf.robotics.parts.cameras import webcam
+
+    # Each camera exports its frames on index 0 and a metadata node beside it.
+    nodes = [
+        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0",
+        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index1",
+        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index0",
+        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index1",
+    ]
+    monkeypatch.setattr(webcam.glob, "glob", lambda _pattern: nodes)
+
+    assert webcam.WebcamCamera._linux_devices() == [
+        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index0",
+        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0",
+    ]
+
+    # A camera that exposes only a higher index is still listed.
+    only_higher = ["/dev/v4l/by-id/usb-Odd_Cam_1-video-index1"]
+    monkeypatch.setattr(webcam.glob, "glob", lambda _pattern: only_higher)
+    assert webcam.WebcamCamera._linux_devices() == only_higher
+
+
 def test_a_real_arm_runs_against_a_faked_sdk():
     from robot_mocks import mocked_sdks
 
@@ -4654,6 +4744,7 @@ def test_the_bench_check_runs_a_whole_robot_on_fakes():
 def test_every_shipped_robot_runs_on_faked_sdks():
     from robot_mocks import mocked_sdks
 
+    from rlinf.robotics.parts.cameras import CameraInfo
     from toolkits.realworld_check.check_robot_parts import check
 
     robots = {
@@ -4697,6 +4788,19 @@ def test_every_shipped_robot_runs_on_faked_sdks():
             "left_can_channel": "can0",
             "right_can_channel": "can1",
         },
+        "LeKiwi": {
+            "node_rank": 0,
+            "port": "/dev/ttyACM0",
+            "cameras": {
+                "front": CameraInfo(
+                    name="front",
+                    serial_number="0",
+                    camera_type="webcam",
+                    resolution=(64, 48),
+                    fps=5,
+                )
+            },
+        },
     }
     with mocked_sdks():
         import rlinf.robotics.robots  # noqa: F401
@@ -4704,6 +4808,93 @@ def test_every_shipped_robot_runs_on_faked_sdks():
         failed = [name for name, args in robots.items() if check(name, args) != 0]
 
     assert failed == []
+
+
+def test_lekiwi_base_drives_and_reads_back_velocity():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.mobility import LeKiwiBase
+
+        base = LeKiwiBase("/dev/ttyACM0")
+        assert base.observation_features == {
+            "velocity": {"shape": (3,), "dtype": "float32"}
+        }
+        assert base.action_features == base.observation_features
+
+        base.connect()
+        try:
+            # The base starts at rest.
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.0, 0.0, 0.0], atol=1e-6
+            )
+
+            # A forward command round-trips through the wheel kinematics.
+            applied = base.send_action(
+                {"velocity": np.array([0.1, 0.0, 0.0], dtype=np.float32)}
+            )
+            np.testing.assert_allclose(applied["velocity"], [0.1, 0.0, 0.0], atol=0.02)
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.1, 0.0, 0.0], atol=0.02
+            )
+
+            # Lateral and spin round-trip together, in one command.
+            base.send_action({"velocity": np.array([0.0, 0.1, 30.0], dtype=np.float32)})
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.0, 0.1, 30.0], atol=0.3
+            )
+
+            # reset() stops the base.
+            base.reset()
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.0, 0.0, 0.0], atol=1e-6
+            )
+        finally:
+            base.disconnect()
+
+        bus = made["lerobot.motors.feetech"].FeetechMotorsBus.instances[-1]
+        assert not bus.is_connected
+        assert bus.disable_calls >= 1, "release must drop torque"
+
+
+def test_lekiwi_wheel_mapping_matches_lerobot():
+    """Per-wheel signs and units are lerobot's LeKiwi contract."""
+    import math
+
+    from rlinf.robotics.parts.mobility import body_to_wheel_raw
+
+    def rounded(x, y, theta, **kwargs):
+        return {
+            name: round(value)
+            for name, value in body_to_wheel_raw(x, y, theta, **kwargs).items()
+        }
+
+    assert rounded(0.0, 0.0, 0.0) == {"left": 0, "back": 0, "right": 0}
+    assert rounded(0.1, 0.0, 0.0) == {"left": -1129, "back": 0, "right": 1129}
+    assert rounded(0.0, 0.1, 0.0) == {"left": 652, "back": -1304, "right": 652}
+    assert rounded(0.0, 0.0, 30.0) == {"left": 853, "back": 853, "right": 853}
+    assert rounded(-0.1, 0.0, 0.0) == {
+        name: -value for name, value in rounded(0.1, 0.0, 0.0).items()
+    }
+
+    for not_finite in ((math.nan, 0.0, 0.0), (0.0, math.inf, 0.0)):
+        with pytest.raises(ValueError):
+            body_to_wheel_raw(*not_finite)
+    with pytest.raises(ValueError):
+        body_to_wheel_raw(0.0, 0.0, 0.0, wheel_radius=0.0)
+
+
+def test_lekiwi_wheel_limit_slows_a_direction_instead_of_skewing_it():
+    from rlinf.robotics.parts.mobility import body_to_wheel_raw, limit_wheel_raw
+
+    raw = body_to_wheel_raw(0.3, 0.2, 90.0)
+    peak = max(abs(value) for value in raw.values())
+    limited, scale = limit_wheel_raw(raw, 100)
+
+    assert max(abs(value) for value in limited.values()) == 100
+    assert scale == pytest.approx(peak / 100)
+    for name, value in raw.items():
+        assert limited[name] == round(value / scale)
 
 
 def test_a_worker_installs_the_fakes_for_itself():
