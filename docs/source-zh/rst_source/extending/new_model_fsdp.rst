@@ -373,3 +373,27 @@ FSDP CPU 参数 offload 使用计算 dtype 准备梯度（``param_dtype``，未�
 wrapper 保留梯度。优化器沿用参数分组和优化器配置，在更新时将梯度转为 FP32，
 并保持 FP32 优化器状态。原始 BF16/FP16 参数还会有一份 FP32 master weights。
 使用原生 AdamW 时，保持默认的 ``keep_low_precision_grads: false``。
+
+FP32 master weights 同时解锁了低精度参数的全量微调。原生 AdamW 以原地方式
+更新这类参数，小于参数 dtype 半个 ULP 的更新会被圆整掉：以 bf16 权重和较小的
+学习率（例如 ``lr=5e-6``）为例，所有满足 ``|w| >= lr * 2^8`` 的元素完全不会
+变化。``use_fp32_master_params: true`` 可以消除该死区，支持 FSDP1 的全部
+sharding 策略以及 FSDP2：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       precision: null        # 保持发布配置中的低精度模型
+     optim:
+       use_fp32_master_params: true
+     fsdp_config:
+       strategy: fsdp          # 或 fsdp2
+       sharding_strategy: full_shard
+
+优化器会为每个低精度可训练参数维护一份 FP32 master 拷贝和 FP32 动量，约需
+为每个可训练参数多付出 8 字节优化器内存。分片优化器状态 checkpoint 可以通过
+``torch.distributed.checkpoint`` 完整往返，从 checkpoint 恢复的训练与不间断
+训练逐位一致。注意：从默认的低精度优化器路径切换过来会改变训练动力学——
+此前被圆整冻结的权重开始更新，与默认配置的训练结果对比时需要重新调整学习率
+和探索噪声。
