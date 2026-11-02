@@ -1,70 +1,44 @@
 Heterogeneous Envs
 ==================
 
-This page shows you how to run heterogeneous envs: different env workers of one
-run step different env configurations, while one policy acts in all of them
-during the same rollout. Use it to co-train on ManiSkill and LIBERO, to mix two
-LIBERO suites, or to run a simulator next to a real robot.
+This page shows you how to train or evaluate one policy on several different env
+configurations in the same run, such as ManiSkill and LIBERO, two LIBERO suites,
+or a simulator next to a real robot. RLinf calls this heterogeneous envs.
 
-By default, ``env.train`` and ``env.eval`` each hold a single env configuration.
-Every env worker runs it, and ``total_num_envs`` only sets how many parallel
-copies of it run; this page calls that case homogeneous. ``env.train`` or
-``env.eval`` becomes heterogeneous when it lists several env configurations
-under ``envs``. Heterogeneous hardware (:doc:`hetero`) is a separate feature: it
-decides which nodes the workers run on, not which env each worker runs. The two
-combine when an env needs particular hardware, such as a robot.
+It is different from ``total_num_envs``, which runs many parallel copies of one
+env configuration, and from :doc:`hetero`, which decides which machines the
+workers run on. You'll first see how heterogeneous envs run, then configure
+them, decide which env workers run which env, make the observations fit the
+policy, and read the results of each env.
 
-The page first explains how heterogeneous envs run, because each later step
-follows from that: how to configure them, how RLinf assigns env configurations
-to env workers, how observations are aligned for the policy, and how to read
-per-env results. It ends with a runnable example and the current limitations.
+How It Works
+------------
 
-How Heterogeneous Envs Run
---------------------------
+Normally every env worker runs the same env configuration. With heterogeneous
+envs, each env worker still runs exactly one env configuration, but different
+workers can run different ones.
 
-Three terms keep the rest of the page precise:
+The rest of the training loop stays the same. Rollout collects the observations
+of all env workers into one batch, runs the policy once, and sends each worker
+the actions for its own envs. Each worker converts those actions for its
+simulator or robot and steps it. The actor then trains on all trajectories
+together.
 
-- An **env configuration** is one complete env setup: ``env_type``, task,
-  ``init_params``, reward options, and so on.
-- An **env instance** is one parallel copy of an env configuration.
-  ``total_num_envs`` counts env instances.
-- An **env worker** is one env worker process. ``W`` denotes the number of env
-  workers.
+Because everything meets in one batch, two rules apply:
 
-With a homogeneous ``env.train``, every env worker builds the same env
-configuration and steps ``total_num_envs / W`` instances of it. Heterogeneous
-envs keep this unit of work, one env configuration per env worker, and only let
-different env workers build different env configurations. One rollout step then
-runs as usual:
+- Every env worker runs the same number of parallel envs.
+- Every env configuration sends the policy the same kinds of observations at the
+  same image size.
 
-1. Each env worker steps its env instances and sends their observations to
-   rollout over the env-rollout channel.
-2. Each rollout worker concatenates the observations it receives into one
-   batch, runs the policy once, and sends each env worker the actions for its
-   rows.
-3. Each env worker converts its actions for its own ``env_type`` and steps its
-   env instances.
-4. After the rollout, the actor trains on the trajectories of all env workers
-   together.
-
-Rollout, actor, and runner have no per-env-type code paths, and every
-simulator or robot SDK runs in its own process. Steps 1 and 2 impose two
-requirements on the env configurations that run together:
-
-- **Equal batches.** The env-rollout channel expects every env worker to send a
-  batch of the same size, so every env worker must host the same number of env
-  instances. `Assign Env Configurations to Env Workers`_ shows how RLinf sizes
-  the workers.
-- **Stackable observations.** Rollout concatenates observations key by key, so
-  every env configuration must send the same keys with the same shapes.
-  `Align Observations for the Policy`_ shows how to conform them.
+The sections below show how RLinf handles the first rule for you and how you
+handle the second one.
 
 Configure Heterogeneous Envs
 ----------------------------
 
-To make ``env.train`` heterogeneous, put its env configurations under ``envs``
-and give each one a name. The config below trains on LIBERO-Goal and a ManiSkill
-scene with 8 env instances each:
+List the env configurations under ``env.train.envs``, each under a name you
+choose. This config trains on LIBERO-Goal and a ManiSkill scene with 8 parallel
+envs each:
 
 .. code-block:: yaml
 
@@ -86,93 +60,29 @@ scene with 8 env instances each:
            max_episode_steps: 8
            max_steps_per_rollout_epoch: 8
 
-Each defaults line of the form ``env/<preset>@env.train.envs.<name>`` loads an
-env preset as the env configuration ``<name>``. You choose the names; RLinf uses
-them in metric keys and video paths. Each env configuration under ``envs`` has
-the same keys a homogeneous ``env.train`` has, and its ``total_num_envs`` is its
-number of env instances. ``env.eval`` is configured the same way. The two are
-independent, so either one can stay homogeneous.
+Each ``defaults`` line loads an env preset under a name, here ``libero_goal`` and
+``maniskill``. Each env configuration takes the same settings as a normal
+``env.train``, and its ``total_num_envs`` is its own number of parallel envs.
+``env.eval`` works the same way and is independent, so you can train on two env
+configurations and evaluate on one.
 
-With ``envs`` set, ``env.train`` itself keeps only fields that describe the
-whole rollout. You set some of them, and RLinf derives the others from the env
-configurations:
+A few settings belong to the shared rollout loop, so every env configuration
+must give them the same value: ``max_steps_per_rollout_epoch``, ``auto_reset``,
+and ``ignore_terminations``. Env presets ship different defaults, so set them on
+each env configuration, as the example does. ``max_episode_steps`` may differ
+between env configurations; when it does in training, also set
+``env.train.max_episode_steps``, which the actor uses to normalize the loss.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 15 45
+Put every other setting, such as videos or rewards, inside the env configuration
+it belongs to. RLinf fills in the totals, such as ``env.train.total_num_envs``,
+on its own, and stops at startup with a clear message when settings conflict.
 
-   * - Field of ``env.train``
-     - Set by
-     - Value
-   * - ``envs``
-     - You
-     - The env configurations, keyed by name.
-   * - ``rollout_epoch``
-     - You
-     - Rollout epochs per training step, as in a homogeneous ``env.train``.
-   * - ``policy_obs``
-     - You (optional)
-     - The observation format the policy receives; see
-       `Align Observations for the Policy`_.
-   * - ``total_num_envs``
-     - RLinf
-     - The sum of the env configurations' ``total_num_envs``; 16 in the example.
-   * - ``max_steps_per_rollout_epoch``, ``auto_reset``, ``ignore_terminations``
-     - RLinf
-     - Copied from the env configurations, which must all set the same value.
-   * - ``max_episode_steps``
-     - RLinf or you
-     - Copied when all env configurations agree. In ``env.train``, set it
-       yourself when they differ.
+Assign Env Workers
+------------------
 
-The copied fields describe the shared rollout loop, not one env. Rollout steps
-every env worker in lockstep, for ``max_steps_per_rollout_epoch`` env steps per
-rollout epoch. The actor applies one ``auto_reset`` and ``ignore_terminations``
-rule to the whole batch when it masks finished episodes, and it normalizes the
-loss by one ``max_episode_steps``. Each env configuration may still truncate its
-own episodes at a different ``max_episode_steps``. Presets ship different
-defaults (LIBERO-Goal runs 320 steps per rollout epoch, the ManiSkill scene 80),
-so set the shared fields on every env configuration, as the example does.
-
-RLinf derives these fields once, while it validates the config at startup, and
-writes them onto ``env.train``. Rollout, actor, and runner then read them exactly
-as they do for a homogeneous ``env.train``. If you set one of them yourself, it
-must equal the derived value. Any other key directly under ``env.train``, such as
-``env.train.video_cfg``, is rejected because no env would read it, so set it on
-each env configuration instead.
-
-Validation also checks every env configuration and stops the run with a message
-that names the env configuration and the conflicting values:
-
-- Every env configuration sets ``env_type`` and a positive integer
-  ``total_num_envs``.
-- The copied fields have one value across the env configurations.
-- Env-type rules run on each env configuration they apply to. ManiSkill env
-  configurations get ``init_params.control_mode`` from the model's
-  ``policy_setup``, Behavior env configurations must use ``r1pro_behavior``, and
-  with online LeRobot collection, LIBERO, RoboTwin, and Behavior env
-  configurations need ``skip_intermediate_renders: False``.
-- Each env configuration's ``group_size`` divides the number of env instances
-  per env worker and pipeline stage, so a GRPO group never spans two env
-  configurations.
-
-Assign Env Configurations to Env Workers
-----------------------------------------
-
-Once validation has derived the totals, RLinf assigns each env configuration a
-contiguous block of env worker ranks, in the order they are listed under
-``envs``. With ``W`` env workers and env configurations of ``n_1, ..., n_k``
-env instances:
-
-1. Each env worker hosts ``e = (n_1 + ... + n_k) / W`` env instances. The sum
-   must be divisible by ``W``.
-2. Env configuration ``i`` gets ``n_i / e`` env workers. Each ``n_i`` must be a
-   multiple of ``e``.
-3. The first env configuration takes ranks ``0`` to ``n_1 / e - 1``, the second
-   the next ``n_2 / e`` ranks, and so on.
-
-For example, with 4 env workers, 48 LIBERO-Goal instances, and 16 ManiSkill
-instances, ``e = 64 / 4 = 16``:
+RLinf splits the env workers among the env configurations in the order you list
+them, in proportion to their ``total_num_envs``. Say ``env`` runs on 4 workers,
+with 48 LIBERO-Goal envs and 16 ManiSkill envs. Each worker then runs 16 envs:
 
 .. list-table::
    :header-rows: 1
@@ -180,7 +90,7 @@ instances, ``e = 64 / 4 = 16``:
 
    * - Env configuration
      - ``total_num_envs``
-     - Env worker ranks
+     - Env workers
    * - ``libero_goal``
      - 48
      - 0, 1, 2
@@ -188,65 +98,33 @@ instances, ``e = 64 / 4 = 16``:
      - 16
      - 3
 
-With 2 env workers instead, ``e = 32``, and ``libero_goal`` would need 1.5
-workers, so validation fails. Change the instance counts or the number of env
-workers until every env configuration gets whole workers.
+Each env configuration must fill whole workers. On 2 workers, LIBERO-Goal would
+need one and a half, so RLinf rejects the config; change the counts or the number
+of workers.
 
-Inside its block, an env configuration runs as if it were alone on ``n_i / e``
-env workers. Each env worker gets a local rank, its rank minus the first rank of
-the block, and uses it wherever a homogeneous env uses the global rank:
+On its workers, an env configuration behaves as if it ran alone: seeds and reset
+states are split among its own workers, and an ``override_cfgs`` list has one
+item per worker of that env configuration.
 
-- Seeds and reset states are partitioned across the workers of the block only.
-- Item ``k`` of an env configuration's ``override_cfgs`` applies to local rank
-  ``k`` of its block, so the list has one item per worker of the block.
-
-The seeds and reset states of an env configuration therefore depend on the env
-configuration itself and its block size, not on where its block starts.
-
-Rank order follows the ``env`` placement, so the placement decides where each
-block runs. Several env workers can share one GPU: ``env: 0:0-1`` places ranks 0
-and 1 on GPU 0. To run an env configuration on robot hardware, place the ranks of
-its block on the robot nodes; :doc:`hetero` describes node groups.
+The ``env`` placement decides where these workers run. Several env workers can
+share one GPU, for example ``env: 0:0-1``. To drive a real robot, place the
+workers of that env configuration on the robot's node; :doc:`hetero` shows how.
 
 .. warning::
 
-   Ranks are assigned by listing order. If you reorder the env configurations or
-   change an instance count, the env configuration that each rank runs changes
-   too, and a real-robot env configuration could end up on a GPU node. Check the
-   placement whenever you edit either.
+   Workers follow the listing order. Reordering ``envs`` or changing a count
+   changes which env each worker runs, so check the placement afterwards,
+   especially with real robots.
 
-Align Observations for the Policy
----------------------------------
+Match Observations
+------------------
 
-Every env worker now runs its own env configuration, but its observations still
-end up in one policy batch. Each env worker sends rollout these keys:
+Rollout stacks the observations of all env workers into one batch, so they must
+match. Envs from different simulators usually don't: LIBERO sends a main camera
+and a wrist camera at 256x256, while the ManiSkill scene sends one 480x640
+camera. Without a fix, rollout stops with an error.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Key
-     - Shape
-   * - ``main_images``
-     - ``[B, H, W, C]``
-   * - ``wrist_images``
-     - ``[B, H, W, C]`` or ``[B, V, H, W, C]`` for ``V`` views
-   * - ``extra_view_images``
-     - ``[B, V, H, W, C]``
-   * - ``states``
-     - ``[B, D]``
-   * - ``task_descriptions``
-     - ``B`` strings
-
-When rollout concatenates the batches of several env workers, each key must be
-present on all of them or on none, and its tensors must match in every dimension
-after ``B``. Env configurations from different simulators rarely meet this. In
-the example, LIBERO sends a 256x256 main view and a wrist view, while the
-ManiSkill scene sends one 480x640 (height x width) main view and no wrist view,
-so rollout stops with ``Cannot merge present and absent batch values``.
-
-Set ``policy_obs`` on ``env.train`` or ``env.eval`` to give every env worker the
-same output format:
+Set ``policy_obs`` to choose what the policy receives:
 
 .. code-block:: yaml
 
@@ -256,61 +134,39 @@ same output format:
          keys: [main_images, task_descriptions]
          image_size: [256, 256]
 
-``keys`` lists the keys the policy receives. Every other key is sent as
-``None``, so it is absent from the batch of every env worker. ``image_size`` is
-``[height, width]``. Every image key is resized to it with antialiased bilinear
-interpolation over ``H`` and ``W``, and the other dimensions stay as they are.
-Integer images are rounded and clamped, so ``uint8`` stays ``uint8``. Images
-already at that size pass through unchanged. With this setting, both env
-configurations in the example send ``main_images`` as ``[B, 256, 256, 3]``
-``uint8``, plus ``task_descriptions``, which is what OpenVLA-OFT reads.
+``keys`` lists the observations the policy reads; the others are not sent.
+``image_size`` resizes every camera image to one height and width. Here both
+envs send a 256x256 main camera image and the task text, which is what
+OpenVLA-OFT reads.
 
-Each env worker applies ``policy_obs`` only to the copy of the observations it
-sends to rollout, in both training and evaluation. Reward models, video
-recording, and data collection still receive the env's original observations.
-The resize runs once per image key and chunk step, on the device where the env
-produced the images: the CPU for LIBERO, and the simulation GPU for ManiSkill's
-GPU backend. Leave ``image_size`` out when the env configurations already agree
-on resolution. ``policy_obs`` also works with a homogeneous ``env.train`` or
-``env.eval``.
+Only the policy's copy changes. Reward models, videos, and data collection still
+see each env's original observations. Resizing costs time on every step, so
+leave ``image_size`` out when the image sizes already match. ``policy_obs`` does
+not resize robot states, so a policy that reads ``states`` needs env
+configurations whose states have the same size.
 
-Actions need no matching setting. Rollout returns one action tensor, and each
-env worker converts its rows for its own ``env_type`` before it steps its env.
-The policy still produces one action space with one action normalization, which
-for OpenVLA-OFT means one ``unnorm_key``. Every env configuration must therefore
-accept the same kind of action, such as a 7-dimensional end-effector delta with a
-gripper command.
+Actions go the other way without extra settings: each env worker converts its
+share of the policy's actions for its own env. The policy still has one action
+format and one action normalization (one ``unnorm_key`` for OpenVLA-OFT), so all
+env configurations must accept the same kind of action.
 
 Read Per-Env Results
 --------------------
 
-A training step now mixes episodes from several env configurations, so RLinf
-reports each metric both pooled and per env configuration. With heterogeneous
-envs, every env worker reports each metric twice, under its usual key and under
-``<name>/<key>``. The runner concatenates the per-episode values of all env
-workers that report a key and averages them:
+Each metric is logged twice: once for all envs together and once for each env
+configuration. ``env/success_once`` covers every episode, and
+``env/libero_goal/success_once`` covers LIBERO-Goal only. Evaluation metrics
+follow the same pattern under ``eval/``.
 
-- ``env/success_once`` is the mean over all episodes of all env configurations.
-- ``env/libero_goal/success_once`` is the mean over the episodes of
-  ``libero_goal`` only.
-
-Evaluation reports under ``eval/`` the same way, and every env metric gets a
-per-env-configuration copy, including ``episode_len`` and the interaction-delay
-statistics.
-
-Videos go to ``<video_base_dir>/seed_<n>/<name>/``. Each env configuration
-numbers its seeds from 0, so the name keeps env configurations that share a
-``video_base_dir`` from overwriting each other's files. Data-collection files
-are named by the global env worker rank, which already tells the env
-configurations apart.
+Videos are saved under ``<video_base_dir>/seed_<n>/<name>/``, so env
+configurations that share a video folder do not overwrite each other.
 
 Run the Example
 ---------------
 
-The end-to-end test ``maniskill_libero_grpo_openvlaoft`` combines everything on
-this page. It trains OpenVLA-OFT with GRPO on LIBERO-Goal and ManiSkill and
-evaluates on both after every step. You need both simulators in one virtual
-environment, the OpenVLA-OFT checkpoint and LoRA adapter named in the config,
+The end-to-end test ``maniskill_libero_grpo_openvlaoft`` trains OpenVLA-OFT with
+GRPO on LIBERO-Goal and ManiSkill and evaluates on both. It needs both simulators
+in one virtual environment, the checkpoint and LoRA adapter named in the config,
 and 2 GPUs.
 
 .. code-block:: bash
@@ -322,45 +178,23 @@ and 2 GPUs.
 
 What this does:
 
-1. Installs OpenVLA-OFT, ManiSkill, and LIBERO into one virtual environment.
-2. Starts two env workers on GPUs 0 and 1. In both training and evaluation,
-   rank 0 runs ``libero_goal`` and rank 1 runs ``maniskill``.
-3. Runs two GRPO steps and logs ``env/<name>/*`` and ``eval/<name>/*`` for each
-   env configuration in TensorBoard under ``runner.logger.log_path``.
+1. Installs OpenVLA-OFT with ManiSkill and LIBERO.
+2. Runs LIBERO-Goal on env worker 0 and ManiSkill on env worker 1.
+3. Runs two GRPO steps and logs ``env/<name>/*`` and ``eval/<name>/*`` to
+   TensorBoard under ``runner.logger.log_path``.
 
-The test uses 8-step episodes to check the data path. For real co-training,
-raise the horizons and instance counts and keep the shared fields equal. The
-ManiSkill scene also needs its assets under ``rlinf/envs/sim/maniskill/assets``,
-as described in :doc:`../examples/embodied/maniskill`.
+The test uses 8-step episodes to check that everything connects. For real
+training, raise the episode lengths and env counts. The ManiSkill scene also
+needs its assets, as described in :doc:`../examples/embodied/maniskill`.
 
 Limitations
 -----------
 
-All env configurations under one ``envs`` share one policy and one rollout loop,
-which sets these limits:
-
-- The policy has one action space and one action normalization, and it is not
-  told which env configuration a sample came from.
-- ``policy_obs`` resizes images only, so ``states`` must have the same size
-  ``D`` in every env configuration.
-- Every env configuration needs a whole number of env workers, as computed in
-  `Assign Env Configurations to Env Workers`_.
-
-The following features need a homogeneous ``env.train`` or ``env.eval``, or one
-kind of env in it, and stop at startup otherwise:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
-
-   * - Feature
-     - Reason
-   * - Smooth intervention (``smooth_intervene``)
-     - Its actions bypass the policy and cannot share a rollout batch with the
-       policy actions of other env configurations.
-   * - Real-time control evaluation (``runner.rtc``)
-     - The RTC rollout chooses its delay model from the ``env_type`` of a
-       homogeneous ``env.eval``.
-   * - RLT simulator replay
-     - The actor keeps one replay layout, so either every env configuration in
-       ``env.train`` is ``maniskill_rlt`` or none is.
+- The policy has one action format and one action normalization, and it does not
+  know which env a sample came from.
+- Robot states are not resized, so they must have the same size in every env
+  configuration.
+- Smooth intervention (``smooth_intervene``) and real-time control evaluation
+  (``runner.rtc``) work with a single env configuration only, and RLT simulator
+  replay needs every train env configuration to be ``maniskill_rlt``. RLinf
+  stops at startup when a config breaks these rules.
