@@ -70,8 +70,8 @@ class RTCEnvWorker(EnvWorker):
             "RTC real-world evaluation currently supports a single env per worker."
         )
         # The RTC rollout picks its delay model from env.eval.env_type.
-        assert not EnvLayout.is_multi(self.cfg.env.eval), (
-            "RTC evaluation drives one env type, but env.eval.envs lists "
+        assert not EnvLayout.is_heterogeneous(self.cfg.env.eval), (
+            "RTC evaluation needs a homogeneous env.eval, but env.eval.envs lists "
             f"{list(self.cfg.env.eval.envs)}."
         )
 

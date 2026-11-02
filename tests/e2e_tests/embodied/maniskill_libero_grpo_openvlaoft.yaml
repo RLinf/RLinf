@@ -1,6 +1,6 @@
-# One OpenVLA-OFT policy trains and evaluates on ManiSkill and LIBERO at once:
-# each mode lists both envs under `envs`, and each of the two env workers hosts
-# one of them.
+# One OpenVLA-OFT policy trains and evaluates on ManiSkill and LIBERO at once.
+# Both modes are heterogeneous: they list the two envs under `envs`, and each of
+# the two env workers hosts one of them.
 defaults:
   - env/libero_goal@env.train.envs.libero_goal
   - env/maniskill_put_on_plate_in_scene_25_main@env.train.envs.maniskill

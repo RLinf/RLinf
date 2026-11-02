@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Env modes that list several envs, and the observations they send the policy."""
+"""Heterogeneous env modes, and the observations env workers send the policy."""
 
 import numpy as np
 import pytest
@@ -42,11 +42,11 @@ def _env(env_type: str, total_num_envs: int, **fields) -> dict:
     }
 
 
-def _multi_mode(**envs: dict):
+def _hetero_mode(**envs: dict):
     return OmegaConf.create({"rollout_epoch": 1, "envs": envs})
 
 
-def test_single_env_mode_is_hosted_unchanged_by_every_worker():
+def test_homogeneous_mode_is_hosted_unchanged_by_every_worker():
     mode_cfg = OmegaConf.create(_env("libero", 8))
     layout = EnvLayout(mode_cfg, world_size=2, path="env.train")
 
@@ -60,7 +60,7 @@ def test_single_env_mode_is_hosted_unchanged_by_every_worker():
 
 
 def test_listed_envs_get_contiguous_worker_blocks_sized_by_their_share():
-    mode_cfg = _multi_mode(libero=_env("libero", 48), maniskill=_env("maniskill", 16))
+    mode_cfg = _hetero_mode(libero=_env("libero", 48), maniskill=_env("maniskill", 16))
     layout = EnvLayout(mode_cfg, world_size=4, path="env.train")
 
     hosted = [(a.name, a.rank, a.world_size) for a in map(layout.assign, range(4))]
@@ -78,10 +78,10 @@ def test_listed_envs_get_contiguous_worker_blocks_sized_by_their_share():
     ("libero_episode_steps", "agreed"),
     [(80, {"max_episode_steps": 80}), (300, {})],
 )
-def test_multi_env_mode_takes_its_loop_fields_from_its_envs(
+def test_heterogeneous_mode_takes_its_loop_fields_from_its_envs(
     libero_episode_steps, agreed
 ):
-    mode_cfg = _multi_mode(
+    mode_cfg = _hetero_mode(
         libero=_env("libero", 8, max_episode_steps=libero_episode_steps),
         maniskill=_env("maniskill", 8),
     )
@@ -156,7 +156,7 @@ def test_layout_rejects_modes_its_workers_cannot_run(mode, world_size, match):
 
 def test_each_env_reports_its_own_metrics_beside_the_overall_ones():
     layout = EnvLayout(
-        _multi_mode(libero=_env("libero", 4), maniskill=_env("maniskill", 2)),
+        _hetero_mode(libero=_env("libero", 4), maniskill=_env("maniskill", 2)),
         world_size=3,
         path="env.eval",
     )
@@ -193,7 +193,7 @@ def test_env_worker_runs_its_env_on_the_workers_hosting_that_env(monkeypatch):
         return Simulator
 
     monkeypatch.setattr(env_worker_module, "get_env_cls", get_env_cls)
-    mode_cfg = _multi_mode(
+    mode_cfg = _hetero_mode(
         libero=_env("libero", 8),
         maniskill=_env(
             "maniskill", 8, override_cfgs=[{"scene": "first"}, {"scene": "second"}]
@@ -219,8 +219,8 @@ def test_env_worker_runs_its_env_on_the_workers_hosting_that_env(monkeypatch):
     assert mode_cfg.envs.maniskill.override_cfg.scene == "second"
 
 
-def test_config_gives_a_multi_env_mode_the_loop_fields_rollout_reads():
-    mode_cfg = _multi_mode(libero=_env("libero", 8), maniskill=_env("maniskill", 8))
+def test_config_gives_a_heterogeneous_mode_the_loop_fields_rollout_reads():
+    mode_cfg = _hetero_mode(libero=_env("libero", 8), maniskill=_env("maniskill", 8))
     OmegaConf.set_struct(mode_cfg, True)
 
     resolve_env_mode_cfg(mode_cfg, "env.train", env_world_size=2)
@@ -231,12 +231,14 @@ def test_config_gives_a_multi_env_mode_the_loop_fields_rollout_reads():
     assert mode_cfg.auto_reset is False
 
 
-def test_config_keeps_smooth_intervention_to_a_single_env():
-    mode_cfg = _multi_mode(
+def test_config_keeps_smooth_intervention_to_a_homogeneous_mode():
+    mode_cfg = _hetero_mode(
         real=_env("real", 1, smooth_intervene=True), maniskill=_env("maniskill", 1)
     )
 
-    with pytest.raises(AssertionError, match="real.smooth_intervene requires a single"):
+    with pytest.raises(
+        AssertionError, match="real.smooth_intervene requires a homogeneous"
+    ):
         resolve_env_mode_cfg(mode_cfg, "env.train", env_world_size=2)
 
 

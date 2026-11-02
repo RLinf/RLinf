@@ -197,9 +197,9 @@ env
      - 每个 rollout 轮采集的最大环境步数。必须能被 ``actor.model.num_action_chunks``
        整除。
    * - ``env.train.envs`` / ``env.eval.envs``
-     - 一个 mode 中并行运行的多个具名环境配置，每个环境运行在自己的 env worker 上。见 :doc:`multi_env`。
+     - 以名字为 key 的多份环境配置，设置后 ``env.train`` 或 ``env.eval`` 成为异构的，每份环境配置运行在自己的一段 env worker 上。见 :doc:`hetero_envs` 。
    * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
-     - 发送给 policy 的观测 key 和图像尺寸，使相机配置不同的环境能共用一个 batch。见 :doc:`multi_env`。
+     - 发送给 policy 的观测 key 和图像尺寸，使相机配置不同的环境能共用一个 batch。见 :doc:`hetero_envs`。
 
 rollout
 ~~~~~~~~~~~~~~~

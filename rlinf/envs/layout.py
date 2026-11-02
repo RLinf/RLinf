@@ -14,9 +14,9 @@
 
 """Assignment of envs to env worker ranks.
 
-An env mode config (``env.train`` or ``env.eval``) is either one env config or
-lists several named env configs under ``envs``. Every env worker rank hosts
-exactly one of them.
+An env mode config (``env.train`` or ``env.eval``) is homogeneous, one env
+config that every env worker rank hosts, or heterogeneous, several named env
+configs under ``envs``. Every env worker rank hosts exactly one env config.
 """
 
 from dataclasses import dataclass
@@ -32,7 +32,7 @@ class EnvAssignment:
     """The env that one env worker rank hosts in one mode.
 
     Attributes:
-        name: Key of the env under ``envs``, or ``None`` when the mode is one env.
+        name: Key of the env under ``envs``, or ``None`` in a homogeneous mode.
         cfg: Config of the env.
         rank: Index of this worker among the workers hosting the env.
         world_size: Number of workers hosting the env.
@@ -67,7 +67,7 @@ class EnvLayout:
         "auto_reset",
         "ignore_terminations",
     )
-    # What a multi-env mode config may hold beside its envs. Anything else
+    # What a heterogeneous mode config may hold beside its envs. Anything else
     # belongs to an env and would be ignored at the mode level.
     MODE_FIELDS: ClassVar[tuple[str, ...]] = (
         ENVS_KEY,
@@ -87,12 +87,12 @@ class EnvLayout:
             path: Config path of ``mode_cfg``, used in error messages.
 
         Raises:
-            ValueError: If a multi-env mode cannot be split across the ranks.
+            ValueError: If a heterogeneous mode cannot be split across the ranks.
         """
         self._path = path
         self._world_size = world_size
         self._mode_fields: dict[str, Any] = {}
-        if not self.is_multi(mode_cfg):
+        if not self.is_heterogeneous(mode_cfg):
             self._blocks = [(None, mode_cfg, range(world_size))]
             return
 
@@ -138,7 +138,7 @@ class EnvLayout:
                 )
 
     @classmethod
-    def is_multi(cls, mode_cfg: DictConfig) -> bool:
+    def is_heterogeneous(cls, mode_cfg: DictConfig) -> bool:
         """Return whether ``mode_cfg`` lists its envs under ``envs``."""
         return mode_cfg.get(cls.ENVS_KEY) is not None
 
@@ -151,12 +151,12 @@ class EnvLayout:
             path: Config path of ``mode_cfg``.
 
         Returns:
-            ``{path: mode_cfg}`` for a single-env mode, otherwise one
+            ``{path: mode_cfg}`` for a homogeneous mode, otherwise one
             ``{path}.envs.<name>`` entry per listed env.
         """
         if mode_cfg is None:
             return {}
-        if not cls.is_multi(mode_cfg):
+        if not cls.is_heterogeneous(mode_cfg):
             return {path: mode_cfg}
         return {
             f"{path}.{cls.ENVS_KEY}.{name}": env_cfg
@@ -164,10 +164,10 @@ class EnvLayout:
         }
 
     def mode_fields(self) -> dict[str, Any]:
-        """Return the fields a multi-env mode config takes from its envs.
+        """Return the fields a heterogeneous mode config takes from its envs.
 
         Rollout, actor, and runner read these from the mode config. The result
-        is empty for a single-env mode, whose config holds them itself.
+        is empty for a homogeneous mode, whose config holds them itself.
         """
         return dict(self._mode_fields)
 

@@ -1075,12 +1075,12 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
 def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -> None:
     """Lay a mode's envs out on the env workers and fill in its loop fields.
 
-    A mode that lists several envs takes ``total_num_envs`` and the fields its
-    envs share from them (``EnvLayout.mode_fields``), so rollout, actor, and
-    runner read one value from the mode config as they do for a single env.
+    A heterogeneous mode takes ``total_num_envs`` and the fields its envs share
+    from them (``EnvLayout.mode_fields``), so rollout, actor, and runner read
+    one value from the mode config as they do for a homogeneous mode.
     """
     layout = EnvLayout(mode_cfg, env_world_size, path)
-    if not EnvLayout.is_multi(mode_cfg):
+    if not EnvLayout.is_heterogeneous(mode_cfg):
         return
     with open_dict(mode_cfg):
         for key, value in layout.mode_fields().items():
@@ -1088,7 +1088,7 @@ def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -
                 mode_cfg[key] = value
     for env_path, env_cfg in EnvLayout.env_cfgs(mode_cfg, path).items():
         assert not env_cfg.get("smooth_intervene", False), (
-            f"{env_path}.smooth_intervene requires a single env in {path}: "
+            f"{env_path}.smooth_intervene requires a homogeneous {path}: "
             "smoothed actions bypass the policy and cannot share a rollout "
             "batch with the policy actions of other envs."
         )
@@ -1346,7 +1346,7 @@ def validate_embodied_cfg(cfg):
 
     if not only_eval:
         resolve_env_mode_cfg(cfg.env.train, "env.train", env_world_size)
-        if EnvLayout.is_multi(cfg.env.train):
+        if EnvLayout.is_heterogeneous(cfg.env.train):
             assert cfg.env.train.get("max_episode_steps") is not None, (
                 "The envs under env.train.envs set different max_episode_steps; "
                 "set env.train.max_episode_steps to the horizon the actor "

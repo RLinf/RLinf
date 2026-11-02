@@ -656,7 +656,7 @@ class EnvWorker(Worker):
         return infer_batch_size(data)
 
     def finish_rollout(self, mode="train"):
-        # Seeds restart at zero for every env of a multi-env mode, so each env
+        # Seeds restart at zero for every env of a heterogeneous mode, so each env
         # writes its videos under its own name.
         if mode == "train":
             for i in range(self.stage_num):

@@ -207,11 +207,12 @@ env
      - Maximum environment steps collected per rollout epoch. Must be divisible by
        ``actor.model.num_action_chunks``.
    * - ``env.train.envs`` / ``env.eval.envs``
-     - Named env configs that one mode runs side by side, each on its own env
-       workers. See :doc:`multi_env`.
+     - Env configurations keyed by name, which make ``env.train`` or ``env.eval``
+       heterogeneous. Each runs on its own block of env workers. See
+       :doc:`hetero_envs`.
    * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
      - Observation keys and image size sent to the policy, so envs with different
-       cameras share one batch. See :doc:`multi_env`.
+       cameras share one batch. See :doc:`hetero_envs`.
 
 rollout
 ~~~~~~~~~~~~~~~

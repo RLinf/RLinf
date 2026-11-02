@@ -619,7 +619,7 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
 
-      - name: ManiSkill + Libero-Goal multi-env GRPO test
+      - name: ManiSkill + Libero-Goal heterogeneous env GRPO test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
