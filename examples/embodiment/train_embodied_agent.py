@@ -107,14 +107,12 @@ def main(cfg) -> None:
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    if str(cfg.rollout.get("rollout_backend", "huggingface")).lower() == "phyai":
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    if rollout_backend == "phyai":
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
         rollout_worker_cls = PhyAIRolloutWorker
-    elif str(cfg.rollout.get("rollout_backend", "huggingface")).lower() in {
-        "hf",
-        "huggingface",
-    }:
+    elif rollout_backend == "huggingface":
         from rlinf.workers.rollout.hf.huggingface_worker import (
             MultiStepRolloutWorker,
         )
@@ -122,8 +120,8 @@ def main(cfg) -> None:
         rollout_worker_cls = MultiStepRolloutWorker
     else:
         raise ValueError(
-            f"Unsupported rollout backend: {cfg.rollout.rollout_backend}. "
-            "Expected 'huggingface', 'hf', or 'phyai'."
+            "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "
+            f"embodied training, got {rollout_backend!r}."
         )
     rollout_group = rollout_worker_cls.create_group(cfg).launch(
         cluster,

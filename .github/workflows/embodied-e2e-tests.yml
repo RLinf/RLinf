@@ -1403,7 +1403,7 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           source .venv/bin/activate
-          pytest tests/unit_tests/test_phyai_rollout_worker.py
+          pytest tests/unit_tests/test_models.py -k phyai
 
       - name: Libero-Spatial PPO OpenPI Pi05 PhyAI test
         timeout-minutes: 40

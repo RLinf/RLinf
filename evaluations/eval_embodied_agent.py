@@ -46,9 +46,7 @@ def main(cfg) -> None:
     # ``apxinf`` is an eval-only in-process backend. vLLM is intentionally not
     # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_backend = str(cfg.rollout.get("rollout_backend", "huggingface")).lower()
-    if rollout_backend == "hf":
-        rollout_backend = "huggingface"
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
     if rollout_backend == "apxinf":

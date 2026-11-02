@@ -25,17 +25,37 @@ def apply_importance_sampling_correction(
     rollout_logprobs: torch.Tensor,
     clip: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Correct advantages for a recomputed-to-rollout policy mismatch.
+    """Reweight advantages when rollout and actor score actions differently.
 
-    Returns the corrected advantages, the unclipped importance weights, and
-    their log ratios so callers can report task-specific metrics.
+    Rollout samples with one implementation and the actor recomputes the same
+    actions with another, so the two log-probabilities can differ. Each
+    advantage is scaled by the detached weight ``min(exp(recomputed -
+    rollout), clip)``.
+
+    Args:
+        advantages: Advantages to correct.
+        recomputed_logprobs: Actor log-probabilities of the sampled actions.
+        rollout_logprobs: Rollout log-probabilities of the same actions, with
+            the same shape as ``recomputed_logprobs``.
+        clip: Positive upper bound on the importance weight.
+
+    Returns:
+        The corrected advantages, the unclipped importance weights, and the log
+        ratios ``recomputed - rollout``. Callers report metrics from the last
+        two.
+
+    Raises:
+        ValueError: If the log-probability shapes differ or ``clip`` is not
+            positive.
     """
     if recomputed_logprobs.shape != rollout_logprobs.shape:
         raise ValueError(
-            "recomputed_logprobs and rollout_logprobs must have the same shape"
+            "Expected recomputed_logprobs and rollout_logprobs to have the same "
+            f"shape, got {tuple(recomputed_logprobs.shape)} and "
+            f"{tuple(rollout_logprobs.shape)}."
         )
     if clip <= 0:
-        raise ValueError(f"importance_sampling_clip must be positive, got {clip}.")
+        raise ValueError(f"Expected a positive importance_sampling_clip, got {clip}.")
 
     log_ratio = recomputed_logprobs - rollout_logprobs
     importance_weight = log_ratio.exp()

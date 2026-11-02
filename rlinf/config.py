@@ -1140,74 +1140,81 @@ def validate_embodied_cfg(cfg):
         assert algorithm_cfg.get("adv_type", None) != "opd", (
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
-    rollout_backend = str(cfg.rollout.get("rollout_backend", "huggingface")).lower()
-    if rollout_backend == "hf":
-        rollout_backend = "huggingface"
-    if rollout_backend == "phyai":
+    if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
         assert model_type == SupportedModel.OPENPI, (
-            "rollout_backend='phyai' currently requires model_type='openpi'."
+            "Expected model_type='openpi' for rollout_backend='phyai', "
+            f"got {model_cfg.model_type!r}."
         )
         openpi_cfg = model_cfg.get("openpi", {})
-        assert bool(model_cfg.get("pi05", True)), (
-            "rollout_backend='phyai' requires model.pi05=True."
+        assert model_cfg.get("pi05", True), (
+            "Expected model.pi05=True for rollout_backend='phyai', "
+            f"got {model_cfg.get('pi05')!r}."
         )
-        assert str(openpi_cfg.get("config_name", "")), (
-            "rollout_backend='phyai' requires a non-empty model.openpi.config_name."
+        assert openpi_cfg.get("config_name", ""), (
+            "Expected a non-empty model.openpi.config_name for "
+            f"rollout_backend='phyai', got {openpi_cfg.get('config_name')!r}."
         )
         expected_variants = {
             "paligemma_variant": "gemma_2b",
             "action_expert_variant": "gemma_300m",
         }
         for field, expected in expected_variants.items():
-            configured = str(openpi_cfg.get(field, expected))
+            configured = openpi_cfg.get(field, expected)
             assert configured == expected, (
-                f"rollout_backend='phyai' requires model.openpi.{field}="
-                f"{expected!r}, got {configured!r}."
+                f"Expected model.openpi.{field}={expected!r} for "
+                f"rollout_backend='phyai', got {configured!r}."
             )
-        num_images = int(openpi_cfg.get("num_images_in_input", 3))
+        num_images = openpi_cfg.get("num_images_in_input", 3)
         assert 1 <= num_images <= 3, (
-            "rollout_backend='phyai' requires "
-            f"model.openpi.num_images_in_input in [1, 3], got {num_images}."
+            "Expected model.openpi.num_images_in_input in [1, 3] for "
+            f"rollout_backend='phyai', got {num_images}."
         )
         if not only_eval:
-            loss_type = str(algorithm_cfg.get("loss_type", "")).lower()
-            unsupported_loss_types = {"embodied_dagger", "rlt_ac", "rlt_td3"}
-            assert loss_type not in unsupported_loss_types, (
-                "rollout_backend='phyai' does not support "
-                f"algorithm.loss_type={loss_type!r}."
+            loss_type = algorithm_cfg.get("loss_type")
+            assert loss_type not in {"embodied_dagger", "rlt_ac", "rlt_td3"}, (
+                "Expected an algorithm.loss_type other than embodied_dagger, "
+                f"rlt_ac, or rlt_td3 for rollout_backend='phyai', got {loss_type!r}."
             )
-            adv_type = str(algorithm_cfg.get("adv_type", "")).lower()
+            adv_type = algorithm_cfg.get("adv_type")
             assert adv_type != "opd", (
-                "rollout_backend='phyai' does not support algorithm.adv_type='opd'."
+                "Expected an algorithm.adv_type other than 'opd' for "
+                f"rollout_backend='phyai', got {adv_type!r}."
             )
-            assert cfg.weight_syncer.get("type") == "bucket", (
-                "rollout_backend='phyai' requires weight_syncer.type='bucket'."
+            syncer_type = cfg.weight_syncer.get("type")
+            assert syncer_type == "bucket", (
+                "Expected weight_syncer.type='bucket' for rollout_backend='phyai', "
+                f"got {syncer_type!r}."
             )
             assert num_images == 2, (
-                "PhyAI training parity requires "
-                f"actor.model.openpi.num_images_in_input=2, got {num_images}."
+                "Expected actor.model.openpi.num_images_in_input=2 for PhyAI "
+                f"training, got {num_images}."
             )
-            assert bool(model_cfg.get("add_value_head", False)), (
-                "PhyAI training requires actor.model.add_value_head=True."
+            assert model_cfg.get("add_value_head", False), (
+                "Expected actor.model.add_value_head=True for PhyAI training, "
+                f"got {model_cfg.get('add_value_head')!r}."
             )
-            assert bool(openpi_cfg.get("value_after_vlm", False)), (
-                "The current openpi Actor requires openpi.value_after_vlm=True."
+            assert openpi_cfg.get("value_after_vlm", False), (
+                "Expected actor.model.openpi.value_after_vlm=True for PhyAI "
+                f"training, got {openpi_cfg.get('value_after_vlm')!r}."
             )
-            assert openpi_cfg.get("value_vlm_mode", "mean_token") == "mean_token", (
-                "The current openpi Actor supports only "
-                "openpi.value_vlm_mode='mean_token'."
+            value_vlm_mode = openpi_cfg.get("value_vlm_mode", "mean_token")
+            assert value_vlm_mode == "mean_token", (
+                "Expected actor.model.openpi.value_vlm_mode='mean_token' for "
+                f"PhyAI training, got {value_vlm_mode!r}."
             )
-            assert not bool(openpi_cfg.get("joint_logprob", False)), (
-                "The current openpi Actor supports only joint_logprob=False."
+            assert not openpi_cfg.get("joint_logprob", False), (
+                "Expected actor.model.openpi.joint_logprob=False for PhyAI "
+                f"training, got {openpi_cfg.get('joint_logprob')!r}."
             )
-            assert openpi_cfg.get("noise_method", "flow_ode") in {
-                "flow_ode",
-                "flow_sde",
-            }, "The current openpi Actor supports flow_ode or flow_sde."
+            noise_method = openpi_cfg.get("noise_method", "flow_ode")
+            assert noise_method in {"flow_ode", "flow_sde"}, (
+                "Expected actor.model.openpi.noise_method 'flow_ode' or "
+                f"'flow_sde' for PhyAI training, got {noise_method!r}."
+            )
             noise_level = float(openpi_cfg.get("noise_level", 0.0))
             assert math.isfinite(noise_level) and noise_level >= 0, (
-                "The current openpi Actor requires openpi.noise_level to be "
-                "finite and non-negative."
+                "Expected a finite, non-negative actor.model.openpi.noise_level "
+                f"for PhyAI training, got {noise_level}."
             )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
@@ -1289,8 +1296,9 @@ def validate_embodied_cfg(cfg):
             )
             if importance_sampling_fix:
                 assert cfg.algorithm.loss_type in {"actor", "actor_critic"}, (
-                    "algorithm.importance_sampling_fix for synchronous embodied "
-                    "training requires loss_type 'actor' or 'actor_critic'."
+                    "Expected algorithm.loss_type 'actor' or 'actor_critic' with "
+                    "algorithm.importance_sampling_fix=True, "
+                    f"got {cfg.algorithm.loss_type!r}."
                 )
                 importance_sampling_clip = algorithm_cfg.get(
                     "importance_sampling_clip", None
@@ -1298,10 +1306,15 @@ def validate_embodied_cfg(cfg):
                 assert (
                     importance_sampling_clip is not None
                     and importance_sampling_clip > 0
-                ), "algorithm.importance_sampling_clip must be greater than 0."
+                ), (
+                    "Expected a positive algorithm.importance_sampling_clip with "
+                    "algorithm.importance_sampling_fix=True, "
+                    f"got {importance_sampling_clip!r}."
+                )
                 assert algorithm_cfg.get("recompute_logprobs", False), (
-                    "algorithm.importance_sampling_fix=True requires "
-                    "algorithm.recompute_logprobs=True."
+                    "Expected algorithm.recompute_logprobs=True with "
+                    "algorithm.importance_sampling_fix=True, got "
+                    f"{algorithm_cfg.get('recompute_logprobs')!r}."
                 )
             if algorithm_cfg.get("recompute_logprobs", False):
                 assert not cfg.runner.get("use_training_pipeline", False), (
