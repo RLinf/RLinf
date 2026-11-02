@@ -868,3 +868,109 @@ def test_clear_stub_import_preserves_real_flash_attn_module():
     Patcher.clear_stub_import("flash_attn")
 
     assert sys.modules["flash_attn"] is real_flash_attn
+
+
+def _vla_sft_checkpoint_worker():
+    from contextlib import nullcontext
+
+    import torch
+    from torch.utils.data import DistributedSampler
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp2 import FSDP2Strategy
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    class Policy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(0.5))
+            self.batches = []
+
+        def forward(self, forward_type, data):
+            self.batches.append(data.clone())
+            return (self.weight * data.float() / 24).square().mean()
+
+    worker = FSDPVlaSftWorker.__new__(FSDPVlaSftWorker)
+    worker._rank = 0
+    worker._world_size = 1
+    worker._cfg = OmegaConf.create(
+        {
+            "optim": {"clip_grad": 1.0},
+            "fsdp_config": {
+                "save_full_model_weights": False,
+                "enable_gradient_accumulation": False,
+            },
+        }
+    )
+    worker._strategy = FSDP2Strategy(worker._cfg, world_size=1)
+    worker._logger = logging.getLogger(__name__)
+    worker._timer_metrics = {}
+    worker.model = Policy()
+    worker.optimizer = torch.optim.Adam(worker.model.parameters(), lr=1e-3)
+    worker.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+        worker.optimizer, factor=1.0
+    )
+    worker.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    worker.amp_context = nullcontext()
+    worker.is_weight_offloaded = False
+    worker.is_optimizer_offloaded = False
+    worker.critic_warmup_steps = 0
+    worker.optimizer_steps = 0
+    worker.global_step = 0
+    worker.gradient_accumulation = 1
+    dataset = torch.arange(24)
+    sampler = DistributedSampler(dataset, num_replicas=2, rank=0, seed=42)
+    worker.data_loader = StatefulDataLoader(dataset, batch_size=2, sampler=sampler)
+    worker.data_iter = iter(worker.data_loader)
+    worker._data_epoch = 0
+    worker._data_iter_offset = 0
+    return worker
+
+
+@pytest.mark.parametrize("epoch,offset", [(3, 2), (3, 6), (0, 2)])
+def test_vla_sft_checkpoint_preserves_batches_across_epochs(
+    tmp_path, monkeypatch, epoch, offset
+):
+    import torch
+    import torch.distributed as dist
+
+    rng_state = torch.get_rng_state()
+    monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", str(tmp_path / "inductor_cache"))
+    # The checkpoint and training paths run on CPU without accelerator resources.
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            current_device=lambda: "cpu",
+            is_available=lambda: False,
+            synchronize=lambda: None,
+            ipc_collect=lambda: None,
+            empty_cache=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu", raising=False)
+    dist.init_process_group(
+        "gloo", init_method=(tmp_path / "rendezvous").as_uri(), rank=0, world_size=1
+    )
+    try:
+        reference = _vla_sft_checkpoint_worker()
+        for _ in range(epoch * len(reference.data_loader) + offset):
+            reference.run_training()
+        checkpoint = tmp_path / "checkpoint"
+        reference.save_checkpoint(str(checkpoint))
+        if epoch == 0:
+            # Older checkpoints contain data.pt without the epoch sidecar.
+            (checkpoint / "data_state.json").unlink(missing_ok=True)
+
+        resumed = _vla_sft_checkpoint_worker()
+        resumed.load_checkpoint(str(checkpoint))
+        for _ in range(len(reference.data_loader) + 1):
+            reference.run_training()
+            resumed.run_training()
+            torch.testing.assert_close(
+                resumed.model.batches[-1], reference.model.batches[-1]
+            )
+            torch.testing.assert_close(resumed.model.weight, reference.model.weight)
+    finally:
+        dist.destroy_process_group()
+        torch.set_rng_state(rng_state)
