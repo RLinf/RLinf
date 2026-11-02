@@ -12,11 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 from typing import TypedDict
 
 import torch
 
 PREFIX_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
+
+
+class PrefixForwardType(Enum):
+    """Actor and critic operations accepted by the wrapped Prefix policy."""
+
+    ACTOR = "actor"
+    CRITIC = "critic"
 
 
 class PrefixObs(TypedDict):

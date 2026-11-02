@@ -83,7 +83,6 @@ runner:
 algorithm:
   update_epoch: 8
   group_size: 1
-  agg_q: min
   actor_agg_q: q1
   enable_drq: False
 
@@ -279,6 +278,9 @@ rollout:
     openpi_data:
       # Must match the repo_id used to compute Stage1 OpenPI norm stats.
       repo_id: STAGE1_REPO_ID  # Replace
+    prefix:
+      pool: rlt_token
+      image_only: false
     openpi:
       task: eval
       config_name: "pi05_dualfranka_tcp_rot6d"
@@ -302,7 +304,6 @@ rollout:
       joint_logprob: True
       use_rlt: True
       rlt_prefix_seq_len: 1024
-      rlt_image_only: False
       rlt_use_mask: True
 
   enable_torch_compile: True

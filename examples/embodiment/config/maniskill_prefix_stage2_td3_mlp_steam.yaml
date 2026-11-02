@@ -52,7 +52,6 @@ algorithm:
   name: td3
   loss_agg_func: "token-mean"
 
-  agg_q: min
   actor_agg_q: min
   enable_drq: False
   bootstrap_type: standard
@@ -257,7 +256,7 @@ rollout:
     lora_rank: 32
     prefix:
       pool: masked_mean
-      image_only: false
+      image_only: true
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
@@ -298,8 +297,10 @@ rollout:
     chunk_size: 10
     lookback_chunks: 2
     latch_until_done: True
-    main_image_key: image
-    wrist_image_key: wrist_image
+    # STEAM processor camera key -> env observation key.
+    cameras:
+      image: main_images
+      wrist_image: wrist_images
     expert_takeover:
       enable: True
       # Balanced profile calibrated from actor-only shadow traces.

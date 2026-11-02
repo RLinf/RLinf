@@ -52,7 +52,6 @@ algorithm:
   name: td3
   loss_agg_func: "token-mean"
 
-  agg_q: min
   actor_agg_q: min
   enable_drq: False
   bootstrap_type: standard
@@ -255,6 +254,9 @@ rollout:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
+    prefix:
+      pool: rlt_token
+      image_only: false
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
@@ -280,7 +282,6 @@ rollout:
       rlt_num_heads: 8
       rlt_mlp_ratio: 4.0
       rlt_encoder_type: "append_self_attention"
-      rlt_image_only: False
       rlt_use_mask: True
 
   # Optional ManiSkill expert takeover model. Enable it with

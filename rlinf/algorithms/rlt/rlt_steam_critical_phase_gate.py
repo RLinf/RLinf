@@ -127,9 +127,22 @@ class SteamRoutingGate:
                         1,
                     )
                 )
+        legacy_camera_keys = [
+            key for key in ("main_image_key", "wrist_image_key") if key in cfg
+        ]
+        if legacy_camera_keys:
+            raise ValueError(
+                f"routing_gate.{legacy_camera_keys[0]} is no longer supported; "
+                "expected routing_gate.cameras as {STEAM processor key: env "
+                "observation key}, e.g. {image: main_images, wrist_image: "
+                "wrist_images}."
+            )
+        cameras = cfg.get("cameras", None)
+        if cameras is None:
+            cameras = {"image": "main_images", "wrist_image": "wrist_images"}
         self.camera_mapping = {
-            str(cfg.get("main_image_key", "image")): "main_images",
-            str(cfg.get("wrist_image_key", "wrist_image")): "wrist_images",
+            str(processor_key): str(env_key)
+            for processor_key, env_key in dict(cameras).items()
         }
 
         expert_cfg = cfg.get("expert_takeover", {}) or {}
@@ -174,8 +187,9 @@ class SteamRoutingGate:
         missing_keys = processor_keys - set(self.camera_mapping)
         if missing_keys:
             raise ValueError(
-                "STEAM checkpoint expects camera keys that are not mapped from "
-                f"ManiSkill RLT observations: {sorted(missing_keys)}"
+                "routing_gate.cameras must map every STEAM processor key "
+                f"{sorted(processor_keys)} to an env observation key; missing "
+                f"{sorted(missing_keys)} in {self.camera_mapping}."
             )
         self._states: dict[tuple[str, int], _GateState] = {}
 
@@ -285,8 +299,9 @@ class SteamRoutingGate:
             value = env_obs.get(env_key)
             if value is None:
                 raise KeyError(
-                    f"STEAM gate requires env observation {env_key!r} for "
-                    f"checkpoint camera {steam_key!r}"
+                    f"routing_gate.cameras maps STEAM processor key "
+                    f"{steam_key!r} to env observation {env_key!r}, but the "
+                    f"env observation has keys {sorted(env_obs)}."
                 )
             images[steam_key] = self._batch_images(value)
         return images
@@ -388,10 +403,10 @@ class SteamRoutingGate:
         self,
         state: _GateState,
         prompts: list[str],
+        rows: list[int],
     ) -> _GatePrediction:
         samples = []
-        batch_size = state.valid_count.shape[0]
-        for batch_idx in range(batch_size):
+        for batch_idx in rows:
             image_t = {
                 key: history[batch_idx, 0]
                 for key, history in state.image_history.items()
@@ -496,23 +511,24 @@ class SteamRoutingGate:
         )
         ready = state.valid_count >= self.lookback_chunks + 1
 
+        score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
+        phase_probability = torch.zeros_like(score)
+        emitted_phase_features = (
+            self.empty_phase_features(batch_size) if self.emit_phase_features else None
+        )
         if ready.any():
-            prediction = self._predict_pair(state, prompts)
-            score = torch.where(
-                ready,
-                prediction.score_min,
-                torch.zeros_like(prediction.score_min),
+            ready_rows = torch.nonzero(ready).flatten()
+            prediction = self._predict_pair(state, prompts, ready_rows.tolist())
+            score[ready_rows] = prediction.score_min.to(score.device)
+            phase_probability[ready_rows] = prediction.phase_probability.to(
+                score.device
             )
-            phase_probability = torch.where(
-                ready,
-                prediction.phase_probability,
-                torch.zeros_like(prediction.phase_probability),
-            )
-            phase_features = prediction.phase_features
-        else:
-            score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
-            phase_probability = torch.zeros_like(score)
-            phase_features = None
+            if emitted_phase_features is not None:
+                emitted_phase_features[ready_rows] = (
+                    prediction.phase_features.permute(1, 0, 2)
+                    .detach()
+                    .to(emitted_phase_features)
+                )
 
         actor_candidate = (
             ready & (phase_probability >= self.enter_threshold)
@@ -565,7 +581,9 @@ class SteamRoutingGate:
             & actor_active
             & (state.critical_chunk_count >= self.expert_warmup_chunks)
         )
-        expert_low_progress = expert_ready & (score <= self.expert_enter_threshold)
+        expert_low_progress = (
+            expert_ready & ready & (score <= self.expert_enter_threshold)
+        )
         state.expert_low_progress_count = torch.where(
             expert_low_progress,
             state.expert_low_progress_count + 1,
@@ -607,14 +625,6 @@ class SteamRoutingGate:
             "rlt_route_expert_entry_step": state.route_expert_entry_step[:, None],
         }
         state.chunk_index = state.chunk_index + 1
-        emitted_phase_features = None
-        if self.emit_phase_features:
-            if phase_features is None:
-                emitted_phase_features = self.empty_phase_features(batch_size)
-            else:
-                emitted_phase_features = (
-                    phase_features.permute(1, 0, 2).detach().to(torch.float16)
-                )
         return RoutingDecision(
             actor_switch=route_flags[:, None],
             expert_requested=route_expert_flags[:, None],

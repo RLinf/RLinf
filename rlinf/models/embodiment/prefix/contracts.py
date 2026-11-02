@@ -53,4 +53,20 @@ def extract_prefix_obs(
         raise TypeError(
             f"{type(feature_model).__name__} must implement extract_prefix_obs()."
         )
-    return extractor(env_obs)
+    prefix_obs = extractor(env_obs)
+    z_width = prefix_obs["z_rl"].shape[-1]
+    if z_width != feature_model.z_dim:
+        raise ValueError(
+            f"{type(feature_model).__name__}.extract_prefix_obs() returned z_rl "
+            f"with last dimension {z_width}, expected z_dim={feature_model.z_dim}."
+        )
+    return prefix_obs
+
+
+def check_prefix_feature_dim(feature_model: PrefixFeatureModel, z_dim: int) -> None:
+    """Reject a feature model whose ``z_rl`` width differs from the policy input."""
+    if int(feature_model.z_dim) != int(z_dim):
+        raise ValueError(
+            "rollout.prefix_feature_model produces z_rl of width "
+            f"{feature_model.z_dim}, but actor.model.z_dim is {z_dim}."
+        )

@@ -93,7 +93,7 @@ Prefix pooling
 * ``last`` reads the last valid token; without a mask it reads the final sequence position.
 * ``rlt_token`` is a configuration marker. OpenPI routes it to ``rlt_module.encode_flat`` instead of calling ``pool_prefix`` directly.
 
-``resolve_prefix_pool`` resolves the final mode from ``prefix.pool``, ``stage2_z_source``, ``use_rlt``, and ``rlt_use_mask``. Set ``prefix.pool`` explicitly so the representation source can be inspected in both Stage 1 and Stage 2 configurations.
+``prefix.pool`` and ``prefix.image_only`` sit beside the ``openpi`` block of the OpenPI model config. When ``prefix.pool`` is unset, ``resolve_prefix_pool`` returns ``rlt_token`` if ``openpi.use_rlt`` is true and ``masked_mean`` otherwise. ``prefix.image_only`` defaults to true and keeps only image tokens before pooling or RLT encoding. Set both fields explicitly so the representation source can be inspected in both Stage 1 and Stage 2 configurations. The rollout worker checks at startup that the feature model's ``z_dim`` equals ``actor.model.z_dim``.
 
 State history
 ^^^^^^^^^^^^^
@@ -327,7 +327,9 @@ Place the new head in ``rlinf.models.embodiment.prefix.heads`` and import it fro
 Extending the Prefix Algorithm
 ------------------------------
 
-``PrefixOffPolicyAlgorithm`` separates the actor objective, critic target action, and Q aggregation rules. Subclass it, implement ``requirements``, ``actor_forward_kwargs``, ``target_actions``, and ``aggregate_actor_q``, then register the class with ``register_prefix_off_policy_algorithm``.
+The algorithm contract has three entry points: ``critic_loss``, ``actor_loss``, and ``target_actions``. Declare the required head capabilities in ``requirements`` and register the subclass with ``register_prefix_off_policy_algorithm``. The base class provides a chunk-discounted Bellman critic loss; inherit it unless the algorithm needs a different target or critic objective. Implement ``actor_loss`` and ``target_actions`` for the new algorithm.
+
+The example below reuses the shared BC/Q actor objective with minimum-Q aggregation. It sends semantic actor requests through ``context.target_model(...)``; the worker-owned FSDP wrapper still runs its ``forward`` hooks. ``PrefixPolicy`` dispatches actor calls and selects the ordinary-Q or CrossQ critic backend. Algorithms do not select SAC or CrossQ forward types.
 
 .. code:: python
 
@@ -335,7 +337,7 @@ Extending the Prefix Algorithm
        PrefixAlgorithmRequirements, PrefixOffPolicyAlgorithm,
        register_prefix_off_policy_algorithm,
    )
-   from rlinf.models.embodiment.base_policy import ForwardType
+   from rlinf.models.embodiment.prefix import PrefixForwardType
 
    @register_prefix_off_policy_algorithm("my_algorithm")
    class MyAlgorithm(PrefixOffPolicyAlgorithm):
@@ -345,33 +347,47 @@ Extending the Prefix Algorithm
            uses_target_actor=True,
        )
 
-       def actor_forward_kwargs(self):
-           return {"apply_action_noise": True}
+       def actor_loss(self, context, batch):
+           return self._actor_loss(
+               context,
+               batch,
+               actor_agg_q="min",
+               apply_reference_dropout=False,
+               apply_action_noise=True,
+           )
 
        def target_actions(self, context, next_obs):
            actions, _, _ = context.target_model(
-               forward_type=ForwardType.SAC,
+               forward_type=PrefixForwardType.ACTOR,
                obs=next_obs,
            )
            return actions
 
-       def aggregate_actor_q(self, all_q_values):
-           return self._min_twin_q(all_q_values)
+``PrefixOffPolicyAlgorithm`` keeps chunk-reward discounting, termination bootstrap, and critic MSE in ``critic_loss``. Its optional ``_actor_loss`` helper shares BC targets, human-intervention masks, BC/Q weight schedules, and Q aggregation across AC and TD3. A different actor objective can implement ``actor_loss`` directly without using that helper. Import the module from the registry's ``_load_builtin_algorithms``; select it with ``algorithm.name: my_algorithm`` while keeping ``loss_type: prefix_off_policy``.
 
-``PrefixOffPolicyAlgorithm`` already implements chunk-reward discounting, termination bootstrap, BC targets, human-intervention masks, BC/Q weight schedules, and critic MSE. The subclass supplies algorithm semantics. Import the module from the registry's ``_load_builtin_algorithms``; select it with ``algorithm.name: my_algorithm`` while keeping ``loss_type: prefix_off_policy``.
-
-The built-in ``ac`` uses a stochastic actor and Q1 aggregation. ``td3`` uses a deterministic actor, a target actor, action noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. The algorithm requirements are checked against the head capabilities.
+The built-in ``ac`` uses a stochastic actor and Q1 aggregation; ``algorithm.actor_agg_q`` may only be ``q1``. ``td3`` uses a deterministic actor, a target actor, action noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. The critic target always bootstraps from the minimum of the first two Q heads, so ``algorithm.agg_q`` must be ``min`` or unset; extra ``multi_q_mlp`` heads regress to that same target. Prefix algorithms do not train an entropy temperature and require ``algorithm.entropy_tuning.alpha_type: fixed_alpha``. These settings and the head capabilities are checked when the algorithm is built.
 
 Training and Running
 --------------------
 
-The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. It uses masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Replace ``rollout.prefix_feature_model.model_path``, the OpenPI ``repo_id``, ``norm_stats_path``, and environment asset paths, then run:
+The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. It uses masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Supply the four checkpoints at ``rollout.prefix_feature_model.model_path``, ``rollout.routing_gate.actor_switch.phase_head_path``, ``rollout.routing_gate.model.model_path``, and ``rollout.expert_model.model_path``. Their paths are placeholders; match the OpenPI ``repo_id``, ``norm_stats_path``, and environment assets to your checkpoints, then run:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-The frozen feature model uses ``prefix.pool: masked_mean`` and ``use_rlt: false``, so ``z_rl`` comes from VLM pooling while the RLT token module remains disabled. STEAM routing selects among the base VLA, Stage 2 actor, and expert during rollout; the Prefix runtime still owns the heads and algorithm.
+The frozen feature model explicitly uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Its ``z_rl`` pools only VLM image tokens; language still conditions the reference actions. STEAM routing selects among the base VLA, Stage 2 actor, and expert during rollout; the Prefix runtime still owns the heads and algorithm. ``rollout.routing_gate.cameras`` maps each STEAM processor camera key to the env observation key that supplies it.
+
+To calibrate routing on recorded episodes, set
+``rollout.routing_gate.actor_switch.collect_phase_features: true`` and
+``algorithm.rlt_gate_calibration.enable: true`` while collecting rollouts.
+The learner writes features and gate diagnostics to ``algorithm.rlt_gate_calibration.save_path`` under ``rank_<rank>/trace_*.pt``. After collection, run the offline tool:
+
+.. code:: bash
+
+   python toolkits/rlt/calibrate_steam_gates.py /path/to/gate_calibration --device cpu
+
+The tool writes ``steam_phase_head.pt`` and ``steam_gate_recommendation.yaml`` in that directory. Copy the recommendation's ``rollout.routing_gate`` settings into your run config, including the phase-head path and calibrated thresholds. Set both collection flags back to false for normal training; the calibration tool runs separately from training updates.
 
 Stage 2 replay uses a fixed observation contract:
 

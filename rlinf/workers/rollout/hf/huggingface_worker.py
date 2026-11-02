@@ -47,6 +47,7 @@ from rlinf.models.embodiment.prefix.config import (
     get_prefix_feature_model_config,
     is_prefix_off_policy_loss,
 )
+from rlinf.models.embodiment.prefix.contracts import check_prefix_feature_dim
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
@@ -185,6 +186,7 @@ class MultiStepRolloutWorker(Worker):
             )
             self.prefix_feature_model.eval()
             self.prefix_feature_model.requires_grad_(False)
+            check_prefix_feature_dim(self.prefix_feature_model, self.model_cfg.z_dim)
             self.rlt_route = build_rlt_route(self.cfg)
             self.prefix_histories = [
                 build_state_history_buffer(self.model_cfg)

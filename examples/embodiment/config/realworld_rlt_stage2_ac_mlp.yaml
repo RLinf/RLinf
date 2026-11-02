@@ -68,7 +68,6 @@ algorithm:
   # schedules ~100–150 updates (25×5), not 8000 on the loaded buffer.
   update_epoch: 5
   group_size: 1
-  agg_q: min
   actor_agg_q: q1
   enable_drq: False
 
@@ -231,6 +230,9 @@ rollout:
       # Must match the repo_id/config_name used to compute Stage1 OpenPI norm stats.
       repo_id: "realworld_franka_pni"
       norm_stats_path: "/path/to/realworld_franka_pni"
+    prefix:
+      pool: rlt_token
+      image_only: false
     openpi:
       task: eval
       config_name: "pi05_franka_state"
@@ -254,7 +256,6 @@ rollout:
       joint_logprob: True
       use_rlt: True
       rlt_prefix_seq_len: 1024
-      rlt_image_only: False
       rlt_use_mask: True
 
   enable_torch_compile: True

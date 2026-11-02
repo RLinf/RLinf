@@ -134,11 +134,10 @@ class PrefixOffPolicyRuntime:
         self._synchronize_after_training()
         return mean_metrics
 
-    @staticmethod
-    def _synchronize_after_training() -> None:
-        torch.cuda.synchronize()
+    def _synchronize_after_training(self) -> None:
+        self.torch_platform.synchronize()
         torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
 
 
 class PrefixOffPolicyFSDPPolicy(PrefixOffPolicyRuntime, EmbodiedSACFSDPPolicy):

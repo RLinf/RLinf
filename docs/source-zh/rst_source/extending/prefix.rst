@@ -93,7 +93,7 @@ Prefix pooling
 * ``last`` 读取最后一个有效 token；没有 mask 时读取序列末端。
 * ``rlt_token`` 是配置层的标记。OpenPI 会转到 ``rlt_module.encode_flat``，因此不会直接调用 ``pool_prefix``。
 
-``resolve_prefix_pool`` 按 ``prefix.pool``、``stage2_z_source``、``use_rlt`` 和 ``rlt_use_mask`` 解析最终模式。建议在配置中显式写出 ``prefix.pool``，这样 Stage 1 和 Stage 2 的表示来源可以直接检查。
+``prefix.pool`` 和 ``prefix.image_only`` 与 OpenPI 模型配置中的 ``openpi`` 块并列。未设置 ``prefix.pool`` 时，``resolve_prefix_pool`` 在 ``openpi.use_rlt`` 为 true 时返回 ``rlt_token``，否则返回 ``masked_mean``。``prefix.image_only`` 默认为 true，会在 pooling 或 RLT 编码前只保留图像 token。建议在配置中显式写出这两个字段，这样 Stage 1 和 Stage 2 的表示来源可以直接检查。rollout worker 启动时会检查特征模型的 ``z_dim`` 与 ``actor.model.z_dim`` 一致。
 
 State history
 ^^^^^^^^^^^^^
@@ -327,7 +327,9 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
 扩展 Prefix Algorithm
 ---------------------
 
-``PrefixOffPolicyAlgorithm`` 将 actor objective、critic target action 和 Q 聚合规则抽成组件。新 algorithm 继承该基类，实现 ``requirements``、``actor_forward_kwargs``、``target_actions`` 和 ``aggregate_actor_q``，再用 ``register_prefix_off_policy_algorithm`` 注册。
+算法接口以 ``critic_loss``、``actor_loss`` 和 ``target_actions`` 为三个主要入口。新 algorithm 用 ``requirements`` 声明所需的 head capabilities，并通过 ``register_prefix_off_policy_algorithm`` 注册。基类已提供按 chunk 折扣的 Bellman critic loss；只有 target 或 critic objective 不同时才需要覆盖。子类实现自己的 ``actor_loss`` 和 ``target_actions``。
+
+下面的示例使用 minimum-Q 聚合，并复用共享的 BC/Q actor objective。actor 请求通过 ``context.target_model(...)`` 发出，因此仍经过 worker 持有的 FSDP wrapper 及其 ``forward`` hooks。``PrefixPolicy`` 负责 actor 分发和普通 Q / CrossQ critic 的选择，算法不需要指定 SAC 或 CrossQ forward type。
 
 .. code:: python
 
@@ -335,7 +337,7 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
        PrefixAlgorithmRequirements, PrefixOffPolicyAlgorithm,
        register_prefix_off_policy_algorithm,
    )
-   from rlinf.models.embodiment.base_policy import ForwardType
+   from rlinf.models.embodiment.prefix import PrefixForwardType
 
    @register_prefix_off_policy_algorithm("my_algorithm")
    class MyAlgorithm(PrefixOffPolicyAlgorithm):
@@ -345,33 +347,47 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
            uses_target_actor=True,
        )
 
-       def actor_forward_kwargs(self):
-           return {"apply_action_noise": True}
+       def actor_loss(self, context, batch):
+           return self._actor_loss(
+               context,
+               batch,
+               actor_agg_q="min",
+               apply_reference_dropout=False,
+               apply_action_noise=True,
+           )
 
        def target_actions(self, context, next_obs):
            actions, _, _ = context.target_model(
-               forward_type=ForwardType.SAC,
+               forward_type=PrefixForwardType.ACTOR,
                obs=next_obs,
            )
            return actions
 
-       def aggregate_actor_q(self, all_q_values):
-           return self._min_twin_q(all_q_values)
+``PrefixOffPolicyAlgorithm`` 在 ``critic_loss`` 中复用 chunk reward 折扣、termination bootstrap 和 critic MSE。可选的 ``_actor_loss`` helper 为 AC 和 TD3 共享 BC target、human intervention mask、BC/Q weight schedule 和 Q 聚合。其他 actor objective 可以直接实现 ``actor_loss``，无需使用该 helper。在 registry 的 ``_load_builtin_algorithms`` 中导入模块后，算法通过 ``algorithm.name: my_algorithm`` 选择，worker 仍使用 ``loss_type: prefix_off_policy``。
 
-``PrefixOffPolicyAlgorithm`` 已实现 chunk reward 折扣、termination bootstrap、BC target、human intervention mask、BC/Q weight schedule 和 critic MSE。子类只覆盖算法语义。在 registry 的 ``_load_builtin_algorithms`` 中导入模块后，算法通过 ``algorithm.name: my_algorithm`` 选择，worker 仍使用 ``loss_type: prefix_off_policy``。
-
-内置 ``ac`` 使用 stochastic actor 和 Q1 聚合，``td3`` 使用 deterministic actor、target actor、action noise，并支持 ``min``、``q1``、``mean`` 三种 actor Q 聚合。每个 algorithm 的 requirements 会和 head capabilities 一起校验。
+内置 ``ac`` 使用 stochastic actor 和 Q1 聚合，``algorithm.actor_agg_q`` 只能为 ``q1``。``td3`` 使用 deterministic actor、target actor、action noise，并支持 ``min``、``q1``、``mean`` 三种 actor Q 聚合。critic target 始终取前两个 Q head 的最小值，因此 ``algorithm.agg_q`` 只能为 ``min`` 或不设置；``multi_q_mlp`` 的其余 head 回归到同一个 target。Prefix algorithm 不训练 entropy temperature，要求 ``algorithm.entropy_tuning.alpha_type: fixed_alpha``。构建 algorithm 时会一起校验这些设置和 head capabilities。
 
 训练与运行
 ----------
 
-仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。该配置使用 masked-mean VLM Prefix 特征、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。将 ``rollout.prefix_feature_model.model_path``、OpenPI ``repo_id``、``norm_stats_path`` 和环境资产改成当前机器的路径后运行：
+仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。该配置使用 masked-mean VLM Prefix 特征、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。先在 ``rollout.prefix_feature_model.model_path``、``rollout.routing_gate.actor_switch.phase_head_path``、``rollout.routing_gate.model.model_path`` 和 ``rollout.expert_model.model_path`` 填入四个 checkpoint。示例中的路径都是占位符；将 OpenPI ``repo_id``、``norm_stats_path`` 和环境资产与 checkpoint 对齐后运行：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-冻结的特征模型使用 ``prefix.pool: masked_mean`` 和 ``use_rlt: false``，因此 ``z_rl`` 来自 VLM pooling，同时关闭 RLT token module。STEAM routing 只负责 base VLA、Stage 2 actor 与 expert 的 rollout route，head 和 algorithm 仍由 Prefix runtime 负责。
+冻结的特征模型显式设置 ``prefix.pool: masked_mean``、``prefix.image_only: true`` 和 ``use_rlt: false``。``z_rl`` 只对 VLM 图像 token 做 pooling；语言仍用于生成 reference action。STEAM routing 只负责 base VLA、Stage 2 actor 与 expert 的 rollout route，head 和 algorithm 仍由 Prefix runtime 负责。``rollout.routing_gate.cameras`` 将每个 STEAM processor camera key 映射到提供该图像的 env observation key。
+
+要用已记录的 episode 校准路由，在采集 rollout 时设置
+``rollout.routing_gate.actor_switch.collect_phase_features: true`` 和
+``algorithm.rlt_gate_calibration.enable: true``。
+learner 会在 ``algorithm.rlt_gate_calibration.save_path`` 下的 ``rank_<rank>/trace_*.pt`` 中写入特征与 gate 诊断信息。采集完成后运行离线工具：
+
+.. code:: bash
+
+   python toolkits/rlt/calibrate_steam_gates.py /path/to/gate_calibration --device cpu
+
+工具会在该目录生成 ``steam_phase_head.pt`` 和 ``steam_gate_recommendation.yaml``。将推荐文件的 ``rollout.routing_gate`` 设置复制到运行配置，包括 phase-head 路径与校准后的阈值。正常训练时将两个采集开关恢复为 false；校准工具与训练更新分开运行。
 
 Stage 2 replay 的 observation 固定为：
 

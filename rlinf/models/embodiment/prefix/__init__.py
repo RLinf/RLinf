@@ -26,6 +26,7 @@ from rlinf.models.embodiment.prefix.config import (
 from rlinf.models.embodiment.prefix.contracts import (
     PrefixFeatureModel,
     TrainablePrefixPolicy,
+    check_prefix_feature_dim,
     extract_prefix_obs,
 )
 from rlinf.models.embodiment.prefix.heads import (
@@ -35,7 +36,11 @@ from rlinf.models.embodiment.prefix.heads import (
 from rlinf.models.embodiment.prefix.history import StateHistoryBuffer
 from rlinf.models.embodiment.prefix.policy import PrefixPolicy
 from rlinf.models.embodiment.prefix.pool import pool_prefix
-from rlinf.models.embodiment.prefix.types import PREFIX_OBS_KEYS, PrefixObs
+from rlinf.models.embodiment.prefix.types import (
+    PREFIX_OBS_KEYS,
+    PrefixForwardType,
+    PrefixObs,
+)
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16) -> PrefixPolicy:
@@ -58,11 +63,13 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16) -> PrefixPolicy:
 __all__ = [
     "PREFIX_OBS_KEYS",
     "PrefixFeatureModel",
+    "PrefixForwardType",
     "PrefixObs",
     "PrefixPolicy",
     "StateHistoryBuffer",
     "TrainablePrefixPolicy",
     "build_state_history_buffer",
+    "check_prefix_feature_dim",
     "extract_prefix_obs",
     "get_model",
     "get_prefix_feature_dim",

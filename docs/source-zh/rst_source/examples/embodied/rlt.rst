@@ -153,6 +153,9 @@ Stage 1 中比较关键的字段：
        action_dim: 7
        num_steps: 4
        add_value_head: False
+       prefix:
+         pool: rlt_token
+         image_only: false
        openpi:
          task: sft
          config_name: "pi05_franka_state"
@@ -172,7 +175,6 @@ Stage 1 中比较关键的字段：
          use_rlt: True
          rlt_alpha: 1.0
          rlt_prefix_seq_len: 1024
-         rlt_image_only: False
          rlt_use_mask: True
 
 ``repo_id``、``config_name`` 和归一化统计需要与 Stage 2 特征模型配置保持一致。
@@ -264,6 +266,9 @@ Stage 2 中比较关键的字段：
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
          norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
+       prefix:
+         pool: rlt_token
+         image_only: false
        openpi:
          task: eval
          config_name: "pi05_franka_state"
@@ -283,7 +288,6 @@ Stage 2 中比较关键的字段：
          state_indices: []      # 保留完整 raw state；例如 19D state
          use_rlt: True
          rlt_prefix_seq_len: 1024
-         rlt_image_only: False
          rlt_use_mask: True
 
    actor:
@@ -616,7 +620,7 @@ Stage 1 checkpoint，然后执行：
 目前该变体只提供 ManiSkill 仿真配置。它保留冻结的 Stage 1 特征和 transition
 replay 路径，仅将 Stage 2 策略和更新目标替换为直接 TD3 actor 与 twin-Q critic。
 
-如需将同一套 TD3 组件与 STEAM 组合，先在 ``maniskill_prefix_stage2_td3_mlp_steam.yaml`` 中设置 feature model、phase head、value model 与 expert checkpoint 路径，再执行：
+STEAM preset 显式设置 ``prefix.image_only: true``，只对图像 token 做 pooling。如需将同一套 TD3 组件与 STEAM 组合，先在 ``maniskill_prefix_stage2_td3_mlp_steam.yaml`` 中设置 feature model、phase head、value model 与 expert checkpoint 路径，再执行：
 
 .. code:: bash
 

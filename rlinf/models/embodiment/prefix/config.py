@@ -47,10 +47,8 @@ def resolve_prefix_pool(
     *,
     use_rlt: bool = False,
     prefix_pool: str | None = None,
-    stage2_z_source: str | None = None,
-    rlt_use_mask: bool = False,
 ) -> str:
-    """Resolve the pooling operation used to construct frozen prefix features."""
+    """Return ``prefix.pool``, defaulting to RLT tokens when the module exists."""
     if prefix_pool:
         pool = str(prefix_pool)
         if pool not in PREFIX_POOL_MODES:
@@ -58,11 +56,7 @@ def resolve_prefix_pool(
                 f"prefix.pool must be one of {PREFIX_POOL_MODES}, got {pool!r}."
             )
         return pool
-    if stage2_z_source == "vlm_prefix":
-        return "masked_mean" if rlt_use_mask else "mean"
-    if use_rlt:
-        return "rlt_token"
-    return "masked_mean"
+    return "rlt_token" if use_rlt else "masked_mean"
 
 
 def get_prefix_feature_model_config(cfg: Any) -> Any | None:

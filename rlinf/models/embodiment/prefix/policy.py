@@ -23,6 +23,7 @@ from rlinf.models.embodiment.prefix.heads.registry import (
     build_prefix_actor,
     build_prefix_critic,
 )
+from rlinf.models.embodiment.prefix.types import PrefixForwardType
 
 
 class PrefixPolicy(nn.Module, BasePolicy):
@@ -118,8 +119,23 @@ class PrefixPolicy(nn.Module, BasePolicy):
     def _format_chunk_actions(self, actions: torch.Tensor) -> torch.Tensor:
         return actions.reshape(-1, self.chunk_len, self.step_action_dim)
 
-    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
-        """Dispatch the forward pass required by the off-policy worker."""
+    def forward(
+        self,
+        forward_type: PrefixForwardType | ForwardType = ForwardType.DEFAULT,
+        **kwargs: Any,
+    ) -> (
+        torch.Tensor
+        | tuple[torch.Tensor, torch.Tensor | None]
+        | tuple[torch.Tensor, torch.Tensor, None]
+    ):
+        """Dispatch actor or critic calls without exposing the critic backend.
+
+        Prefix actor calls return ``(actions, log_probs, None)``. Prefix critic
+        calls return ``(current_q, next_q)``; ``next_q`` is ``None`` for a
+        non-joint critic. SAC and CrossQ forward types are not accepted; the
+        Prefix worker routes every actor and critic call through
+        ``PrefixForwardType``.
+        """
         obs = kwargs.get("obs")
         if obs is not None:
             kwargs["obs"] = self.preprocess_env_obs(obs)
@@ -127,14 +143,12 @@ class PrefixPolicy(nn.Module, BasePolicy):
         if next_obs is not None:
             kwargs["next_obs"] = self.preprocess_env_obs(next_obs)
 
-        if forward_type == ForwardType.SAC:
+        if forward_type == PrefixForwardType.ACTOR:
             return self.sac_forward(**kwargs)
-        if forward_type == ForwardType.SAC_Q:
-            return self.sac_q_forward(**kwargs)
-        if forward_type == ForwardType.CROSSQ:
-            return self.sac_forward(**kwargs)
-        if forward_type == ForwardType.CROSSQ_Q:
-            return self.crossq_q_forward(**kwargs)
+        if forward_type == PrefixForwardType.CRITIC:
+            if self.q_head.capabilities.supports_cross_q:
+                return self.crossq_q_forward(**kwargs)
+            return self.sac_q_forward(**kwargs), None
         if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
         if forward_type == ForwardType.DEFAULT:

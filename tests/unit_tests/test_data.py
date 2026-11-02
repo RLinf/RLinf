@@ -1782,9 +1782,13 @@ def test_history_reward_assignment_matches_main_across_chunks():
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
 
 
-@pytest.mark.parametrize("loss_type", ["rlt_ac", "rlt_td3"])
-def test_rlt_output_matches_main_transition_and_intervention_behavior(loss_type):
-    collector = _make(_config(algorithm={"loss_type": loss_type}))
+@pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
+def test_prefix_output_matches_main_transition_and_intervention_behavior(
+    algorithm_name,
+):
+    collector = _make(
+        _config(algorithm={"loss_type": "prefix_off_policy", "name": algorithm_name})
+    )
     key = TrajectoryKey(3, 0, 0, 0, 0)
     current_ref_chunk = torch.tensor([[1.0, 2.0]])
     intervened_chunk = torch.tensor([[9.0, 8.0]])
@@ -2574,6 +2578,7 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.routing_gate = None
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -2861,6 +2866,7 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = OmegaConf.create({"env": {"train": {"auto_reset": True}}})
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -2966,6 +2972,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = OmegaConf.create({"env": {"train": {"auto_reset": True}}})
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3198,7 +3205,9 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
     rollout._publish_env_part(completion, None, None, actor_channel)
 
-    rollout._predict_rollout_actions.assert_called_once_with(completion.next_obs)
+    rollout._predict_rollout_actions.assert_called_once_with(
+        completion.next_obs, update_history=False, stage_id=0, update_gate=False
+    )
     part = actor_channel.put.call_args.args[0]
     assert torch.equal(part.bootstrap_values, torch.zeros(1, 1))
     assert torch.equal(part.final_prev_values, torch.zeros(1, 1))

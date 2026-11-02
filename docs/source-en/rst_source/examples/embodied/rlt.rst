@@ -158,6 +158,9 @@ Important Stage 1 fields:
        action_dim: 7
        num_steps: 4
        add_value_head: False
+       prefix:
+         pool: rlt_token
+         image_only: false
        openpi:
          task: sft
          config_name: "pi05_franka_state"
@@ -177,7 +180,6 @@ Important Stage 1 fields:
          use_rlt: True
          rlt_alpha: 1.0
          rlt_prefix_seq_len: 1024
-         rlt_image_only: False
          rlt_use_mask: True
 
 Keep ``repo_id``, ``config_name``, and normalization stats consistent with the
@@ -275,6 +277,9 @@ Important Stage 2 fields:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
          norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
+       prefix:
+         pool: rlt_token
+         image_only: false
        openpi:
          task: eval
          config_name: "pi05_franka_state"
@@ -294,7 +299,6 @@ Important Stage 2 fields:
          state_indices: []      # keep the full raw state, e.g. 19D
          use_rlt: True
          rlt_prefix_seq_len: 1024
-         rlt_image_only: False
          rlt_use_mask: True
 
    actor:
@@ -658,6 +662,7 @@ This variant is currently configured only for ManiSkill simulation. It keeps
 the frozen Stage 1 features and transition replay path, while replacing the
 Stage 2 policy and update objective with a direct TD3 actor and twin-Q critic.
 
+The STEAM preset explicitly sets ``prefix.image_only: true`` to pool image tokens.
 To combine the same TD3 components with STEAM, set the feature, phase-head,
 value-model, and expert checkpoint paths in
 ``maniskill_prefix_stage2_td3_mlp_steam.yaml``, then launch:

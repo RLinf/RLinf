@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import torch
 import torch.nn.functional as F
@@ -22,11 +22,14 @@ from rlinf.algorithms.prefix_off_policy.capabilities import (
     PrefixAlgorithmRequirements,
 )
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
-from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.prefix.heads.registry import (
     get_prefix_actor_spec,
     get_prefix_critic_spec,
 )
+from rlinf.models.embodiment.prefix.types import PrefixForwardType
+
+ActorQAggregation = Literal["min", "q1", "mean"]
+ACTOR_Q_AGGREGATIONS: tuple[ActorQAggregation, ...] = ("min", "q1", "mean")
 
 
 class PrefixOffPolicyContext(Protocol):
@@ -40,7 +43,7 @@ class PrefixOffPolicyContext(Protocol):
 
 
 class PrefixOffPolicyAlgorithm(ABC):
-    """Algorithm contract shared by prefix AC and TD3 variants."""
+    """Loss and target-action contract for Prefix off-policy algorithms."""
 
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
@@ -74,6 +77,37 @@ class PrefixOffPolicyAlgorithm(ABC):
                 f"algorithm.name={self.cfg.algorithm.name!r} requires at least "
                 f"{requirements.min_q_heads} Q heads, got {self.num_q_heads}."
             )
+        critic_agg_q = self.cfg.algorithm.get("agg_q", "min")
+        if critic_agg_q != "min":
+            raise ValueError(
+                "Prefix critic targets use the minimum of the first two Q heads; "
+                f"expected algorithm.agg_q='min' or unset, got {critic_agg_q!r}."
+            )
+        # Matches the SAC worker default, which builds an alpha optimizer
+        # whenever alpha_type is not fixed_alpha.
+        entropy_cfg = self.cfg.algorithm.get("entropy_tuning", None) or {}
+        alpha_type = entropy_cfg.get("alpha_type", "softplus")
+        if alpha_type != "fixed_alpha":
+            raise ValueError(
+                "Prefix off-policy algorithms do not train an entropy "
+                "temperature; expected algorithm.entropy_tuning.alpha_type="
+                f"'fixed_alpha', got {alpha_type!r}."
+            )
+
+    def _configured_actor_agg_q(
+        self,
+        *,
+        default: ActorQAggregation,
+        allowed: tuple[ActorQAggregation, ...] = ACTOR_Q_AGGREGATIONS,
+    ) -> ActorQAggregation:
+        """Read ``algorithm.actor_agg_q`` and reject values this algorithm ignores."""
+        actor_agg_q = str(self.cfg.algorithm.get("actor_agg_q", default))
+        if actor_agg_q not in allowed:
+            raise ValueError(
+                f"algorithm.name={self.cfg.algorithm.name!r} expects "
+                f"algorithm.actor_agg_q in {allowed}, got {actor_agg_q!r}."
+            )
+        return actor_agg_q
 
     @staticmethod
     def _flatten_chunk(tensor: torch.Tensor) -> torch.Tensor:
@@ -270,17 +304,10 @@ class PrefixOffPolicyAlgorithm(ABC):
             },
         )
 
-    def _uses_cross_q(self) -> bool:
-        return self.critic_capabilities.supports_cross_q
-
     @property
     @abstractmethod
     def requirements(self) -> PrefixAlgorithmRequirements:
         """Return the policy-head capabilities required by this algorithm."""
-
-    @abstractmethod
-    def actor_forward_kwargs(self) -> dict[str, Any]:
-        """Return model options for an actor update."""
 
     @abstractmethod
     def target_actions(
@@ -291,15 +318,23 @@ class PrefixOffPolicyAlgorithm(ABC):
         """Produce the action used by the critic target."""
 
     @abstractmethod
-    def aggregate_actor_q(self, all_q_values: torch.Tensor) -> torch.Tensor:
-        """Reduce twin-Q output for the actor objective."""
+    def actor_loss(
+        self,
+        context: PrefixOffPolicyContext,
+        batch: dict[str, Any],
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+        """Return actor loss, entropy, and metrics for one replay batch."""
 
     def critic_loss(
         self,
         context: PrefixOffPolicyContext,
         batch: dict[str, Any],
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        use_crossq = self._uses_cross_q()
+        """Return chunk-discounted Bellman MSE and critic metrics.
+
+        The bootstrap value is ``min(Q1, Q2)`` over the first two Q heads; any
+        additional heads regress to that same target.
+        """
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
 
         curr_obs = batch["curr_obs"]
@@ -314,25 +349,33 @@ class PrefixOffPolicyAlgorithm(ABC):
             keepdim=True,
         )
 
+        joint_critic = self.critic_capabilities.supports_cross_q
         with torch.no_grad():
             next_actions = self.target_actions(context, next_obs)
-            if not use_crossq:
-                all_qf_next_target = context.target_model(
-                    forward_type=ForwardType.SAC_Q,
+            if not joint_critic:
+                all_qf_next, _ = context.target_model(
+                    forward_type=PrefixForwardType.CRITIC,
                     obs=next_obs,
                     actions=next_actions,
                 )
-                q_next = self._min_twin_q(all_qf_next_target)
-            else:
-                _, all_qf_next = context.model(
-                    forward_type=ForwardType.CROSSQ_Q,
-                    obs=curr_obs,
-                    actions=actions,
-                    next_obs=next_obs,
-                    next_actions=next_actions,
-                )
-                q_next = self._min_twin_q(all_qf_next.detach())
 
+        if joint_critic:
+            all_data_q_values, all_qf_next = context.model(
+                forward_type=PrefixForwardType.CRITIC,
+                obs=curr_obs,
+                actions=actions,
+                next_obs=next_obs,
+                next_actions=next_actions,
+            )
+        else:
+            all_data_q_values, _ = context.model(
+                forward_type=PrefixForwardType.CRITIC,
+                obs=curr_obs,
+                actions=actions,
+            )
+
+        with torch.no_grad():
+            q_next = self._min_twin_q(all_qf_next.detach())
             reward_target = self._discounted_chunk_rewards(
                 rewards,
                 context.torch_dtype,
@@ -346,21 +389,6 @@ class PrefixOffPolicyAlgorithm(ABC):
             else:
                 raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
-        if not use_crossq:
-            all_data_q_values = context.model(
-                forward_type=ForwardType.SAC_Q,
-                obs=curr_obs,
-                actions=actions,
-            )
-        else:
-            all_data_q_values, _ = context.model(
-                forward_type=ForwardType.CROSSQ_Q,
-                obs=curr_obs,
-                actions=actions,
-                next_obs=next_obs,
-                next_actions=next_actions,
-            )
-
         target_q_values = target_q_values.to(dtype=all_data_q_values.dtype)
         critic_loss = F.mse_loss(
             all_data_q_values,
@@ -368,47 +396,50 @@ class PrefixOffPolicyAlgorithm(ABC):
         )
         return critic_loss, {"q_data": all_data_q_values.mean().item()}
 
-    def actor_loss(
+    def _actor_loss(
         self,
         context: PrefixOffPolicyContext,
         batch: dict[str, Any],
+        *,
+        actor_agg_q: ActorQAggregation,
+        apply_reference_dropout: bool,
+        apply_action_noise: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
-        use_crossq = self._uses_cross_q()
         curr_obs = batch["curr_obs"]
         reference_dropout_prob = float(
             self.cfg.algorithm.get("reference_dropout_prob", 0.0)
         )
         pi, log_pi, _ = context.model(
-            forward_type=ForwardType.SAC,
+            forward_type=PrefixForwardType.ACTOR,
             obs=curr_obs,
-            **self.actor_forward_kwargs(),
+            apply_reference_dropout=apply_reference_dropout,
+            reference_dropout_prob=reference_dropout_prob,
+            apply_action_noise=apply_action_noise,
         )
         if log_pi.ndim == 1:
             log_pi = log_pi.unsqueeze(-1)
         log_pi = log_pi.sum(dim=-1, keepdim=True)
 
-        if not use_crossq:
-            all_qf_pi = context.model(
-                forward_type=ForwardType.SAC_Q,
-                obs=curr_obs,
-                actions=pi,
-                detach_encoder=True,
-            )
-        else:
-            all_qf_pi, _ = context.model(
-                forward_type=ForwardType.CROSSQ_Q,
-                obs=curr_obs,
-                actions=pi,
-                next_obs=None,
-                next_actions=None,
-                detach_encoder=True,
-            )
+        all_qf_pi, _ = context.model(
+            forward_type=PrefixForwardType.CRITIC,
+            obs=curr_obs,
+            actions=pi,
+            detach_encoder=True,
+        )
 
         metrics = {
             f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item()
             for q_id in range(all_qf_pi.shape[-1])
         }
-        qf_pi = self.aggregate_actor_q(all_qf_pi)
+        if actor_agg_q == "min":
+            qf_pi = self._min_twin_q(all_qf_pi)
+        elif actor_agg_q == "q1":
+            qf_pi = self._q1(all_qf_pi)
+        elif actor_agg_q == "mean":
+            self._require_twin_q(all_qf_pi)
+            qf_pi = all_qf_pi.mean(dim=-1, keepdim=True)
+        else:
+            raise ValueError(f"Unsupported actor_agg_q={actor_agg_q!r}.")
         metrics["q_pi"] = qf_pi.mean().item()
 
         ref_chunk = self._ref_chunk(curr_obs)
