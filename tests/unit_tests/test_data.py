@@ -127,6 +127,10 @@ def test_env_replay_buffer_draws_each_env_by_weight_not_by_fill(tmp_path):
 
         assert batch["rewards"].squeeze(-1).tolist().count(1.0) == 2
         assert batch["rewards"].squeeze(-1).tolist().count(2.0) == 6
+        # Each transition names its env by position, for per-env SAC temperatures.
+        assert torch.equal(
+            batch["env_index"], (batch["rewards"].reshape(-1) == 2.0).long()
+        )
         assert env_buffer.get_stats()["libero/num_trajectories"] == 8
         assert env_buffer.get_stats()["num_trajectories"] == 10
         # ManiSkill holds 2 trajectories, its 3/4 share of 2 but not of 4.

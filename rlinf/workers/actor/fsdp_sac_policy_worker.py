@@ -145,6 +145,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             alpha_type=alpha_type,
             device=self.device,
             dtype=self.torch_dtype,
+            num_temperatures=len(self._rollout_geometry.layout.specs),
         )
         if alpha_type != "fixed_alpha":
             self.target_entropy = self.cfg.algorithm.entropy_tuning.get(
@@ -419,7 +420,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
                 if self.cfg.algorithm.get("backup_entropy", True):
                     qf_next_target = (
-                        qf_next_target - self.entropy_temp.alpha * next_state_log_pi
+                        qf_next_target
+                        - self.entropy_temp.sample_alpha(
+                            batch.get("env_index")
+                        ).detach()
+                        * next_state_log_pi
                     )
                     qf_next_target = qf_next_target.to(dtype=self.torch_dtype)
                 if bootstrap_type == "always":
@@ -459,7 +464,11 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             elif agg_q == "mean":
                 qf_next = torch.mean(all_qf_next, dim=1, keepdim=True)
             if self.cfg.algorithm.get("backup_entropy", True):
-                qf_next = qf_next - self.entropy_temp.alpha * next_state_log_pi
+                qf_next = (
+                    qf_next
+                    - self.entropy_temp.sample_alpha(batch.get("env_index")).detach()
+                    * next_state_log_pi
+                )
                 qf_next = qf_next.to(dtype=self.torch_dtype)
 
             if bootstrap_type == "always":
@@ -529,7 +538,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         elif agg_q == "mean":
             qf_pi = torch.mean(all_qf_pi, dim=1, keepdim=True)
         metrics["q_pi"] = qf_pi.mean().item()
-        actor_loss = ((self.entropy_temp.alpha * log_pi) - qf_pi).mean()
+        alpha = self.entropy_temp.sample_alpha(batch.get("env_index")).detach()
+        actor_loss = ((alpha * log_pi) - qf_pi).mean()
 
         entropy = -log_pi.mean()
         return actor_loss, entropy, metrics
@@ -552,8 +562,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 log_pi = log_pi.unsqueeze(-1)
             log_pi = log_pi.sum(dim=-1, keepdim=True)
 
-        alpha = self.entropy_temp.compute_alpha()
-        alpha_loss = -alpha * (log_pi.mean() + self.target_entropy)
+        # Each env's temperature tunes toward the target entropy on its own samples.
+        alpha = self.entropy_temp.sample_alpha(batch.get("env_index"))
+        alpha_loss = -(alpha * (log_pi + self.target_entropy)).mean()
         return alpha_loss
 
     @Worker.timer("update_one_epoch")
@@ -654,6 +665,14 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     "sac/actor_loss": np.mean(gbs_actor_loss),
                     "sac/alpha_loss": np.mean(gbs_alpha_loss),
                     "sac/alpha": self.entropy_temp.alpha,
+                    **{
+                        key: value
+                        for spec, alpha in zip(
+                            self._rollout_geometry.layout.specs,
+                            self.entropy_temp.compute_alpha().tolist(),
+                        )
+                        for key, value in spec.scoped({"sac/alpha": alpha}).items()
+                    },
                     "actor/lr": self.optimizer.param_groups[0]["lr"],
                     "actor/grad_norm": actor_grad_norm,
                     "actor/entropy": np.mean(gbs_entropy),

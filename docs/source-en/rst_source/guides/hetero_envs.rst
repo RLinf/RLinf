@@ -261,9 +261,10 @@ Limitations
   use ``policy_obs`` to make them match.
 - The training pipeline (``runner.use_training_pipeline``) and online LeRobot
   collection for DAgger need a single env configuration.
-- PPO and SAC share one critic across env configurations, and SAC also shares
-  one entropy temperature; RLinf does not normalize rewards per env, so set
-  ``reward_scale`` when reward scales differ.
+- PPO and SAC share one critic across env configurations; RLinf does not
+  normalize rewards per env, so set ``reward_scale`` when reward scales differ.
+  SAC tunes one entropy temperature per env configuration, except for samples
+  mixed with a demo buffer, which use their mean.
 - In env-decoupled mode, each rollout worker serves an equal share of a step's
   requests from a shared queue and runs one forward pass per observation
   format in what it receives.

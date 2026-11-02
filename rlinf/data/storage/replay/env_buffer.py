@@ -72,12 +72,23 @@ class EnvReplayBuffer:
             self.buffers[name].add_trajectories(items)
 
     def sample(self, num_chunks: int) -> dict[str, torch.Tensor]:
-        """Sample ``num_chunks`` transitions, split among the envs by weight."""
-        parts = [
-            self.buffers[name].sample(count)
-            for name, count in self._counts(num_chunks).items()
-            if count > 0
-        ]
+        """Sample ``num_chunks`` transitions, split among the envs by weight.
+
+        Each transition carries ``env_index``, the position of its env in the
+        buffer order, which matches the env layout's order.
+        """
+        parts = []
+        for index, (name, count) in enumerate(self._counts(num_chunks).items()):
+            if count == 0:
+                continue
+            part = self.buffers[name].sample(count)
+            rows = next(
+                value.shape[0]
+                for value in part.values()
+                if isinstance(value, torch.Tensor)
+            )
+            part["env_index"] = torch.full((rows,), index, dtype=torch.long)
+            parts.append(part)
         return reduce(concat_batch, parts)
 
     def is_ready(self, min_size: int) -> bool:

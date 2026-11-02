@@ -1720,3 +1720,21 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+
+
+def test_entropy_temperatures_are_tuned_per_env_and_load_scalar_checkpoints():
+    from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+    temperature = EntropyTemperature(initial_alpha=0.1, num_temperatures=2)
+    with torch.no_grad():
+        temperature.base_alpha[1] += 1.0
+
+    alpha = temperature.sample_alpha(torch.tensor([1, 0, 1]))
+
+    assert alpha.shape == (3, 1)
+    assert alpha[0, 0] == alpha[2, 0] > alpha[1, 0]
+    assert temperature.sample_alpha(None) == temperature.compute_alpha().mean()
+
+    single = EntropyTemperature(initial_alpha=0.1)
+    single.load_state_dict({"base_alpha": torch.tensor(0.5)})
+    assert single.base_alpha.tolist() == [0.5]
