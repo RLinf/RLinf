@@ -4062,6 +4062,11 @@ install_robodojo_env() {
     # IsaacLab and cuRobo extensions built below.
     set_torch_cuda_arch_list
 
+    # cuRobo derives its version from git through setuptools_scm. Install it
+    # first so the metadata and wheel stages both see it; otherwise uv prepares
+    # 0.0.0 metadata and rejects the wheel named with the SCM version.
+    uv pip install --no-config --prerelease=allow "setuptools_scm==10.3.4"
+
     # cuRobo is pinned to the revision the RoboDojo runtime was validated with.
     # ``--no-config`` keeps these installs on the runtime's own pins: the
     # simulator stack must resolve from the upstream compatibility overrides,
