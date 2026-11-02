@@ -48,7 +48,7 @@ env:
     use_fixed_reset_state_ids: True
     is_eval: True
     state_action_order: aloha
-    seeds_path: ${oc.env:REPO_PATH}/evaluations/robodojo/put_bottles_into_dustbin_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robodojo/seeds/eval_seeds.json
     video_cfg:
       save_video: False
       info_on_video: True
@@ -84,4 +84,4 @@ rollout:
       torch_compile: False
     openpi_data:
       adapt_to_pi: False
-      norm_stats_path: ${..model_path}/arx_x5_sim/norm_stats.json
+      norm_stats_path: ${..model_path}/assets/norm_stats.json

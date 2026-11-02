@@ -55,7 +55,7 @@ env:
     # `task_config.random: False` replays the official layouts under
     # Assets/Eval_Layout, whose ids are 0..N-1. The env samples reset seeds from
     # `success_seeds` when it is set, and a random id would miss the layout list.
-    seeds_path: ${oc.env:REPO_PATH}/evaluations/robodojo/put_bottles_into_dustbin_seeds.json
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robodojo/seeds/eval_seeds.json
     video_cfg:
       save_video: False
       info_on_video: True
@@ -92,4 +92,4 @@ rollout:
     openpi_data:
       # Official RoboDojo Pi_05 config: no Aloha joint/gripper realignment.
       adapt_to_pi: False
-      norm_stats_path: ${..model_path}/arx_x5_sim/norm_stats.json
+      norm_stats_path: ${..model_path}/assets/norm_stats.json
