@@ -1095,16 +1095,6 @@ def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -
         )
 
 
-# Training paths that still take one value per mode for the loop fields.
-_MODE_LEVEL_TRAINING_LOSSES = (
-    "embodied_sac",
-    "rlt_ac",
-    "rlt_td3",
-    "embodied_dagger",
-    "decoupled_actor_critic",
-)
-
-
 def validate_env_training_cfg(
     cfg: DictConfig, layout: EnvLayout, *, stage_num: int, actor_world_size: int
 ) -> None:
@@ -1145,21 +1135,17 @@ def validate_env_training_cfg(
 
     if not EnvLayout.is_heterogeneous(cfg.env.train):
         return
-    mode_level_reasons = {
-        "runner.enable_decoupled_mode": cfg.runner.get("enable_decoupled_mode", False),
+    # These paths still take one value per mode for the loop fields.
+    single_env_paths = {
         "runner.use_training_pipeline": cfg.runner.get("use_training_pipeline", False),
         "algorithm.dagger.online_lerobot.enabled": OmegaConf.select(
             cfg, "algorithm.dagger.online_lerobot.enabled", default=False
         ),
-        f"algorithm.loss_type={algorithm_cfg.get('loss_type')}": algorithm_cfg.get(
-            "loss_type"
-        )
-        in _MODE_LEVEL_TRAINING_LOSSES,
     }
-    unsupported = [reason for reason, enabled in mode_level_reasons.items() if enabled]
+    unsupported = [path for path, enabled in single_env_paths.items() if enabled]
     assert not unsupported, (
-        "Heterogeneous env.train configs support sync on-policy training, but "
-        f"this run uses {unsupported}."
+        "Heterogeneous env.train configs need each env's loop read per env, which "
+        f"{unsupported} does not do; use one env configuration."
     )
     for spec in layout.specs:
         sources = len(spec.ranks) * stage_num

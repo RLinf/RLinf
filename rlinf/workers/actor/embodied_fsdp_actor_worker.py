@@ -14,7 +14,7 @@
 
 import math
 from collections import defaultdict
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import numpy as np
 import torch
@@ -29,6 +29,7 @@ from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_trajectory import RolloutGeometry
 from rlinf.data.schema.embodied_types import Trajectory, batch_format
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
+from rlinf.data.storage.replay import EnvReplayBuffer, TrajectoryReplayBuffer
 from rlinf.envs.layout import EnvSpec
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -337,7 +338,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "adv_type": algorithm_cfg.adv_type,
                 "rewards": batch["rewards"],
                 "dones": batch["dones"],
-                "values": batch.get("prev_values", None),
+                # Async training scores values with the proximal policy.
+                "values": batch.get("proximal_values", batch.get("prev_values", None)),
                 "prev_logprobs": batch.get("prev_logprobs", None),
                 "teacher_logprobs": batch.get("teacher_logprobs", None),
                 "num_action_chunks": self.cfg.actor.model.num_action_chunks,
@@ -541,6 +543,43 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     split_dict_to_chunk(part, math.ceil(rows / micro_batch_size))
                 )
             yield micro_batches
+
+    def _build_env_replay_buffer(
+        self,
+        auto_save_path: str,
+        make_buffer: Callable[[str], TrajectoryReplayBuffer],
+    ) -> EnvReplayBuffer:
+        """Build one replay buffer per env, sampled by the transitions it collects.
+
+        Each env's weight is the transitions it collects per step times its
+        ``loss_weight``, so the sampled mix follows the env counts and not how
+        full each buffer is.
+
+        Args:
+            auto_save_path: Save path of a homogeneous run's buffer; each env of a
+                heterogeneous run saves under ``<auto_save_path>/<name>``.
+            make_buffer: Builds one buffer given its save path.
+
+        Returns:
+            The buffers of all envs, used as one.
+        """
+        buffers, weights = {}, {}
+        for spec in self._rollout_geometry.layout.specs:
+            buffers[spec.name] = make_buffer(
+                EnvReplayBuffer._path(auto_save_path, spec.name)
+            )
+            weights[spec.name] = (
+                spec.cfg.total_num_envs
+                * spec.cfg.rollout_epoch
+                * spec.chunk_steps(self._rollout_geometry.num_action_chunks)
+                * self._env_algorithm_cfgs[spec.name].get("loss_weight", 1.0)
+            )
+        return EnvReplayBuffer(
+            buffers,
+            weights,
+            mix_envs=self.cfg.actor.get("mix_envs", True),
+            seed=self.cfg.actor.get("seed", 1234),
+        )
 
     @Worker.timer("actor/compute_opd_teacher_logprobs")
     def compute_opd_teacher_logprobs(self, batch: dict[str, Any]) -> None:

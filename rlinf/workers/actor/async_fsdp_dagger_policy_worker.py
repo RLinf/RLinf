@@ -20,7 +20,7 @@ import time
 import torch
 
 from rlinf.scheduler import Worker
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.metric_utils import append_to_dict
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
@@ -70,9 +70,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 time.sleep(0.1)
 
     def _recv_rollout_thread_main(self, input_channel):
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        split_num = self._rollout_geometry.shards_per_actor()
         while not self.should_stop:
             for _ in range(split_num):
                 trajectory = input_channel.get()

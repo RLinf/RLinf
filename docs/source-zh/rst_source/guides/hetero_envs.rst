@@ -101,6 +101,8 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 - ``adv_norm_scope: all`` 在所有环境配置上一起归一化 advantage，而不是分别归一化。它只影响在整个 batch 上做归一化的 advantage 类型，例如 GAE；GRPO 本来就在每个 group 内归一化。
 - ``actor.mix_envs: False`` 让每个 optimizer step 只使用一份环境配置的数据，顺序随机且所有 actor worker 一致。此时每份环境配置的样本数必须能填满整数个 global batch。
 
+异步训练和 off-policy 训练也保持同样的配比。在异步 PPO 中，每份环境配置按它每个 step 发给每个 actor 的轨迹数，分到 ``algorithm.rollout_store_size_per_rank`` 中相应的份额；训练 step 要等每份份额都填满才开始，因此跑得快的环境不会挤占慢的环境。off-policy 训练（SAC、DAgger、RLT）为每份环境配置保留一个 replay buffer，并按每份配置每个 step 采集的 transition 数乘以 ``loss_weight`` 的比例从中采样；设置 ``actor.mix_envs: False`` 时，每个 batch 只来自一份环境配置。
+
 奖励保持各环境自己的尺度。PPO 和 SAC 的 critic 同时服务所有环境配置，如果各环境的奖励大小相差很多，较大的那份会主导 critic，另一个环境得到的 baseline 就会变差。可以在环境配置上设置 ``reward_scale`` ，让各环境的 return 处在相近的量级；它会在训练读取奖励之前乘到这个环境的奖励上，此后 ``huber_delta`` 和 ``value_clip`` 作用于缩放后的值。
 
 处理不同的观测
@@ -156,6 +158,7 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 
 - policy 只有一种动作格式和一套动作归一化，也无法得知某个样本来自哪个环境。
 - NFT 训练要求各份环境配置发送同一种观测格式，请用 ``policy_obs`` 让它们一致。
-- 异构训练目前使用同步的 on-policy runner（PPO、GRPO 等）。异步训练、off-policy 训练（SAC、DAgger、RLT）、env-decoupled 模式和 training pipeline 需要单份环境配置。
-- PPO 和 SAC 在各环境配置之间共享一个 critic；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``reward_scale`` 。
+- training pipeline（ ``runner.use_training_pipeline`` ）和 DAgger 的在线 LeRobot 采集需要单份环境配置。
+- PPO 和 SAC 在各环境配置之间共享一个 critic，SAC 还共享同一个 entropy temperature；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``reward_scale`` 。
+- 在 env-decoupled 模式下，每个 rollout worker 从共享队列中处理一个 step 里相同份额的请求，并对收到的请求按观测格式分别运行前向计算。
 - 平滑干预（ ``smooth_intervene`` ）和实时控制评估（ ``runner.rtc`` ）只支持单份环境配置；RLT 仿真 replay 要求训练中的每份环境配置都是 ``maniskill_rlt`` 。配置不满足这些要求时，RLinf 会在启动阶段停止。

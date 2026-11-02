@@ -160,6 +160,15 @@ settings change that:
   configuration, in a random order shared by all actor workers. Each env
   configuration's samples must then fill whole global batches.
 
+Async and off-policy training keep the same mix. In async PPO, each env
+configuration gets its share of ``algorithm.rollout_store_size_per_rank``, in
+proportion to the trajectories it sends each actor, and a training step waits
+until every share is full, so a fast env cannot crowd out a slow one.
+Off-policy training (SAC, DAgger, RLT) keeps one replay buffer per env
+configuration and samples them in proportion to the transitions each collects
+per step, times ``loss_weight``; with ``actor.mix_envs: False`` each batch
+comes from one env configuration.
+
 Rewards keep each env's own scale. For PPO and SAC, whose critic serves every env
 configuration, rewards of very different sizes let the larger one dominate the
 critic, which gives the other env poor baselines. Set ``reward_scale`` on an env
@@ -250,12 +259,14 @@ Limitations
   know which env a sample came from.
 - NFT training needs every env configuration to send one observation format;
   use ``policy_obs`` to make them match.
-- Heterogeneous training runs with the synchronous on-policy runner (PPO, GRPO,
-  and similar). Async training, off-policy training (SAC, DAgger, RLT),
-  env-decoupled mode, and the training pipeline need a single env
-  configuration.
-- PPO and SAC share one critic across env configurations; RLinf does not
-  normalize rewards per env, so set ``reward_scale`` when reward scales differ.
+- The training pipeline (``runner.use_training_pipeline``) and online LeRobot
+  collection for DAgger need a single env configuration.
+- PPO and SAC share one critic across env configurations, and SAC also shares
+  one entropy temperature; RLinf does not normalize rewards per env, so set
+  ``reward_scale`` when reward scales differ.
+- In env-decoupled mode, each rollout worker serves an equal share of a step's
+  requests from a shared queue and runs one forward pass per observation
+  format in what it receives.
 - Smooth intervention (``smooth_intervene``) and real-time control evaluation
   (``runner.rtc``) work with a single env configuration only, and RLT simulator
   replay needs every train env configuration to be ``maniskill_rlt``. RLinf

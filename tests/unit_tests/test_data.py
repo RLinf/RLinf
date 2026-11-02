@@ -66,7 +66,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
-from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.data.storage.replay import EnvReplayBuffer, TrajectoryReplayBuffer
 from rlinf.envs.layout import EnvAssignment, EnvLayout
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
@@ -99,6 +99,63 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 def _scalar_trajectory(value: float) -> Trajectory:
     """One-sample trajectory so checkpoint tests write only tiny files."""
     return Trajectory(max_episode_length=1, rewards=torch.full((1, 1, 1), float(value)))
+
+
+def _env_trajectory(env_name: str, value: float, length: int = 4) -> Trajectory:
+    trajectory = Trajectory(
+        max_episode_length=length,
+        rewards=torch.full((length, 1, 1), float(value)),
+    )
+    trajectory.env_name = env_name
+    return trajectory
+
+
+def test_env_replay_buffer_draws_each_env_by_weight_not_by_fill(tmp_path):
+    buffers = {
+        "libero": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+        "maniskill": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+    }
+    env_buffer = EnvReplayBuffer(buffers, {"libero": 1.0, "maniskill": 3.0})
+    try:
+        # LIBERO's buffer holds four times as many trajectories, yet the draw
+        # follows the 1:3 weights.
+        env_buffer.add_trajectories(
+            [_env_trajectory("libero", 1.0) for _ in range(8)]
+            + [_env_trajectory("maniskill", 2.0) for _ in range(2)]
+        )
+        batch = env_buffer.sample(8)
+
+        assert batch["rewards"].squeeze(-1).tolist().count(1.0) == 2
+        assert batch["rewards"].squeeze(-1).tolist().count(2.0) == 6
+        assert env_buffer.get_stats()["libero/num_trajectories"] == 8
+        assert env_buffer.get_stats()["num_trajectories"] == 10
+        # ManiSkill holds 2 trajectories, its 3/4 share of 2 but not of 4.
+        assert env_buffer.is_ready(2) and not env_buffer.is_ready(4)
+
+        env_buffer.save_checkpoint(str(tmp_path))
+        assert (tmp_path / "maniskill" / "metadata.json").exists()
+    finally:
+        env_buffer.close()
+
+
+def test_env_replay_buffer_draws_one_env_per_batch_when_envs_do_not_mix():
+    buffers = {
+        "libero": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+        "maniskill": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+    }
+    env_buffer = EnvReplayBuffer(
+        buffers, {"libero": 1.0, "maniskill": 1.0}, mix_envs=False, seed=3
+    )
+    try:
+        env_buffer.add_trajectories(
+            [_env_trajectory("libero", 1.0), _env_trajectory("maniskill", 2.0)]
+        )
+        batches = [env_buffer.sample(4)["rewards"].unique() for _ in range(8)]
+
+        assert all(len(values) == 1 for values in batches)
+        assert {values.item() for values in batches} == {1.0, 2.0}
+    finally:
+        env_buffer.close()
 
 
 def test_memory_checkpoint_indexes_only_cached_trajectories(tmp_path):

@@ -152,13 +152,17 @@ class RolloutGeometry:
         sources = len(self.spec(env_rank).ranks) * self.stage_num
         return math.lcm(sources, self.actor_world_size) // sources
 
-    def shards_per_actor(self) -> int:
-        """Return the trajectory shards each actor receives per training step."""
-        return sum(
-            math.lcm(len(spec.ranks) * self.stage_num, self.actor_world_size)
+    def env_shards_per_actor(self) -> dict[str | None, int]:
+        """Return the trajectory shards of each env an actor receives per step."""
+        return {
+            spec.name: math.lcm(len(spec.ranks) * self.stage_num, self.actor_world_size)
             // self.actor_world_size
             for spec in self.layout.specs
-        )
+        }
+
+    def shards_per_actor(self) -> int:
+        """Return the trajectory shards each actor receives per training step."""
+        return sum(self.env_shards_per_actor().values())
 
 
 @dataclass(frozen=True)

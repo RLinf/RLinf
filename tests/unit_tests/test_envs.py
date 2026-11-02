@@ -344,8 +344,7 @@ def _training_cfg(algorithm=None, runner=None, **envs):
             r"may set \['loss_weight'.*got \['group_size'\]",
         ),
         ({"adv_norm_scope": "rank"}, None, r"must be 'env' or 'all', got 'rank'"),
-        ({"loss_type": "embodied_sac"}, None, r"algorithm.loss_type=embodied_sac"),
-        ({}, {"enable_decoupled_mode": True}, r"runner.enable_decoupled_mode"),
+        ({}, {"use_training_pipeline": True}, r"runner.use_training_pipeline"),
     ],
 )
 def test_config_rejects_per_env_settings_the_run_cannot_honor(algorithm, runner, match):

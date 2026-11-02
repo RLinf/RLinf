@@ -37,7 +37,6 @@ from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
-    compute_split_num,
 )
 from rlinf.utils.nested_dict_process import (
     put_tensor_device,
@@ -187,15 +186,18 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             )
         else:
             auto_save_path = os.path.join(auto_save_path, f"rank_{self._rank}")
-        self.replay_buffer = TrajectoryReplayBuffer(
-            seed=seed,
-            enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
-            cache_size=self.cfg.algorithm.replay_buffer.cache_size,
-            sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
-            auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
-            auto_save_path=auto_save_path,
-            trajectory_format=self.cfg.algorithm.replay_buffer.get(
-                "trajectory_format", "pt"
+        self.replay_buffer = self._build_env_replay_buffer(
+            auto_save_path,
+            lambda path: TrajectoryReplayBuffer(
+                seed=seed,
+                enable_cache=self.cfg.algorithm.replay_buffer.enable_cache,
+                cache_size=self.cfg.algorithm.replay_buffer.cache_size,
+                sample_window_size=self.cfg.algorithm.replay_buffer.sample_window_size,
+                auto_save=self.cfg.algorithm.replay_buffer.get("auto_save", False),
+                auto_save_path=path,
+                trajectory_format=self.cfg.algorithm.replay_buffer.get(
+                    "trajectory_format", "pt"
+                ),
             ),
         )
 
@@ -328,9 +330,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         """
         clear_memory(sync=False)
 
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        split_num = self._rollout_geometry.shards_per_actor()
 
         recv_list = []
 

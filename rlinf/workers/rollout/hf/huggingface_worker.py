@@ -95,14 +95,6 @@ class MultiStepRolloutWorker(Worker):
             if self.enable_eval
             else None
         )
-        # Decoupled routes count rounds, so they read the loop fields that every
-        # env of the mode shares.
-        self.rollout_epoch = (
-            train_env_cfg.get("rollout_epoch", 1) if train_env_cfg is not None else 1
-        )
-        self.eval_rollout_epoch = (
-            eval_env_cfg.get("rollout_epoch", 1) if self.enable_eval else 1
-        )
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
@@ -140,18 +132,6 @@ class MultiStepRolloutWorker(Worker):
 
         self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", False)
 
-        self.n_train_chunk_steps = (
-            cfg.env.train.get("max_steps_per_rollout_epoch", 0)
-            // self.model_cfg.num_action_chunks
-            if self.enable_train
-            else 0
-        )
-        self.n_eval_chunk_steps = (
-            cfg.env.eval.get("max_steps_per_rollout_epoch", 0)
-            // self.model_cfg.num_action_chunks
-            if self.enable_eval
-            else 0
-        )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.version = 0
@@ -169,6 +149,20 @@ class MultiStepRolloutWorker(Worker):
             self._sync_weight_comm_options = self.weight_syncer.comm_options
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        if self.env_decoupled_mode and self.enable_train:
+            # Every source sends one request per chunk step of each epoch.
+            requests_per_step = sum(
+                len(spec.ranks)
+                * spec.cfg.rollout_epoch
+                * spec.chunk_steps(self.model_cfg.num_action_chunks)
+                for spec in self.train_layout.specs
+            )
+            assert requests_per_step % self._world_size == 0, (
+                "Decoupled rollout workers split a step's requests evenly, so its "
+                f"{requests_per_step} requests must divide among {self._world_size} "
+                "rollout workers."
+            )
+            self.decoupled_requests_per_step = requests_per_step // self._world_size
 
         if self.env_decoupled_mode:
             # save the run-time imformation in communicate channel for decoupled mode
@@ -970,19 +964,28 @@ class MultiStepRolloutWorker(Worker):
             # Attached parts close previously executed chunks.
             self._publish_env_parts(policy_input, forward_inputs, actor_channel)
 
-    @Worker.timer("generate_one_epoch")
-    async def generate_one_epoch(
+    @Worker.timer("serve_decoupled_step")
+    async def _serve_decoupled_step(
         self,
         input_channel: Channel,
         output_channel: Channel,
         actor_channel: Channel,
     ) -> None:
-        """Serve one rollout epoch of decoupled requests by counting chunk steps."""
-        self.update_dagger_beta()
-        for _ in range(self.n_train_chunk_steps):
-            for stage_id in range(self.num_pipeline_stages):
+        """Serve this worker's share of one training step's decoupled requests.
+
+        Rollout workers pull requests from a shared queue, so each serves an
+        equal share of the step's requests, counted from the env specs. The
+        share is split into the longest env's rollout epochs for DAgger's
+        per-epoch schedule.
+        """
+        epochs = max(spec.cfg.rollout_epoch for spec in self.train_layout.specs)
+        served = 0
+        for epoch in range(epochs):
+            self.update_dagger_beta()
+            epoch_end = self.decoupled_requests_per_step * (epoch + 1) // epochs
+            while served < epoch_end:
                 requests, split_sizes = await self._receive_policy_input(
-                    input_channel, "policy", stage_id
+                    input_channel, "policy", 0
                 )
                 if any(request.is_last for request in requests):
                     raise ValueError("Received a final input in the policy stream.")
@@ -990,9 +993,10 @@ class MultiStepRolloutWorker(Worker):
                     requests,
                     output_channel,
                     actor_channel,
-                    stage_id,
+                    0,
                     split_sizes=split_sizes,
                 )
+                served += len(requests)
 
     def _source_budgets(
         self, layout: EnvLayout, batch_size: int, count: Callable[[EnvSpec], int]
@@ -1088,11 +1092,12 @@ class MultiStepRolloutWorker(Worker):
         actor_channel: Channel,
     ) -> None:
         """Serve the policy requests of one training step."""
-        if not self.env_decoupled_mode:
+        if self.env_decoupled_mode:
+            await self._serve_decoupled_step(
+                input_channel, output_channel, actor_channel
+            )
+        else:
             await self._serve_step(input_channel, output_channel, actor_channel)
-            return
-        for _ in range(self.rollout_epoch):
-            await self.generate_one_epoch(input_channel, output_channel, actor_channel)
 
     @Worker.timer("rollout/generate")
     async def generate(
