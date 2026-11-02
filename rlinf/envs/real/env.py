@@ -50,6 +50,27 @@ ChunkStepResult = tuple[
 ]
 
 
+def _resolve_success_current_step(
+    infos: EnvInfos, step_reward: np.ndarray, num_envs: int
+) -> np.ndarray:
+    """Prefer an env-reported success signal over inferring it from reward.
+
+    A dense-reward env's step reward rarely lands exactly on 1.0, so
+    ``np.isclose`` alone misses a success it already reported through
+    ``info["success"]``. ``"_success"`` is gymnasium's per-env mask for which
+    envs actually set ``"success"`` this step; envs that don't report it fall
+    back to the isclose check.
+    """
+    if "success" not in infos:
+        return np.isclose(step_reward, 1.0)
+    reported = infos.get("_success", np.ones(num_envs, dtype=bool))
+    return np.where(
+        reported,
+        np.asarray(infos["success"], dtype=bool),
+        np.isclose(step_reward, 1.0),
+    )
+
+
 class RealWorldEnv(gym.Env):
     def __init__(
         self,
@@ -290,17 +311,20 @@ class RealWorldEnv(gym.Env):
         full_states = np.concatenate([state[k] for k in sorted(state)], axis=-1)
         obs["states"] = full_states
 
-        frames = raw_obs["frames"]
-        if self.main_image_key not in frames:
-            raise KeyError(
-                f"main_image_key {self.main_image_key!r} not in {list(frames)}"
-            )
-        obs["main_images"] = frames[self.main_image_key]
-        raw_images = OrderedDict(sorted(frames.items()))
-        raw_images.pop(self.main_image_key)
+        # A state-only env (no cameras) omits 'frames' entirely rather than
+        # reporting an empty dict; skip image handling in that case.
+        frames = raw_obs.get("frames") or {}
+        if frames:
+            if self.main_image_key not in frames:
+                raise KeyError(
+                    f"main_image_key {self.main_image_key!r} not in {list(frames)}"
+                )
+            obs["main_images"] = frames[self.main_image_key]
+            raw_images = OrderedDict(sorted(frames.items()))
+            raw_images.pop(self.main_image_key)
 
-        if raw_images:
-            obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            if raw_images:
+                obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
         raw_depths = raw_obs.get("depths")
         if raw_depths:
@@ -339,7 +363,9 @@ class RealWorldEnv(gym.Env):
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
-        success_current_step = np.isclose(step_reward, 1.0)
+        success_current_step = _resolve_success_current_step(
+            infos, step_reward, self.num_envs
+        )
         intervene_flag = np.zeros(self.num_envs, dtype=bool)
         if "intervene_action" in infos:
             for env_id in range(self.num_envs):

@@ -360,6 +360,34 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-mlp-realworld-ur5-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env ur5
+
+      - name: UR5 Reach SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh ur5_mock_sac_mlp_reach
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-realworld-collect-data-mock-test:
     runs-on: embodied
     steps:

@@ -110,6 +110,15 @@ class UR5EnvConfig:
         """Coerce the array-valued fields, which may arrive as lists."""
         self.joint_limit_low = np.asarray(self.joint_limit_low, dtype=np.float64)
         self.joint_limit_high = np.asarray(self.joint_limit_high, dtype=np.float64)
+        if self.joint_limit_low.shape != (_DOF,) or self.joint_limit_high.shape != (
+            _DOF,
+        ):
+            raise ValueError(
+                f"A UR5 has {_DOF} arm joints, so 'joint_limit_low' and "
+                f"'joint_limit_high' each need {_DOF} values, got shapes "
+                f"{self.joint_limit_low.shape} and "
+                f"{self.joint_limit_high.shape}."
+            )
 
 
 class UR5Env(gym.Env):
@@ -141,6 +150,30 @@ class UR5Env(gym.Env):
             value = getattr(config, name)
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
+        if np.any(config.joint_limit_low < _DEFAULT_JOINT_LIMIT_LOW) or np.any(
+            config.joint_limit_high > _DEFAULT_JOINT_LIMIT_HIGH
+        ):
+            raise ValueError(
+                f"joint_limit_low {config.joint_limit_low.tolist()} / "
+                f"joint_limit_high {config.joint_limit_high.tolist()} fall "
+                f"outside the arm driver's "
+                f"[{_DEFAULT_JOINT_LIMIT_LOW.tolist()}, "
+                f"{_DEFAULT_JOINT_LIMIT_HIGH.tolist()}] travel; both backends "
+                "clip commanded positions to that travel regardless of this "
+                "task's bounds, so a wider task bound would not actually "
+                "constrain the positions commanded."
+            )
+        reset_joint_qpos = np.asarray(config.reset_joint_qpos, dtype=np.float64)
+        if np.any(reset_joint_qpos < config.joint_limit_low) or np.any(
+            reset_joint_qpos > config.joint_limit_high
+        ):
+            raise ValueError(
+                f"reset_joint_qpos {reset_joint_qpos.tolist()} falls outside "
+                f"[{config.joint_limit_low.tolist()}, "
+                f"{config.joint_limit_high.tolist()}]; the arm clips motion "
+                "to its own hardware limits, not this task's bounds, so a "
+                "reset pose outside them would bypass the task's restriction."
+            )
         self.hardware = get_hardware_config(
             UR5Config, robot_info, is_dummy=config.is_dummy
         )
@@ -154,29 +187,37 @@ class UR5Env(gym.Env):
 
         self._num_steps = 0
         self._success_hold_counter = 0
+        self._last_hit = False
         self._joints = np.zeros(_DOF)
         self.robot: Optional[UR5Robot] = None
 
-        if not self.config.is_dummy:
-            self._setup_hardware()
-            # This view borrows the arm; self.robot owns its connection.
-            self._state_parts = PartGroup(arm=self._arm)
+        try:
+            if not self.config.is_dummy:
+                self._setup_hardware()
+                # This view borrows the arm; self.robot owns its connection.
+                self._state_parts = PartGroup(arm=self._arm)
 
-        if not self.hardware.camera_serials:
-            self._logger.info(
-                "No camera serials configured. "
-                "Observations will not contain camera frames."
-            )
+            if not self.hardware.camera_serials:
+                self._logger.info(
+                    "No camera serials configured. "
+                    "Observations will not contain camera frames."
+                )
 
-        self._init_action_obs_spaces()
+            self._init_action_obs_spaces()
 
-        if self.config.is_dummy:
-            return
+            if self.config.is_dummy:
+                return
 
-        if self.config.reset_on_init:
-            self.go_to_rest()
-        self._open_cameras()
-        self.camera_player = VideoPlayer(self.config.enable_camera_player)
+            if self.config.reset_on_init:
+                self.go_to_rest()
+            self._open_cameras()
+            self.camera_player = VideoPlayer(self.config.enable_camera_player)
+        except BaseException:
+            # _setup_hardware() may have connected the robot and cameras
+            # before this point failed; close() tears down whatever of that
+            # got built instead of leaking an open connection.
+            self.close()
+            raise
 
     # Hardware setup.
 
@@ -197,6 +238,8 @@ class UR5Env(gym.Env):
             node_rank=controller_node_rank,
             worker_rank=self.env_worker_rank,
             cameras={info.name: info for info in self._camera_infos()},
+            headless_mode=hardware.headless_mode,
+            step_goal_time=hardware.step_goal_time,
         )
         self.robot.connect()
         # The arm part, for the operations the Arm contract names. Reading and
@@ -256,6 +299,14 @@ class UR5Env(gym.Env):
             Tuple of ``(observation, reward, terminated, truncated, info)``.
         """
         start_time = time.monotonic()
+        action = np.asarray(action, dtype=np.float64)
+        if action.shape != self.action_space.shape:
+            raise ValueError(
+                f"Expected an action of shape {self.action_space.shape}, got "
+                f"{action.shape}."
+            )
+        if not np.all(np.isfinite(action)):
+            raise ValueError(f"Expected a finite action, got {action.tolist()}.")
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
         if not self.config.is_dummy:
@@ -272,17 +323,18 @@ class UR5Env(gym.Env):
             )
 
         self._num_steps += 1
+
+        # Pace before reading back state, so the observation reflects the
+        # commanded motion instead of the arm's pre-action position.
+        step_time = time.monotonic() - start_time
+        time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
+
         observation = self._get_observation()
         reward = self._calc_step_reward(observation)
 
-        terminated = (
-            reward >= 1.0
-            and self._success_hold_counter >= self.config.success_hold_steps
-        )
+        terminated = self._success_hold_counter >= self.config.success_hold_steps
         truncated = self._num_steps >= self.config.max_num_steps
-        step_time = time.monotonic() - start_time
-        time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
-        return observation, reward, terminated, truncated, {}
+        return observation, reward, terminated, truncated, {"success": self._last_hit}
 
     def get_joint_positions(self) -> np.ndarray:
         """Arm joints as ``(1, 6)``, the shape teleop bindings index by arm."""
@@ -304,6 +356,7 @@ class UR5Env(gym.Env):
         seed_sampled_spaces(seed, self._base_observation_space)
         self._num_steps = 0
         self._success_hold_counter = 0
+        self._last_hit = False
         if self.config.is_dummy:
             return self._get_observation(), {}
 
@@ -326,10 +379,15 @@ class UR5Env(gym.Env):
         target = np.asarray(self.config.target_joint_qpos, dtype=float)
         distance = np.abs(measured - target)
 
+        # The hold counter tracks proximity regardless of reward shaping, so a
+        # dense-reward run still terminates on success instead of running to
+        # the step limit every episode.
+        hit = bool(np.all(distance < self.config.reward_threshold))
+        self._last_hit = hit
+        self._success_hold_counter = self._success_hold_counter + 1 if hit else 0
+
         if self.config.use_dense_reward:
             return float(-np.linalg.norm(distance))
-        hit = bool(np.all(distance < self.config.reward_threshold))
-        self._success_hold_counter = self._success_hold_counter + 1 if hit else 0
         return 1.0 if hit else 0.0
 
     # Observation.

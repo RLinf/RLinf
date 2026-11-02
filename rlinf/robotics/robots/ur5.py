@@ -38,6 +38,11 @@ class UR5Robot(Robot):
     driver for the same hardware registers beside it. :attr:`UR5Config.backend`
     may select another."""
 
+    #: Backend that takes the ROS2-only ``headless_mode``/``step_goal_time``
+    #: options; neither is forwarded to another backend, which would reject
+    #: them as unrecognized constructor arguments.
+    ROS2_BACKEND: str = "ur_ros2"
+
     @classmethod
     def build_arms(
         cls,
@@ -49,16 +54,27 @@ class UR5Robot(Robot):
         acceleration: float = 1.4,
         worker_rank: int = 0,
         env_idx: int = 0,
+        headless_mode: Optional[bool] = None,
+        step_goal_time: Optional[float] = None,
     ) -> dict[str, Any]:
         """Return the arm declaration."""
         from ..parts.arms import Arm
 
-        arm = Arm.backend(backend or cls.BACKEND).declare(
+        # Arm.backend() already lowercases before lookup; normalize here too so
+        # this equality check doesn't silently miss a differently-cased name
+        # and drop the ROS2-only options.
+        resolved_backend = (backend or cls.BACKEND).lower()
+        settings: dict[str, Any] = {"speed": speed, "acceleration": acceleration}
+        if resolved_backend == cls.ROS2_BACKEND:
+            if headless_mode is not None:
+                settings["headless_mode"] = headless_mode
+            if step_goal_time is not None:
+                settings["step_goal_time"] = step_goal_time
+        arm = Arm.backend(resolved_backend).declare(
             robot_ip,
-            speed=speed,
-            acceleration=acceleration,
             node_rank=node_rank,
             worker_name=f"{cls.ROBOT_TYPE}Arm-{worker_rank}-{env_idx}",
+            **settings,
         )
         return {"arm": arm}
 
@@ -85,6 +101,8 @@ class UR5Robot(Robot):
         worker_rank: int = 0,
         cameras: Optional[Mapping[str, Any]] = None,
         camera_node_rank: Optional[int] = None,
+        headless_mode: Optional[bool] = None,
+        step_goal_time: Optional[float] = None,
     ) -> "UR5Robot":
         """Compose a UR5 robot from its arm and cameras."""
         return cls(
@@ -96,6 +114,8 @@ class UR5Robot(Robot):
                 node_rank=node_rank,
                 worker_rank=worker_rank,
                 env_idx=env_idx,
+                headless_mode=headless_mode,
+                step_goal_time=step_goal_time,
             ),
             **cls.build_cameras(cameras, node_rank=camera_node_rank),
         )
@@ -128,6 +148,16 @@ class UR5Config(RobotConfig):
     controller_node_rank: Optional[int] = None
     """Node rank where the arm part should run.
     When ``None`` (default), co-located with the env worker."""
+
+    headless_mode: Optional[bool] = None
+    """Whether the UR ROS2 driver was launched with ``headless_mode:=true``.
+    Only meaningful for the ``ur_ros2`` backend; ``None`` uses that backend's
+    own default (``True``) and is ignored by another backend."""
+
+    step_goal_time: Optional[float] = None
+    """``time_from_start`` of a per-step ROS2 trajectory goal, in seconds.
+    Only meaningful for the ``ur_ros2`` backend; ``None`` uses that backend's
+    own default and is ignored by another backend."""
 
     def __post_init__(self) -> None:
         """Post-initialization to validate the configuration."""

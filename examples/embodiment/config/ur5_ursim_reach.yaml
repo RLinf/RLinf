@@ -4,12 +4,26 @@
 # the `ur_ros2` arm backend commands an already-running
 # `Universal_Robots_ROS2_Driver` over the ROS graph (joint_states +
 # scaled_joint_trajectory_controller). URSim stands in for the real UR5 and
-# shares its interface, so the same config drives real hardware by pointing
-# `robot_ip` at the arm.
+# shares its interface, so the same config drives real hardware -- but only
+# after pointing that external driver and its ROS graph at the real arm, not
+# by changing `robot_ip` here: this backend always commands the fixed action
+# endpoint on the ROS graph it is configured for. Set `robot_ip` to the same
+# address regardless, since it also keys the device claim that stops two
+# backends from driving the controller at once.
 #
 # Prerequisites on the robot/controller node, before launching:
-#   1. Start URSim + the driver:  bash ~/ur_stack_up.sh   (prints CONTROL LINK UP)
-#   2. The env-worker process needs ROS2 on its path:
+#   1. Boot URSim with a Host-Only network adapter (e.g. VirtualBox's
+#      vboxnet0) so it is reachable at the `robot_ip` below (192.168.56.101);
+#      on its teach pendant, under Installation > URCaps > External Control,
+#      set "Host IP" to this machine's address on that same network.
+#   2. Launch the Universal_Robots_ROS2_Driver, pointed at URSim and matching
+#      `headless_mode` below:
+#        ros2 launch ur_robot_driver ur_control.launch.py \
+#          ur_type:=ur5 robot_ip:=192.168.56.101 \
+#          launch_rviz:=false headless_mode:=true
+#      This brings up `scaled_joint_trajectory_controller` (the controller
+#      this backend commands) and starts publishing `/joint_states`.
+#   3. The env-worker process needs ROS2 on its path:
 #        source /opt/ros/jazzy/setup.bash   (alongside the usual venv/XPU env)
 # URSim has no scene, contact, or cameras, so this validates the control link
 # and joint-space motion only -- not a manipulation task's success.
@@ -44,7 +58,8 @@ cluster:
         configs:
           - node_rank: 0
             backend: ur_ros2
-            # URSim's docker bridge IP; point at the real arm for hardware.
+            # URSim's docker bridge IP; for hardware, match whatever arm the
+            # externally configured ROS2 driver is pointed at.
             robot_ip: 192.168.56.101
             # URSim exposes no cameras.
             camera_serials: []
