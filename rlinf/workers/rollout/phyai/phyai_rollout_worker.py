@@ -79,7 +79,12 @@ class _PI05SamplingPlan:
 
 
 class _PhyAIWeightTarget(torch.nn.Module):
-    """Adapt bucket syncer's ``load_state_dict`` calls to a PhyAI Engine."""
+    """Receive bucket-synced actor weights on behalf of a PhyAI engine.
+
+    ``BucketWeightSyncer.apply`` loads each bucket through ``load_state_dict``;
+    this target converts the bucket to PhyAI parameter names and hands it to
+    the engine's open weight update.
+    """
 
     def __init__(self, engine: Engine) -> None:
         super().__init__()
@@ -90,7 +95,14 @@ class _PhyAIWeightTarget(torch.nn.Module):
         state_dict: dict[str, torch.Tensor],
         strict: bool = True,
         assign: bool = False,
-    ) -> Any:
+    ) -> None:
+        """Convert one bucket of actor weights and apply it to the engine.
+
+        Args:
+            state_dict: Actor parameter names and tensors for one bucket.
+            strict: Ignored; a bucket holds only part of the model.
+            assign: Ignored; the engine copies into its own buffers.
+        """
         del strict, assign
         normalized = {
             PhyAIRolloutWorker._actor_weight_name(name): tensor
@@ -103,27 +115,29 @@ class _PhyAIWeightTarget(torch.nn.Module):
             if name.startswith("value_head.")
         )
         self.engine.update_weights(converted)
-        return None
 
 
 class PhyAIRolloutWorker(Worker):
-    """Run embodied rollout and evaluation with an in-process PhyAI engine.
+    """Embodied rollout worker that runs PI0.5 through an in-process PhyAI engine.
 
-    The RLinf worker remains the Ray actor and owns one in-process PhyAI
-    ``Engine``. This backend owns its channel loops and runtime state directly;
-    it does not inherit Hugging Face model configuration or lifecycle behavior.
+    Each worker owns one PhyAI ``Engine`` on one GPU. Evaluation asks
+    ``Engine.step`` for actions only. Training builds the denoising plan in
+    RLinf, runs it with ``Engine.rollout_step``, and returns the replay data
+    the OpenPI actor reads: ``prev_logprobs``, ``prev_values``, and
+    ``forward_inputs``.
 
-    Evaluation keeps the original action-only ``Engine.step`` path. For
-    training, RLinf constructs the sampling plan, asks ``Engine.rollout_step``
-    to execute it, and reduces the raw trajectory into the OpenPI replay
-    contract consumed by the Actor.
+    Args:
+        cfg: Experiment config. ``rollout.phyai`` holds the engine options.
+            Training reads the model from ``actor.model``, with
+            ``rollout.model.model_path`` and ``rollout.model.precision`` as
+            overrides; evaluation reads ``rollout.model``.
     """
 
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig) -> None:
         Worker.__init__(self)
 
         self._phyai_cfg = cfg.rollout.get("phyai", {})
-        self._phyai_plugin = str(self._phyai_cfg.get("plugin", "pi05")).lower()
+        self._phyai_plugin = self._phyai_cfg.get("plugin", "pi05")
         if self._phyai_plugin != "pi05":
             raise NotImplementedError(
                 "PhyAIRolloutWorker supports the 'pi05' engine plugin; "
@@ -221,20 +235,26 @@ class PhyAIRolloutWorker(Worker):
             )
         if len(self.global_accelerator_ids) != 1:
             raise ValueError(
-                "The initial PhyAI integration requires exactly one GPU per "
-                "rollout Ray actor (PhyAI world_size=1); got "
-                f"{self.global_accelerator_ids}."
+                "Expected exactly one GPU per PhyAI rollout worker, got "
+                f"accelerators {self.global_accelerator_ids}."
             )
 
     @property
     def collect_raw_transition_obs(self) -> bool:
-        """Return whether Actor training requires raw transition observations."""
+        """Whether trajectory parts carry raw observations for the actor."""
         return self.collect_transitions and not self.enable_rlt
 
-    # Configuration and engine setup.
-
     def init_worker(self) -> None:
-        """Construct one PhyAI engine and the shared OpenPI transforms."""
+        """Build the PhyAI engine and the OpenPI transforms on this worker's GPU.
+
+        The engine loads the checkpoint at the model's ``model_path``. When
+        ``runner.ckpt_path`` is set, that state dict is applied on top, so
+        evaluation and the first training rollout start from the same weights
+        as the actor.
+
+        Raises:
+            RuntimeError: If the engine is already initialized.
+        """
         from phyai.engine import Engine, EngineArgs
         from phyai.engine_config import (
             DeviceConfig,
@@ -419,26 +439,12 @@ class PhyAIRolloutWorker(Worker):
 
     @staticmethod
     def _optional_dtype(value: Any) -> torch.dtype | None:
-        if value is None:
-            return None
-        if isinstance(value, torch.dtype):
-            return value
-        precision = {
-            "bfloat16": "bf16",
-            "float16": "fp16",
-            "float32": "fp32",
-        }.get(str(value).lower(), str(value))
-        dtype = torch_dtype_from_precision(precision)
-        if dtype is None:
-            raise ValueError(f"Unsupported PhyAI vision_params_dtype: {value!r}.")
-        return dtype
+        return None if value is None else torch_dtype_from_precision(value)
 
     @staticmethod
     def _actor_weight_name(name: str) -> str:
         """Map the native wrapper prefix to PhyAI HF parameter names."""
         return name[len("model.") :] if name.startswith("model.") else name
-
-    # Backend-local adapters around shared RLinf/OpenPI transforms.
 
     def _select_configured_state(self, states: Any) -> Any:
         indices = self._state_indices
@@ -522,8 +528,6 @@ class PhyAIRolloutWorker(Worker):
         )
         return request, processed
 
-    # RLinf decides the transition distribution; PhyAI executes it.
-
     def _build_rollout_plan(self, request: PI05Request) -> _PI05SamplingPlan:
         """Resolve RLinf policy choices into a sigma execution plan."""
         from phyai.models.pi05.scheduler_pi05 import PI05RolloutRequest
@@ -549,7 +553,10 @@ class PhyAIRolloutWorker(Worker):
 
         ignore_last = bool(openpi_cfg.get("ignore_last", False))
         if ignore_last and num_steps < 2:
-            raise ValueError("ignore_last=True requires at least two denoise steps.")
+            raise ValueError(
+                "Expected at least two denoise steps with ignore_last=True, "
+                f"got num_steps={num_steps}."
+            )
         last = num_steps - 2 if ignore_last else num_steps - 1
         selected = random.randint(0, last)
         denoise_inds = torch.full(
@@ -601,8 +608,6 @@ class PhyAIRolloutWorker(Worker):
             action_chunk=action_chunk,
             action_dim=action_dim,
         )
-
-    # Raw PhyAI execution results are reduced into the Actor replay contract.
 
     @staticmethod
     def _reduce_rollout_outputs(
@@ -705,13 +710,27 @@ class PhyAIRolloutWorker(Worker):
             )
         return {key: value.contiguous() for key, value in forward_inputs.items()}
 
-    # Evaluation uses action-only inference; training returns replay state.
-
     @Worker.timer("predict")
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Run inference or collect the real behavior-policy PPO state."""
+        """Predict action chunks for a batch of environment observations.
+
+        Args:
+            env_obs: Batched environment observations.
+            mode: ``"eval"`` returns actions only. ``"train"`` also samples
+                the PPO denoising step and returns the replay data.
+
+        Returns:
+            Actions of shape ``[batch, num_action_chunks, action_dim]`` and a
+            dict with ``prev_logprobs``, ``prev_values`` (both ``None`` in
+            eval mode), ``forward_inputs`` for the actor, and
+            ``expert_label_flag``.
+
+        Raises:
+            RuntimeError: If ``init_worker`` has not run, or train mode is
+                requested on an evaluation-only worker.
+        """
         if mode not in ("train", "eval"):
             raise ValueError(f"Unsupported PhyAI rollout mode: {mode!r}.")
         if mode == "train" and self.only_eval:
@@ -770,8 +789,6 @@ class PhyAIRolloutWorker(Worker):
                 "expert_label_flag": False,
             }
         return actions, result
-
-    # Channel loops are backend-owned so PhyAI does not depend on HF worker state.
 
     @staticmethod
     def _infer_policy_input_batch_size(policy_input: PolicyInput) -> int:
@@ -905,6 +922,13 @@ class PhyAIRolloutWorker(Worker):
         output_channel: Channel,
         actor_channel: Channel,
     ) -> None:
+        """Serve one training rollout epoch.
+
+        Args:
+            input_channel: Channel the env workers send policy inputs on.
+            output_channel: Channel to send actions back to the env workers.
+            actor_channel: Channel that collects trajectory parts for the actor.
+        """
         for _ in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 policy_input = await self._receive_policy_input(
@@ -952,6 +976,13 @@ class PhyAIRolloutWorker(Worker):
         output_channel: Channel,
         actor_channel: Channel,
     ) -> None:
+        """Serve ``env.train.rollout_epoch`` training rollout epochs.
+
+        Args:
+            input_channel: Channel the env workers send policy inputs on.
+            output_channel: Channel to send actions back to the env workers.
+            actor_channel: Channel that collects trajectory parts for the actor.
+        """
         for _ in tqdm(
             range(self.rollout_epoch),
             desc="Generating Rollout Epochs",
@@ -988,6 +1019,12 @@ class PhyAIRolloutWorker(Worker):
 
     @Worker.timer("evaluate")
     async def evaluate(self, input_channel: Channel, output_channel: Channel) -> None:
+        """Serve evaluation epochs with action-only inference.
+
+        Args:
+            input_channel: Channel the env workers send observations on.
+            output_channel: Channel to send actions back to the env workers.
+        """
         for _ in tqdm(
             range(self.eval_rollout_epoch),
             desc="Evaluating Rollout Epochs",
@@ -1016,20 +1053,30 @@ class PhyAIRolloutWorker(Worker):
                         batch_size=self.eval_batch_size,
                     )
 
-    # Actor weights are committed transactionally before their version advances.
-
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self) -> None:
-        """Receive actor buckets and hot-update the in-process PhyAI engine."""
+        """Receive the actor's weights and load them into the PhyAI engine.
+
+        The update is opened before the first bucket arrives and finished after
+        the last one. If receiving or applying any bucket fails, the update is
+        aborted, the error propagates to the runner, and ``self.version`` keeps
+        its previous value.
+
+        Raises:
+            RuntimeError: If ``init_worker`` has not run or no weight syncer is
+                configured.
+            NotImplementedError: If the weight syncer is not a bucket syncer.
+        """
         if self._engine is None or self._weight_target is None:
             raise RuntimeError("init_worker() must be called before weight sync.")
         if self.weight_syncer is None:
             raise RuntimeError("PhyAI weight sync requires weight_syncer config.")
         if not isinstance(self.weight_syncer, BucketWeightSyncer):
+            # Patch sync assumes the same state-dict layout on both sides, but
+            # PhyAI stores fused weights under different names.
             raise NotImplementedError(
-                "PhyAI currently supports only bucket weight synchronization. "
-                "Patch synchronization assumes identical sender/receiver state "
-                "dict layouts, which is incompatible with PhyAI fused weights."
+                "Expected a BucketWeightSyncer for PhyAI, got "
+                f"{type(self.weight_syncer).__name__}."
             )
 
         async def recv_func() -> Any:
@@ -1083,5 +1130,9 @@ class PhyAIRolloutWorker(Worker):
         self.torch_platform.empty_cache()
 
     def set_global_step(self, global_step: int) -> None:
-        """PhyAI sampling has no global-step-dependent schedule."""
+        """Ignore the step; PhyAI sampling has no step-dependent schedule.
+
+        Args:
+            global_step: Current training step, unused.
+        """
         del global_step
