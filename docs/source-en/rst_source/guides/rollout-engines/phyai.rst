@@ -1,24 +1,32 @@
 PhyAI Embodied Rollout Backend
 ==============================
 
-Use PhyAI to generate PI0.5 rollouts for LIBERO while RLinf's FSDP actor trains
-the policy. This guide covers installation, checkpoint configuration, and the
-synchronous PPO example. RLinf handles environments, observation transforms,
-action execution, and weight synchronization; each rollout worker runs an
-in-process PhyAI engine on one GPU.
+This guide trains a PI0.5 policy on LIBERO with PPO while
+`PhyAI <https://github.com/mingti-org/phyai>`_ generates the rollouts. PhyAI is
+an inference framework for physical-AI models such as VLAs. Each RLinf rollout
+worker runs one PhyAI engine on its GPU, and the engine samples actions with
+CUDA graphs and FlashInfer kernels instead of the Hugging Face model code.
+Everything else stays with RLinf: the LIBERO environments, observation and
+action transforms, the FSDP actor, and weight synchronization.
+
+You'll install the backend, point the example at a checkpoint, and run
+training. Before the run, one section explains why PhyAI training keeps
+importance-sampling correction turned on, because that setting decides how the
+actor treats actions it did not sample itself.
 
 Prerequisites
 -------------
 
-Prepare a Linux machine with NVIDIA GPUs and a PI0.5 LIBERO checkpoint. The
-installer uses Python 3.12 and Torch 2.11.0. The training path has been smoke-tested on
-two NVIDIA H800 80 GB GPUs with the RLinf PI0.5 LIBERO SFT checkpoint.
+You need a Linux machine with NVIDIA GPUs and Python 3.12. The backend
+currently supports PI0.5 on LIBERO with synchronous PPO, and each rollout
+worker uses exactly one GPU. The training path has been smoke-tested on two
+NVIDIA H800 80 GB GPUs with the RLinf PI0.5 LIBERO SFT checkpoint.
 
 Installation
 ------------
 
 From the RLinf repository root, install RLinf, OpenPI, LIBERO, and PhyAI into
-the same virtual environment, then activate it:
+one virtual environment, then activate it:
 
 .. code-block:: bash
 
@@ -32,76 +40,110 @@ the same virtual environment, then activate it:
      --engine phyai
    source .venv/bin/activate
 
-The installer detects the NVIDIA driver, selects a compatible Torch CUDA build,
-and retains the Torch and Transformers versions installed for OpenPI. It then
-selects ``requirements/agentic/phyai_0.2.0rc1_cu12.txt`` or
-``requirements/agentic/phyai_0.2.0rc1_cu13.txt`` for the same CUDA line and installs
-the three PhyAI packages with ``--no-deps`` from the official PhyAI wheel index.
-It stops before installing PhyAI when the selected CUDA line and
-``torch.version.cuda`` have different major versions.
+What this does:
 
-Configure the Checkpoint and Backend
-------------------------------------
+1. Installs RLinf, OpenPI, and LIBERO exactly as for the Hugging Face rollout.
+2. Installs the PhyAI packages at the version RLinf is tested with, for the
+   CUDA version of the installed Torch. PhyAI's own dependency list would
+   replace the Torch and Transformers versions OpenPI needs, so the installer
+   keeps those versions and stops if PhyAI's CUDA build does not match Torch.
 
-Set ``actor.model.model_path`` in
-``examples/embodiment/config/libero_spatial_ppo_openpi_pi05_phyai.yaml`` to your
-PI0.5 LIBERO checkpoint directory. The checkpoint must contain
-``model.safetensors`` and
-``physical-intelligence/libero/norm_stats.json``. The rollout model inherits
-the actor's checkpoint path and normalization statistics so both use the same
-observation and action transforms.
+Prepare the Checkpoint
+----------------------
 
-To initialize from an RL training checkpoint, set ``runner.ckpt_path`` to its
-``.pt`` file. Each PhyAI rollout engine loads the complete state dict after
-loading ``model.safetensors`` so evaluation and the initial training rollout use
-the same weights as the actor, including frozen parameters.
+Download the PI0.5 LIBERO SFT checkpoint:
 
-The example selects PhyAI through ``rollout.rollout_backend`` and loads the
-kernel policy through a Hydra default:
+.. code-block:: bash
+
+   # For mainland China users: export HF_ENDPOINT=https://hf-mirror.com
+   hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
+
+Then set ``actor.model.model_path`` in
+``examples/embodiment/config/libero_spatial_ppo_openpi_pi05_phyai.yaml`` to the
+downloaded directory. The rollout reads the same path, so PhyAI and the actor
+load the same weights and normalize observations with the same statistics.
+:doc:`RL on π₀ and π₀.₅ Models <../../examples/embodied/pi0>` lists the other
+PI0.5 checkpoints and download mirrors.
+
+To start from an RL training checkpoint instead, also set ``runner.ckpt_path``
+to its ``.pt`` file. Each PhyAI engine loads that state dict on top of the
+downloaded checkpoint, so the first rollout uses the same weights as the actor,
+frozen parameters included.
+
+Configure the Backend
+---------------------
+
+The example config already selects PhyAI. These are the lines that matter:
 
 .. code-block:: yaml
 
    defaults:
      - hybrid_engines/phyai@rollout.phyai
 
+   algorithm:
+     recompute_logprobs: True
+     importance_sampling_fix: True
+     importance_sampling_clip: 1.0
+
    rollout:
      rollout_backend: phyai
+     phyai:
+       max_batch_size: null
 
-``examples/embodiment/config/hybrid_engines/phyai.yaml`` supplies
-``rollout.phyai.kernel_config`` as a YAML mapping. It selects the attention and
-activation kernels used by the PI0.5 adapter. Adjust
-``rollout.phyai.max_batch_size`` to set each engine's batch capacity; a
-``null`` value derives it from the number of environments assigned to the worker.
+``rollout.rollout_backend: phyai`` makes the training script start PhyAI
+rollout workers instead of the Hugging Face ones. The ``hybrid_engines/phyai``
+default supplies the kernel policy, which fixes the attention and activation
+kernels PhyAI uses for PI0.5 so the numbers stay as close to the actor as the
+two implementations allow. ``max_batch_size`` caps how many observations one
+engine runs at once; ``null`` sizes it to the environments assigned to that
+worker.
+
+The three ``algorithm`` keys deal with the remaining difference between PhyAI
+and the actor, which the next section explains.
+
+Correct Rollout and Actor Differences
+-------------------------------------
+
+PhyAI and the FSDP actor hold the same weights, but they compute with different
+kernels: paged attention, fused activations, and a different reduction order.
+So when the actor scores an action that PhyAI sampled, it gets a slightly
+different log-probability than PhyAI reported.
+
+PPO measures each update against the policy that produced the data. If that
+reference came from PhyAI, the kernel gap would show up in every PPO ratio and
+could trigger clipping on its own. With
+``recompute_logprobs``, the actor rescores every sampled action before training
+and uses its own score as the reference instead. ``importance_sampling_fix``
+then reweights each sample by how much more likely the actor finds the action
+than PhyAI did, capped at ``importance_sampling_clip``, so the update stays
+correct for data the actor did not sample itself. Keep the three keys together:
+startup stops if ``importance_sampling_fix`` is on without
+``recompute_logprobs``.
+
+:doc:`PPO <../../reference/algorithms/ppo>` describes the correction and its
+metrics in detail.
 
 Run Training
 ------------
 
-After setting the checkpoint path, launch the example from the repository root:
+With the checkpoint path set, launch the example from the repository root:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh \
      libero_spatial_ppo_openpi_pi05_phyai
 
-This starts the standard embodied training entry point with an FSDP actor,
-PhyAI rollout workers, and LIBERO environment workers. RLinf samples action
-chunks, updates the actor, and sends updated weights back to the PhyAI engines.
+What this does: starts the embodied training entry point with an FSDP actor,
+PhyAI rollout workers, and LIBERO environment workers. Each step collects
+rollouts with PhyAI, has the actor rescore them, updates the actor, and sends
+the new weights to every PhyAI engine before the next rollout.
 
-The example uses bucket weight synchronization and enables actor log-probability
-recomputation with importance-sampling correction. Keep
-``algorithm.recompute_logprobs`` and ``algorithm.importance_sampling_fix``
-enabled together. See :doc:`PPO <../../reference/algorithms/ppo>` for the
-correction and its diagnostic metrics.
+Check the Run
+-------------
 
-The training integration uses PI0.5 with a value head after the VLM,
-``value_vlm_mode: mean_token``, and ``joint_logprob: False``. Use synchronous,
-non-pipelined training; the config validator checks these requirements before
-workers launch.
-
-Monitor the Run
----------------
-
-The launcher writes logs under ``logs/<timestamp>-<config-name>/``. Monitor
-``env/success_once`` for task success and the PPO importance-sampling metrics
-for rollout-to-actor log-probability differences. See
-:doc:`Training Metrics <../../reference/metrics>` for metric definitions.
+The launcher writes logs under ``logs/<timestamp>-<config-name>/``. Watch
+``env/success_once`` for task success. ``actor/importance_sampling_weight``
+near 1 with a small ``actor/importance_sampling_clip_fraction`` means PhyAI and
+the actor still agree closely; a weight drifting away from 1 means their scores
+are diverging. :doc:`Training Metrics <../../reference/metrics>` defines the
+remaining metrics.
