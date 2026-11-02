@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
@@ -27,7 +28,7 @@ from omegaconf.dictconfig import DictConfig
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
-from rlinf.envs.layout import EnvLayout
+from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
@@ -1094,6 +1095,87 @@ def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -
         )
 
 
+# Training paths that still take one value per mode for the loop fields.
+_MODE_LEVEL_TRAINING_LOSSES = (
+    "embodied_sac",
+    "rlt_ac",
+    "rlt_td3",
+    "embodied_dagger",
+    "decoupled_actor_critic",
+)
+
+
+def validate_env_training_cfg(
+    cfg: DictConfig, layout: EnvLayout, *, stage_num: int, actor_world_size: int
+) -> None:
+    """Check the per-env training settings against the env layout.
+
+    Args:
+        cfg: The run configuration.
+        layout: Layout of ``env.train``.
+        stage_num: ``rollout.pipeline_stage_num``.
+        actor_world_size: Number of actor workers.
+    """
+    algorithm_cfg = cfg.algorithm
+    env_names = [spec.name for spec in layout.specs]
+    for name, overrides in (algorithm_cfg.get("envs", None) or {}).items():
+        assert name in env_names, (
+            f"algorithm.envs.{name} must name an env under env.train.envs "
+            f"{[n for n in env_names if n is not None]}, got {name!r}."
+        )
+        unknown = set(overrides) - set(EnvSpec.ALGORITHM_FIELDS)
+        assert not unknown, (
+            f"algorithm.envs.{name} may set {list(EnvSpec.ALGORITHM_FIELDS)}, "
+            f"got {sorted(unknown)}."
+        )
+    adv_norm_scope = algorithm_cfg.get("adv_norm_scope", "env")
+    assert adv_norm_scope in ("env", "all"), (
+        f"algorithm.adv_norm_scope must be 'env' or 'all', got {adv_norm_scope!r}."
+    )
+    layout.reference_lengths(algorithm_cfg.get("env_weighting", "trajectory"))
+    if algorithm_cfg.get("adv_type") == "grpo":
+        for spec in layout.specs:
+            assert spec.has_loss_mask, (
+                "GRPO scores each trajectory up to its first done, so "
+                f"{'env.train' if spec.name is None else f'env.train.envs.{spec.name}'} "
+                "needs auto_reset=False and ignore_terminations=False, got "
+                f"auto_reset={spec.cfg.auto_reset} and "
+                f"ignore_terminations={spec.cfg.ignore_terminations}."
+            )
+
+    if not EnvLayout.is_heterogeneous(cfg.env.train):
+        return
+    mode_level_reasons = {
+        "runner.enable_decoupled_mode": cfg.runner.get("enable_decoupled_mode", False),
+        "runner.use_training_pipeline": cfg.runner.get("use_training_pipeline", False),
+        "algorithm.dagger.online_lerobot.enabled": OmegaConf.select(
+            cfg, "algorithm.dagger.online_lerobot.enabled", default=False
+        ),
+        f"algorithm.loss_type={algorithm_cfg.get('loss_type')}": algorithm_cfg.get(
+            "loss_type"
+        )
+        in _MODE_LEVEL_TRAINING_LOSSES,
+    }
+    unsupported = [reason for reason, enabled in mode_level_reasons.items() if enabled]
+    assert not unsupported, (
+        "Heterogeneous env.train configs support sync on-policy training, but "
+        f"this run uses {unsupported}."
+    )
+    for spec in layout.specs:
+        sources = len(spec.ranks) * stage_num
+        shards_per_source = math.lcm(sources, actor_world_size) // sources
+        envs_per_source = spec.cfg.total_num_envs // sources
+        group_size = spec.cfg.get("group_size", 1)
+        assert (
+            envs_per_source % shards_per_source == 0
+            and (envs_per_source // shards_per_source) % group_size == 0
+        ), (
+            f"Each actor takes an equal share of env.train.envs.{spec.name}, so its "
+            f"{envs_per_source} envs per env worker and stage must split into "
+            f"{shards_per_source} shards of whole groups of {group_size}."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1177,26 +1259,22 @@ def validate_embodied_cfg(cfg):
             )
             for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
                 eval_env_cfg.group_size = eval_env_cfg.get("group_size", 1)
-        if algorithm_cfg.get("rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.rollout_epoch is deprecated; use env.train.rollout_epoch instead."
-            )
-            if cfg.env.get("train", None) is not None:
-                cfg.env.train.rollout_epoch = cfg.env.train.get(
-                    "rollout_epoch", algorithm_cfg.rollout_epoch
+        for mode, legacy_key in (
+            ("train", "rollout_epoch"),
+            ("eval", "eval_rollout_epoch"),
+        ):
+            legacy_value = algorithm_cfg.get(legacy_key, None)
+            if legacy_value is not None:
+                logging.warning(
+                    f"algorithm.{legacy_key} is deprecated; use "
+                    f"env.{mode}.rollout_epoch instead."
                 )
-        if algorithm_cfg.get("eval_rollout_epoch", None) is not None:
-            logging.warning(
-                "algorithm.eval_rollout_epoch is deprecated; use env.eval.rollout_epoch instead."
-            )
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.rollout_epoch = cfg.env.eval.get(
-                    "rollout_epoch", algorithm_cfg.eval_rollout_epoch
+            for env_cfg in EnvLayout.env_cfgs(
+                cfg.env.get(mode, None), f"env.{mode}"
+            ).values():
+                env_cfg.rollout_epoch = env_cfg.get(
+                    "rollout_epoch", 1 if legacy_value is None else legacy_value
                 )
-        if cfg.env.get("train", None) is not None:
-            cfg.env.train.rollout_epoch = cfg.env.train.get("rollout_epoch", 1)
-        if cfg.env.get("eval", None) is not None:
-            cfg.env.eval.rollout_epoch = cfg.env.eval.get("rollout_epoch", 1)
         if cfg.rollout.get("sampling_params", None) is None:
             if algorithm_cfg.get("sampling_params", None) is not None:
                 logging.warning(
@@ -1338,20 +1416,20 @@ def validate_embodied_cfg(cfg):
                 "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
                 f"must be divisible by {env_path}.group_size"
             )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
-        )
+        for env_path, eval_env_cfg in EnvLayout.env_cfgs(
+            cfg.env.eval, "env.eval"
+        ).items():
+            assert (
+                eval_env_cfg.max_steps_per_rollout_epoch % model_cfg.num_action_chunks
+                == 0
+            ), (
+                f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+                f"actor.model.num_action_chunks ({model_cfg.num_action_chunks}), got "
+                f"{eval_env_cfg.max_steps_per_rollout_epoch}."
+            )
 
     if not only_eval:
         resolve_env_mode_cfg(cfg.env.train, "env.train", env_world_size)
-        if EnvLayout.is_heterogeneous(cfg.env.train):
-            assert cfg.env.train.get("max_episode_steps") is not None, (
-                "The envs under env.train.envs set different max_episode_steps; "
-                "set env.train.max_episode_steps to the horizon the actor "
-                "normalizes the loss by."
-            )
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )
@@ -1374,10 +1452,19 @@ def validate_embodied_cfg(cfg):
                 "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num "
                 f"must be divisible by {env_path}.group_size"
             )
-        assert (
-            cfg.env.train.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
-        ), (
-            "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+            assert (
+                train_env_cfg.max_steps_per_rollout_epoch % model_cfg.num_action_chunks
+                == 0
+            ), (
+                f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+                f"actor.model.num_action_chunks ({model_cfg.num_action_chunks}), got "
+                f"{train_env_cfg.max_steps_per_rollout_epoch}."
+            )
+        validate_env_training_cfg(
+            cfg,
+            EnvLayout(cfg.env.train, env_world_size, "env.train"),
+            stage_num=stage_num,
+            actor_world_size=component_placement.get_world_size("actor"),
         )
     with open_dict(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)

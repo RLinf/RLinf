@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+from collections import defaultdict
+from typing import Any, Iterator
+
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -22,8 +26,10 @@ from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
-from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+from rlinf.data.schema.embodied_types import Trajectory, batch_format
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
+from rlinf.envs.layout import EnvSpec
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
@@ -37,16 +43,16 @@ from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_critic_explained_variance_from_stats,
     compute_group_success_metrics,
-    compute_loss_mask,
     compute_rollout_metrics,
-    compute_split_num,
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import (
+    cat_list_of_dict_tensor,
     flatten_nested_tensor_time_batch,
     process_nested_dict_for_adv,
     process_nested_dict_for_train,
     put_tensor_device,
+    select_nested_rows,
     split_dict_to_chunk,
     trim_nested_tensor_time_dim,
 )
@@ -54,7 +60,9 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
 )
 from rlinf.utils.utils import (
+    add_loss_weights,
     clear_memory,
+    compute_trajectory_loss_mask,
     get_loss_agg_func,
     masked_mean,
 )
@@ -100,6 +108,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        self._rollout_geometry = RolloutGeometry.from_cfg(cfg)
+        self._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(cfg.algorithm)
+            for spec in self._rollout_geometry.layout.specs
+        }
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
@@ -191,65 +204,70 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
-        """
-        Receive rollout trajectories from rollout workers.
+        """Receive this actor's trajectory shards and preprocess each env's batch.
 
         Args:
             input_channel: The input channel to read from.
         """
         clear_memory(sync=False)
 
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
-
-        recv_list = []
-        for _ in range(split_num):
+        trajectories: dict[str | None, list[Trajectory]] = defaultdict(list)
+        for _ in range(self._rollout_geometry.shards_per_actor()):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
-            recv_list.append(trajectory)
+            trajectories[trajectory.env_name].append(trajectory)
 
-        self.rollout_batch = Trajectory.to_batch(recv_list)
-
-        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+        self.env_batches: dict[str | None, dict[str, Any]] = {}
+        self._group_success_metrics = {}
+        for spec in self._rollout_geometry.layout.specs:
+            assert trajectories[spec.name], (
+                "Expected trajectories of every env on each actor, but env "
+                f"{spec.name!r} sent none; received envs {sorted(trajectories)}."
+            )
+            batch, metrics = self._process_received_rollout_batch(
+                Trajectory.to_batch(trajectories[spec.name]), spec
+            )
+            self.env_batches[spec.name] = batch
+            self._group_success_metrics.update(spec.scoped(metrics) or metrics)
 
     def _process_received_rollout_batch(
-        self, rollout_batch: dict[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
-        """
+        self, rollout_batch: dict[str, torch.Tensor], spec: EnvSpec
+    ) -> tuple[dict[str, torch.Tensor], dict[str, float]]:
+        """Reshape one env's batch, then build its loss mask and reward filter.
+
         original shape: [rollout_epoch x n_chunk_steps, bsz, num_action_chunks, ...]
         target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
+
+        Args:
+            rollout_batch: The env's stacked trajectories.
+            spec: The env's spec.
+
+        Returns:
+            The processed batch and its group success metrics.
         """
-        rollout_epoch = self.cfg.env.train.rollout_epoch
-        rollout_batch = process_nested_dict_for_adv(rollout_batch, rollout_epoch)
+        algorithm_cfg = self._env_algorithm_cfgs[spec.name]
+        rollout_batch = process_nested_dict_for_adv(
+            rollout_batch, spec.cfg.rollout_epoch
+        )
 
-        if (
-            not self.cfg.env.train.auto_reset
-            and not self.cfg.env.train.ignore_terminations
-        ):
-            dones = rollout_batch[
-                "dones"
-            ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]
-            loss_mask, loss_mask_sum = compute_loss_mask(dones)
-
-            if self.cfg.algorithm.reward_type == "chunk_level":
-                loss_mask = loss_mask.any(dim=-1, keepdim=True)
-                loss_mask_sum = loss_mask_sum[..., -1:]
-
+        if spec.has_loss_mask:
+            loss_mask, loss_mask_sum = compute_trajectory_loss_mask(
+                rollout_batch["dones"], algorithm_cfg.reward_type
+            )
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
 
-        self._group_success_metrics = {}
-        if self.cfg.algorithm.get("log_group_success_metrics", False):
-            self._group_success_metrics = compute_group_success_metrics(
+        group_success_metrics = {}
+        if algorithm_cfg.get("log_group_success_metrics", False):
+            group_success_metrics = compute_group_success_metrics(
                 rollout_batch["rewards"],
-                group_size=self.cfg.algorithm.group_size,
+                group_size=algorithm_cfg.group_size,
                 loss_mask=rollout_batch.get("loss_mask", None),
-                rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
-                rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
+                rewards_lower_bound=algorithm_cfg.get("rewards_lower_bound", None),
+                rewards_upper_bound=algorithm_cfg.get("rewards_upper_bound", None),
             )
 
         # filter data by rewards
-        if self.cfg.algorithm.get("filter_rewards", False):
+        if algorithm_cfg.get("filter_rewards", False):
             rewards = rollout_batch[
                 "rewards"
             ]  # [n_chunk_step, batch, num_action_chunks]
@@ -257,7 +275,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 rewards = rewards * rollout_batch["loss_mask"]
             n_chunk_step, batch_size, num_action_chunks = rewards.shape
 
-            group_size = self.cfg.algorithm.group_size
+            group_size = algorithm_cfg.group_size
             assert batch_size % group_size == 0, (
                 f"batch {batch_size} not divisible by group_size {group_size}"
             )
@@ -276,9 +294,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             # mask
             reward_filter_mask = (
-                mean_reward_in_group >= self.cfg.algorithm.rewards_lower_bound
+                mean_reward_in_group >= algorithm_cfg.rewards_lower_bound
             ) & (
-                mean_reward_in_group <= self.cfg.algorithm.rewards_upper_bound
+                mean_reward_in_group <= algorithm_cfg.rewards_upper_bound
             )  # [n_prompts]
 
             # extend mask dimension
@@ -297,58 +315,245 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             else:
                 rollout_batch["loss_mask"] = reward_filter_mask
 
-        return rollout_batch
+        return rollout_batch, group_success_metrics
 
     @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
+        """Compute each env's advantages and returns, then merge the envs.
+
+        Returns:
+            Rollout metrics over all envs, plus a ``<name>/`` copy for each env
+            of a heterogeneous run.
         """
-        Compute the advantages and returns.
-        """
-        if self.cfg.algorithm.adv_type == "opd":
-            self.compute_opd_teacher_logprobs()
+        normalize_jointly = self.cfg.algorithm.get("adv_norm_scope", "env") == "all"
+        for spec in self._rollout_geometry.layout.specs:
+            batch = self.env_batches[spec.name]
+            algorithm_cfg = self._env_algorithm_cfgs[spec.name]
+            if algorithm_cfg.adv_type == "opd":
+                self.compute_opd_teacher_logprobs(batch)
 
-        kwargs = {
-            "task_type": self.cfg.runner.task_type,
-            "adv_type": self.cfg.algorithm.adv_type,
-            "rewards": self.rollout_batch["rewards"],
-            "dones": self.rollout_batch["dones"],
-            "values": self.rollout_batch.get("prev_values", None),
-            "prev_logprobs": self.rollout_batch.get("prev_logprobs", None),
-            "teacher_logprobs": self.rollout_batch.get("teacher_logprobs", None),
-            "num_action_chunks": self.cfg.actor.model.num_action_chunks,
-            "gamma": self.cfg.algorithm.get("gamma", 1),
-            "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
-            "group_size": self.cfg.algorithm.get("group_size", 8),
-            "reward_type": self.cfg.algorithm.reward_type,
-            "loss_mask": self.rollout_batch.get("loss_mask", None),
-            "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
-            "advantage_mode": self.cfg.algorithm.get("advantage_mode", None),
-        }
+            kwargs = {
+                "task_type": self.cfg.runner.task_type,
+                "adv_type": algorithm_cfg.adv_type,
+                "rewards": batch["rewards"],
+                "dones": batch["dones"],
+                "values": batch.get("prev_values", None),
+                "prev_logprobs": batch.get("prev_logprobs", None),
+                "teacher_logprobs": batch.get("teacher_logprobs", None),
+                "num_action_chunks": self.cfg.actor.model.num_action_chunks,
+                "gamma": algorithm_cfg.get("gamma", 1),
+                "gae_lambda": algorithm_cfg.get("gae_lambda", 1),
+                "group_size": algorithm_cfg.get("group_size", 8),
+                "reward_type": algorithm_cfg.reward_type,
+                "loss_mask": batch.get("loss_mask", None),
+                "loss_mask_sum": batch.get("loss_mask_sum", None),
+                "advantage_mode": algorithm_cfg.get("advantage_mode", None),
+            }
+            if normalize_jointly:
+                kwargs["normalize_advantages"] = False
 
-        advantages_and_returns = calculate_adv_and_returns(**kwargs)
+            batch.update(calculate_adv_and_returns(**kwargs))
+            if kwargs["loss_mask"] is not None:
+                batch.update({"loss_mask": kwargs["loss_mask"]})
+            if kwargs["loss_mask_sum"] is not None:
+                batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
 
-        self.rollout_batch.update(advantages_and_returns)
-        if kwargs["loss_mask"] is not None:
-            self.rollout_batch.update({"loss_mask": kwargs["loss_mask"]})
-        if kwargs["loss_mask_sum"] is not None:
-            self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
+        if normalize_jointly:
+            self._normalize_advantages_jointly()
 
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
-        rollout_metrics.update(self._group_success_metrics)
+        rollout_metrics = dict(self._group_success_metrics)
+        for spec in self._rollout_geometry.layout.specs:
+            rollout_metrics.update(
+                spec.scoped(compute_rollout_metrics(self.env_batches[spec.name]))
+            )
+        self.rollout_batches = self._merge_env_batches()
+        rollout_metrics.update(
+            compute_rollout_metrics(
+                cat_list_of_dict_tensor(
+                    [
+                        {
+                            key: pool[key]
+                            for key in ("rewards", "advantages", "returns", "loss_mask")
+                            if pool.get(key) is not None
+                        }
+                        for pool in self.rollout_batches
+                    ]
+                )
+            )
+        )
         return rollout_metrics
 
+    def _normalize_advantages_jointly(self) -> None:
+        """Normalize advantages over the valid steps of every env together.
+
+        This applies GAE's own normalization to the union of the envs' batches.
+        """
+        valid = []
+        for batch in self.env_batches.values():
+            advantages, loss_mask = batch["advantages"], batch.get("loss_mask")
+            if loss_mask is None:
+                valid.append(advantages.reshape(-1))
+            else:
+                valid.append(advantages[loss_mask.expand_as(advantages).bool()])
+        valid = torch.cat(valid)
+        mean, std = valid.mean(), valid.std()
+        for batch in self.env_batches.values():
+            batch["advantages"] = (batch["advantages"] - mean) / (std + 1e-5)
+
+    def _merge_env_batches(self) -> list[dict[str, Any]]:
+        """Weight each env's steps, flatten them to transitions, and pool them.
+
+        Every step gets a ``loss_mask`` and a ``loss_mask_ratio`` (see
+        :func:`add_loss_weights`), so the loss treats all envs with one rule.
+        Envs whose transitions share a format, the same keys and trailing
+        shapes, are concatenated into one pool; envs whose policy inputs differ
+        get separate pools. Rows keep env order; :meth:`_order_training_batch`
+        shuffles them.
+
+        Returns:
+            One ``[N, ...]`` batch per format, usually a single one.
+        """
+        reference_lengths = self._rollout_geometry.layout.reference_lengths(
+            self.cfg.algorithm.get("env_weighting", "trajectory")
+        )
+        pools: dict[Any, list[dict[str, Any]]] = {}
+        # Env name -> (pool index, first row in the pool, rows).
+        self._env_rows: dict[str | None, tuple[int, int, int]] = {}
+        for spec in self._rollout_geometry.layout.specs:
+            batch = self.env_batches[spec.name]
+            algorithm_cfg = self._env_algorithm_cfgs[spec.name]
+            if algorithm_cfg.loss_type == "opd":
+                target_steps = int(batch["advantages"].shape[0])
+                for key in [
+                    "prev_logprobs",
+                    "forward_inputs",
+                    "loss_mask",
+                    "loss_mask_sum",
+                ]:
+                    assert key in batch, f"OPD training requires {key}."
+                    batch[key] = trim_nested_tensor_time_dim(
+                        batch[key], target_steps, (key,)
+                    )
+            add_loss_weights(
+                batch,
+                reward_type=algorithm_cfg.reward_type,
+                reference_length=reference_lengths[spec.name],
+                loss_weight=algorithm_cfg.get("loss_weight", 1.0),
+            )
+            rows = batch["prev_logprobs"].shape[0] * batch["prev_logprobs"].shape[1]
+            flat = process_nested_dict_for_train(batch, torch.arange(rows))
+            pool = pools.setdefault(batch_format(flat), [])
+            self._env_rows[spec.name] = (
+                list(pools).index(batch_format(flat)),
+                sum(entry["prev_logprobs"].shape[0] for entry in pool),
+                rows,
+            )
+            pool.append(flat)
+        self.env_batches = {}
+        return [cat_list_of_dict_tensor(entries) for entries in pools.values()]
+
+    def _order_training_batch(self) -> None:
+        """Order each pool's rows and plan the rows every global batch takes.
+
+        Rows are ordered so each pool hands them out front to back, and
+        ``self._global_batch_plan`` lists, per global batch, the rows it takes
+        from each pool. With ``actor.mix_envs`` every global batch takes the same
+        share of each pool; otherwise each takes the rows of one env, in a
+        random order every actor rank shares.
+        """
+        g = torch.Generator()
+        g.manual_seed(self.cfg.actor.seed + self._rank)
+        self._training_round = getattr(self, "_training_round", 0) + 1
+        batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
+        pool_rows = [pool["prev_logprobs"].shape[0] for pool in self.rollout_batches]
+        assert sum(pool_rows) % batch_size_per_rank == 0, (
+            f"Expected the {sum(pool_rows)} samples on each actor to fill whole "
+            f"global batches of {batch_size_per_rank}."
+        )
+        if self.cfg.actor.get("mix_envs", True):
+            orders = [torch.randperm(rows, generator=g) for rows in pool_rows]
+            num_global_batches = sum(pool_rows) // batch_size_per_rank
+            for rows in pool_rows:
+                assert rows % num_global_batches == 0, (
+                    "Every global batch takes an equal share of each observation "
+                    f"format, so a format's {rows} samples per actor must split "
+                    f"into {num_global_batches} global batches."
+                )
+            plan = [
+                [rows // num_global_batches for rows in pool_rows]
+                for _ in range(num_global_batches)
+            ]
+        else:
+            env_parts = []
+            for name, (pool_index, offset, rows) in self._env_rows.items():
+                assert rows % batch_size_per_rank == 0, (
+                    "actor.mix_envs=False needs each env's samples per actor to "
+                    f"fill whole global batches of {batch_size_per_rank}, but env "
+                    f"{name!r} has {rows}."
+                )
+                shuffled = offset + torch.randperm(rows, generator=g)
+                env_parts.extend(
+                    (pool_index, part) for part in shuffled.split(batch_size_per_rank)
+                )
+            shared = torch.Generator()
+            shared.manual_seed(self.cfg.actor.seed + self._training_round)
+            env_parts = [
+                env_parts[index]
+                for index in torch.randperm(len(env_parts), generator=shared)
+            ]
+            orders = [
+                torch.cat([part for index, part in env_parts if index == pool_index])
+                for pool_index in range(len(pool_rows))
+            ]
+            plan = [
+                [
+                    batch_size_per_rank if index == pool_index else 0
+                    for pool_index in range(len(pool_rows))
+                ]
+                for index, _ in env_parts
+            ]
+        with torch.no_grad():
+            self.rollout_batches = [
+                select_nested_rows(pool, order)
+                for pool, order in zip(self.rollout_batches, orders)
+            ]
+        self._global_batch_plan = plan
+
+    def _global_batches(self) -> Iterator[list[dict[str, Any]]]:
+        """Yield each planned global batch as its micro-batches.
+
+        A micro-batch holds rows of one pool, so it never mixes observation
+        formats.
+        """
+        micro_batch_size = self.cfg.actor.micro_batch_size
+        offsets = [0] * len(self.rollout_batches)
+        for takes in self._global_batch_plan:
+            micro_batches = []
+            for pool_index, rows in enumerate(takes):
+                if rows == 0:
+                    continue
+                start = offsets[pool_index]
+                part = select_nested_rows(
+                    self.rollout_batches[pool_index], slice(start, start + rows)
+                )
+                offsets[pool_index] += rows
+                micro_batches.extend(
+                    split_dict_to_chunk(part, math.ceil(rows / micro_batch_size))
+                )
+            yield micro_batches
+
     @Worker.timer("actor/compute_opd_teacher_logprobs")
-    def compute_opd_teacher_logprobs(self) -> None:
-        assert self.rollout_batch.get("teacher_logprobs", None) is None, (
+    def compute_opd_teacher_logprobs(self, batch: dict[str, Any]) -> None:
+        assert batch.get("teacher_logprobs", None) is None, (
             "OPD teacher_logprobs must be computed after rollout on actor workers."
         )
         assert self.cfg.rollout.get("expert_model", None) is not None, (
             "OPD requires rollout.expert_model as teacher model config."
         )
-        assert "forward_inputs" in self.rollout_batch, (
+        assert "forward_inputs" in batch, (
             "OPD teacher logprob computation requires rollout forward_inputs."
         )
-        assert "prev_logprobs" in self.rollout_batch, (
+        assert "prev_logprobs" in batch, (
             "OPD teacher logprob computation requires student prev_logprobs."
         )
         assert SupportedModel(self.cfg.actor.model.model_type) in [
@@ -356,7 +561,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             SupportedModel.OPENVLA_OFT,
         ], "OPD teacher logprob computation currently supports OpenVLA models."
 
-        prev_logprobs = self.rollout_batch["prev_logprobs"]
+        prev_logprobs = batch["prev_logprobs"]
         time_dim, batch_dim = prev_logprobs.shape[:2]
         flat_batch_size = time_dim * batch_dim
 
@@ -368,7 +573,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         teacher_model.to(self.device)
 
         flat_forward_inputs = flatten_nested_tensor_time_batch(
-            self.rollout_batch["forward_inputs"], ("forward_inputs",)
+            batch["forward_inputs"], ("forward_inputs",)
         )
         num_chunks = (
             flat_batch_size + self.cfg.actor.micro_batch_size - 1
@@ -398,7 +603,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"teacher_logprobs shape {teacher_logprobs.shape} must match "
             f"flattened student logprobs shape {expected_shape}."
         )
-        self.rollout_batch["teacher_logprobs"] = teacher_logprobs.reshape(
+        batch["teacher_logprobs"] = teacher_logprobs.reshape(
             time_dim, batch_dim, *teacher_logprobs.shape[1:]
         )
 
@@ -406,15 +611,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         clear_memory()
 
     @Worker.timer("actor/recompute_logprobs")
-    def recompute_prev_logprobs(self, batch_size_per_rank: int) -> dict[str, float]:
+    def recompute_prev_logprobs(self, batch: dict[str, Any]) -> dict[str, float]:
         """
         Recompute ``prev_logprobs`` with the actor's own forward, so both ends of
-        the PPO ratio come from the same path. Runs after the shuffle and reuses
-        the update loop's split, so each sample is scored in the micro-batch it
-        will be trained in.
+        the PPO ratio come from the same path. Runs after the shuffle and scores
+        the pool front to back in micro-batches of ``actor.micro_batch_size``,
+        the same micro-batches the update loop trains on when a global batch's
+        share of the pool is a multiple of that size.
 
         Args:
-            batch_size_per_rank: Samples per optimizer step on this rank.
+            batch: One ordered pool of training transitions; its
+                ``prev_logprobs`` are replaced.
 
         Returns:
             Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob
@@ -425,11 +632,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             ValueError: If ``algorithm.max_recompute_logprob_gap`` is set and the
                 joint gap exceeds it or is not finite.
         """
-        assert "forward_inputs" in self.rollout_batch, (
+        assert "forward_inputs" in batch, (
             "Recomputing logprobs requires rollout forward_inputs."
         )
 
-        rollout_logprobs = self.rollout_batch["prev_logprobs"]
+        rollout_logprobs = batch["prev_logprobs"]
         rollout_size = rollout_logprobs.shape[0]
         kwargs = {}
         if SupportedModel(self.cfg.actor.model.model_type) in [
@@ -443,24 +650,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         recomputed_logprobs = []
         with torch.no_grad():
-            for global_batch in split_dict_to_chunk(
-                self.rollout_batch, rollout_size // batch_size_per_rank
+            for micro_batch in split_dict_to_chunk(
+                batch, math.ceil(rollout_size / self.cfg.actor.micro_batch_size)
             ):
-                for micro_batch in split_dict_to_chunk(
-                    global_batch,
-                    batch_size_per_rank // self.cfg.actor.micro_batch_size,
-                ):
-                    micro_batch = put_tensor_device(micro_batch, self.device)
-                    with self.amp_context:
-                        output = self.model(
-                            forward_inputs=micro_batch["forward_inputs"],
-                            compute_logprobs=True,
-                            compute_entropy=False,
-                            compute_values=False,
-                            use_cache=False,
-                            **kwargs,
-                        )
-                    recomputed_logprobs.append(output["logprobs"].detach().cpu())
+                micro_batch = put_tensor_device(micro_batch, self.device)
+                with self.amp_context:
+                    output = self.model(
+                        forward_inputs=micro_batch["forward_inputs"],
+                        compute_logprobs=True,
+                        compute_entropy=False,
+                        compute_values=False,
+                        use_cache=False,
+                        **kwargs,
+                    )
+                recomputed_logprobs.append(output["logprobs"].detach().cpu())
 
         recomputed_logprobs = torch.cat(recomputed_logprobs, dim=0).to(
             rollout_logprobs.dtype
@@ -476,7 +679,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
             *rollout_logprobs.shape[:-1], -1, action_dim
         )
-        loss_mask = self.rollout_batch.get("loss_mask", None)
+        loss_mask = batch.get("loss_mask", None)
         mask = (
             None
             if loss_mask is None
@@ -501,7 +704,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"found {joint_gap}."
             )
 
-        self.rollout_batch["prev_logprobs"] = recomputed_logprobs
+        batch["prev_logprobs"] = recomputed_logprobs
         return metrics
 
     def _get_opd_teacher_model(self):
@@ -610,75 +813,30 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
-        if self.cfg.algorithm.loss_type == "opd":
-            target_steps = int(self.rollout_batch["advantages"].shape[0])
-            for key in [
-                "prev_logprobs",
-                "forward_inputs",
-                "loss_mask",
-                "loss_mask_sum",
-            ]:
-                assert key in self.rollout_batch, f"OPD training requires {key}."
-                self.rollout_batch[key] = trim_nested_tensor_time_dim(
-                    self.rollout_batch[key], target_steps, (key,)
-                )
-
         self.model.train()
-        rollout_size = (
-            self.rollout_batch["prev_logprobs"].shape[0]
-            * self.rollout_batch["prev_logprobs"].shape[1]
-        )
-        g = torch.Generator()
-        g.manual_seed(self.cfg.actor.seed + self._rank)
-        shuffle_id = torch.randperm(rollout_size, generator=g)
+        self._order_training_batch()
 
-        with torch.no_grad():
-            self.rollout_batch = process_nested_dict_for_train(
-                self.rollout_batch, shuffle_id
-            )
-
-        # Split to make minibatch iterator for updating the actor
-        # See PPO paper for details. https://arxiv.org/abs/1707.06347
-        rollout_size = self.rollout_batch["prev_logprobs"].size(0)
-        batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
-        assert rollout_size % batch_size_per_rank == 0, (
-            f"{rollout_size} is not divisible by {batch_size_per_rank}"
-        )
         metrics = {}
         if self.cfg.algorithm.get("recompute_logprobs", False):
-            append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
+            for pool in self.rollout_batches:
+                append_to_dict(metrics, self.recompute_prev_logprobs(pool))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            rollout_dataloader_iter = split_dict_to_chunk(
-                self.rollout_batch,
-                rollout_size // batch_size_per_rank,
-            )
-            for train_global_batch in rollout_dataloader_iter:
-                # split batch into micro_batches
-                train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
-                assert (
-                    train_global_batch_size
-                    == self.cfg.actor.global_batch_size
-                    // torch.distributed.get_world_size()
+            # See PPO paper for details. https://arxiv.org/abs/1707.06347
+            for micro_batches in self._global_batches():
+                global_batch_rows = sum(
+                    batch["prev_logprobs"].shape[0] for batch in micro_batches
                 )
-                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
-                )
-
-                train_micro_batch = split_dict_to_chunk(
-                    train_global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
-                )
-
                 self.optimizer.zero_grad()
-                for idx, batch in enumerate(train_micro_batch):
+                for idx, batch in enumerate(micro_batches):
                     self.train_micro_batch(
                         micro_batch=batch,
                         metrics=metrics,
-                        is_last=(idx + 1) == self.gradient_accumulation,
+                        is_last=(idx + 1) == len(micro_batches),
+                        global_batch_rows=global_batch_rows,
                     )
                     # avoid gpu memory leak
-                    train_micro_batch[idx] = None
+                    micro_batches[idx] = None
                     del batch
 
                 self.torch_platform.empty_cache()
@@ -716,7 +874,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics: dict[str, list[float]],
         *,
         is_last: bool,
+        global_batch_rows: int | None = None,
     ) -> None:
+        """Accumulate the gradient of one micro-batch.
+
+        Args:
+            micro_batch: Transitions of one observation format.
+            metrics: Metrics to append to.
+            is_last: Whether this micro-batch ends its global batch.
+            global_batch_rows: Rows in the global batch; defaults to
+                ``gradient_accumulation`` micro-batches of this size.
+        """
+        micro_batch_rows = micro_batch["prev_logprobs"].shape[0]
+        if global_batch_rows is None:
+            global_batch_rows = micro_batch_rows * self.gradient_accumulation
         micro_batch = put_tensor_device(micro_batch, self.device)
         backward_ctx = self.before_micro_batch(self.model, is_last_micro_batch=is_last)
         advantages = micro_batch["advantages"]
@@ -724,7 +895,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         returns = micro_batch.get("returns", None)
         prev_values = micro_batch.get("prev_values", None)
         loss_mask = micro_batch.get("loss_mask", None)
-        loss_mask_sum = micro_batch.get("loss_mask_sum", None)
+        loss_mask_ratio = micro_batch.get("loss_mask_ratio", None)
         forward_inputs = micro_batch.get("forward_inputs", None)
 
         kwargs = {}
@@ -789,8 +960,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "value_clip": self.cfg.algorithm.get("value_clip", None),
             "huber_delta": self.cfg.algorithm.get("huber_delta", None),
             "loss_mask": loss_mask,
-            "loss_mask_sum": loss_mask_sum,
-            "max_episode_steps": self.cfg.env.train.max_episode_steps,
+            "loss_mask_ratio": loss_mask_ratio,
             "task_type": self.cfg.runner.task_type,
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
             "logprob_mask": output_dict.get("logprob_mask", None),
@@ -855,7 +1025,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.enable_sft_co_train:
             loss = self._train_sft_epoch(metrics_data, loss)
 
-        loss /= self.gradient_accumulation
+        # The loss is this micro-batch's mean; dividing by its share of the global
+        # batch makes the accumulated gradient the global batch's mean.
+        loss /= global_batch_rows / micro_batch_rows
         with backward_ctx:
             self.grad_scaler.scale(loss).backward()
 

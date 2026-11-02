@@ -1242,6 +1242,23 @@ def test_least_loaded_deals_to_the_shallowest_queue_after_consumption():
     assert asyncio.run(run()) == {"actor:0": 1, "actor:1": 2, "actor:2": 2}
 
 
+def test_least_loaded_splits_each_dispatch_group_evenly():
+    async def run():
+        worker = _stub_worker(dispatcher="least_loaded")
+        # Dealt by count alone, this order gives actor:0 two "a" items and
+        # actor:2 two "b" items.
+        for group in ["a", "a", "b", "a", "b", "b"]:
+            await worker._enqueue("k", SimpleNamespace(dispatch_group=group), 0)
+        return {
+            consumer: sorted(
+                queue.get_nowait().item.dispatch_group for _ in range(queue.qsize())
+            )
+            for consumer, queue in worker._consumer_queues["k"].items()
+        }
+
+    assert asyncio.run(run()) == dict.fromkeys(ACTORS, ["a", "b"])
+
+
 def test_stealing_lets_a_starved_consumer_take_from_the_deepest_peer():
     async def run():
         worker = _stub_worker(dispatcher="least_loaded_stealing")

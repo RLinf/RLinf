@@ -24,6 +24,7 @@ the public schema API.
 
 from __future__ import annotations
 
+import math
 from abc import abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -47,6 +48,7 @@ from rlinf.data.schema.embodied_types import (
     TrajectoryPart,
     TrajectoryStep,
 )
+from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.channel import (
     ChannelContext,
     Collector,
@@ -57,6 +59,7 @@ from rlinf.scheduler.worker.routing import CommMapper
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.utils import (
+    add_loss_weights,
     flatten_embodied_batch,
     pack_batch,
     preprocess_embodied_batch,
@@ -85,16 +88,19 @@ class TrajectoryMode(str, Enum):
 class RolloutGeometry:
     """How one training step's rollout data is shaped and routed.
 
+    Every source (one env worker rank and pipeline stage) follows the spec of
+    the env its rank hosts.
+
     Attributes:
-        source_count: Number of logical rollout sources (env ranks x stages).
-        chunk_count: Action chunks each source produces per rollout epoch.
-        shards_per_source: Consumable items each source is split into.
+        layout: Env layout of ``env.train``.
+        stage_num: Pipeline stages per env worker.
+        num_action_chunks: Env steps in one action chunk.
         actor_world_size: Number of actor workers consuming the channel.
     """
 
-    source_count: int
-    chunk_count: int
-    shards_per_source: int
+    layout: EnvLayout
+    stage_num: int
+    num_action_chunks: int
     actor_world_size: int
 
     @classmethod
@@ -106,33 +112,52 @@ class RolloutGeometry:
 
         Returns:
             The rollout geometry.
-
-        Raises:
-            ValueError: If sources cannot be split evenly across actors.
         """
         from rlinf.scheduler.cluster import Cluster
-        from rlinf.utils.metric_utils import compute_split_num
         from rlinf.utils.placement import HybridComponentPlacement
 
         placement = HybridComponentPlacement(cfg, Cluster())
-        actor_world_size = placement.get_world_size("actor")
-        source_count = placement.get_world_size("env") * cfg.rollout.pipeline_stage_num
-        output_count = compute_split_num(source_count, actor_world_size) * (
-            actor_world_size
-        )
-        if output_count % source_count:
-            raise ValueError(
-                "Trajectory routing requires each rollout source to have an "
-                "equal number of actor shards."
-            )
         return cls(
-            source_count=source_count,
-            chunk_count=(
-                cfg.env.train.max_steps_per_rollout_epoch
-                // cfg.actor.model.num_action_chunks
+            layout=EnvLayout(
+                cfg.env.train, placement.get_world_size("env"), "env.train"
             ),
-            shards_per_source=output_count // source_count,
-            actor_world_size=actor_world_size,
+            stage_num=cfg.rollout.pipeline_stage_num,
+            num_action_chunks=cfg.actor.model.num_action_chunks,
+            actor_world_size=placement.get_world_size("actor"),
+        )
+
+    @property
+    def env_ranks(self) -> range:
+        """All env worker ranks of the layout."""
+        return range(sum(len(spec.ranks) for spec in self.layout.specs))
+
+    @property
+    def source_count(self) -> int:
+        """Number of logical rollout sources (env ranks x stages)."""
+        return len(self.env_ranks) * self.stage_num
+
+    def spec(self, env_rank: int) -> EnvSpec:
+        """Return the spec of the env that ``env_rank`` hosts."""
+        return self.layout.spec_of_rank(env_rank)
+
+    def chunk_count(self, env_rank: int) -> int:
+        """Return the action chunks a source of ``env_rank`` produces per epoch."""
+        return self.spec(env_rank).chunk_steps(self.num_action_chunks)
+
+    def shards_per_source(self, env_rank: int) -> int:
+        """Return the shards each source of ``env_rank``'s env is split into.
+
+        Every actor then receives the same number of shards of each env.
+        """
+        sources = len(self.spec(env_rank).ranks) * self.stage_num
+        return math.lcm(sources, self.actor_world_size) // sources
+
+    def shards_per_actor(self) -> int:
+        """Return the trajectory shards each actor receives per training step."""
+        return sum(
+            math.lcm(len(spec.ranks) * self.stage_num, self.actor_world_size)
+            // self.actor_world_size
+            for spec in self.layout.specs
         )
 
 
@@ -371,7 +396,6 @@ class TrajectoryOutput:
         self._cfg = cfg
         self._geometry = geometry
         self._source_count = self._geometry.source_count
-        self._chunk_count = self._geometry.chunk_count
         self._completed_keys: set[TrajectoryKey] = set()
 
     @abstractmethod
@@ -394,6 +418,10 @@ class AccumulatorOutput(TrajectoryOutput):
         self._enable_rlt = cfg.algorithm.get("loss_type") in {"rlt_ac", "rlt_td3"}
         self._env_reward_weight = cfg.get("reward", {}).get("env_reward_weight", 1.0)
         self._reward_weight = cfg.get("reward", {}).get("reward_weight", 1.0)
+        self._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(cfg.algorithm)
+            for spec in self._geometry.layout.specs
+        }
 
     def emit(self, chunk: JoinedChunk) -> Iterator[CollectedItem]:
         """Append a policy chunk and flush its scope when complete."""
@@ -410,13 +438,15 @@ class AccumulatorOutput(TrajectoryOutput):
         accumulator = accumulators.setdefault(
             chunk.source,
             TrajectoryAccumulator(
-                max_episode_length=self._cfg.env.train.max_episode_steps
+                max_episode_length=self._geometry.spec(
+                    chunk.key.env_rank
+                ).cfg.max_episode_steps
             ),
         )
         self._append_chunk(accumulator, chunk)
         self._completed_keys.add(chunk.key)
 
-        if self._scope_key_count(scope) != self._expected_key_count:
+        if self._scope_key_count(scope) != self._expected_key_count(scope):
             return
         if len(accumulators) != self._expected_accumulator_count:
             raise ValueError(
@@ -435,12 +465,14 @@ class AccumulatorOutput(TrajectoryOutput):
         self, accumulator: TrajectoryAccumulator, chunk: JoinedChunk
     ) -> None:
         """Resolve and retain one joined chunk without inspecting its fields."""
+        spec = self._geometry.spec(chunk.key.env_rank)
         rewards = chunk.env.compute_rewards(
             env_reward_weight=self._env_reward_weight,
             reward_weight=self._reward_weight,
-            auto_reset=self._cfg.env.train.auto_reset,
+            reward_scale=spec.cfg.get("reward_scale", 1.0),
+            auto_reset=spec.cfg.auto_reset,
             bootstrap_type=self._cfg.algorithm.get("bootstrap_type", "standard"),
-            gamma=self._cfg.algorithm.get("gamma", 1.0),
+            gamma=self._env_algorithm_cfgs[spec.name].get("gamma", 1.0),
         )
         step = TrajectoryStep.from_parts(
             chunk.policy,
@@ -449,7 +481,9 @@ class AccumulatorOutput(TrajectoryOutput):
             collect_prev_infos=self._collect_prev_infos,
             collect_transitions=self._collect_transitions,
             enable_rlt=self._enable_rlt,
-            include_final_value=chunk.key.chunk_id == self._chunk_count - 1,
+            include_final_value=(
+                chunk.key.chunk_id == self._geometry.chunk_count(chunk.key.env_rank) - 1
+            ),
         )
         accumulator.append(step)
         accumulator.assign_history_rewards(
@@ -457,10 +491,9 @@ class AccumulatorOutput(TrajectoryOutput):
             reward_weight=self._reward_weight,
         )
 
-    @property
     @abstractmethod
-    def _expected_key_count(self) -> int:
-        """Number of chunks required to flush one collection scope."""
+    def _expected_key_count(self, scope: CollectionScope) -> int:
+        """Number of chunks required to flush ``scope``."""
 
     @property
     def _expected_accumulator_count(self) -> int:
@@ -493,15 +526,17 @@ class RolloutOutput(AccumulatorOutput):
     ) -> Iterator[CollectedItem]:
         """Split each source's trajectory into its shards."""
         # Stable source ordering makes output independent of arrival timing.
-        for _, accumulator in sorted(accumulators.items()):
-            shards = accumulator.to_trajectory().split(self._geometry.shards_per_source)
-            for trajectory in shards:
-                yield DEFAULT_KEY, trajectory
+        for (env_rank, _), accumulator in sorted(accumulators.items()):
+            trajectory = accumulator.to_trajectory()
+            trajectory.env_name = self._geometry.spec(env_rank).name
+            for shard in trajectory.split(self._geometry.shards_per_source(env_rank)):
+                yield DEFAULT_KEY, shard
 
-    @property
-    def _expected_key_count(self) -> int:
-        """Return all chunks emitted by one source in a training step."""
-        return self._cfg.env.train.rollout_epoch * self._chunk_count
+    def _expected_key_count(self, scope: CollectionScope) -> int:
+        """Return all chunks one source emits in a training step."""
+        _, env_rank, _ = scope
+        spec = self._geometry.spec(env_rank)
+        return spec.cfg.rollout_epoch * self._geometry.chunk_count(env_rank)
 
     @property
     def _expected_accumulator_count(self) -> int:
@@ -528,6 +563,9 @@ class PipelineOutput(AccumulatorOutput):
         self._actor_world_size = self._geometry.actor_world_size
         self._generators: dict[int, torch.Generator] = {}
         self._shuffle_rollout = self._cfg.algorithm.get("shuffle_rollout", True)
+        self._reference_lengths = self._geometry.layout.reference_lengths(
+            self._cfg.algorithm.get("env_weighting", "trajectory")
+        )
 
     def _flush(
         self, accumulators: dict[SourceID, TrajectoryAccumulator]
@@ -546,9 +584,10 @@ class PipelineOutput(AccumulatorOutput):
             trajectories = accumulator.to_trajectory().split(
                 [size for _, size in actor_splits]
             )
+            spec = self._geometry.spec(env_rank)
             for (actor_rank, _), trajectory in zip(actor_splits, trajectories):
                 batches_by_actor[actor_rank].append(
-                    self._prepare_pipeline_batch(trajectory)
+                    self._prepare_pipeline_batch(trajectory, spec)
                 )
 
         # Normalize per actor after routing, matching its local training batch.
@@ -574,39 +613,45 @@ class PipelineOutput(AccumulatorOutput):
                     )
 
     def _prepare_pipeline_batch(
-        self, trajectory: Trajectory
+        self, trajectory: Trajectory, spec: EnvSpec
     ) -> dict[str, torch.Tensor]:
         """Preprocess one actor shard and compute training targets."""
+        algorithm_cfg = self._env_algorithm_cfgs[spec.name]
         batch = preprocess_embodied_batch(
             Trajectory.to_batch([trajectory]),
             rollout_epoch=1,
-            auto_reset=self._cfg.env.train.auto_reset,
-            ignore_terminations=self._cfg.env.train.ignore_terminations,
-            reward_type=self._cfg.algorithm.reward_type,
-            filter_rewards=self._cfg.algorithm.get("filter_rewards", False),
-            group_size=self._cfg.algorithm.group_size,
-            rewards_lower_bound=self._cfg.algorithm.get("rewards_lower_bound"),
-            rewards_upper_bound=self._cfg.algorithm.get("rewards_upper_bound"),
+            auto_reset=spec.cfg.auto_reset,
+            ignore_terminations=spec.cfg.ignore_terminations,
+            reward_type=algorithm_cfg.reward_type,
+            filter_rewards=algorithm_cfg.get("filter_rewards", False),
+            group_size=algorithm_cfg.group_size,
+            rewards_lower_bound=algorithm_cfg.get("rewards_lower_bound"),
+            rewards_upper_bound=algorithm_cfg.get("rewards_upper_bound"),
         )
         batch.update(
             calculate_adv_and_returns(
                 task_type=self._cfg.runner.task_type,
-                adv_type=self._cfg.algorithm.adv_type,
+                adv_type=algorithm_cfg.adv_type,
                 rewards=batch["rewards"],
                 dones=batch["dones"],
                 values=batch.get("prev_values"),
                 prev_logprobs=batch.get("prev_logprobs"),
                 num_action_chunks=self._cfg.actor.model.num_action_chunks,
-                gamma=self._cfg.algorithm.get("gamma", 1),
-                gae_lambda=self._cfg.algorithm.get("gae_lambda", 1),
-                group_size=self._cfg.algorithm.get("group_size", 8),
-                reward_type=self._cfg.algorithm.reward_type,
+                gamma=algorithm_cfg.get("gamma", 1),
+                gae_lambda=algorithm_cfg.get("gae_lambda", 1),
+                group_size=algorithm_cfg.group_size,
+                reward_type=algorithm_cfg.reward_type,
                 loss_mask=batch.get("loss_mask"),
                 loss_mask_sum=batch.get("loss_mask_sum"),
                 normalize_advantages=False,
             )
         )
-        return batch
+        return add_loss_weights(
+            batch,
+            reward_type=algorithm_cfg.reward_type,
+            reference_length=self._reference_lengths[spec.name],
+            loss_weight=algorithm_cfg.get("loss_weight", 1.0),
+        )
 
     def _pipeline_micro_batches(
         self, batch: dict[str, torch.Tensor], actor_rank: int
@@ -636,10 +681,12 @@ class PipelineOutput(AccumulatorOutput):
             )
         ]
 
-    @property
-    def _expected_key_count(self) -> int:
+    def _expected_key_count(self, scope: CollectionScope) -> int:
         """Return all source chunks required for one pipeline epoch."""
-        return self._source_count * self._chunk_count
+        return self._geometry.stage_num * sum(
+            self._geometry.chunk_count(env_rank)
+            for env_rank in self._geometry.env_ranks
+        )
 
     def _scope(self, key: TrajectoryKey) -> CollectionScope:
         """Group every source participating in the same pipeline epoch."""
@@ -683,14 +730,17 @@ class LerobotOutput(TrajectoryOutput):
         self._completed_keys.add(chunk.key)
 
         scope = (chunk.key.step_id, *chunk.source)
-        expected = self._cfg.env.train.rollout_epoch * self._chunk_count
+        env_rank = chunk.key.env_rank
+        expected = self._geometry.spec(
+            env_rank
+        ).cfg.rollout_epoch * self._geometry.chunk_count(env_rank)
         if (
             sum(self._lerobot_scope(key) == scope for key in self._completed_keys)
             != expected
         ):
             return
 
-        shards_per_source = self._geometry.shards_per_source
+        shards_per_source = self._geometry.shards_per_source(env_rank)
         episodes = accumulator.drain_episodes()
         outputs = [
             (DEFAULT_KEY, episodes[shard::shards_per_source])

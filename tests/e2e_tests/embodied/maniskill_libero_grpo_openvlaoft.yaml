@@ -65,25 +65,27 @@ env:
   group_name: "EnvGroup"
 
   train:
-    rollout_epoch: 1
     # LIBERO sends a 256x256 main and wrist view, ManiSkill one 640x480 view.
     # The policy reads the main view and the task, so both send just those.
     policy_obs:
       keys: [main_images, task_descriptions]
       image_size: [256, 256]
     # Override the default values in env/libero_goal and
-    # env/maniskill_put_on_plate_in_scene_25_main.
+    # env/maniskill_put_on_plate_in_scene_25_main. The two envs run different
+    # horizons and epochs.
     envs:
       libero_goal:
         total_num_envs: 8
+        rollout_epoch: 2
         max_episode_steps: 8
         max_steps_per_rollout_epoch: 8
         group_size: ${algorithm.group_size}
         reset_gripper_open: False
       maniskill:
         total_num_envs: 8
-        max_episode_steps: 8
-        max_steps_per_rollout_epoch: 8
+        rollout_epoch: 1
+        max_episode_steps: 16
+        max_steps_per_rollout_epoch: 16
         group_size: ${algorithm.group_size}
   eval:
     rollout_epoch: 1

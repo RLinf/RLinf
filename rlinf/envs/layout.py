@@ -17,14 +17,88 @@
 An env mode config (``env.train`` or ``env.eval``) is homogeneous, one env
 config that every env worker rank hosts, or heterogeneous, several named env
 configs under ``envs``. Every env worker rank hosts exactly one env config.
+Each env config is described by an :class:`EnvSpec`, which every stage reads
+its per-env settings from; a homogeneous mode has a single spec.
 """
 
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.envs.policy_obs import PolicyObsSpec
+
+
+@dataclass(frozen=True)
+class EnvSpec:
+    """One env config of a mode and the env worker ranks that host it.
+
+    Attributes:
+        name: Key of the env under ``envs``, or ``None`` in a homogeneous mode.
+        cfg: Config of the env.
+        ranks: Env worker ranks hosting the env.
+    """
+
+    name: str | None
+    cfg: DictConfig
+    ranks: range
+
+    # Algorithm fields that ``algorithm.envs.<name>`` may set for one env.
+    ALGORITHM_FIELDS: ClassVar[tuple[str, ...]] = (
+        "loss_weight",
+        "gamma",
+        "gae_lambda",
+        "rewards_lower_bound",
+        "rewards_upper_bound",
+    )
+
+    @property
+    def has_loss_mask(self) -> bool:
+        """Whether training ignores the steps after a trajectory's first done."""
+        return not self.cfg.auto_reset and not self.cfg.ignore_terminations
+
+    @property
+    def reference_length(self) -> int:
+        """Env steps that one trajectory's loss is normalized to.
+
+        A masked trajectory is normalized to ``max_episode_steps``; an unmasked
+        one counts every step of its rollout epoch.
+        """
+        if self.has_loss_mask:
+            return self.cfg.max_episode_steps
+        return self.cfg.max_steps_per_rollout_epoch
+
+    def scoped(self, metrics: dict[str, Any]) -> dict[str, Any]:
+        """Return ``metrics`` under ``<name>/``; empty for a homogeneous mode.
+
+        A homogeneous mode's metrics are already the pooled ones.
+        """
+        if self.name is None:
+            return {}
+        return {f"{self.name}/{key}": value for key, value in metrics.items()}
+
+    def chunk_steps(self, num_action_chunks: int) -> int:
+        """Return the number of action chunks in one rollout epoch."""
+        return self.cfg.max_steps_per_rollout_epoch // num_action_chunks
+
+    def algorithm_cfg(self, algorithm_cfg: DictConfig) -> DictConfig:
+        """Return ``algorithm_cfg`` as it applies to this env's data.
+
+        ``group_size`` comes from the env config, which repeats each reset state
+        that many times, and ``algorithm.envs.<name>`` overrides the fields in
+        :attr:`ALGORITHM_FIELDS`.
+
+        Args:
+            algorithm_cfg: The run's ``algorithm`` config.
+
+        Returns:
+            A new config without ``envs``.
+        """
+        resolved = OmegaConf.to_container(algorithm_cfg, resolve=True)
+        overrides = resolved.pop("envs", None) or {}
+        resolved["group_size"] = self.cfg.get("group_size", resolved.get("group_size"))
+        resolved.update(overrides.get(self.name, {}) if self.name else {})
+        return OmegaConf.create(resolved)
 
 
 @dataclass(frozen=True)
@@ -60,22 +134,22 @@ class EnvLayout:
     """
 
     ENVS_KEY: ClassVar[str] = "envs"
-    # One rollout loop steps every env of a mode and the actor masks dones with
-    # one rule, so the envs must agree on these.
-    SHARED_FIELDS: ClassVar[tuple[str, ...]] = (
+    # Per-env loop fields. A heterogeneous mode config carries one of them only
+    # when every env agrees, for readers that take one value for the mode.
+    LOOP_FIELDS: ClassVar[tuple[str, ...]] = (
+        "rollout_epoch",
         "max_steps_per_rollout_epoch",
         "auto_reset",
         "ignore_terminations",
+        "max_episode_steps",
     )
     # What a heterogeneous mode config may hold beside its envs. Anything else
     # belongs to an env and would be ignored at the mode level.
     MODE_FIELDS: ClassVar[tuple[str, ...]] = (
         ENVS_KEY,
-        "rollout_epoch",
         "total_num_envs",
-        "max_episode_steps",
         PolicyObsSpec.CFG_KEY,
-        *SHARED_FIELDS,
+        *LOOP_FIELDS,
     )
 
     def __init__(self, mode_cfg: DictConfig, world_size: int, path: str):
@@ -93,7 +167,7 @@ class EnvLayout:
         self._world_size = world_size
         self._mode_fields: dict[str, Any] = {}
         if not self.is_heterogeneous(mode_cfg):
-            self._blocks = [(None, mode_cfg, range(world_size))]
+            self._specs = (EnvSpec(None, mode_cfg, range(world_size)),)
             return
 
         envs = self._check_envs(mode_cfg)
@@ -104,7 +178,7 @@ class EnvLayout:
                 f"divisible by the {world_size} env workers."
             )
         envs_per_rank = total_num_envs // world_size
-        self._blocks = []
+        specs = []
         first_rank = 0
         for name, env_cfg in envs.items():
             if env_cfg.total_num_envs % envs_per_rank != 0:
@@ -116,19 +190,23 @@ class EnvLayout:
                     "(several workers can share a GPU, e.g. 'env: 0:0-1')."
                 )
             num_ranks = env_cfg.total_num_envs // envs_per_rank
-            self._blocks.append(
-                (name, env_cfg, range(first_rank, first_rank + num_ranks))
+            specs.append(
+                EnvSpec(name, env_cfg, range(first_rank, first_rank + num_ranks))
             )
             first_rank += num_ranks
+        self._specs = tuple(specs)
 
         self._mode_fields["total_num_envs"] = total_num_envs
-        for field in self.SHARED_FIELDS:
-            self._mode_fields[field] = self._agreed_value(envs, field, required=True)
-        max_episode_steps = self._agreed_value(
-            envs, "max_episode_steps", required=False
-        )
-        if max_episode_steps is not None:
-            self._mode_fields["max_episode_steps"] = max_episode_steps
+        for field in self.LOOP_FIELDS:
+            values = {name: env_cfg.get(field) for name, env_cfg in envs.items()}
+            if len(set(values.values())) == 1 and None not in values.values():
+                self._mode_fields[field] = next(iter(values.values()))
+            elif mode_cfg.get(field) is not None:
+                raise ValueError(
+                    f"{path}.{field} is {mode_cfg[field]!r}, but the envs under "
+                    f"{path}.envs set {field} to {values}. Set it on each env "
+                    f"and remove {path}.{field}."
+                )
         for field, value in self._mode_fields.items():
             if mode_cfg.get(field) is not None and mode_cfg[field] != value:
                 raise ValueError(
@@ -166,24 +244,76 @@ class EnvLayout:
     def mode_fields(self) -> dict[str, Any]:
         """Return the fields a heterogeneous mode config takes from its envs.
 
-        Rollout, actor, and runner read these from the mode config. The result
-        is empty for a homogeneous mode, whose config holds them itself.
+        These are ``total_num_envs`` and each loop field that all envs agree on.
+        The result is empty for a homogeneous mode, whose config holds them
+        itself.
         """
         return dict(self._mode_fields)
 
-    def assign(self, rank: int) -> EnvAssignment:
-        """Return the env that env worker ``rank`` hosts."""
-        for name, env_cfg, ranks in self._blocks:
-            if rank in ranks:
-                return EnvAssignment(
-                    name=name,
-                    cfg=env_cfg,
-                    rank=rank - ranks.start,
-                    world_size=len(ranks),
-                )
+    @property
+    def specs(self) -> tuple[EnvSpec, ...]:
+        """Specs of the mode's envs, in listing order."""
+        return self._specs
+
+    def reference_lengths(self, env_weighting: str) -> dict[str | None, float]:
+        """Return the env steps each env's trajectories are normalized to.
+
+        With ``"sample"`` every env keeps its own
+        :attr:`EnvSpec.reference_length`, so a longer trajectory weighs more.
+        With ``"trajectory"`` all envs share their trajectory-weighted mean, so
+        every trajectory weighs the same. One env gets its own length either way.
+
+        Args:
+            env_weighting: ``algorithm.env_weighting``.
+
+        Returns:
+            The reference length of each env, keyed by env name.
+        """
+        lengths = {spec.name: float(spec.reference_length) for spec in self._specs}
+        if env_weighting == "sample":
+            return lengths
+        if env_weighting != "trajectory":
+            raise ValueError(
+                "Expected algorithm.env_weighting to be 'trajectory' or 'sample', "
+                f"got {env_weighting!r}."
+            )
+        counts = {
+            spec.name: spec.cfg.total_num_envs * spec.cfg.rollout_epoch
+            for spec in self._specs
+        }
+        shared = sum(counts[name] * lengths[name] for name in lengths) / sum(
+            counts.values()
+        )
+        return dict.fromkeys(lengths, shared)
+
+    def spec(self, name: str | None) -> EnvSpec:
+        """Return the spec of the env called ``name`` (``None`` if homogeneous)."""
+        for spec in self._specs:
+            if spec.name == name:
+                return spec
+        raise KeyError(
+            f"Expected an env name in {[spec.name for spec in self._specs]} for "
+            f"{self._path}, got {name!r}."
+        )
+
+    def spec_of_rank(self, rank: int) -> EnvSpec:
+        """Return the spec of the env that env worker ``rank`` hosts."""
+        for spec in self._specs:
+            if rank in spec.ranks:
+                return spec
         raise ValueError(
             f"Env worker rank {rank} is outside the {self._world_size} ranks "
             f"{self._path} is laid out on."
+        )
+
+    def assign(self, rank: int) -> EnvAssignment:
+        """Return the env that env worker ``rank`` hosts."""
+        spec = self.spec_of_rank(rank)
+        return EnvAssignment(
+            name=spec.name,
+            cfg=spec.cfg,
+            rank=rank - spec.ranks.start,
+            world_size=len(spec.ranks),
         )
 
     def _check_envs(self, mode_cfg: DictConfig) -> dict[str, DictConfig]:
@@ -213,17 +343,3 @@ class EnvLayout:
                     f"got {total_num_envs!r}."
                 )
         return dict(envs.items())
-
-    def _agreed_value(
-        self, envs: dict[str, DictConfig], field: str, *, required: bool
-    ) -> Any:
-        values = {name: env_cfg.get(field) for name, env_cfg in envs.items()}
-        distinct = set(values.values())
-        if len(distinct) == 1 and None not in distinct:
-            return distinct.pop()
-        if required:
-            raise ValueError(
-                f"Every env under {self._path}.envs must set the same {field}, "
-                f"because one rollout loop steps them all; got {values}."
-            )
-        return None

@@ -594,3 +594,20 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_loss_weights_count_every_step_of_an_unmasked_trajectory_and_keep_filters():
+    from rlinf.utils.utils import add_loss_weights
+
+    dones = torch.zeros(4, 2, 1, dtype=torch.bool)
+    reward_filter = torch.tensor([True, False]).reshape(1, 2, 1).expand(3, 2, 1)
+    batch = add_loss_weights(
+        {"dones": dones, "loss_mask": reward_filter},
+        reward_type="action_level",
+        reference_length=6.0,
+        loss_weight=2.0,
+    )
+
+    assert batch["loss_mask"] is reward_filter
+    assert batch["loss_mask_sum"].unique().tolist() == [3]
+    assert torch.allclose(batch["loss_mask_ratio"], torch.full((3, 2, 1), 0.25))

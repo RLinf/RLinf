@@ -3,26 +3,21 @@
 
 本页介绍如何在一次运行中，让同一个 policy 在多种不同的环境配置上训练或评估，例如 ManiSkill 与 LIBERO、两个 LIBERO 任务集，或仿真环境与真机。RLinf 把这种用法称为异构环境。
 
-它与 ``total_num_envs`` 不同， ``total_num_envs`` 是把同一份环境配置并行运行多份；它也不同于 :doc:`hetero` ，后者决定各个 worker 运行在哪些机器上。下面先说明异构环境如何运行，再依次介绍如何配置、如何决定哪些 env worker 运行哪个环境、如何让观测适配 policy，以及如何查看每个环境的结果。
+它与 ``total_num_envs`` 不同， ``total_num_envs`` 是把同一份环境配置并行运行多份；它也不同于 :doc:`hetero` ，后者决定各个 worker 运行在哪些机器上。下面先说明异构环境如何运行，再依次介绍如何配置、如何决定哪些 env worker 运行哪个环境、如何在各环境之间平衡训练、如何处理不同的观测，以及如何查看每个环境的结果。
 
 运行方式
 --------
 
 通常所有 env worker 都运行同一份环境配置。使用异构环境时，每个 env worker 仍然只运行一份环境配置，但不同的 worker 可以运行不同的配置。
 
-训练流程的其余部分保持不变。rollout 把所有 env worker 的观测收集成一个 batch，运行一次 policy，再把每个 worker 对应的动作发回去。每个 worker 把动作转换成自己的仿真器或机器人能接受的格式，然后推进环境。最后，actor 用全部轨迹一起训练。
+每份环境配置还保留自己的循环设置：一个 rollout epoch 走多少步、一个训练 step 跑几个 epoch、episode 何时结束。rollout 把所有 env worker 的观测收集成一个 batch，运行一次 policy，再把每个 worker 对应的动作发回去。每个 worker 把动作转换成自己的仿真器或机器人能接受的格式，然后推进环境。某份环境配置提前跑完自己的 epoch 后，它的 worker 就退出 batch；所有环境配置都跑完时，这个训练 step 结束。actor 先按每份环境配置自己的设置计算它的 advantage，再用全部轨迹一起训练。
 
-由于所有数据最终汇入同一个 batch，需要满足两条规则：
-
-- 每个 env worker 运行的并行环境数相同。
-- 每份环境配置发给 policy 的观测种类和图像尺寸相同。
-
-下文会说明 RLinf 如何自动满足第一条，以及你需要如何处理第二条。
+关于这个 batch，有两点需要先了解。每个 env worker 运行的并行环境数相同，这一点由 RLinf 自动安排。观测则可以因环境配置而不同：rollout 会按观测格式分别运行 policy，因此每次前向计算看到的输入都是同一种形状。
 
 配置异构环境
 ------------
 
-把各份环境配置列在 ``env.train.envs`` 下，每份配置用一个你自己起的名字。下面的配置在 LIBERO-Goal 和一个 ManiSkill 场景上训练，各有 8 个并行环境：
+把各份环境配置列在 ``env.train.envs`` 下，每份配置用一个你自己起的名字。下面的配置在 LIBERO-Goal 和一个 ManiSkill 场景上训练，各有 64 个并行环境：
 
 .. code-block:: yaml
 
@@ -33,20 +28,22 @@
 
    env:
      train:
-       rollout_epoch: 1
        envs:
          libero_goal:
-           total_num_envs: 8
-           max_episode_steps: 8
-           max_steps_per_rollout_epoch: 8
+           total_num_envs: 64
+           rollout_epoch: 1
+           max_episode_steps: 320
+           max_steps_per_rollout_epoch: 320
+           group_size: 8
          maniskill:
-           total_num_envs: 8
-           max_episode_steps: 8
-           max_steps_per_rollout_epoch: 8
+           total_num_envs: 64
+           rollout_epoch: 2
+           max_episode_steps: 80
+           max_steps_per_rollout_epoch: 80
+           ignore_terminations: True
+           group_size: 8
 
-每一行 ``defaults`` 把一个环境预设加载到一个名字下，这里是 ``libero_goal`` 和 ``maniskill`` 。每份环境配置可以使用普通 ``env.train`` 的全部设置，其中的 ``total_num_envs`` 是它自己的并行环境数。 ``env.eval`` 的写法相同，并且与 ``env.train`` 互相独立，例如可以在两份环境配置上训练、只在一份上评估。
-
-有几项设置属于共享的 rollout 循环，所以每份环境配置都必须取相同的值： ``max_steps_per_rollout_epoch`` 、 ``auto_reset`` 和 ``ignore_terminations`` 。不同环境预设的默认值并不相同，请像示例那样在每份环境配置上显式设置。 ``max_episode_steps`` 可以各不相同；训练时如果取值不同，还需要设置 ``env.train.max_episode_steps`` ，actor 用它对 loss 做归一化。
+每一行 ``defaults`` 把一个环境预设加载到一个名字下，这里是 ``libero_goal`` 和 ``maniskill`` 。每份环境配置可以使用普通 ``env.train`` 的全部设置，而且各份配置可以取不同的值： ``total_num_envs`` 是它自己的并行环境数， ``rollout_epoch`` 、 ``max_steps_per_rollout_epoch`` 、 ``max_episode_steps`` 、 ``auto_reset`` 、 ``ignore_terminations`` 和 ``group_size`` 也只作用于它自己的环境。在这个例子里，每个训练 step 中 LIBERO-Goal 跑一个 320 步的 epoch，ManiSkill 跑两个 80 步的 epoch。 ``env.eval`` 的写法相同，并且与 ``env.train`` 互相独立，例如可以在两份环境配置上训练、只在一份上评估。
 
 其他设置（例如视频或奖励）都写在各自所属的环境配置里。 ``env.train.total_num_envs`` 这类汇总值由 RLinf 自动填写；设置互相冲突时，RLinf 会在启动阶段停止，并给出明确的报错信息。
 
@@ -73,18 +70,45 @@ RLinf 按你列出的顺序，按各份环境配置 ``total_num_envs`` 的比例
 
 在分给自己的 worker 上，一份环境配置的行为与它单独运行时相同：随机种子和重置状态只在它自己的 worker 之间划分， ``override_cfgs`` 列表也是每个 worker 对应一项。
 
+actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 actor worker 训练的环境组成都相同。一个 GRPO group 必须留在同一个 actor worker 上，所以每份环境配置的 group 数必须能被 actor worker 数整除；RLinf 会在启动阶段检查这一点。
+
 这些 worker 运行在哪里，由 ``env`` 的 placement 决定。多个 env worker 可以共用一块 GPU，例如 ``env: 0:0-1`` 。如果要驱动真机，请把这份环境配置的 worker 放到机器人所在的节点上，具体做法见 :doc:`hetero` 。
 
 .. warning::
 
    worker 按列出的顺序分配。调整 ``envs`` 的顺序或修改环境数，都会改变每个 worker 运行的环境，修改后请重新检查 placement，使用真机时尤其如此。
 
-对齐观测
---------
+平衡各环境的训练
+----------------
 
-rollout 会把所有 env worker 的观测叠成一个 batch，因此这些观测必须一致。来自不同仿真器的环境通常并不一致：LIBERO 发送 256x256 的主相机和腕部相机图像，而这个 ManiSkill 场景只发送一个 480x640 的相机图像。不做处理的话，rollout 会直接报错。
+每个训练 step 包含每份环境配置的 ``total_num_envs`` 乘以 ``rollout_epoch`` 条轨迹，一条轨迹就是一个环境的一个 rollout epoch。在上面的例子里，这是 64 条最长 320 步的 LIBERO-Goal 轨迹和 128 条 80 步的 ManiSkill 轨迹。这些数量决定了每份环境配置的数据量；一个 step 的耗时取决于最慢的那份环境配置， ``time/env/<name>/interact`` 记录了每份配置用了多长时间。
 
-设置 ``policy_obs`` ，指定 policy 接收哪些观测：
+默认情况下，无论环境的 episode 有多长，每条轨迹在 loss 中的分量都相同，所以在这个例子里 ManiSkill 占梯度的三分之二。下面这些设置可以调整这一点：
+
+.. code-block:: yaml
+
+   algorithm:
+     env_weighting: trajectory  # 或 sample
+     adv_norm_scope: env        # 或 all
+     envs:
+       maniskill:
+         loss_weight: 0.5
+   actor:
+     mix_envs: True
+
+- ``env_weighting: sample`` 改为让每一步的分量相同，于是 episode 更长的环境配置占比更大。
+- ``algorithm.envs.<name>`` 为一份环境配置单独设置 ``loss_weight`` 、 ``gamma`` 、 ``gae_lambda`` 、 ``rewards_lower_bound`` 或 ``rewards_upper_bound`` ，其余设置沿用 ``algorithm`` 。 ``loss_weight`` 会乘到这份环境配置每一步的权重上。
+- ``adv_norm_scope: all`` 在所有环境配置上一起归一化 advantage，而不是分别归一化。它只影响在整个 batch 上做归一化的 advantage 类型，例如 GAE；GRPO 本来就在每个 group 内归一化。
+- ``actor.mix_envs: False`` 让每个 optimizer step 只使用一份环境配置的数据，顺序随机且所有 actor worker 一致。此时每份环境配置的样本数必须能填满整数个 global batch。
+
+奖励保持各环境自己的尺度。PPO 和 SAC 的 critic 同时服务所有环境配置，如果各环境的奖励大小相差很多，较大的那份会主导 critic，另一个环境得到的 baseline 就会变差。可以在环境配置上设置 ``reward_scale`` ，让各环境的 return 处在相近的量级；它会在训练读取奖励之前乘到这个环境的奖励上，此后 ``huber_delta`` 和 ``value_clip`` 作用于缩放后的值。
+
+处理不同的观测
+--------------
+
+来自不同仿真器的环境通常发送不同的观测：LIBERO 发送 256x256 的主相机和腕部相机图像，而这个 ManiSkill 场景只发送一个 480x640 的相机图像。RLinf 会把每一轮 rollout 的请求按观测格式分组，观测格式指观测有哪些 key 以及每个 key 的形状，然后每种格式运行一次前向计算。actor 训练时，每个 micro-batch 也只包含一种格式。因此 policy 每次只会看到一种形状，但它必须能处理收到的每一种格式。
+
+分开处理不同格式会降低速度：每次前向计算的 batch 更小，一轮也需要按格式数运行多次。设置 ``policy_obs`` 可以让各环境的格式一致，所有环境就能重新共用一次前向计算：
 
 .. code-block:: yaml
 
@@ -96,7 +120,7 @@ rollout 会把所有 env worker 的观测叠成一个 batch，因此这些观测
 
 ``keys`` 列出 policy 读取的观测，其余观测不会发送； ``image_size`` 把所有相机图像缩放到同一个高度和宽度。这样设置后，两个环境都只发送 256x256 的主相机图像和任务描述，这正是 OpenVLA-OFT 需要的输入。
 
-被改动的只是发给 policy 的那一份观测，奖励模型、视频录制和数据采集看到的仍是环境的原始观测。缩放在每一步都会消耗时间，所以图像尺寸本来一致时，不要设置 ``image_size`` 。 ``policy_obs`` 不会缩放机器人状态，如果 policy 读取 ``states`` ，各份环境配置的状态维度必须相同。
+被改动的只是发给 policy 的那一份观测，奖励模型、视频录制和数据采集看到的仍是环境的原始观测。缩放在每一步都会消耗时间，所以图像尺寸本来一致时，不要设置 ``image_size`` 。 ``policy_obs`` 不会缩放机器人状态，状态维度不同的环境配置会保持各自的格式。
 
 动作方向不需要额外设置：每个 env worker 会把属于自己的那部分动作转换成自己环境的格式。不过 policy 只有一种动作格式和一套动作归一化（对 OpenVLA-OFT 来说是一个 ``unnorm_key`` ），所以所有环境配置都必须接受同一类动作。
 
@@ -131,5 +155,7 @@ rollout 会把所有 env worker 的观测叠成一个 batch，因此这些观测
 ----
 
 - policy 只有一种动作格式和一套动作归一化，也无法得知某个样本来自哪个环境。
-- 机器人状态不会被缩放，因此各份环境配置的状态维度必须相同。
+- NFT 训练要求各份环境配置发送同一种观测格式，请用 ``policy_obs`` 让它们一致。
+- 异构训练目前使用同步的 on-policy runner（PPO、GRPO 等）。异步训练、off-policy 训练（SAC、DAgger、RLT）、env-decoupled 模式和 training pipeline 需要单份环境配置。
+- PPO 和 SAC 在各环境配置之间共享一个 critic；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``reward_scale`` 。
 - 平滑干预（ ``smooth_intervene`` ）和实时控制评估（ ``runner.rtc`` ）只支持单份环境配置；RLT 仿真 replay 要求训练中的每份环境配置都是 ``maniskill_rlt`` 。配置不满足这些要求时，RLinf 会在启动阶段停止。

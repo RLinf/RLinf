@@ -36,7 +36,7 @@ from rlinf.utils.metric_utils import (
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import add_loss_weights, clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -178,7 +178,11 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
 
         self.rollout_batch = Trajectory.to_batch(rollout_batch)
-        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+        self.rollout_batch, self._group_success_metrics = (
+            self._process_received_rollout_batch(
+                self.rollout_batch, self._rollout_geometry.layout.spec(None)
+            )
+        )
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
 
@@ -278,6 +282,15 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
+        algorithm_cfg = self._env_algorithm_cfgs[None]
+        add_loss_weights(
+            self.rollout_batch,
+            reward_type=algorithm_cfg.reward_type,
+            reference_length=self._rollout_geometry.layout.reference_lengths(
+                algorithm_cfg.get("env_weighting", "trajectory")
+            )[None],
+            loss_weight=algorithm_cfg.get("loss_weight", 1.0),
+        )
         t_dim = int(self.rollout_batch["prev_logprobs"].shape[0])
         b_dim = int(self.rollout_batch["prev_logprobs"].shape[1])
         total_samples = t_dim * b_dim
@@ -360,7 +373,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     returns = data.get("returns", None)
                     prev_values = data.get("prev_values", None)
                     loss_mask = data.get("loss_mask", None)
-                    loss_mask_sum = data.get("loss_mask_sum", None)
+                    loss_mask_ratio = data.get("loss_mask_ratio", None)
 
                     versions = data.get("versions", None)
                     proximal_logprobs = data.get("proximal_logprobs", None)
@@ -432,8 +445,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         "value_clip": self.cfg.algorithm.get("value_clip", None),
                         "huber_delta": self.cfg.algorithm.get("huber_delta", None),
                         "loss_mask": loss_mask,
-                        "loss_mask_sum": loss_mask_sum,
-                        "max_episode_steps": self.cfg.env.train.max_episode_steps,
+                        "loss_mask_ratio": loss_mask_ratio,
                         "task_type": self.cfg.runner.task_type,
                         "critic_warmup": self.optimizer_steps
                         < self.critic_warmup_steps,

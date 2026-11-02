@@ -224,14 +224,16 @@ class LeastLoadedDispatcher(_DealingDispatcher):
     """Deal each item to the consumer that has been given the fewest so far.
 
     Ties break on consumer id, so an even producer stream splits exactly evenly
-    and reproducibly across consumers.
+    and reproducibly across consumers. An item with a ``dispatch_group``
+    attribute is balanced within its group, so every consumer gets an even share
+    of each group.
     """
 
     def route(self, item: Any, key: str) -> str | None:
-        """Return the consumer least loaded on this key."""
+        """Return the consumer least loaded on this key and the item's group."""
         if not self._consumers:
             return None
-        counts = self.counts(key)
+        counts = self.counts((key, getattr(item, "dispatch_group", None)))
         consumer = min(self._consumers, key=lambda name: (counts[name], name))
         counts[consumer] += 1
         return consumer

@@ -128,13 +128,7 @@ class EnvWorker(Worker):
         self.enable_eval = (
             self.cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
         )
-        self.rollout_epoch = (
-            train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
-        )
-        self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
-
-        # The mode configs hold the loop shared by every env worker; the
-        # assignment holds the env this rank runs.
+        # The assignment holds the env this rank runs, including its loop.
         self.train_assignment: EnvAssignment | None = (
             EnvLayout(train_env_cfg, self._world_size, "env.train").assign(self._rank)
             if self.enable_train
@@ -144,6 +138,12 @@ class EnvWorker(Worker):
             EnvLayout(eval_env_cfg, self._world_size, "env.eval").assign(self._rank)
             if self.enable_eval
             else None
+        )
+        self.rollout_epoch = (
+            self.train_assignment.cfg.rollout_epoch if self.enable_train else 1
+        )
+        self.eval_rollout_epoch = (
+            self.eval_assignment.cfg.rollout_epoch if self.enable_eval else 1
         )
         self._train_policy_obs_spec = PolicyObsSpec.from_cfg(train_env_cfg)
         self._eval_policy_obs_spec = PolicyObsSpec.from_cfg(eval_env_cfg)
@@ -179,13 +179,13 @@ class EnvWorker(Worker):
         self.n_train_chunk_steps = 0
         if self.enable_train:
             self.n_train_chunk_steps = (
-                self.cfg.env.train.max_steps_per_rollout_epoch
+                self.train_assignment.cfg.max_steps_per_rollout_epoch
                 // self.model_cfg.num_action_chunks
             )
         self.n_eval_chunk_steps = 0
         if self.enable_eval:
             self.n_eval_chunk_steps = (
-                self.cfg.env.eval.max_steps_per_rollout_epoch
+                self.eval_assignment.cfg.max_steps_per_rollout_epoch
                 // self.model_cfg.num_action_chunks
             )
         if self.enable_train:
@@ -901,7 +901,7 @@ class EnvWorker(Worker):
             channel=rollout_channel,
             data=policy_input,
             mode="train",
-            tag="policy_final" if policy_input.is_last else "policy",
+            tag="policy",
             route_key=stage_id if not self.env_decoupled_mode else None,
             batch_size=self.train_batch_size,
             split_fn=self._policy_input_split_fn or PolicyInput.split,

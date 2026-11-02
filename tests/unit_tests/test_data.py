@@ -67,7 +67,7 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
-from rlinf.envs.layout import EnvAssignment
+from rlinf.envs.layout import EnvAssignment, EnvLayout
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
@@ -1428,22 +1428,18 @@ def _episode_data():
     }
 
 
-def _make(cfg=None, **geometry):
+def _make(cfg=None, *, env_world_size=1, actor_world_size=1):
     """Build the public collector with a deterministic cluster geometry."""
-    shape = {
-        "source_count": 1,
-        "chunk_count": 1,
-        "shards_per_source": 1,
-        "actor_world_size": 1,
-    }
-    shape.update(geometry)
+    cfg = cfg if cfg is not None else _config()
+    geometry = RolloutGeometry(
+        layout=EnvLayout(cfg.env.train, env_world_size, "env.train"),
+        stage_num=cfg.rollout.pipeline_stage_num,
+        num_action_chunks=cfg.actor.model.num_action_chunks,
+        actor_world_size=actor_world_size,
+    )
     collector = TrajectoryCollector()
-    with patch.object(
-        RolloutGeometry, "from_cfg", return_value=RolloutGeometry(**shape)
-    ):
-        collector.setup(
-            ChannelContext(name="Actor", cfg=cfg if cfg is not None else _config())
-        )
+    with patch.object(RolloutGeometry, "from_cfg", return_value=geometry):
+        collector.setup(ChannelContext(name="Actor", cfg=cfg))
     return collector
 
 
@@ -1587,7 +1583,7 @@ def test_rollout_sources_flush_independently_like_main_env_workers(decoupled):
         env={"train": {"total_num_envs": 2}},
         runner={"enable_decoupled_mode": decoupled},
     )
-    collector = _make(cfg, source_count=2)
+    collector = _make(cfg, env_world_size=2)
     initial = EnvTransition(
         dones=torch.zeros(1, 1, dtype=torch.bool),
         truncations=torch.zeros(1, 1, dtype=torch.bool),
@@ -1612,7 +1608,7 @@ def test_rollout_sources_flush_independently_like_main_env_workers(decoupled):
 
 
 def test_collector_joins_out_of_order_routed_fragments_and_initial_state():
-    collector = _make(source_count=1, chunk_count=1, shards_per_source=1)
+    collector = _make()
     collector._joiner._source_batch_size = 2
     key = TrajectoryKey(0, 0, 0, 0, 0)
     initial = EnvTransition(dones=torch.zeros(2, 1, dtype=torch.bool))
@@ -1757,7 +1753,7 @@ def test_history_reward_assignment_matches_main_across_chunks():
             "reward_weight": 2.0,
         },
     )
-    collector = _make(cfg, chunk_count=2)
+    collector = _make(cfg)
     initial = EnvTransition(
         dones=torch.zeros(1, 1, dtype=torch.bool),
         truncations=torch.zeros(1, 1, dtype=torch.bool),
@@ -1833,6 +1829,87 @@ def test_rlt_output_matches_main_transition_and_intervention_behavior(loss_type)
     )
 
 
+def test_each_source_follows_the_spec_of_the_env_it_hosts():
+    def env(**fields):
+        return {
+            "env_type": "maniskill",
+            "total_num_envs": 1,
+            "rollout_epoch": 1,
+            "auto_reset": False,
+            "ignore_terminations": True,
+            "max_episode_steps": 4,
+            "max_steps_per_rollout_epoch": 1,
+            **fields,
+        }
+
+    cfg = _config()
+    cfg.env.train = OmegaConf.create(
+        {
+            "total_num_envs": 2,
+            "envs": {
+                "short": env(),
+                "long": env(max_steps_per_rollout_epoch=2, reward_scale=2.0),
+            },
+        }
+    )
+    collector = _make(cfg, env_world_size=2)
+    initial = EnvTransition(
+        dones=torch.zeros(1, 1, dtype=torch.bool),
+        truncations=torch.zeros(1, 1, dtype=torch.bool),
+        terminations=torch.zeros(1, 1, dtype=torch.bool),
+    )
+
+    short_key = TrajectoryKey(0, 0, 0, 0, 0)
+    [(_, short)] = _collect(
+        collector, _env_part(short_key, initial_transition=initial), _policy(short_key)
+    )
+    long_first, long_last = TrajectoryKey(0, 0, 1, 0, 0), TrajectoryKey(0, 0, 1, 0, 1)
+    assert (
+        _collect(
+            collector,
+            _env_part(long_first, initial_transition=initial),
+            _policy(long_first),
+        )
+        == []
+    )
+    [(_, long)] = _collect(collector, _env_part(long_last), _policy(long_last))
+
+    assert (short.env_name, long.env_name) == ("short", "long")
+    assert (short.rewards.shape[0], long.rewards.shape[0]) == (1, 2)
+    assert short.rewards.unique().tolist() == [1.0]
+    assert long.rewards.unique().tolist() == [2.0]
+
+
+def test_every_actor_gets_an_even_share_of_each_env():
+    cfg = _config()
+    env = {
+        "env_type": "maniskill",
+        "rollout_epoch": 1,
+        "auto_reset": False,
+        "ignore_terminations": True,
+        "max_episode_steps": 1,
+        "max_steps_per_rollout_epoch": 1,
+    }
+    cfg.env.train = OmegaConf.create(
+        {
+            "envs": {
+                "libero": {**env, "total_num_envs": 6},
+                "maniskill": {**env, "total_num_envs": 2},
+            }
+        }
+    )
+    geometry = RolloutGeometry(
+        layout=EnvLayout(cfg.env.train, 4, "env.train"),
+        stage_num=1,
+        num_action_chunks=1,
+        actor_world_size=2,
+    )
+
+    # Three LIBERO sources deal 6 shards and one ManiSkill source deals 2.
+    assert (geometry.shards_per_source(0), geometry.shards_per_source(3)) == (2, 2)
+    assert geometry.shards_per_actor() == 4
+
+
 def test_pipeline_output_contains_main_actor_training_fields():
     collector = _make(
         _config(runner={"use_training_pipeline": True}),
@@ -1870,11 +1947,7 @@ def test_pipeline_waits_for_all_sources_and_routes_each_actor_like_main():
         env={"train": {"total_num_envs": 2}},
         runner={"use_training_pipeline": True},
     )
-    collector = _make(
-        cfg,
-        source_count=2,
-        actor_world_size=2,
-    )
+    collector = _make(cfg, env_world_size=2, actor_world_size=2)
     initial = EnvTransition(
         dones=torch.zeros(1, 1, dtype=torch.bool),
         truncations=torch.zeros(1, 1, dtype=torch.bool),
@@ -1909,7 +1982,9 @@ def test_pipeline_flushes_each_epoch_to_the_actor_specific_key():
         _config(runner={"use_training_pipeline": True}),
         actor_world_size=1,
     )
-    collector._output._prepare_pipeline_batch = lambda trajectory: {"value": trajectory}
+    collector._output._prepare_pipeline_batch = lambda trajectory, spec: {
+        "value": trajectory
+    }
     collector._output._pipeline_micro_batches = lambda batch, actor_rank: [batch]
 
     for epoch_id in (0, 1):
@@ -1927,7 +2002,7 @@ def test_online_lerobot_accepts_external_policy_actions_and_emits_shards():
     cfg = _config(
         algorithm={"dagger": {"online_lerobot": {"enabled": True}}},
     )
-    collector = _make(cfg, shards_per_source=2)
+    collector = _make(cfg, actor_world_size=2)
     key = TrajectoryKey(3, 0, 0, 0, 0)
 
     outputs = _collect(
@@ -2500,7 +2575,7 @@ def test_policy_input_compression_preserves_attached_env_parts(monkeypatch):
 
     assert is_compressed_image(shards[0].obs["main_images"])
     assert is_compressed_image(shards[0].env_parts[0].next_obs["main_images"])
-    merged = MultiStepRolloutWorker._merge_policy_inputs(shards)
+    merged = PolicyInput.merge(MultiStepRolloutWorker._decompress_policy_inputs(shards))
     assert torch.equal(merged.obs["main_images"], current_images)
     assert torch.equal(
         torch.cat([part.next_obs["main_images"] for part in merged.env_parts], dim=0),
@@ -2581,11 +2656,11 @@ def test_decoupled_policy_route_round_trip():
     rollout.rollout_queue_size = 0
     rollout.batch_router = {"policy": ["stale"]}
     rollout.recv_from_and_record_batch_routes_with_timeout = AsyncMock(
-        return_value=(_policy_input(), [8, 8])
+        return_value=([_policy_input()], [8, 8])
     )
     rollout.send_to_recorded_batch_routes = Mock()
 
-    policy_input, split_sizes = asyncio.run(
+    [policy_input], split_sizes = asyncio.run(
         rollout._receive_policy_input(None, "policy", 0)
     )
     source = torch.zeros(16, 4, requires_grad=True)
@@ -2598,7 +2673,7 @@ def test_decoupled_policy_route_round_trip():
         channel=None,
         tag="policy",
         batch_size=32,
-        merge_fn=rollout._merge_policy_inputs,
+        merge_fn=rollout._decompress_policy_inputs,
         infer_batch_size_fn=rollout._infer_policy_input_batch_size,
         timeout_time=0.02,
         recv_queue_size=0,
@@ -2860,6 +2935,24 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
     assert policy_input.env_parts[0].requires_inference
 
 
+def _serve_one_source(rollout, *policy_inputs):
+    """Wire ``rollout`` to serve one fixed-route source that sends ``policy_inputs``."""
+    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="env"))
+    rollout.train_layout = None
+    rollout.train_batch_size = 1
+    rollout._source_budgets = Mock(return_value={0: {0: 1}})
+    rollout.recv_from = Mock(
+        side_effect=[
+            SimpleNamespace(async_wait=AsyncMock(return_value=[policy_input]))
+            for policy_input in policy_inputs
+        ]
+    )
+    serve_step = MultiStepRolloutWorker._serve_step
+    while hasattr(serve_step, "__wrapped__"):
+        serve_step = serve_step.__wrapped__
+    return serve_step
+
+
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.n_train_chunk_steps = 2
@@ -2895,37 +2988,26 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
         next_obs={"states": torch.tensor([[3]])},
         requires_inference=True,
     )
-    rollout._receive_policy_input = AsyncMock(
-        side_effect=[
-            (
-                PolicyInput(
-                    obs={"states": torch.tensor([[1]])},
-                    sources=[TrajectorySource(key0, 1)],
-                    env_parts=[None],
-                    request_sizes=[1],
-                ),
-                None,
-            ),
-            (
-                PolicyInput(
-                    obs={"states": torch.tensor([[2]])},
-                    sources=[TrajectorySource(key1, 1)],
-                    env_parts=[completion0],
-                    request_sizes=[1],
-                ),
-                None,
-            ),
-            (
-                PolicyInput(
-                    obs={"states": torch.tensor([[3]])},
-                    env_parts=[completion1],
-                    request_sizes=[1],
-                    is_last=True,
-                ),
-                None,
-            ),
-        ]
-    )
+    policy_inputs = [
+        PolicyInput(
+            obs={"states": torch.tensor([[1]])},
+            sources=[TrajectorySource(key0, 1)],
+            env_parts=[None],
+            request_sizes=[1],
+        ),
+        PolicyInput(
+            obs={"states": torch.tensor([[2]])},
+            sources=[TrajectorySource(key1, 1)],
+            env_parts=[completion0],
+            request_sizes=[1],
+        ),
+        PolicyInput(
+            obs={"states": torch.tensor([[3]])},
+            env_parts=[completion1],
+            request_sizes=[1],
+            is_last=True,
+        ),
+    ]
     rollout._predict_rollout_actions = Mock(
         side_effect=[
             (torch.zeros(1, 1), {"forward_inputs": {"states": torch.tensor([[1]])}}),
@@ -2940,12 +3022,10 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
         ]
     )
     actor_channel = Mock()
-    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
-    while hasattr(generate_one_epoch, "__wrapped__"):
-        generate_one_epoch = generate_one_epoch.__wrapped__
+    serve_step = _serve_one_source(rollout, *policy_inputs)
 
     asyncio.run(
-        generate_one_epoch(
+        serve_step(
             rollout,
             input_channel=Mock(),
             output_channel=Mock(),
@@ -2963,6 +3043,41 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     assert torch.equal(env_parts[1].bootstrap_values, torch.tensor([[4.0]]))
     assert torch.equal(env_parts[1].final_prev_values, torch.tensor([[4.0, 5.0]]))
     assert rollout._predict_rollout_actions.call_count == 3
+
+
+def test_rollout_runs_one_forward_pass_per_observation_format():
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.collect_transitions = False
+    rollout.enable_rlt = False
+    rollout._send_actions = Mock()
+    rollout._publish_env_parts = Mock()
+    rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
+    batch_sizes = []
+
+    def predict(obs, **kwargs):
+        batch = next(iter(obs.values())).shape[0]
+        batch_sizes.append(batch)
+        return torch.full((batch, 1), float(obs["states"].shape[-1])), {}
+
+    rollout._predict_rollout_actions = Mock(side_effect=predict)
+    requests = [
+        PolicyInput(
+            obs={"states": torch.zeros(batch, width)},
+            sources=[TrajectorySource(TrajectoryKey(0, 0, rank, 0, 0), batch)],
+            env_parts=[None],
+            request_sizes=[batch],
+        )
+        for rank, (batch, width) in enumerate([(1, 2), (2, 3), (3, 2)])
+    ]
+
+    rollout._serve_policy_inputs(
+        requests, Mock(), Mock(), stage_id=0, peer_ranks=[0, 1, 2]
+    )
+
+    # The two width-2 requests share one call; actions return in request order.
+    assert sorted(batch_sizes) == [2, 4]
+    actions = rollout._send_actions.call_args.args[1]
+    assert actions.squeeze(-1).tolist() == [2.0, 3.0, 3.0, 2.0, 2.0, 2.0]
 
 
 def test_rollout_routes_external_input_without_model_inference():
@@ -2995,38 +3110,27 @@ def test_rollout_routes_external_input_without_model_inference():
         requires_inference=False,
     )
     dummy_actions = torch.full((1, 2, 3), 2.0)
-    rollout._receive_policy_input = AsyncMock(
-        side_effect=[
-            (
-                PolicyInput(
-                    obs={"states": torch.zeros(1, 4)},
-                    sources=[TrajectorySource(key0, 1)],
-                    env_parts=[None],
-                    request_sizes=[1],
-                ),
-                None,
-            ),
-            (
-                PolicyInput(
-                    obs={"states": torch.ones(1, 4)},
-                    external_actions=dummy_actions,
-                    sources=[TrajectorySource(key1, 1)],
-                    env_parts=[completion0],
-                    request_sizes=[1],
-                ),
-                None,
-            ),
-            (
-                PolicyInput(
-                    obs={"states": torch.ones(1, 4)},
-                    env_parts=[completion1],
-                    request_sizes=[1],
-                    is_last=True,
-                ),
-                None,
-            ),
-        ]
-    )
+    policy_inputs = [
+        PolicyInput(
+            obs={"states": torch.zeros(1, 4)},
+            sources=[TrajectorySource(key0, 1)],
+            env_parts=[None],
+            request_sizes=[1],
+        ),
+        PolicyInput(
+            obs={"states": torch.ones(1, 4)},
+            external_actions=dummy_actions,
+            sources=[TrajectorySource(key1, 1)],
+            env_parts=[completion0],
+            request_sizes=[1],
+        ),
+        PolicyInput(
+            obs={"states": torch.ones(1, 4)},
+            env_parts=[completion1],
+            request_sizes=[1],
+            is_last=True,
+        ),
+    ]
     rollout._predict_rollout_actions = Mock(
         return_value=(
             torch.ones(1, 2, 3),
@@ -3034,11 +3138,9 @@ def test_rollout_routes_external_input_without_model_inference():
         )
     )
     actor_channel = Mock()
-    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
-    while hasattr(generate_one_epoch, "__wrapped__"):
-        generate_one_epoch = generate_one_epoch.__wrapped__
+    serve_step = _serve_one_source(rollout, *policy_inputs)
 
-    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
+    asyncio.run(serve_step(rollout, Mock(), Mock(), actor_channel))
 
     parts = [call.args[0] for call in actor_channel.put.call_args_list]
     inferred_parts = [
