@@ -1,10 +1,11 @@
-RL with RoboDojo Benchmark
-==========================
+RoboDojo Benchmark Evaluation
+=============================
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ is an Isaac Sim-based
 benchmark for dual-arm manipulation. It includes tabletop rearrangement,
 pick-and-place, and tool-use tasks for robots such as ARX-X5. RLinf exposes
-RoboDojo as a Gym environment for VLA rollout and evaluation.
+RoboDojo as a Gym environment for evaluating VLA policies; RL training is not
+supported yet.
 
 Overview
 --------
@@ -36,7 +37,7 @@ environment interface.
       1 node · 1+ GPU
 
 | **You'll do:** install → download scene assets and the Pi_05 checkpoint →
-  verify the installation → launch a single-environment task.
+  convert the checkpoint → verify the installation → run the evaluation.
 | **Prerequisites:** :doc:`Base installation </rst_source/start/installation>` ·
   an NVIDIA CUDA GPU · at least 120 GB of free disk space.
 
@@ -248,14 +249,15 @@ RLinf's OpenPI loader reads an OpenPI-format checkpoint
      --input-model "$CKPT" \
      --input-norm-stats "$CKPT/assets/arx_x5_sim/norm_stats.json" \
      --output-model "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5" \
-     --output-norm-stats "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5/arx_x5_sim/norm_stats.json" \
+     --output-norm-stats "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5/assets/norm_stats.json" \
      --action-dim 32 \
      --action-horizon 50
 
 The converted directory contains ``model.safetensors`` and
-``arx_x5_sim/norm_stats.json``. Point ``rollout.model.model_path`` at it; the
-norm stats path is derived from it. ``joint-1`` and ``joint-2`` are the other
-two runs of the same checkpoint, and ``ckpt/RoboDojo/Pi_0/`` holds the
+``assets/norm_stats.json``. Point ``rollout.model.model_path`` at it; the
+evaluation configuration reads the norm stats from
+``${..model_path}/assets/norm_stats.json``. ``joint-1`` and ``joint-2`` are the
+other two runs of the same checkpoint, and ``ckpt/RoboDojo/Pi_0/`` holds the
 corresponding π₀ checkpoints.
 
 .. note::
@@ -299,11 +301,11 @@ assets:
 
 Do not start a policy server, video recording, and multiple environments during
 the first launch. Once reset, step, and close work for one environment, increase
-``env.train.total_num_envs``.
+``env.eval.total_num_envs``.
 
-**Use in a training configuration**
+**Environment preset**
 
-Reference the environment preset from your training configuration:
+The evaluation configuration extends this environment preset:
 
 .. code-block:: text
 
@@ -356,9 +358,9 @@ for the converted checkpoint directory. The default
 Visualization and Results
 -------------------------
 
-RoboDojo is launched through the same embodied training entrypoint as other
-RLinf environments. The primary metric is ``env/success_once``; see
-:doc:`Training metrics <../../reference/metrics>` for the full metric list.
+RoboDojo evaluation runs through the same embodied evaluation entrypoint as
+other RLinf environments. The primary metric is ``eval/success_once``; see
+:doc:`Training metrics <../../reference/metrics>` for the metric definitions.
 
 Enable rollout videos in the environment configuration when needed:
 
@@ -367,7 +369,7 @@ Enable rollout videos in the environment configuration when needed:
    video_cfg:
      save_video: True
      info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
+     video_base_dir: ${runner.logger.log_path}/video/eval
 
 Common Problems
 ---------------
@@ -402,7 +404,7 @@ download them again.
 
 **GPU memory is insufficient**
 
-Set the environment count to one and stop other training or inference
+Set the environment count to one and stop other evaluation or inference
 processes. RoboDojo starts a separate Isaac Sim process per parallel
 environment, so multi-environment settings depend on the measured per-scene
 memory use.

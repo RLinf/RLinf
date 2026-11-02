@@ -1,8 +1,8 @@
-基于 RoboDojo 的强化学习训练
+RoboDojo 基准评估
 ========================================
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂\
-操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf\
+操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf \
 将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 rollout 和评估。
 
 概览
@@ -33,9 +33,8 @@
 
       1 节点 · 1+ GPU
 
-| **你将完成：** 安装环境 → 下载场景资产和 Pi_05 检查点 → 验证安装 → 启动单环境任务。
-| **前置条件：** :doc:`基础安装 </rst_source/start/installation>` · NVIDIA CUDA GPU ·
-  至少 120 GB 可用磁盘空间。
+| **你将完成：** 安装环境 → 下载场景资产和 Pi_05 检查点 → 转换检查点 → 验证安装 → 运行评估。
+| **前置条件：** :doc:`基础安装 </rst_source/start/installation>` · NVIDIA CUDA GPU · 至少 120 GB 可用磁盘空间。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -233,11 +232,11 @@ RLinf 的 OpenPI 加载器读取 OpenPI 格式的检查点（``model.safetensors
      --input-model "$CKPT" \
      --input-norm-stats "$CKPT/assets/arx_x5_sim/norm_stats.json" \
      --output-model "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5" \
-     --output-norm-stats "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5/arx_x5_sim/norm_stats.json" \
+     --output-norm-stats "$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5/assets/norm_stats.json" \
      --action-dim 32 \
      --action-horizon 50
 
-转换后的目录包含 ``model.safetensors`` 和 ``arx_x5_sim/norm_stats.json``。``rollout.model.model_path`` 应指向该目录，norm stats 路径会由它推导。同级的 ``joint-1``、``joint-2`` 是同一检查点的另外两次训练 run，``ckpt/RoboDojo/Pi_0/`` 下是对应的 π₀ 检查点。
+转换后的目录包含 ``model.safetensors`` 和 ``assets/norm_stats.json``。``rollout.model.model_path`` 应指向该目录，评估配置会从 ``${..model_path}/assets/norm_stats.json`` 读取 norm stats。同级的 ``joint-1``、``joint-2`` 是同一检查点的另外两次训练 run，``ckpt/RoboDojo/Pi_0/`` 下是对应的 π₀ 检查点。
 
 .. note::
 
@@ -277,11 +276,11 @@ RLinf 的 OpenPI 加载器读取 OpenPI 格式的检查点（``model.safetensors
    PY
 
 首次启动时不要同时运行策略服务、视频录制和多个环境。确认单环境能够完成 reset、\
-step 和 close 后，再提高 ``env.train.total_num_envs``。
+step 和 close 后，再提高 ``env.eval.total_num_envs``。
 
-**接入训练配置**
+**环境配置**
 
-训练配置可以直接引用：
+评估配置直接复用该环境配置：
 
 .. code-block:: text
 
@@ -312,7 +311,7 @@ step 和 close 后，再提高 ``env.train.total_num_envs``。
 
 14 维状态/动作的布局由 ``state_action_order`` 决定。官方 Pi_05 检查点使用 ALOHA 顺序 ``[左臂, 左夹爪, 右臂, 右夹爪]``，因此评估配置设置 ``state_action_order: aloha``。
 
-评估配置中的 ``rollout.model.model_path`` 只是占位路径。``rollout.model.openpi_data.norm_stats_path`` 默认由它推导，因此只需覆盖 ``model_path``：
+评估配置中的 ``rollout.model.model_path`` 只是占位路径。``rollout.model.openpi_data.norm_stats_path`` 固定为 ``${..model_path}/assets/norm_stats.json``，因此只需覆盖 ``model_path``：
 
 .. code-block:: bash
 
@@ -323,7 +322,7 @@ step 和 close 后，再提高 ``env.train.total_num_envs``。
 可视化与结果
 ----------------------------------------
 
-训练启动方式与 RLinf 的其他 embodied 环境一致。关键指标为 ``env/success_once``，完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
+评估流程与 RLinf 的其他 embodied 环境一致。关键指标为 ``eval/success_once``，完整指标定义见 :doc:`训练指标 <../../reference/metrics>`。
 
 如需保存 rollout 视频，可在环境配置中启用：
 
@@ -332,7 +331,7 @@ step 和 close 后，再提高 ``env.train.total_num_envs``。
    video_cfg:
      save_video: True
      info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
+     video_base_dir: ${runner.logger.log_path}/video/eval
 
 常见问题
 ----------------------------------------
@@ -364,7 +363,7 @@ macOS 或 AMD ROCm。
 
 **启动后显存不足**
 
-先把环境数降为 1，并关闭其他训练或推理进程。RoboDojo 会为每个并行环境启动独立的\
+先把环境数降为 1，并关闭其他评估或推理进程。RoboDojo 会为每个并行环境启动独立的\
 Isaac Sim 进程，多环境配置需要根据单环境的实际显存占用调整。
 
 **进程结束后显存未释放**
