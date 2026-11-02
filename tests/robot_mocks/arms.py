@@ -1080,10 +1080,16 @@ def ur_rtde() -> dict[str, types.ModuleType]:
             self._connected = True
             #: Joint targets received, for assertions.
             self.sent: list[list[float]] = []
+            #: Speeds moveJ was called with, parallel to ``sent``.
+            self.speeds: list[float] = []
+            #: Test hook: moveJ returns this instead of True, simulating the
+            #: controller refusing the motion.
+            self.moveJ_ok = True
 
-        def moveJ(self, q, *_args, **_kwargs):
+        def moveJ(self, q, speed=None, *_args, **_kwargs):
             self.sent.append(list(q))
-            return True
+            self.speeds.append(speed)
+            return self.moveJ_ok
 
         def servoJ(self, q, *_args, **_kwargs):
             self.sent.append(list(q))
@@ -1138,6 +1144,26 @@ def ur_ros2() -> dict[str, types.ModuleType]:
 
     #: Goals the action client received, exposed on the fake ``rclpy`` module.
     sent_goals: list[Any] = []
+    #: Goal handles that had ``cancel_goal_async`` called on them.
+    canceled_handles: list[Any] = []
+    #: Test hook: while on, ``send_goal_async`` returns an unresolved
+    #: ``_PendingFuture`` (collected in ``pending_sends``) instead of
+    #: resolving immediately -- simulating an accept that arrives only after
+    #: the caller has moved on (e.g. into teardown).
+    hold_sends = {"on": False}
+    pending_sends: list[Any] = []
+    #: Test hook: the resend_robot_program service's Trigger response.
+    #: ``stuck`` simulates a call that never completes, for the timeout case.
+    resend_response = {"success": True, "message": "", "stuck": False}
+
+    class GoalStatus:
+        STATUS_UNKNOWN = 0
+        STATUS_ACCEPTED = 1
+        STATUS_EXECUTING = 2
+        STATUS_CANCELING = 3
+        STATUS_SUCCEEDED = 4
+        STATUS_CANCELED = 5
+        STATUS_ABORTED = 6
 
     class _Future:
         def __init__(self, result: Any = None) -> None:
@@ -1149,15 +1175,91 @@ def ur_ros2() -> dict[str, types.ModuleType]:
         def result(self) -> Any:
             return self._result
 
-    class _ResultWrap:
+        def add_done_callback(self, callback: Any) -> None:
+            # Already done by construction, so rclpy would invoke this
+            # synchronously from the calling thread in that case too.
+            callback(self)
+
+    class _PendingFuture:
+        """A send future a test resolves explicitly, via ``resolve()``."""
+
         def __init__(self) -> None:
-            self.result = types.SimpleNamespace(error_code=0)
+            self._done = False
+            self._result: Any = None
+            self._callbacks: list[Any] = []
+
+        def done(self) -> bool:
+            return self._done
+
+        def result(self) -> Any:
+            return self._result
+
+        def add_done_callback(self, callback: Any) -> None:
+            if self._done:
+                callback(self)
+            else:
+                self._callbacks.append(callback)
+
+        def resolve(self, result: Any) -> None:
+            self._result = result
+            self._done = True
+            for callback in self._callbacks:
+                callback(self)
+
+    class _ResultWrap:
+        def __init__(
+            self, status: int = GoalStatus.STATUS_SUCCEEDED, error_code: int = 0
+        ) -> None:
+            self.status = status
+            self.result = types.SimpleNamespace(error_code=error_code)
+
+    class _NeverFuture:
+        """A future that never completes, simulating a terminal result or
+        cancellation acknowledgement the controller never sends."""
+
+        def done(self) -> bool:
+            return False
+
+        def result(self) -> Any:
+            return None
+
+        def add_done_callback(self, callback: Any) -> None:
+            pass  # Never resolves, so the callback is never invoked.
 
     class _GoalHandle:
         accepted = True
 
+        def __init__(self) -> None:
+            self.canceled = False
+            #: Test hook: the ``return_code`` a cancel response carries.
+            #: Nonzero simulates the controller rejecting the cancellation.
+            self.cancel_return_code = 0
+            #: Test hook: when set, get_result_async() never completes,
+            #: simulating a goal that never reaches a terminal state.
+            self.stuck_canceling = False
+
         def get_result_async(self) -> "_Future":
-            return _Future(_ResultWrap())
+            if self.stuck_canceling:
+                return _NeverFuture()
+            status = (
+                GoalStatus.STATUS_CANCELED
+                if self.canceled
+                else GoalStatus.STATUS_SUCCEEDED
+            )
+            return _Future(_ResultWrap(status=status))
+
+        def cancel_goal_async(self) -> "_Future":
+            self.canceled = True
+            canceled_handles.append(self)
+            return _Future(types.SimpleNamespace(return_code=self.cancel_return_code))
+
+        def __eq__(self, other: Any) -> bool:
+            # Real rclpy ClientGoalHandle compares by goal ID and does not
+            # define __hash__, making it unhashable; mirror that here so a
+            # regression that puts handles into a set or dict key is caught.
+            return self is other
+
+        __hash__ = None
 
     class ActionClient:
         def __init__(self, node: Any, action_type: Any, name: str) -> None:
@@ -1168,6 +1270,10 @@ def ur_ros2() -> dict[str, types.ModuleType]:
 
         def send_goal_async(self, goal: Any) -> "_Future":
             sent_goals.append(goal)
+            if hold_sends["on"]:
+                future = _PendingFuture()
+                pending_sends.append(future)
+                return future
             return _Future(_GoalHandle())
 
     class _ServiceClient:
@@ -1175,7 +1281,14 @@ def ur_ros2() -> dict[str, types.ModuleType]:
             return True
 
         def call_async(self, request: Any) -> "_Future":
-            return _Future(object())
+            if resend_response["stuck"]:
+                return _NeverFuture()
+            return _Future(
+                types.SimpleNamespace(
+                    success=resend_response["success"],
+                    message=resend_response["message"],
+                )
+            )
 
     class JointState:
         def __init__(self) -> None:
@@ -1244,6 +1357,14 @@ def ur_ros2() -> dict[str, types.ModuleType]:
     )
     #: Test hook: the goals the fake action client received.
     rclpy_module.sent_goals = sent_goals
+    #: Test hook: goal handles that were canceled.
+    rclpy_module.canceled_handles = canceled_handles
+    #: Test hook: hold/inspect sends that a test resolves itself.
+    rclpy_module.hold_sends = hold_sends
+    rclpy_module.pending_sends = pending_sends
+    rclpy_module.new_goal_handle = _GoalHandle
+    #: Test hook: controls the fake resend_robot_program service's response.
+    rclpy_module.resend_response = resend_response
 
     return {
         "rclpy": rclpy_module,
@@ -1258,6 +1379,8 @@ def ur_ros2() -> dict[str, types.ModuleType]:
         "control_msgs.action": module(
             "control_msgs.action", FollowJointTrajectory=FollowJointTrajectory
         ),
+        "action_msgs": module("action_msgs"),
+        "action_msgs.msg": module("action_msgs.msg", GoalStatus=GoalStatus),
         "std_srvs": module("std_srvs"),
         "std_srvs.srv": module("std_srvs.srv", Trigger=Trigger),
         "trajectory_msgs": module("trajectory_msgs"),

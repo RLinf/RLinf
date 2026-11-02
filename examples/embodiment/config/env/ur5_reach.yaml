@@ -14,6 +14,10 @@ teleop: none
 keyboard_intervention_wrapper: False
 # The UR5 driver carries no gripper.
 no_gripper: True
+# The SAC MLP policy's actions are tanh-squashed to [-1, 1]; rescale them to
+# the env's absolute-radian joint bounds instead of clipping most of the
+# travel away.
+normalize_actions: True
 main_image_key: wrist_1
 
 video_cfg:

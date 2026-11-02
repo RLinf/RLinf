@@ -24,6 +24,7 @@ import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, fields
@@ -1034,6 +1035,69 @@ def test_ur5_arm_runs_its_lifecycle_against_the_fake_sdk():
         arm.disconnect()
 
 
+def test_ur5_robot_forwards_headless_mode_only_to_the_ros2_backend():
+    """``headless_mode``/``step_goal_time``/``speed_scaling`` reach ``ur_ros2`` only.
+
+    These options are ROS2-specific; the ``ur_rtde`` backend's constructor
+    does not accept them and must not receive them.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+        from rlinf.robotics.robots import UR5Robot
+
+        # The default backend (ur_rtde) must not receive the ROS2-only
+        # options; forwarding them unconditionally would raise here.
+        rtde_arm = UR5Robot.build_arms(
+            robot_ip="127.0.0.1",
+            node_rank=0,
+            headless_mode=False,
+            step_goal_time=2.0,
+            speed_scaling=0.1,
+        )["arm"]
+        assert isinstance(rtde_arm, UR5Arm)
+
+        ros2_arm = UR5Robot.build_arms(
+            robot_ip="127.0.0.1",
+            node_rank=0,
+            backend="ur_ros2",
+            headless_mode=False,
+            step_goal_time=2.0,
+            speed_scaling=0.1,
+        )["arm"]
+        assert isinstance(ros2_arm, UR5ROS2Arm)
+        assert ros2_arm._headless_mode is False
+        assert ros2_arm._step_goal_time == 2.0
+        assert ros2_arm._speed_scaling == 0.1
+
+
+def test_ur5_robot_resolves_backend_case_insensitively():
+    """A differently-cased backend name must still reach the ROS2 options.
+
+    Backend resolution is case-insensitive, so ``headless_mode`` and
+    ``step_goal_time`` must reach the ROS2 arm regardless of how the
+    backend name is cased.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+        from rlinf.robotics.robots import UR5Robot
+
+        ros2_arm = UR5Robot.build_arms(
+            robot_ip="127.0.0.1",
+            node_rank=0,
+            backend="UR_ROS2",
+            headless_mode=False,
+            step_goal_time=2.0,
+        )["arm"]
+        assert isinstance(ros2_arm, UR5ROS2Arm)
+        assert ros2_arm._headless_mode is False
+        assert ros2_arm._step_goal_time == 2.0
+
+
 def test_ur5_ros2_arm_runs_its_lifecycle_against_the_fake_driver():
     """The ur_ros2 backend opens, reads, commands, and closes over fake rclpy.
 
@@ -1058,8 +1122,8 @@ def test_ur5_ros2_arm_runs_its_lifecycle_against_the_fake_driver():
         try:
             assert arm.is_robot_up()
             observation = arm.get_observation()
+            assert set(observation) == {"arm_joint_position"}
             assert observation["arm_joint_position"].shape == (6,)
-            assert observation["tcp_pose"].shape == (7,)
             # The fake reports joints scrambled; the backend returns canonical
             # base-to-wrist order (shoulder_pan, shoulder_lift, elbow, w1, w2, w3).
             np.testing.assert_allclose(
@@ -1087,6 +1151,2600 @@ def test_ur5_ros2_arm_runs_its_lifecycle_against_the_fake_driver():
         assert not arm.is_connected
         # A second disconnect must not raise.
         arm.disconnect()
+
+
+def test_ur5_ros2_reconnect_clears_goal_state_left_over_from_a_prior_session():
+    """Reconnecting must not carry over goal state from the prior session.
+
+    A reused instance's ``_goal_error``, ``_active_goal_handle``,
+    ``_pending_sends``, ``_pending_send_deadlines``, and
+    ``_pending_cancellations`` all describe goals sent to the *previous*
+    connection; a new connection must start with none of them still set.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps disconnect() fast below
+        rclpy.hold_sends["on"] = True
+        arm.move_joints(np.zeros(6))
+        with arm._goal_lock:
+            assert arm._pending_sends
+            assert arm._pending_send_deadlines
+            arm._active_goal_handle = object()
+            arm._pending_cancellations[1] = object()
+            arm._goal_error = (1, "stale", False)
+        rclpy.hold_sends["on"] = False
+        arm.disconnect()
+
+        arm.connect()
+        try:
+            with arm._goal_lock:
+                assert not arm._pending_sends
+                assert not arm._pending_send_deadlines
+                assert not arm._pending_cancellations
+                assert arm._active_goal_handle is None
+                assert arm._goal_error is None
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_failed_ros_claim_releases_the_ip_claim_too():
+    """A ROS-graph claim conflict must not leak the IP claim taken just before it.
+
+    If acquiring the ROS claim fails after the IP claim was already taken,
+    ``connect()`` must release the IP claim before raising, so a failed open
+    never leaves it held.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+        from rlinf.robotics.parts.claims import DeviceClaim
+
+        domain = os.environ.get("ROS_DOMAIN_ID", "0")
+        blocker = DeviceClaim(
+            f"ur5-ros2-domain:{domain}:{UR5ROS2Arm.TRAJECTORY_ACTION}", "blocker"
+        )
+        blocker.acquire()
+        try:
+            arm = UR5ROS2Arm("192.168.56.101")
+            with pytest.raises(RuntimeError, match="already holds it"):
+                arm.connect()
+            # The IP claim must already be free, since the failed open never
+            # got past acquiring the ROS claim.
+            retry = DeviceClaim("ur5:192.168.56.101", "retry")
+            retry.acquire()
+            retry.release()
+        finally:
+            blocker.release()
+
+
+def test_ur5_ros2_disconnect_cancels_a_goal_accepted_after_teardown_starts():
+    """A step goal accepted only after disconnect() begins must still be canceled.
+
+    Cancellation at teardown must reach a goal whose accept arrives only
+    after disconnect() has already started, not just whatever handle was
+    already installed in ``_active_goal_handle``, so the controller never
+    keeps executing it after the device claims are released.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        rclpy.hold_sends["on"] = True
+        try:
+            arm.send_action({"joint_position": np.zeros(6)})
+            pending = rclpy.pending_sends[-1]
+            goal_handle = rclpy.new_goal_handle()
+
+            def accept_after_a_moment():
+                time.sleep(0.1)
+                pending.resolve(goal_handle)
+
+            threading.Thread(target=accept_after_a_moment).start()
+            arm.disconnect()
+            assert goal_handle.canceled, (
+                "a goal accepted only after disconnect() started must still "
+                "be canceled so the controller does not keep moving"
+            )
+        finally:
+            rclpy.hold_sends["on"] = False
+
+
+def test_ur5_ros2_goal_failure_requires_the_succeeded_status_too():
+    """``error_code == 0`` alone must not read as success for a canceled goal.
+
+    A canceled ``FollowJointTrajectory`` result can still carry
+    ``error_code == 0`` in its payload; success must also require the
+    result wrapper's own status to be ``STATUS_SUCCEEDED``.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from action_msgs.msg import GoalStatus
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        target = np.zeros(6)
+        succeeded = SimpleNamespace(
+            status=GoalStatus.STATUS_SUCCEEDED,
+            result=SimpleNamespace(error_code=0),
+        )
+        assert UR5ROS2Arm._goal_failure_message(succeeded, target) is None
+
+        canceled_with_zero_error_code = SimpleNamespace(
+            status=GoalStatus.STATUS_CANCELED,
+            result=SimpleNamespace(error_code=0),
+        )
+        message = UR5ROS2Arm._goal_failure_message(
+            canceled_with_zero_error_code, target
+        )
+        assert message is not None and "status=" in message
+
+
+def test_ur5_ros2_on_goal_result_reports_a_cancellation_with_zero_error_code():
+    """The non-blocking step-goal path applies the same status check.
+
+    Complements the ``_goal_failure_message`` unit test by proving
+    ``_on_goal_result`` actually consults it, surfacing the failure to the
+    next command through ``_check_goal_error``.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from action_msgs.msg import GoalStatus
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            generation = arm._goal_generation
+            canceled_result = SimpleNamespace(
+                status=GoalStatus.STATUS_CANCELED,
+                result=SimpleNamespace(error_code=0),
+            )
+            future = SimpleNamespace(result=lambda: canceled_result)
+            arm._on_goal_result(future, generation, np.zeros(6))
+            with pytest.raises(RuntimeError, match="unsuccessfully"):
+                arm._check_goal_error()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_keeps_a_goal_until_its_replacement_is_accepted():
+    """An accept must not be canceled merely because a later goal was sent.
+
+    Supersession is judged by whether a later goal has actually been
+    *accepted*, not merely sent; an earlier accepted goal must stay active
+    and uncanceled until a replacement is itself accepted.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        rclpy.hold_sends["on"] = True
+        try:
+            arm.move_joints(np.zeros(6))
+            first_pending = rclpy.pending_sends[-1]
+
+            # Sent before the first goal's own accept arrives, but its
+            # acceptance is not resolved yet either.
+            arm.move_joints(np.full(6, 0.1))
+            second_pending = rclpy.pending_sends[-1]
+
+            first_handle = rclpy.new_goal_handle()
+            # Never reaching a terminal state keeps this accept's own result
+            # from resolving (the mock resolves get_result_async()
+            # synchronously), so the assertions below observe it as the
+            # still-installed active handle rather than already cleared.
+            first_handle.stuck_canceling = True
+            first_pending.resolve(first_handle)
+            assert not first_handle.canceled, (
+                "a goal must stay active while no later goal has actually "
+                "been accepted yet, even if a later one was already sent"
+            )
+            assert arm._active_goal_handle is first_handle
+
+            # Once the replacement is actually accepted, it becomes current;
+            # the first is left for the controller's own preemption, not
+            # explicitly canceled here.
+            second_handle = rclpy.new_goal_handle()
+            second_handle.stuck_canceling = True
+            second_pending.resolve(second_handle)
+            assert arm._active_goal_handle is second_handle
+            assert not second_handle.canceled
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_rejected_replacement_does_not_cancel_the_active_goal():
+    """A later goal's rejection must not discard the still-active earlier one.
+
+    A replacement that is rejected never supersedes the controller's
+    current goal, so the earlier accepted handle must remain active and
+    uncanceled.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            first_pending = rclpy.pending_sends[-1]
+            first_handle = rclpy.new_goal_handle()
+            # Keeps the accept's own result from resolving synchronously, so
+            # it is observed below as still installed rather than already
+            # cleared by its own (immediately-successful) result.
+            first_handle.stuck_canceling = True
+            first_pending.resolve(first_handle)
+            assert arm._active_goal_handle is first_handle
+            rclpy.hold_sends["on"] = False
+
+            class _RejectedFuture:
+                def done(self) -> bool:
+                    return True
+
+                def result(self) -> Any:
+                    return SimpleNamespace(accepted=False)
+
+                def add_done_callback(self, callback: Any) -> None:
+                    callback(self)
+
+            arm._action.send_goal_async = lambda goal: _RejectedFuture()
+            arm.move_joints(np.full(6, 0.1))
+            with pytest.raises(RuntimeError, match="rejected"):
+                arm._check_goal_error()
+
+            assert arm._active_goal_handle is first_handle, (
+                "a rejected replacement must not discard the earlier goal, "
+                "which the controller never actually preempted"
+            )
+            assert not first_handle.canceled
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_cancels_a_goal_accepted_during_teardown():
+    """An accept that arrives during teardown must be canceled, not installed.
+
+    Once ``_shutting_down`` is set, any goal accepted afterward must be
+    canceled immediately rather than installed as the active goal, since
+    nothing would otherwise stop it after the device claims are released.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            pending = rclpy.pending_sends[-1]
+            rclpy.hold_sends["on"] = False
+
+            # Simulates teardown already having started and swept past this
+            # send (e.g. its own ack-wait already timed out) before the
+            # accept below resolves.
+            arm._shutting_down = True
+            handle = rclpy.new_goal_handle()
+            handle.stuck_canceling = True
+            pending.resolve(handle)
+
+            assert arm._active_goal_handle is None, (
+                "a goal accepted during teardown must not be installed as "
+                "active -- nothing is left to ever cancel it there"
+            )
+            assert id(handle) in arm._pending_cancellations
+            assert handle.canceled
+        finally:
+            arm._shutting_down = False
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_move_joints_faults_once_too_many_step_sends_are_unacknowledged():
+    """``move_joints`` must fault once too many sends are outstanding.
+
+    An action server that stops acknowledging goals must not be allowed to
+    grow ``_pending_sends`` without bound; once ``MAX_PENDING_STEP_SENDS``
+    outstanding sends are unacknowledged, further sends must raise.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        try:
+            rclpy.hold_sends["on"] = True
+            for _ in range(arm.MAX_PENDING_STEP_SENDS):
+                arm.move_joints(np.zeros(6))
+            with pytest.raises(RuntimeError, match="unacknowledged"):
+                arm.move_joints(np.zeros(6))
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_move_joints_faults_once_a_step_send_outlives_its_ack_deadline():
+    """``move_joints`` must fault once a step send outlives ``GOAL_ACK_TIMEOUT``.
+
+    Each pending send carries its own acknowledgement deadline, independent
+    of ``MAX_PENDING_STEP_SENDS``, so a controller that stalls on a single
+    goal is reported as unresponsive even while other sends succeed.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            pending = rclpy.pending_sends[-1]
+            # Simulates GOAL_ACK_TIMEOUT having already elapsed without a
+            # response, without this test actually waiting that long.
+            arm._pending_send_deadlines[pending] = time.monotonic() - 1.0
+
+            with pytest.raises(RuntimeError, match="not acknowledged"):
+                arm.move_joints(np.full(6, 0.1))
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_cancels_an_accept_after_its_ack_deadline():
+    """An accept arriving after its own ack deadline must be canceled.
+
+    Once a send has already been faulted as unacknowledged, an accept that
+    arrives for it afterward must be canceled rather than installed as the
+    active goal, so it is not left running unmanaged.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps disconnect() fast below
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            pending = rclpy.pending_sends[-1]
+            # Simulates GOAL_ACK_TIMEOUT having already elapsed before the
+            # accept below arrives.
+            arm._pending_send_deadlines[pending] = time.monotonic() - 1.0
+
+            handle = rclpy.new_goal_handle()
+            handle.stuck_canceling = True
+            pending.resolve(handle)
+
+            assert arm._active_goal_handle is None, (
+                "an accept that arrives after its own ack deadline must not "
+                "be installed as active -- the deadline already reported it "
+                "as unresponsive"
+            )
+            assert id(handle) in arm._pending_cancellations
+            assert handle.canceled
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_disconnect_continues_canceling_late_handles_after_one_raises():
+    """One late send's result raising must not skip canceling the rest.
+
+    Collecting accepted handles from pending sends must isolate each
+    send's ``result()`` call, so one send that completes exceptionally does
+    not stop the handles of other, still-accepted sends from being canceled.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            exception=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+
+        class _RaisingFuture:
+            def done(self) -> bool:
+                return True
+
+            def result(self) -> Any:
+                raise RuntimeError("send completed exceptionally")
+
+        good_handle = rclpy.new_goal_handle()
+        good_handle.stuck_canceling = True
+
+        class _GoodFuture:
+            def done(self) -> bool:
+                return True
+
+            def result(self) -> Any:
+                return good_handle
+
+        arm._pending_sends = {_RaisingFuture(), _GoodFuture()}
+
+        arm.disconnect()
+
+        assert good_handle.canceled, (
+            "a send swept after one whose result raised must still have its "
+            "accepted handle canceled, not skipped because the earlier "
+            "result raised"
+        )
+        assert any("raised" in str(call) for call in errors)
+
+
+def test_ur5_ros2_disconnect_logs_when_a_send_is_never_confirmed():
+    """A send that never acknowledges before teardown must be logged, not silent.
+
+    Device claims are released regardless of whether an in-flight send ever
+    confirms, so a timed-out wait during teardown must still be logged as an
+    error; otherwise a caller has no sign the arm's motion was never
+    confirmed stopped.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+        rclpy.hold_sends["on"] = True
+        try:
+            arm.move_joints(np.zeros(6))
+            assert rclpy.pending_sends, "the send must be left unresolved"
+            arm.disconnect()
+            assert errors, "a never-confirmed send must be logged, not swallowed"
+        finally:
+            rclpy.hold_sends["on"] = False
+
+
+def test_ur5_ros2_disconnect_waits_once_for_multiple_unconfirmed_sends():
+    """Several unresolved sends at teardown must share one timeout, not N.
+
+    Waiting for multiple pending sends at teardown must share a single
+    ``TEARDOWN_CONFIRM_TIMEOUT`` deadline, so teardown time stays bounded
+    regardless of how many sends are simultaneously outstanding.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.2
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            debug=lambda *a, **k: None,
+        )
+        rclpy.hold_sends["on"] = True
+        try:
+            arm.move_joints(np.zeros(6))
+            arm.move_joints(np.full(6, 0.1))
+            arm.move_joints(np.full(6, 0.2))
+            assert len(rclpy.pending_sends) == 3, (
+                "all three sends must be left unresolved"
+            )
+
+            start = time.monotonic()
+            arm.disconnect()
+            elapsed = time.monotonic() - start
+
+            assert elapsed < arm.TEARDOWN_CONFIRM_TIMEOUT * 2, (
+                f"disconnect took {elapsed:.2f}s for 3 unresolved sends; they "
+                "must share one TEARDOWN_CONFIRM_TIMEOUT deadline, not one each"
+            )
+        finally:
+            rclpy.hold_sends["on"] = False
+
+
+def test_ur5_ros2_disconnect_shares_one_deadline_across_every_shutdown_wait():
+    """Every shutdown wait must share one deadline, not one apiece.
+
+    Canceling a known active handle and waiting on in-flight sends must
+    share one ``TEARDOWN_CONFIRM_TIMEOUT`` deadline, so teardown stays
+    bounded even when both a stuck cancellation and a stuck send occur
+    together.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.2
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            debug=lambda *a, **k: None,
+        )
+        # A still-active goal whose terminal result never arrives.
+        stuck_handle = rclpy.new_goal_handle()
+        stuck_handle.stuck_canceling = True
+        arm._active_goal_handle = stuck_handle
+
+        rclpy.hold_sends["on"] = True
+        try:
+            arm.move_joints(np.zeros(6))
+            assert rclpy.pending_sends, "the send must be left unresolved"
+
+            start = time.monotonic()
+            arm.disconnect()
+            elapsed = time.monotonic() - start
+
+            assert elapsed < arm.TEARDOWN_CONFIRM_TIMEOUT * 1.5, (
+                f"disconnect took {elapsed:.2f}s with both a stuck active "
+                "goal and an unresolved send; every wait must share one "
+                "TEARDOWN_CONFIRM_TIMEOUT deadline, not one apiece"
+            )
+        finally:
+            rclpy.hold_sends["on"] = False
+
+
+def test_ur5_ros2_rejects_new_sends_once_teardown_starts():
+    """A send racing disconnect() must land in _pending_sends or be refused.
+
+    Sending a goal and registering it in ``_pending_sends`` must be atomic
+    with respect to teardown, so a concurrent ``_cancel_pending_goal`` never
+    misses a new send and leaves it running unmanaged after the device
+    claims are released.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            arm._shutting_down = True
+            sent_before = len(rclpy.sent_goals)
+
+            with pytest.raises(RuntimeError, match="disconnecting"):
+                arm._send_goal_async(np.zeros(6), 0.1)
+            with pytest.raises(RuntimeError, match="disconnecting"):
+                arm._send_goal(np.zeros(6), 0.1)
+
+            assert len(rclpy.sent_goals) == sent_before, (
+                "a goal must never reach the controller once teardown has begun"
+            )
+        finally:
+            arm._shutting_down = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_reset_preserves_the_active_handle_until_accepted():
+    """A reset rejected by the controller must not erase the step handle.
+
+    ``_active_goal_handle`` must keep pointing at the still-executing step
+    trajectory until a replacement goal is confirmed accepted; a reset that
+    is rejected, times out, or fails to send must leave it intact so
+    disconnect can still cancel it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps disconnect() fast below
+        try:
+            # A step goal still executing: accepted, but with no terminal
+            # result yet (the fake otherwise resolves accept and result in
+            # the same synchronous call, which this test must avoid).
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            pending = rclpy.pending_sends[-1]
+            step_handle = rclpy.new_goal_handle()
+            step_handle.stuck_canceling = True
+            pending.resolve(step_handle)
+            rclpy.hold_sends["on"] = False
+            assert arm._active_goal_handle is step_handle
+
+            class _RejectedFuture:
+                def done(self) -> bool:
+                    return True
+
+                def result(self) -> Any:
+                    return SimpleNamespace(accepted=False)
+
+            arm._action.send_goal_async = lambda goal: _RejectedFuture()
+
+            with pytest.raises(RuntimeError, match="rejected"):
+                arm._send_goal(np.full(6, 0.1), 1.0)
+
+            assert arm._active_goal_handle is step_handle, (
+                "a rejected reset must not erase the handle to the step "
+                "trajectory that is still actually running"
+            )
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_send_goal_preserves_a_pending_reset_during_a_later_send():
+    """A reset's own accept must not look superseded by a merely later send.
+
+    The blocking path must judge supersession by whether a later goal has
+    actually been accepted, not merely sent; a step sent while a reset's
+    accept is still pending must not cause that reset's own accept to be
+    treated as superseded and canceled.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps disconnect() fast below
+        try:
+            rclpy.hold_sends["on"] = True
+            errors = []
+
+            def run_reset():
+                try:
+                    arm._send_goal(np.full(6, 0.2), 1.0)
+                except Exception as exc:  # pragma: no cover - failure path
+                    errors.append(exc)
+
+            thread = threading.Thread(target=run_reset)
+            thread.start()
+            deadline = time.monotonic() + 2.0
+            while not rclpy.pending_sends and time.monotonic() < deadline:
+                time.sleep(0.01)
+            reset_pending = rclpy.pending_sends[-1]
+
+            # Sent while the reset's own accept is still pending, bumping
+            # _goal_generation without ever itself being accepted.
+            arm.move_joints(np.full(6, 0.3))
+            assert len(rclpy.pending_sends) == 2
+
+            reset_handle = rclpy.new_goal_handle()
+            reset_pending.resolve(reset_handle)
+            thread.join(timeout=5.0)
+
+            assert not errors, f"reset must not fail, got {errors}"
+            assert not reset_handle.canceled, (
+                "a reset's own accept must not be treated as superseded "
+                "merely because a later goal was sent but never itself "
+                "accepted"
+            )
+            # The fake handle's own result resolves synchronously, so by now
+            # the reset has also completed normally and cleared the handle.
+            assert arm._active_goal_handle is None
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_send_goal_clears_the_handle_despite_a_later_unaccepted_send():
+    """A completed reset's handle must clear even if a later send is pending.
+
+    ``_send_goal``'s success path compares its generation against
+    ``_last_accepted_generation`` (bumped only once a goal is confirmed
+    current), not ``_goal_generation`` (bumped as soon as a later goal is
+    *sent*, before it is known to be accepted) -- the same invariant
+    ``_on_goal_result`` keeps for the non-blocking path.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from action_msgs.msg import GoalStatus
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            succeeded = SimpleNamespace(
+                status=GoalStatus.STATUS_SUCCEEDED,
+                result=SimpleNamespace(error_code=0),
+            )
+
+            class _Handle:
+                accepted = True
+
+                def get_result_async(self):
+                    # Simulates a later, not-yet-accepted send having
+                    # already bumped _goal_generation by the time this
+                    # reset's own result arrives.
+                    with arm._goal_lock:
+                        arm._goal_generation += 1
+                    return SimpleNamespace(done=lambda: True, result=lambda: succeeded)
+
+            class _SendFuture:
+                def done(self) -> bool:
+                    return True
+
+                def result(self) -> Any:
+                    return _Handle()
+
+            arm._action.send_goal_async = lambda goal: _SendFuture()
+
+            arm._send_goal(np.zeros(6), 1.0)
+
+            assert arm._active_goal_handle is None, (
+                "a goal confirmed as the last accepted one must clear its "
+                "handle once its result arrives, regardless of a later, "
+                "not-yet-accepted send having bumped _goal_generation"
+            )
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_disconnect_logs_a_rejected_cancellation():
+    """A cancel the controller rejects must be logged, not read as stopped.
+
+    A completed ``cancel_goal_async()`` future only means the cancel service
+    replied; a rejected cancellation also completes the future, so teardown
+    must check the reply's outcome and log a rejection rather than treat
+    completion alone as proof the goal stopped.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        handle = rclpy.new_goal_handle()
+        handle.cancel_return_code = 1
+        arm._active_goal_handle = handle
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+        arm.disconnect()
+        assert any("rejected" in str(call) for call in errors), (
+            "a rejected cancellation must be logged, not treated as a safe teardown"
+        )
+
+
+def test_ur5_ros2_disconnect_logs_an_unconfirmed_cancellation_result():
+    """A cancel whose goal never reaches a terminal state must be logged.
+
+    ``cancel_goal_async()`` completing is not proof the trajectory stopped;
+    teardown must also wait for the goal's own terminal result and log an
+    error when a cancellation never reaches one, such as when the
+    controller silently drops it and keeps executing.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        handle = rclpy.new_goal_handle()
+        handle.stuck_canceling = True
+        arm._active_goal_handle = handle
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+        arm.disconnect()
+        assert any("terminal state" in str(call) for call in errors), (
+            "a cancellation that never reaches a terminal result must be "
+            "logged, not treated as a safe teardown"
+        )
+
+
+def test_ur5_ros2_tracks_a_superseded_goal_accepted_after_a_newer_send():
+    """A stale accept must stay visible to teardown until its cancellation ends.
+
+    A goal accepted after it has already been superseded must be tracked in
+    ``_pending_cancellations`` for as long as its cancellation is
+    unconfirmed, so a disconnect racing the executor-thread callback that
+    started the cancel can still find and confirm that handle.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            stale_pending = rclpy.pending_sends[-1]
+            rclpy.hold_sends["on"] = False
+
+            # Supersedes the held goal before its accept arrives, bumping the
+            # generation the stale accept is checked against.
+            arm.move_joints(np.full(6, 0.1))
+
+            stale_handle = rclpy.new_goal_handle()
+            # Never reaching a terminal state keeps the cancellation this
+            # triggers from completing on its own, so the handle would stay
+            # tracked here rather than being removed once confirmed.
+            stale_handle.stuck_canceling = True
+            stale_pending.resolve(stale_handle)
+
+            assert id(stale_handle) in arm._pending_cancellations, (
+                "a superseded goal accepted late must stay tracked until its "
+                "cancellation is confirmed, not be dropped immediately"
+            )
+            assert stale_handle.canceled
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_disconnect_confirms_a_tracked_superseded_cancellation():
+    """Teardown must confirm a superseded goal's cancellation outcome itself.
+
+    Teardown must independently confirm a superseded goal's cancellation
+    rather than rely solely on the executor-thread callback that started it,
+    so a cancellation that never terminates is still caught and logged
+    before the device claims are released.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+        rclpy.hold_sends["on"] = True
+        arm.move_joints(np.zeros(6))
+        stale_pending = rclpy.pending_sends[-1]
+        rclpy.hold_sends["on"] = False
+        arm.move_joints(np.full(6, 0.1))
+
+        stale_handle = rclpy.new_goal_handle()
+        stale_handle.stuck_canceling = True
+        stale_pending.resolve(stale_handle)
+        assert id(stale_handle) in arm._pending_cancellations
+
+        arm.disconnect()
+
+        assert rclpy.canceled_handles.count(stale_handle) >= 2, (
+            "teardown must re-confirm a tracked superseded cancellation "
+            "itself, not assume the executor-thread callback alone handled it"
+        )
+        assert any("terminal state" in str(call) for call in errors), (
+            "a superseded goal's cancellation that teardown could not "
+            "confirm must be logged, not treated as a safe stop"
+        )
+
+
+def test_ur5_arm_disconnects_the_receive_interface_when_control_raises():
+    """A control-interface disconnect failure must not skip the receive side.
+
+    The receive interface's own ``disconnect()`` must still be called even
+    if the control interface's disconnect raises, so cleanup is not left
+    half-done.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+
+        arm = UR5Arm("192.168.56.101")
+        arm.connect()
+        receive_disconnected = []
+        arm._receive.disconnect = lambda: receive_disconnected.append(True)
+        arm._control.disconnect = lambda: (_ for _ in ()).throw(
+            RuntimeError("control disconnect failed")
+        )
+
+        with pytest.raises(RuntimeError, match="control disconnect failed"):
+            arm.disconnect()
+
+        assert receive_disconnected, (
+            "the receive interface must still be disconnected even if the "
+            "control interface's disconnect raised"
+        )
+        assert not arm.is_connected
+
+
+def test_ur5_ros2_disconnect_runs_remaining_cleanup_when_cancellation_raises():
+    """A goal-cancellation failure must not skip the rest of teardown.
+
+    If ``_cancel_pending_goal`` raises, teardown must still shut down the
+    executor, join the spin thread, and destroy the node, so a borrowed
+    rclpy context is never left with its executor and spin thread running
+    unmanaged.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        shutdown_calls = []
+        join_calls = []
+        destroy_calls = []
+        arm._executor.shutdown = lambda: shutdown_calls.append(True)
+        arm._spin_thread.join = lambda timeout=None: join_calls.append(timeout)
+        arm._node.destroy_node = lambda: destroy_calls.append(True)
+        arm._cancel_pending_goal = lambda: (_ for _ in ()).throw(
+            RuntimeError("cancellation failed")
+        )
+
+        with pytest.raises(RuntimeError, match="cancellation failed"):
+            arm.disconnect()
+
+        assert shutdown_calls, "the executor must still be shut down"
+        assert join_calls, "the spin thread must still be joined"
+        assert destroy_calls, "the node must still be destroyed"
+        assert not arm.is_connected
+
+
+def test_ur5_arm_rejects_non_finite_targets_before_clipping():
+    """A NaN or infinite target must be rejected, not silently clipped.
+
+    ``nan`` survives ``np.clip`` unchanged, and ``inf`` clips to an
+    extreme-but-finite-looking joint target; both must be rejected before
+    clipping rather than passed through as if valid.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+
+        arm = UR5Arm("127.0.0.1")
+        with pytest.raises(ValueError, match="finite"):
+            arm._clip_target([0.0, 0.0, 0.0, 0.0, 0.0, float("nan")])
+        with pytest.raises(ValueError, match="finite"):
+            arm._clip_target([0.0, 0.0, 0.0, 0.0, 0.0, float("inf")])
+
+
+def test_ur5_arm_raises_when_the_controller_refuses_movej():
+    """A ``moveJ`` refusal must raise, not be treated as a completed move.
+
+    ``move_joints`` must check ``moveJ``'s return value and raise when the
+    controller refuses the motion (e.g. a protective stop), not report it
+    as having succeeded.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+
+        arm = UR5Arm("127.0.0.1")
+        arm.connect()
+        try:
+            arm._control.moveJ_ok = False
+            with pytest.raises(RuntimeError, match="refused"):
+                arm.move_joints(np.zeros(6))
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_arm_reset_joint_floors_the_speed_for_a_nearby_target():
+    """A reset to a target barely off the current pose must not pace near zero.
+
+    ``reset_speed`` must be floored at ``UR5Arm.MIN_RESET_SPEED``, so a
+    target within noise distance of the current pose still settles quickly
+    instead of stalling ``moveJ`` with a near-zero commanded speed.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+
+        arm = UR5Arm("127.0.0.1")
+        arm.connect()
+        try:
+            current = arm._receive.getActualQ()
+            nearby_target = np.asarray(current) + 1e-6
+            arm.reset_joint(nearby_target, duration=3.0)
+            assert arm._control.speeds[-1] >= UR5Arm.MIN_RESET_SPEED, (
+                "a reset barely off the current pose must still pace at "
+                "least the minimum reset speed, not a near-zero value"
+            )
+        finally:
+            arm.disconnect()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"duration": float("nan")},
+        {"duration": 0.0},
+        {"duration": -1.0},
+        {"max_velocity": float("nan")},
+        {"max_velocity": 0.0},
+        {"max_velocity": -1.0},
+    ],
+)
+def test_ur5_arm_reset_joint_rejects_non_finite_or_non_positive_pacing(kwargs):
+    """A non-finite or non-positive duration/max_velocity must raise, not pace near zero."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5 import UR5Arm
+
+        arm = UR5Arm("127.0.0.1")
+        arm.connect()
+        try:
+            with pytest.raises(ValueError, match="finite and positive"):
+                arm.reset_joint(np.zeros(6), **kwargs)
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_rejects_non_finite_targets_before_clipping():
+    """The ros2 backend's ``_clip_target`` applies the same guard."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        with pytest.raises(ValueError, match="finite"):
+            arm._clip_target([0.0, 0.0, 0.0, 0.0, 0.0, float("nan")])
+        with pytest.raises(ValueError, match="finite"):
+            arm._clip_target([0.0, 0.0, 0.0, 0.0, 0.0, float("-inf")])
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"duration": float("nan")},
+        {"duration": 0.0},
+        {"duration": -1.0},
+        {"max_velocity": float("nan")},
+        {"max_velocity": 0.0},
+        {"max_velocity": -1.0},
+    ],
+)
+def test_ur5_ros2_reset_joint_rejects_non_finite_or_non_positive_pacing(kwargs):
+    """A non-finite or non-positive duration/max_velocity must raise, not pace near zero."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            with pytest.raises(ValueError, match="finite and positive"):
+                arm.reset_joint(np.zeros(6), **kwargs)
+        finally:
+            arm.disconnect()
+
+
+@pytest.mark.parametrize(
+    "speed_scaling", [float("nan"), 0.0, -1.0], ids=["nan", "zero", "negative"]
+)
+def test_ur5_ros2_rejects_a_non_finite_or_non_positive_speed_scaling(speed_scaling):
+    """A non-finite or non-positive speed_scaling must raise, not pace near zero."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        with pytest.raises(ValueError, match="finite and positive"):
+            UR5ROS2Arm("192.168.56.101", speed_scaling=speed_scaling)
+
+
+def test_ur5_ros2_send_goal_stretches_its_result_wait_by_speed_scaling():
+    """A reduced ``speed_scaling`` must stretch ``_send_goal``'s result wait.
+
+    ``scaled_joint_trajectory_controller`` stretches actual execution time by
+    the controller's realtime speed scaling (e.g. 0.1 at 10% on the teach
+    pendant), so a goal that is still healthy at that reduced speed must not
+    be timed out against the unscaled ``time_from_start``.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from action_msgs.msg import GoalStatus
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101", speed_scaling=0.1)
+        arm.connect()
+        try:
+            succeeded = SimpleNamespace(
+                status=GoalStatus.STATUS_SUCCEEDED,
+                result=SimpleNamespace(error_code=0),
+            )
+            handle = SimpleNamespace(
+                accepted=True,
+                get_result_async=lambda: SimpleNamespace(
+                    kind="result",
+                    done=lambda: True,
+                    result=lambda: succeeded,
+                    add_done_callback=lambda cb: None,
+                ),
+            )
+
+            class _SendFuture:
+                kind = "ack"
+
+                def done(self):
+                    return True
+
+                def result(self):
+                    return handle
+
+                def add_done_callback(self, callback):
+                    pass
+
+            arm._action.send_goal_async = lambda goal: _SendFuture()
+
+            seen_timeouts = []
+
+            def fake_spin_until(future, timeout):
+                if future.kind == "result":
+                    seen_timeouts.append(timeout)
+                return True
+
+            arm._spin_until = fake_spin_until
+
+            arm._send_goal(np.full(6, 0.1), 3.0)
+
+            # 3.0s of nominal trajectory time, stretched tenfold by the 0.1
+            # speed scaling, plus the fixed 10s processing margin.
+            assert seen_timeouts == [3.0 / 0.1 + 10.0]
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_tracks_a_superseded_blocking_reset_until_confirmed():
+    """A blocking reset accepted after being superseded must stay tracked.
+
+    Before ``_send_goal`` cancels a stale handle it must first register it
+    in ``_pending_cancellations``, so a concurrent teardown racing this
+    blocking confirmation can still find and confirm the handle. The handle
+    must also remain tracked when its own cancellation never reaches a
+    terminal result, so a later disconnect can retry stopping it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.2  # keeps this test fast
+        try:
+            rclpy.hold_sends["on"] = True
+            reset_errors = []
+
+            def run_reset():
+                try:
+                    arm._send_goal(np.zeros(6), 1.0)
+                except RuntimeError as error:
+                    reset_errors.append(error)
+
+            thread = threading.Thread(target=run_reset)
+            thread.start()
+            deadline = time.monotonic() + 2.0
+            while not rclpy.pending_sends and time.monotonic() < deadline:
+                time.sleep(0.01)
+            reset_pending = rclpy.pending_sends[-1]
+            rclpy.hold_sends["on"] = False
+
+            # Supersedes the blocking reset before its accept arrives.
+            arm.move_joints(np.full(6, 0.1))
+
+            stale_handle = rclpy.new_goal_handle()
+            # Never reaching a terminal state keeps _send_goal's own
+            # confirmation blocking long enough to observe the tracked handle.
+            stale_handle.stuck_canceling = True
+            reset_pending.resolve(stale_handle)
+
+            seen_tracked = False
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and not seen_tracked:
+                if id(stale_handle) in arm._pending_cancellations:
+                    seen_tracked = True
+                time.sleep(0.01)
+            assert seen_tracked, (
+                "a superseded blocking reset's handle must be tracked while "
+                "its cancellation is being confirmed"
+            )
+
+            thread.join(timeout=2.0)
+            assert reset_errors and "superseded" in str(reset_errors[0])
+            assert id(stale_handle) in arm._pending_cancellations, (
+                "an unconfirmed cancellation must stay tracked so a "
+                "subsequent disconnect can retry stopping it"
+            )
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_preserves_a_late_rejection_when_no_newer_goal_is_accepted():
+    """A rejection must surface even once later sends bump the generation.
+
+    A goal's rejection must not be dropped merely because later sends have
+    bumped ``_goal_generation``; as long as none of those later goals has
+    actually been accepted, the rejection is real and must still raise.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            first_pending = rclpy.pending_sends[-1]
+            arm.move_joints(np.full(6, 0.1))
+            second_pending = rclpy.pending_sends[-1]
+            rclpy.hold_sends["on"] = False
+
+            first_pending.resolve(SimpleNamespace(accepted=False))
+
+            with pytest.raises(RuntimeError, match="rejected"):
+                arm._check_goal_error()
+
+            second_pending.resolve(rclpy.new_goal_handle())
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_drops_a_stale_rejection_once_a_newer_goal_is_accepted():
+    """A rejection superseded by an actually-accepted newer goal is dropped.
+
+    Complements the preservation test above: once a later goal is confirmed
+    accepted, an earlier goal's rejection is genuine preemption and must not
+    surface as an error.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            first_pending = rclpy.pending_sends[-1]
+            rclpy.hold_sends["on"] = False
+
+            # A newer goal is sent and confirmed accepted before the first
+            # goal's rejection arrives.
+            arm.move_joints(np.full(6, 0.1))
+
+            first_pending.resolve(SimpleNamespace(accepted=False))
+
+            arm._check_goal_error()  # must not raise: genuinely preempted
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_drops_a_rejection_confirmed_stale_only_after_it_was_recorded():
+    """A rejection recorded before its supersession is confirmed is dropped.
+
+    Whether a recorded error has been superseded must be decided when the
+    error is read, not fixed at the moment it was recorded, since a
+    canceled or rejected goal's result can arrive before its replacement's
+    acceptance is confirmed.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            first_pending = rclpy.pending_sends[-1]
+            arm.move_joints(np.full(6, 0.1))
+            second_pending = rclpy.pending_sends[-1]
+            rclpy.hold_sends["on"] = False
+
+            # The first goal's rejection is recorded while the second is
+            # still unconfirmed -- at write time, nothing supersedes it yet.
+            first_pending.resolve(SimpleNamespace(accepted=False))
+            # Only now does the second goal's acceptance confirm.
+            second_pending.resolve(rclpy.new_goal_handle())
+
+            arm._check_goal_error()  # must not raise: genuinely preempted
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_keeps_a_newer_failure_over_a_late_stale_cancellation():
+    """A late, lower-generation canceled result must not hide a newer failure.
+
+    A stale, already-superseded goal's own canceled result must not
+    overwrite ``_goal_error`` once a newer goal's genuine failure has
+    already been recorded, since that newer failure's generation is the one
+    ``_check_goal_error`` will report.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from action_msgs.msg import GoalStatus
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            # Goal generation 2 was sent and confirmed accepted, superseding
+            # generation 1.
+            arm._goal_generation = 2
+            arm._last_accepted_generation = 2
+
+            # Generation 2's own result arrives first: a genuine failure.
+            aborted = SimpleNamespace(
+                status=GoalStatus.STATUS_ABORTED,
+                result=SimpleNamespace(error_code=7),
+            )
+            arm._on_goal_result(SimpleNamespace(result=lambda: aborted), 2, np.zeros(6))
+
+            # Generation 1's own stale result, from before it was superseded,
+            # arrives late.
+            canceled = SimpleNamespace(
+                status=GoalStatus.STATUS_CANCELED,
+                result=SimpleNamespace(error_code=0),
+            )
+            arm._on_goal_result(
+                SimpleNamespace(result=lambda: canceled), 1, np.zeros(6)
+            )
+
+            with pytest.raises(RuntimeError, match="error_code=7"):
+                arm._check_goal_error()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_connect_raises_when_the_resend_service_times_out():
+    """A resend_robot_program call that never completes must raise, not hang.
+
+    ``connect()`` must check ``_spin_until``'s wait result and raise when
+    the resend service never answers, rather than silently treat it as a
+    success.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        rclpy.resend_response["stuck"] = True
+        try:
+            arm = UR5ROS2Arm("192.168.56.101")
+            with pytest.raises(RuntimeError, match="did not respond"):
+                arm.connect()
+            assert not arm.is_connected
+        finally:
+            rclpy.resend_response["stuck"] = False
+
+
+def test_ur5_ros2_connect_raises_when_the_resend_service_fails():
+    """A resend_robot_program failure response must raise with its message.
+
+    ``connect()`` must read the Trigger response's ``success`` and
+    ``message`` fields and raise with that message when the service reports
+    failure, rather than proceed as if external control had restarted.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        rclpy.resend_response["success"] = False
+        rclpy.resend_response["message"] = "program not loaded"
+        try:
+            arm = UR5ROS2Arm("192.168.56.101")
+            with pytest.raises(RuntimeError, match="program not loaded"):
+                arm.connect()
+            assert not arm.is_connected
+        finally:
+            rclpy.resend_response["success"] = True
+            rclpy.resend_response["message"] = ""
+
+
+def test_ur5_ros2_headless_mode_false_skips_the_resend_service():
+    """``headless_mode=False`` must skip resend_robot_program entirely.
+
+    The upstream UR ROS2 driver's own ``sendRobotProgram()`` always reports
+    failure outside headless mode, so ``connect()`` must not call it, and
+    must not check its response, when ``headless_mode`` is ``False``.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        rclpy.resend_response["success"] = False
+        rclpy.resend_response["message"] = "program not loaded"
+        try:
+            arm = UR5ROS2Arm("192.168.56.101", headless_mode=False)
+            arm.connect()
+            assert arm.is_connected, (
+                "a failing resend response must not block connecting when "
+                "headless_mode is False, since the service is never called"
+            )
+            arm.disconnect()
+        finally:
+            rclpy.resend_response["success"] = True
+            rclpy.resend_response["message"] = ""
+
+
+def test_ur5_ros2_cancels_a_goal_accepted_after_the_ack_timeout():
+    """A goal accepted only after ``_send_goal`` gave up must be canceled.
+
+    Routed through the same ``_on_goal_response`` the non-blocking path
+    uses, so the late accept is both canceled immediately (not left for a
+    future command or disconnect to stumble on) and reported through
+    ``_check_goal_error`` for the next command to see.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.GOAL_ACK_TIMEOUT = 0.05  # keeps this test fast
+        try:
+            rclpy.hold_sends["on"] = True
+            with pytest.raises(RuntimeError, match="not acknowledged"):
+                arm._send_goal(np.full(6, 0.1), 1.0)
+            rclpy.hold_sends["on"] = False
+
+            late_handle = rclpy.new_goal_handle()
+            rclpy.pending_sends[-1].resolve(late_handle)
+
+            assert late_handle.canceled, (
+                "a goal accepted after the sender gave up must be canceled "
+                "immediately, not left for a later command to discover"
+            )
+            assert id(late_handle) not in arm._pending_cancellations, (
+                "a cancellation that is confirmed must stop being tracked"
+            )
+            with pytest.raises(
+                RuntimeError, match="accepted after not being acknowledged"
+            ):
+                arm.move_joints(np.zeros(6))
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_tracks_a_superseded_handle_before_canceling():
+    """A superseded accept's handle must be tracked before cancellation starts.
+
+    ``_on_goal_response`` discards the future from ``_pending_sends`` and
+    adds an accepted-but-superseded handle to ``_pending_cancellations`` in
+    one critical section, so a concurrent ``_cancel_pending_goal``
+    snapshotting in between can never see the goal in neither set and
+    release the device claims without canceling it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            observed = []
+
+            class _Handle:
+                accepted = True
+
+                def cancel_goal_async(self):
+                    observed.append(
+                        (
+                            future in arm._pending_sends,
+                            id(self) in arm._pending_cancellations,
+                        )
+                    )
+                    return SimpleNamespace(
+                        done=lambda: True,
+                        result=lambda: SimpleNamespace(return_code=0),
+                        add_done_callback=lambda cb: None,
+                    )
+
+                def get_result_async(self):
+                    return SimpleNamespace(
+                        done=lambda: True,
+                        result=lambda: SimpleNamespace(status=5),  # STATUS_CANCELED
+                        add_done_callback=lambda cb: None,
+                    )
+
+            class _Future:
+                def result(self):
+                    return handle
+
+            handle = _Handle()
+            future = _Future()
+            with arm._goal_lock:
+                arm._pending_sends.add(future)
+                arm._last_accepted_generation = 5
+
+            arm._on_goal_response(future, 1, np.zeros(6))
+
+            assert observed, "cancellation must have been requested"
+            still_pending, already_tracked = observed[0]
+            assert not still_pending, (
+                "the future must already be discarded from _pending_sends"
+            )
+            assert already_tracked, (
+                "the handle must already be in _pending_cancellations before "
+                "cancellation is requested, so a concurrent teardown's "
+                "snapshot can never see it in neither set"
+            )
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_logs_when_a_superseded_cancel_request_raises():
+    """A superseded accept's own cancel request raising must not propagate.
+
+    This callback runs on the executor thread, so a raise from
+    ``cancel_goal_async()`` (or registering its done-callback) must be
+    caught and logged, not left to escape and stop the executor from
+    processing further state updates and cancellation responses. The
+    handle stays in ``_pending_cancellations`` (added before the request is
+    made) so a later disconnect can still retry it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            errors = []
+            arm._logger = SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                exception=lambda *a, **k: errors.append(a),
+                debug=lambda *a, **k: None,
+            )
+
+            class _Handle:
+                accepted = True
+
+                def cancel_goal_async(self):
+                    raise RuntimeError("cancel_goal_async raised")
+
+            class _Future:
+                def result(self):
+                    return handle
+
+            handle = _Handle()
+            future = _Future()
+            with arm._goal_lock:
+                arm._pending_sends.add(future)
+                arm._last_accepted_generation = 5
+
+            arm._on_goal_response(future, 1, np.zeros(6))
+
+            assert id(handle) in arm._pending_cancellations, (
+                "the handle must stay tracked so a later disconnect can "
+                "retry canceling it"
+            )
+            assert any("raised" in str(call) for call in errors)
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_records_an_error_when_the_result_request_raises():
+    """A current goal's result request raising must be reported, not dropped.
+
+    When ``goal_handle.get_result_async()`` itself raises for a goal that
+    is current (installed as ``_active_goal_handle``), the failure must
+    still reach :meth:`UR5ROS2Arm._record_goal_error` for the next command
+    to see, and the handle must stay installed so a disconnect can still
+    find and cancel it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+
+            class _Handle:
+                accepted = True
+
+                def get_result_async(self):
+                    raise RuntimeError("get_result_async raised")
+
+            class _Future:
+                def result(self):
+                    return handle
+
+            handle = _Handle()
+            future = _Future()
+            with arm._goal_lock:
+                arm._pending_sends.add(future)
+
+            arm._on_goal_response(future, 1, np.zeros(6))
+
+            assert arm._active_goal_handle is handle, (
+                "the handle must stay installed so a disconnect can still "
+                "find and cancel it"
+            )
+            with pytest.raises(RuntimeError, match="result-request raised"):
+                arm._check_goal_error()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_get_state_raises_before_any_reading_has_arrived():
+    """``get_state`` must raise, not report zeros, before a reading arrives.
+
+    Before any joint_states reading has arrived, ``get_state`` must raise
+    rather than fall back to an all-zero pose, since callers like
+    ``wait_until_still`` and reward scoring cannot otherwise distinguish
+    that from a genuine reading.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            arm._latest = None
+            arm._latest_stamp = None
+            with pytest.raises(RuntimeError, match="has not reported"):
+                arm.get_state()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_get_state_raises_on_a_stale_reading():
+    """``get_state`` must raise on a reading older than ``STATE_STALE_AFTER``.
+
+    ``get_state`` must check the age of ``_latest`` and raise once it is
+    older than ``STATE_STALE_AFTER``, since callers like
+    ``wait_until_still`` and reward scoring poll it directly with no
+    freshness check of their own.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            arm.STATE_STALE_AFTER = 0.01  # keeps this test fast
+            time.sleep(0.02)
+            with pytest.raises(RuntimeError, match="stale"):
+                arm.get_state()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_cancellation_sweep_continues_after_one_handle_raises():
+    """One handle's cancellation request raising must not skip the rest.
+
+    Requesting cancellation for each tracked handle must isolate failures
+    per handle, so one handle whose ``cancel_goal_async()`` raises does not
+    stop later handles in the sweep from being asked to stop.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            exception=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+
+        failing_handle = rclpy.new_goal_handle()
+        failing_handle.cancel_goal_async = lambda: (_ for _ in ()).throw(
+            RuntimeError("cancel request failed")
+        )
+        good_handle = rclpy.new_goal_handle()
+
+        arm._active_goal_handle = failing_handle
+        arm._pending_cancellations = {id(good_handle): good_handle}
+
+        arm.disconnect()
+
+        assert good_handle.canceled, (
+            "a handle swept after one that raised must still be canceled, "
+            "not skipped because the earlier request aborted the sweep"
+        )
+        assert any("raised" in str(call) for call in errors)
+
+
+def test_ur5_ros2_cancellation_sweep_continues_after_a_cancel_response_raises():
+    """One handle's cancel response raising must not skip the rest.
+
+    Reading each handle's ``cancel_future.result()`` must isolate failures
+    per handle, so one response that raises does not stop later handles in
+    the sweep from being asked for their terminal result.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            exception=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+
+        class _RaisingResultFuture:
+            def done(self) -> bool:
+                return True
+
+            def result(self) -> Any:
+                raise RuntimeError("cancel response raised")
+
+        class _BadCancelResponseHandle:
+            def cancel_goal_async(self) -> Any:
+                return _RaisingResultFuture()
+
+        bad_handle = _BadCancelResponseHandle()
+        good_handle = rclpy.new_goal_handle()
+
+        arm._active_goal_handle = bad_handle
+        arm._pending_cancellations = {id(good_handle): good_handle}
+
+        arm.disconnect()
+
+        assert good_handle.canceled, (
+            "a handle swept after one whose cancel response raised must "
+            "still be canceled, not skipped because the earlier response "
+            "aborted the sweep"
+        )
+        assert any("raised" in str(call) for call in errors)
+
+
+def test_ur5_ros2_cancellation_sweep_continues_after_result_retrieval_raises():
+    """One handle's result retrieval raising must not skip the rest.
+
+    Calling ``handle.get_result_async()`` must isolate failures per handle,
+    so one handle that raises retrieving its terminal result does not stop
+    later handles in the sweep from being confirmed stopped.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            exception=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+
+        class _OkCancelFuture:
+            def done(self) -> bool:
+                return True
+
+            def result(self) -> Any:
+                return SimpleNamespace(return_code=0)
+
+        class _BadResultHandle:
+            def cancel_goal_async(self) -> Any:
+                return _OkCancelFuture()
+
+            def get_result_async(self) -> Any:
+                raise RuntimeError("result retrieval raised")
+
+        bad_handle = _BadResultHandle()
+        good_handle = rclpy.new_goal_handle()
+
+        arm._active_goal_handle = bad_handle
+        arm._pending_cancellations = {id(good_handle): good_handle}
+
+        arm.disconnect()
+
+        assert good_handle.canceled, (
+            "a handle swept after one whose result retrieval raised must "
+            "still be canceled, not skipped because the earlier retrieval "
+            "aborted the sweep"
+        )
+        assert any("raised" in str(call) for call in errors)
+
+
+def test_ur5_ros2_send_goal_reports_confirmed_stop_after_a_result_timeout():
+    """A step goal's result timeout must report whether cancellation stopped it.
+
+    On a result timeout, the error message must reflect whether the goal's
+    terminal result confirmed it actually stopped, not merely that the
+    cancel service's own reply was received.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            result_calls = {"n": 0}
+
+            class _Handle:
+                accepted = True
+
+                def __init__(self):
+                    self.canceled = False
+
+                def cancel_goal_async(self):
+                    self.canceled = True
+                    return SimpleNamespace(
+                        kind="cancel",
+                        done=lambda: True,
+                        result=lambda: SimpleNamespace(return_code=0),
+                        add_done_callback=lambda cb: None,
+                    )
+
+                def get_result_async(self):
+                    result_calls["n"] += 1
+                    return SimpleNamespace(
+                        kind="result",
+                        done=lambda: True,
+                        result=lambda: SimpleNamespace(status=5),
+                        add_done_callback=lambda cb: None,
+                    )
+
+            handle = _Handle()
+
+            class _SendFuture:
+                kind = "ack"
+
+                def done(self):
+                    return True
+
+                def result(self):
+                    return handle
+
+                def add_done_callback(self, callback):
+                    pass
+
+            arm._action.send_goal_async = lambda goal: _SendFuture()
+
+            def fake_spin_until(future, timeout):
+                if future.kind == "result":
+                    # The first call is the main wait in _send_goal, which
+                    # must time out; the second is _confirm_goal_stopped's
+                    # own check, which must succeed.
+                    return result_calls["n"] > 1
+                return True
+
+            arm._spin_until = fake_spin_until
+
+            with pytest.raises(RuntimeError, match="canceled and confirmed stopped"):
+                arm._send_goal(np.full(6, 0.1), 1.0)
+
+            assert handle.canceled
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_send_goal_reports_an_unconfirmed_stop_after_a_result_timeout():
+    """A step goal's result timeout must say so if the stop can't be confirmed."""
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        try:
+
+            class _Handle:
+                accepted = True
+
+                def __init__(self):
+                    self.canceled = False
+
+                def cancel_goal_async(self):
+                    self.canceled = True
+                    return SimpleNamespace(
+                        kind="cancel",
+                        done=lambda: True,
+                        result=lambda: SimpleNamespace(return_code=0),
+                        add_done_callback=lambda cb: None,
+                    )
+
+                def get_result_async(self):
+                    # Never completes, so neither the outer wait (gated by
+                    # fake_spin_until below) nor _confirm_goal_stopped's own
+                    # result check -- which reads done() directly -- ever
+                    # succeeds.
+                    return SimpleNamespace(
+                        kind="result",
+                        done=lambda: False,
+                        result=lambda: SimpleNamespace(status=5),
+                        add_done_callback=lambda cb: None,
+                    )
+
+            handle = _Handle()
+
+            class _SendFuture:
+                kind = "ack"
+
+                def done(self):
+                    return True
+
+                def result(self):
+                    return handle
+
+                def add_done_callback(self, callback):
+                    pass
+
+            arm._action.send_goal_async = lambda goal: _SendFuture()
+
+            def fake_spin_until(future, timeout):
+                # Gates the outer wait in _send_goal; the ack wait succeeds
+                # immediately, the result wait never does.
+                return future.kind != "result"
+
+            arm._spin_until = fake_spin_until
+
+            with pytest.raises(RuntimeError, match="could not be confirmed"):
+                arm._send_goal(np.full(6, 0.1), 1.0)
+
+            assert handle.canceled
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_confirm_goal_stopped_treats_a_raising_result_as_unconfirmed():
+    """A terminal-result future that raises must report an unconfirmed stop.
+
+    ``_confirm_goal_stopped`` must read ``result_future.result()``, not
+    just check ``done()``, so a result future that completes with an
+    exception is reported as unconfirmed rather than as a confirmed stop.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            errors = []
+            arm._logger = SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                exception=lambda *a, **k: errors.append(a),
+                debug=lambda *a, **k: None,
+            )
+
+            class _ResultFuture:
+                def done(self) -> bool:
+                    return True
+
+                def result(self) -> Any:
+                    raise RuntimeError("result retrieval raised")
+
+            class _Handle:
+                def cancel_goal_async(self) -> Any:
+                    return SimpleNamespace(
+                        done=lambda: True,
+                        result=lambda: SimpleNamespace(return_code=0),
+                    )
+
+                def get_result_async(self) -> Any:
+                    return _ResultFuture()
+
+            assert arm._confirm_goal_stopped(_Handle()) is False
+            assert any("raised" in str(call) for call in errors)
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_disconnect_logs_when_a_late_result_retrieval_raises():
+    """A terminal result that raises during the disconnect sweep must be logged.
+
+    The disconnect sweep's final loop must log a result future that
+    completes with an exception, the same as every other failure the sweep
+    tolerates, rather than silently discard it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps this test fast
+        errors = []
+        arm._logger = SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+            exception=lambda *a, **k: errors.append(a),
+            debug=lambda *a, **k: None,
+        )
+
+        class _ResultFuture:
+            def done(self) -> bool:
+                return True
+
+            def result(self) -> Any:
+                raise RuntimeError("result retrieval raised")
+
+        class _Handle:
+            def cancel_goal_async(self) -> Any:
+                return SimpleNamespace(
+                    done=lambda: True,
+                    result=lambda: SimpleNamespace(return_code=0),
+                )
+
+            def get_result_async(self) -> Any:
+                return _ResultFuture()
+
+        arm._active_goal_handle = _Handle()
+
+        arm.disconnect()
+
+        assert any("raised" in str(call) for call in errors)
+
+
+def test_ur5_ros2_on_goal_response_records_an_error_for_a_late_accept():
+    """An accept arriving after its ack deadline must also record an error.
+
+    Canceling an accept that arrives after its own ack deadline must also
+    record a goal error, so ``_check_goal_error`` reports the lost motion
+    on the next command instead of staying silent.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        arm.TEARDOWN_CONFIRM_TIMEOUT = 0.05  # keeps disconnect() fast below
+        try:
+            rclpy.hold_sends["on"] = True
+            arm.move_joints(np.zeros(6))
+            pending = rclpy.pending_sends[-1]
+            # Simulates GOAL_ACK_TIMEOUT having already elapsed before the
+            # accept below arrives.
+            arm._pending_send_deadlines[pending] = time.monotonic() - 1.0
+
+            handle = rclpy.new_goal_handle()
+            handle.stuck_canceling = True
+            pending.resolve(handle)
+
+            with pytest.raises(RuntimeError, match="not being acknowledged"):
+                arm._check_goal_error()
+        finally:
+            rclpy.hold_sends["on"] = False
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_superseded_cancel_result_keeps_the_handle_if_retrieval_raises():
+    """A superseded cancellation's result retrieval raising must not drop tracking.
+
+    ``_on_superseded_cancel_result`` must keep the handle in
+    ``_pending_cancellations`` if reading ``future.result()`` raises, so a
+    goal whose stop was never confirmed still has a handle left for
+    disconnect to retry.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        import rclpy
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            errors = []
+            arm._logger = SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                exception=lambda *a, **k: errors.append(a),
+                debug=lambda *a, **k: None,
+            )
+
+            handle = rclpy.new_goal_handle()
+            arm._pending_cancellations[id(handle)] = handle
+
+            class _ResultFuture:
+                def result(self) -> Any:
+                    raise RuntimeError("result retrieval raised")
+
+            arm._on_superseded_cancel_result(_ResultFuture(), handle, np.zeros(6))
+
+            assert id(handle) in arm._pending_cancellations, (
+                "a handle whose terminal-result retrieval raised must stay "
+                "tracked so a later disconnect can retry confirming it"
+            )
+            assert any("raised" in str(call) for call in errors)
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_send_goal_preserves_the_handle_if_result_retrieval_raises():
+    """A step goal's result retrieval raising must not drop its handle.
+
+    The blocking ``_send_goal`` path must keep ``_active_goal_handle`` set
+    while reading the terminal result, so a retrieval failure still leaves
+    a handle for a subsequent disconnect to retry canceling.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+
+            class _ResultFuture:
+                def done(self) -> bool:
+                    return True
+
+                def result(self) -> Any:
+                    raise RuntimeError("result retrieval raised")
+
+            class _Handle:
+                accepted = True
+
+                def get_result_async(self) -> Any:
+                    return _ResultFuture()
+
+            handle = _Handle()
+
+            class _SendFuture:
+                def done(self) -> bool:
+                    return True
+
+                def result(self) -> Any:
+                    return handle
+
+                def add_done_callback(self, callback: Any) -> None:
+                    pass
+
+            arm._action.send_goal_async = lambda goal: _SendFuture()
+
+            with pytest.raises(RuntimeError, match="result retrieval raised"):
+                arm._send_goal(np.full(6, 0.1), 1.0)
+
+            assert arm._active_goal_handle is handle, (
+                "a step goal whose result retrieval raised must keep its "
+                "handle tracked so a disconnect can retry canceling it"
+            )
+        finally:
+            arm._active_goal_handle = None
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_result_retains_the_handle_if_retrieval_raises():
+    """A step goal's result retrieval raising must not drop the active handle.
+
+    ``_on_goal_result`` must keep ``_active_goal_handle`` set and record a
+    goal error if reading ``future.result()`` raises, so a later disconnect
+    can still retry canceling it and the next command sees the failure.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            generation = arm._goal_generation
+            handle = SimpleNamespace()
+            arm._active_goal_handle = handle
+
+            class _ResultFuture:
+                def result(self) -> Any:
+                    raise RuntimeError("result retrieval raised")
+
+            arm._on_goal_result(_ResultFuture(), generation, np.zeros(6))
+
+            assert arm._active_goal_handle is handle, (
+                "a step goal whose result retrieval raised must keep its "
+                "handle tracked, not clear it before the failure could be "
+                "confirmed"
+            )
+            with pytest.raises(RuntimeError, match="raised"):
+                arm._check_goal_error()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_result_clears_the_handle_despite_a_later_unaccepted_send():
+    """A completed goal's handle must clear even if a later send is pending.
+
+    ``_on_goal_result`` must compare its generation against
+    ``_last_accepted_generation``, bumped only once a goal is confirmed
+    accepted, not against ``_goal_generation``, which bumps as soon as a
+    later goal is merely sent; otherwise a goal's own successful result
+    would leave ``_active_goal_handle`` pointing at an already finished
+    goal while a replacement is still unacknowledged.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from action_msgs.msg import GoalStatus
+
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            handle = SimpleNamespace()
+            arm._active_goal_handle = handle
+            arm._last_accepted_generation = 1
+
+            # Simulates a replacement goal having been sent (generation 2)
+            # but not yet acknowledged.
+            arm._goal_generation = 2
+
+            succeeded = SimpleNamespace(
+                status=GoalStatus.STATUS_SUCCEEDED,
+                result=SimpleNamespace(error_code=0),
+            )
+            arm._on_goal_result(
+                SimpleNamespace(result=lambda: succeeded), 1, np.zeros(6)
+            )
+
+            assert arm._active_goal_handle is None, (
+                "a goal confirmed as the last accepted one must clear its "
+                "handle once its result arrives, regardless of a later, "
+                "not-yet-accepted send having bumped _goal_generation"
+            )
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_check_goal_error_defers_while_a_replacement_awaits_acceptance():
+    """A recorded error must not raise while a newer goal awaits its accept.
+
+    A superseded goal's canceled result can be recorded before its
+    replacement's acceptance callback runs; ``_check_goal_error`` must wait
+    to see whether that replacement is actually accepted rather than raise
+    on the stale cancellation in the meantime.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            arm._last_accepted_generation = 1
+            arm._record_goal_error(1, "stale cancellation", is_cancellation=True)
+
+            # Simulates a replacement goal having been sent (generation 2)
+            # but not yet acknowledged.
+            arm._goal_generation = 2
+            pending_future = object()
+            with arm._goal_lock:
+                arm._pending_sends.add(pending_future)
+
+            arm._check_goal_error()  # must not raise
+            assert arm._goal_error == (1, "stale cancellation", True), (
+                "the error must stay recorded so it can be resolved once "
+                "the replacement goal's acceptance is decided"
+            )
+
+            # The replacement is confirmed accepted: resolved as superseded.
+            with arm._goal_lock:
+                arm._pending_sends.discard(pending_future)
+            arm._last_accepted_generation = 2
+
+            arm._check_goal_error()  # still must not raise
+            assert arm._goal_error is None
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_check_goal_error_still_raises_without_a_pending_replacement():
+    """A recorded error with no goal in flight must still raise promptly.
+
+    Guards the deferral added for the "Defer cancellation errors..." fix
+    against swallowing a genuine failure when nothing is pending.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            arm._record_goal_error(1, "genuine failure")
+            with pytest.raises(RuntimeError, match="genuine failure"):
+                arm._check_goal_error()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_goal_response_records_an_error_if_retrieval_raises():
+    """A step goal's ack retrieval raising must clean up and record a failure.
+
+    When ``future.result()`` raises, ``_on_goal_response`` must remove the
+    send from ``_pending_sends``/``_pending_send_deadlines`` and record the
+    failure, so it is neither left pending forever nor hidden from the
+    control loop.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            generation = arm._goal_generation + 1
+
+            class _Future:
+                def result(self) -> Any:
+                    raise RuntimeError("ack retrieval raised")
+
+            future = _Future()
+            with arm._goal_lock:
+                arm._pending_sends.add(future)
+                arm._pending_send_deadlines[future] = time.monotonic() + 10.0
+
+            arm._on_goal_response(future, generation, np.zeros(6))
+
+            assert future not in arm._pending_sends
+            assert future not in arm._pending_send_deadlines
+            with pytest.raises(RuntimeError, match="acknowledgement retrieval raised"):
+                arm._check_goal_error()
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_superseded_cancel_response_logs_when_the_response_raises():
+    """A superseded cancel's response retrieval raising must not drop the handle.
+
+    When the cancel response future raises, ``_on_superseded_cancel_response``
+    must log the unconfirmed stop and keep the handle tracked without
+    requesting its terminal result, and must not let the exception
+    propagate out of the executor callback.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            errors = []
+            arm._logger = SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                exception=lambda *a, **k: errors.append(a),
+                debug=lambda *a, **k: None,
+            )
+
+            class _ResponseFuture:
+                def result(self) -> Any:
+                    raise RuntimeError("cancel response raised")
+
+            def _must_not_be_called():
+                raise AssertionError(
+                    "a raising cancel response must not request a terminal result"
+                )
+
+            handle = SimpleNamespace(get_result_async=_must_not_be_called)
+            arm._pending_cancellations[id(handle)] = handle
+
+            arm._on_superseded_cancel_response(_ResponseFuture(), handle, np.zeros(6))
+
+            assert id(handle) in arm._pending_cancellations, (
+                "the handle must stay tracked so a later disconnect can "
+                "retry confirming it"
+            )
+            assert any("raised" in str(call) for call in errors)
+        finally:
+            arm.disconnect()
+
+
+def test_ur5_ros2_on_superseded_cancel_response_logs_when_the_result_request_raises():
+    """A superseded cancel's result request raising must not drop the handle.
+
+    When ``goal_handle.get_result_async()`` itself raises,
+    ``_on_superseded_cancel_response`` must still log the failure and keep
+    the handle tracked rather than let the exception propagate and drop it.
+    """
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.ur5_ros2 import UR5ROS2Arm
+
+        arm = UR5ROS2Arm("192.168.56.101")
+        arm.connect()
+        try:
+            errors = []
+            arm._logger = SimpleNamespace(
+                info=lambda *a, **k: None,
+                warning=lambda *a, **k: None,
+                error=lambda *a, **k: None,
+                exception=lambda *a, **k: errors.append(a),
+                debug=lambda *a, **k: None,
+            )
+
+            class _ResponseFuture:
+                def result(self) -> Any:
+                    return SimpleNamespace(return_code=0)
+
+            def _raising_get_result_async():
+                raise RuntimeError("get_result_async raised")
+
+            handle = SimpleNamespace(get_result_async=_raising_get_result_async)
+            arm._pending_cancellations[id(handle)] = handle
+
+            arm._on_superseded_cancel_response(_ResponseFuture(), handle, np.zeros(6))
+
+            assert id(handle) in arm._pending_cancellations, (
+                "the handle must stay tracked so a later disconnect can "
+                "retry confirming it"
+            )
+            assert any("raised" in str(call) for call in errors)
+        finally:
+            arm.disconnect()
 
 
 def _arm_with_a_camera_of_its_own(log):

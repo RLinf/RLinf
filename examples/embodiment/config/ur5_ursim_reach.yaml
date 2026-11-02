@@ -1,16 +1,43 @@
 # UR5 joint-reach driven through the Universal Robots ROS2 driver, against URSim.
 #
-# Unlike the state/pixel robosuite tasks, this talks to a real UR control stack:
-# the `ur_ros2` arm backend commands an already-running
+# This talks to a real UR control stack: the `ur_ros2` arm backend commands
+# an already-running
 # `Universal_Robots_ROS2_Driver` over the ROS graph (joint_states +
 # scaled_joint_trajectory_controller). URSim stands in for the real UR5 and
-# shares its interface, so the same config drives real hardware by pointing
-# `robot_ip` at the arm.
+# shares its interface, so the same config drives real hardware -- but only
+# after pointing that external driver and its ROS graph at the real arm, not
+# by changing `robot_ip` here: this backend always commands the fixed action
+# endpoint on the ROS graph it is configured for. Set `robot_ip` to the same
+# address regardless, since it also keys the device claim that stops two
+# backends from driving the controller at once.
 #
 # Prerequisites on the robot/controller node, before launching:
-#   1. Start URSim + the driver:  bash ~/ur_stack_up.sh   (prints CONTROL LINK UP)
-#   2. The env-worker process needs ROS2 on its path:
-#        source /opt/ros/jazzy/setup.bash   (alongside the usual venv/XPU env)
+#   1. Boot URSim with a Host-Only network adapter (e.g. VirtualBox's
+#      vboxnet0) so it is reachable at the `robot_ip` below (192.168.56.101);
+#      on its teach pendant, under Installation > URCaps > External Control,
+#      set "Host IP" to this machine's address on that same network.
+#   2. Launch the Universal_Robots_ROS2_Driver, pointed at URSim and matching
+#      `headless_mode` below:
+#        ros2 launch ur_robot_driver ur_control.launch.py \
+#          ur_type:=ur5 robot_ip:=192.168.56.101 \
+#          launch_rviz:=false headless_mode:=true
+#      This brings up `scaled_joint_trajectory_controller` (the controller
+#      this backend commands) and starts publishing `/joint_states`.
+#   3. The env-worker process needs ROS2 on its path. ROS2 Jazzy's binary
+#      `rclpy` targets Python 3.12, while the UR5 install above defaults to
+#      Python 3.11.14 and cannot import it -- sourcing Jazzy alone does not
+#      fix that mismatch. Create a Python 3.12 environment with access to
+#      the system `rclpy`, then run the UR5 installer against it so it also
+#      has RLinf, Hydra, Ray, and the other UR5 install deps -- a bare
+#      `venv` only gets `rclpy`, which makes ROS importable but leaves the
+#      training entry point unable to import the rest:
+#        python3.12 -m venv --system-site-packages .venv-ros2
+#        bash requirements/install.sh embodied --env ur5 \
+#          --python 3.12 --venv .venv-ros2
+#      Then activate it and source Jazzy before running the env worker from
+#      it instead of the default venv:
+#        source .venv-ros2/bin/activate
+#        source /opt/ros/jazzy/setup.bash
 # URSim has no scene, contact, or cameras, so this validates the control link
 # and joint-space motion only -- not a manipulation task's success.
 defaults:
@@ -44,7 +71,8 @@ cluster:
         configs:
           - node_rank: 0
             backend: ur_ros2
-            # URSim's docker bridge IP; point at the real arm for hardware.
+            # URSim's docker bridge IP; for hardware, match whatever arm the
+            # externally configured ROS2 driver is pointed at.
             robot_ip: 192.168.56.101
             # URSim exposes no cameras.
             camera_serials: []
@@ -132,7 +160,6 @@ rollout:
     model_path: ""
     precision: ${actor.model.precision}
 
-  # triton on XPU is the CUDA build; keep compile off.
   enable_torch_compile: False
   enable_cuda_graph: False
 

@@ -32,6 +32,7 @@ from rlinf.envs.real.wrappers.teleop.config import NO_DEVICE, resolve_teleop_dev
 from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
 from rlinf.envs.real.wrappers.transforms import (
     GripperCloseEnv,
+    NormalizeAction,
     Quat2EulerWrapper,
     RelativeFrame,
 )
@@ -39,6 +40,7 @@ from rlinf.envs.real.wrappers.transforms import (
 #: Wrappers available to ``ACTION_WRAPPERS`` and ``TRANSFORMS`` declarations.
 WRAPPERS: dict[str, type] = {
     "GripperCloseEnv": GripperCloseEnv,
+    "NormalizeAction": NormalizeAction,
     "Quat2EulerWrapper": Quat2EulerWrapper,
     "RelativeFrame": RelativeFrame,
 }
