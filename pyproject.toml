@@ -77,6 +77,7 @@ Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
 [project.optional-dependencies]
+dream = ["dreamlabs==1.0.17", "dreamlabs-client==1.0.9"]
 agentic = [
     "numpy==2.2",
     # uvloop is not compatible with simulators, put it here
