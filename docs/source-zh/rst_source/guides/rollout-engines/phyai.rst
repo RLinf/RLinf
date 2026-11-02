@@ -6,7 +6,7 @@ PhyAI 具身 Rollout 后端
 准备工作
 --------
 
-准备配备 NVIDIA GPU 的 Linux 机器和 PI0.5 LIBERO checkpoint。安装器使用 Python 3.12 和 Torch 2.11.0。当前接入已使用 RLinf PI0.5 LIBERO SFT checkpoint，在两张 NVIDIA A800 80 GB GPU 上完成训练流程的 smoke test。
+准备配备 NVIDIA GPU 的 Linux 机器和 PI0.5 LIBERO checkpoint。安装器使用 Python 3.12 和 Torch 2.11.0。当前接入已使用 RLinf PI0.5 LIBERO SFT checkpoint，在两张 NVIDIA H800 80 GB GPU 上完成训练流程的 smoke test。
 
 安装
 ----
