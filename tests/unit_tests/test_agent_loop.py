@@ -12,21 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the continuous agent loop and the async agent runner.
+"""Unit tests for the agent loop worker and the async agent runner.
 
 Covers `run_agentloop_rollout_continuously` (stop exit, error propagation,
-in-flight cancellation, metric records on the metric channel) and the
-runner's metric drain/aggregation. No Ray or sglang is launched.
+in-flight cancellation, metric records on the metric channel), the
+multi-turn rollout's per-turn version collection, the loop's idle-time
+accounting, and the runner's metric drain/aggregation. No Ray, sglang, or
+Megatron is launched; the tests importing the runner or the Megatron actor
+skip when those are absent.
 """
 
 import asyncio
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
 from omegaconf import OmegaConf
 
 from rlinf.data.schema import DiscardedGroup
-from rlinf.workers.agent.agent_loop import AgentLoopWorker, GroupDiscarded
+from rlinf.workers.agent.agent_loop import (
+    AgentLoopWorker,
+    GroupDiscarded,
+    MultiAgentLoopWorker,
+)
 
 
 class _QueueChannel:
@@ -79,8 +87,9 @@ class TestAggregateAgentMetrics:
 
     @staticmethod
     def _make_runner():
-        # Imported here, not at module top: the runner module pulls in the
-        # megatron actor, which is not installed in every unit-test env.
+        # The runner module pulls in the megatron actor, which is not
+        # installed in every unit-test env.
+        pytest.importorskip("megatron.core")
         from rlinf.runners.async_agent_runner import AsyncAgentRunner
 
         return AsyncAgentRunner.__new__(AsyncAgentRunner)
@@ -109,6 +118,7 @@ class TestGetAgentMetrics:
 
     @staticmethod
     def _make_runner():
+        pytest.importorskip("megatron.core")
         from rlinf.runners.async_agent_runner import AsyncAgentRunner
 
         runner = AsyncAgentRunner.__new__(AsyncAgentRunner)
@@ -484,6 +494,7 @@ class TestRunnerConstruction:
 
     def test_collocated_placement_rejected(self):
         """A non-disaggregated placement fails construction."""
+        pytest.importorskip("megatron.core")
         from omegaconf import DictConfig
 
         from rlinf.runners.async_agent_runner import AsyncAgentRunner
@@ -513,6 +524,7 @@ class TestSyncWeightsInstanceSubset:
 
     def test_instance_subset_rejected(self):
         """Passing instance ids fails: the actor pushes to all instances."""
+        pytest.importorskip("megatron.core")
         from rlinf.runners.async_agent_runner import AsyncAgentRunner
 
         runner = AsyncAgentRunner.__new__(AsyncAgentRunner)
@@ -521,3 +533,250 @@ class TestSyncWeightsInstanceSubset:
             raise AssertionError("expected the sync to fail")
         except AssertionError as e:
             assert "subset" in str(e)
+
+
+def _single_turn_output(
+    version_start: int | None,
+    version_end: int | None,
+    not_training: bool = False,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        prompt_ids=[1, 2],
+        response_ids=[3],
+        response_logprobs=[0.5],
+        is_end=True,
+        reward_score=0.0,
+        extra_fields={"not_training": not_training},
+        version_start=version_start,
+        version_end=version_end,
+    )
+
+
+def _make_multi_worker():
+    worker = MultiAgentLoopWorker.__new__(MultiAgentLoopWorker)
+    worker.print_outputs = False
+    worker.return_logprobs = True
+    return worker
+
+
+class TestGetRolloutResultVersions:
+    """MultiAgentLoopWorker.get_rollout_result collects per-turn versions."""
+
+    @staticmethod
+    def _get_rollout_result(turns_per_task):
+        worker = _make_multi_worker()
+        task_results = [
+            SimpleNamespace(single_turn_outputs=turns, trace_prints=[])
+            for turns in turns_per_task
+        ]
+        return worker.get_rollout_result(
+            task_results, None, None, None, extra_fields_train={}
+        )
+
+    def test_versions_written_and_aligned(self):
+        result = self._get_rollout_result(
+            [
+                [
+                    _single_turn_output(5, 5),
+                    _single_turn_output(5, 6),
+                ],
+                [_single_turn_output(6, 6)],
+            ]
+        )
+        assert result.version_start == [5, 5, 6]
+        assert result.version_end == [5, 6, 6]
+        assert len(result.version_start) == result.num_sequence
+
+    def test_not_training_turns_skipped_stay_aligned(self):
+        result = self._get_rollout_result(
+            [
+                [
+                    _single_turn_output(5, 5),
+                    _single_turn_output(None, None, not_training=True),
+                    _single_turn_output(5, 6),
+                ],
+            ]
+        )
+        assert result.version_start == [5, 5]
+        assert result.version_end == [5, 6]
+
+    def test_no_versions_yields_none(self):
+        result = self._get_rollout_result(
+            [[_single_turn_output(None, None), _single_turn_output(None, None)]]
+        )
+        assert result.version_start is None
+        assert result.version_end is None
+
+    def test_mixed_versions_assert(self):
+        with pytest.raises(AssertionError, match="mix"):
+            self._get_rollout_result(
+                [[_single_turn_output(5, 5), _single_turn_output(None, None)]]
+            )
+
+
+class TestIdleStats:
+    """The continuous agent loop's idle-time accounting."""
+
+    @staticmethod
+    def _make_worker():
+        worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker._agentloop_task = None
+        worker._agent_metric_channel = None
+        worker._producer_error = None
+        worker._inflight_groups = set()
+        worker.log_error = mock.MagicMock()
+        return worker
+
+    def test_idle_window_and_reset(self):
+        worker = self._make_worker()
+        worker._idle_seconds = 0.0
+        worker._idle_window_start = 100.0
+        worker._idle_since = 100.0
+
+        with mock.patch(
+            "rlinf.workers.agent.agent_loop.time.monotonic",
+            side_effect=[104.0, 106.0],
+        ):
+            # pop_idle_stats reads the clock twice: once for the window end,
+            # once as the new window start.
+            idle, window = worker.pop_idle_stats()
+            assert idle == 4.0
+            assert window == 4.0
+            # A second pop on an ongoing idle segment counts up to the call.
+            idle, window = worker.pop_idle_stats()
+            assert idle == 2.0
+            assert window == 2.0
+
+    def test_busy_time_not_counted_as_idle(self):
+        worker = self._make_worker()
+        worker._idle_seconds = 0.0
+        worker._idle_window_start = 100.0
+        worker._idle_since = None
+
+        with mock.patch(
+            "rlinf.workers.agent.agent_loop.time.monotonic", return_value=105.0
+        ):
+            idle, window = worker.pop_idle_stats()
+            assert idle == 0.0
+            assert window == 5.0
+
+    def test_transitions_accumulate_idle_between_groups(self):
+        async def run():
+            worker = self._make_worker()
+            in_channel = _QueueChannel()
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def _group(input_ids, answer, group_size, output_channel, group_id):
+                started.set()
+                await release.wait()
+                return {}
+
+            worker.run_agentloop_rollout_group = _group
+            continuously = asyncio.create_task(
+                worker.run_agentloop_rollout_continuously(
+                    in_channel, _QueueChannel(), _QueueChannel()
+                )
+            )
+            # The loop is idle from the method start until the request
+            # arrives and the group task is registered.
+            in_channel.put(_request())
+            await started.wait()
+            with mock.patch(
+                "rlinf.workers.agent.agent_loop.time.monotonic", return_value=100.0
+            ):
+                idle, _ = worker.pop_idle_stats()
+            assert idle > 0.0
+            release.set()
+            await asyncio.wait_for(continuously, timeout=5)
+
+        asyncio.run(run())
+
+
+class TestGroupIdPassthrough:
+    """The group id stamped by the agent loop group methods."""
+
+    @staticmethod
+    def _make_group_worker():
+        worker = AgentLoopWorker.__new__(AgentLoopWorker)
+        worker.print_outputs = False
+        worker.return_logprobs = False
+        worker.cfg = OmegaConf.create(
+            {
+                "data": {
+                    "rollout_batch_size": 4,
+                    "shuffle": False,
+                    "num_workers": 0,
+                    "seed": 1,
+                    "max_prompt_length": 8,
+                },
+                "runner": {"seq_length": 16},
+                "algorithm": {
+                    "staleness_threshold": 0,
+                    "group_size": 2,
+                    "max_num_gen_batches": 1,
+                },
+            }
+        )
+        return worker
+
+    def test_group_id_written_onto_the_result(self):
+        """run_agentloop_rollout_group stamps group_id on the result."""
+
+        async def run():
+            worker = self._make_group_worker()
+            out_channel = _QueueChannel()
+
+            async def _query(input_ids):
+                return SimpleNamespace(
+                    prompt_ids=[1, 2],
+                    prompt_text="p",
+                    response_ids=[3],
+                    response_text="r",
+                    response_mask=None,
+                    response_logprobs=None,
+                    trace_prints=[],
+                )
+
+            worker.run_one_query = _query
+            await worker.run_agentloop_rollout_group(
+                input_ids=[1, 2],
+                answer="a",
+                group_size=2,
+                output_channel=out_channel,
+                group_id=9,
+            )
+            result = out_channel.get_nowait()
+            assert result.group_id == 9
+
+        asyncio.run(run())
+
+    def test_results_without_group_id_stay_none(self):
+        """The synchronous path leaves group_id at its None default."""
+
+        async def run():
+            worker = self._make_group_worker()
+            out_channel = _QueueChannel()
+
+            async def _query(input_ids):
+                return SimpleNamespace(
+                    prompt_ids=[1, 2],
+                    prompt_text="p",
+                    response_ids=[3],
+                    response_text="r",
+                    response_mask=None,
+                    response_logprobs=None,
+                    trace_prints=[],
+                )
+
+            worker.run_one_query = _query
+            await worker.run_agentloop_rollout_group(
+                input_ids=[1, 2],
+                answer="a",
+                group_size=2,
+                output_channel=out_channel,
+            )
+            result = out_channel.get_nowait()
+            assert result.group_id is None
+
+        asyncio.run(run())

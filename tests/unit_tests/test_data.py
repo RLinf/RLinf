@@ -64,6 +64,7 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
     split_episode_data,
 )
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
@@ -3613,3 +3614,122 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+class TestVersionFieldPreservation:
+    """merge_result_list and split_results keep version fields aligned."""
+
+    @staticmethod
+    def _dynamic_result(
+        num_sequence: int = 2,
+        group_size: int = 1,
+        version_start: list[int] | None = None,
+        version_end: list[int] | None = None,
+        rewards: list[float] | None = None,
+    ):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=group_size,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence if rewards is None else rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_merge_concatenates_versions(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(version_start=[1, 2], version_end=[1, 3]),
+                self._dynamic_result(version_start=[4], version_end=[5]),
+            ]
+        )
+        assert merged.version_start == [1, 2, 4]
+        assert merged.version_end == [1, 3, 5]
+
+    def test_merge_without_versions_stays_none(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [self._dynamic_result(), self._dynamic_result()]
+        )
+        assert merged.version_start is None
+        assert merged.version_end is None
+
+    def test_merge_mixed_versions_asserts(self):
+        with pytest.raises(AssertionError, match="mix"):
+            DynamicRolloutResult.merge_result_list(
+                [
+                    self._dynamic_result(version_start=[1], version_end=[1]),
+                    self._dynamic_result(),
+                ]
+            )
+
+    def test_split_slices_versions(self):
+        result = self._dynamic_result(
+            num_sequence=3, version_start=[1, 2, 3], version_end=[1, 2, 3]
+        )
+        splits = DynamicRolloutResult.split_results(result, [1, 2])
+        assert [s.version_start for s in splits] == [[1], [2, 3]]
+        assert [s.version_end for s in splits] == [[1], [2, 3]]
+
+    def test_split_without_versions_stays_none(self):
+        result = self._dynamic_result(num_sequence=2)
+        splits = DynamicRolloutResult.split_results(result, [1, 1])
+        assert all(s.version_start is None for s in splits)
+        assert all(s.version_end is None for s in splits)
+
+
+class TestGroupMetadataView:
+    """DynamicRolloutResult.group_metadata over real results."""
+
+    @staticmethod
+    def _dynamic_result(
+        rewards=None,
+        version_start=None,
+        version_end=None,
+        idx_to_traj=None,
+        response_lengths=None,
+        is_end=None,
+    ):
+        from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+        num_sequence = len(idx_to_traj) if idx_to_traj else 2
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=2,
+            idx_to_traj=idx_to_traj or [0, 1],
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=response_lengths or [1] * num_sequence,
+            is_end=is_end or [True] * num_sequence,
+            rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_metadata_summarizes_rewards_versions_tokens_calls(self):
+        result = self._dynamic_result(
+            rewards=[1.0, 0.0, 1.0, 0.0],
+            version_start=[1, 1, 2, 3],
+            version_end=[1, 2, 3, 3],
+            idx_to_traj=[0, 0, 1, 1],
+            response_lengths=[2, 3, 4, 5],
+        )
+        metadata = result.group_metadata()
+        assert metadata.group_id is None
+        assert metadata.rewards == [1.0, 1.0]
+        assert metadata.earliest_version == 1
+        assert metadata.completion_version == 3
+        assert metadata.num_gen_tokens == 14
+        # One generate call per sequence, is_end is irrelevant.
+        assert metadata.num_generate_calls == 4
+
+    def test_metadata_without_versions_or_rewards(self):
+        result = self._dynamic_result(rewards=None, is_end=[False, False])
+        metadata = result.group_metadata()
+        assert metadata.rewards == [None, None]
+        assert metadata.earliest_version is None
+        assert metadata.completion_version is None
+        assert metadata.num_generate_calls == 2

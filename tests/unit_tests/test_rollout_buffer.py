@@ -16,9 +16,8 @@
 
 Covers the buffer's admission budget and release order, the discard
 paths (equal-reward, staleness, task-declared, drop limit), the
-checkpoint round-trip of its dataloader, the group-id passthrough on
-DynamicRolloutResult, and the worker's resident coroutines over fake
-channels. No Ray or sglang is launched.
+checkpoint round-trip of its dataloader, and the worker's resident
+coroutines over fake channels. No Ray or sglang is launched.
 """
 
 import asyncio
@@ -366,86 +365,6 @@ class TestStepMetrics:
         metrics = buffer.get_step_metrics()
         assert metrics["batch_issue_versions"] == 2
         assert metrics["batch_oldest_issue_version_ratio"] == 2 / 3
-
-
-class TestAgentLoopPassthrough:
-    """The group id stamped by the agent loop group methods."""
-
-    @staticmethod
-    def _multi_worker():
-        from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
-
-        worker = MultiAgentLoopWorker.__new__(MultiAgentLoopWorker)
-        return worker
-
-    def test_group_id_written_onto_the_result(self):
-        """run_agentloop_rollout_group stamps group_id on the result."""
-        from rlinf.workers.agent.agent_loop import AgentLoopWorker
-
-        worker = AgentLoopWorker.__new__(AgentLoopWorker)
-        out_channel = _QueueChannel()
-
-        async def run():
-            async def _query(input_ids):
-                return SimpleNamespace(
-                    prompt_ids=[1, 2],
-                    prompt_text="p",
-                    response_ids=[3],
-                    response_text="r",
-                    response_mask=None,
-                    response_logprobs=None,
-                    trace_prints=[],
-                )
-
-            worker.run_one_query = _query
-            worker.print_outputs = False
-            worker.return_logprobs = False
-            worker.cfg = _cfg()
-            await worker.run_agentloop_rollout_group(
-                input_ids=[1, 2],
-                answer="a",
-                group_size=2,
-                output_channel=out_channel,
-                group_id=9,
-            )
-
-        asyncio.run(run())
-        result = out_channel.get_nowait()
-        assert result.group_id == 9
-
-    def test_results_without_group_id_stay_none(self):
-        """The synchronous path leaves group_id at its None default."""
-        from rlinf.workers.agent.agent_loop import AgentLoopWorker
-
-        worker = AgentLoopWorker.__new__(AgentLoopWorker)
-        out_channel = _QueueChannel()
-
-        async def run():
-            async def _query(input_ids):
-                return SimpleNamespace(
-                    prompt_ids=[1, 2],
-                    prompt_text="p",
-                    response_ids=[3],
-                    response_text="r",
-                    response_mask=None,
-                    response_logprobs=None,
-                    trace_prints=[],
-                )
-
-            worker.run_one_query = _query
-            worker.print_outputs = False
-            worker.return_logprobs = False
-            worker.cfg = _cfg()
-            await worker.run_agentloop_rollout_group(
-                input_ids=[1, 2],
-                answer="a",
-                group_size=2,
-                output_channel=out_channel,
-            )
-
-        asyncio.run(run())
-        result = out_channel.get_nowait()
-        assert result.group_id is None
 
 
 class TestCheckpoint:
@@ -1084,82 +1003,3 @@ class TestStalenessDrops:
                 await asyncio.wait_for(resident, timeout=5)
 
         asyncio.run(run())
-
-
-class TestGroupMetadataView:
-    """DynamicRolloutResult.group_metadata over real results."""
-
-    @staticmethod
-    def _dynamic_result(
-        rewards=None,
-        version_start=None,
-        version_end=None,
-        idx_to_traj=None,
-        response_lengths=None,
-        is_end=None,
-    ):
-        from rlinf.data.schema.reasoning_results import DynamicRolloutResult
-
-        num_sequence = len(idx_to_traj) if idx_to_traj else 2
-        return DynamicRolloutResult(
-            num_sequence=num_sequence,
-            group_size=2,
-            idx_to_traj=idx_to_traj or [0, 1],
-            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
-            prompt_lengths=[2] * num_sequence,
-            response_lengths=response_lengths or [1] * num_sequence,
-            is_end=is_end or [True] * num_sequence,
-            rewards=rewards,
-            version_start=version_start,
-            version_end=version_end,
-        )
-
-    def test_metadata_summarizes_rewards_versions_tokens_calls(self):
-        result = self._dynamic_result(
-            rewards=[1.0, 0.0, 1.0, 0.0],
-            version_start=[1, 1, 2, 3],
-            version_end=[1, 2, 3, 3],
-            idx_to_traj=[0, 0, 1, 1],
-            response_lengths=[2, 3, 4, 5],
-        )
-        metadata = result.group_metadata()
-        assert metadata.group_id is None
-        assert metadata.rewards == [1.0, 1.0]
-        assert metadata.earliest_version == 1
-        assert metadata.completion_version == 3
-        assert metadata.num_gen_tokens == 14
-        # One generate call per sequence, is_end is irrelevant.
-        assert metadata.num_generate_calls == 4
-
-    def test_metadata_without_versions_or_rewards(self):
-        result = self._dynamic_result(rewards=None, is_end=[False, False])
-        metadata = result.group_metadata()
-        assert metadata.rewards == [None, None]
-        assert metadata.earliest_version is None
-        assert metadata.completion_version is None
-        assert metadata.num_generate_calls == 2
-
-
-class TestRewardsAllEqual:
-    """rewards_all_equal over per-trajectory reward views."""
-
-    def test_equal_rewards_are_detected(self):
-        from rlinf.utils.down_sampling import rewards_all_equal
-
-        assert rewards_all_equal([1.0, 1.0, 1.0])
-        assert rewards_all_equal([0.5, 0.5])
-
-    def test_unequal_rewards_are_kept(self):
-        from rlinf.utils.down_sampling import rewards_all_equal
-
-        assert not rewards_all_equal([1.0, 0.0])
-        assert not rewards_all_equal([0.0, 0.0, 0.1])
-
-    def test_none_or_empty_rewards_are_kept(self):
-        """A None reward cannot be judged; the group is kept, not crashed."""
-        from rlinf.utils.down_sampling import rewards_all_equal
-
-        assert not rewards_all_equal(None)
-        assert not rewards_all_equal([])
-        assert not rewards_all_equal([1.0, None])
-        assert not rewards_all_equal([None, None])
