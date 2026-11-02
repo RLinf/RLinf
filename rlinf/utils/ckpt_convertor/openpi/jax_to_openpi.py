@@ -66,8 +66,18 @@ def _load_jax_params(checkpoint_dir: str | pathlib.Path) -> dict:
         lambda _: ocp.RestoreArgs(restore_type=np.ndarray), metadata
     )
     restored = checkpointer.restore(str(params_dir), restore_args=restore_args)
+    # Flax NNX stores parameter arrays in singleton "value" dictionaries.
+    # Treat these wrappers as leaves while retaining ordinary NumPy leaves.
     restored = jax.tree_util.tree_map(
-        lambda x: np.asarray(x, dtype=np.float32), restored
+        lambda x: np.asarray(
+            x["value"] if isinstance(x, dict) else x, dtype=np.float32
+        ),
+        restored,
+        is_leaf=lambda x: (
+            isinstance(x, dict)
+            and set(x) == {"value"}
+            and isinstance(x["value"], np.ndarray)
+        ),
     )
     # Some orbax checkpoints (e.g. the pi05_base reference) wrap the parameter
     # tree under a top-level ``params`` collection; the converters expect the

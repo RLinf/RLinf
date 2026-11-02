@@ -191,6 +191,7 @@
    Behavior <embodied/behavior>
    MetaWorld <embodied/metaworld>
    IsaacLab <embodied/isaaclab>
+   Bench2Dex <embodied/bench2dex>
    CALVIN <embodied/calvin>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>

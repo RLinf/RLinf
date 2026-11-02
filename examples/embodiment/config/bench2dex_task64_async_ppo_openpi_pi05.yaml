@@ -1,0 +1,12 @@
+defaults:
+  - bench2dex_task64_ppo_openpi_pi05
+  - _self_
+
+runner:
+  logger:
+    experiment_name: bench2dex_task64_async_ppo_openpi_pi05
+
+algorithm:
+  loss_type: decoupled_actor_critic
+  staleness_threshold: 1
+  behave_weight_threshold: 2.0

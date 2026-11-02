@@ -1,0 +1,59 @@
+defaults:
+  - env/bench2dex@env.eval
+  - model/pi05_bench2dex@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env, rollout: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  max_epochs: 1
+  max_steps: -1
+  resume_dir: null
+  ckpt_path: null
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: bench2dex_task64_pi05
+    logger_backends: [tensorboard]
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  eval:
+    rollout_epoch: 50
+    total_num_envs: 1
+    is_eval: true
+    max_episode_steps: 665
+    # Scheduling rounds to a multiple of C=20; the simulator stops at 665.
+    max_steps_per_rollout_epoch: 680
+    init_params:
+      output_dir: ${runner.logger.log_path}/benchmark
+      policy_name: pi05
+      task: 64_sports_ball_cup_sort
+      embodiment: multi_panda_with_allegro
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    openpi:
+      task: eval
+      noise_rng: jax

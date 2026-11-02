@@ -18,10 +18,12 @@ export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/
 export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
 export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
 export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
-# Base path to Isaac Sim, only required when running the behavior experiment.
-export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
-export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
-export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
+# Derive standalone runtime paths only from an explicitly supplied root.
+if [ -n "${ISAAC_PATH:-}" ]; then
+    export ISAAC_PATH
+    export EXP_PATH="${EXP_PATH:-${ISAAC_PATH}/apps}"
+    export CARB_APP_PATH="${CARB_APP_PATH:-${ISAAC_PATH}/kit}"
+fi
 
 # POLARIS dataset
 export POLARIS_DATA_PATH=${POLARIS_DATA_PATH:-"/path/to/dataset/PolaRiS-Hub"}

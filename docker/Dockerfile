@@ -74,6 +74,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-calvin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-bench2dex
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
@@ -379,6 +380,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: Bench2Dex
+##################################################################################################
+FROM embodied-common-image AS embodied-bench2dex-image
+
+ENV ISAAC_LAB_PATH=/opt/envs/isaaclab-bench2dex
+ENV BENCH2DEX_PATH=/opt/envs/bench2dex
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env bench2dex --python 3.11.14
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

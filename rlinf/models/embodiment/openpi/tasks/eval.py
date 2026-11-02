@@ -42,7 +42,10 @@ class Pi0Eval(EnvIO, Pi0):
         rtc_enabled: bool = False,
         rtc_guidance_mode: str = "approx",
         rtc_guidance_clip: float = 5.0,
+        noise_rng: Literal["torch", "jax"] = "torch",
     ):
+        if noise_rng not in ("torch", "jax"):
+            raise ValueError(f"Expected noise_rng='torch' or 'jax', got {noise_rng!r}")
         super().__init__(
             config,
             num_steps=num_steps,
@@ -55,6 +58,13 @@ class Pi0Eval(EnvIO, Pi0):
         self.rtc_enabled = rtc_enabled
         self.rtc_guidance_mode = rtc_guidance_mode
         self.rtc_guidance_clip = rtc_guidance_clip
+        self._episode_noise = None
+        if noise_rng == "jax":
+            from rlinf.models.embodiment.openpi.sampling.episode_noise import (
+                JaxEpisodeNoise,
+            )
+
+            self._episode_noise = JaxEpisodeNoise()
 
     @torch.no_grad()
     def predict_action_batch(
@@ -75,6 +85,21 @@ class Pi0Eval(EnvIO, Pi0):
                 "use a training task wrapper (rl / dagger / dsrl) for train rollouts."
             )
         observation = self.env_obs_to_observation(env_obs)
+        if noise is None and rng is None and self._episode_noise is not None:
+            context = env_obs.get("extra_obs", {}).get("policy_sampling")
+            if context is None:
+                raise ValueError(
+                    "JAX episode noise requires extra_obs.policy_sampling "
+                    "with episode_seed and zero-based query_index"
+                )
+            seeds = torch.as_tensor(context["episode_seed"]).detach().cpu().numpy()
+            indices = torch.as_tensor(context["query_index"]).detach().cpu().numpy()
+            values = self._episode_noise(
+                seeds, indices, (self.action_horizon, self.action_dim)
+            )
+            noise = torch.as_tensor(
+                values, device=observation.state.device, dtype=torch.float32
+            )
         if rtc_context is not None and self.rtc_enabled:
             if self.rtc_guidance_mode != "approx":
                 raise NotImplementedError(
@@ -124,7 +149,9 @@ class Pi0Eval(EnvIO, Pi0):
         self._require_rlt()
         observation = self.env_obs_to_observation(env_obs)
 
-        prepared_observation = preprocess_observation(observation, train=False)
+        prepared_observation = preprocess_observation(
+            observation, train=False, image_keys=self.image_keys
+        )
         prefix_output, prefix_mask, kv_cache = self.build_prefix_cache(
             prepared_observation
         )
