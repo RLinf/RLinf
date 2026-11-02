@@ -143,11 +143,9 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 下载模型
 ----------------------------------------
 
-下载面向 GenieSim 的 OpenPI |pi| SFT 检查点，作为 PPO 或 GRPO 训练的起点。
+下载面向 GenieSim 的 OpenPI |pi| SFT 检查点 `RLinf-Pi05-GenieSim-G2-Instruction-SFT <https://huggingface.co/RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT>`__，作为 PPO 或 GRPO 训练的起点。
 
 该检查点使用 `GenieSim3.0-Dataset 的 instruction_and_robust 任务集 <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__ 中的 5,000 条轨迹进行 SFT，训练 45,000 步，action chunk 长度设为 10。
-
-**模型仓库：上传后补充。** 请将下方的 ``<GENIESIM_PI05_SFT_REPO>`` 替换为发布的 Hugging Face 仓库 ID。
 
 在已激活的 OpenPI 环境中下载模型：Docker 用户在 RLinf 容器内的 ``/workspace/RLinf`` 执行，自定义环境用户在主机的 RLinf 仓库根目录执行。已有检查点时，将 ``GENIESIM_CHECKPOINT_PATH`` 设为当前环境可访问的检查点目录，然后继续“运行”部分。
 
@@ -159,7 +157,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
    # export HF_ENDPOINT=https://hf-mirror.com
 
    export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
-   hf download "<GENIESIM_PI05_SFT_REPO>" \
+   hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
       --local-dir "$GENIESIM_CHECKPOINT_PATH"
 
 示例将检查点保存到 RLinf 仓库下的目录；使用其他目录时，在下载前修改 ``GENIESIM_CHECKPOINT_PATH``。训练与评测均通过该变量读取模型路径，也可以直接在 YAML 中设置 RLinf 进程可访问的路径：
@@ -319,21 +317,21 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
    * - ``pick_block_size``
      - 60.00%
      - 92.00%
-     - —
+     - 85.00%
      - 92.00%\ :sup:`※`
      - 88.00%\ :sup:`※`
      - 92.00%\ :sup:`※`
    * - ``pick_billiards_color``
      - 66.00%
      - 93.00%
-     - —
+     - 91.00%
      - 91.00%\ :sup:`※`
      - 82.00%\ :sup:`※`
      - 89.00%\ :sup:`※`
    * - ``pick_block_shape``
      - 32.00%
      - 45.00%
-     - —
+     - 37.00%
      - 37.00%\ :sup:`※`
      - 37.00%\ :sup:`※`
      - 41.00%\ :sup:`※`
@@ -347,7 +345,7 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
    * - ``pick_object_type``
      - 50.00%
      - 65.00%
-     - —
+     - 60.00%
      - 64.00%
      - 63.00%\ :sup:`※`
      - 64.00%\ :sup:`※`

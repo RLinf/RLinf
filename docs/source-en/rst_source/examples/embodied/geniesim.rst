@@ -171,15 +171,13 @@ activate OpenPI:
 Download the Model
 ------------------
 
-Download the OpenPI |pi| SFT checkpoint for GenieSim as the starting point for
+Download the OpenPI |pi| SFT checkpoint for GenieSim,
+`RLinf-Pi05-GenieSim-G2-Instruction-SFT <https://huggingface.co/RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT>`__, as the starting point for
 PPO or GRPO training.
 
 The checkpoint was trained with 5,000 trajectories from the
 `instruction_and_robust suite of GenieSim3.0-Dataset <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__.
 SFT ran for 45,000 steps with an action chunk length of 10.
-
-**Model repository: to be added after upload.** Replace
-``<GENIESIM_PI05_SFT_REPO>`` below with the published Hugging Face repository ID.
 
 Run the download in the activated OpenPI environment: inside the RLinf
 container at ``/workspace/RLinf``, or in the host's RLinf repository root for
@@ -195,7 +193,7 @@ and continue to ``Run It``.
    # export HF_ENDPOINT=https://hf-mirror.com
 
    export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
-   hf download "<GENIESIM_PI05_SFT_REPO>" \
+   hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
       --local-dir "$GENIESIM_CHECKPOINT_PATH"
 
 The example saves the checkpoint under the RLinf repository. Choose another
@@ -390,21 +388,21 @@ the same evaluation protocol.
    * - ``pick_block_size``
      - 60.00%
      - 92.00%
-     - —
+     - 85.00%
      - 92.00%\ :sup:`※`
      - 88.00%\ :sup:`※`
      - 92.00%\ :sup:`※`
    * - ``pick_billiards_color``
      - 66.00%
      - 93.00%
-     - —
+     - 91.00%
      - 91.00%\ :sup:`※`
      - 82.00%\ :sup:`※`
      - 89.00%\ :sup:`※`
    * - ``pick_block_shape``
      - 32.00%
      - 45.00%
-     - —
+     - 37.00%
      - 37.00%\ :sup:`※`
      - 37.00%\ :sup:`※`
      - 41.00%\ :sup:`※`
@@ -418,7 +416,7 @@ the same evaluation protocol.
    * - ``pick_object_type``
      - 50.00%
      - 65.00%
-     - —
+     - 60.00%
      - 64.00%
      - 63.00%\ :sup:`※`
      - 64.00%\ :sup:`※`
