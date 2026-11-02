@@ -35,7 +35,6 @@ from rlinf.algorithms.prefix_off_policy import build_prefix_off_policy_algorithm
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
-from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
@@ -1546,118 +1545,127 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert torch.all(actions[1, :, 6] == 0.5)
 
 
-def _make_expo_prefix_policy(*, candidate_samples=0):
-    return PrefixPolicy(
-        prefix_dim=3,
-        proprio_dim=2,
-        action_dim=2,
-        num_action_chunks=2,
-        ref_num_action_chunks=2,
-        actor_head_cfg={
-            "name": "expo_edit_mlp",
-            "hidden_dims": [16, 16],
-            "edit_scale": 0.2,
-        },
-        critic_head_cfg={
-            "name": "multi_q_mlp",
-            "hidden_dims": [16, 16],
-            "num_q_heads": 3,
-        },
-        expo_candidate_samples=candidate_samples,
-    )
+@pytest.mark.parametrize(
+    "config_name,algorithm_name,actor_head,critic_head,num_q_heads,overrides",
+    [
+        (
+            "maniskill_prefix_stage2_td3_mlp_steam",
+            "td3",
+            "deterministic_mlp",
+            "twin_q_mlp",
+            2,
+            [],
+        ),
+        (
+            "maniskill_rlt_stage2_td3_mlp",
+            "td3",
+            "deterministic_mlp",
+            "twin_q_mlp",
+            2,
+            [],
+        ),
+        (
+            "maniskill_rlt_stage2_ac_mlp",
+            "ac",
+            "fixed_std_mlp",
+            "multi_q_mlp",
+            2,
+            [],
+        ),
+        (
+            "maniskill_rlt_stage2_ac_mlp",
+            "ac",
+            "fixed_std_mlp",
+            "multi_q_mlp",
+            4,
+            ["actor.model.critic_head.num_q_heads=4"],
+        ),
+    ],
+)
+def test_maniskill_prefix_configs_build_policy_and_losses(
+    monkeypatch,
+    config_name,
+    algorithm_name,
+    actor_head,
+    critic_head,
+    num_q_heads,
+    overrides,
+):
+    from hydra import compose, initialize_config_dir
 
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    with initialize_config_dir(
+        config_dir=str(root / "examples/embodiment/config"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name=config_name,
+            overrides=[
+                *overrides,
+                "+actor.model.load_to_device=false",
+                "+rollout.model.load_to_device=false",
+            ],
+        )
+    OmegaConf.resolve(cfg)
+    assert cfg.algorithm.name == algorithm_name
+    assert cfg.algorithm.loss_type == "prefix_off_policy"
+    assert cfg.algorithm.entropy_tuning.alpha_type == "fixed_alpha"
+    assert cfg.algorithm.entropy_tuning.initial_alpha == 0.0
+    assert cfg.actor.model.actor_head.name == actor_head
+    assert cfg.actor.model.critic_head.name == critic_head
 
-def _expo_prefix_obs(batch_size=2):
-    return {
-        "z_rl": torch.randn(batch_size, 3),
-        "proprio": torch.randn(batch_size, 2),
-        "ref_chunk": torch.zeros(batch_size, 2, 2),
-    }
-
-
-def test_expo_edit_actor_bounds_and_reference_candidate():
-    model = _make_expo_prefix_policy(candidate_samples=3)
-    obs = _expo_prefix_obs()
-    action, logprobs, _ = model.sac_forward(obs)
-    assert action.shape == (2, 4)
-    assert logprobs.shape == action.shape
-    assert torch.isfinite(logprobs).all()
-    assert torch.all(action.abs() <= model.actor_head.edit_scale + 1e-6)
-
-    class PreferReference(torch.nn.Module):
-        def forward(self, state, actions):
-            del state
-            score = -actions.abs().sum(dim=-1, keepdim=True)
-            return score.expand(-1, 3)
-
-    model.q_head = PreferReference()
-    with torch.no_grad():
-        model.actor_head.mean_head.weight.zero_()
-        model.actor_head.mean_head.bias.fill_(3.0)
-    selected, info = model.predict_action_batch(obs, mode="eval")
-    torch.testing.assert_close(selected, obs["ref_chunk"])
-    assert info["prev_logprobs"].shape == (2, 4)
-
-
-def test_expo_prefix_losses_use_candidate_ensemble_and_temperature():
-    cfg = OmegaConf.create(
-        {
-            "env": {"train": {"env_type": "maniskill_rlt"}},
-            "actor": {
-                "model": {
-                    "action_dim": 2,
-                    "num_action_chunks": 2,
-                    "actor_head": {"name": "expo_edit_mlp"},
-                    "critic_head": {"name": "multi_q_mlp", "num_q_heads": 3},
-                }
-            },
-            "algorithm": {
-                "name": "expo",
-                "gamma": 0.99,
-                "q_weight": 1.0,
-                "bc_weight": 0.0,
-                "expo_num_edit_samples": 2,
-                "expo_num_min_qs": 2,
-                "entropy_tuning": {"target_entropy": -2.0},
-            },
-        }
-    )
     algorithm = build_prefix_off_policy_algorithm(cfg)
-    model = _make_expo_prefix_policy()
-    target_model = copy.deepcopy(model)
+    model = get_model(cfg.actor.model)
+    rollout_model = get_model(cfg.rollout.model)
+    rollout_model.load_state_dict(model.state_dict())
+    assert isinstance(model, PrefixPolicy)
+    assert algorithm.num_q_heads == num_q_heads
+    model_cfg = cfg.actor.model
+    obs = {
+        "z_rl": torch.randn(2, model_cfg.z_dim),
+        "proprio": torch.randn(2, model_cfg.proprio_dim),
+        "ref_chunk": torch.zeros(
+            2, model_cfg.ref_num_action_chunks, model_cfg.action_dim
+        ),
+    }
+    actions, _ = model.predict_action_batch(obs, mode="eval")
+    rollout_actions, _ = rollout_model.predict_action_batch(obs, mode="eval")
+    assert actions.shape == (2, model_cfg.num_action_chunks, model_cfg.action_dim)
+    torch.testing.assert_close(rollout_actions, actions)
+    assert torch.isfinite(actions).all()
+    assert (actions.abs() <= 1.0).all()
+
     context = SimpleNamespace(
         model=model,
-        target_model=target_model,
+        target_model=copy.deepcopy(model).eval().requires_grad_(False),
         torch_dtype=torch.float32,
         update_step=0,
-        entropy_temp=EntropyTemperature(initial_alpha=0.1),
     )
-    obs = _expo_prefix_obs()
-    with torch.no_grad():
-        candidates = algorithm._candidate_actions(target_model, obs)
-        q_values = algorithm._candidate_q_values(target_model, obs, candidates)
-    assert candidates.shape == (2, 3, 4)
-    torch.testing.assert_close(candidates[:, 0], obs["ref_chunk"].flatten(1))
-    assert q_values.shape == (2, 3, 3)
-
     batch = {
         "curr_obs": obs,
         "next_obs": obs,
-        "actions": torch.zeros(2, 4),
-        "rewards": torch.ones(2, 2),
-        "terminations": torch.zeros(2, 2, dtype=torch.bool),
-        "dones": torch.zeros(2, 2, dtype=torch.bool),
+        "actions": actions.flatten(1),
+        "rewards": torch.ones(2, model_cfg.num_action_chunks),
+        "terminations": torch.zeros(2, model_cfg.num_action_chunks, dtype=torch.bool),
+        "dones": torch.zeros(2, model_cfg.num_action_chunks, dtype=torch.bool),
     }
-    critic_loss, metrics = algorithm.critic_loss(context, batch)
-    assert critic_loss.ndim == 0
-    assert metrics["expo_candidates"] == 3.0
+    critic_loss, _ = algorithm.critic_loss(context, batch)
+    assert critic_loss.ndim == 0 and torch.isfinite(critic_loss)
+    critic_loss.backward()
+    assert all(
+        parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        for parameter in model.q_head.parameters()
+    )
+    model.zero_grad(set_to_none=True)
+    model.set_critic_requires_grad(False)
     actor_loss, entropy, _ = algorithm.actor_loss(context, batch)
-    assert actor_loss.ndim == 0
-    assert entropy.ndim == 0
-    alpha_loss = algorithm.alpha_loss(context, batch)
-    assert alpha_loss.ndim == 0
-    alpha_loss.backward()
-    assert context.entropy_temp.base_alpha.grad is not None
+    assert actor_loss.ndim == 0 and torch.isfinite(actor_loss)
+    assert entropy.ndim == 0 and torch.isfinite(entropy)
+    actor_loss.backward()
+    assert all(
+        parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        for parameter in model.actor_head.parameters()
+    )
 
 
 def test_dual_franka_rlt_stage2_builds_prefix_policy(monkeypatch):
