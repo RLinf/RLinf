@@ -1,4 +1,5 @@
 # Install the runtime with: pip install -r requirements/embodiinfer.txt
+# Requires EmbodiInfer GPU PIL preprocessing and private-history prewarming.
 # Requires ActiveVLN's vlnce_server client and a running VLN-CE server.
 defaults:
   - env/vlnce_server_r2r@env.train
@@ -60,6 +61,7 @@ env:
   enable_offload: False
   train:
     rollout_epoch: 1
+    reuse_environments: True
   eval:
     rollout_epoch: 1
     group_size: 1
@@ -67,7 +69,7 @@ rollout:
   group_name: RolloutGroup
   recompute_logprobs: False
   collect_final_values: False
-  enable_offload: True
+  enable_offload: False
   pipeline_stage_num: 1
   sampling_params:
     do_sample: True
@@ -83,9 +85,21 @@ rollout:
     embodiinfer:
       workspace_tokens: 512
       query_bucket_size: 32
-      cuda_graph: False
-      fused_ops: False
-      split_attention: False
+      cuda_graph: True
+      fused_ops: True
+      split_attention: True
+      gpu_preprocess: True
+      attention_kernel: gqa
+      vision_kernel: fused
+      # Capacity for the default B=2 and max_context=4096.
+      kv_pool_tokens: 8192
+      incremental_kv_commit: True
+      skip_padded_queries: True
+      packed_prefill: True
+      packed_prefill_bucket: 64
+      decode_linear: True
+      sampling_seed: 42
+      reuse_history: True
       grammar_tree_budget: 31
 actor:
   group_name: ActorGroup
@@ -93,7 +107,7 @@ actor:
   micro_batch_size: 1
   global_batch_size: 16
   seed: 42
-  enable_offload: True
+  enable_offload: False
   optim:
     lr: 5.0e-6
     value_lr: 1.0e-4

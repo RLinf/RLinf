@@ -72,7 +72,48 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             self._weight_version = step
             self.history_stats["weight_invalidations"] += 1
 
-    def _prepare_history(self, messages, images, state):
+    def _prepare_image_batches(self, image_batches):
+        """Process new RGB frames together and retain CPU pixels for actor replay."""
+        import numpy as np
+        from transformers import BatchFeature
+
+        transform = self.core.gpu_image_transform
+        if transform is None:
+            return [None] * len(image_batches)
+        parameter = next(self.core.parameters())
+        device = parameter.device
+        rows = [[None] * len(images) for images in image_batches]
+        shapes = {}
+        for row, images in enumerate(image_batches):
+            for index, image in enumerate(images):
+                rgb = np.asarray(
+                    image.convert("RGB") if hasattr(image, "convert") else image
+                )
+                if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[-1] != 3:
+                    raise ValueError("GPU preprocessing requires uint8 HWC RGB images")
+                shapes.setdefault(rgb.shape, []).append((row, index, rgb))
+        for shape, entries in shapes.items():
+            frames = torch.from_numpy(np.stack([entry[2] for entry in entries]))
+            pixels = transform(frames.to(device)).to(parameter.dtype).cpu()
+            height, width = transform.resized_size(shape[0], shape[1])
+            grid = torch.tensor([
+                [1, height // transform.patch_size, width // transform.patch_size]
+            ])
+            for (row, index, _), patches in zip(
+                entries, pixels.chunk(len(entries)), strict=True
+            ):
+                rows[row][index] = (patches, grid)
+        return [
+            BatchFeature({
+                "pixel_values": torch.cat([entry[0] for entry in row]),
+                "image_grid_thw": torch.cat([entry[1] for entry in row]),
+            })
+            if row
+            else None
+            for row in rows
+        ]
+
+    def _prepare_history(self, messages, images, state, encoded_images=None):
         """Tokenize the full replay prompt, processing only newly appended images."""
         from transformers import BatchFeature
 
@@ -80,9 +121,10 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
         new_images = images[previous_images:]
         if not new_images:
             return self.prepare_observation(messages, images)
-        encoded_images = self.processor.image_processor(
-            images=new_images, return_tensors="pt"
-        )
+        if encoded_images is None:
+            encoded_images = self.processor.image_processor(
+                images=new_images, return_tensors="pt"
+            )
         pixels, grids = encoded_images.pixel_values, encoded_images.image_grid_thw
         self.history_stats["processed_images"] += len(new_images)
         if state is not None:
@@ -226,6 +268,12 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             self._runtime = self.core.create_batched_runtime(
                 batch_size=count, **self.runtime_options
             )
+            if self._runtime.gpu_preprocess:
+                from embodiinfer.policies.activevln.image_gpu import QwenImageTransform
+
+                self.core.gpu_image_transform = QwenImageTransform(
+                    self.processor.image_processor
+                )
             sampling_state = self._sampling_states.get(str(self._runtime.device))
             if sampling_state is not None:
                 self._runtime.sampling_generator.set_state(sampling_state)
@@ -237,16 +285,31 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             )
         active_ids = {key for key in session_ids if key is not None}
         self._episodes = {k: v for k, v in self._episodes.items() if k in active_ids}
-        for messages, images, key, step in zip(
-            env_obs["messages"], env_obs["images"], session_ids, steps, strict=True
+        histories, image_batches = [], []
+        for images, key, step in zip(
+            env_obs["images"], session_ids, steps, strict=True
         ):
             state = self._episodes.get(key) if self.reuse_history else None
             if state is not None and (
                 step != state.step + 1 or len(images) <= len(state.grids)
             ):
                 state = None
-            if self.reuse_history and key is not None:
-                ids, positions, encoded = self._prepare_history(messages, images, state)
+            histories.append(state)
+            image_batches.append(images[0 if state is None else len(state.grids) :])
+        encoded_batches = self._prepare_image_batches(image_batches)
+        for messages, images, key, step, state, encoded_images in zip(
+            env_obs["messages"],
+            env_obs["images"],
+            session_ids,
+            steps,
+            histories,
+            encoded_batches,
+            strict=True,
+        ):
+            if (self.reuse_history and key is not None) or encoded_images is not None:
+                ids, positions, encoded = self._prepare_history(
+                    messages, images, state, encoded_images
+                )
             else:
                 ids, positions, encoded = self.prepare_observation(messages, images)
                 self.history_stats["processed_images"] += len(images)
