@@ -273,25 +273,18 @@ class SGLangWorker(Worker):
 
     async def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
-        # Finalize meta_info statistics collectors if they exist
         if self._collect_meta_stats:
             self.async_meta_stats_collector.finalize()
 
-        # Close the dispatch gate first: the rollout_serverless loop is
-        # still running, and requests that reached the input channel before
-        # the agent loop stopped would be picked up and dispatched into new
-        # generate tasks while the cancellation below awaits. The gate (the
-        # same one drain pauses use) parks the loop instead of dispatching.
+        # Park the dispatch loop before cancelling: a request that already
+        # reached the input channel must not be dispatched into a new
+        # generate task while the cancellation below awaits.
         self._dispatch_gate.clear()
 
-        # Cancel in-flight generate_and_send tasks before shutting the
-        # backend down: they are fire-and-forget, so nobody else cancels
-        # them, and a generate that hits the torn-down server would be
-        # logged as an ERROR (ServerDisconnected, then "http_client is not
-        # available"). CancelledError is a BaseException, so it skips the
-        # failure reporting in generate_and_send and no error payload is
-        # written to any channel. The synchronous path has no in-flight
-        # tasks and is unaffected.
+        # Cancel the fire-and-forget generate tasks before the backend
+        # shuts down: a generate hitting the torn-down server would log an
+        # ERROR and write an error payload to its channel key. Cancelled
+        # tasks skip that failure reporting.
         for task in self._inflight_generates:
             task.cancel()
         if self._inflight_generates:
@@ -760,8 +753,8 @@ class SGLangWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
     ):
-        # Backs up rollout_serverless' entry gate: an exception in this
-        # unawaited task would be lost, so return instead of raising.
+        # Backstop for rollout_serverless's entry-rank gate; return instead
+        # of raising because nobody awaits this task.
         if not self._is_model_instance_entry:
             return
         final_sampling_params = self._sampling_params
@@ -770,9 +763,9 @@ class SGLangWorker(Worker):
             for key, value in sampling_params.items():
                 final_sampling_params[key] = value
 
-        # Nobody awaits this task: on any failure (generation or result
-        # parsing), put an error payload on the same channel key so the
-        # requesting agent loop raises instead of waiting forever.
+        # Fire-and-forget: on failure, put an error payload on the same
+        # channel key so the requesting agent loop raises instead of
+        # waiting forever.
         try:
             version_start = self._weight_version
             result = await self._backend.async_generate(

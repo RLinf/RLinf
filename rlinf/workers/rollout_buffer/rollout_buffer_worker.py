@@ -435,13 +435,11 @@ class RolloutBufferWorker(Worker):
                 await dataloader_channel.put(request, async_op=True).async_wait()
 
     async def _run_receive(self, input_channel: Channel, rollout_channel: Channel):
+        # Group filtering runs here rather than in RewardWorker so that a
+        # dropped group returns its admission slot and gets replaced.
         while True:
             result = await input_channel.get(async_op=True).async_wait()
             if isinstance(result, DiscardedGroup):
-                # Group filtering runs here rather than in RewardWorker so
-                # that a dropped group returns its admission slot and gets
-                # replaced; under AsyncAgentRunner, RewardWorker is not
-                # used yet.
                 self.buffer.drop_group(
                     result.group_id,
                     result.reason,
@@ -451,10 +449,6 @@ class RolloutBufferWorker(Worker):
                 continue
             metadata = result.group_metadata()
             if self.reject_equal_reward and rewards_all_equal(metadata.rewards):
-                # Group filtering runs here rather than in RewardWorker so
-                # that a dropped group returns its admission slot and gets
-                # replaced; under AsyncAgentRunner, RewardWorker is not
-                # used yet.
                 self.buffer.drop_group(
                     metadata.group_id,
                     "equal_reward",

@@ -404,8 +404,8 @@ class AgentLoopWorker(Worker):
                     {"bucket": None, "metrics": agent_metrics}, async_op=True
                 )
         elif self._producer_error is None:
-            # A done callback cannot raise; record the error and cancel the
-            # loop task so it unwinds and the recorded error is raised.
+            # Done callbacks cannot raise: record the error, cancel the
+            # loop task, and let it re-raise the error on unwind.
             self.log_error(f"Agent loop group failed:\n{type(exc).__name__}: {exc}")
             self._producer_error = exc
             self._agentloop_task.cancel()
