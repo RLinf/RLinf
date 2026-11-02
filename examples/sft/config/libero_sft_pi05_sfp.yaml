@@ -1,0 +1,84 @@
+defaults:
+  - model/pi0_5_sfp@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-3
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_pi05_sfp_sft"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: -1
+  max_steps: 100000
+  # SFP validation is not implemented; keep this off.
+  val_check_interval: -1
+  save_interval: 5000
+  resume_dir: null
+
+data:
+  # LeRobot repo id below HF_LEROBOT_HOME, or a local dataset directory. The
+  # dataset must carry action_states; convert it with
+  # toolkits/lerobot/convert_libero_data_to_lerobot.py.
+  train_data_paths: "local/libero_sfp"
+  num_workers: 4
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  # global_batch_size must stay a multiple of micro_batch_size * world_size.
+  micro_batch_size: 4
+  global_batch_size: 64
+  seed: 42
+
+  model:
+    model_path: "/path/to/pi05_libero_pytorch"
+    openpi_data:
+      # Directory holding norm_stats.json, written by
+      # toolkits/lerobot/calculate_norm_stats.py.
+      norm_stats_path: /path/to/assets/libero_sfp/norm_stats.json
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "openpi_cosine"
+    lr_warmup_steps: 10000
+    total_training_steps: 100000
+    num_cycles: 0.5
+    min_lr: 1.0e-5
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

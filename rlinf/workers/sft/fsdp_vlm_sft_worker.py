@@ -208,8 +208,13 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         return correct
 
     def get_train_model_output(
-        self, batch: dict[str, Any]
+        self,
+        batch: dict[str, Any],
+        *,
+        micro_batch_index: int = 0,
+        gradient_accumulation: int = 1,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        del micro_batch_index, gradient_accumulation
         # hundle the input batch
         input_ids = batch["prompt"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)

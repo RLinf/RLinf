@@ -1115,11 +1115,13 @@ def test_openpi_factory_separates_parameter_and_activation_dtypes(
     torch.testing.assert_close(model.img.stem.weight, source.img.stem.weight)
 
 
-def test_openpi_sft_uses_activation_checkpointing(monkeypatch):
+@pytest.mark.parametrize("use_sfp", [False, True])
+def test_openpi_sft_uses_activation_checkpointing(monkeypatch, use_sfp):
     from rlinf.models.embodiment.base_policy import ForwardType
     from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
     from rlinf.models.embodiment.openpi.pi0 import Pi0
     from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.sfp_config import OpenPiPytorchSfpConfig
 
     monkeypatch.setattr(gemma, "PALIGEMMA_VOCAB_SIZE", 32)
     monkeypatch.setattr(utils, "_torch_compile_enabled", False)
@@ -1136,14 +1138,17 @@ def test_openpi_sft_uses_activation_checkpointing(monkeypatch):
     )
     cfg = Pi0Config(
         dtype="float32",
+        pi05=use_sfp,
         paligemma_variant="dummy",
         action_expert_variant="dummy",
         action_horizon=2,
         max_token_len=4,
     )
-    model = Pi0(cfg).train()
+    model = Pi0(cfg, sfp_cfg=OpenPiPytorchSfpConfig(use_sfp=use_sfp)).train()
     model.gradient_checkpointing_enable({"use_reentrant": False})
     observation = cfg.fake_obs()
+    if use_sfp:
+        observation.action_states = torch.zeros_like(observation.state)
     checkpoint = torch.utils.checkpoint.checkpoint
     calls = []
 

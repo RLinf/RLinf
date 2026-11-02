@@ -3,7 +3,7 @@ LIBERO 评测
 
 LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA 策略并输出任务级成功率。
 
-相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
+相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:doc:`../../examples/embodied/sft_pi05_sfp`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
 
 环境准备
 --------
@@ -32,6 +32,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_openpi_pi05_eval.yaml``
      - Spatial
      - π₀.₅
+   * - ``libero_spatial_openpi_pi05_sfp_eval.yaml``
+     - Spatial
+     - π₀.₅ SFP
    * - ``libero_spatial_starvla_eval.yaml``
      - Spatial
      - StarVLA
