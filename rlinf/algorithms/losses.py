@@ -574,6 +574,60 @@ def compute_opd_actor_loss(
     return policy_loss, metrics_data
 
 
+@register_policy_loss("gspo")
+def compute_gspo_actor_loss(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    clip_ratio_low: float,
+    clip_ratio_high: float,
+    loss_mask: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
+    """Compute GSPO with length-normalized sequence ratios and clipping.
+
+    Inputs have shape ``[batch, response_tokens]``. Advantages are constant
+    over each response's valid tokens, as produced by the GRPO estimator.
+    Responses receive equal weight; an empty response contributes zero loss
+    and gradient while retaining its place in the batch mean.
+
+    Implements equations 5--7 of https://arxiv.org/abs/2507.18071.
+    """
+    assert logprobs.ndim == 2 and old_logprobs.shape == logprobs.shape
+    assert advantages.shape == logprobs.shape
+    assert logprobs.dtype == old_logprobs.dtype == advantages.dtype == torch.float32
+    if loss_mask is None:
+        loss_mask = torch.ones_like(logprobs, dtype=torch.bool)
+    assert loss_mask.shape == logprobs.shape
+
+    lengths = loss_mask.sum(dim=-1)
+    denominator = lengths.clamp_min(1)
+    # Mask before exponentiation; padded log probabilities may be -inf.
+    log_ratio = torch.where(loss_mask, logprobs - old_logprobs, 0.0)
+    sequence_log_ratio = log_ratio.sum(dim=-1) / denominator
+    ratio = sequence_log_ratio.exp()
+    sequence_advantages = (
+        torch.where(loss_mask, advantages, 0.0).sum(dim=-1) / denominator
+    )
+    clipped_ratio = ratio.clamp(1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
+    losses = -sequence_advantages * ratio
+    clipped_losses = -sequence_advantages * clipped_ratio
+    loss = torch.maximum(losses, clipped_losses).mean()
+
+    with torch.no_grad():
+        valid = lengths > 0
+        metrics = {
+            "actor/policy_loss": loss.detach(),
+            "actor/ratio": masked_mean(ratio, valid),
+            "actor/clipped_ratio": masked_mean(clipped_ratio, valid),
+            "actor/approx_kl": -masked_mean(sequence_log_ratio, valid),
+            "actor/clip_fraction": masked_mean(
+                (losses < clipped_losses).float(), valid
+            ),
+        }
+    return loss, metrics
+
+
 @register_policy_loss("actor")
 def compute_grpo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
     """
