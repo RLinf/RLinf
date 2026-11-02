@@ -50,7 +50,7 @@ RLT 的两个训练阶段通过完整的 Stage 1 ``actor`` checkpoint 衔接。S
      - 在 Franka 示范数据上联合 SFT π₀.₅ 和 RLT token transformer。
    * - Franka Stage 2（RL token）
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
-     - 使用冻结的 Stage 1 token 特征，在真机上训练 RLT actor-critic。
+     - 使用冻结的 Stage 1 特征模型，在真机上训练 RLT actor-critic。
    * - 双臂 Franka Stage 2
      - ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``
      - 在同一台主机上驱动双臂，用 ``pi05_dualfranka_tcp_rot6d`` 的 Stage 1 checkpoint 训练 Stage 2 MLP。

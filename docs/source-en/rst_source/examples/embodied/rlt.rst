@@ -50,7 +50,7 @@ Provided Configuration Files
      - SFT π₀.₅ together with the RLT token transformer on Franka demonstrations.
    * - Franka Stage 2 (RL token)
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
-     - Run real-world RLT actor-critic training with the frozen Stage 1 token feature.
+     - Run real-world RLT actor-critic training with the frozen Stage 1 feature model.
    * - Dual Franka Stage 2
      - ``examples/embodiment/config/realworld_dual_franka_rlt_stage2_ac_mlp.yaml``
      - Train the Stage 2 MLP on one host that drives both arms, from a ``pi05_dualfranka_tcp_rot6d`` Stage 1 checkpoint.
