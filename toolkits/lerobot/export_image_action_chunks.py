@@ -30,6 +30,9 @@ import tyro
 from torch.utils.data import DataLoader
 
 from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def main(
@@ -127,7 +130,10 @@ def main(
     }
     with open(os.path.join(output, "meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
-    print(json.dumps({k: v for k, v in meta.items() if "action_" not in k}, indent=2))
+    logger.info(
+        "Exported image/action chunks: %s",
+        json.dumps({k: v for k, v in meta.items() if "action_" not in k}, indent=2),
+    )
 
 
 if __name__ == "__main__":

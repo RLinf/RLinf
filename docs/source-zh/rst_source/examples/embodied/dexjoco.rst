@@ -314,6 +314,8 @@ CNN + PPO
 
 ``dexjoco_ppo_cnn`` 用同样的观测和动作布局运行 PPO：128 个环境、完整的 1000 步回合，每 5 轮在 64 个回合上评测。每轮执行 1 个 PPO update epoch，使用 action-level log-probability；前 50 个 optimizer step 只训练 value head。把 ``runner.ckpt_path`` 设为 SFT 的 ``full_weights.pt`` 即可从行为克隆 policy 出发；保持 ``null`` 则只从 ResNet-10 编码器开始训练。``actor.model.action_norm_stats`` 必须与 SFT 使用同一个 ``meta.json``。
 
+SFT 的 encoder dropout 为 0.1；PPO 和评测设置 ``encoder_config.dropout: 0.0``，使用确定性的图像特征。
+
 报告中的训练从 SFT 第 8000 步开始，使用 8 张 H100 GPU。要复现相同的 worker 分布和评测频率，在同一个配置文件中设置：
 
 .. code:: yaml

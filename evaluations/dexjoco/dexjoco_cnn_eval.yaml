@@ -77,3 +77,4 @@ rollout:
     backbone: resnet
     encoder_config:
       ckpt_name: "resnet10_pretrained.pt"
+      dropout: 0.0

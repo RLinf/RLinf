@@ -42,7 +42,7 @@ class CNNConfig:
     add_value_head: bool = False
     add_q_head: bool = False
     q_head_type: str = "default"
-    # Per-dimension action mean and std from the dataset.
+    # Per-dimension dataset statistics for unscaled Gaussian actions.
     action_norm_stats: Optional[str] = None
 
     state_latent_dim: int = 64
@@ -84,6 +84,14 @@ class CNNPolicy(nn.Module, BasePolicy):
     def __init__(self, cfg: CNNConfig):
         super().__init__()
         self.cfg = cfg
+        if self.cfg.action_norm_stats is not None and (
+            self.cfg.add_q_head or self.cfg.action_scale is not None
+        ):
+            raise ValueError(
+                "action_norm_stats requires an unscaled Gaussian policy "
+                "(add_q_head=False, action_scale=None), got "
+                f"add_q_head={self.cfg.add_q_head}, action_scale={self.cfg.action_scale}."
+            )
         self.in_channels = self.cfg.image_size[0]
         self.register_buffer(
             "img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 1, 3)
@@ -188,12 +196,6 @@ class CNNPolicy(nn.Module, BasePolicy):
         )
         self.torch_compile_enabled = False
 
-    def train(self, mode: bool = True) -> "CNNPolicy":
-        # PPO rollout and recomputation must use the same deterministic encoder.
-        super().train(mode)
-        self.encoders.eval()
-        return self
-
     def _load_action_norm_stats(self) -> tuple[torch.Tensor, torch.Tensor]:
         width = self.cfg.num_action_chunks * self.cfg.action_dim
         if self.cfg.action_norm_stats is None:
@@ -201,12 +203,15 @@ class CNNPolicy(nn.Module, BasePolicy):
         with open(self.cfg.action_norm_stats) as f:
             stats = json.load(f)
         mean = torch.tensor(stats["action_mean"], dtype=torch.float32)
-        std = torch.tensor(stats["action_std"], dtype=torch.float32).clamp_min(1e-6)
-        if mean.numel() != self.cfg.action_dim:
+        std = torch.tensor(stats["action_std"], dtype=torch.float32)
+        expected_shape = (self.cfg.action_dim,)
+        if mean.shape != expected_shape or std.shape != expected_shape:
             raise ValueError(
-                f"action_norm_stats must have {self.cfg.action_dim} entries per "
-                f"dimension, got {mean.numel()} in {self.cfg.action_norm_stats}."
+                "action_norm_stats requires action_mean and action_std with shape "
+                f"{expected_shape}, got {tuple(mean.shape)} and {tuple(std.shape)} "
+                f"in {self.cfg.action_norm_stats}."
             )
+        std = std.clamp_min(1e-6)
         return (
             mean.repeat(self.cfg.num_action_chunks).view(1, width),
             std.repeat(self.cfg.num_action_chunks).view(1, width),
@@ -320,8 +325,6 @@ class CNNPolicy(nn.Module, BasePolicy):
             raise NotImplementedError
 
     def sft_forward(self, data, **kwargs):
-        # SFT is the only path that uses the encoder dropout; train() keeps it off.
-        self.encoders.train(self.training)
         obs = self.preprocess_env_obs(
             {
                 "main_images": data["main_images"],
@@ -331,12 +334,10 @@ class CNNPolicy(nn.Module, BasePolicy):
         )
         target_actions = data["action"].to(obs["states"].device)
         target_actions = target_actions.reshape(target_actions.shape[0], -1)
-        full_feature, mix_feature, action_mean, action_logstd = (
-            self._actor_forward_from_processed_tensors(
-                obs["main_images"],
-                obs["states"],
-                obs.get("extra_view_images"),
-            )
+        _, _, action_mean, action_logstd = self._actor_forward_from_processed_tensors(
+            obs["main_images"],
+            obs["states"],
+            obs.get("extra_view_images"),
         )
         if action_mean.shape != target_actions.shape:
             raise ValueError(

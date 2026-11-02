@@ -41,23 +41,14 @@ actor:
   seed: 0
 
   model:
-    model_type: cnn_policy
     model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-    image_size: [3, 128, 128]
     image_num: 2
     state_dim: 23
     action_dim: 22
     num_action_chunks: 10
-    hidden_dim: 256
     action_norm_stats: "/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json"
-    precision: "32"
-    add_value_head: True # Keeps the PPO/eval parameter layout so runner.ckpt_path loads strictly.
+    add_value_head: True # Match the PPO checkpoint layout.
     add_q_head: False
-    is_lora: False
-    lora_rank: 32
-    backbone: resnet
-    encoder_config:
-      ckpt_name: "resnet10_pretrained.pt"
 
   optim:
     lr: 3.0e-4

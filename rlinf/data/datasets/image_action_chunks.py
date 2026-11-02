@@ -33,29 +33,48 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 
 class ImageActionChunkDataset(Dataset):
-    """One exported directory; items carry ``main_images``, ``states``, ``action``
-    and, when the export had several cameras, ``extra_view_images``."""
+    """Memory-mapped image/state/action chunks from one exported directory.
 
-    def __init__(self, root: str):
+    Items carry ``main_images``, ``states``, ``action`` and, for multi-camera
+    exports, ``extra_view_images``.
+    """
+
+    def __init__(self, root: str) -> None:
         self.root = root
         with open(os.path.join(root, "meta.json")) as f:
             self.meta = json.load(f)
-        self.main_images = np.load(os.path.join(root, "main_images.npy"), mmap_mode="r")
-        self.states = np.load(os.path.join(root, "states.npy"), mmap_mode="r")
-        self.actions = np.load(os.path.join(root, "actions.npy"), mmap_mode="r")
-        extra_path = os.path.join(root, "extra_view_images.npy")
+        self._open_arrays()
+
+    def _open_arrays(self) -> None:
+        self.main_images = np.load(
+            os.path.join(self.root, "main_images.npy"), mmap_mode="r"
+        )
+        self.states = np.load(os.path.join(self.root, "states.npy"), mmap_mode="r")
+        self.actions = np.load(os.path.join(self.root, "actions.npy"), mmap_mode="r")
+        extra_path = os.path.join(self.root, "extra_view_images.npy")
         self.extra_view_images = (
             np.load(extra_path, mmap_mode="r") if os.path.exists(extra_path) else None
         )
         assert len(self.main_images) == len(self.states) == len(self.actions), (
-            f"{root}: expected equal sample counts, got images {len(self.main_images)}, "
+            f"{self.root}: expected equal sample counts, got images {len(self.main_images)}, "
             f"states {len(self.states)}, actions {len(self.actions)}"
         )
 
-    def __len__(self):
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        # Workers reopen the files; pickling memmaps would copy their contents.
+        for key in ("main_images", "states", "actions", "extra_view_images"):
+            del state[key]
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._open_arrays()
+
+    def __len__(self) -> int:
         return len(self.states)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         item = {
             "main_images": torch.from_numpy(np.array(self.main_images[idx])),
             "states": torch.from_numpy(np.array(self.states[idx])),
@@ -80,7 +99,8 @@ def build_cnn_sft_dataloader(
     Args:
         cfg: Full RLinf config; reads ``actor.seed``, ``actor.micro_batch_size``
             and ``data.num_workers``.
-        world_size / rank: Distributed layout for the sampler.
+        world_size: Number of distributed sampler replicas.
+        rank: Index of this sampler replica.
         data_paths: One exported directory or a list of them.
         eval_dataset: Build the non-shuffled evaluation loader.
 

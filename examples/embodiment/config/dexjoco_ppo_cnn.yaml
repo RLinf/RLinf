@@ -145,6 +145,7 @@ actor:
     backbone: resnet
     encoder_config:
       ckpt_name: "resnet10_pretrained.pt"
+      dropout: 0.0
 
   optim:
     lr: 1.0e-5

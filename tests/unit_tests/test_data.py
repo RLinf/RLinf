@@ -3624,9 +3624,9 @@ def _write_image_action_chunks(root, num_frames, chunk, with_extra_views):
             root / "extra_view_images.npy",
             rng.integers(0, 256, (num_frames, 1, 8, 8, 3), dtype=np.uint8),
         )
-    np.save(
-        root / "states.npy", rng.standard_normal((num_frames, 23)).astype(np.float32)
-    )
+    states = rng.standard_normal((num_frames, 23)).astype(np.float32)
+    states[:, 0] = np.arange(num_frames)
+    np.save(root / "states.npy", states)
     np.save(
         root / "actions.npy",
         rng.standard_normal((num_frames, chunk, 22)).astype(np.float32),
@@ -3655,6 +3655,38 @@ def test_image_action_chunk_dataset_items_use_the_env_observation_keys(tmp_path)
     assert item["extra_view_images"].shape == (1, 8, 8, 3)
 
 
+@pytest.mark.parametrize("with_extra_views", [False, True])
+def test_image_action_chunk_dataset_pickle_reopens_file_mappings(
+    tmp_path, with_extra_views
+):
+    from rlinf.data.datasets.image_action_chunks import ImageActionChunkDataset
+
+    payloads = []
+    for name, num_frames in (("small", 4), ("large", 128)):
+        root = tmp_path / name
+        _write_image_action_chunks(root, num_frames, 10, with_extra_views)
+        dataset = ImageActionChunkDataset(str(root))
+        payload = pickle.dumps(dataset)
+        payloads.append(payload)
+        restored = pickle.loads(payload)
+
+        assert len(restored) == num_frames
+        array_names = ["main_images", "states", "actions"]
+        if with_extra_views:
+            array_names.append("extra_view_images")
+        else:
+            assert restored.extra_view_images is None
+        for array_name in array_names:
+            array = getattr(restored, array_name)
+            assert isinstance(array, np.memmap)
+            assert Path(array.filename) == root / f"{array_name}.npy"
+            assert array.mode == "r"
+        for key, value in dataset[num_frames - 1].items():
+            torch.testing.assert_close(restored[num_frames - 1][key], value)
+
+    assert len(payloads[1]) < 2 * len(payloads[0])
+
+
 def test_cnn_sft_dataloader_shards_full_batches_across_ranks(tmp_path):
     from rlinf.data.datasets.image_action_chunks import build_cnn_sft_dataloader
 
@@ -3673,3 +3705,10 @@ def test_cnn_sft_dataloader_shards_full_batches_across_ranks(tmp_path):
     assert [len(b) for b in batches] == [3, 3]
     assert batches[0][0]["action"].shape == (2, 10, 22)
     assert batches[0][0]["extra_view_images"].shape == (2, 1, 8, 8, 3)
+    sample_ids = [
+        {int(index) for batch in rank_batches for index in batch["states"][:, 0]}
+        for rank_batches in batches
+    ]
+    assert [len(ids) for ids in sample_ids] == [6, 6]
+    assert sample_ids[0].isdisjoint(sample_ids[1])
+    assert len(sample_ids[0] | sample_ids[1]) == 12

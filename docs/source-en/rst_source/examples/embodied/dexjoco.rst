@@ -354,6 +354,9 @@ start from the behavior-cloned policy; with ``null`` the policy starts from the
 ResNet-10 encoder alone. ``actor.model.action_norm_stats`` must name the same
 ``meta.json`` as the SFT run.
 
+The encoder uses dropout 0.1 during SFT. PPO and evaluation set
+``encoder_config.dropout: 0.0`` for deterministic image features.
+
 The reported run starts from SFT step 8000 on 8 H100 GPUs. To reproduce its
 placement and evaluation schedule, set these fields in the same config:
 
