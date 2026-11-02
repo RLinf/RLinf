@@ -19,7 +19,7 @@ cluster:
 runner:
   task_type: embodied
   ckpt_path: /path/to/ogpo_bc.pt
-  ckpt_allowed_missing_prefixes: ["q_head.", "action_scale", "action_bias"]
+  ckpt_allowed_missing_prefixes: ["q_head."]
   use_training_pipeline: False
   logger:
     log_path: "../results"
@@ -35,7 +35,6 @@ runner:
 algorithm:
   loss_type: embodied_ogpo
   adv_type: raw
-  loss_agg_func: token-mean
   group_size: 32
   update_epoch: 8
   gamma: 0.99
@@ -72,7 +71,7 @@ env:
     init_params:
       reward_mode: "sparse"
     auto_reset: True
-    ignore_terminations: False
+    ignore_terminations: True
     max_episode_steps: 100
     max_steps_per_rollout_epoch: 100
     use_fixed_reset_state_ids: False

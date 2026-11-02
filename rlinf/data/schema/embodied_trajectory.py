@@ -173,11 +173,7 @@ class TrajectoryPlan:
                 "are computed on actor workers after rollout."
             )
         if cfg.algorithm.get("loss_type") == "embodied_ogpo":
-            if (
-                use_pipeline
-                or use_lerobot
-                or cfg.runner.get("execution_mode", "sync") != "sync"
-            ):
+            if use_pipeline or use_lerobot:
                 raise ValueError("OGPO requires synchronous episode collection")
             return TrajectoryMode.OGPO
         if use_lerobot:

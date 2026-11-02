@@ -54,8 +54,6 @@ class OGPOFlowActor(nn.Module):
         denoising_steps: int,
     ):
         super().__init__()
-        self.register_buffer("action_scale", torch.ones(action_dim))
-        self.register_buffer("action_bias", torch.zeros(action_dim))
         self.action_dim = action_dim
         self.denoising_steps = denoising_steps
         self.time_embedding = SinusoidalTimeEmbedding()

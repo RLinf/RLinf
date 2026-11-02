@@ -477,13 +477,9 @@ class EnvWorker(Worker):
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
 
         if self._is_ogpo:
-            raw_chunk_terminations = infos.pop("_raw_chunk_terminations", None)
-            raw_chunk_truncations = infos.pop("_raw_chunk_truncations", None)
+            raw_chunk_terminations = infos.pop("_raw_chunk_terminations")
+            raw_chunk_truncations = infos.pop("_raw_chunk_truncations")
             terminal_obs = infos.pop("_terminal_observation")
-            if raw_chunk_terminations is None or raw_chunk_truncations is None:
-                raise RuntimeError(
-                    "OGPO requires raw per-step termination data from ManiSkill"
-                )
             episode_info = infos.get("final_info", infos).get("episode", {})
             success = (
                 torch.as_tensor(
@@ -520,14 +516,6 @@ class EnvWorker(Worker):
                 rlt_switch_flags=rlt_switch_flags,
             ),
         )
-        chunk_step_payload = {
-            "chunk_actions": exec_actions,
-            "obs_list": obs_list,
-            "terminations": chunk_terminations,
-            "truncations": chunk_truncations,
-            "infos_list": infos_list,
-            "valid_action_mask": valid_action_mask,
-        }
         if self._is_ogpo:
             episode_infos = [{} for _ in obs_list]
             episode_infos[-1]["terminal_obs"] = terminal_obs
@@ -541,6 +529,15 @@ class EnvWorker(Worker):
                     "infos_list": episode_infos,
                 }
             )
+        else:
+            chunk_step_payload = {
+                "chunk_actions": exec_actions,
+                "obs_list": obs_list,
+                "terminations": chunk_terminations,
+                "truncations": chunk_truncations,
+                "infos_list": infos_list,
+                "valid_action_mask": valid_action_mask,
+            }
         return env_output, env_info, chunk_step_payload
 
     def env_evaluate_step(
@@ -561,14 +558,8 @@ class EnvWorker(Worker):
         )
         env_info = {}
 
-        if self._is_ogpo:
-            chunk_step_result = self.eval_env_list[stage_id].chunk_step(
-                chunk_actions, stop_on_done=True
-            )
-        else:
-            chunk_step_result = self.eval_env_list[stage_id].chunk_step(chunk_actions)
         obs_list, _, chunk_terminations, chunk_truncations, infos_list = (
-            chunk_step_result
+            self.eval_env_list[stage_id].chunk_step(chunk_actions)
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None

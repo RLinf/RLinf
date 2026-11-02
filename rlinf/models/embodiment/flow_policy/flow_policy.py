@@ -468,15 +468,15 @@ class FlowStatePolicy(nn.Module, BasePolicy):
         )
 
         # Action scaling for flow actor
-        if self.cfg.action_scale is not None:
-            l, h = self.cfg.action_scale
-            shape = (flow_action_dim,) if is_ogpo else ()
-            action_scale = torch.full(shape, (h - l) / 2.0, dtype=torch.float32)
-            action_bias = torch.full(shape, (h + l) / 2.0, dtype=torch.float32)
-        else:
-            # Default to [-1, 1] range
-            action_scale = torch.ones(flow_action_dim, dtype=torch.float32)
-            action_bias = torch.zeros(flow_action_dim, dtype=torch.float32)
+        if not is_ogpo:
+            if self.cfg.action_scale is not None:
+                l, h = self.cfg.action_scale
+                action_scale = torch.tensor((h - l) / 2.0, dtype=torch.float32)
+                action_bias = torch.tensor((h + l) / 2.0, dtype=torch.float32)
+            else:
+                # Default to [-1, 1] range
+                action_scale = torch.ones(self.cfg.action_dim, dtype=torch.float32)
+                action_bias = torch.zeros(self.cfg.action_dim, dtype=torch.float32)
 
         if self.cfg.flow_actor_type == "FlowTActor":
             self.flow_actor = FlowTActor(
@@ -537,7 +537,7 @@ class FlowStatePolicy(nn.Module, BasePolicy):
                 initializer="xavier_uniform" if is_ogpo else "default",
             )
 
-        if is_ogpo or self.cfg.action_scale is not None:
+        if not is_ogpo and self.cfg.action_scale is not None:
             self.register_buffer("action_scale", action_scale.clone())
             self.register_buffer("action_bias", action_bias.clone())
         else:
