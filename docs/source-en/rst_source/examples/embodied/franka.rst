@@ -548,12 +548,14 @@ for the next demonstration. Collect 20 successful demonstrations:
      bash examples/embodiment/collect_data.sh realworld_collect_data \
      "env.eval.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE"
 
-The collector saves successful trajectories under ``logs/franka-demo/demos``.
-This replay-buffer directory is the input for RLPD, not the optional episode
-exports under ``collected_data``. Wait for the collector to finish and release
-the arm before starting training. Use a new log directory for a new collection
-session to keep demonstration sets separate. To collect with a GELLO device
-instead of the SpaceMouse, see :doc:`franka_gello`.
+The collector saves successful trajectories under
+``logs/franka-demo/demo_buffer``. This replay-buffer directory is
+the input for RLPD. Optional episode exports sit beside it: pickle files under
+``pickle_episode/``, and LeRobot shards under
+``lerobot_dataset/``. Wait for the collector to finish and release the arm
+before starting training. Use a new log directory for a new collection session
+to keep demonstration sets separate. To collect with a GELLO device instead of
+the SpaceMouse, see :doc:`franka_gello`.
 
 Train the Policy
 ~~~~~~~~~~~~~~~~~~~~
@@ -565,7 +567,7 @@ With the same environment, Ray instance, and target pose, start training:
    bash examples/embodiment/run_realworld_async.sh \
      realworld_peginsertion_rlpd_cnn_async \
      "env.train.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE" \
-     "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demos" \
+     "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demo_buffer" \
      "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained" \
      "rollout.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
 
@@ -669,7 +671,7 @@ and run the same installation:
 Both computers must use the same RLinf revision, Python version, and Ray
 version. Collect demonstrations on the controller using the earlier collection
 steps with node rank 0, before joining the multi-node cluster. Copy the
-complete ``logs/franka-demo/demos`` directory to the GPU server.
+complete ``logs/franka-demo/demo_buffer`` directory to the GPU server.
 
 Configure and Start the Cluster
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

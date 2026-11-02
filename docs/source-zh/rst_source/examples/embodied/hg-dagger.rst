@@ -195,8 +195,8 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
        data_collection:
          enabled: True
-         save_dir: ${runner.logger.log_path}/collected_data
-         export_format: "lerobot"
+         save_dir: ${runner.logger.log_path}
+         export_format: [replay_buffer, lerobot_dataset]
          only_success: True
          robot_type: "panda"
          fps: 10
@@ -213,8 +213,8 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 
 遥操作过程中，同一次运行会写出：
 
-- replay-buffer 轨迹到 ``logs/{timestamp}/demos/``
-- LeRobot 数据到 ``logs/{timestamp}/collected_data/``
+- replay-buffer 轨迹到 ``logs/{timestamp}/demo_buffer/``
+- LeRobot 数据到 ``logs/{timestamp}/lerobot_dataset/``
 
 关于采集格式，参见 :doc:`../../guides/data_collection`。
 

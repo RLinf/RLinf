@@ -29,6 +29,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
@@ -255,6 +256,44 @@ def test_entropy_loss_rejects_a_model_that_computes_no_entropy():
     # entropy_bonus is a config error, not a zero bonus.
     with pytest.raises(ValueError, match="algorithm.entropy_bonus"):
         compute_entropy_loss(None, "chunk_level", torch.ones(4, 1, dtype=torch.bool))
+
+
+# ReinForce++ advantages on the reasoning path: rewards are one scalar per
+# response and response_mask is [bsz, seq_len], right-padded.
+
+
+def _reinpp_advantages(rewards, use_reinpp_baseline):
+    response_mask = torch.tensor(
+        [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1], [1, 0, 0, 0, 0], [1, 1, 1, 1, 0]]
+    )
+    advantages, _ = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="reinpp",
+        rewards=rewards,
+        loss_mask=response_mask,
+        group_size=2,
+        use_reinpp_baseline=use_reinpp_baseline,
+    )
+    return advantages
+
+
+def test_reinpp_baseline_subtracts_the_group_mean_reward():
+    rewards = torch.tensor([1.0, 0.0, 1.0, 1.0])
+
+    with_baseline = _reinpp_advantages(rewards, use_reinpp_baseline=True)
+    centered = torch.tensor([0.5, -0.5, 0.0, 0.0])
+    expected = _reinpp_advantages(centered, use_reinpp_baseline=False)
+
+    assert torch.allclose(with_baseline, expected)
+
+
+def test_reinpp_baseline_leaves_the_caller_rewards_unchanged():
+    # The workers pass batch["rewards"] straight through and log it afterwards.
+    rewards = torch.tensor([1.0, 0.0, 1.0, 1.0])
+
+    _reinpp_advantages(rewards, use_reinpp_baseline=True)
+
+    assert rewards.tolist() == [1.0, 0.0, 1.0, 1.0]
 
 
 def _load_checkpoint_utils():

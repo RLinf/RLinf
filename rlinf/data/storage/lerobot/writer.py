@@ -15,10 +15,64 @@
 """LeRobot dataset writer for saving rollout data."""
 
 import gc
-from typing import Any
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from types import MethodType
+from typing import Any, Optional
+
+import numpy as np
 
 from rlinf.data.storage.lerobot.compat import add_frame_to_dataset
 from rlinf.utils.logging import get_logger
+
+
+def _write_png(image: Any, fpath: Any) -> None:
+    """Write one RGB image as a lossless PNG."""
+    import cv2
+
+    if hasattr(image, "detach"):
+        image = image.detach().cpu().numpy()
+    image = np.asarray(image)
+    if image.shape[0] == 3:
+        image = image.transpose(1, 2, 0)
+    if image.dtype != np.uint8:
+        if image.min() < 0 or image.max() > 1:
+            raise ValueError("Floating-point images must be in [0, 1].")
+        image = (image * 255).astype(np.uint8)
+    # Uncompressed, because compressing three views at the recording rate
+    # costs more CPU than the control machine has. These bytes are what the
+    # dataset keeps: saving an episode embeds them into parquet unchanged.
+    if not cv2.imwrite(
+        str(fpath),
+        cv2.cvtColor(image, cv2.COLOR_RGB2BGR),
+        [cv2.IMWRITE_PNG_COMPRESSION, 0],
+    ):
+        raise OSError(f"Failed to write recording image: {fpath}")
+
+
+def _save_episode_table(dataset, episode_buffer: dict, episode_index: int) -> None:
+    """Write LeRobot v2 rows in small batches without retaining past episodes."""
+    import datasets
+    import pyarrow.parquet as pq
+    from datasets.table import embed_table_storage
+
+    features = dataset.hf_features
+    path = dataset.root / dataset.meta.get_data_file_path(ep_index=episode_index)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(".parquet.tmp")
+    try:
+        with pq.ParquetWriter(temporary_path, features.arrow_schema) as writer:
+            # Bound embedded image bytes, including incompressible RGB frames.
+            for start in range(0, len(episode_buffer["index"]), 16):
+                batch = datasets.Dataset.from_dict(
+                    {key: episode_buffer[key][start : start + 16] for key in features},
+                    features=features,
+                )
+                table = embed_table_storage(batch.data.table)
+                writer.write_table(table)
+                del table, batch
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _silence_hf_datasets_progress_bars() -> None:
@@ -55,6 +109,8 @@ class LeRobotDatasetWriter:
         """Initialize the writer."""
         self.dataset = None
         self.logger = get_logger()
+        self._image_pool: Optional[ThreadPoolExecutor] = None
+        self._pending_images: list[Future] = []
 
     def create(
         self,
@@ -170,6 +226,89 @@ class LeRobotDatasetWriter:
             image_writer_threads=image_writer_threads,
             image_writer_processes=image_writer_processes,
         )
+        if hasattr(self.dataset, "_save_episode_table"):
+            # LeRobot v2 normally concatenates all embedded episodes in RAM.
+            # This instance only records; keep upstream metadata/stats handling
+            # but replace its table writer. Other dataset instances are untouched.
+            #
+            # These are LeRobot-internal hooks, pinned by LEROBOT_COMMIT in
+            # requirements/install.sh. Re-verify them (and the guards below)
+            # whenever that pin moves.
+            self.dataset._save_episode_table = MethodType(
+                _save_episode_table, self.dataset
+            )
+            self.dataset.hf_dataset = None
+            if image_writer_threads == 0 and image_writer_processes == 0:
+                # No upstream writer: this one writes each frame's views at
+                # once, a thread per view, rather than one after another.
+                views = sum(
+                    spec["dtype"] in ("image", "video") for spec in features.values()
+                )
+                self._image_pool = ThreadPoolExecutor(
+                    max_workers=max(1, views), thread_name_prefix="lerobot_image"
+                )
+                self.dataset._save_image = self._queue_image
+
+    def _queue_image(self, image: Any, fpath: Any) -> None:
+        """Start writing one image; :meth:`_wait_images` collects it."""
+        self._pending_images.append(self._image_pool.submit(_write_png, image, fpath))
+
+    def _wait_images(self) -> None:
+        """Wait for every image started so far, then raise the first failure."""
+        pending, self._pending_images = self._pending_images, []
+        wait(pending)
+        for future in pending:
+            future.result()
+
+    def add_frame(self, frame_data: dict[str, Any]) -> None:
+        """Stream one frame into the in-progress episode buffer.
+
+        The frame's images are on disk when this returns; only small
+        per-frame fields stay in memory. Pair with :meth:`save_episode` to
+        close out the episode.
+
+        Args:
+            frame_data: Same per-frame dict as the entries of the list taken
+                by :meth:`add_episode`.
+        """
+        if self.dataset is None:
+            raise RuntimeError("Dataset not created. Call create() first.")
+        add_frame_to_dataset(self.dataset, frame_data)
+        self._wait_images()
+        if self.dataset.image_writer is not None:
+            # The upstream image queue is unbounded. Drain this frame's views
+            # before accepting another; CollectEpisode supplies bounded async I/O.
+            self.dataset.image_writer.wait_until_done()
+
+    def save_episode(self, is_success: Optional[bool] = None) -> int:
+        """Save the episode accumulated through :meth:`add_frame` calls.
+
+        Args:
+            is_success: When given, overwrite every frame's ``is_success``
+                entry with this episode-level value and mark the last frame
+                ``done``. This lets streaming callers stamp the outcome that
+                only becomes known after the final frame was added.
+
+        Returns:
+            The number of frames saved; ``0`` when no episode was in progress.
+        """
+        if self.dataset is None:
+            raise RuntimeError("Dataset not created. Call create() first.")
+        episode_buffer = getattr(self.dataset, "episode_buffer", None)
+        if not episode_buffer or not episode_buffer.get("size"):
+            self.logger.warning("save_episode called with no frames; skipping.")
+            return 0
+        size = episode_buffer["size"]
+        if is_success is not None:
+            if "is_success" in episode_buffer:
+                episode_buffer["is_success"] = [
+                    np.array([is_success], dtype=bool) for _ in range(size)
+                ]
+            if "done" in episode_buffer:
+                episode_buffer["done"][-1] = np.array([True], dtype=bool)
+        self.dataset.save_episode()
+        self.logger.info(f"Saved streaming episode with {size} frames.")
+        return size
 
     def add_episode(self, episode_data: list[dict[str, Any]]) -> None:
         """
@@ -196,6 +335,7 @@ class LeRobotDatasetWriter:
             return
         for frame_data in episode_data:
             add_frame_to_dataset(self.dataset, frame_data)
+        self._wait_images()
 
         self.dataset.save_episode()
         self.logger.info(
@@ -219,6 +359,10 @@ class LeRobotDatasetWriter:
         ):
             self.dataset.image_writer.stop()
             self.dataset.image_writer = None
+
+        if self._image_pool is not None:
+            self._image_pool.shutdown(wait=True)
+            self._image_pool = None
 
         if hasattr(self.dataset, "episode_buffer"):
             self.dataset.episode_buffer = None

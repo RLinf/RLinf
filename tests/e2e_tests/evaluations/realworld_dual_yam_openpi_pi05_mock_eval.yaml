@@ -1,0 +1,75 @@
+defaults:
+  - env/realworld_dual_yam_joint@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout: 0
+    env:
+      node_group: yam
+      placement: 0
+  node_groups:
+    - label: yam
+      node_ranks: 0
+      hardware:
+        type: DualYam
+        configs:
+          - node_rank: 0
+            left_can_channel: can0
+            right_can_channel: can1
+            camera_serials: [MOCK0001, MOCK0002, MOCK0003]
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: /workspace/results/realworld_dual_yam_openpi_pi05_mock_eval
+    project_name: rlinf
+    experiment_name: ci-test
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  max_steps: 1
+  only_eval: true
+  val_check_interval: -1
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  eval:
+    total_num_envs: 1
+    max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
+    rollout_epoch: 1
+    teleop: none
+    override_cfg:
+      task_description: dual-arm YAM manipulation task
+      max_num_steps: 10
+      image_height: 48
+      image_width: 64
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: false
+  collect_prev_infos: false
+  model:
+    model_path: /workspace/dataset/pi05_base
+    precision: bf16
+    num_action_chunks: 5
+    action_dim: 14
+    rewrite_chunk_gripper: false
+    openpi:
+      task: eval
+      config_name: pi05_yam_joint

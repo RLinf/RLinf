@@ -110,7 +110,9 @@ class DreamTransform(DreamTransformBase):
             # 3) Prepare actions
             transformed_data["segmentation_target"] = np.zeros((2,))
             transformed_data["segmentation_target_mask"] = np.zeros((1,))
-            transformed_data["has_real_action"] = np.ones((), dtype=bool)
+            # Collates to [B, 1]; the action head's has_real_action[:, None]
+            # then masks the [B, T, D] action loss per sample.
+            transformed_data["has_real_action"] = np.ones((1,), dtype=bool)
             actions, actions_mask, _ = self._prepare_action(data)
             transformed_data["action"] = actions
             transformed_data["action_mask"] = actions_mask
@@ -147,7 +149,7 @@ class DreamTransform(DreamTransformBase):
             transformed_data["embodiment_id"] = self.embodiment_tag_mapping["dream"]
             transformed_data["state"] = np.zeros_like(transformed_data["state"])
             actions_shape = transformed_data["action"].shape
-            transformed_data["has_real_action"] = np.ones((), dtype=bool)
+            transformed_data["has_real_action"] = np.ones((1,), dtype=bool)
             transformed_data["has_lapa_action"] = np.zeros((), dtype=bool)
             dream_actions = data["dream_actions"]
             assert dream_actions.size == actions_shape[0] * actions_shape[1], (
@@ -158,7 +160,7 @@ class DreamTransform(DreamTransformBase):
 
         if is_lapa_instance:
             assert "lapa_action" in data
-            transformed_data["has_real_action"] = np.ones((), dtype=bool)
+            transformed_data["has_real_action"] = np.ones((1,), dtype=bool)
             transformed_data["has_lapa_action"] = np.zeros((), dtype=bool)
             transformed_data["embodiment_id"] = self.embodiment_tag_mapping["lapa"]
             transformed_data["state"] = np.zeros_like(transformed_data["state"])

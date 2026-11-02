@@ -1,0 +1,107 @@
+# Set every station-specific value before launching the collector.
+defaults:
+  - env/realworld_dual_yam_joint@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: yam
+      placement: 0
+  node_groups:
+    - label: yam
+      node_ranks: 0
+      hardware:
+        type: DualYam
+        configs:
+          # Unset here, the CAN channels and the camera serials come from
+          # LEFT_CAN_CHANNEL, RIGHT_CAN_CHANNEL, and CAMERA_SERIALS (top, left,
+          # right) exported on this node before Ray starts.
+          - node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: dual-yam-pico-collection
+    logger_backends: [tensorboard]
+  num_data_episodes: 50
+  record_task_description: true
+
+seed: 1234
+
+env:
+  group_name: EnvGroup
+  eval:
+    max_episode_steps: 10000
+    max_steps_per_rollout_epoch: 10000
+    auto_reset: false
+    ignore_terminations: false
+    # One controller per arm. Each solves its pose through the env's arm IK
+    # (override_cfg.ik) into joint targets.
+    teleop:
+      - {pico: {drives: left}}
+      - {pico: {drives: right}}
+    pico:
+      zmq_addr: ${oc.env:YAM_PICO_ZMQ_ADDR}
+      control_trigger: grip
+      control_threshold: 0.85
+      position_scale: 0.3
+      rotation_scale: 0.3
+      rotation_delta_frame: operator
+      max_stale_s: 0.2
+      max_tick_s: 0.1
+      ik_backtrack_attempts: 3
+      calibration:
+        button: trigger
+        auto_calibrate_on_start: true
+        required: true
+      left:
+        gripper_close_button: X
+        gripper_open_button: Y
+        operator_to_robot_yaw: ${oc.env:YAM_LEFT_OPERATOR_TO_ROBOT_YAW}
+      right:
+        gripper_close_button: A
+        gripper_open_button: B
+        operator_to_robot_yaw: ${oc.env:YAM_RIGHT_OPERATOR_TO_ROBOT_YAW}
+    yam_episode:
+      record_button: right_menu_button
+      discard_button: left_menu_button
+      button_debounce_s: 0.2
+      keyboard_enabled: false
+      wait_for_record_button: true
+      log_control_timing: true
+    override_cfg:
+      enforce_runtime_joint_limits: true
+      step_frequency: 30.0
+      manual_episode_control_only: true
+      ik:
+        site_name: grasp_site
+        solver: quadprog
+        max_iters: 30
+        dt: 0.01
+        position_tolerance: 0.001
+        rotation_tolerance: 0.01
+        max_solve_s: 0.03
+      reset:
+        enabled: false
+      park_on_close:
+        enabled: false
+    data_collection:
+      enabled: true
+      save_dir: ${runner.logger.log_path}
+      export_format: lerobot_dataset
+      streaming: true
+      only_success: false
+      robot_type: dual_yam
+      fps: 30

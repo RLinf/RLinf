@@ -11,15 +11,16 @@ Use alongside the PR diff. **Always cross-reference against `origin/main`** (`gi
 - [ ] Error handling: meaningful messages, validate at boundaries, no silent except
 - [ ] Behavior parity vs `origin/main` on refactored code paths (read both side-by-side)
 
-## (b) Design & pattern consistency vs `origin/main` — primary
-- [ ] Closest sibling identified in `origin/main`; new code matches its structure/naming
-- [ ] Registry decorators used (`register_advantage` / `register_policy_loss` / `register_reward`)
+## (b) Design, code reuse & unnecessary changes vs `origin/main` — primary
+- [ ] Closest *recent* sibling identified in `origin/main` (`git log`); new code matches its structure/naming rather than legacy boilerplate
+- [ ] Clean, single-responsibility abstractions (`AGENTS.md`): no pass-through wrappers, parallel vocabularies, or dynamic machinery where a direct method/constructor or registry (`register_model` / `register_advantage` / `register_policy_loss` / `register_reward` / `get_env_cls()`) works
 - [ ] `SupportedModel` / `SupportedEnvType` / `get_env_cls()` / `validate_cfg` updated where needed
-- [ ] Worker subclasses `Worker`, uses `self.log_*`, launched via `create_group(...).launch(...)`
-- [ ] Embodied policy extends `BasePolicy`; no reimplemented base behavior
-- [ ] YAML config copied from a sibling; no dynamic values; fields read-only in code
-- [ ] No duplication of helpers already in `rlinf/utils/` (cite the existing helper)
-- [ ] Simpler approach used when the codebase already has one
+- [ ] Worker subclasses `Worker`, uses `self.log_*`, launched via `create_group(...).launch(...)`; embodied policy extends `BasePolicy`
+- [ ] No duplication of helpers/transforms already in `rlinf/utils/`, `rlinf/models/embodiment/`, `rlinf/envs/`, `rlinf/data/`, or `requirements/install.sh` (cite `origin/main:file:line`)
+- [ ] No dead/unreferenced functions, classes, dataclass fields, or defensive branches for impossible inputs
+- [ ] YAML config copied from a current sibling; static values only; fields read-only in code; no redundant re-declaration of keys already set by Hydra `defaults`
+- [ ] No unnecessary install/Docker/CI bloat: no inline `pyproject.toml` patching or per-env Torch pins in `install.sh`, no Docker stages for real-world envs that don't ship images, no redundant per-file rules in `ci-tests.yml`, no duplicated e2e steps across workflows
+- [ ] Unit tests placed in the component's existing `tests/unit_tests/test_<component>.py` file (not a new per-model/env/fix file) and test real contracts rather than mock setup
 - [ ] No hardcoded machine paths, sleep-based sync, or monkey-patches
 
 ## (c) Code ↔ docs consistency
@@ -47,3 +48,7 @@ Use alongside the PR diff. **Always cross-reference against `origin/main`** (`gi
 - [ ] Newly-added files (`git diff --name-status origin/main...<pr-head>`, status `A`) carry the `# Copyright <YEAR> The RLinf Authors.` header with `<YEAR>` = current year (`date +%Y`); third-party-vendored files keep their upstream copyright line
 - [ ] Every commit `Signed-off-by`; Conventional Commits subject
 - [ ] PR title in Conventional Commits format; PR Description + Checklist sections filled
+
+## Output clarity
+- [ ] Each finding includes **both** a plain-language explanation for a reviewer with little background in that module (what it tries to do, what happens instead, and why it matters) **and** a step-by-step code walkthrough that directly shows the key offending code snippet(s) inline rather than only pointing to line numbers
+

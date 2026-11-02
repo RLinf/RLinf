@@ -329,11 +329,11 @@ Key data-collection settings in the same file:
      - ``spacemouse``
      - Which device drives the arm during collection.
    * - ``env.eval.data_collection.save_dir``
-     - ``${runner.logger.log_path}/collected_data``
-     - Directory where collected trajectories are saved.
+     - ``${runner.logger.log_path}``
+     - Collection root. LeRobot shards go to ``{save_dir}/lerobot_dataset`` and the replay buffer goes to ``{save_dir}/demo_buffer``.
    * - ``env.eval.data_collection.export_format``
-     - ``"lerobot"``
-     - Export format for the collected data.
+     - ``[replay_buffer, lerobot_dataset]``
+     - Write both the replay buffer and a LeRobot dataset. The real-robot collector accepts ``replay_buffer``, ``pickle_episode``, and ``lerobot_dataset``.
    * - ``env.eval.data_collection.only_success``
      - ``True``
      - Only save successful episodes.
@@ -388,7 +388,7 @@ Pass another config name if you copy the ZED + Robotiq YAML:
 
 During collection, use the SpaceMouse to teleoperate the robot.  The script
 will terminate after the configured number of episodes and save the data
-under ``logs/<timestamp>-<config_name>/collected_data/``.
+under ``logs/<timestamp>-<config_name>/`` as ``demo_buffer/`` and ``lerobot_dataset/``.
 
 After collection, upload the data to the training node and set the
 ``algorithm.demo_buffer.load_path`` field in your training config to the

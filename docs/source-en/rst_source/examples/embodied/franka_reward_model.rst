@@ -139,11 +139,12 @@ Follow the steps in the **Data Collection** section under **Running the Experime
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: True
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: [replay_buffer, pickle_episode]
+         only_success: True
 
 Approach 1: Keyboard Labeling (General-Purpose)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -211,7 +212,7 @@ It is recommended to set ``fail-success-ratio`` to ``3``:
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
@@ -334,8 +335,8 @@ Enable ``data_collection`` to save each episode as a ``.pkl`` file:
      eval:
        data_collection:
          enabled: True
-         save_dir: /path/to/collected_data
-         export_format: "pickle"
+         save_dir: /path/to/run
+         export_format: pickle_episode
          only_success: False
 
 Collection Tips
@@ -379,7 +380,7 @@ Preprocess into VLM Trend Dataset
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The collected ``.pkl`` episodes must be converted to VLM trend SFT format using
-``preprocess_vlm_trend_reward_dataset.py``. Activate the virtual environment and
+``examples/reward/vlm_trend/preprocess_reward_dataset.py``. Activate the virtual environment and
 set ``PYTHONPATH`` before running:
 
 .. code-block:: bash
@@ -392,8 +393,8 @@ and auto-labels based on GAE, reward, or TCP-distance changes:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-       --raw-data-path /path/to/collected_data \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+       --raw-data-path /path/to/run/pickle_episode \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --task-description "Pick up the peg and insert it into the hole."
@@ -403,8 +404,8 @@ TCP-to-target distance instead of rewards as the trend signal:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-       --raw-data-path /path/to/collected_data \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
+       --raw-data-path /path/to/run/pickle_episode \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --target-ee-pose "X,Y,Z,RX,RY,RZ" \

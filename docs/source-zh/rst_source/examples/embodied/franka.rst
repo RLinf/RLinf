@@ -406,7 +406,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
      bash examples/embodiment/collect_data.sh realworld_collect_data \
      "env.eval.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE"
 
-成功轨迹保存在 ``logs/franka-demo/demos`` 下。RLPD 使用这个 replay buffer 目录，而不是 ``collected_data`` 下的可选 episode 导出文件。等待采集程序退出并释放机械臂后，再启动训练。再次采集时请更换日志目录，避免混合不同批次的演示。使用 GELLO 代替 SpaceMouse 采集时，参见 :doc:`franka_gello`。
+成功轨迹保存在 ``logs/franka-demo/demo_buffer`` 下。RLPD 使用这个 replay buffer 目录。可选的 episode 导出在同级目录中：pickle 放在 ``pickle_episode/``，LeRobot 放在 ``lerobot_dataset/``。等待采集程序退出并释放机械臂后，再启动训练。再次采集时请更换日志目录，避免混合不同批次的演示。使用 GELLO 代替 SpaceMouse 采集时，参见 :doc:`franka_gello`。
 
 训练 Policy
 ~~~~~~~~~~~
@@ -418,7 +418,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
    bash examples/embodiment/run_realworld_async.sh \
      realworld_peginsertion_rlpd_cnn_async \
      "env.train.override_cfg.target_ee_pose=$FRANKA_TARGET_POSE" \
-     "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demos" \
+     "algorithm.demo_buffer.load_path=$PWD/logs/franka-demo/demo_buffer" \
      "actor.model.model_path=$PWD/models/RLinf-ResNet10-pretrained" \
      "rollout.model.model_path=$PWD/models/RLinf-ResNet10-pretrained"
 
@@ -495,7 +495,7 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
    bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
-两台计算机必须使用相同的 RLinf 代码版本、Python 版本和 Ray 版本。加入多节点集群前，先按前文采集步骤在控制计算机上收集演示，此时使用节点编号 0。然后将完整的 ``logs/franka-demo/demos`` 目录复制到 GPU 服务器。
+两台计算机必须使用相同的 RLinf 代码版本、Python 版本和 Ray 版本。加入多节点集群前，先按前文采集步骤在控制计算机上收集演示，此时使用节点编号 0。然后将完整的 ``logs/franka-demo/demo_buffer`` 目录复制到 GPU 服务器。
 
 配置并启动集群
 ~~~~~~~~~~~~~~
