@@ -301,6 +301,47 @@ def test_phyai_rollout_worker_rejects_unknown_plugin(monkeypatch):
         PhyAIRolloutWorker(cfg)
 
 
+def test_eval_only_worker_accepts_config_without_algorithm(monkeypatch):
+    def init_worker_base(worker):
+        worker._world_size = 1
+        worker._rank = 0
+        worker._group_name = "rollout"
+        worker.global_accelerator_ids = [0]
+
+    placement = SimpleNamespace(get_world_size=lambda _component: 1)
+    monkeypatch.setattr(Worker, "__init__", init_worker_base)
+    monkeypatch.setattr(
+        phyai_rollout_worker,
+        "HybridComponentPlacement",
+        lambda _cfg, _cluster: placement,
+    )
+    monkeypatch.setattr(phyai_rollout_worker, "Cluster", lambda: object())
+    cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": True, "val_check_interval": -1},
+            "rollout": {
+                "phyai": {"plugin": "pi05"},
+                "model": {"num_action_chunks": 5},
+                "pipeline_stage_num": 1,
+            },
+            "env": {
+                "group_name": "env",
+                "eval": {
+                    "rollout_epoch": 1,
+                    "total_num_envs": 1,
+                    "max_steps_per_rollout_epoch": 5,
+                },
+            },
+        }
+    )
+    OmegaConf.set_struct(cfg, True)
+
+    worker = PhyAIRolloutWorker(cfg)
+
+    assert worker.algorithm_cfg == {}
+    assert not worker.enable_rlt
+
+
 @pytest.mark.parametrize("only_eval", [False, True])
 @pytest.mark.parametrize(
     "kernel_config",

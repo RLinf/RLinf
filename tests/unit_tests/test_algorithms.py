@@ -27,15 +27,16 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class _ReplayModel:
-    def __init__(self) -> None:
+    def __init__(self, offset: float = 0.25) -> None:
         self.batch_sizes = []
         self.kwargs = []
+        self.offset = offset
 
     def __call__(self, *, forward_inputs, **kwargs):
         expected = forward_inputs["expected_logprobs"]
         self.batch_sizes.append(expected.shape[0])
         self.kwargs.append(kwargs)
-        return {"logprobs": expected + 0.25}
+        return {"logprobs": expected + self.offset}
 
 
 def test_importance_sampling_correction_is_shared_across_training_backends():
@@ -100,6 +101,42 @@ def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
     assert torch.equal(worker.rollout_batch["prev_logprobs"], expected + 0.25)
     assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(11.75)
     assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(87.0)
+
+
+def test_lingbot_recompute_restores_action_layout_before_masking(monkeypatch):
+    monkeypatch.setattr(
+        "rlinf.workers.actor.embodied_fsdp_actor_worker.clear_memory", lambda: None
+    )
+    worker = object.__new__(EmbodiedFSDPActor)
+    worker.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "micro_batch_size": 3,
+                "model": {"model_type": "lingbotvlav2", "action_dim": 2},
+            },
+            "algorithm": {"max_recompute_logprob_gap": 1.0e-3},
+            "rollout": {},
+        }
+    )
+    worker.device = torch.device("cpu")
+    worker.amp_context = nullcontext()
+    worker.is_weight_offloaded = False
+    worker.model = _ReplayModel(offset=0.0)
+
+    recomputed = torch.zeros(6, 4, dtype=torch.float32)
+    per_action_gap = torch.linspace(5.0e-5, 2.0e-4, 6).unsqueeze(-1)
+    rollout = recomputed - per_action_gap
+    worker.rollout_batch = {
+        "prev_logprobs": rollout,
+        "forward_inputs": {"expected_logprobs": recomputed},
+        "loss_mask": torch.ones(6, 1, dtype=torch.bool),
+    }
+
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(
+        worker, batch_size_per_rank=3
+    )
+
+    assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(8.0e-4)
 
 
 @pytest.mark.parametrize(

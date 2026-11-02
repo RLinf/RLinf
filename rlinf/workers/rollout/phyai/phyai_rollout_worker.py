@@ -186,7 +186,8 @@ class PhyAIRolloutWorker(Worker):
             else 0
         )
         self.collect_transitions = bool(cfg.rollout.get("collect_transitions", False))
-        self.enable_rlt = cfg.algorithm.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self.algorithm_cfg = cfg.get("algorithm", {})
+        self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
         self.collect_prev_infos = bool(cfg.rollout.get("collect_prev_infos", True))
         self.version = 0
         self.weight_syncer = None

@@ -63,9 +63,17 @@ from rlinf.utils.utils import (
 def _reshape_recompute_logprob_gap(
     logprob_gap: torch.Tensor, cfg: DictConfig
 ) -> torch.Tensor:
-    """Restore the action-token layout used by OpenVLA loss masks."""
+    """Return the logprob gap as ``[..., chunks, action_dim]``.
+
+    OpenVLA, OpenVLA-OFT, and LingBot-VLA V2 return one flat logprob per action
+    dimension; OpenPI already returns this layout.
+    """
     model_type = SupportedModel(cfg.actor.model.model_type)
-    if model_type in (SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT):
+    if model_type in (
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+        SupportedModel.LINGBOTVLAV2,
+    ):
         action_dim = cfg.actor.model.get("action_dim", 7)
         return logprob_gap.reshape(*logprob_gap.shape[:-1], -1, action_dim)
     return logprob_gap

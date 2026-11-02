@@ -1124,6 +1124,9 @@ def validate_embodied_cfg(cfg):
             )
 
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
+        # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
+        # the OpenVLA family and LingBot-VLA V2. OpenPI already returns the
+        # action-token layout. GR00T rescores inside its training forward.
         assert model_type in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
