@@ -1,6 +1,6 @@
 defaults:
-  - env/dexjoco@env.train
-  - env/dexjoco@env.eval
+  - env@env.train: dexjoco_water_plant
+  - env@env.eval: dexjoco_water_plant
   - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer

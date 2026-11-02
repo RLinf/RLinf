@@ -1,0 +1,9 @@
+defaults:
+  - dexjoco
+  - _self_
+
+task_name: water_plant
+task_description: "Grasp the watering can and apply water to the plant."
+camera_names: [front, wrist]
+max_episode_steps: 1000
+max_steps_per_rollout_epoch: 1000

@@ -7,7 +7,7 @@
 
    使用 Allegro 灵巧手浇花（图片来源：`DexJoCo <https://github.com/brave-eai/dexjoco>`__）。
 
-使用 RLinf 在 `DexJoCo <https://github.com/brave-eai/dexjoco>`__ 官方示范数据上微调 CNN 和 π₀.₅ policy，再用 PPO 继续训练。这个 MuJoCo 基准包含 Franka 机械臂与 Allegro 灵巧手的单臂和双臂任务。本页介绍数据准备、训练和评测的完整流程。
+使用 RLinf 在 `DexJoCo <https://github.com/brave-eai/dexjoco>`__ 官方 ``water_plant`` 示范数据上微调 CNN 和 π₀.₅ policy，再用 PPO 继续训练。这个 MuJoCo 基准包含 Franka 机械臂与 Allegro 灵巧手的单臂和双臂任务。本页介绍数据准备、训练和评测的完整流程。
 
 概览
 ----------------------------------------
@@ -43,7 +43,7 @@
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-训练和评测各运行一个任务。在 ``env.train`` 和 ``env.eval`` 中设置 ``task_name``，描述译自该任务的官方提示词：
+训练和评测各运行一个任务。在 ``env.train`` 和 ``env.eval`` 中选择该任务的 ``env/dexjoco_<task>`` 配置组，一并加载任务名、提示词、相机以及默认回合和 rollout 时长。π₀.₅ 配方使用 ``dexjoco_water_plant`` 环境配置和 ``pi05_dexjoco`` 模型配置。环境支持以下任务，描述译自官方提示词：
 
 .. list-table::
    :header-rows: 1
@@ -156,8 +156,6 @@
 1. 下载 ``water_plant`` 回合，包括前视和腕部视频、机器人状态、动作和任务文本。
 2. 在数据集目录中写入 ``norm_stats.json``，供 SFT、PPO 和评测使用。
 
-双臂任务传入 ``--config-name pi05_dexjoco_dual_arm``；``click_mouse`` 的主视角相机是 ``ego_right``，传入 ``--config-name pi05_dexjoco_click_mouse``。
-
 CNN 配方把同一份示范数据读成图像、状态和动作块数组。按训练分辨率导出一个任务：
 
 .. code:: bash
@@ -206,7 +204,7 @@ CNN 配方把同一份示范数据读成图像、状态和动作块数组。按�
 
 **OpenPI π₀.₅**
 
-DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 维双臂动作的变体。下载基座检查点并转换为 RLinf OpenPI 格式，转换方法见 :doc:`sft_openpi`：
+为 ``water_plant`` 配方下载 DexJoCo 的 π₀.₅ 基座检查点，并转换为 RLinf OpenPI 格式，转换方法见 :doc:`sft_openpi`：
 
 .. code-block:: bash
 
@@ -219,8 +217,6 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
      --output-model /path/to/pi05_base_openpi \
      --output-norm-stats /path/to/pi05_base_openpi/dexjoco/norm_stats.json \
      --action-dim 32 --action-horizon 30 --max-token-len 250
-
-双臂任务改为下载 ``pi05_base_action_dim_44/params/**``，并使用 ``--action-dim 44`` 转换到 ``/path/to/pi05_base_action_dim_44_openpi``。
 
 运行
 ----------------------------------------
@@ -262,9 +258,20 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
 2. 为 actor、rollout 和 DexJoCo env 组件创建 Ray worker。
 3. 运行 PPO rollout，计算稀疏成功奖励，并更新 CNN policy。
 
-.. note::
+这些配方默认训练 ``water_plant``。用 CNN PPO 训练其他任务时，为训练和评测环境同时选择该任务的配置组，并使用对应的 SFT 检查点和动作统计量。例如，准备好 ``bimanual_assembly`` 数据并完成 CNN SFT 后，在仓库根目录运行：
 
-   这些配方默认训练 ``water_plant``。换成其他任务时，在 ``env.train`` 和 ``env.eval`` 中覆盖 ``task_name`` 和 ``camera_names``\ （单臂任务为 ``[front, wrist]``，``click_mouse`` 为 ``[ego_right, wrist]``，双臂任务为 ``[ego, wrist_left, wrist_right]``），并把 ``env.train`` 和 ``env.eval`` 中的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch`` 都设为该任务的时间上限（所有上限都是 10 步动作块的倍数）。双臂任务使用 46 维状态和 44 维动作：CNN 需设置 ``actor.model.state_dim: 46`` 和 ``actor.model.action_dim: 44``；π₀.₅ 使用 SFT 一节中的双臂设置。
+.. code:: bash
+
+   EMBODIED_PATH=$(pwd)/examples/embodiment PYTHONPATH=$(pwd) \
+     MUJOCO_GL=egl PYOPENGL_PLATFORM=egl python examples/embodiment/train_embodied_agent.py \
+     --config-path config --config-name dexjoco_ppo_cnn \
+     'env@env.train=dexjoco_bimanual_assembly' \
+     'env@env.eval=dexjoco_bimanual_assembly' \
+     actor.model.image_num=3 actor.model.state_dim=46 actor.model.action_dim=44 \
+     actor.model.action_norm_stats=/path/to/bimanual_assembly_chunks/meta.json \
+     runner.ckpt_path=/path/to/bimanual_assembly_sft/full_weights.pt
+
+这两个配置组覆盖会一起加载任务的提示词、相机和默认时长。模型参数匹配该任务的 3 路相机、46 维状态和 44 维动作，CNN SFT 也使用相同的模型维度。独立评测 CNN 时，选择 ``env@env.eval=dexjoco_bimanual_assembly``，在 ``rollout.model`` 下设置对应的维度，并把 ``rollout.model.action_norm_stats`` 设为该任务的 ``meta.json``，``runner.ckpt_path`` 设为对应的 SFT 或 PPO 检查点。
 
 以下 ``init_params`` 字段控制随机化和任务选项：
 
@@ -279,7 +286,7 @@ DexJoCo 发布了 π₀.₅ 基座检查点，以及一个动作投影覆盖 44 
    * - ``init_params.randomize_dynamics``
      - 为 ``True`` 时随机化物体动力学。
    * - ``init_params.password``
-     - ``bimanual_unlock_ipad`` 的解锁数字序列，默认 ``[1, 2, 3]``；π₀.₅ 的提示词始终写 123。
+     - ``bimanual_unlock_ipad`` 的解锁数字序列，默认 ``[1, 2, 3]``；任务的默认提示词写 123。
 
 仿真器只在每个已执行动作块的最后一步渲染相机，供 policy 读取这帧观测并决策；设置 ``video_cfg.save_video: True`` 时每一步都会渲染。
 
@@ -351,7 +358,7 @@ SFT 的 encoder dropout 为 0.1；PPO 和评测设置 ``encoder_config.dropout: 
 π₀.₅ + SFT
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml`` 中设置以下字段：
+``pi05_dexjoco`` 模型配置读取 ``water_plant`` 的前视和腕部图像，以及 22 维动作。在 ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml`` 中设置以下字段：
 
 .. list-table::
    :header-rows: 1
@@ -371,8 +378,6 @@ SFT 的 encoder dropout 为 0.1；PPO 和评测设置 ``encoder_config.dropout: 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_openpi_pi05
 
 该配方使用 FP32 参数、BF16 计算和 ``no_shard``，详见 :doc:`sft_openpi`。每张 actor GPU 都保存完整的模型、梯度和优化器状态，因此建议使用 80 GB 级别的 GPU。单张 48 GB GPU 上，设置 ``actor.micro_batch_size: 1``、``actor.global_batch_size: 1`` 和 ``actor.model.precision: bf16``；这会把参数和优化器精度从默认的 FP32 改为 BF16。全局批量必须能被单卡微批量与 actor 工作进程数的乘积整除。训练会保存 ``checkpoints/global_step_<N>`` 目录，PPO 和评测配置可以直接加载。
-
-双臂任务需要把 ``actor.model.openpi.config_name`` 设为 ``pi05_dexjoco_dual_arm``，把 ``actor.model.action_dim`` 和 ``actor.model.openpi.model_action_dim`` 设为 ``44``，并从转换得到的 44 维基座检查点开始训练。``click_mouse`` 需要把 ``actor.model.openpi.config_name`` 设为 ``pi05_dexjoco_click_mouse``。
 
 π₀.₅ + PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -395,7 +400,7 @@ SFT 的 encoder dropout 为 0.1；PPO 和评测设置 ``encoder_config.dropout: 
 
 每次决策执行预测的 30 个动作中的前 10 个，用 5 步去噪采样。每轮采集 128 个环境 × 2 个 rollout epoch 的数据，执行一个 PPO epoch，全局批量为 1024，微批量为 64。前 50 个优化器步只训练 value head（``actor.optim.critic_warmup_steps``）。
 
-独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_openpi_pi05_eval``。把 ``rollout.model.model_path`` 设为 SFT 或 PPO 检查点，把 ``rollout.model.openpi_data.norm_stats_path`` 设为训练时使用的统计量文件；评测双臂检查点时，在 ``rollout.model`` 下使用同样的双臂设置。
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>` 运行 ``dexjoco_openpi_pi05_eval``。把 ``rollout.model.model_path`` 设为 SFT 或 PPO 检查点，把 ``rollout.model.openpi_data.norm_stats_path`` 设为训练时使用的统计量文件。
 
 报告中的曲线使用 8 个 worker 评测 64 个回合，设置 ``env.eval.seed: 10000``，每块执行 10 个动作，去噪 5 步，``max_token_len: 200``。每个回合上限为 1000 个环境步，评测 rollout 预算为 1020 步。环境种子固定 reset 状态，动作采样使用各进程的随机数历史。
 

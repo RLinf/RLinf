@@ -1,0 +1,9 @@
+defaults:
+  - dexjoco
+  - _self_
+
+task_name: pick_bucket
+task_description: "Place the boxed food into the bucket and then lift the bucket."
+camera_names: [front, wrist]
+max_episode_steps: 1200
+max_steps_per_rollout_epoch: 1200

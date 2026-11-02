@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.envs.sim.dexjoco.utils import TASK_DESCRIPTIONS, TASK_STEP_LIMITS
+from rlinf.envs.sim.dexjoco.utils import TASK_STEP_LIMITS
 from rlinf.envs.utils import (
     list_of_dict_to_dict_of_list,
     to_tensor,
@@ -137,6 +137,8 @@ class DexJoCoEnv(gym.Env):
         total_num_processes: int,
         worker_info: Any,
     ) -> None:
+        from dexjoco.tasks import CONFIG_MAPPING
+
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.total_num_processes = total_num_processes
@@ -153,13 +155,13 @@ class DexJoCoEnv(gym.Env):
 
         self._generator = np.random.default_rng(seed=self.seed)
 
-        if cfg.task_name not in TASK_DESCRIPTIONS:
+        if cfg.task_name not in CONFIG_MAPPING:
             raise ValueError(
                 f"Unknown DexJoCo task {cfg.task_name!r}; expected one of "
-                f"{list(TASK_DESCRIPTIONS)}."
+                f"{list(CONFIG_MAPPING)}."
             )
         self.dual_arm = cfg.task_name.startswith("bimanual_")
-        self.task_description = TASK_DESCRIPTIONS[cfg.task_name]
+        self.task_description = cfg.task_description
         self.update_reset_state_ids()
         self._init_env()
 

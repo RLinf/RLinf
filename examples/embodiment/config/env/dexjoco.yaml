@@ -1,13 +1,9 @@
 env_type: dexjoco
-task_name: water_plant
-camera_names: [front, wrist]
 
 total_num_envs: null
 
 auto_reset: True
 ignore_terminations: False
-max_steps_per_rollout_epoch: 1000
-max_episode_steps: 1000
 
 use_rel_reward: False
 reward_coef: 1.0

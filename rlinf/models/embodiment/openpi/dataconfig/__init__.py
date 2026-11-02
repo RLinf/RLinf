@@ -614,40 +614,6 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
-    TrainConfig(
-        name="pi05_dexjoco_dual_arm",
-        model=pi0_config.Pi0Config(
-            pi05=True,
-            action_horizon=30,
-            action_dim=44,
-            max_token_len=250,
-            discrete_state_input=True,
-        ),
-        data=LeRobotDexJoCoDataConfig(
-            repo_id="dexjoco",
-            base_config=DataConfig(prompt_from_task=False),
-            assets=AssetsConfig(asset_id="dexjoco"),
-            dual_arm=True,
-            image_key="observation.images.ego",
-        ),
-        pytorch_weight_path="checkpoints/torch/pi05_base_action_dim_44",
-    ),
-    TrainConfig(
-        name="pi05_dexjoco_click_mouse",
-        model=pi0_config.Pi0Config(
-            pi05=True,
-            action_horizon=30,
-            max_token_len=250,
-            discrete_state_input=True,
-        ),
-        data=LeRobotDexJoCoDataConfig(
-            repo_id="dexjoco",
-            base_config=DataConfig(prompt_from_task=False),
-            assets=AssetsConfig(asset_id="dexjoco"),
-            image_key="observation.images.ego_right",
-        ),
-        pytorch_weight_path="checkpoints/torch/pi05_base",
-    ),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):

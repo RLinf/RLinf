@@ -1,5 +1,5 @@
 defaults:
-  - env/dexjoco@env.eval
+  - env@env.eval: dexjoco_water_plant
   - model/pi0_5@rollout.model
   - override hydra/job_logging: stdout
 
@@ -41,7 +41,6 @@ env:
     total_num_envs: 64
     auto_reset: False
     ignore_terminations: False
-    max_episode_steps: 1000
     max_steps_per_rollout_epoch: 1020
     is_eval: True
     seed: 10000

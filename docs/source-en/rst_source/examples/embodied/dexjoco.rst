@@ -7,7 +7,7 @@ RL with DexJoCo Benchmark
 
    Watering a plant with an Allegro hand (image: `DexJoCo <https://github.com/brave-eai/dexjoco>`__).
 
-Fine-tune CNN and π₀.₅ policies on the official
+Fine-tune CNN and π₀.₅ policies on the official ``water_plant``
 `DexJoCo <https://github.com/brave-eai/dexjoco>`__ demonstrations, then continue
 both with PPO. The MuJoCo benchmark covers single-arm and dual-arm dexterous
 manipulation with Franka arms and Allegro hands. This page walks through data
@@ -47,8 +47,11 @@ Train Franka and Allegro policies on DexJoCo tasks from camera images and propri
 Tasks
 ~~~~~
 
-Training and evaluation each run one task. Set ``task_name`` in ``env.train``
-and ``env.eval``; the description is the task's official prompt:
+Training and evaluation each run one task. Select its ``env/dexjoco_<task>``
+config group for both ``env.train`` and ``env.eval``. Each task config sets
+the task name, prompt, cameras, and default episode and rollout lengths.
+The π₀.₅ recipes use ``dexjoco_water_plant`` and the ``pi05_dexjoco`` model
+config. The environment supports these tasks:
 
 .. list-table::
    :header-rows: 1
@@ -163,10 +166,6 @@ What this does:
 1. Downloads the ``water_plant`` episodes with front and wrist videos, robot state, actions, and task text.
 2. Writes ``norm_stats.json`` into the dataset directory for SFT, PPO, and evaluation.
 
-For dual-arm tasks, pass ``--config-name pi05_dexjoco_dual_arm``; for
-``click_mouse``, whose base camera is ``ego_right``, pass
-``--config-name pi05_dexjoco_click_mouse``.
-
 The CNN recipes read the same demonstrations as image, state, and action-chunk
 arrays. Export one task at the training resolution:
 
@@ -217,8 +216,7 @@ Then set the same checkpoint path for rollout and actor in
 
 **OpenPI π₀.₅**
 
-DexJoCo publishes the π₀.₅ base checkpoint together with a variant whose
-action projections cover the 44-dim dual-arm action. Download the base and
+Download DexJoCo's π₀.₅ base checkpoint for the ``water_plant`` recipe and
 convert it to the RLinf OpenPI layout, as described in :doc:`sft_openpi`:
 
 .. code-block:: bash
@@ -232,10 +230,6 @@ convert it to the RLinf OpenPI layout, as described in :doc:`sft_openpi`:
      --output-model /path/to/pi05_base_openpi \
      --output-norm-stats /path/to/pi05_base_openpi/dexjoco/norm_stats.json \
      --action-dim 32 --action-horizon 30 --max-token-len 250
-
-For dual-arm tasks, download ``pi05_base_action_dim_44/params/**`` instead
-and convert it with ``--action-dim 44`` into
-``/path/to/pi05_base_action_dim_44_openpi``.
 
 Run It
 ------
@@ -277,18 +271,29 @@ What this does:
 2. Creates Ray workers for the actor, rollout, and DexJoCo env components.
 3. Runs PPO rollouts, computes sparse success rewards, and updates the CNN policy.
 
-.. note::
+The recipes train ``water_plant``. To run CNN PPO on another task, select
+that task's config group for both environments and use its SFT checkpoint
+and action statistics. For example, after preparing ``bimanual_assembly``
+data and training its CNN policy, run from the repository root:
 
-   The recipes train ``water_plant``. For another task, override ``task_name``
-   and ``camera_names`` in both ``env.train`` and ``env.eval`` (``[front, wrist]``
-   for single-arm tasks, ``[ego_right, wrist]`` for ``click_mouse``, and
-   ``[ego, wrist_left, wrist_right]`` for dual-arm tasks), and set
-   ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both ``env.train``
-   and ``env.eval`` to the task's time limit (every limit is a multiple of the
-   10-step chunk). Dual-arm tasks use 46-dim state
-   and 44-dim actions: for the CNN, set ``actor.model.state_dim: 46`` and
-   ``actor.model.action_dim: 44``; for π₀.₅, apply the dual-arm settings in the
-   SFT section.
+.. code:: bash
+
+   EMBODIED_PATH=$(pwd)/examples/embodiment PYTHONPATH=$(pwd) \
+     MUJOCO_GL=egl PYOPENGL_PLATFORM=egl python examples/embodiment/train_embodied_agent.py \
+     --config-path config --config-name dexjoco_ppo_cnn \
+     'env@env.train=dexjoco_bimanual_assembly' \
+     'env@env.eval=dexjoco_bimanual_assembly' \
+     actor.model.image_num=3 actor.model.state_dim=46 actor.model.action_dim=44 \
+     actor.model.action_norm_stats=/path/to/bimanual_assembly_chunks/meta.json \
+     runner.ckpt_path=/path/to/bimanual_assembly_sft/full_weights.pt
+
+The two config-group overrides load the task's prompt, cameras, and default
+lengths together. The model overrides match its three cameras, 46-dim state,
+and 44-dim actions. Use the same model dimensions when training the CNN with
+SFT. For standalone CNN evaluation, select
+``env@env.eval=dexjoco_bimanual_assembly`` and set the corresponding dimensions
+under ``rollout.model``. Set ``rollout.model.action_norm_stats`` to the task's
+``meta.json`` and ``runner.ckpt_path`` to its SFT or PPO checkpoint.
 
 These ``init_params`` fields control randomization and task options:
 
@@ -303,7 +308,7 @@ These ``init_params`` fields control randomization and task options:
    * - ``init_params.randomize_dynamics``
      - ``True`` randomizes object dynamics.
    * - ``init_params.password``
-     - Digits ``bimanual_unlock_ipad`` expects, default ``[1, 2, 3]``; the π₀.₅ prompt always names 123.
+     - Digits ``bimanual_unlock_ipad`` expects, default ``[1, 2, 3]``; the task's default prompt names 123.
 
 The simulator renders the cameras only on the last step of each executed
 action chunk, which is the observation the policy acts on; with
@@ -395,7 +400,9 @@ For standalone evaluation, use the unified :doc:`Evaluation CLI
 π₀.₅ + SFT
 ~~~~~~~~~~
 
-Set these fields in ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``:
+The ``pi05_dexjoco`` model config maps the ``water_plant`` front and wrist
+images and 22-dim actions. Set these fields in
+``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``:
 
 .. list-table::
    :header-rows: 1
@@ -423,12 +430,6 @@ precision from the FP32 default. The global batch must be divisible by the
 micro batch times the number of actor workers. Training saves
 ``checkpoints/global_step_<N>`` directories, which the PPO and evaluation
 configs load directly.
-
-For a dual-arm task, set ``actor.model.openpi.config_name`` to
-``pi05_dexjoco_dual_arm``, set ``actor.model.action_dim`` and
-``actor.model.openpi.model_action_dim`` to ``44``, and start from the
-converted 44-dim base. For ``click_mouse``, set
-``actor.model.openpi.config_name`` to ``pi05_dexjoco_click_mouse``.
 
 π₀.₅ + PPO
 ~~~~~~~~~~
@@ -468,8 +469,7 @@ For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with ``dexjoco_openpi_pi05_eval``. Set
 ``rollout.model.model_path`` to the SFT or PPO checkpoint and
 ``rollout.model.openpi_data.norm_stats_path`` to the statistics used for
-training; for a dual-arm checkpoint, apply the dual-arm settings under
-``rollout.model``.
+training.
 
 The reported curve uses 64 episodes on 8 workers with
 ``env.eval.seed: 10000``, 10 executed actions per chunk, 5 denoising steps,
