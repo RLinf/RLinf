@@ -44,44 +44,11 @@ OpenWAM checkpoint 会提供模型和 dataloader 设置。将 ``data.train_data_
 运行
 ----
 
-在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认使用 8 张 GPU（``0-7``），为 OpenWAM 的可训练 DiT/action 参数和优化器状态留出更多显存余量。其他 OpenWAM SFT 配方也继承这一默认卡数。
+在 ``examples/sft/config/model/openwam.yaml`` 和 ``examples/sft/config/libero_sft_openwam.yaml`` 中设置 checkpoint 与数据集路径。配方默认使用 8 张 GPU（``0-7``），为 OpenWAM 的可训练 DiT/action 参数和优化器状态留出更多显存余量。``mixture_sft_openwam.yaml`` 也继承这一默认卡数。
 
 在 H200 上使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 实测：4 卡时每卡峰值已分配显存为 72.3 GiB、保留显存为 113.3 GiB；8 卡时分别为 55.5 GiB 和 83.7 GiB。8 卡默认值依据这组数据，并不代表已经验证能在 80 GiB 显卡上运行；实际显存需求仍需结合 checkpoint 和硬件确认。
 
-数据读取器由 checkpoint 的 ``config.yaml`` 决定，因此配方要把 checkpoint 和同类型的数据配对。``examples/sft/config/`` 下每种 OpenWAM 读取器各有一份配方，都继承 ``libero_sft_openwam.yaml``，只改路径和实验名：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - 配方
-     - 数据
-   * - ``libero_sft_openwam``
-     - LIBERO（LeRobot v3，EEF10 动作）
-   * - ``agibotworld_sft_openwam``
-     - AgibotWorld
-   * - ``interndata_a1_sft_openwam``
-     - InterData A1
-   * - ``mixture_sft_openwam``
-     - OpenWAM reader 混合数据
-   * - ``muka_franka_sft_openwam``
-     - Muka Franka
-   * - ``oxe_droid_sft_openwam``
-     - OXE DROID
-   * - ``robocoin_sft_openwam``
-     - RoboCoin
-   * - ``robotwin_sft_openwam``
-     - RoboTwin 2.0（aloha-agilex，20 维双臂 EEF）
-   * - ``robodojo_sft_openwam``
-     - RoboDojo 真机数据
-   * - ``ebench_sft_openwam``
-     - EBench
-   * - ``robocasa365_sft_openwam``
-     - RoboCasa365
-   * - ``robocasa_gr1_sft_openwam``
-     - RoboCasa GR1 人形
-   * - ``vlabench_sft_openwam``
-     - VLABench
+数据读取器由 checkpoint 的 ``config.yaml`` 决定，因此配方要把 checkpoint 和同类型的数据配对。``libero_sft_openwam.yaml`` 适用于任何单一数据源的 OpenWAM checkpoint：把 ``actor.model.model_path`` 指向 checkpoint，把 ``data.train_data_paths`` 指向同一读取器类型的数据集即可。OpenWAM 提供的读取器包括 LIBERO（LeRobot v3，EEF10 动作）、AgibotWorld、InternData A1、Muka Franka、OXE DROID、RoboCoin、RoboTwin 2.0（aloha-agilex，20 维双臂 EEF；根目录取 ``robotwin2.0/dataset`` 这一层）、RoboDojo 真机数据、EBench、RoboCasa365、RoboCasa GR1 和 VLABench。用这些读取器混合训练的 checkpoint 使用 ``mixture_sft_openwam.yaml``。
 
 对 ``mixture`` checkpoint，``data.train_data_paths`` 只填一个根目录：checkpoint 的 mixture 配置中每个启用的数据源 ``datasets.<name>`` 都从 ``<root>/<name>`` 读取，单个数据源可用 ``data.openwam.datasets.<name>.dataset_dir`` 指向别处。各数据源各自保留归一化统计量，因此 mixture 训练不会在 checkpoint 旁保存 ``normalization_stats.npy``，导出时使用源 checkpoint 中的文件。
 

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 import os
 import shutil
 from pathlib import Path
@@ -27,6 +26,18 @@ from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+
+
+def _saved_sampler_epoch(loader_state: dict[str, Any]) -> int | None:
+    """Return the sampler epoch in a ``StatefulDataLoader.state_dict()``, if any.
+
+    Multi-process loaders nest the sampler state under the main-process
+    snapshot; single-process loaders keep it at the top level.
+    """
+    main = loader_state.get("_snapshot", {}).get("_main_snapshot", loader_state)
+    sampler_state = (main.get("_sampler_iter_state") or {}).get("sampler_state") or {}
+    epoch = sampler_state.get("epoch")
+    return None if epoch is None else int(epoch)
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
@@ -269,6 +280,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             if os.path.exists(data_path):
                 all_states = torch.load(data_path, weights_only=False)
                 state = all_states[self._rank]
+                # Creating the iterator forks the loader workers before it
+                # restores the sampler, so an epoch-aware dataset (OpenWAM's
+                # MixtureDataset) must reach the saved epoch here first.
+                saved_epoch = _saved_sampler_epoch(state)
+                sampler = getattr(self.data_loader, "sampler", None)
+                if saved_epoch is not None and hasattr(sampler, "set_epoch"):
+                    sampler.set_epoch(saved_epoch)
                 self.data_loader.load_state_dict(state)
                 self.data_iter = iter(self.data_loader)
                 # Creating the iterator applies the sampler state. Continue the
@@ -290,7 +308,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 )
                 if strict_resume:
                     raise FileNotFoundError(message)
-                logging.warning(message)
+                self.log_warning(message)
 
             rng_path = os.path.join(load_path, "rng.pt")
             if os.path.exists(rng_path):

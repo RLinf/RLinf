@@ -96,16 +96,12 @@ def _openwam_eef20_to_robotwin_ee16(chunk_actions) -> np.ndarray:
         )
     if not np.isfinite(raw).all():
         raise ValueError("OpenWAM RoboTwin rollout produced non-finite actions")
-    flat = raw.reshape(-1, 20)
-    out = np.empty((flat.shape[0], 16), dtype=np.float32)
-    for row, action in enumerate(flat):
-        out[row, 0:3] = action[0:3]
-        out[row, 3:7] = rot6d_to_quat_xyzw(action[3:9].astype(np.float64))
-        out[row, 7] = action[9]
-        out[row, 8:11] = action[10:13]
-        out[row, 11:15] = rot6d_to_quat_xyzw(action[13:19].astype(np.float64))
-        out[row, 15] = action[19]
-    return out.reshape(*raw.shape[:-1], 16)
+    l_quat = rot6d_to_quat_xyzw(raw[..., 3:9])
+    r_quat = rot6d_to_quat_xyzw(raw[..., 13:19])
+    return np.concatenate(
+        [raw[..., 0:3], l_quat, raw[..., 9:10], raw[..., 10:13], r_quat, raw[..., 19:20]],
+        axis=-1,
+    ).astype(np.float32)
 
 
 def prepare_actions_for_robotwin(
@@ -176,6 +172,8 @@ def _openwam_absolute_eef10_to_libero7(
     """Convert absolute EEF10 goals to LIBERO's per-step OSC action."""
     from scipy.spatial.transform import Rotation
 
+    from rlinf.utils.rot6d import rot6d_to_matrix
+
     raw = np.asarray(raw_chunk_actions, dtype=np.float32)
     ref = np.asarray(reference_eef10, dtype=np.float32)
     if raw.shape[-1] != 10 or ref.shape[-1] != 10:
@@ -194,17 +192,9 @@ def _openwam_absolute_eef10_to_libero7(
     if not (pos_scale > 0 and rot_scale > 0):
         raise ValueError(f"OSC scales must be positive, got {pos_scale=} {rot_scale=}")
 
-    def matrix(r6):
-        first = r6[..., :3]
-        second = r6[..., 3:6]
-        first = first / np.maximum(np.linalg.norm(first, axis=-1, keepdims=True), 1e-8)
-        second = second - np.sum(first * second, axis=-1, keepdims=True) * first
-        second = second / np.maximum(
-            np.linalg.norm(second, axis=-1, keepdims=True), 1e-8
-        )
-        return np.stack([first, second, np.cross(first, second)], axis=-1)
-
-    relative = matrix(raw[..., 3:9]) @ np.swapaxes(matrix(ref[..., 3:9]), -1, -2)
+    relative = rot6d_to_matrix(raw[..., 3:9]) @ np.swapaxes(
+        rot6d_to_matrix(ref[..., 3:9]), -1, -2
+    )
     rotvec = (
         Rotation.from_matrix(relative.reshape(-1, 3, 3))
         .as_rotvec()
@@ -225,6 +215,8 @@ def _openwam_eef10_to_libero7(raw_chunk_actions: np.ndarray) -> np.ndarray:
     """Convert native OpenWAM EEF10 deltas to LIBERO's 7-D OSC action."""
     from scipy.spatial.transform import Rotation
 
+    from rlinf.utils.rot6d import rot6d_to_matrix
+
     raw = np.asarray(raw_chunk_actions, dtype=np.float32)
     if raw.shape[-1] != 10:
         raise ValueError(
@@ -235,13 +227,7 @@ def _openwam_eef10_to_libero7(raw_chunk_actions: np.ndarray) -> np.ndarray:
             "OpenWAM EEF action contains non-finite values; refusing to send "
             "NaN or Inf into the LIBERO controller."
         )
-    r6d = raw[..., 3:9].reshape(-1, 6).astype(np.float64)
-    first = r6d[:, :3]
-    second = r6d[:, 3:]
-    first /= np.maximum(np.linalg.norm(first, axis=-1, keepdims=True), 1e-8)
-    second -= np.sum(first * second, axis=-1, keepdims=True) * first
-    second /= np.maximum(np.linalg.norm(second, axis=-1, keepdims=True), 1e-8)
-    matrices = np.stack([first, second, np.cross(first, second)], axis=-1)
+    matrices = rot6d_to_matrix(raw[..., 3:9]).reshape(-1, 3, 3)
     rotvec = Rotation.from_matrix(matrices).as_rotvec().astype(np.float32)
     output = np.concatenate(
         [raw[..., :3], rotvec.reshape(raw.shape[:-1] + (3,)), -raw[..., 9:10]],

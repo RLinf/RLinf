@@ -165,7 +165,8 @@ def build_openwam_sft_dataloader(
     else:
         dataset_dirs = [str(data_paths)]
     if not dataset_dirs:
-        raise ValueError("OpenWAM SFT requires data.train_data_paths.")
+        field = "data.val_data_paths" if eval_dataset else "data.train_data_paths"
+        raise ValueError(f"OpenWAM SFT requires {field}.")
 
     model_cfg = cfg.actor.model
     model_path = str(model_cfg.model_path)

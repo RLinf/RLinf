@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Generate OpenWAM RoboTwin evaluation recipes for every RoboTwin 2.0 task.
+"""Generate OpenWAM RoboTwin evaluation recipes for the RoboTwin 2.0 tasks.
 
 OpenWAM's RoboTwin checkpoints are multi-task (50 aloha-agilex tasks) and act in
 the dataset's 20-D absolute EEF space, so every task shares one environment
@@ -20,18 +20,24 @@ and the step budget. The budget is RoboTwin's ``task_config/_eval_step_limit.yml
 rounded up to a multiple of the 32-step action chunk. Tasks that have RLinf eval
 seeds use them; the others fall back to RoboTwinEnv's random seeds.
 
-Run from the repository root::
+The repository ships the preset and the recipes for ``COMMITTED_TASKS``. Run
+from the repository root to rewrite those, or pass ``--all`` (or task names)
+to write the recipes for every task (or the named ones)::
 
     python toolkits/openwam/gen_robotwin_eval_recipes.py
+    python toolkits/openwam/gen_robotwin_eval_recipes.py --all
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 CHUNK = 32
 CHECKPOINT = "/path/to/openwam-robotwin-checkpoint"
+# Recipes kept in evaluations/robotwin/; the others are generated on demand.
+COMMITTED_TASKS = ("adjust_bottle", "click_bell")
 
 # RoboTwin 2.0 ``task_config/_eval_step_limit.yml`` (RLinf_support branch).
 STEP_LIMITS = {
@@ -266,15 +272,25 @@ def rounded_steps(limit: int, chunk: int = CHUNK) -> int:
     return ((limit + chunk - 1) // chunk) * chunk
 
 
-def render_recipes(repo: Path) -> dict[Path, str]:
-    """Return the env preset and the 50 task recipes keyed by their repo path."""
+def render_recipes(repo: Path, tasks=None) -> dict[Path, str]:
+    """Return the env preset and the task recipes keyed by their repo path.
+
+    ``tasks`` defaults to every task in ``STEP_LIMITS``.
+    """
+    tasks = sorted(STEP_LIMITS if tasks is None else tasks)
+    unknown = sorted(set(tasks) - set(STEP_LIMITS))
+    if unknown:
+        raise ValueError(
+            f"Unknown RoboTwin tasks {unknown}; expected names in STEP_LIMITS."
+        )
     files = {
         repo / "examples/embodiment/config/env/robotwin_openwam_aloha.yaml": PRESET
     }
     seeds_file = repo / "rlinf/envs/sim/robotwin/seeds/eval_seeds.json"
     seeded = set(json.loads(seeds_file.read_text()).keys())
     out_dir = repo / "evaluations/robotwin"
-    for task, limit in sorted(STEP_LIMITS.items()):
+    for task in tasks:
+        limit = STEP_LIMITS[task]
         seeds = (
             "${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json"
             if task in seeded
@@ -291,8 +307,19 @@ def render_recipes(repo: Path) -> dict[Path, str]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "tasks", nargs="*", help="Task names (default: the committed tasks)."
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Write the recipes for every task."
+    )
+    args = parser.parse_args()
+    if args.all and args.tasks:
+        parser.error("pass either --all or task names, not both")
+    tasks = None if args.all else (args.tasks or COMMITTED_TASKS)
     repo = Path(__file__).resolve().parents[2]
-    files = render_recipes(repo)
+    files = render_recipes(repo, tasks)
     for path, text in files.items():
         path.write_text(text)
     print(f"wrote {len(files) - 1} recipes and the env preset")

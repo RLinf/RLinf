@@ -476,10 +476,12 @@ def _axis_angle_to_rotation_6d(value: Any) -> np.ndarray:
     """Convert a LIBERO axis-angle state to OpenWAM's 6-D representation."""
     from scipy.spatial.transform import Rotation
 
+    from rlinf.utils.rot6d import matrix_to_rot6d
+
     matrix = Rotation.from_rotvec(
         np.asarray(value, dtype=np.float64).reshape(3)
     ).as_matrix()
-    return np.concatenate([matrix[:, 0], matrix[:, 1]]).astype(np.float32)
+    return matrix_to_rot6d(matrix)
 
 
 def _libero_state_to_eef10(value: Any) -> np.ndarray | None:

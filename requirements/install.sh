@@ -3112,7 +3112,7 @@ install_cosmos3_model() {
 
 install_openwam_deps() {
     local openwam_path
-    openwam_path=$(clone_or_reuse_repo OPENWAM_PATH "$VENV_DIR/openwam" https://github.com/OpenWAM-Official/OpenWAM.git)
+    openwam_path=$(clone_or_reuse_repo OPENWAM_PATH "$VENV_DIR/openwam" "${GITHUB_PREFIX}https://github.com/OpenWAM-Official/OpenWAM.git")
     if [ -z "${OPENWAM_PATH:-}" ]; then
         git -C "$openwam_path" checkout "${OPENWAM_GIT_REF:-a8992b613fdb5b1c4649f53b3a914379c49e3892}" >&2
     fi
@@ -3128,36 +3128,27 @@ install_openwam_deps() {
     uv pip install -r "$SCRIPT_DIR/embodied/models/openwam.txt"
     # --no-deps: OpenWAM pins transformers>=5.5 and deepspeed<0.19, neither of which
     # it actually needs. See embodied/models/openwam.txt for the analysis.
-    python -m pip install -e "$openwam_path" --no-deps
+    uv pip install -e "$openwam_path" --no-deps
 }
 
 install_openwam_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
     case "$ENV_NAME" in
-        maniskill_libero|libero)
-            create_and_sync_venv
-            install_common_embodied_deps
+        maniskill_libero|libero|robotwin)
             install_${ENV_NAME}_env
-            install_openwam_deps
-            install_flash_attn
-            ;;
-        robotwin)
-            create_and_sync_venv
-            install_common_embodied_deps
-            install_robotwin_env
-            install_openwam_deps
-            install_flash_attn
             ;;
         "")
-            create_and_sync_venv
-            install_common_embodied_deps
-            install_openwam_deps
-            install_flash_attn
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenWAM model." >&2
             exit 1
             ;;
     esac
+
+    install_openwam_deps
+    install_flash_attn
 }
 
 install_diffusion_model() {

@@ -44,44 +44,11 @@ Install the OpenWAM environment and RLinf:
 Run It
 ------
 
-Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to eight GPUs (``0-7``) to leave more memory headroom for OpenWAM's trainable DiT/action parameters and optimizer state. The other OpenWAM SFT recipes inherit this placement.
+Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to eight GPUs (``0-7``) to leave more memory headroom for OpenWAM's trainable DiT/action parameters and optimizer state. ``mixture_sft_openwam.yaml`` inherits this placement.
 
 Measured on H200 GPUs with LIBERO data, ``micro_batch_size: 1`` and ``global_batch_size: 8``, four ranks peaked at 72.3 GiB allocated and 113.3 GiB reserved per GPU; eight ranks peaked at 55.5 GiB allocated and 83.7 GiB reserved. These measurements motivate the eight-GPU default; they do not establish that the recipe fits on 80-GiB GPUs. Validate memory use for your checkpoint and hardware.
 
-The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. One recipe per OpenWAM reader ships under ``examples/sft/config/``; each inherits ``libero_sft_openwam.yaml`` and only sets the paths and the experiment name:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Recipe
-     - Data
-   * - ``libero_sft_openwam``
-     - LIBERO (LeRobot v3, EEF10 actions)
-   * - ``agibotworld_sft_openwam``
-     - AgibotWorld
-   * - ``interndata_a1_sft_openwam``
-     - InterData A1
-   * - ``mixture_sft_openwam``
-     - Mixed OpenWAM reader data
-   * - ``muka_franka_sft_openwam``
-     - Muka Franka
-   * - ``oxe_droid_sft_openwam``
-     - OXE DROID
-   * - ``robocoin_sft_openwam``
-     - RoboCoin
-   * - ``robotwin_sft_openwam``
-     - RoboTwin 2.0 (aloha-agilex, 20-D dual-arm EEF)
-   * - ``robodojo_sft_openwam``
-     - RoboDojo real-robot data
-   * - ``ebench_sft_openwam``
-     - EBench
-   * - ``robocasa365_sft_openwam``
-     - RoboCasa365
-   * - ``robocasa_gr1_sft_openwam``
-     - RoboCasa GR1 humanoid
-   * - ``vlabench_sft_openwam``
-     - VLABench
+The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. ``libero_sft_openwam.yaml`` works for any single-source OpenWAM checkpoint: point ``actor.model.model_path`` at the checkpoint and ``data.train_data_paths`` at a dataset of its reader type. OpenWAM ships readers for LIBERO (LeRobot v3, EEF10 actions), AgibotWorld, InternData A1, Muka Franka, OXE DROID, RoboCoin, RoboTwin 2.0 (aloha-agilex, 20-D dual-arm EEF; use the ``robotwin2.0/dataset`` level as the root), RoboDojo real-robot data, EBench, RoboCasa365, RoboCasa GR1 and VLABench. ``mixture_sft_openwam.yaml`` covers checkpoints trained on a mixture of these readers.
 
 For a ``mixture`` checkpoint, ``data.train_data_paths`` names one root directory: every enabled source ``datasets.<name>`` of the checkpoint's mixture config is read from ``<root>/<name>``, and ``data.openwam.datasets.<name>.dataset_dir`` points a single source elsewhere. Each source keeps its own normalization statistics, so a mixture run stores no ``normalization_stats.npy`` next to the checkpoint and the exporter takes the source checkpoint's file.
 

@@ -1875,28 +1875,50 @@ def test_openwam_robotwin_eval_recipes_validate(openwam_eval_recipe, name):
     assert cfg.rollout.model.openwam.inference_horizon is None
 
 
-def test_openwam_robotwin_recipe_generator_covers_all_tasks():
-    """The committed preset and 50 recipes are exactly what the generator renders."""
+def test_openwam_robotwin_recipe_generator_covers_all_tasks(
+    openwam_eval_recipe, tmp_path
+):
+    """The committed recipes match the generator, which renders all 50 tasks."""
+    from rlinf.config import validate_cfg
     from toolkits.openwam.gen_robotwin_eval_recipes import (
+        COMMITTED_TASKS,
         STEP_LIMITS,
         render_recipes,
         rounded_steps,
     )
 
     repo = Path(__file__).resolve().parents[2]
-    assert len(STEP_LIMITS) == 50 and len(_ROBOTWIN_RECIPES) == 50
-    assert {f"robotwin_{t}_openwam_eval" for t in STEP_LIMITS} == set(_ROBOTWIN_RECIPES)
-    rendered = render_recipes(repo)
-    assert len(rendered) == 51
+    assert len(STEP_LIMITS) == 50
+    assert {f"robotwin_{t}_openwam_eval" for t in COMMITTED_TASKS} == set(
+        _ROBOTWIN_RECIPES
+    )
+    committed = render_recipes(repo, COMMITTED_TASKS)
     stale = [
         str(path.relative_to(repo))
-        for path, text in rendered.items()
+        for path, text in committed.items()
         if path.read_text() != text
     ]
     assert not stale, (
         f"regenerate with toolkits/openwam/gen_robotwin_eval_recipes.py: {stale}"
     )
     assert rounded_steps(400) == 416 and rounded_steps(512) == 512
+    with pytest.raises(ValueError, match="Unknown RoboTwin tasks"):
+        render_recipes(repo, ["not_a_task"])
+
+    # Every generated recipe composes and validates, not just the committed ones.
+    rendered = render_recipes(repo)
+    assert len(rendered) == 51
+    out_dir = tmp_path / "robotwin"
+    out_dir.mkdir()
+    for path, text in rendered.items():
+        if path.parent.name == "robotwin":
+            (out_dir / path.name).write_text(text)
+    for task in STEP_LIMITS:
+        cfg = openwam_eval_recipe(f"robotwin_{task}_openwam_eval", subdir=str(out_dir))
+        cfg.runner.task_type = "embodied_eval"
+        cfg = validate_cfg(cfg)
+        assert cfg.env.eval.task_config.task_name == task
+        assert cfg.env.eval.max_episode_steps == rounded_steps(STEP_LIMITS[task])
 
 
 def test_openwam_eef20_to_robotwin_ee16_layout():
@@ -2272,70 +2294,6 @@ def test_openwam_compose_fills_every_camera_slot():
     assert single.size == (320, 384)
 
 
-def test_openwam_sft_dataloader_concatenates_multiple_datasets(tmp_path, monkeypatch):
-    """data.train_data_paths may list several native dataset roots."""
-    import sys
-
-    from omegaconf import OmegaConf
-
-    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
-
-    ckpt = tmp_path / "ckpt"
-    ckpt.mkdir()
-    (ckpt / "config.yaml").write_text(
-        "dataloader:\n  type: libero\n  dataset_dir: /unused\n  num_frames: 33\n"
-    )
-
-    class _FakeDataset(torch.utils.data.Dataset):
-        def __init__(self, root, length):
-            self.root = root
-            self.length = length
-
-        def __len__(self):
-            return self.length
-
-        def __getitem__(self, index):
-            return {"root": self.root, "index": index}
-
-    calls = []
-
-    def fake_build_dataset(dl_cfg, split):
-        calls.append((dl_cfg.dataset_dir, split, dl_cfg.num_frames))
-        return _FakeDataset(dl_cfg.dataset_dir, {"/a": 3, "/b": 5}[dl_cfg.dataset_dir])
-
-    registry = ModuleType("openwam.dataloader.registry")
-    registry.build_dataset = fake_build_dataset
-    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
-    monkeypatch.setitem(
-        sys.modules, "openwam.dataloader", ModuleType("openwam.dataloader")
-    )
-    monkeypatch.setitem(sys.modules, "openwam.dataloader.registry", registry)
-
-    cfg = OmegaConf.create(
-        {
-            "actor": {
-                "model": {"model_path": str(ckpt)},
-                "micro_batch_size": 2,
-                "seed": 3,
-            },
-            "data": {"openwam": {"num_frames": 9}},
-        }
-    )
-    loader, info = build_openwam_sft_dataloader(cfg, 1, 0, ["/a", "/b"])
-
-    assert calls == [("/a", "train", 9), ("/b", "train", 9)]
-    assert info["num_samples"] == 8
-    assert info["num_samples_per_dataset"] == {"/a": 3, "/b": 5}
-    assert info["dataset_dir"] == ["/a", "/b"]
-    roots = [sample["root"] for batch in loader for sample in batch]
-    assert sorted(roots) == ["/a"] * 3 + ["/b"] * 5
-
-    _, single = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
-    assert single["dataset_dir"] == "/a" and single["num_samples"] == 3
-    with pytest.raises(ValueError, match="requires data.train_data_paths"):
-        build_openwam_sft_dataloader(cfg, 1, 0, [])
-
-
 def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
     """The SFT preset defers device placement to FSDP; RL recipes are refused."""
     import hydra
@@ -2375,25 +2333,9 @@ def test_openwam_sft_recipe_builds_on_cpu_and_rejects_rl(monkeypatch):
         validate_embodied_cfg(rl_cfg)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "agibotworld_sft_openwam",
-        "interndata_a1_sft_openwam",
-        "mixture_sft_openwam",
-        "muka_franka_sft_openwam",
-        "oxe_droid_sft_openwam",
-        "robocoin_sft_openwam",
-        "robotwin_sft_openwam",
-        "robodojo_sft_openwam",
-        "ebench_sft_openwam",
-        "robocasa365_sft_openwam",
-        "robocasa_gr1_sft_openwam",
-        "vlabench_sft_openwam",
-    ],
-)
+@pytest.mark.parametrize("name", ["mixture_sft_openwam"])
 def test_openwam_dataset_sft_recipes_inherit_the_libero_recipe(name):
-    """Every dataset recipe only changes paths and the experiment name."""
+    """The mixture recipe only changes paths and the experiment name."""
     import hydra
 
     from rlinf.config import validate_sft_cfg
@@ -2605,302 +2547,6 @@ def test_openwam_from_checkpoint_disables_video_decode(tmp_path, monkeypatch):
     assert policy.architecture._dtype == torch.float32
 
 
-def _openwam_fake_dataset_cfg(tmp_path, monkeypatch, lengths):
-    """Register a fake ``openwam.dataloader.registry.build_dataset``."""
-    import sys
-
-    class _FakeDataset(torch.utils.data.Dataset):
-        def __init__(self, root, length):
-            self.root = root
-            self.length = length
-
-        def __len__(self):
-            return self.length
-
-        def __getitem__(self, index):
-            return {"root": self.root, "index": index}
-
-    calls = []
-
-    def fake_build_dataset(dl_cfg, split):
-        calls.append((dl_cfg.dataset_dir, split))
-        return _FakeDataset(dl_cfg.dataset_dir, lengths[dl_cfg.dataset_dir])
-
-    registry = ModuleType("openwam.dataloader.registry")
-    registry.build_dataset = fake_build_dataset
-    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
-    monkeypatch.setitem(
-        sys.modules, "openwam.dataloader", ModuleType("openwam.dataloader")
-    )
-    monkeypatch.setitem(sys.modules, "openwam.dataloader.registry", registry)
-    ckpt = tmp_path / "ckpt"
-    ckpt.mkdir()
-    (ckpt / "config.yaml").write_text(
-        "dataloader:\n  type: libero\n  dataset_dir: /unused\n  num_frames: 33\n"
-    )
-    cfg = OmegaConf.create(
-        {
-            "actor": {
-                "model": {"model_path": str(ckpt)},
-                "micro_batch_size": 2,
-                "seed": 3,
-            },
-            "data": {},
-        }
-    )
-    return cfg, calls
-
-
-def test_openwam_sft_dataloader_checkpoints_and_resumes_mid_epoch(
-    tmp_path, monkeypatch
-):
-    """A resumed loader continues the same shuffle epoch at the next unseen batch."""
-    pytest.importorskip("torchdata")
-    from torchdata.stateful_dataloader import StatefulDataLoader
-
-    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
-
-    cfg, _ = _openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
-    loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
-    assert isinstance(loader, StatefulDataLoader)
-
-    def indices(batch):
-        return [sample["index"] for sample in batch]
-
-    reference = []
-    for epoch in range(2):
-        loader.sampler.set_epoch(epoch)
-        reference.append([indices(batch) for batch in loader])
-    assert len(reference[1]) == 5 and reference[0] != reference[1]
-
-    # Interrupt epoch 1 after two batches and resume in a fresh process' loader.
-    loader.sampler.set_epoch(1)
-    iterator = iter(loader)
-    consumed = [indices(next(iterator)) for _ in range(2)]
-    state = loader.state_dict()
-
-    resumed, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
-    resumed.load_state_dict(state)
-    remaining = [indices(batch) for batch in resumed]
-    assert consumed + remaining == reference[1]
-    assert resumed.sampler.epoch == 1
-
-
-def test_openwam_sft_validation_split_is_configurable_and_never_empty(
-    tmp_path, monkeypatch
-):
-    """Validation reads the val split by default and fails loudly when empty."""
-    pytest.importorskip("torchdata")
-    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
-
-    cfg, calls = _openwam_fake_dataset_cfg(
-        tmp_path,
-        monkeypatch,
-        {"/train": 6, "/held-out": 4, "/no-val": 0, "/tiny": 1, "/tail": 3},
-    )
-    build_openwam_sft_dataloader(cfg, 1, 0, "/train")
-    build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
-    assert calls == [("/train", "train"), ("/held-out", "val")]
-
-    # A LeRobot root without a val split yields nothing: refuse instead of
-    # silently reporting an empty validation pass.
-    with pytest.raises(ValueError, match="openwam_val_split=train"):
-        build_openwam_sft_dataloader(cfg, 1, 0, "/no-val", eval_dataset=True)
-    cfg.data.openwam_val_split = "train"
-    _, info = build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
-    assert calls[-1] == ("/held-out", "train") and info["num_samples"] == 4
-
-    # Validation shards are padded to equal lengths so every rank executes the
-    # same number of FSDP forwards; the padded sample is marked and excluded
-    # from the reduced metric.
-    eval_loader, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tiny", eval_dataset=True)
-    empty_eval_loader, _ = build_openwam_sft_dataloader(
-        cfg, 2, 1, "/tiny", eval_dataset=True
-    )
-    assert len(eval_loader) == 1
-    assert len(empty_eval_loader) == 1
-    assert not next(iter(eval_loader))[0].is_padding
-    assert next(iter(empty_eval_loader))[0].is_padding
-
-    # A tail batch also stays equal-sized when the validation batch is larger
-    # than one sample.
-    cfg.actor.eval_batch_size = 2
-    tail_rank0, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tail", eval_dataset=True)
-    tail_rank1, _ = build_openwam_sft_dataloader(cfg, 2, 1, "/tail", eval_dataset=True)
-    assert len(tail_rank0) == len(tail_rank1) == 1
-    assert [item.is_padding for item in next(iter(tail_rank0))] == [False, False]
-    assert [item.is_padding for item in next(iter(tail_rank1))] == [False, True]
-
-
-def test_openwam_sft_eval_reports_mean_native_loss(monkeypatch):
-    """Validation averages OpenWAM's SFT losses; other models keep raising."""
-    pytest.importorskip("torchdata")
-    import contextlib
-
-    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
-    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
-
-    class _Model(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.calls = 0
-
-        def forward(self, forward_type, data):
-            assert forward_type == ForwardType.SFT
-            self.calls += 1
-            value = float(sum(sample["v"] for sample in data))
-            return {
-                "loss": torch.tensor(value),
-                "loss_video": torch.tensor(value / 2),
-                "loss_action": torch.tensor([1.0, 2.0]),  # non-scalar: dropped
-            }
-
-    stub = SimpleNamespace(
-        cfg=OmegaConf.create(
-            {"actor": {"model": {"model_type": "openwam"}, "eval_max_batches": 2}}
-        ),
-        eval_data_loader=[[{"v": 1.0}], [{"v": 3.0}], [{"v": 5.0}]],
-        model=_Model(),
-        amp_context=contextlib.nullcontext(),
-        worker_timer=contextlib.nullcontext,
-    )
-    stub._is_openwam = lambda: FSDPVlaSftWorker._is_openwam(stub)
-    stub.get_eval_model_output = lambda batch: FSDPVlaSftWorker.get_eval_model_output(
-        stub, batch
-    )
-    monkeypatch.setattr(
-        worker_module, "all_reduce_dict", lambda metrics, op=None: metrics
-    )
-
-    metrics = FSDPVlaSftWorker.run_eval(stub)
-    assert metrics == {
-        "loss": 2.0,
-        "loss_action": 0.0,
-        "loss_video": 1.0,
-        "num_batches": 2.0,
-    }
-    assert stub.model.calls == 2 and stub.model.training
-
-    stub.cfg.actor.model.model_type = "openpi"
-    with pytest.raises(NotImplementedError, match="eval is not supported"):
-        FSDPVlaSftWorker.get_eval_model_output(stub, [{"v": 1.0}])
-
-
-def test_openwam_sft_eval_forwards_padding_but_excludes_it_from_metrics(monkeypatch):
-    """Padded validation samples keep FSDP calls aligned without biasing loss."""
-    pytest.importorskip("torchdata")
-    import contextlib
-
-    from rlinf.data.datasets.openwam.dataloader import ValidationSample
-    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
-    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
-
-    class _Model(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.calls = 0
-
-        def forward(self, forward_type, data):
-            self.calls += 1
-            return {"loss": torch.tensor(float(data[0]["v"]))}
-
-    stub = SimpleNamespace(
-        cfg=OmegaConf.create(
-            {"actor": {"model": {"model_type": "openwam"}, "eval_max_batches": 1}}
-        ),
-        eval_data_loader=[
-            [
-                ValidationSample({"v": 2.0}),
-                ValidationSample({"v": 99.0}, is_padding=True),
-            ]
-        ],
-        model=_Model(),
-        amp_context=contextlib.nullcontext(),
-        worker_timer=contextlib.nullcontext,
-    )
-    stub._is_openwam = lambda: FSDPVlaSftWorker._is_openwam(stub)
-    stub.get_eval_model_output = lambda batch: FSDPVlaSftWorker.get_eval_model_output(
-        stub, batch
-    )
-    monkeypatch.setattr(
-        worker_module, "all_reduce_dict", lambda metrics, op=None: metrics
-    )
-
-    metrics = FSDPVlaSftWorker.run_eval(stub)
-
-    assert metrics["loss"] == 2.0
-    assert metrics["num_batches"] == 1.0
-    assert stub.model.calls == 2
-
-
-def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
-    tmp_path, monkeypatch, caplog
-):
-    """Resume restores the loader and epoch; old checkpoints without data.pt warn."""
-    pytest.importorskip("torchdata")
-    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
-    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
-    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
-
-    monkeypatch.setattr(
-        worker_module.FSDPSftWorker, "load_checkpoint", lambda self, path: None
-    )
-    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
-    cfg, _ = _openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
-
-    def indices(batch):
-        return [sample["index"] for sample in batch]
-
-    # Reference run: two batches into epoch 1, then checkpoint the loader.
-    source, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
-    source.sampler.set_epoch(1)
-    iterator = iter(source)
-    consumed = [indices(next(iterator)) for _ in range(2)]
-    source_state = source.state_dict()  # position after two batches
-    remaining = [indices(batch) for batch in iterator]
-    ckpt = tmp_path / "global_step_2" / "actor"
-    ckpt.mkdir(parents=True)
-
-    def make_stub():
-        # super().load_checkpoint needs a real instance; skip the heavy __init__.
-        loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
-        stub = object.__new__(FSDPVlaSftWorker)
-        stub.data_loader = loader
-        stub.data_iter = iter(loader)
-        stub._rank, stub._world_size, stub._data_epoch = 0, 1, 0
-        return stub
-
-    # The state was captured after two batches; the resumed worker gets the rest.
-    torch.save([source_state], ckpt / "data.pt")
-    stub = make_stub()
-    FSDPVlaSftWorker.load_checkpoint(stub, str(ckpt))
-    assert stub._data_epoch == 1
-    assert [indices(batch) for batch in stub.data_iter] == remaining
-    assert len(consumed) + len(remaining) == 5
-
-    # An older checkpoint without data.pt is still usable, with a warning.
-    old = tmp_path / "global_step_1" / "actor"
-    old.mkdir(parents=True)
-    stub = make_stub()
-    with caplog.at_level("WARNING"):
-        FSDPVlaSftWorker.load_checkpoint(stub, str(old))
-    assert "has no data.pt" in caplog.text
-    assert stub._data_epoch == 0
-    assert len([indices(batch) for batch in stub.data_iter]) == 5
-
-    # OpenWAM's checked-in recipe opts into strict resume so a silent data
-    # restart cannot be mistaken for an exact continuation.
-    strict_stub = make_stub()
-    strict_stub.cfg = OmegaConf.create({"runner": {"strict_resume": True}})
-    with pytest.raises(FileNotFoundError, match="has no data.pt"):
-        FSDPVlaSftWorker.load_checkpoint(strict_stub, str(old))
-
-    strict_data_stub = make_stub()
-    strict_data_stub.cfg = OmegaConf.create({"runner": {"strict_resume": True}})
-    with pytest.raises(FileNotFoundError, match="has no rng.pt"):
-        FSDPVlaSftWorker.load_checkpoint(strict_data_stub, str(ckpt))
-
-
 def test_openwam_export_rebuilds_native_checkpoint_dir(tmp_path):
     source = _make_source(tmp_path)
     step_dir = _make_rlinf_checkpoint(tmp_path)
@@ -2966,42 +2612,6 @@ def test_openwam_export_links_assets_and_infers_step(tmp_path):
     assert written.name == "checkpoint_step_3.safetensors"
 
 
-def test_openwam_sft_model_provider_uses_the_model_registry(monkeypatch):
-    """The SFT worker builds OpenWAM through ``rlinf.models.get_model``'s contract."""
-    import rlinf.models as models
-    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
-
-    built = []
-
-    def fake_builder(cfg, torch_dtype):
-        built.append((cfg, torch_dtype))
-        return torch.nn.Linear(1, 1)
-
-    monkeypatch.setitem(models._MODEL_REGISTRY, "openwam", fake_builder)
-    stub = object.__new__(FSDPVlaSftWorker)
-    stub.cfg = OmegaConf.create(
-        {
-            "actor": {
-                "model": {
-                    "model_type": "openwam",
-                    "model_path": "/ckpt",
-                    "precision": "fp32",
-                    "is_lora": False,
-                    "load_to_device": False,
-                },
-                "fsdp_config": {"mixed_precision": {"param_dtype": "bf16"}},
-            }
-        }
-    )
-    model = FSDPVlaSftWorker.model_provider_func(stub)
-    assert isinstance(model, torch.nn.Linear)
-    ((cfg, torch_dtype),) = built
-    # fp32 master weights; FSDP's compute dtype reaches OpenWAM as runtime_dtype.
-    assert torch_dtype == torch.float32
-    assert cfg.runtime_dtype == "bf16"
-    assert cfg.model_path == "/ckpt"
-
-
 def test_openwam_eval_validation_rejects_inconsistent_recipes(openwam_eval_recipe):
     """Chunking, step budget and action bridge are checked before the model loads."""
     from rlinf.config import validate_cfg
@@ -3025,123 +2635,6 @@ def test_openwam_eval_validation_rejects_inconsistent_recipes(openwam_eval_recip
         validate("env.eval.openwam_action_representation=joint")
     with pytest.raises(ValueError, match="render_gpu_ids"):
         validate("env.eval.render_gpu_ids=0")
-
-
-def _openwam_fake_mixture_cfg(tmp_path, monkeypatch, override_libero=None):
-    """Register a fake ``build_dataset`` that records the mixture config it gets."""
-    import sys
-
-    class _FakeMixture(torch.utils.data.Dataset):
-        def __init__(self):
-            self.epochs = []
-
-        def __len__(self):
-            return 6
-
-        def __getitem__(self, index):
-            return {"index": index}
-
-        def set_epoch(self, epoch):
-            self.epochs.append(int(epoch))
-
-    seen = []
-    built = []
-
-    def fake_build_dataset(dl_cfg, split):
-        seen.append((OmegaConf.to_container(dl_cfg.datasets), split))
-        built.append(_FakeMixture())
-        return built[-1]
-
-    registry = ModuleType("openwam.dataloader.registry")
-    registry.build_dataset = fake_build_dataset
-    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
-    monkeypatch.setitem(
-        sys.modules, "openwam.dataloader", ModuleType("openwam.dataloader")
-    )
-    monkeypatch.setitem(sys.modules, "openwam.dataloader.registry", registry)
-    ckpt = tmp_path / "ckpt"
-    ckpt.mkdir()
-    (ckpt / "config.yaml").write_text(
-        "dataloader:\n"
-        "  type: mixture\n"
-        "  datasets:\n"
-        "    robocoin: {enabled: true, dataset_dir: /train-host/robocoin}\n"
-        "    oxe_droid: {enabled: false, dataset_dir: /train-host/oxe_droid}\n"
-        "    libero: {enabled: true, dataset_dir: /train-host/libero}\n"
-    )
-    data = {"num_workers": 0}
-    if override_libero is not None:
-        data["openwam"] = {"datasets": {"libero": {"dataset_dir": override_libero}}}
-    cfg = OmegaConf.create(
-        {
-            "actor": {
-                "model": {"model_path": str(ckpt)},
-                "micro_batch_size": 2,
-                "seed": 3,
-            },
-            "data": data,
-        }
-    )
-    return cfg, seen, built
-
-
-def test_openwam_sft_dataloader_places_mixture_sources_under_one_root(
-    tmp_path, monkeypatch
-):
-    """A mixture root maps to ``<root>/<name>`` per enabled source."""
-    pytest.importorskip("torchdata")
-    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
-
-    cfg, seen, _ = _openwam_fake_mixture_cfg(
-        tmp_path, monkeypatch, override_libero="/elsewhere/libero"
-    )
-    loader, info = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
-    assert seen == [
-        (
-            {
-                "robocoin": {"enabled": True, "dataset_dir": "/root/robocoin"},
-                "oxe_droid": {"enabled": False, "dataset_dir": "/train-host/oxe_droid"},
-                "libero": {"enabled": True, "dataset_dir": "/elsewhere/libero"},
-            },
-            "train",
-        )
-    ]
-    assert info["dataset_type"] == "mixture"
-    assert info["normalization_stats_path"] is None
-    assert len(loader) == 3
-    with pytest.raises(ValueError, match="exactly one data root"):
-        build_openwam_sft_dataloader(cfg, 1, 0, ["/a", "/b"])
-
-
-def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(tmp_path, monkeypatch):
-    """A resumed epoch-aware dataset reshuffles for the restored epoch, not epoch 0."""
-    pytest.importorskip("torchdata")
-    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
-    from rlinf.workers.sft import fsdp_vla_sft_worker as worker_module
-    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
-
-    monkeypatch.setattr(
-        worker_module.FSDPSftWorker, "load_checkpoint", lambda self, path: None
-    )
-    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
-    cfg, _, built = _openwam_fake_mixture_cfg(tmp_path, monkeypatch)
-    source, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
-    source.sampler.set_epoch(2)
-    iterator = iter(source)
-    next(iterator)
-    ckpt = tmp_path / "global_step_1" / "actor"
-    ckpt.mkdir(parents=True)
-    torch.save([source.state_dict()], ckpt / "data.pt")
-
-    loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
-    stub = object.__new__(FSDPVlaSftWorker)
-    stub.data_loader = loader
-    stub.data_iter = iter(loader)
-    stub._rank, stub._world_size, stub._data_epoch = 0, 1, 0
-    FSDPVlaSftWorker.load_checkpoint(stub, str(ckpt))
-    assert stub._data_epoch == 2
-    assert built[-1].epochs[-1] == 2
-    assert len(list(stub.data_iter)) == 2
 
 
 @pytest.mark.parametrize("step", [0, 4, 9])

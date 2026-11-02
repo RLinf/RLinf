@@ -24,13 +24,14 @@ import random
 import shutil
 import time
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, Mock, patch
 
 import numpy as np
 import pytest
 import torch
+from _openwam_fakes import openwam_fake_dataset_cfg, openwam_fake_mixture_cfg
 from omegaconf import DictConfig, OmegaConf
 
 import rlinf.data.datasets.d4rl as d4rl_dataset_module
@@ -3610,3 +3611,179 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+# --- OpenWAM SFT data loader -----------------------------------------------
+
+
+def test_openwam_sft_dataloader_concatenates_multiple_datasets(tmp_path, monkeypatch):
+    """data.train_data_paths may list several native dataset roots."""
+    import sys
+
+    from omegaconf import OmegaConf
+
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    (ckpt / "config.yaml").write_text(
+        "dataloader:\n  type: libero\n  dataset_dir: /unused\n  num_frames: 33\n"
+    )
+
+    class _FakeDataset(torch.utils.data.Dataset):
+        def __init__(self, root, length):
+            self.root = root
+            self.length = length
+
+        def __len__(self):
+            return self.length
+
+        def __getitem__(self, index):
+            return {"root": self.root, "index": index}
+
+    calls = []
+
+    def fake_build_dataset(dl_cfg, split):
+        calls.append((dl_cfg.dataset_dir, split, dl_cfg.num_frames))
+        return _FakeDataset(dl_cfg.dataset_dir, {"/a": 3, "/b": 5}[dl_cfg.dataset_dir])
+
+    registry = ModuleType("openwam.dataloader.registry")
+    registry.build_dataset = fake_build_dataset
+    monkeypatch.setitem(sys.modules, "openwam", ModuleType("openwam"))
+    monkeypatch.setitem(
+        sys.modules, "openwam.dataloader", ModuleType("openwam.dataloader")
+    )
+    monkeypatch.setitem(sys.modules, "openwam.dataloader.registry", registry)
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {"model_path": str(ckpt)},
+                "micro_batch_size": 2,
+                "seed": 3,
+            },
+            "data": {"openwam": {"num_frames": 9}},
+        }
+    )
+    loader, info = build_openwam_sft_dataloader(cfg, 1, 0, ["/a", "/b"])
+
+    assert calls == [("/a", "train", 9), ("/b", "train", 9)]
+    assert info["num_samples"] == 8
+    assert info["num_samples_per_dataset"] == {"/a": 3, "/b": 5}
+    assert info["dataset_dir"] == ["/a", "/b"]
+    roots = [sample["root"] for batch in loader for sample in batch]
+    assert sorted(roots) == ["/a"] * 3 + ["/b"] * 5
+
+    _, single = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+    assert single["dataset_dir"] == "/a" and single["num_samples"] == 3
+    with pytest.raises(ValueError, match="requires data.train_data_paths"):
+        build_openwam_sft_dataloader(cfg, 1, 0, [])
+
+
+def test_openwam_sft_dataloader_checkpoints_and_resumes_mid_epoch(
+    tmp_path, monkeypatch
+):
+    """A resumed loader continues the same shuffle epoch at the next unseen batch."""
+    pytest.importorskip("torchdata")
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    cfg, _ = openwam_fake_dataset_cfg(tmp_path, monkeypatch, {"/a": 10})
+    loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+    assert isinstance(loader, StatefulDataLoader)
+
+    def indices(batch):
+        return [sample["index"] for sample in batch]
+
+    reference = []
+    for epoch in range(2):
+        loader.sampler.set_epoch(epoch)
+        reference.append([indices(batch) for batch in loader])
+    assert len(reference[1]) == 5 and reference[0] != reference[1]
+
+    # Interrupt epoch 1 after two batches and resume in a fresh process' loader.
+    loader.sampler.set_epoch(1)
+    iterator = iter(loader)
+    consumed = [indices(next(iterator)) for _ in range(2)]
+    state = loader.state_dict()
+
+    resumed, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/a")
+    resumed.load_state_dict(state)
+    remaining = [indices(batch) for batch in resumed]
+    assert consumed + remaining == reference[1]
+    assert resumed.sampler.epoch == 1
+
+
+def test_openwam_sft_validation_split_is_configurable_and_never_empty(
+    tmp_path, monkeypatch
+):
+    """Validation reads the val split by default and fails loudly when empty."""
+    pytest.importorskip("torchdata")
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    cfg, calls = openwam_fake_dataset_cfg(
+        tmp_path,
+        monkeypatch,
+        {"/train": 6, "/held-out": 4, "/no-val": 0, "/tiny": 1, "/tail": 3},
+    )
+    build_openwam_sft_dataloader(cfg, 1, 0, "/train")
+    build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
+    assert calls == [("/train", "train"), ("/held-out", "val")]
+
+    # A LeRobot root without a val split yields nothing: refuse instead of
+    # silently reporting an empty validation pass.
+    with pytest.raises(ValueError, match="openwam_val_split=train"):
+        build_openwam_sft_dataloader(cfg, 1, 0, "/no-val", eval_dataset=True)
+    cfg.data.openwam_val_split = "train"
+    _, info = build_openwam_sft_dataloader(cfg, 1, 0, "/held-out", eval_dataset=True)
+    assert calls[-1] == ("/held-out", "train") and info["num_samples"] == 4
+
+    # Validation shards are padded to equal lengths so every rank executes the
+    # same number of FSDP forwards; the padded sample is marked and excluded
+    # from the reduced metric.
+    eval_loader, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tiny", eval_dataset=True)
+    empty_eval_loader, _ = build_openwam_sft_dataloader(
+        cfg, 2, 1, "/tiny", eval_dataset=True
+    )
+    assert len(eval_loader) == 1
+    assert len(empty_eval_loader) == 1
+    assert not next(iter(eval_loader))[0].is_padding
+    assert next(iter(empty_eval_loader))[0].is_padding
+
+    # A tail batch also stays equal-sized when the validation batch is larger
+    # than one sample.
+    cfg.actor.eval_batch_size = 2
+    tail_rank0, _ = build_openwam_sft_dataloader(cfg, 2, 0, "/tail", eval_dataset=True)
+    tail_rank1, _ = build_openwam_sft_dataloader(cfg, 2, 1, "/tail", eval_dataset=True)
+    assert len(tail_rank0) == len(tail_rank1) == 1
+    assert [item.is_padding for item in next(iter(tail_rank0))] == [False, False]
+    assert [item.is_padding for item in next(iter(tail_rank1))] == [False, True]
+
+
+def test_openwam_sft_dataloader_places_mixture_sources_under_one_root(
+    tmp_path, monkeypatch
+):
+    """A mixture root maps to ``<root>/<name>`` per enabled source."""
+    pytest.importorskip("torchdata")
+    from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
+
+    cfg, seen, _ = openwam_fake_mixture_cfg(
+        tmp_path, monkeypatch, override_libero="/elsewhere/libero"
+    )
+    loader, info = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
+    assert seen == [
+        (
+            {
+                "robocoin": {"enabled": True, "dataset_dir": "/root/robocoin"},
+                "oxe_droid": {"enabled": False, "dataset_dir": "/train-host/oxe_droid"},
+                "libero": {"enabled": True, "dataset_dir": "/elsewhere/libero"},
+            },
+            "train",
+        )
+    ]
+    assert info["dataset_type"] == "mixture"
+    assert info["normalization_stats_path"] is None
+    assert len(loader) == 3
+    with pytest.raises(ValueError, match="exactly one data root"):
+        build_openwam_sft_dataloader(cfg, 1, 0, ["/a", "/b"])
