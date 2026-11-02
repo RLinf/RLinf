@@ -13,6 +13,8 @@
      - RLinf 配置文件的结构与覆盖方式。
    * - :doc:`具身智能配置 <../embodiment_config>`
      - 具身训练专用配置项。
+   * - :doc:`多环境 <../multi_env>`
+     - 让同一个 policy 同时在多个仿真器或真机上训练和评估。
    * - :doc:`智能体配置 <../agentic_config>`
      - 智能体和推理训练专用配置项。
    * - :doc:`日志 <../logger>`
@@ -23,5 +25,6 @@
 
    基础配置 <../basic_config>
    具身智能配置 <../embodiment_config>
+   多环境 <../multi_env>
    智能体配置 <../agentic_config>
    日志 <../logger>

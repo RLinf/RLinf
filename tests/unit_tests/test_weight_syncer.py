@@ -28,6 +28,7 @@ from torch.distributed.tensor.placement_types import Partial, Replicate, Shard
 
 from rlinf.config import validate_weight_sync_overlap_cfg
 from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
+from rlinf.envs.layout import EnvAssignment
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
@@ -2067,6 +2068,9 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
 
         # Manually set required attributes
         self.worker.cfg = self.cfg
+        self.worker.train_assignment = EnvAssignment(
+            name=None, cfg=self.cfg.env.train, rank=0, world_size=1
+        )
         self.worker._rank = 0
         self.worker._world_size = 1
         self.worker._group_name = "EnvGroup"

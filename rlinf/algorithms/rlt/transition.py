@@ -17,6 +17,7 @@ from typing import Any
 import torch
 
 from rlinf.envs import SupportedEnvType
+from rlinf.envs.layout import EnvLayout
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 RLT_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
@@ -24,13 +25,26 @@ RLT_TRANSITION_PREFIX = "rlt_transition_"
 
 
 def use_simulator_transition_replay(cfg: Any) -> bool:
-    """Return True for envs that store one replay row per env step."""
-    train_env_cfg = cfg.env.get("train", None)
-    if train_env_cfg is None:
-        return False
+    """Return True for envs that store one replay row per env step.
+
+    Raises:
+        ValueError: If only some of the train envs store a row per env step;
+            the actor keeps one replay layout.
+    """
+    env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    per_step = {path: _is_maniskill_rlt(env_cfg) for path, env_cfg in env_cfgs.items()}
+    if len(set(per_step.values())) > 1:
+        raise ValueError(
+            "RLT replay needs every train env to be maniskill_rlt or none of "
+            f"them, got {per_step}."
+        )
+    return any(per_step.values())
+
+
+def _is_maniskill_rlt(env_cfg: Any) -> bool:
     try:
         return (
-            SupportedEnvType(train_env_cfg.get("env_type", ""))
+            SupportedEnvType(env_cfg.get("env_type", ""))
             == SupportedEnvType.MANISKILL_RLT
         )
     except ValueError:

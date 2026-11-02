@@ -206,6 +206,12 @@ env
    * - ``env.train.max_steps_per_rollout_epoch`` / ``env.eval.max_steps_per_rollout_epoch``
      - Maximum environment steps collected per rollout epoch. Must be divisible by
        ``actor.model.num_action_chunks``.
+   * - ``env.train.envs`` / ``env.eval.envs``
+     - Named env configs that one mode runs side by side, each on its own env
+       workers. See :doc:`multi_env`.
+   * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
+     - Observation keys and image size sent to the policy, so envs with different
+       cameras share one batch. See :doc:`multi_env`.
 
 rollout
 ~~~~~~~~~~~~~~~

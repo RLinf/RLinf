@@ -14,6 +14,8 @@ settings before launching a run.
      - How RLinf config files are structured and overridden.
    * - :doc:`Embodied Configuration <../embodiment_config>`
      - Config keys specific to embodied training.
+   * - :doc:`Multiple Environments <../multi_env>`
+     - Train and evaluate one policy on several simulators or robots at once.
    * - :doc:`Agentic Configuration <../agentic_config>`
      - Config keys specific to agentic and reasoning training.
    * - :doc:`Logging <../logger>`
@@ -24,5 +26,6 @@ settings before launching a run.
 
    Basic Configuration <../basic_config>
    Embodied Configuration <../embodiment_config>
+   Multiple Environments <../multi_env>
    Agentic Configuration <../agentic_config>
    Logging <../logger>

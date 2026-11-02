@@ -67,6 +67,7 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.envs.layout import EnvAssignment
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
@@ -3106,10 +3107,11 @@ def test_env_closes_reward_stream_with_final_chunk():
     env.use_training_pipeline = False
     env.env_decoupled_mode = False
     env.enable_online_lerobot = False
-    env.cfg = SimpleNamespace(
-        env=SimpleNamespace(
-            train=SimpleNamespace(auto_reset=True, ignore_terminations=False)
-        )
+    env.train_assignment = EnvAssignment(
+        name=None,
+        cfg=SimpleNamespace(auto_reset=True, ignore_terminations=False),
+        rank=0,
+        world_size=1,
     )
     env._bootstrap_and_send_train = Mock(
         return_value=[EnvOutput(obs={"states": torch.zeros(1, 4)})]
