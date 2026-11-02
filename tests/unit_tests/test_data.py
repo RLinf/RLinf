@@ -3733,3 +3733,42 @@ class TestGroupMetadataView:
         assert metadata.earliest_version is None
         assert metadata.completion_version is None
         assert metadata.num_generate_calls == 2
+
+
+class TestTaskNameField:
+    """task_name rides on results like group_id: single-group only."""
+
+    @staticmethod
+    def _dynamic_result(num_sequence: int = 2, task_name: str | None = None):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=num_sequence,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence,
+            task_name=task_name,
+        )
+
+    def test_merge_drops_task_name(self):
+        """A merged result spans several groups, so it carries None."""
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(task_name="searchr1"),
+                self._dynamic_result(task_name="searchr1"),
+            ]
+        )
+        assert merged.task_name is None
+
+    def test_split_drops_task_name(self):
+        """Split results are rebuilt without the field, so it is None."""
+        split = DynamicRolloutResult.split_results(
+            self._dynamic_result(task_name="searchr1"), [1, 1]
+        )
+        assert all(result.task_name is None for result in split)
+
+    def test_group_metadata_carries_task_name(self):
+        result = self._dynamic_result(task_name="searchr1")
+        assert result.group_metadata().task_name == "searchr1"

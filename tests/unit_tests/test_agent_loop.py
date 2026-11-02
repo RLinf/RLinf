@@ -72,14 +72,62 @@ def _make_worker() -> AgentLoopWorker:
     return worker
 
 
-def _request(n_groups=1, group_size=2, group_ids=None):
+def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
     """A RolloutRequest double: n_groups (input_ids, answer) pairs."""
     return SimpleNamespace(
         input_ids=[[1, 2] for _ in range(n_groups)],
         answers=[f"a{i}" for i in range(n_groups)],
         n=group_size,
         group_ids=group_ids,
+        task_names=task_names,
     )
+
+
+def _make_group_worker(worker_cls=AgentLoopWorker):
+    """A group-method worker: enough state to build one group result."""
+    worker = worker_cls.__new__(worker_cls)
+    worker.print_outputs = False
+    worker.return_logprobs = False
+    worker.cfg = OmegaConf.create(
+        {
+            "data": {
+                "rollout_batch_size": 4,
+                "shuffle": False,
+                "num_workers": 0,
+                "seed": 1,
+                "max_prompt_length": 8,
+            },
+            "runner": {"seq_length": 16},
+            "algorithm": {
+                "group_size": 2,
+                "max_num_gen_batches": 1,
+            },
+        }
+    )
+    return worker
+
+
+async def _single_query_output(input_ids):
+    """One finished single-turn trajectory for the base group method."""
+    return SimpleNamespace(
+        prompt_ids=[1, 2],
+        prompt_text="p",
+        response_ids=[3],
+        response_text="r",
+        response_mask=None,
+        response_logprobs=None,
+        trace_prints=[],
+    )
+
+
+class _NullContext:
+    """A context manager standing in for the worker timer."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
 
 
 class TestAggregateAgentMetrics:
@@ -162,8 +210,15 @@ class TestRunAgentloopRolloutContinuously:
             metric_channel = _QueueChannel()
             calls = []
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
-                calls.append((answer, group_size))
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
+                calls.append((answer, group_size, task_name))
                 return {"__sum__/turns": 1}
 
             worker.run_agentloop_rollout_group = _group
@@ -172,7 +227,9 @@ class TestRunAgentloopRolloutContinuously:
                     in_channel, out_channel, metric_channel
                 )
             )
-            in_channel.put(_request(n_groups=2, group_size=3))
+            in_channel.put(
+                _request(n_groups=2, group_size=3, task_names=["searchr1", "searchr1"])
+            )
             while metric_channel._queue.qsize() < 2:
                 await asyncio.sleep(0.01)
             # Drain the records; empty-metric groups put nothing.
@@ -185,7 +242,8 @@ class TestRunAgentloopRolloutContinuously:
             worker.stop()
             await asyncio.wait_for(continuously, timeout=5)
 
-            assert calls == [("a0", 3), ("a1", 3)]
+            # Each group got its task name by index from the request.
+            assert calls == [("a0", 3, "searchr1"), ("a1", 3, "searchr1")]
 
         asyncio.run(run())
 
@@ -215,7 +273,14 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             boom = RuntimeError("group exploded")
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
                 raise boom
 
             worker.run_agentloop_rollout_group = _group
@@ -242,7 +307,14 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             cancelled = asyncio.Event()
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
                 try:
                     await asyncio.sleep(60)
                 except asyncio.CancelledError:
@@ -273,7 +345,14 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             metric_channel = _QueueChannel()
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
                 return None if answer == "a0" else {}
 
             worker.run_agentloop_rollout_group = _group
@@ -299,7 +378,14 @@ class TestRunAgentloopRolloutContinuously:
             out_channel = _QueueChannel()
             seen = []
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
                 seen.append((answer, group_id))
                 return {}
 
@@ -327,7 +413,14 @@ class TestRunAgentloopRolloutContinuously:
             in_channel = _QueueChannel()
             seen = []
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
                 seen.append(group_id)
                 return {}
 
@@ -667,7 +760,14 @@ class TestIdleStats:
             started = asyncio.Event()
             release = asyncio.Event()
 
-            async def _group(input_ids, answer, group_size, output_channel, group_id):
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id,
+                task_name=None,
+            ):
                 started.set()
                 await release.wait()
                 return {}
@@ -696,49 +796,13 @@ class TestIdleStats:
 class TestGroupIdPassthrough:
     """The group id stamped by the agent loop group methods."""
 
-    @staticmethod
-    def _make_group_worker():
-        worker = AgentLoopWorker.__new__(AgentLoopWorker)
-        worker.print_outputs = False
-        worker.return_logprobs = False
-        worker.cfg = OmegaConf.create(
-            {
-                "data": {
-                    "rollout_batch_size": 4,
-                    "shuffle": False,
-                    "num_workers": 0,
-                    "seed": 1,
-                    "max_prompt_length": 8,
-                },
-                "runner": {"seq_length": 16},
-                "algorithm": {
-                    "staleness_threshold": 0,
-                    "group_size": 2,
-                    "max_num_gen_batches": 1,
-                },
-            }
-        )
-        return worker
-
     def test_group_id_written_onto_the_result(self):
         """run_agentloop_rollout_group stamps group_id on the result."""
 
         async def run():
-            worker = self._make_group_worker()
+            worker = _make_group_worker()
             out_channel = _QueueChannel()
-
-            async def _query(input_ids):
-                return SimpleNamespace(
-                    prompt_ids=[1, 2],
-                    prompt_text="p",
-                    response_ids=[3],
-                    response_text="r",
-                    response_mask=None,
-                    response_logprobs=None,
-                    trace_prints=[],
-                )
-
-            worker.run_one_query = _query
+            worker.run_one_query = _single_query_output
             await worker.run_agentloop_rollout_group(
                 input_ids=[1, 2],
                 answer="a",
@@ -755,21 +819,9 @@ class TestGroupIdPassthrough:
         """The synchronous path leaves group_id at its None default."""
 
         async def run():
-            worker = self._make_group_worker()
+            worker = _make_group_worker()
             out_channel = _QueueChannel()
-
-            async def _query(input_ids):
-                return SimpleNamespace(
-                    prompt_ids=[1, 2],
-                    prompt_text="p",
-                    response_ids=[3],
-                    response_text="r",
-                    response_mask=None,
-                    response_logprobs=None,
-                    trace_prints=[],
-                )
-
-            worker.run_one_query = _query
+            worker.run_one_query = _single_query_output
             await worker.run_agentloop_rollout_group(
                 input_ids=[1, 2],
                 answer="a",
@@ -778,5 +830,108 @@ class TestGroupIdPassthrough:
             )
             result = out_channel.get_nowait()
             assert result.group_id is None
+
+        asyncio.run(run())
+
+
+class TestTaskNamePassthrough:
+    """The task name stamped by the agent loop group methods."""
+
+    def test_task_name_written_onto_the_result(self):
+        """run_agentloop_rollout_group stamps task_name on the result."""
+
+        async def run():
+            worker = _make_group_worker()
+            out_channel = _QueueChannel()
+            worker.run_one_query = _single_query_output
+            await worker.run_agentloop_rollout_group(
+                input_ids=[1, 2],
+                answer="a",
+                group_size=2,
+                output_channel=out_channel,
+                group_id=9,
+                task_name="searchr1",
+            )
+            result = out_channel.get_nowait()
+            assert result.task_name == "searchr1"
+
+        asyncio.run(run())
+
+    def test_synchronous_path_leaves_task_name_none(self):
+        """Without a group id the task name stays at its None default."""
+
+        async def run():
+            worker = _make_group_worker()
+            out_channel = _QueueChannel()
+            worker.run_one_query = _single_query_output
+            await worker.run_agentloop_rollout_group(
+                input_ids=[1, 2],
+                answer="a",
+                group_size=2,
+                output_channel=out_channel,
+            )
+            result = out_channel.get_nowait()
+            assert result.task_name is None
+
+        asyncio.run(run())
+
+    def test_multi_group_method_writes_task_name(self):
+        """MultiAgentLoopWorker.run_agentloop_rollout_group stamps it too."""
+
+        async def run():
+            worker = _make_group_worker(MultiAgentLoopWorker)
+            worker.return_logprobs = True
+            worker.extra_keys_turn = None
+            worker.extra_keys_traj = None
+            worker.is_eval = False
+            out_channel = _QueueChannel()
+
+            async def _query(input_dict, answer=None):
+                return SimpleNamespace(
+                    single_turn_outputs=[_single_turn_output(None, None)],
+                    trace_prints=[],
+                    extra_fields={},
+                )
+
+            worker.run_one_query = _query
+            await worker.run_agentloop_rollout_group(
+                input_dict={"input_ids": [1, 2]},
+                answer="a",
+                group_size=2,
+                output_channel=out_channel,
+                group_id=5,
+                task_name="searchr1",
+            )
+            result = out_channel.get_nowait()
+            assert result.task_name == "searchr1"
+
+        asyncio.run(run())
+
+    def test_synchronous_rollout_passes_no_task_name(self):
+        """run_agentloop_rollout calls groups without a task name."""
+
+        async def run():
+            worker = _make_group_worker()
+            out_channel = _QueueChannel()
+            request = _request(n_groups=2)
+            # The synchronous path reads the request from a plain get().
+            in_channel = SimpleNamespace(get=lambda key=None, async_op=False: request)
+            seen = []
+
+            async def _group(
+                input_ids,
+                answer,
+                group_size,
+                output_channel,
+                group_id=None,
+                task_name=None,
+            ):
+                seen.append((group_id, task_name))
+                return {}
+
+            worker.run_agentloop_rollout_group = _group
+            worker.worker_timer = lambda: _NullContext()
+            await worker.run_agentloop_rollout(in_channel, out_channel)
+            assert seen == [(None, None), (None, None)]
 
         asyncio.run(run())

@@ -18,6 +18,7 @@ import time
 from typing import Any, Optional
 
 import torch
+from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -341,6 +342,9 @@ class RolloutBufferWorker(Worker):
             "max_actor_accept_staleness", None
         )
         self.max_dropped_groups_per_step = cfg.algorithm.max_dropped_groups_per_step
+        # Agent task name stamped on every issued request; the buffer keys
+        # its per-task state by it. None until the user configures one.
+        self.task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
         self._resident_task: Optional[asyncio.Task] = None
         self._data_iter = None
         self._rollout_channel: Optional[Channel] = None
@@ -432,6 +436,7 @@ class RolloutBufferWorker(Worker):
                 await self.buffer.wait_for_admission_slot()
                 group_id, _ = self.buffer.issue_group(sample_idx)
                 request.group_ids = [group_id]
+                request.task_names = [self.task_name]
                 await dataloader_channel.put(request, async_op=True).async_wait()
 
     async def _run_receive(self, input_channel: Channel, rollout_channel: Channel):

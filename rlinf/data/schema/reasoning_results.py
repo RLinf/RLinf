@@ -69,6 +69,9 @@ class RolloutResult:
     # Id of the query group this result belongs to when rollout runs
     # asynchronously; None in synchronous training.
     group_id: Optional[int] = None
+    # Agent task name of the group this result belongs to, set by the agent
+    # loop from the issuing request's task_names.
+    task_name: Optional[str] = None
 
     @property
     def batch_size(self):
@@ -830,6 +833,8 @@ class GroupMetadata:
     """
 
     group_id: Optional[int]
+    # Agent task name of the group the result belongs to.
+    task_name: Optional[str] = None
     # One reward per trajectory, in trajectory order.
     rewards: Optional[list[float]]
     # Weight version the group's earliest generate call started under and
@@ -888,9 +893,14 @@ class DynamicRolloutResult:
     version_end: Optional[list[int]] = None
 
     # Id of the query group this result belongs to, set by the agent loop
-    # from the issuing request's group_ids. Merged and split results span
-    # more than one group and carry None.
+    # from the issuing request's group_ids. Merged results span several
+    # groups and split results are rebuilt without it, so both carry None.
     group_id: Optional[int] = None
+
+    # Agent task name of the group this result belongs to, set by the agent
+    # loop from the issuing request's task_names; merges and splits leave
+    # it None for the same reason as group_id above.
+    task_name: Optional[str] = None
 
     # extra fields used in training for custom process
     extra_fields_train: dict[str, list] = field(default_factory=dict)
@@ -919,6 +929,7 @@ class DynamicRolloutResult:
         )
         return GroupMetadata(
             group_id=self.group_id,
+            task_name=self.task_name,
             rewards=rewards,
             earliest_version=min(versions) if versions else None,
             completion_version=max(versions) if versions else None,

@@ -48,6 +48,7 @@ def _cfg(
     reject_equal_reward: bool = False,
     max_actor_accept_staleness: int | None = None,
     max_dropped_groups_per_step: int = 1000,
+    task_name: str | None = None,
 ):
     algorithm = {
         "staleness_threshold": staleness_threshold,
@@ -73,6 +74,7 @@ def _cfg(
             },
             "runner": {"seq_length": 16},
             "algorithm": algorithm,
+            "agentloop": {"task_name": task_name},
         }
     )
 
@@ -165,6 +167,7 @@ def _make_worker(
     reject_equal_reward=False,
     max_actor_accept_staleness=None,
     max_dropped_groups_per_step=1000,
+    task_name=None,
 ):
     """A RolloutBufferWorker with the loop state but no Worker init."""
     cfg = _cfg(
@@ -173,6 +176,7 @@ def _make_worker(
         reject_equal_reward=reject_equal_reward,
         max_actor_accept_staleness=max_actor_accept_staleness,
         max_dropped_groups_per_step=max_dropped_groups_per_step,
+        task_name=task_name,
     )
     worker = RolloutBufferWorker.__new__(RolloutBufferWorker)
     worker.cfg = cfg
@@ -182,6 +186,7 @@ def _make_worker(
     worker.reject_equal_reward = reject_equal_reward
     worker.max_actor_accept_staleness = max_actor_accept_staleness
     worker.max_dropped_groups_per_step = max_dropped_groups_per_step
+    worker.task_name = task_name
     worker.log_warning = mock.MagicMock()
     worker.log_info = mock.MagicMock()
     worker._resident_task = None
@@ -998,6 +1003,35 @@ class TestStalenessDrops:
                     for _ in range(2)
                 ]
                 assert [r.group_id for r in released] == [2, 3]
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+
+class TestIssuedRequestTaskName:
+    """The task name the admission stamps on issued requests."""
+
+    def test_issued_request_carries_task_name(self):
+        """The admission stamps the configured task name on the request."""
+
+        async def run():
+            worker = _make_worker(rollout_batch_size=2, task_name="searchr1")
+            dataloader_channel = _QueueChannel()
+            input_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    input_channel, dataloader_channel, rollout_channel
+                )
+            )
+            try:
+                request = await asyncio.wait_for(
+                    dataloader_channel._queue.get(), timeout=5
+                )
+                assert request.task_names == ["searchr1"]
+                assert request.group_ids == [0]
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)

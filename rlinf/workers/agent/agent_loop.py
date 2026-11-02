@@ -275,6 +275,7 @@ class AgentLoopWorker(Worker):
         group_size: int,
         output_channel: Channel,
         group_id: Optional[int] = None,
+        task_name: Optional[str] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -290,6 +291,7 @@ class AgentLoopWorker(Worker):
             rollout_result = self.get_rollout_result(task_results, answer)
             if group_id is not None:
                 rollout_result.group_id = group_id
+                rollout_result.task_name = task_name
             await output_channel.put(rollout_result, async_op=True).async_wait()
         except GroupDiscarded as e:
             # Only this failure mode is per-group: record the discard and
@@ -358,13 +360,20 @@ class AgentLoopWorker(Worker):
             while True:
                 request = await input_channel.get(async_op=True).async_wait()
                 group_ids = request.group_ids
+                task_names = request.task_names
                 for index, (input_ids, answer) in enumerate(
                     zip(request.input_ids, request.answers)
                 ):
                     group_id = group_ids[index] if group_ids is not None else None
+                    task_name = task_names[index] if task_names is not None else None
                     task = asyncio.create_task(
                         self.run_agentloop_rollout_group(
-                            input_ids, answer, request.n, output_channel, group_id
+                            input_ids,
+                            answer,
+                            request.n,
+                            output_channel,
+                            group_id,
+                            task_name,
                         )
                     )
                     task.add_done_callback(self._on_group_done)
@@ -632,6 +641,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         group_size: int,
         output_channel: Channel,
         group_id: Optional[int] = None,
+        task_name: Optional[str] = None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -643,6 +653,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             output_channel: Channel to output results
             group_id: Id of the query group, carried on the result so the
                 receiver can route it; None in synchronous training.
+            task_name: Agent task name of the group, carried on the result
+                like group_id.
         """
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
@@ -660,6 +672,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_result = self.get_rollout_result(task_results, *extra_fields)
             if group_id is not None:
                 rollout_result.group_id = group_id
+                rollout_result.task_name = task_name
             agent_metrics = self.get_rollout_metrics(rollout_result)
 
             await output_channel.put(rollout_result, async_op=True).async_wait()
