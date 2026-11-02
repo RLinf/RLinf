@@ -511,6 +511,11 @@ class MultiStepRolloutWorker(Worker):
         )
 
         model_type = SupportedModel(self.model_cfg.model_type)
+        if model_type == SupportedModel.ACTIVEVLN:
+            kwargs = dict(kwargs)
+            kwargs["repetition_penalty"] = self.cfg.rollout.sampling_params.get(
+                "repetition_penalty", 1.0
+            )
         if model_type in [
             SupportedModel.OPENPI,
             SupportedModel.PI0_FAST,

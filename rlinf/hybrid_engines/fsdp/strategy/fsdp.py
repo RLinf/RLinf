@@ -178,6 +178,7 @@ class FSDPStrategy(FSDPStrategyBase):
         )
 
         cpu_offload = CPUOffload(offload_params=self.cfg.fsdp_config.cpu_offload)
+        ignored_states_fn = getattr(model, "get_fsdp_ignored_states", None)
 
         fsdp_model = FSDP(
             module=model,
@@ -193,6 +194,7 @@ class FSDPStrategy(FSDPStrategyBase):
             limit_all_gathers=self.cfg.fsdp_config.limit_all_gathers,
             use_orig_params=self.cfg.fsdp_config.use_orig_params,
             cpu_offload=cpu_offload,
+            ignored_states=ignored_states_fn() if ignored_states_fn else None,
         )
         apply_buffer_dtype_compatibility(fsdp_model)
         return fsdp_model
