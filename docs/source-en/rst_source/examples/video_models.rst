@@ -13,6 +13,8 @@ RLinf's ``diffusion`` environment, and updates the diffusion model from the
 resulting reward. The current examples optimize text rendering with an OCR
 reward and support both image-level and frame-aware video training.
 
+For ImageReward-based preference tuning of SD3, see :doc:`embodied/refl`.
+
 Overview
 --------
 
