@@ -210,6 +210,7 @@ def mocked_sdks(*, extra: dict[str, Any] | None = None) -> Iterator[dict[str, An
     for dotted, attributes in {
         "rlinf.robotics.parts.arms.franka_ros": {"psutil": processes},
         "rlinf.robotics.parts.transports.ros.ros_controller": {"psutil": processes},
+        "rlinf.robotics.parts.transports.pico": {"zmq": made["zmq"]},
         "rlinf.robotics.parts.arms.dosw1": dosw1_patch,
         "rlinf.robotics.parts.arms.franky": _no_realtime(),
         **_PATCHES,

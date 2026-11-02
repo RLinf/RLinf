@@ -24,6 +24,7 @@ import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, fields
@@ -2757,7 +2758,7 @@ def _settle(zmq, device, frame, wanted, tries=200):
     raise AssertionError(f"The PICO reading never reflected {frame}.")
 
 
-def _pico_joint(tool):
+def _pico_joint(tool, **settings):
     from rlinf.robotics.parts.teleop import PicoJoint
 
     return PicoJoint(
@@ -2767,6 +2768,7 @@ def _pico_joint(tool):
         joint_step_limits=[0.05] * 6,
         hand="right",
         zmq_addr="tcp://x:1",
+        **settings,
     )
 
 
@@ -2846,6 +2848,44 @@ def test_a_pico_moves_joints_toward_its_ik_solution_a_step_a_tick():
             )
         finally:
             pico.disconnect()
+
+
+def test_an_integrating_pico_arm_outruns_a_lagging_measurement_up_to_its_lead():
+    """With a lead bound the command advances a step a tick even while the arm lags.
+
+    Stepping from the measured joints instead caps the arm's speed at the step
+    limit over the servo's lag, which a streamed arm makes visible.
+    """
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    lagging = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        for lead, expected in ((None, [0.35, 0.35, 0.35]), (0.12, [0.35, 0.4, 0.42])):
+            pico = _pico_joint(FreeToolKinematics(), max_joint_lead=lead)
+            pico.connect()
+            try:
+                released = _settle(zmq, pico, pico_packet(), lambda r: r["calibrated"])
+                pico.action(released, lagging)
+                held = _settle(
+                    zmq, pico, pico_packet(right={"grip": 1.0}), lambda r: r["held"]
+                )
+                pico.action(held, lagging)
+                moved = _settle(
+                    zmq,
+                    pico,
+                    pico_packet(right={"grip": 1.0, "position": [0, 0, -0.2]}),
+                    lambda r: r["position_delta"][0] > 0.19,
+                )
+                ticks = [pico.action(moved, lagging).parts["arm"][0] for _ in range(3)]
+                assert np.allclose(ticks, expected, atol=1e-6)
+            finally:
+                pico.disconnect()
 
 
 def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
@@ -3244,8 +3284,12 @@ def _pico_reader(**overrides):
         "calibration": {"enabled": False, "required": False},
     }
     config.update(overrides)
+    original_start = PicoExpert.start
     PicoExpert.start = lambda self: None
-    return PicoExpert(**config)
+    try:
+        return PicoExpert(**config)
+    finally:
+        PicoExpert.start = original_start
 
 
 def test_a_reading_is_empty_until_the_operator_takes_hold():
@@ -4697,6 +4741,10 @@ def test_every_shipped_robot_runs_on_faked_sdks():
             "left_can_channel": "can0",
             "right_can_channel": "can1",
         },
+        "R2": {
+            "node_rank": 0,
+            "enable_base": True,
+        },
     }
     with mocked_sdks():
         import rlinf.robotics.robots  # noqa: F401
@@ -4809,10 +4857,11 @@ def test_an_address_is_checked_by_the_arm_that_dials_it():
 
 def test_a_connection_cannot_be_composed_into_a_robot():
     from rlinf.robotics.parts.arms.dosw1 import DOSW1Connection
+    from rlinf.robotics.parts.arms.r2 import R2Connection
     from rlinf.robotics.parts.arms.turtle2 import Turtle2Connection
     from rlinf.robotics.parts.base import Connection, RobotPart
 
-    for cls in (Turtle2Connection, DOSW1Connection):
+    for cls in (Turtle2Connection, DOSW1Connection, R2Connection):
         assert issubclass(cls, Connection), f"{cls.__name__} must still be placeable"
         assert not issubclass(cls, RobotPart), (
             f"{cls.__name__} backs parts without being one; it must not be "
@@ -4832,6 +4881,7 @@ def test_no_robot_builder_absorbs_a_setting_it_does_not_use():
         DualFrankaRobot,
         FrankaRobot,
         GimArmRobot,
+        R2Robot,
         Turtle2Robot,
     )
 
@@ -4842,6 +4892,7 @@ def test_no_robot_builder_absorbs_a_setting_it_does_not_use():
         GimArmRobot,
         Turtle2Robot,
         DOSW1Robot,
+        R2Robot,
     ):
         # Forwarding catch-alls are valid only when a downstream API validates keys.
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -7137,3 +7188,1048 @@ def test_SE3_body_delta_compose_round_trip():
 
         assert np.allclose(T_rec[..., :3, :3], T_abs[..., :3, :3], atol=1e-6)
         assert np.allclose(T_rec[..., :3, 3], T_abs[..., :3, 3], atol=1e-6)
+
+
+def test_any_driver_reports_faults_recovers_and_holds_one_command():
+    """Generic fault hooks: piggybacked and async health reports recover, then hold one step."""
+    from rlinf.robotics import FaultLevel, HealthStatus
+
+    class _SerialServoArm(ControllablePart):
+        def __init__(self) -> None:
+            self.hw_error_byte = 0
+            self.cleared_count = 0
+            self.last_cmd = np.zeros(2, dtype=np.float32)
+
+        def _open(self) -> Any:
+            return "serial_bus"
+
+        def _release(self, device: Any) -> None:
+            pass
+
+        @property
+        def observation_features(self) -> dict[str, dict]:
+            return {"q": {"shape": (2,)}}
+
+        @property
+        def action_features(self) -> dict[str, dict]:
+            return {"q": {"shape": (2,)}}
+
+        def get_state(self) -> dict[str, Any]:
+            return {"q": self.last_cmd.copy(), "error_byte": self.hw_error_byte}
+
+        def get_observation(self) -> dict[str, np.ndarray]:
+            return {"q": self.read_state()["q"]}
+
+        def _inspect_state_health(self, state: Any) -> Optional[HealthStatus]:
+            err = int(state.get("error_byte", 0))
+            if err != 0:
+                return HealthStatus(
+                    healthy=False,
+                    level=FaultLevel.RECOVERABLE_FAULT,
+                    error_code=err,
+                    error_message=f"servo_error={err}",
+                )
+            return HealthStatus(healthy=True)
+
+        def clear_errors(self) -> bool:
+            self.hw_error_byte = 0
+            self.cleared_count += 1
+            return True
+
+        def send_action(self, action: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+            self.last_cmd = np.asarray(action["q"], dtype=np.float32)
+            return {"q": self.last_cmd}
+
+    servo = _SerialServoArm()
+    robot = Robot(arm=servo)
+    robot.connect()
+    try:
+        # A fault carried in the state read is recovered before the next command,
+        # which is then dropped so the arm holds; the one after drives again.
+        servo.hw_error_byte = 0x04
+        robot.get_observation()
+        assert robot.diagnose().error_code == 0x04
+        robot.send_action({"arm": {"q": np.array([0.1, 0.2], dtype=np.float32)}})
+        assert robot.consume_recovery_event()["error_code"] == 0x04
+        assert servo.cleared_count == 1 and robot.diagnose().healthy
+        assert np.allclose(servo.last_cmd, [0.0, 0.0])
+        robot.send_action({"arm": {"q": np.array([0.1, 0.2], dtype=np.float32)}})
+        assert np.allclose(servo.last_cmd, [0.1, 0.2])
+
+        # A fault reported from a background callback recovers the same way.
+        servo.report_health(
+            HealthStatus(
+                healthy=False,
+                level=FaultLevel.RECOVERABLE_FAULT,
+                error_code=99,
+                error_message="async_can_emcy",
+            )
+        )
+        robot.send_action({"arm": {"q": np.array([0.3, 0.4], dtype=np.float32)}})
+        assert robot.consume_recovery_event()["error_code"] == 99
+        assert servo.cleared_count == 2 and robot.diagnose().healthy
+    finally:
+        robot.disconnect()
+
+
+def test_setpoint_streamer_moves_within_limits_and_smooths_irregular_goals():
+    """Streamed setpoints respect limits, smooth irregular goals, and never carry a jump forward."""
+    from rlinf.robotics import MotionProfile, SetpointStreamer
+
+    dt = 0.01
+    # A step is approached within per-joint limits, keeping its direction.
+    streamer = SetpointStreamer(
+        np.zeros(3),
+        max_velocity=[1.5, 1.5, 0.5],
+        max_acceleration=6.0,
+        max_extrapolation_s=0.1,
+    )
+    goal = np.array([0.6, -0.3, 0.2])
+    streamer.set_goal(goal, 0.0)
+    path = np.array([streamer.step(k * dt, dt) for k in range(1, 400)])
+    velocity = np.diff(path, axis=0) / dt
+    assert np.all(np.abs(velocity).max(axis=0) <= np.array([1.5, 1.5, 0.5]) + 1e-9)
+    assert np.abs(np.diff(velocity, axis=0) / dt).max() <= 6.0 + 1e-6
+    assert np.max((path - goal) * np.sign(goal)) <= 1e-9
+    assert np.allclose(path[-1], goal)
+    assert np.allclose(path[50] / goal, (path[50] / goal)[0])
+
+    # Goals arriving at an irregular ~50 Hz yield a stream as fast as the goal.
+    rng = np.random.default_rng(0)
+    streamer = SetpointStreamer(
+        np.zeros(1), max_velocity=2.0, max_acceleration=8.0, max_extrapolation_s=0.1
+    )
+    t, next_goal, out = 0.0, 0.0, []
+    while t < 3.0:
+        t += dt
+        if t >= next_goal:
+            streamer.set_goal([0.4 * np.sin(1.5 * t + 1.0)], t)
+            next_goal = t + 0.02 + rng.uniform(-0.006, 0.006)
+        out.append(streamer.step(t, dt)[0])
+    speed = np.abs(np.diff(out[50:]) / dt)
+    assert speed.max() <= 0.65
+    assert np.std(np.diff(np.diff(out[50:]) / dt)) < 0.03
+
+    # Parts updated one at a time inside a couple of milliseconds are one
+    # command, so the velocity estimate survives.
+    streamer = SetpointStreamer(
+        np.zeros(2), max_velocity=2.0, max_acceleration=8.0, max_extrapolation_s=0.1
+    )
+    streamer.set_goal([0.0, 0.0], 0.0)
+    streamer.set_goal([0.01, 0.0], 0.02)
+    streamer.set_goal([0.01, 0.01], 0.0205)
+    assert np.allclose(streamer._goal_velocity, [0.01 / 0.0205] * 2)
+
+    # A goal faster than the velocity limit is a jump: no overshoot.
+    streamer = SetpointStreamer(
+        np.zeros(1), max_velocity=1.0, max_acceleration=4.0, max_extrapolation_s=0.1
+    )
+    streamer.set_goal([0.0], 0.0)
+    streamer.set_goal([1.0], 0.02)
+    peak = max(streamer.step(0.02 + k * dt, dt)[0] for k in range(1, 300))
+    assert peak <= 1.0 + 1e-9
+
+    # A timed move lasts its duration and reports completion; a goal preempts it.
+    streamer = SetpointStreamer(
+        np.zeros(2), max_velocity=1.0, max_acceleration=4.0, max_extrapolation_s=0.1
+    )
+    duration = MotionProfile().move_duration([0.3, 0.1], min_duration=2.0)
+    assert duration == 2.0
+    done = streamer.start_move([0.3, 0.1], 0.0, duration)
+    steps = 0
+    while not done.is_set():
+        steps += 1
+        streamer.step(steps * dt, dt)
+    assert steps == 200 and streamer.move_completed
+    done = streamer.start_move([0.0, 0.0], 2.0, 1.0)
+    streamer.set_goal([0.3, 0.1], 2.1)
+    assert done.is_set() and not streamer.move_completed
+
+
+def test_motion_profile_sizes_moves_and_rejects_bad_limits():
+    """MotionProfile limits are physical, validated, and size raised-cosine moves."""
+    from rlinf.robotics import MotionProfile
+
+    profile = MotionProfile(max_joint_velocity=1.0, max_joint_acceleration=4.0)
+    # Peak raised-cosine speed pi*d/(2T) equals the limit.
+    assert np.isclose(profile.move_duration([1.5]), np.pi * 1.5 / 2.0)
+    assert np.isclose(
+        profile.move_duration([0.01], max_acceleration=0.5),
+        np.pi * np.sqrt(0.01 / 1.0),
+    )
+    assert profile.move_duration([0.0, 0.0], min_duration=0.7) == 0.7
+    tuned = MotionProfile.from_config({"max_joint_velocity": "2"}, defaults=profile)
+    assert tuned.max_joint_velocity == 2.0 and tuned.max_joint_acceleration == 4.0
+    with pytest.raises(KeyError, match="max_step"):
+        MotionProfile.from_config({"max_step": 0.01})
+    with pytest.raises(ValueError, match="max_joint_velocity"):
+        MotionProfile(max_joint_velocity=0.0)
+
+
+def test_batch_commands_reports_whether_staged_commands_ran():
+    """A batch scope reports its outermost flush, so staged moves cannot fail silently."""
+    from rlinf.robotics import Connection
+
+    class _StagingConnection(Connection):
+        def __init__(self) -> None:
+            self.result = True
+            self.flushes = 0
+
+        def _open(self) -> Any:
+            return "bus"
+
+        def _flush_command_batch(self) -> bool:
+            self.flushes += 1
+            return self.result
+
+    conn = _StagingConnection()
+    conn.connect()
+    try:
+        with conn.batch_commands() as outer:
+            with conn.batch_commands() as inner:
+                pass
+        assert outer.ok and inner.ok and conn.flushes == 1
+        conn.result = False
+        with conn.batch_commands() as failed:
+            pass
+        assert failed.ok is False
+    finally:
+        conn.disconnect()
+
+
+def test_joint_stream_streams_limited_setpoints_for_any_driver():
+    """JointStream needs only callables, so any position-streaming driver can use it."""
+    import threading
+
+    from rlinf.robotics import JointStream, MotionProfile
+
+    measured = np.array([0.1, -0.2])
+    sent: list[tuple[float, np.ndarray]] = []
+    fault = threading.Event()
+    starts: list[bool] = []
+    stream = JointStream(
+        send=lambda q: sent.append((time.monotonic(), q.copy())),
+        measure=lambda: measured.copy(),
+        faulted=fault.is_set,
+        limits=lambda: (np.array([1.0, 0.5]), np.array([4.0, 4.0])),
+        profile=lambda: MotionProfile(control_rate_hz=200.0),
+        on_start=lambda: starts.append(True),
+    )
+    stream.start()
+    try:
+        # Nothing goes out until a command; streaming then starts at the
+        # measured joints, after the driver's start hook.
+        time.sleep(0.05)
+        assert not sent and not stream.active
+        stream.track([0.4, 0.2])
+        assert _wait_until(lambda: sent and np.allclose(sent[-1][1], [0.4, 0.2]))
+        assert starts == [True]
+        assert np.allclose(sent[0][1], measured, atol=0.02)
+        steps = np.abs(np.diff(np.array([q for _, q in sent]), axis=0))
+        assert np.all(steps.max(axis=0) <= np.array([1.0, 0.5]) * 2 * 0.005 + 1e-9)
+
+        # A timed move lasts its duration and reports arrival.
+        started = time.monotonic()
+        assert stream.move([0.45, 0.25], duration=0.3)
+        assert time.monotonic() - started >= 0.29
+
+        # A fault stops sending and ends a move as not arrived.
+        fault.set()
+        assert _wait_until(lambda: not stream.active)
+        assert not stream.move([0.0, 0.0], duration=0.5)
+        count = len(sent)
+        time.sleep(0.05)
+        assert len(sent) == count and not stream.active
+        fault.clear()
+
+        # After a hold the next command starts again from the measured joints.
+        measured[:] = [0.3, 0.1]
+        stream.hold()
+        sent.clear()
+        stream.track([0.3, 0.1])
+        assert _wait_until(lambda: len(sent) > 2)
+        assert np.allclose(sent[0][1], [0.3, 0.1], atol=0.02)
+        assert len(starts) == 3
+    finally:
+        stream.close()
+    assert stream._thread is None
+
+
+def test_a_braked_setpoint_stream_stops_within_its_limits():
+    """Braking ends a move early, along its direction, within the acceleration limit."""
+    from rlinf.robotics import MotionProfile, SetpointStreamer
+
+    vmax, amax, dt = 1.0, 4.0, 0.01
+    target = np.array([1.0, -0.6, 0.3])
+    streamer = SetpointStreamer(
+        np.zeros(3), max_velocity=vmax, max_acceleration=amax, max_extrapolation_s=0.1
+    )
+    duration = MotionProfile().move_duration(
+        target, max_velocity=vmax, max_acceleration=amax
+    )
+    done = streamer.start_move(target, 0.0, duration)
+    path = [streamer.step(k * dt, dt) for k in range(1, int(0.5 * duration / dt))]
+    rest = streamer.brake()
+    now = len(path) * dt
+    path += [streamer.step(now + k * dt, dt) for k in range(1, 100)]
+
+    assert done.is_set() and not streamer.move_completed
+    # The arm stops ahead of where it was braked, short of the old target.
+    braked_at = path[int(0.5 * duration / dt) - 2]
+    assert np.all(np.sign(rest - braked_at) == np.sign(target))
+    assert np.all(np.abs(rest) < np.abs(target))
+    velocity = np.diff(path, axis=0) / dt
+    assert np.abs(np.diff(velocity, axis=0)).max() <= amax * dt + 1e-9
+    assert np.max((np.asarray(path) - rest) * np.sign(target)) < 1e-4
+    np.testing.assert_allclose(path[-1], rest, atol=1e-6)
+
+
+def _wait_until(predicate: Any, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
+
+
+def _r2_robot(**settings: Any) -> Any:
+    from rlinf.robotics import R2Robot
+
+    defaults = {
+        "body_dof": 21,
+        "end_effector_type": "gripper",
+        "enable_base": False,
+        "cameras": (),
+    }
+    return R2Robot.build(**{**defaults, **settings})
+
+
+def test_r2_robot_variants_read_and_command_the_robot_interface():
+    """Every R2 variant reads its parts and commands them through /robotic/*."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.discovery import RobotDiscovery
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_HAND_FINGER_ORDER,
+        R2_LEFT_READY_QPOS,
+        R2_MODE_MANUAL_DRAG,
+        R2_RIGHT_READY_QPOS,
+        R2Connection,
+        compute_r2_arm_cartesian_step,
+        compute_r2_arm_fk_and_jacobian,
+        infer_r2_hardware,
+    )
+    from rlinf.robotics.robots.r2 import R2Config
+
+    p_r0, _, _, _ = compute_r2_arm_fk_and_jacobian("right", R2_RIGHT_READY_QPOS)
+    q_r_fwd = compute_r2_arm_cartesian_step(
+        "right", R2_RIGHT_READY_QPOS, [0.04, 0.0, 0.0]
+    )
+    p_r1, _, _, _ = compute_r2_arm_fk_and_jacobian("right", q_r_fwd)
+    assert np.allclose(p_r1 - p_r0, [0.04, 0.0, 0.0], atol=2e-3)
+    p_l0, _, _, _ = compute_r2_arm_fk_and_jacobian("left", R2_LEFT_READY_QPOS)
+    q_l_up = compute_r2_arm_cartesian_step("left", R2_LEFT_READY_QPOS, [0.0, 0.0, 0.04])
+    p_l1, _, _, _ = compute_r2_arm_fk_and_jacobian("left", q_l_up)
+    assert np.allclose(p_l1 - p_l0, [0.0, 0.0, 0.04], atol=2e-3)
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        # The 21-DoF gripper body with chassis and depth cameras.
+        robot = _r2_robot(
+            enable_base=True,
+            cameras=("head", "wrist_left", "wrist_right"),
+            enable_depth=True,
+        )
+        assert not robot.is_connected
+        robot.connect()
+        try:
+            obs = robot.get_observation()
+            assert obs["left"]["arm"]["joint_position"].shape == (7,)
+            assert obs["right"]["gripper"]["state"].shape == (1,)
+            assert obs["base"]["base_pose"].shape == (3,)
+            assert obs["head"]["frame"].shape == (720, 1280, 3)
+            assert obs["head"]["depth"].shape == (720, 1280)
+            assert obs["wrist_left"]["frame"].shape == (480, 640, 3)
+
+            left_q = np.array([0.1, 0.3, 0.2, -0.4, 0.1, 0.1, 0.1], dtype=np.float32)
+            robot.send_action(
+                {
+                    "left": {
+                        "arm": {"joint_position": left_q},
+                        "gripper": {"target": np.array([0.25], dtype=np.float32)},
+                    },
+                    "right": {"gripper": {"target": np.array([1.0], dtype=np.float32)}},
+                    "base": {
+                        "base_velocity": np.array([0.2, -0.1, 0.05], dtype=np.float32)
+                    },
+                }
+            )
+            arm = robot.child("left").child("arm")
+            assert _wait_until(
+                lambda: np.allclose(arm.get_observation()["joint_position"], left_q)
+            )
+            after = robot.get_observation()
+            assert np.allclose(after["left"]["gripper"]["state"], [0.25])
+            # The right gripper's default minimum closure keeps it from opening fully.
+            assert np.allclose(after["right"]["gripper"]["state"], [0.85])
+            assert np.allclose(after["base"]["base_velocity"], [0.2, -0.1, 0.05])
+            assert np.allclose(controller.base_commands[-1], [0.2, -0.1, 0.05])
+            robot.child("base").stop()
+            assert np.allclose(controller.base_commands[-1], [0.0, 0.0, 0.0])
+
+            robot.configure_motion_profile(
+                control_rate_hz=200.0, max_joint_velocity=1.5
+            )
+            conn = robot.owners()[0]
+            assert conn.motion_profile.max_joint_velocity == 1.5
+            assert np.isclose(conn.motion_profile.dt, 0.005)
+            with robot.batch_commands() as batch:
+                robot.child("left").child("arm").reset_joint(np.zeros(7), duration=0.2)
+                robot.child("right").child("arm").reset_joint(np.zeros(7), duration=0.2)
+            assert batch.ok
+            assert _wait_until(
+                lambda: np.allclose(
+                    robot.get_observation()["left"]["arm"]["joint_position"],
+                    0,
+                    atol=1e-4,
+                )
+            )
+            assert robot.child("left").child("arm").clear_errors()
+
+            fk = conn.forward_kinematics(np.zeros(14))
+            assert fk["left_tcp_pose"].shape == (6,)
+            assert np.allclose(
+                conn.forward_kinematics(np.zeros(19))["left_tcp_pose"],
+                fk["left_tcp_pose"],
+            )
+            assert conn.switch_controller(R2_MODE_MANUAL_DRAG)
+            assert controller.run_mode == R2_MODE_MANUAL_DRAG
+        finally:
+            robot.disconnect()
+
+        # A 20-DoF body with dexterous hands, detected from its joint names.
+        controller.configure(body_dof=20, end_effector_type="hand")
+        assert infer_r2_hardware(list(controller.joints)) == (20, "hand")
+        assert R2Connection.probe_hardware() == (20, "hand")
+        resources = RobotDiscovery.registry["R2"].discovery_cls.enumerate(
+            node_rank=0, configs=[R2Config(node_rank=0, cameras=[])]
+        )
+        resolved = resources.infos[0].config
+        assert (resolved.body_dof, resolved.end_effector_type) == (20, "hand")
+        hand_robot = _r2_robot(body_dof=None, end_effector_type="auto")
+        hand_robot.connect()
+        conn = hand_robot.owners()[0]
+        try:
+            assert (conn.body_dof, conn.end_effector_type) == (20, "hand")
+            fingers = np.linspace(0.1, 0.6, len(R2_HAND_FINGER_ORDER), dtype=np.float32)
+            hand_robot.send_action({"left": {"hand": {"target": fingers}}})
+            assert _wait_until(
+                lambda: np.allclose(
+                    hand_robot.get_observation()["left"]["hand"]["state"], fingers
+                )
+            )
+            conn.move_neck_joint(np.array([0.3, 0.1], dtype=np.float32))
+            assert _wait_until(
+                lambda: np.isclose(controller.joints["J_NeckPitch"], 0.1)
+            )
+            # The 20-DoF frame packs neck pitch only.
+            assert len(controller.frames[-1][1]) == 20
+        finally:
+            hand_robot.disconnect()
+
+
+def test_r2_streams_commands_from_a_fixed_rate_servo_loop():
+    """Commands only move a goal; a 100 Hz loop streams limited setpoints."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_MAX_JOINT_VELOCITY,
+        R2_WAIST_MAX_VELOCITY,
+        R2KinematicsAdapter,
+    )
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        robot = _r2_robot()
+        robot.connect()
+        conn = robot.owners()[0]
+        try:
+            target = np.array([0.3, 0.5, 0.3, -0.5, 0.3, 0.3, 0.3], dtype=np.float32)
+            started = time.monotonic()
+            robot.send_action({"left": {"arm": {"joint_position": target}}})
+            assert time.monotonic() - started < 0.05
+            arm = robot.child("left").child("arm")
+            assert _wait_until(
+                lambda: np.allclose(arm.get_observation()["joint_position"], target)
+            )
+            frames = list(controller.frames)
+            times = np.array([f[0] for f in frames])
+            joints = np.array([f[1] for f in frames])
+            assert 90.0 < len(frames) / (times[-1] - times[0]) < 110.0
+            assert np.abs(np.diff(joints, axis=0)).max() <= R2_MAX_JOINT_VELOCITY * 0.02
+
+            # A timed move lasts at least its duration; the waist stays slower.
+            started = time.monotonic()
+            assert conn.move_body_smooth(waist=[0.2, 0.2, 0.0, 0.0, 0.0], duration=0.3)
+            assert (
+                time.monotonic() - started
+                >= np.pi * 0.2 / (2.0 * R2_WAIST_MAX_VELOCITY) - 0.02
+            )
+            controller.frames.clear()
+            assert conn.move_body_smooth(waist=[0.0] * 5)
+            waist = np.array([f[1][:5] for f in controller.frames])
+            assert np.abs(np.diff(waist, axis=0)).max() <= R2_WAIST_MAX_VELOCITY * 0.02
+
+            # tcp_pose streams a full 6-DoF IK solution, orientation included.
+            seed = np.array([-0.35, 0.2, 1.0, -0.7, 0.0, -0.3, 0.0], dtype=np.float32)
+            assert conn.move_body_smooth(left_arm=seed, duration=0.2)
+            solver = R2KinematicsAdapter("left", waist_qpos=np.zeros(5))
+            start = solver.fk(seed)
+            pose = np.concatenate(
+                [
+                    start[:3, 3] + [0.03, 0.0, 0.02],
+                    (
+                        R.from_euler("z", 10.0, degrees=True)
+                        * R.from_matrix(start[:3, :3])
+                    ).as_euler("xyz"),
+                ]
+            )
+            robot.send_action({"left": {"arm": {"tcp_pose": pose}}})
+
+            def _reached() -> bool:
+                reached = solver.fk(arm.get_observation()["joint_position"])
+                turned = (
+                    R.from_matrix(reached[:3, :3]) * R.from_euler("xyz", pose[3:]).inv()
+                )
+                return (
+                    np.linalg.norm(reached[:3, 3] - pose[:3]) < 3e-3
+                    and turned.magnitude() < 0.03
+                )
+
+            assert _wait_until(_reached)
+            assert np.allclose(
+                arm.get_observation()["tcp_pose"][:3], pose[:3], atol=3e-3
+            )
+            with pytest.raises(ValueError, match="no IK solution"):
+                conn.inverse_kinematics(left_tcp_pose=pose + [3.0, 0, 0, 0, 0, 0])
+            assert not conn.move_left_arm_cartesian(pose + [3.0, 0, 0, 0, 0, 0])
+        finally:
+            robot.disconnect()
+        assert conn._stream._thread is None
+
+
+def test_r2_hold_stops_a_running_move_and_base_pulse_where_they_are():
+    """hold() ends a move early; the next command starts from where the arm stopped."""
+    from robot_mocks import mocked_sdks
+
+    def _settled(arm: Any) -> bool:
+        before = arm.get_observation()["joint_position"]
+        time.sleep(0.05)
+        return np.allclose(arm.get_observation()["joint_position"], before, atol=1e-4)
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        robot = _r2_robot(enable_base=True)
+        robot.connect()
+        conn = robot.owners()[0]
+        arm = robot.child("left").child("arm")
+        try:
+            target = np.array([0.6, 0.5, 0.3, -0.8, 0.3, 0.3, 0.3], dtype=np.float32)
+            moved: dict[str, bool] = {}
+            mover = threading.Thread(
+                target=lambda: moved.setdefault(
+                    "ok", conn.move_body_smooth(left_arm=target, max_velocity=0.5)
+                )
+            )
+            mover.start()
+            time.sleep(0.4)
+            conn.hold()
+            mover.join(timeout=2.0)
+
+            assert moved == {"ok": False}
+            assert _wait_until(lambda: _settled(arm))
+            stopped = arm.get_observation()["joint_position"]
+            assert 0.05 < np.abs(stopped).max() and not np.allclose(
+                stopped, target, atol=0.05
+            )
+            # A head move afterwards leaves the stopped arm where it is.
+            assert conn.move_body_smooth(neck=[0.1, -0.2])
+            np.testing.assert_allclose(
+                arm.get_observation()["joint_position"], stopped, atol=1e-3
+            )
+
+            pulse = threading.Thread(
+                target=conn.move_base_pulse,
+                args=([0.2, 0.0, 0.0],),
+                kwargs={"duration": 3.0},
+            )
+            started = time.monotonic()
+            pulse.start()
+            time.sleep(0.3)
+            conn.hold()
+            pulse.join(timeout=2.0)
+            assert not pulse.is_alive() and time.monotonic() - started < 1.5
+            assert controller.base_commands[-1] == [0.0, 0.0, 0.0]
+        finally:
+            robot.disconnect()
+
+
+def test_r2_fault_handling_follows_the_controller_codes():
+    """Faults come from the robot's own codes; an emergency stop is never auto-cleared."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import FaultLevel
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_MODE_AUTO,
+        R2_MODE_SERVOJ,
+        R2_SYSTEM_STATE_EMERGENCY_STOP,
+        R2Connection,
+    )
+
+    q = np.array([0.1, 0.1, 0.1, -0.1, 0.1, 0.1, 0.1], dtype=np.float32)
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        assert R2Connection().enable_fault_recovery is True
+        robot = _r2_robot(max_recovery_attempts=2)
+        robot.connect()
+        conn = robot.owners()[0]
+        arm = robot.child("left").child("arm")
+
+        def _drive(target: np.ndarray) -> None:
+            robot.send_action({"left": {"arm": {"joint_position": target}}})
+            assert _wait_until(
+                lambda: np.allclose(arm.get_observation()["joint_position"], target)
+            )
+
+        def _holds_then_drives(target: np.ndarray, level: str) -> dict:
+            held = arm.get_observation()["joint_position"]
+            robot.send_action({"left": {"arm": {"joint_position": target}}})
+            event = robot.consume_recovery_event()
+            assert event["level"] == level
+            time.sleep(0.1)
+            assert np.allclose(arm.get_observation()["joint_position"], held)
+            _drive(target)
+            return event
+
+        try:
+            assert robot.diagnose().level == FaultLevel.OK
+            _drive(q)
+
+            # A rejected request and a status code leave the robot healthy.
+            controller.service_errors["/clear_faults"] = 201
+            conn._call_service("/clear_faults", lambda _req: None)
+            controller.service_errors["/clear_faults"] = 11
+            conn._call_service("/clear_faults", lambda _req: None)
+            controller.service_errors.clear()
+            assert not conn._has_active_fault()
+
+            # A controller that left ServoJ is switched back, and the step holds.
+            controller.run_mode = R2_MODE_AUTO
+            assert robot.diagnose().level == FaultLevel.MODE_DROP
+            event = _holds_then_drives(q * 2, "mode_drop")
+            assert event["action"] == "switch_controller(SERVOJ)"
+            assert controller.run_mode == R2_MODE_SERVOJ
+
+            # A motion fault from the health monitor is cleared, and the step holds.
+            controller.report_health("M.ARM-E-501")
+            assert robot.diagnose().level == FaultLevel.RECOVERABLE_FAULT
+            event = _holds_then_drives(q, "recoverable_fault")
+            assert "M.ARM-E-501" in event["error_message"]
+
+            # A collision stays latched after the monitor drops it from its list.
+            controller.report_health(
+                "C.MC-E-804", message="GENERAL_ERROR(MOTION,COLLISION_DETECTED,robot)"
+            )
+            controller.report_health("", severity=0)
+            status = robot.diagnose()
+            assert status.error_code == 304 and "C.MC-E-804" in status.error_message
+
+            # With recovery off a fault stays until recovered by hand.
+            conn._recovery_timestamps.clear()
+            robot.configure_fault_recovery(enable_fault_recovery=False)
+            robot.send_action({"left": {"arm": {"joint_position": q * 2}}})
+            assert robot.consume_recovery_event() is None
+            assert robot.diagnose().error_code == 304
+            assert robot.recover(trigger="manual").healthy
+            assert robot.consume_recovery_event()["trigger"] == "manual"
+            robot.configure_fault_recovery(enable_fault_recovery=True)
+
+            # A fault the controller keeps re-raising trips the circuit breaker.
+            conn._recovery_timestamps.clear()
+            controller.state, controller.error_code = 4, 501
+            controller.clearable = False
+            robot.diagnose()
+            for _ in range(2):
+                robot.send_action({"left": {"arm": {"joint_position": q}}})
+            with pytest.raises(RuntimeError, match="exceeded max_recovery_attempts=2"):
+                robot.send_action({"left": {"arm": {"joint_position": q}}})
+            controller.clearable = True
+            assert conn.clear_errors() and robot.diagnose().healthy
+
+            # An emergency stop stops the stream, refuses automatic recovery, and
+            # stays latched after release until a person clears it.
+            conn._recovery_timestamps.clear()
+            _drive(q * 2)
+            controller.set_main_state(R2_SYSTEM_STATE_EMERGENCY_STOP)
+            assert robot.diagnose().level == FaultLevel.UNRECOVERABLE_FAULT
+            sent = len(controller.frames)
+            with pytest.raises(RuntimeError, match="emergency stop"):
+                robot.send_action({"left": {"arm": {"joint_position": q}}})
+            time.sleep(0.1)
+            assert len(controller.frames) == sent
+            controller.set_main_state(4)
+            assert robot.diagnose().level == FaultLevel.UNRECOVERABLE_FAULT
+            assert conn.clear_errors() and robot.diagnose().healthy
+        finally:
+            robot.disconnect()
+
+        # Connecting during an emergency stop fails and releases what it opened.
+        controller.set_main_state(R2_SYSTEM_STATE_EMERGENCY_STOP)
+        robot = _r2_robot()
+        with pytest.raises(RuntimeError, match="emergency stop"):
+            robot.connect()
+        assert not robot.is_connected
+        assert robot.owners()[0]._stream._thread is None
+        assert not any(controller.readers.values())
+        controller.set_main_state(4)
+
+        # A robot that reports no joint states is refused rather than streamed blind.
+        controller.silent = True
+        robot = _r2_robot()
+        with pytest.raises(RuntimeError, match="joint_states"):
+            robot.connect()
+        assert not robot.is_connected
+
+
+def test_r2_servo_loop_stops_quietly_only_when_ros_shuts_down(caplog):
+    """A send failing after ROS 2 shut down is shutdown; any other failure is an error."""
+    import logging
+
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        robot = _r2_robot()
+        robot.connect()
+        conn = robot.owners()[0]
+        q = np.array([0.1, 0.1, 0.1, -0.1, 0.1, 0.1, 0.1], dtype=np.float32)
+        try:
+            for flag, level in (
+                ("send_fails", logging.ERROR),
+                ("shut_down", logging.INFO),
+            ):
+                caplog.clear()
+                with caplog.at_level(logging.INFO):
+                    setattr(controller, flag, True)
+                    robot.send_action({"left": {"arm": {"joint_position": q}}})
+                    assert _wait_until(lambda: not conn._stream.active)
+                    setattr(controller, flag, False)
+                stopped = [
+                    r for r in caplog.records if "servo loop stopped" in r.message
+                ]
+                assert [r.levelno for r in stopped] == [level]
+                q = q * 2
+        finally:
+            robot.disconnect()
+
+
+def test_r2_kinematics_adapter_and_pico_joint():
+    """R2KinematicsAdapter solves 6-DoF TCP targets on 7-DoF R2 arms and drives PicoJoint."""
+    import json
+
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.teleop import pico_packet
+    from scipy.spatial.transform import Rotation as R
+
+    from rlinf.robotics.parts.arms import (
+        R2IKConfig,
+        R2KinematicsAdapter,
+    )
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_LEFT_HOME_QPOS,
+        R2_LEFT_READY_QPOS,
+        R2_RIGHT_HOME_QPOS,
+        R2_RIGHT_READY_QPOS,
+    )
+    from rlinf.robotics.parts.teleop import PicoJoint
+
+    for side, home_q, seed in (
+        ("left", R2_LEFT_HOME_QPOS, R2_LEFT_READY_QPOS),
+        ("right", R2_RIGHT_HOME_QPOS, R2_RIGHT_READY_QPOS),
+    ):
+        solver = R2KinematicsAdapter(side, config=R2IKConfig())
+        zero_pose = solver.fk(np.zeros(7, dtype=np.float64))
+        home_pose = solver.fk(home_q)
+        assert float(home_pose[0, 3]) > float(zero_pose[0, 3]) + 0.05
+        assert abs(float(home_pose[1, 3])) > abs(float(zero_pose[1, 3])) + 0.01
+        for alpha in np.linspace(0.0, 1.0, 11):
+            q_interp = (1.0 - alpha) * home_q + alpha * seed
+            assert abs(float(q_interp[1])) >= 0.199
+        start_pose = solver.fk(seed)
+        assert start_pose.shape == (4, 4)
+
+        # 3 cm forward (+X), 2 cm up (+Z), and 5 deg yaw rotation
+        target = start_pose.copy()
+        target[:3, 3] += np.array([0.03, 0.0, 0.02], dtype=np.float64)
+        target[:3, :3] = (
+            R.from_euler("z", 5.0, degrees=True).as_matrix() @ start_pose[:3, :3]
+        )
+        res = solver.solve(target, seed)
+        assert res.success is True, f"{side} solve failed: {res.reason}"
+        assert res.position_error < solver.config.position_tolerance
+        assert res.rotation_error < solver.config.rotation_tolerance
+        reached = solver.fk(res.q_target)
+        assert np.allclose(reached[:3, 3], target[:3, 3], atol=2e-3)
+
+        # 10 cm forward (+X) boundary projection from ready pose succeeds without residual freeze
+        fwd_target = start_pose.copy()
+        fwd_target[:3, 3] += np.array([0.10, 0.0, 0.0], dtype=np.float64)
+        fwd_res = solver.solve(fwd_target, seed)
+        assert fwd_res.success is True, (
+            f"{side} 10cm forward solve failed: {fwd_res.reason}"
+        )
+        fwd_reached = solver.fk(fwd_res.q_target)
+        assert fwd_reached[0, 3] > start_pose[0, 3] + 0.03
+
+        # Large 44 cm + 60 deg teleop sweep clamps lookahead and succeeds on first try
+        sweep_target = start_pose.copy()
+        sweep_target[:3, 3] += np.array([0.25, -0.35, 0.10], dtype=np.float64)
+        sweep_target[:3, :3] = (
+            R.from_euler("xyz", [30.0, -25.0, 45.0], degrees=True).as_matrix()
+            @ start_pose[:3, :3]
+        )
+        sweep_res = solver.solve(sweep_target, seed)
+        assert sweep_res.success is True, (
+            f"{side} large sweep solve failed: {sweep_res.reason}"
+        )
+
+        # Out-of-limits seed is rejected immediately
+        bad_seed = seed.copy()
+        bad_seed[0] = 10.0
+        bad_res = solver.solve(target, bad_seed)
+        assert bad_res.success is False
+        assert bad_res.reason == "seed_out_of_limits"
+
+        # Unreachable target 5 meters away fails cleanly
+        far_target = start_pose.copy()
+        far_target[:3, 3] += np.array([5.0, 0.0, 0.0], dtype=np.float64)
+        far_res = solver.solve(far_target, seed)
+        assert far_res.success is False
+
+    # Drive 7-DoF R2 right arm through PicoJoint even when headset pose is untracked (required=False)
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        pico = PicoJoint(
+            kinematics=lambda: R2KinematicsAdapter("right"),
+            joints=slice(0, 7),
+            grip=slice(7, 8),
+            joint_step_limits=(0.08, 0.08, 0.08, 0.08, 0.12, 0.12, 0.12),
+            hand="right",
+            zmq_addr="tcp://x:1",
+            gripper_trigger="trigger",
+            calibration={
+                "enabled": True,
+                "auto_calibrate_on_start": True,
+                "required": False,
+                "button": "trigger",
+            },
+        )
+        context = {
+            "joint_positions": np.concatenate(
+                [R2_RIGHT_READY_QPOS.astype(np.float64), [1.0]]
+            )
+        }
+        pico.connect()
+        try:
+            untracked_headset_pkt = json.loads(pico_packet())
+            untracked_headset_pkt["headset_pose"] = [0.0] * 7
+            idle = _settle(
+                zmq,
+                pico,
+                json.dumps(untracked_headset_pkt),
+                lambda r: r["ready"] and r["calibrated"] and not r["held"],
+            )
+            assert not pico.action(idle, context).driving
+
+            held_pkt = json.loads(pico_packet(right={"grip": 1.0}))
+            held_pkt["headset_pose"] = [0.0] * 7
+            held = _settle(zmq, pico, json.dumps(held_pkt), lambda r: r["held"])
+            anchored = pico.action(held, context)
+            assert anchored.driving
+            assert np.allclose(anchored.parts["arm"], R2_RIGHT_READY_QPOS, atol=1e-4)
+
+            moved = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0, "position": [0.0, 0.0, -0.04]}),
+                lambda r: r["position_delta"][0] > 0.03,
+            )
+            step = pico.action(moved, context)
+            assert step.driving
+            assert step.info["ik_fault"] is None
+            fk_before = pico._kinematics.fk(R2_RIGHT_READY_QPOS)
+            fk_after = pico._kinematics.fk(step.parts["arm"])
+            assert fk_after[0, 3] > fk_before[0, 3] + 0.008
+
+            # Clutching / re-grip: release side button, relocate and rotate controller
+            # in space, then re-squeeze side button at the displaced arm posture.
+            displaced_q = step.parts["arm"].astype(np.float64).copy()
+            displaced_ctx = {
+                "joint_positions": np.concatenate([displaced_q, [1.0]]),
+            }
+            _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 0.0,
+                        "position": [0.25, -0.15, 0.30],
+                        "orientation": list(
+                            R.from_euler(
+                                "xyz", [20.0, -15.0, 35.0], degrees=True
+                            ).as_quat()
+                        ),
+                    }
+                ),
+                lambda r: not r["held"],
+            )
+            regrip_pose = [0.25, -0.15, 0.30]
+            regrip_quat = list(
+                R.from_euler("xyz", [20.0, -15.0, 35.0], degrees=True).as_quat()
+            )
+            regripped = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 1.0,
+                        "position": regrip_pose,
+                        "orientation": regrip_quat,
+                    }
+                ),
+                lambda r: r["held"] and r["grip_epoch"] >= 2,
+            )
+            # Even if action() was not called during the released interval,
+            # the incremented grip_epoch re-anchors _held_from to displaced_q
+            # with zero posture jump.
+            regrip_anchor = pico.action(regripped, displaced_ctx)
+            assert regrip_anchor.driving
+            assert np.allclose(regrip_anchor.parts["arm"], displaced_q, atol=1e-4)
+
+            # Moving left (-X in PICO = +Y in robot) from the re-gripped anchor
+            # tracks smoothly in +Y without snapping back toward READY_QPOS.
+            regrip_moved = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 1.0,
+                        "position": [
+                            regrip_pose[0] - 0.04,
+                            regrip_pose[1],
+                            regrip_pose[2],
+                        ],
+                        "orientation": regrip_quat,
+                    }
+                ),
+                lambda r: r["position_delta"][1] > 0.03,
+            )
+            regrip_step = pico.action(regrip_moved, displaced_ctx)
+            assert regrip_step.driving
+            assert regrip_step.info["ik_fault"] is None
+            fk_regrip_before = pico._kinematics.fk(displaced_q)
+            fk_regrip_after = pico._kinematics.fk(regrip_step.parts["arm"])
+            assert fk_regrip_after[1, 3] > fk_regrip_before[1, 3] + 0.008
+
+            # Index trigger closes gripper even when grip is released, and
+            # intermediate encoder feedback (0.65) does not overwrite the 0.0 target.
+            trig_close = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 0.0, "trigger": 0.9, "axis": [0.5, -0.8]}),
+                lambda r: not r["held"] and r["grip_close"] and r["axis"][0] > 0.4,
+            )
+            act_close = pico.action(trig_close, context)
+            assert act_close.driving
+            assert act_close.parts["end_effector"][0] == pytest.approx(0.0)
+
+            mid_travel_ctx = {
+                "joint_positions": np.concatenate(
+                    [R2_RIGHT_READY_QPOS.astype(np.float64), [0.65]]
+                )
+            }
+            trig_hold_closed = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 0.0, "trigger": 0.9}),
+                lambda r: not r["held"] and r["grip_close"],
+            )
+            assert pico.action(trig_hold_closed, mid_travel_ctx).parts["end_effector"][
+                0
+            ] == pytest.approx(0.0)
+
+            # Releasing index trigger opens gripper back to 1.0, and reading
+            # last_reading does not consume the falling-edge open_pressed state.
+            trig_open = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 0.0, "trigger": 0.0}),
+                lambda r: not r["held"] and r["grip_open"],
+            )
+            assert pico._device.last_reading["grip_open"] is True
+            act_open = pico.action(trig_open, mid_travel_ctx)
+            assert act_open.driving
+            assert act_open.parts["end_effector"][0] == pytest.approx(1.0)
+
+            # Even when optical 6-DoF pose is untracked (invalid_pose=True),
+            # trigger/button closes the gripper and hold_until_released preserves
+            # the latched 0.0 target instead of freezing at mid-travel 0.65.
+            untracked_close = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 0.0,
+                        "trigger": 0.9,
+                        "orientation": [0.0, 0.0, 0.0, 0.0],
+                    }
+                ),
+                lambda r: r.get("invalid_pose") and r["grip_close"],
+            )
+            act_untracked_close = pico.action(untracked_close, mid_travel_ctx)
+            assert act_untracked_close.driving
+            assert act_untracked_close.parts["end_effector"][0] == pytest.approx(0.0)
+
+            untracked_idle = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 0.0,
+                        "trigger": 0.9,
+                        "orientation": [0.0, 0.0, 0.0, 0.0],
+                    }
+                ),
+                lambda r: r.get("invalid_pose"),
+            )
+            untracked_idle = {**untracked_idle, "grip_close": False, "grip_open": False}
+            act_untracked_hold = pico.action(untracked_idle, mid_travel_ctx)
+            assert not act_untracked_hold.driving
+            assert act_untracked_hold.parts["end_effector"][0] == pytest.approx(0.0)
+
+            # Because grip was released (0.0) while untracked, squeezing grip on
+            # the very first valid-pose frame immediately drives the arm without
+            # requiring a second release-and-squeeze cycle.
+            reengaged = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0, "position": [0.0, 0.0, 0.0]}),
+                lambda r: r["held"] and not r.get("invalid_pose", False),
+            )
+            assert pico.action(reengaged, mid_travel_ctx).driving
+        finally:
+            pico.disconnect()

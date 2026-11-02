@@ -50,6 +50,32 @@ class RobotConfig(HardwareConfig):
     that dials it.
     """
 
+    enable_fault_recovery: bool = True
+    """Whether to automatically diagnose and recover from recoverable hardware faults."""
+
+    max_recovery_attempts: int = 3
+    """Maximum automatic recovery attempts allowed within ``recovery_cooldown_window``."""
+
+    recovery_cooldown_window: float = 10.0
+    """Sliding time window (seconds) used by the recovery circuit breaker."""
+
+    motion_profile: Optional[dict[str, float]] = None
+    """Overrides for the connection's :class:`~rlinf.robotics.parts.motion.MotionProfile`.
+
+    Keys are profile fields such as ``control_rate_hz``, ``max_joint_velocity``
+    (rad/s), and ``max_joint_acceleration`` (rad/s^2). Connections that stream
+    joint setpoints apply them on top of their own defaults; others ignore
+    them.
+    """
+
+    def fault_recovery_settings(self) -> dict[str, Any]:
+        """Return the fault-detection and auto-recovery parameters as a dictionary."""
+        return {
+            "enable_fault_recovery": bool(self.enable_fault_recovery),
+            "max_recovery_attempts": int(self.max_recovery_attempts),
+            "recovery_cooldown_window": float(self.recovery_cooldown_window),
+        }
+
     def hardware_model(self, robot_type: str) -> str:
         """Return the hardware model reported to the scheduler."""
         return robot_type
