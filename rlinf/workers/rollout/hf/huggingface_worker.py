@@ -557,6 +557,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
+            SupportedModel.PSI0,
             SupportedModel.LINGBOTVLAV2,
         ]:
             if self.enable_dagger:
@@ -803,20 +804,23 @@ class MultiStepRolloutWorker(Worker):
                 raise ValueError(
                     "Terminal inference requires a post-action observation."
                 )
-            stage_id = env_part.sources[0].key.stage_id
-            _, result = self._predict_rollout_actions(
-                next_obs,
-                update_history=False,
-                stage_id=stage_id,
-                update_gate=False,
-            )
-            values = result.get("prev_values")
+            if self.model_cfg.model_type == SupportedModel.PSI0.value:
+                values = self.hf_model.predict_value_batch(next_obs)
+            else:
+                stage_id = env_part.sources[0].key.stage_id
+                _, result = self._predict_rollout_actions(
+                    next_obs,
+                    update_history=False,
+                    stage_id=stage_id,
+                    update_gate=False,
+                )
+                values = result.get("prev_values")
+                if self.enable_rlt:
+                    next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                        result.get("forward_inputs"), transition=True
+                    )
             if values is not None:
                 final_prev_values = values.cpu().contiguous()
-            if self.enable_rlt:
-                next_rlt_obs = extract_rlt_obs_from_forward_inputs(
-                    result.get("forward_inputs"), transition=True
-                )
         # Republish environment-owned data here to keep one Actor-channel writer.
         actor_channel.put(
             env_part.complete(
@@ -1078,6 +1082,7 @@ class MultiStepRolloutWorker(Worker):
                         self.routing_gate.reset(mode="eval")
                     for history in self.prefix_histories:
                         history.reset()
+                eval_epoch_done = False
                 for _ in range(self.n_eval_chunk_steps):
                     for stage_id in range(self.num_pipeline_stages):
                         env_output = await self.recv_from(
@@ -1090,6 +1095,9 @@ class MultiStepRolloutWorker(Worker):
                             merge_fn=self._merge_obs_batches,
                             infer_batch_size_fn=self._infer_env_batch_size,
                         ).async_wait()
+                        if env_output.get("eval_epoch_done"):
+                            eval_epoch_done = True
+                            break
                         actions, result = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",
@@ -1117,6 +1125,9 @@ class MultiStepRolloutWorker(Worker):
                                 else self._split_actions
                             ),
                         )
+
+                    if eval_epoch_done:
+                        break
 
             if self.enable_offload:
                 self.offload_model()
@@ -1226,6 +1237,9 @@ class MultiStepRolloutWorker(Worker):
                 obs_dicts, intervene_flags_list
             ),
             "dones": self._merge_optional_flag_tensors(obs_dicts, dones_list),
+            "eval_epoch_done": any(
+                bool(obs_batch.get("eval_epoch_done")) for obs_batch in obs_batches
+            ),
         }
 
     @staticmethod

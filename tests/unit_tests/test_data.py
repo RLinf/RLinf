@@ -1264,6 +1264,53 @@ def test_trajectory_step_owns_intervention_and_transition_conversion():
     assert torch.equal(step.final_prev_values, torch.full((1, 1), 5.0))
 
 
+@pytest.mark.parametrize("collect_prev_infos", [False, True])
+def test_trajectory_step_preserves_gate_features_with_executed_action_mask(
+    collect_prev_infos,
+):
+    sources = [TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 2)]
+    actions = torch.ones(2, 3, 4)
+    logprobs = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+    executed_mask = torch.tensor([[True, False, False], [True, True, False]])
+    phase_features = torch.ones(2, 1, 6)
+    policy = PolicyPart(
+        sources=sources,
+        obs={"states": torch.zeros(2, 4)},
+        output=PolicyOutput(forward_inputs={"action": actions}, prev_logprobs=logprobs),
+    )
+    env = EnvPart(
+        sources=sources,
+        transition=EnvTransition(
+            rewards=torch.ones(2, 3),
+            executed_mask=executed_mask,
+            trajectory_infos={"rlt_gate_phase_features": phase_features},
+        ),
+    )
+
+    step = TrajectoryStep.from_parts(
+        policy,
+        env,
+        rewards=env.transition.rewards,
+        collect_prev_infos=collect_prev_infos,
+        collect_transitions=False,
+        enable_rlt=False,
+        include_final_value=False,
+    )
+
+    torch.testing.assert_close(step.forward_inputs["action"], actions)
+    torch.testing.assert_close(
+        step.forward_inputs["rlt_gate_phase_features"], phase_features
+    )
+    torch.testing.assert_close(step.forward_inputs["executed_mask"], executed_mask)
+    if collect_prev_infos:
+        torch.testing.assert_close(
+            step.prev_logprobs, logprobs.masked_fill(~executed_mask.unsqueeze(-1), 0)
+        )
+    else:
+        assert step.prev_logprobs is None
+    torch.testing.assert_close(policy.output.prev_logprobs, logprobs)
+
+
 def test_trajectory_owns_step_materialization_splitting_and_batching():
     steps = [
         TrajectoryStep(
@@ -2872,6 +2919,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
@@ -3182,9 +3230,34 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
+@pytest.mark.parametrize("early_stop", [False, True])
+def test_rollout_merges_episode_boundaries_and_eval_early_stop(early_stop):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    dones = torch.tensor([[False, True]])
+    batches = [
+        {"obs": {"states": torch.zeros(1, 4)}, "dones": dones},
+        {
+            "obs": {"states": torch.ones(1, 4)},
+            "eval_epoch_done": early_stop,
+        },
+    ]
+
+    merged = rollout._merge_obs_batches(batches)
+
+    torch.testing.assert_close(
+        merged["obs"]["states"],
+        torch.cat([batch["obs"]["states"] for batch in batches]),
+    )
+    torch.testing.assert_close(
+        merged["dones"], torch.cat([dones, torch.zeros_like(dones)])
+    )
+    assert merged["eval_epoch_done"] is early_stop
+
+
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3241,6 +3314,7 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(
