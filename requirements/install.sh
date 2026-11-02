@@ -3265,7 +3265,7 @@ install_env_only() {
             install_common_embodied_deps
             install_simple_env
             ;;
-        libero|maniskill_libero)
+        libero|maniskill_libero|robotwin)
             install_common_embodied_deps
             install_${ENV_NAME}_env
             ;;

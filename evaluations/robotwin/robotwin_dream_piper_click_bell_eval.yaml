@@ -1,0 +1,20 @@
+defaults:
+  - _robotwin_dream_eval
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+env:
+  eval:
+    task_config:
+      embodiment: [piper, piper, 0.6]
+
+rollout:
+  dream:
+    action_hz: 30

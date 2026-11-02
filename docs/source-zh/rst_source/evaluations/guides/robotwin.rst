@@ -88,8 +88,82 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
      - click_bell
      - LingbotVLA 2.0
+   * - ``robotwin_dream_aloha_click_bell_eval.yaml``
+     - click_bell
+     - Dream API (ALOHA)
+   * - ``robotwin_dream_piper_click_bell_eval.yaml``
+     - click_bell
+     - Dream API (Piper)
 
 若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
+
+.. _robotwin-dream-eval:
+
+Dream API 评测
+--------------
+
+使用 ALOHA 或 Piper 在 RoboTwin 上评测 Dream API。RLinf 将三路 RGB 图像、实测关节状态和任务指令传给 Dream SDK，再通过 RoboTwin 执行返回的绝对关节目标。
+
+**安装依赖**
+
+Dream SDK 使用 Python 3.11–3.13。按上方「环境准备」克隆 RoboTwin 并下载资产，然后在 RLinf 仓库根目录安装环境和 SDK：
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --env robotwin
+   source .venv/bin/activate
+   pip install -e '.[dream]'
+
+在 rollout worker 的环境中设置 ``DREAM_API_KEY``。``ROBOTWIN_PATH`` 应指向包含 ``assets/`` 目录的 RoboTwin 仓库根目录。通过 ``DREAM_IK_ARM_FILE`` 指定所选机器人的 Dream SDK 机械臂描述文件，确认其 URDF、关节顺序、base 坐标系和 TCP 与仿真机器人一致。
+
+**启动评测**
+
+按所用机器人选择配置运行 click_bell。切换到 Piper 时，同时更换配置和机械臂描述文件：
+
+.. code-block:: bash
+
+   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH}
+
+   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
+   bash evaluations/run_eval.sh robotwin robotwin_dream_piper_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH}
+
+**查看结果**
+
+每份配置使用单环境运行十个 episode，每回合上限为 400 步。ALOHA 频率为 20 Hz，Piper 为 30 Hz，均使用 48 步、14 维动作块。
+
+两份配置均通过 ``env.eval.seeds_path`` 读取 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中预筛选的 success seeds，遵循 :ref:`robotwin-eval-config`。RLinf 根据配置种子打乱该任务的种子列表，十个回合分别使用不同的 seed。通过 ``eval/success_once`` 查看成功率，日志和视频位置见 :doc:`../reference/results`。
+
+历史结果
+~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - 机械臂
+     - 任务
+     - 成功次数
+   * - aloha-agilex
+     - click_bell
+     - 5/10
+   * - aloha-agilex
+     - move_playingcard_away
+     - 3/10
+   * - piper
+     - click_bell
+     - 6/10
+
+接口检查
+~~~~~~~~
+
+使用 mock SDK 运行 CPU 测试，检查配置加载、相机编码、动作传输、seed 轮换和会话清理：
+
+.. code-block:: bash
+
+   PYTHONPATH=. pytest -q tests/unit_tests/test_models.py -k dream_api --confcutdir=tests/unit_tests
 
 完整评测流程
 ------------

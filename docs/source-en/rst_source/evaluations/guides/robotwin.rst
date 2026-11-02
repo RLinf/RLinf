@@ -87,8 +87,82 @@ Available under ``evaluations/robotwin/``:
    * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
      - click_bell
      - LingbotVLA 2.0
+   * - ``robotwin_dream_aloha_click_bell_eval.yaml``
+     - click_bell
+     - Dream API (ALOHA)
+   * - ``robotwin_dream_piper_click_bell_eval.yaml``
+     - click_bell
+     - Dream API (Piper)
 
 If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
+
+.. _robotwin-dream-eval:
+
+Dream API Evaluation
+--------------------
+
+Run Dream API evaluation on RoboTwin with ALOHA or Piper. RLinf sends three RGB views, measured joint states and the task instruction to the Dream SDK, then executes the returned absolute joint targets through RoboTwin.
+
+**Install dependencies**
+
+Use Python 3.11–3.13 for the Dream SDK. Prepare the RoboTwin repository and assets as described in Environment Setup above. From the RLinf repository root, install the environment and SDK:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --env robotwin
+   source .venv/bin/activate
+   pip install -e '.[dream]'
+
+Set ``DREAM_API_KEY`` in the rollout worker's environment and point ``ROBOTWIN_PATH`` to the RoboTwin repository root, which contains the ``assets/`` directory. For each robot, use a matching Dream SDK arm specification in ``DREAM_IK_ARM_FILE``. Its URDF, joint order, base frame and TCP must agree with the simulated robot.
+
+**Launch evaluation**
+
+Run click_bell with the config for your robot. When switching from ALOHA to Piper, change both the config and arm specification:
+
+.. code-block:: bash
+
+   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH}
+
+   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
+   bash evaluations/run_eval.sh robotwin robotwin_dream_piper_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH}
+
+**Check results**
+
+Each config runs ten episodes in one environment, with a 400-step limit per episode. ALOHA runs at 20 Hz and Piper at 30 Hz; both use 48-step, 14-dimensional action chunks.
+
+Both configs load the pre-filtered success seeds from ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` through ``env.eval.seeds_path``, following :ref:`robotwin-eval-config`. RLinf shuffles the task's seed list deterministically and uses a different seed for each of the ten episodes. Monitor ``eval/success_once`` for the success rate; see :doc:`../reference/results` for logs and videos.
+
+Historical Results
+~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Robot
+     - Task
+     - Success
+   * - aloha-agilex
+     - click_bell
+     - 5/10
+   * - aloha-agilex
+     - move_playingcard_away
+     - 3/10
+   * - piper
+     - click_bell
+     - 6/10
+
+Interface Checks
+~~~~~~~~~~~~~~~~
+
+Run the CPU tests with a mock SDK to check config loading, camera encoding, action transport, seed rotation and session cleanup:
+
+.. code-block:: bash
+
+   PYTHONPATH=. pytest -q tests/unit_tests/test_models.py -k dream_api --confcutdir=tests/unit_tests
 
 End-to-End Workflow
 -------------------
