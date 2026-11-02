@@ -196,8 +196,6 @@ adapter 是一个 **独立的普通类**\ （不需要继承任何基类），�
 - **HTTP 收发由 worker 负责**——adapter 不持有 HTTP client、也不发请求。worker
   会调用 ``build_request`` 拿到 payload，用 ``http_client.post(adapter.action_path,
   payload, msgpack=True, ...)`` 发送，再把响应交给 ``parse_response``；
-- 发送前 worker 会把 ``payload["parameters"]["seeds"]`` 设为请求中每个环境行一个
-  seed，adapter 只需保留它原本发送的单个 ``parameters.seed``；
 - ``build_request`` 输入的 ``env_obs`` 是按 batch 组织的环境观测字典；通用字段包括
   ``main_images``、``task_descriptions``，模型还可以使用 ``wrist_images``、
   ``states`` 或其它视角。返回 ``(payload, state)``：``payload`` 是发给 server 的
@@ -428,9 +426,7 @@ adapter 的 ``build_request`` 组装发往 ``POST /v1/actions/generations`` 的 
 - ``parameters.reset_mask`` 用于在下一次请求前清理对应 session 的缓存（评测默认
   全为 ``false``）；
 - ``parameters.negative_prompts`` 是负向提示词；
-- ``parameters.seed`` 来自 ``rollout.sglang.seed``；
-- ``parameters.seeds`` 由 worker 添加：每个环境一个 seed，取
-  ``rollout.sglang.seed`` 加上每个环境各不相同的偏移。
+- ``parameters.seed`` 来自 ``rollout.sglang.seed``。
 
 worker 从以下位置读取 Server 返回的归一化动作，并交给 ``parse_response``：
 
@@ -732,7 +728,7 @@ RLinf 私有参数字段说明：
    * - ``server_type``
      - server 分派分支：``srt`` / ``embodied``
    * - ``seed``
-     - 每次 action 请求使用的随机种子；每个环境的 ``parameters.seeds`` 以它为起点
+     - 每次 action 请求使用的随机种子
 
 ``server`` 子块的字段就是 ``ServerArgs`` 字段（``backend``、
 ``attention_backend``、``tp_size``、``num_gpus``、``dit_cpu_offload``、

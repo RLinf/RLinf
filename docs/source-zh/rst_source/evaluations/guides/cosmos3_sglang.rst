@@ -81,9 +81,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
      'rollout.sglang.server_urls=[http://10.0.0.5:8000]' \
      rollout.sglang.api_key_env=ACTION_SERVER_KEY
 
-**命令说明：** 第 ``i`` 个 rollout worker 向 ``server_urls[i % len(server_urls)]`` 发请求，每个请求都带 ``Authorization: Bearer $ACTION_SERVER_KEY``。在运行命令的 shell 中 export 该变量即可，集群会把它传给 rollout worker。``rollout.sglang.server.batching_max_size`` 请设为该服务单次能接受的最大 batch，adapter 仍按它切分请求。
-
-每个请求都带 ``parameters.seeds``：按请求中的行顺序，每个环境一个 seed，与单个 ``parameters.seed`` 并存。seed 取 ``rollout.sglang.seed`` 加上每个环境各不相同的偏移，且各步之间保持不变；按行采样噪声的服务因此能给每个环境不同的噪声，评测也能精确复现。
+**命令说明：** 第 ``i`` 个 rollout worker 向 ``server_urls[i % len(server_urls)]`` 发请求，每个请求都带 ``Authorization: Bearer $ACTION_SERVER_KEY``。在运行命令的 shell 中 export 该变量。多机集群上请在 head 节点执行 ``ray start`` 之后再 export：RLinf 只把 ``ray start`` 之后新设置或修改的环境变量转发给其他节点上的 worker。若在 ``ray start`` 之前 export，只有自身 ``ray start`` 环境中已有该变量的节点能拿到，其他节点上的 rollout worker 会报错提示该变量未设置。也可以在每个节点执行 ``ray start`` 之前都 export 它。``rollout.sglang.server.batching_max_size`` 请设为该服务单次能接受的最大 batch，adapter 仍按它切分请求。
 
 关键配置
 ----------------------------------------

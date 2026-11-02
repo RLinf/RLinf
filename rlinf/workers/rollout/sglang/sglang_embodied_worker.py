@@ -110,7 +110,6 @@ class SGLangEmbodiedWorker(Worker):
         )
         self._http_max_retries = int(sglang_cfg.get("http_max_retries", 5))
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
-        self._seed = int(sglang_cfg.get("seed", 1140))
         self.sglang_adapter = adapter_cls(self.cfg, self._rank)
 
     @staticmethod
@@ -124,7 +123,8 @@ class SGLangEmbodiedWorker(Worker):
             raise RuntimeError(
                 f"rollout.sglang.api_key_env is {api_key_env!r}, but that "
                 "environment variable is unset or empty in the rollout worker; "
-                "export it in the shell that starts the eval."
+                "export it in the shell that starts the eval (on a multi-node "
+                "cluster, after ray start on the head node)."
             )
         return {"Authorization": f"Bearer {api_key}"}
 
@@ -183,24 +183,19 @@ class SGLangEmbodiedWorker(Worker):
 
         Owns the sglang HTTP round-trip: the adapter builds the request
         payload and parses the response; this worker performs the msgpack POST.
-        Adapters with ``request_groups`` get one request per env group. Each
-        request carries ``parameters.seeds``, one seed per env row in request
-        order; see :meth:`_row_seeds`.
+        Adapters with ``request_groups`` get one request per env group.
         """
         from rlinf.models.embodiment.sglang_adapter import (
             gather_env_rows,
             select_env_rows,
         )
 
-        seeds = self._row_seeds(env_obs)
         request_groups = getattr(self.sglang_adapter, "request_groups", None)
         groups = request_groups(env_obs) if request_groups is not None else None
         if groups is None or len(groups) <= 1:
-            return self._request_actions(env_obs, mode, seeds)
+            return self._request_actions(env_obs, mode)
         outputs = [
-            self._request_actions(
-                select_env_rows(env_obs, group), mode, [seeds[i] for i in group]
-            )
+            self._request_actions(select_env_rows(env_obs, group), mode)
             for group in groups
         ]
         order = [index for group in groups for index in group]
@@ -208,26 +203,11 @@ class SGLangEmbodiedWorker(Worker):
         info = gather_env_rows([info for _, info in outputs], order)
         return actions, info
 
-    def _row_seeds(self, env_obs: dict[str, Any]) -> list[int]:
-        """Return one seed per env row, distinct across rows, stages and ranks.
-
-        The seeds stay the same from one chunk step to the next, as the single
-        ``rollout.sglang.seed`` does, so an eval replays exactly.
-        """
-        num_rows = infer_obs_batch_size(env_obs)
-        stage_id = int(env_obs.get("_rlinf_stage_id", 0))
-        first = self._seed + (stage_id * self._world_size + self._rank) * num_rows
-        return list(range(first, first + num_rows))
-
     def _request_actions(
-        self,
-        env_obs: dict[str, Any],
-        mode: Literal["train", "eval"],
-        seeds: list[int],
+        self, env_obs: dict[str, Any], mode: Literal["train", "eval"]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         adapter = self.sglang_adapter
         payload, state = adapter.build_request(env_obs, mode=mode)
-        payload.setdefault("parameters", {})["seeds"] = seeds
         resp = self.http_client.post(
             adapter.action_path,
             payload,

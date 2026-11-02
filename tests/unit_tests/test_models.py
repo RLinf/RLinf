@@ -22,6 +22,7 @@ import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Callable
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -1731,19 +1732,24 @@ def _wire_array(array: np.ndarray) -> dict:
     }
 
 
-def _cosmos3_action_reply(body: dict) -> dict:
-    # Each row's x translation echoes its seed, so a test can follow the rows.
-    seeds = body["parameters"]["seeds"]
-    values = np.zeros((len(seeds), 16, 10), dtype="<f4")
-    values[..., 3] = 1.0  # rot6d columns (1, 0, 0) and (0, 1, 0): no rotation
-    values[..., 7] = 1.0
-    values[..., 0] = np.asarray(seeds, dtype="<f4")[:, None]
-    return {
-        "data": [
-            {"input_index": i, "action": {"values": _wire_array(values[i])}}
-            for i in range(len(seeds))
-        ]
-    }
+def _cosmos3_action_reply(server, offset: int) -> Callable[[dict], dict]:
+    # Row r of the server's n-th request gets x translation offset + 10 * n + r,
+    # so a test can follow each env row back to its server and request.
+    def reply(body: dict) -> dict:
+        num_rows = len(body["input"]["prompt"])
+        values = np.zeros((num_rows, 16, 10), dtype="<f4")
+        values[..., 3] = 1.0  # rot6d columns (1, 0, 0) and (0, 1, 0): no rotation
+        values[..., 7] = 1.0
+        first = offset + 10 * len(server.requests)
+        values[..., 0] = first + np.arange(num_rows)[:, None]
+        return {
+            "data": [
+                {"input_index": i, "action": {"values": _wire_array(values[i])}}
+                for i in range(num_rows)
+            ]
+        }
+
+    return reply
 
 
 def _external_cosmos3_eval_cfg(**sglang) -> OmegaConf:
@@ -1803,6 +1809,25 @@ def test_embodied_action_servers_come_from_exactly_one_source():
             )
 
 
+def test_embodied_action_server_urls_must_be_a_list_of_urls():
+    from rlinf.config import validate_embodied_action_servers
+
+    def sglang_cfg(*overrides: str):
+        return OmegaConf.from_dotlist(
+            ["serving_mode=embodied", "launch_server=false", *overrides]
+        )
+
+    validate_embodied_action_servers(
+        sglang_cfg("server_urls=[http://h:8000,http://h:8001]")
+    )
+    for override in (
+        "server_urls=http://h:8000",  # no brackets: a string, not a list
+        "server_urls=[http://h:8000,'']",
+    ):
+        with pytest.raises(ValueError, match="list of non-empty URL strings"):
+            validate_embodied_action_servers(sglang_cfg(override))
+
+
 def test_embodied_http_eval_drives_running_action_servers(action_servers, monkeypatch):
     from rlinf.scheduler import Cluster, NodePlacementStrategy
     from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
@@ -1810,8 +1835,8 @@ def test_embodied_http_eval_drives_running_action_servers(action_servers, monkey
     )
 
     servers = [action_servers(), action_servers()]
-    for server in servers:
-        server.reply = _cosmos3_action_reply
+    for index, server in enumerate(servers):
+        server.reply = _cosmos3_action_reply(server, offset=100 * index)
     # The Cluster hands the driver's environment to its workers.
     monkeypatch.setenv("RLINF_TEST_ACTION_KEY", "secret")
     cluster = Cluster(num_nodes=1)
@@ -1837,17 +1862,20 @@ def test_embodied_http_eval_drives_running_action_servers(action_servers, monkey
     results = group.predict(obs).wait()
 
     for rank, (server, (actions, _)) in enumerate(zip(servers, results)):
-        first = 100 + 4 * rank
-        assert [body["parameters"]["seeds"] for _, body in server.requests] == [
-            [first, first + 2],
-            [first + 3],
-            [first + 1],
+        assert [body["input"]["prompt"] for _, body in server.requests] == [
+            ["pick", "pick"],
+            ["pick"],
+            ["open"],
         ]
+        assert {body["parameters"]["seed"] for _, body in server.requests} == {100}
         assert {headers["Authorization"] for headers, _ in server.requests} == {
             "Bearer secret"
         }
         assert actions.shape == (4, 16, 7)
-        assert actions[:, 0, 0].tolist() == [first, first + 1, first + 2, first + 3]
+        # Rank i posts to server i. Env rows come back in env order: env 0
+        # and 2 from request 1, env 3 from request 2, env 1 from request 3.
+        expected = [10, 30, 11, 20]
+        assert actions[:, 0, 0].tolist() == [100 * rank + x for x in expected]
 
 
 def test_embodied_http_eval_refuses_a_named_api_key_that_is_not_set(monkeypatch):

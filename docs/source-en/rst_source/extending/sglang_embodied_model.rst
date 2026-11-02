@@ -207,9 +207,6 @@ Interface contract:
   and does not send requests. The worker calls ``build_request`` to get the
   payload, sends it via ``http_client.post(adapter.action_path, payload,
   msgpack=True, ...)``, then hands the response to ``parse_response``;
-- Before sending, the worker sets ``payload["parameters"]["seeds"]`` to one
-  seed per environment row of the request, so the adapter keeps only the
-  single ``parameters.seed`` it already sends;
 - The ``env_obs`` passed to ``build_request`` is a dictionary of environment
   observations organized by batch; general fields include ``main_images`` and
   ``task_descriptions``, and the model can also use ``wrist_images``, ``states``
@@ -454,9 +451,7 @@ Where:
 - ``parameters.reset_mask`` is used to clear the cache for the corresponding
   session before the next request (all ``false`` by default in evaluation);
 - ``parameters.negative_prompts`` are the negative prompts;
-- ``parameters.seed`` comes from ``rollout.sglang.seed``;
-- ``parameters.seeds`` is added by the worker: one seed per environment,
-  ``rollout.sglang.seed`` plus an offset that differs for every environment.
+- ``parameters.seed`` comes from ``rollout.sglang.seed``.
 
 The worker reads the normalized actions returned by the Server from the following
 location and hands them to ``parse_response``:
@@ -767,8 +762,7 @@ Top-level private-key fields:
    * - ``server_type``
      - server dispatch branch: ``srt`` / ``embodied``
    * - ``seed``
-     - Random seed used for each action request; per-environment
-       ``parameters.seeds`` start from it
+     - Random seed used for each action request
 
 The ``server`` sub-block fields are ``ServerArgs`` fields (``backend``,
 ``attention_backend``, ``tp_size``, ``num_gpus``, ``dit_cpu_offload``,

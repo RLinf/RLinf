@@ -81,9 +81,7 @@ You can point the evaluation at action servers that are already running, on this
      'rollout.sglang.server_urls=[http://10.0.0.5:8000]' \
      rollout.sglang.api_key_env=ACTION_SERVER_KEY
 
-**What this command does:** rollout worker ``i`` posts to ``server_urls[i % len(server_urls)]`` and sends ``Authorization: Bearer $ACTION_SERVER_KEY`` with every request. Export the key in the shell that runs the command; the cluster passes it to the rollout workers. Set ``rollout.sglang.server.batching_max_size`` to the largest batch the running server accepts, since the adapter still splits requests by it.
-
-Every request carries ``parameters.seeds``, one seed per environment row in request order, next to the single ``parameters.seed``. The seeds are ``rollout.sglang.seed`` plus an offset that differs for every environment, and they stay the same from one step to the next, so a server that draws noise per row gives each environment its own noise and the evaluation replays exactly.
+**What this command does:** rollout worker ``i`` posts to ``server_urls[i % len(server_urls)]`` and sends ``Authorization: Bearer $ACTION_SERVER_KEY`` with every request. Export the key in the shell that runs the command. On a multi-node cluster, export it after ``ray start`` on the head node: RLinf forwards to workers on other nodes only the environment variables set or changed after ``ray start``. A key exported before ``ray start`` reaches only the nodes whose own ``ray start`` environment had it, and rollout workers on the other nodes stop with an error that the variable is unset. Exporting it on every node before its ``ray start`` also works. Set ``rollout.sglang.server.batching_max_size`` to the largest batch the running server accepts, since the adapter still splits requests by it.
 
 Key Configuration
 ----------------------------------------
