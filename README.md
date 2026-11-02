@@ -467,11 +467,17 @@ If you use RL+VLA in RLinf, you can also cite our technical report and empirical
 ```
 
 ```bibtex
-@article{liu2025can,
-  title={What can rl bring to vla generalization? an empirical study},
-  author={Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and Wu, Yi and Yu, Chao and Wang, Yu},
-  journal={arXiv preprint arXiv:2505.19789},
-  year={2025}
+@inproceedings{NEURIPS2025_8c0fabe3,
+ author = {Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and WU, YI and Yu, Chao and Wang, Yu},
+ booktitle = {Advances in Neural Information Processing Systems},
+ doi = {10.52202/085713-3248},
+ editor = {D. Belgrave and C. Zhang and H. Lin and R. Pascanu and P. Koniusz and M. Ghassemi and N. Chen},
+ pages = {97121--97151},
+ publisher = {Curran Associates, Inc.},
+ title = {What Can RL Bring to VLA Generalization? An Empirical Study},
+ url = {https://proceedings.neurips.cc/paper_files/paper/2025/file/8c0fabe372177d2aded596be2d3b4544-Paper-Conference.pdf},
+ volume = {38, Main Conference},
+ year = {2025}
 }
 ```
 
@@ -486,13 +492,16 @@ If you use RL+VLA in RLinf, you can also cite our technical report and empirical
 
 If you train your policies in physical world with RLinf, you can cite our paper:
 ```bibtex
-@article{zang2026rlinfuser,
-  title={RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI}, 
-  author={Hongzhi Zang and Shu'ang Yu and Hao Lin and Tianxing Zhou and Zefang Huang and Zhen Guo and Xin Xu and Jiakai Zhou and Yuze Sheng and Shizhe Zhang and Feng Gao and Wenhao Tang and Yufeng Yue and Quanlu Zhang and Xinlei Chen and Chao Yu and Yu Wang},
-  year={2026},
-  journal={arXiv preprint arXiv:2602.07837},
-  url={https://arxiv.org/abs/2602.07837}, 
-}
+@INPROCEEDINGS{ZangH1-RSS-26, 
+    AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang}, 
+    TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}}, 
+    BOOKTITLE = {Proceedings of Robotics: Science and Systems}, 
+    YEAR      = {2026}, 
+    ADDRESS   = {Sydney, Australia}, 
+    MONTH     = {July}, 
+    DOI       = {10.15607/RSS.2026.XXII.037} 
+} 
+  
 ```
 
 If you use World Model + VLA + RL in RLinf, you can cite our paper:

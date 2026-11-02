@@ -467,11 +467,16 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 ```
 
 ```bibtex
-@article{liu2025can,
-  title={What can rl bring to vla generalization? an empirical study},
+@inproceedings{liu2025can,
+  title={What Can {RL} Bring to {VLA} Generalization? An Empirical Study},
   author={Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and Wu, Yi and Yu, Chao and Wang, Yu},
-  journal={arXiv preprint arXiv:2505.19789},
-  year={2025}
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={38},
+  pages={97121--97151},
+  publisher={Curran Associates, Inc.},
+  year={2025},
+  doi={10.52202/085713-3248},
+  url={https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html}
 }
 ```
 
@@ -486,33 +491,36 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 
 如果您使用了RLinf的真机在线学习系统，欢迎引用我们的文章：
 ```bibtex
-@article{zang2026rlinfuser,
-  title={RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI}, 
-  author={Hongzhi Zang and Shu'ang Yu and Hao Lin and Tianxing Zhou and Zefang Huang and Zhen Guo and Xin Xu and Jiakai Zhou and Yuze Sheng and Shizhe Zhang and Feng Gao and Wenhao Tang and Yufeng Yue and Quanlu Zhang and Xinlei Chen and Chao Yu and Yu Wang},
-  year={2026},
-  journal={arXiv preprint arXiv:2602.07837},
-  url={https://arxiv.org/abs/2602.07837}, 
-}
+@INPROCEEDINGS{ZangH1-RSS-26, 
+    AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang}, 
+    TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}}, 
+    BOOKTITLE = {Proceedings of Robotics: Science and Systems}, 
+    YEAR      = {2026}, 
+    ADDRESS   = {Sydney, Australia}, 
+    MONTH     = {July}, 
+    DOI       = {10.15607/RSS.2026.XXII.037} 
+} 
+  
 ```
 如果您在 RLinf 中使用了 World Model + VLA + RL，欢迎引用我们的文章：
 ```bibtex
-@article{jiang2026wovr,
-  title={WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL}, 
+@inproceedings{jiang2026wovr,
+  title={{WoVR}: World Models as Reliable Simulators for Post-Training {VLA} Policies with {RL}},
   author={Zhennan Jiang and Shangqing Zhou and Yutong Jiang and Zefang Huang and Mingjie Wei and Yuhui Chen and Tianxing Zhou and Zhen Guo and Hao Lin and Quanlu Zhang and Yu Wang and Haoran Li and Chao Yu and Dongbin Zhao},
+  booktitle={Proceedings of the Conference on Robot Learning (CoRL)},
   year={2026},
-  journal={arXiv preprint arXiv:2602.13977},
-  url={https://arxiv.org/abs/2602.13977}, 
+  url={https://openreview.net/forum?id=QHIz2k4E88}
 }
 ```
 
 如果您在 RLinf 中使用了基于 RL 的仿真-真机协同训练，欢迎引用我们的文章：
 ```bibtex
-@article{shi2026rlinf,
-  title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models},
-  author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zhang, Hongzhi and Zhang, Weinan and Yu, Chao and Wang, Yu},
-  journal={arXiv preprint arXiv:2602.12628},
+@inproceedings{shi2026rlinf,
+  title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for {VLA} Models},
+  author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zang, Hongzhi and Zhou, Jiakai and Zhang, Weinan and Yu, Chao and Wang, Yu},
+  booktitle={Proceedings of the Conference on Robot Learning (CoRL)},
   year={2026},
-  url={https://arxiv.org/abs/2602.12628},
+  url={https://openreview.net/forum?id=7hdkIcfGRw}
 }
 ```
 
