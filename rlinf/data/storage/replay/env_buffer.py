@@ -105,6 +105,15 @@ class EnvReplayBuffer:
     def __len__(self) -> int:
         return sum(len(buffer) for buffer in self.buffers.values())
 
+    @property
+    def total_samples(self) -> int:
+        """Transitions held over all env buffers."""
+        return sum(buffer.total_samples for buffer in self.buffers.values())
+
+    def _flatten_trajectory(self, trajectory: Trajectory) -> dict[str, torch.Tensor]:
+        # Same layout as the plain buffer, which callers flatten through.
+        return self.buffers[trajectory.env_name]._flatten_trajectory(trajectory)
+
     def get_stats(self) -> dict[str, float]:
         """Return the summed buffer stats, plus a ``<name>/`` copy per named env."""
         stats: dict[str, float] = {}
