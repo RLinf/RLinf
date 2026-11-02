@@ -110,6 +110,13 @@ class AgentRunner(ReasoningRunner):
         if self.recompute_logprobs:
             self.inference_channel = Channel.create("Inference", local=True)
 
+    def _stop_rollouts(self):
+        """Stop the main and solid rollout engines after training finishes."""
+        super()._stop_rollouts()
+        for solid_rollout in self.solid_rollouts.values():
+            if hasattr(solid_rollout, "stop"):
+                solid_rollout.stop().wait()
+
     def init_rollout_workers(self):
         """init rollout workers, tool workers and agent loop worker."""
         rollout_handles = [self.rollout.init_worker()]
@@ -130,6 +137,7 @@ class AgentRunner(ReasoningRunner):
             if (
                 self.cfg.actor.training_backend == "megatron"
                 and self.cfg.actor.megatron.use_hf_ckpt
+                and not getattr(self.cfg.actor.megatron, "mbridge", False)
             ):
                 from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                     convert_hf_to_mg,
@@ -167,6 +175,7 @@ class AgentRunner(ReasoningRunner):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
+            self._stop_rollouts()
             return
 
         global_pbar = tqdm(
@@ -262,12 +271,14 @@ class AgentRunner(ReasoningRunner):
                             logging.info(
                                 f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
                             )
+                            self._stop_rollouts()
                             return
 
                         if run_time_exceeded:
                             logging.info(
                                 f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
                             )
+                            self._stop_rollouts()
                             return
 
                     time_metrics = self.timer.consume_durations()
@@ -312,6 +323,8 @@ class AgentRunner(ReasoningRunner):
 
                     global_pbar.set_postfix(logging_metrics, refresh=False)
                     global_pbar.update(1)
+
+            self._stop_rollouts()
         finally:
             for tool_worker in self.tool_workers:
                 tool_worker.stop_server()

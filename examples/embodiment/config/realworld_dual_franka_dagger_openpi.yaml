@@ -51,9 +51,10 @@ cluster:
             right_gripper_type: robotiq
             left_gripper_connection: LEFT_GRIPPER_CONNECTION    # Replace: /dev/serial/by-id/...
             right_gripper_connection: RIGHT_GRIPPER_CONNECTION  # Replace: /dev/serial/by-id/...
-            left_controller_node_rank: 0
-            right_controller_node_rank: 1
-            node_rank: 0
+            # Cluster ranks. node_rank must sit in this group's node_ranks (1-2).
+            left_controller_node_rank: 1
+            right_controller_node_rank: 2
+            node_rank: 1
 
 runner:
   task_type: embodied

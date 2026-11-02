@@ -53,8 +53,8 @@ class Pi0Config:
         image = torch.ones(batch_size, *model.IMAGE_RESOLUTION, 3)
         image_mask = torch.ones(batch_size, dtype=torch.bool)
         return model.Observation(
-            images={name: image for name in self.image_keys},
-            image_masks={name: image_mask for name in self.image_keys},
+            images=dict.fromkeys(self.image_keys, image),
+            image_masks=dict.fromkeys(self.image_keys, image_mask),
             state=torch.ones(batch_size, self.action_dim),
             tokenized_prompt=torch.ones(
                 batch_size, self.max_token_len, dtype=torch.long
