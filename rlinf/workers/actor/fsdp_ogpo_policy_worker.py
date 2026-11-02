@@ -213,7 +213,7 @@ class EmbodiedOGPOFSDPPolicy(EmbodiedFSDPActor):
         }
 
     def _bc_loss(self, batch_size: int) -> torch.Tensor | None:
-        if not self.success_buffer.is_ready(1):
+        if float(self.cfg.algorithm.ogpo.bc_coeff) == 0.0:
             return None
         batch = self.success_buffer.sample(num_chunks=batch_size)
         valid = batch.pop("forward_inputs")["valid"]
@@ -323,8 +323,7 @@ class EmbodiedOGPOFSDPPolicy(EmbodiedFSDPActor):
                 values["actor/grad_norm"] = values.pop("grad_norm")
                 append_to_dict(metrics, values)
 
-        self._update_targets(actor_tau=0.0)
-        self._update_targets(critic_tau=0.0)
+        self._update_targets()
         return metrics
 
     def process_train_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
@@ -353,9 +352,21 @@ class EmbodiedOGPOFSDPPolicy(EmbodiedFSDPActor):
     @Worker.timer("run_training")
     def run_training(self) -> dict[str, Any]:
         min_size = int(self.cfg.algorithm.replay_buffer.min_buffer_size)
-        if not self.replay_buffer.is_ready(min_size):
+        bc_enabled = float(self.cfg.algorithm.ogpo.bc_coeff) != 0.0
+        ready = torch.tensor(
+            self.replay_buffer.is_ready(min_size)
+            and (not bc_enabled or self.success_buffer.is_ready(1)),
+            dtype=torch.int32,
+            device=self.device,
+        )
+        torch.distributed.all_reduce(
+            ready, op=torch.distributed.ReduceOp.MIN, group=self._dp_group
+        )
+        if not ready.item():
             self.log_on_first_rank(
-                f"OGPO replay size {len(self.replay_buffer)} < {min_size}; skipping update"
+                f"OGPO requires every actor to have at least {min_size} replay "
+                "trajectories and, when BC is enabled, one successful trajectory; "
+                "skipping update"
             )
             return {}
         self.model.train()

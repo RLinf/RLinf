@@ -184,10 +184,6 @@ class EnvWorker(Worker):
                 torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
             ]
-            self.eval_finished: list[torch.Tensor] = [
-                torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
-                for _ in range(self.stage_num)
-            ]
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
         self.smooth_intervene = SmoothInterveneController.from_cfg(
@@ -434,8 +430,7 @@ class EnvWorker(Worker):
 
         if self._is_ogpo:
             chunk_step_result = self.env_list[stage_id].chunk_step(
-                chunk_actions,
-                stop_on_done=bool(self.cfg.env.train.get("stop_on_done", False)),
+                chunk_actions, stop_on_done=True
             )
         else:
             chunk_step_result = self.env_list[stage_id].chunk_step(chunk_actions)
@@ -536,6 +531,7 @@ class EnvWorker(Worker):
         if self._is_ogpo:
             episode_infos = [{} for _ in obs_list]
             episode_infos[-1]["terminal_obs"] = terminal_obs
+            episode_infos[-1]["success"] = success
             chunk_step_payload = clone_nested_to_cpu(
                 {
                     "chunk_actions": exec_actions,
@@ -543,7 +539,6 @@ class EnvWorker(Worker):
                     "terminations": raw_chunk_terminations,
                     "truncations": raw_chunk_truncations,
                     "infos_list": episode_infos,
-                    "valid_action_mask": success,
                 }
             )
         return env_output, env_info, chunk_step_payload
@@ -591,15 +586,7 @@ class EnvWorker(Worker):
         )
 
         current_dones = chunk_dones.any(dim=1)  # [num_envs] bool
-        single_trajectory_per_env = self._is_ogpo and bool(
-            self.cfg.env.eval.get("single_trajectory_per_env", False)
-        )
-        if single_trajectory_per_env:
-            finished = self.eval_finished[stage_id].to(current_dones.device)
-            newly_done = current_dones & ~finished
-            self.eval_finished[stage_id] = finished | current_dones
-            self.eval_prev_done[stage_id] = torch.zeros_like(current_dones)
-        elif self.cfg.env.eval.auto_reset:
+        if self.cfg.env.eval.auto_reset:
             newly_done = current_dones
         else:
             prev = self.eval_prev_done[stage_id].to(current_dones.device)
@@ -1308,21 +1295,11 @@ class EnvWorker(Worker):
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
-        single_trajectory_per_env = self._is_ogpo and bool(
-            self.cfg.env.eval.get("single_trajectory_per_env", False)
-        )
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
-            if (
-                single_trajectory_per_env
-                or not self.cfg.env.eval.auto_reset
-                or eval_rollout_epoch == 0
-            ):
+            if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
                     self.eval_env_list[stage_id].is_start = True
                     self.eval_prev_done[stage_id] = torch.zeros(
-                        self.eval_num_envs_per_stage, dtype=torch.bool
-                    )
-                    self.eval_finished[stage_id] = torch.zeros(
                         self.eval_num_envs_per_stage, dtype=torch.bool
                     )
                     extracted_obs, infos = self.eval_env_list[stage_id].reset()

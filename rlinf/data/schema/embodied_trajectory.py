@@ -743,7 +743,7 @@ class OGPOOutput(TrajectoryOutput):
                         "truncations": truncations[env_index, step_index].clone(),
                         "dones": dones[env_index, step_index].clone(),
                         "versions": version.clone(),
-                        "success": bool(data["valid_action_mask"][env_index]),
+                        "success": bool(data["infos_list"][-1]["success"][env_index]),
                         "curr_obs": self._observation(curr_obs, env_index),
                         "next_obs": self._observation(next_obs, env_index),
                     }

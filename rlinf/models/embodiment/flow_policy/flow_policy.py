@@ -533,15 +533,9 @@ class FlowStatePolicy(nn.Module, BasePolicy):
                 hidden_dims=self.cfg.q_hidden_dims,
                 num_q_heads=self.cfg.num_q_heads,
                 action_feature_dim=flow_action_dim,
+                activation="gelu" if is_ogpo else "tanh",
+                initializer="xavier_uniform" if is_ogpo else "default",
             )
-            if is_ogpo:
-                for head in self.q_head.qs:
-                    for index, module in enumerate(head.net):
-                        if isinstance(module, nn.Tanh):
-                            head.net[index] = nn.GELU()
-                        elif isinstance(module, nn.Linear):
-                            nn.init.xavier_uniform_(module.weight)
-                            nn.init.zeros_(module.bias)
 
         if is_ogpo or self.cfg.action_scale is not None:
             self.register_buffer("action_scale", action_scale.clone())
