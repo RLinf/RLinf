@@ -28,6 +28,9 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    * - RoboTwin
      - Bimanual manipulation simulation with multiple tasks
      - :doc:`robotwin`
+   * - SIMPLE
+     - Whole-body humanoid evaluation with Psi0
+     - :doc:`simple`
 
 .. note::
 
@@ -43,3 +46,4 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    maniskill_ood
    polaris
    robotwin
+   simple
