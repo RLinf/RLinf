@@ -462,7 +462,6 @@ class TestGroupDiscarded:
                 },
                 "runner": {"seq_length": 16},
                 "algorithm": {
-                    "staleness_threshold": 0,
                     "group_size": 2,
                     "max_num_gen_batches": 1,
                 },
@@ -487,6 +486,7 @@ class TestGroupDiscarded:
                 group_size=2,
                 output_channel=out_channel,
                 group_id=9,
+                task_name="searchr1",
             )
             record = out_channel.get_nowait()
             assert isinstance(record, DiscardedGroup)

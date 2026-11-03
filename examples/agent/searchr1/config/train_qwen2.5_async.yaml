@@ -22,22 +22,36 @@
 #     it there), so the retrieval server at tools.search.server_addr only
 #     needs to be reachable from the head node.
 #
-# Async knobs (all under runner/algorithm/rollout in this file):
+# Async knobs (under runner/algorithm/agentloop/rollout/rollout_buffer):
 #   - runner.async_mode: the switch itself.
-#   - algorithm.staleness_threshold: how many batches the rollout may run
-#     ahead of training (the admission budget); the version lag of the
-#     training data stays within roughly this many versions, though long
-#     trajectories can be staler.
+#   - agentloop.task_name: the agent task's name; async training requires
+#     it (it keys the rollout buffer's per-task state and is stamped on
+#     every rollout request).
+#   - rollout_buffer.max_inflight_groups: how many query groups may be
+#     issued but not returned; once this many are in flight, new prompts
+#     wait until a result, a discard, or a release frees capacity. Default
+#     (when null): ceil(rollout.max_running_requests x rollout instances
+#     x 1.2 / algorithm.group_size) - the in-flight trajectories run at
+#     about 1.2x the engine capacity, the margin covering groups waiting
+#     on tools or on their slowest trajectory.
+#   - rollout_buffer.max_buffered_groups: how many finished groups may
+#     wait for a release; bounds both the buffer memory and how stale
+#     training data can get. Default: 2 x data.rollout_batch_size; must
+#     be >= data.rollout_batch_size.
 #   - rollout.pause_mode: how the rollout is paused for a weight sync;
 #     "retract" returns in-flight requests to the queue and continues
 #     generating with the new weights after the sync, keeping the tokens
 #     already generated.
-#   - algorithm.max_actor_accept_staleness: groups staler than this are
-#     dropped instead of trained on; null means no extra limit beyond
-#     staleness_threshold admission. Must be >= staleness_threshold when
-#     set.
-#   - algorithm.max_dropped_groups_per_step: safety cap on dropped groups
-#     between two releases; the run fails when it is exceeded.
+#   - agentloop.max_actor_accept_staleness: groups staler than this
+#     (training version minus earliest generate version) are dropped
+#     instead of trained on; null means no limit, only the count is
+#     reported. Keep it >= max_buffered_groups / rollout_batch_size:
+#     when training is the bottleneck, the oldest buffered groups have
+#     waited about that many steps, and a stricter cap drops them
+#     systematically.
+#   - rollout_buffer.max_dropped_groups_per_step: safety cap on dropped
+#     groups between two releases; the run fails when it is exceeded.
+#     Default: 10 x data.rollout_batch_size.
 #   - algorithm.down_sampling: reject_equal_reward drops groups whose
 #     per-trajectory rewards are all equal (no gradient signal for a
 #     within-group baseline). Off by default; enabling it requires an
@@ -123,11 +137,6 @@ algorithm:
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
 
-  staleness_threshold: 2
-
-  max_actor_accept_staleness: null # null: no drop limit beyond staleness_threshold admission
-  max_dropped_groups_per_step: null # null: derived as 10 * rollout_batch_size
-
   down_sampling:
     do_down_sampling: False
     down_sampling_config:
@@ -164,11 +173,20 @@ data:
 agentloop:
   group_name: "AgentLoopGroup"
   toolcall_parser: "searchr1-qwen"
+  task_name: "searchr1" # required in async training; keys the rollout buffer's per-task state
   max_turns: 2
   max_tool_response_length: 500
   tool_response_truncate_side: "right"
   print_outputs: False
   is_dynamic_rollout_batch: True
+  max_actor_accept_staleness: null # null: groups are never dropped for staleness, only counted
+
+
+# Rollout scheduling capacity for async training (see the header notes).
+rollout_buffer:
+  max_inflight_groups: null # null: ceil(max_running_requests x instances x 1.2 / group_size)
+  max_buffered_groups: null # null: 2 * data.rollout_batch_size
+  max_dropped_groups_per_step: null # null: 10 * data.rollout_batch_size
 
 
 # Tools configuration for AgentLoop

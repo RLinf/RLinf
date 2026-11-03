@@ -46,10 +46,9 @@ class AsyncAgentRunner(AgentRunner):
     and the rollout engine is paused only around each weight sync, so data for
     the next step is generated while the actor trains on the current step. A
     `RolloutBufferWorker` owns admission, buffering and release: it issues
-    prompts from its own dataloader as the staleness budget allows and
-    releases the oldest finished groups when the runner asks for a batch.
-    With `algorithm.staleness_threshold=0` the semantics match the
-    synchronous `AgentRunner`.
+    prompts from its own dataloader while the rollout capacity and the buffer
+    allow, and releases the oldest finished groups when the runner asks for
+    a batch.
     """
 
     def __init__(
@@ -95,7 +94,6 @@ class AsyncAgentRunner(AgentRunner):
             solid_rollouts,
         )
         self.rollout_buffer = rollout_buffer
-        self.staleness_threshold = cfg.algorithm.staleness_threshold
         self.pause_mode = cfg.rollout.pause_mode
         # Per-group agent metrics arrive here from the continuous agent loop.
         self.agent_metric_channel = Channel.create("AgentMetric")
@@ -321,7 +319,7 @@ class AsyncAgentRunner(AgentRunner):
                 agent_metric_channel=self.agent_metric_channel,
             )
             buffer_handle = self.rollout_buffer.run_continuously(
-                input_channel=self.agent_output_channel,
+                agent_output_channel=self.agent_output_channel,
                 dataloader_channel=self.dataloader_channel,
                 rollout_channel=self.rollout_channel,
             )
@@ -355,24 +353,10 @@ class AsyncAgentRunner(AgentRunner):
                         if window_seconds > 0
                     ]
                     with self.timer("sync_weights"):
-                        # With algorithm.staleness_threshold=0 no group should
-                        # be in flight and no batch unclaimed when the sync
-                        # starts; warn if that does not hold.
                         num_inflight = self.agent_loop.num_inflight_groups().wait()
                         # The buffer is a single-worker group; wait() returns
                         # one result per worker.
                         buffer_metrics = self.rollout_buffer.get_metrics().wait()[0]
-                        if self.staleness_threshold == 0 and (
-                            any(count != 0 for count in num_inflight)
-                            or buffer_metrics["inflight_groups"] != 0
-                        ):
-                            logging.warning(
-                                f"Expected no in-flight groups with "
-                                f"algorithm.staleness_threshold=0, found "
-                                f"{num_inflight} in the agent loop and "
-                                f"{buffer_metrics['inflight_groups']} in "
-                                f"the rollout buffer"
-                            )
                         self._sync_weights_for_instances(
                             version=self.global_steps,
                         )
@@ -430,6 +414,9 @@ class AsyncAgentRunner(AgentRunner):
                 rollout_metrics["rollout/buffer/inflight_groups"] = buffer_metrics[
                     "inflight_groups"
                 ]
+                rollout_metrics["rollout/buffer/inflight_group_limit"] = buffer_metrics[
+                    "inflight_group_limit"
+                ]
                 rollout_metrics["rollout/buffer/issued_groups"] = buffer_metrics[
                     "issued_groups"
                 ]
@@ -439,9 +426,14 @@ class AsyncAgentRunner(AgentRunner):
                 rollout_metrics["rollout/buffer/batch_oldest_issue_version_ratio"] = (
                     buffer_metrics["batch_oldest_issue_version_ratio"]
                 )
-                rollout_metrics["rollout/buffer/admission_wait_ratio"] = buffer_metrics[
-                    "admission_wait_ratio"
-                ]
+                # Admission-blocked time, as a fraction of the step window,
+                # split by the condition that held when admission re-checked.
+                rollout_metrics["rollout/buffer/admission_wait_buffer_full"] = (
+                    buffer_metrics["admission_wait_buffer_full"]
+                )
+                rollout_metrics["rollout/buffer/admission_wait_inflight_limit"] = (
+                    buffer_metrics["admission_wait_inflight_limit"]
+                )
                 rollout_metrics["rollout/buffer/dropped_groups"] = buffer_metrics[
                     "dropped_groups"
                 ]

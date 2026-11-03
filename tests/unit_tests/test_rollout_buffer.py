@@ -42,7 +42,8 @@ from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
 
 def _cfg(
     rollout_batch_size: int = 4,
-    staleness_threshold: int = 0,
+    max_inflight_groups: int = 8,
+    max_buffered_groups: int = 8,
     num_samples: int = 64,
     shuffle: bool = False,
     reject_equal_reward: bool = False,
@@ -51,18 +52,19 @@ def _cfg(
     task_name: str | None = None,
 ):
     algorithm = {
-        "staleness_threshold": staleness_threshold,
         "group_size": 2,
         "max_num_gen_batches": 1,
-        "max_dropped_groups_per_step": max_dropped_groups_per_step,
     }
     if reject_equal_reward:
         algorithm["down_sampling"] = {
             "do_down_sampling": True,
             "down_sampling_config": {"reject_equal_reward": True},
         }
+    agentloop = {}
     if max_actor_accept_staleness is not None:
-        algorithm["max_actor_accept_staleness"] = max_actor_accept_staleness
+        agentloop["max_actor_accept_staleness"] = max_actor_accept_staleness
+    if task_name is not None:
+        agentloop["task_name"] = task_name
     return OmegaConf.create(
         {
             "data": {
@@ -74,7 +76,12 @@ def _cfg(
             },
             "runner": {"seq_length": 16},
             "algorithm": algorithm,
-            "agentloop": {"task_name": task_name},
+            "agentloop": agentloop,
+            "rollout_buffer": {
+                "max_inflight_groups": max_inflight_groups,
+                "max_buffered_groups": max_buffered_groups,
+                "max_dropped_groups_per_step": max_dropped_groups_per_step,
+            },
         }
     )
 
@@ -121,7 +128,7 @@ class _QueueChannel:
         return self._queue.get_nowait()
 
 
-def _result(group_id=None, earliest_version=None, rewards=None):
+def _result(group_id=None, earliest_version=None, rewards=None, task_name=None):
     """A single-group DynamicRolloutResult double.
 
     `group_metadata()` mirrors the real method's contract; other fields
@@ -131,6 +138,7 @@ def _result(group_id=None, earliest_version=None, rewards=None):
     def group_metadata():
         return GroupMetadata(
             group_id=group_id,
+            task_name=task_name,
             rewards=rewards,
             earliest_version=earliest_version,
             completion_version=earliest_version,
@@ -147,22 +155,29 @@ class _BufferFixture:
     @staticmethod
     def make(
         rollout_batch_size=4,
-        staleness_threshold=0,
+        max_inflight_groups=8,
+        max_buffered_groups=8,
         loaded_versions=None,
-        start_step=0,
     ):
         with mock.patch.object(RolloutBuffer, "_build_dataloader"):
-            buffer = RolloutBuffer(_cfg(rollout_batch_size, staleness_threshold), None)
+            buffer = RolloutBuffer(
+                _cfg(
+                    rollout_batch_size,
+                    max_inflight_groups=max_inflight_groups,
+                    max_buffered_groups=max_buffered_groups,
+                ),
+                None,
+            )
         buffer.dataloader = None
         if loaded_versions is not None:
             buffer.loaded_versions = dict(loaded_versions)
-        buffer.start_step = start_step
         return buffer
 
 
 def _make_worker(
     rollout_batch_size=2,
-    staleness_threshold=0,
+    max_inflight_groups=8,
+    max_buffered_groups=8,
     num_samples=8,
     reject_equal_reward=False,
     max_actor_accept_staleness=None,
@@ -172,7 +187,8 @@ def _make_worker(
     """A RolloutBufferWorker with the loop state but no Worker init."""
     cfg = _cfg(
         rollout_batch_size,
-        staleness_threshold,
+        max_inflight_groups=max_inflight_groups,
+        max_buffered_groups=max_buffered_groups,
         reject_equal_reward=reject_equal_reward,
         max_actor_accept_staleness=max_actor_accept_staleness,
         max_dropped_groups_per_step=max_dropped_groups_per_step,
@@ -196,74 +212,41 @@ def _make_worker(
     return worker
 
 
-class TestAdmissionBudget:
-    """The admission budget of the rollout buffer."""
+def _task_state(buffer: RolloutBuffer, task_name=None) -> dict:
+    """The buffer's per-task state for `task_name` (None = no task)."""
+    return buffer._task(task_name)
 
-    def test_initial_budget_is_one_batch(self):
-        """Before any sync, one batch of prompts may be issued."""
-        buffer = _BufferFixture.make(rollout_batch_size=4)
-        assert buffer._prompts_to_issue() == 4
 
-    def test_issuing_consumes_the_budget(self):
-        """Each issued group takes one slot of the budget."""
-        buffer = _BufferFixture.make(rollout_batch_size=4)
-        for _ in range(4):
-            buffer.issue_group(0)
-        assert buffer._prompts_to_issue() == 0
+class TestAdmissionByCapacity:
+    """The two admission conditions of the rollout buffer."""
 
-    def test_loaded_version_growth_adds_budget(self):
-        """A new loaded version admits another batch."""
-        buffer = _BufferFixture.make(rollout_batch_size=4, loaded_versions={0: 0, 1: 0})
-        for _ in range(4):
-            buffer.issue_group(0)
-        assert buffer._prompts_to_issue() == 0
-        buffer.set_loaded_versions({0: 1, 1: 1})
-        assert buffer._prompts_to_issue() == 4
+    def test_both_conditions_free_admits(self):
+        """With capacity in flight and in the buffer, admission passes."""
+        buffer = _BufferFixture.make(max_inflight_groups=2, max_buffered_groups=2)
+        assert buffer._admission_block_reason() is None
 
-    def test_minimum_loaded_version_gates(self):
-        """Only the minimum loaded version across instances counts."""
-        buffer = _BufferFixture.make(rollout_batch_size=4, loaded_versions={0: 3, 1: 0})
-        assert buffer._prompts_to_issue() == 4
+    def test_inflight_limit_alone_blocks(self):
+        """In-flight groups at the limit block admission by themselves."""
+        buffer = _BufferFixture.make(max_inflight_groups=2, max_buffered_groups=8)
+        buffer.issue_group(0, None)
+        buffer.issue_group(0, None)
+        assert buffer._admission_block_reason() == "inflight_limit"
 
-    def test_budget_counts_from_the_resume_step(self):
-        """After resuming at step 7 with version 7 loaded, one batch fits."""
-        buffer = _BufferFixture.make(
-            rollout_batch_size=4,
-            loaded_versions={0: 7, 1: 7},
-            start_step=7,
-        )
-        assert buffer._prompts_to_issue() == 4
+    def test_buffer_full_alone_blocks(self):
+        """Buffered groups at the limit block admission by themselves."""
+        buffer = _BufferFixture.make(max_inflight_groups=8, max_buffered_groups=2)
+        for group_id in range(2):
+            buffer.issue_group(group_id, None)
+            buffer.record_result(_result(group_id), _result(group_id).group_metadata())
+        assert buffer._admission_block_reason() == "buffer_full"
 
-    def test_staleness_threshold_widens_the_budget(self):
-        """A threshold of 1 admits one extra batch."""
-        buffer = _BufferFixture.make(
-            rollout_batch_size=4, staleness_threshold=1, loaded_versions={0: 0}
-        )
-        assert buffer._prompts_to_issue() == 8
-
-    def test_lowering_the_threshold_blocks_new_prompts_only(self):
-        """Lowering the threshold stops new admissions; issued stays."""
-        buffer = _BufferFixture.make(
-            rollout_batch_size=4, staleness_threshold=1, loaded_versions={0: 0}
-        )
-        for _ in range(8):
-            buffer.issue_group(0)
-        buffer.set_staleness_threshold(0)
-        # Over-issued relative to the new budget: nothing more may be
-        # issued, but the issued groups are not revoked.
-        assert buffer._prompts_to_issue() <= 0
-        assert buffer.num_issued_groups == 8
-        # The update wakes admission; it would see the smaller budget and
-        # wait again.
-        assert buffer._admission_event.is_set()
-
-    def test_wake_without_a_free_slot_keeps_waiting(self):
-        """A wake-up that frees no slot does not hand one out."""
+    def test_one_result_at_the_limit_frees_one_slot(self):
+        """A single result at the in-flight limit admits exactly one group."""
 
         async def run():
-            buffer = _BufferFixture.make(rollout_batch_size=2)
+            buffer = _BufferFixture.make(max_inflight_groups=2, max_buffered_groups=8)
             for _ in range(2):
-                buffer.issue_group(0)
+                buffer.issue_group(0, None)
             slot_taken = False
 
             async def issue_if_admitted():
@@ -273,17 +256,190 @@ class TestAdmissionBudget:
 
             waiter = asyncio.create_task(issue_if_admitted())
             await asyncio.sleep(0.05)
-            # Wake admission without freeing a slot.
-            buffer.set_staleness_threshold(0)
+            assert not slot_taken
+            # One group returns: one replacement may be issued, not two.
+            buffer.record_result(_result(0), _result(0).group_metadata())
+            await asyncio.wait_for(waiter, timeout=5)
+            buffer.issue_group(0, None)
+            assert buffer._admission_block_reason() == "inflight_limit"
+
+        asyncio.run(run())
+
+    def test_one_discard_at_the_limit_frees_one_slot(self):
+        """A discard record at the in-flight limit admits exactly one group."""
+
+        async def run():
+            buffer = _BufferFixture.make(max_inflight_groups=2, max_buffered_groups=8)
+            for _ in range(2):
+                buffer.issue_group(0, None)
+            slot_taken = False
+
+            async def issue_if_admitted():
+                nonlocal slot_taken
+                await buffer.wait_for_admission_slot()
+                slot_taken = True
+
+            waiter = asyncio.create_task(issue_if_admitted())
             await asyncio.sleep(0.05)
             assert not slot_taken
-            assert not waiter.done()
-            # Freeing a slot (new loaded version) lets it through.
-            buffer.set_loaded_versions({0: 1, 1: 1})
+            buffer.drop_group(0, "task_rule", 1000, already_buffered=False)
+            await asyncio.wait_for(waiter, timeout=5)
+            buffer.issue_group(0, None)
+            assert buffer._admission_block_reason() == "inflight_limit"
+
+        asyncio.run(run())
+
+    def test_buffer_full_recovers_after_actor_handoff(self):
+        """A full buffer admits again once a batch is handed to the actor."""
+
+        async def run():
+            buffer = _BufferFixture.make(
+                rollout_batch_size=2, max_inflight_groups=8, max_buffered_groups=2
+            )
+            for group_id in range(2):
+                buffer.issue_group(group_id, None)
+                buffer.record_result(
+                    _result(group_id), _result(group_id).group_metadata()
+                )
+            slot_taken = False
+
+            async def issue_if_admitted():
+                nonlocal slot_taken
+                await buffer.wait_for_admission_slot()
+                slot_taken = True
+
+            waiter = asyncio.create_task(issue_if_admitted())
+            await asyncio.sleep(0.05)
+            assert not slot_taken
+            # The release empties the buffer: admission recovers.
+            buffer.release_groups()
             await asyncio.wait_for(waiter, timeout=5)
             assert slot_taken
 
         asyncio.run(run())
+
+    def test_wake_without_capacity_keeps_waiting(self):
+        """A wake-up that frees no capacity does not hand a slot out."""
+
+        async def run():
+            buffer = _BufferFixture.make(max_inflight_groups=2, max_buffered_groups=8)
+            for _ in range(2):
+                buffer.issue_group(0, None)
+            slot_taken = False
+
+            async def issue_if_admitted():
+                nonlocal slot_taken
+                await buffer.wait_for_admission_slot()
+                slot_taken = True
+
+            waiter = asyncio.create_task(issue_if_admitted())
+            await asyncio.sleep(0.05)
+            # Loaded versions no longer affect admission; the wake frees
+            # no in-flight capacity.
+            buffer.set_loaded_versions({0: 5, 1: 5})
+            await asyncio.sleep(0.05)
+            assert not slot_taken
+            assert not waiter.done()
+            buffer.record_result(_result(0), _result(0).group_metadata())
+            await asyncio.wait_for(waiter, timeout=5)
+            assert slot_taken
+
+        asyncio.run(run())
+
+    def test_set_loaded_versions_no_longer_wakes_admission(self):
+        """A version update does not set the admission event at all."""
+        buffer = _BufferFixture.make(max_inflight_groups=2, max_buffered_groups=8)
+        for _ in range(2):
+            buffer.issue_group(0, None)
+        buffer._admission_event.clear()
+        buffer.set_loaded_versions({0: 5, 1: 5})
+        assert not buffer._admission_event.is_set()
+
+
+class TestPerTaskState:
+    """The buffer's per-task keyed state."""
+
+    def test_state_is_keyed_by_task_name(self):
+        """Issue, buffer and drop file their state under the task key."""
+        buffer = _BufferFixture.make()
+        buffer.issue_group(0, "searchr1")
+        buffer.record_result(
+            _result(group_id=0, task_name="searchr1"),
+            _result(group_id=0, task_name="searchr1").group_metadata(),
+        )
+        task = _task_state(buffer, "searchr1")
+        assert task["num_issued_groups"] == 1
+        assert task["num_finished_groups"] == 1
+        assert set(task["buffer"]) == {0}
+        assert buffer.tasks.keys() == {"searchr1"}
+
+    def test_inflight_and_buffer_count_across_tasks(self):
+        """Gauges sum over the per-task state."""
+        buffer = _BufferFixture.make()
+        for group_id, task_name in [(0, "searchr1"), (1, "code")]:
+            buffer.issue_group(group_id, task_name)
+        buffer.record_result(
+            _result(group_id=0, task_name="searchr1"),
+            _result(group_id=0, task_name="searchr1").group_metadata(),
+        )
+        assert buffer.inflight_groups() == 1
+        assert buffer._buffered_groups() == 1
+
+    def test_release_takes_the_oldest_groups_across_tasks(self):
+        """A release still hands the actor the oldest buffered groups."""
+        buffer = _BufferFixture.make(rollout_batch_size=2)
+        group_ids = {}
+        for sample, task_name in [(0, "searchr1"), (1, "code"), (2, "searchr1")]:
+            group_ids[sample] = buffer.issue_group(sample, task_name)[0]
+            buffer.record_result(
+                _result(group_id=group_ids[sample], task_name=task_name),
+                _result(
+                    group_id=group_ids[sample], task_name=task_name
+                ).group_metadata(),
+            )
+        released = buffer.release_groups()
+        assert [result.group_id for result in released] == [
+            group_ids[0],
+            group_ids[1],
+        ]
+        assert set(_task_state(buffer, "searchr1")["buffer"]) == {group_ids[2]}
+        assert _task_state(buffer, "code")["buffer"] == {}
+
+    def test_result_routes_by_the_issue_record_not_the_producer(self):
+        """A result whose task stamp differs from issue time files under
+        the issuing task, and the issue record is consumed."""
+        buffer = _BufferFixture.make()
+        buffer.issue_group(0, "searchr1")
+        buffer.record_result(
+            _result(group_id=0, task_name=None),
+            _result(group_id=0, task_name=None).group_metadata(),
+        )
+        assert _task_state(buffer, "searchr1")["num_finished_groups"] == 1
+        assert buffer.tasks.keys() == {"searchr1"}
+        assert buffer.group_tasks == {}
+
+    def test_discard_routes_by_the_issue_record_not_the_producer(self):
+        """A receive-time drop files under the task the group was issued
+        under, regardless of any name the record carries."""
+        buffer = _BufferFixture.make()
+        buffer.issue_group(0, "searchr1")
+        buffer.drop_group(0, "task_rule", 1000, already_buffered=False)
+        task = _task_state(buffer, "searchr1")
+        assert task["num_dropped_groups"] == {"task_rule": 1}
+        assert task["num_finished_groups"] == 1
+        assert buffer.group_tasks == {}
+
+    def test_result_for_an_unknown_group_raises(self):
+        """A result for a group never issued here is a producer bug."""
+        buffer = _BufferFixture.make()
+        with pytest.raises(ValueError, match="unknown group id 7"):
+            buffer.record_result(_result(7), _result(7).group_metadata())
+
+    def test_discard_for_an_unknown_group_raises(self):
+        """A receive-time drop for a group never issued here fails."""
+        buffer = _BufferFixture.make()
+        with pytest.raises(ValueError, match="unknown group id 7"):
+            buffer.drop_group(7, "task_rule", 1000, already_buffered=False)
 
 
 class TestRelease:
@@ -292,29 +448,39 @@ class TestRelease:
     def test_release_takes_the_oldest_groups_in_order(self):
         """Released results come out in group-id order."""
         buffer = _BufferFixture.make(rollout_batch_size=3)
-        for group_id in [5, 1, 9]:
+        # Issue in shuffled order: group ids are assigned in issue order.
+        group_ids = [buffer.issue_group(sample, None)[0] for sample in [5, 1, 9]]
+        for group_id in group_ids:
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == [1, 5, 9]
+        assert [result.group_id for result in released] == sorted(group_ids)
 
     def test_release_removes_the_groups_from_the_buffer(self):
         """Released groups leave the buffer and the issue-version dict."""
-        buffer = _BufferFixture.make(rollout_batch_size=2)
-        for group_id in [1, 2, 3]:
+        buffer = _BufferFixture.make(rollout_batch_size=2, loaded_versions={0: 1})
+        group_ids = [buffer.issue_group(sample, None)[0] for sample in range(3)]
+        for group_id in group_ids:
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
-            buffer.issue_versions[group_id] = 0
         buffer.release_groups()
-        assert set(buffer.buffer) == {3}
-        assert set(buffer.issue_versions) == {3}
+        task = _task_state(buffer, None)
+        assert set(task["buffer"]) == {group_ids[2]}
+        assert set(task["issue_versions"]) == {group_ids[2]}
 
     def test_can_release_requires_a_full_batch(self):
         """can_release flips only at rollout_batch_size groups."""
         buffer = _BufferFixture.make(rollout_batch_size=3)
+        group_ids = [buffer.issue_group(sample, None)[0] for sample in range(3)]
         assert not buffer.can_release()
-        buffer.record_result(_result(1), _result(1).group_metadata())
-        buffer.record_result(_result(2), _result(2).group_metadata())
+        buffer.record_result(
+            _result(group_ids[0]), _result(group_ids[0]).group_metadata()
+        )
+        buffer.record_result(
+            _result(group_ids[1]), _result(group_ids[1]).group_metadata()
+        )
         assert not buffer.can_release()
-        buffer.record_result(_result(3), _result(3).group_metadata())
+        buffer.record_result(
+            _result(group_ids[2]), _result(group_ids[2]).group_metadata()
+        )
         assert buffer.can_release()
 
 
@@ -326,14 +492,18 @@ class TestRecordResult:
         buffer = _BufferFixture.make()
         with pytest.raises(ValueError, match="without a group id"):
             buffer.record_result(_result(None), _result(None).group_metadata())
-        assert buffer.buffer == {}
-        assert buffer.record_result(_result(3), _result(3).group_metadata()) == 3
-        assert buffer.buffer[3][1].group_id == 3
+        assert _task_state(buffer, None)["buffer"] == {}
+        group_id = buffer.issue_group(0, None)[0]
+        assert (
+            buffer.record_result(_result(group_id), _result(group_id).group_metadata())
+            == group_id
+        )
+        assert _task_state(buffer, None)["buffer"][group_id][1].group_id == group_id
 
     def test_inflight_counts_issued_minus_finished(self):
         """In-flight groups drop back to zero as results arrive."""
         buffer = _BufferFixture.make(rollout_batch_size=4)
-        issued = [buffer.issue_group(0)[0] for _ in range(4)]
+        issued = [buffer.issue_group(0, None)[0] for _ in range(4)]
         assert buffer.inflight_groups() == 4
         for group_id in issued[:2]:
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
@@ -350,7 +520,7 @@ class TestStepMetrics:
         """Per-step counters reset; gauges read live values."""
         buffer = _BufferFixture.make(rollout_batch_size=4)
         for _ in range(2):
-            buffer.issue_group(0)
+            buffer.issue_group(0, None)
         buffer.record_result(_result(0), _result(0).group_metadata())
         metrics = buffer.get_step_metrics()
         assert metrics["issued_groups"] == 2
@@ -360,12 +530,93 @@ class TestStepMetrics:
         assert metrics["issued_groups"] == 0
         assert metrics["inflight_groups"] == 1
 
+    def test_inflight_group_limit_equals_the_configured_value(self):
+        """The limit metric mirrors the configured max_inflight_groups."""
+        buffer = _BufferFixture.make(max_inflight_groups=5)
+        metrics = buffer.get_step_metrics()
+        assert metrics["inflight_group_limit"] == 5
+
+    def test_admission_wait_split_by_reason(self):
+        """Blocked time is reported per reason, as a window fraction."""
+
+        async def run():
+            # In-flight limit of 1 with a roomier buffer, so each phase is
+            # blocked by exactly one condition.
+            buffer = _BufferFixture.make(
+                rollout_batch_size=1, max_inflight_groups=1, max_buffered_groups=8
+            )
+            buffer.issue_group(0, None)
+            first = buffer.get_step_metrics()
+            assert first["admission_wait_buffer_full"] == 0.0
+            assert first["admission_wait_inflight_limit"] == 0.0
+
+            async def wait_once():
+                await buffer.wait_for_admission_slot()
+
+            # Blocked by the in-flight limit, then unblocked by a result.
+            waiter = asyncio.create_task(wait_once())
+            await asyncio.sleep(0.05)
+            assert not waiter.done()
+            buffer.record_result(_result(0), _result(0).group_metadata())
+            await asyncio.wait_for(waiter, timeout=5)
+            assert buffer._step_admission_wait["buffer_full"] == 0.0
+
+            # Fill the buffer to its limit, then blocked by the buffer and
+            # unblocked by a release.
+            for sample in range(1, 8):
+                buffer.issue_group(sample, None)
+                buffer.record_result(_result(sample), _result(sample).group_metadata())
+            assert buffer._admission_block_reason() == "buffer_full"
+            waiter = asyncio.create_task(wait_once())
+            await asyncio.sleep(0.05)
+            assert not waiter.done()
+            buffer.release_groups()
+            await asyncio.wait_for(waiter, timeout=5)
+            metrics = buffer.get_step_metrics()
+            assert 0.0 < metrics["admission_wait_inflight_limit"] <= 1.0
+            assert 0.0 < metrics["admission_wait_buffer_full"] <= 1.0
+
+        asyncio.run(run())
+
+    def test_admission_wait_spans_metrics_windows(self):
+        """A wait crossing two metrics reads lands in each window."""
+
+        async def run():
+            buffer = _BufferFixture.make(max_inflight_groups=1)
+            buffer.issue_group(0, None)
+            buffer.get_step_metrics()  # open the first window
+
+            async def wait_once():
+                await buffer.wait_for_admission_slot()
+
+            waiter = asyncio.create_task(wait_once())
+            await asyncio.sleep(0.05)
+            assert not waiter.done()
+            # First read mid-wait: the elapsed part of the wait is already
+            # charged, and the next window starts from this read.
+            first = buffer.get_step_metrics()
+            assert 0.0 < first["admission_wait_inflight_limit"] <= 1.0
+            assert not waiter.done()
+            await asyncio.sleep(0.05)
+            # Second read mid-wait: only the part since the first read.
+            second = buffer.get_step_metrics()
+            assert 0.0 < second["admission_wait_inflight_limit"] <= 1.0
+            # The wait then ends; whatever accrued after the second read
+            # belongs to the next window and stays within it.
+            buffer.record_result(_result(0), _result(0).group_metadata())
+            await asyncio.wait_for(waiter, timeout=5)
+            third = buffer.get_step_metrics()
+            assert 0.0 <= third["admission_wait_inflight_limit"] <= 1.0
+
+        asyncio.run(run())
+
     def test_batch_issue_version_metrics(self):
         """A released batch reports its distinct and oldest-issue share."""
         buffer = _BufferFixture.make(rollout_batch_size=3)
-        for group_id, version in [(1, 0), (2, 0), (3, 1)]:
+        for sample, version in enumerate([0, 0, 1]):
+            group_id = buffer.issue_group(sample, None)[0]
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
-            buffer.issue_versions[group_id] = version
+            buffer._task(None)["issue_versions"][group_id] = version
         buffer.release_groups()
         metrics = buffer.get_step_metrics()
         assert metrics["batch_issue_versions"] == 2
@@ -395,7 +646,6 @@ class TestCheckpoint:
 
             reloaded = self._make_worker(_cfg(rollout_batch_size=4))
             asyncio.run(reloaded.load_checkpoint(tmp_dir, start_step=1))
-            assert reloaded.buffer.start_step == 1
             second = next(iter(reloaded.buffer.dataloader))["idx"].tolist()
             assert second[0] == first[0] + 4
 
@@ -407,13 +657,12 @@ class TestCheckpoint:
             assert os.path.isfile(os.path.join(tmp_dir, "data.pt"))
             assert not os.path.exists(os.path.join(tmp_dir, "data.pt.tmp"))
 
-    def test_missing_state_still_sets_the_start_step(self):
-        """Without data.pt the dataset restarts; start_step is still set."""
+    def test_missing_state_warns(self):
+        """Without data.pt the dataset restarts, with a warning."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             worker = self._make_worker(_cfg(rollout_batch_size=4))
             asyncio.run(worker.load_checkpoint(tmp_dir, start_step=5))
             worker.log_warning.assert_called_once()
-            assert worker.buffer.start_step == 5
 
     def test_save_checkpoint_logs_the_resume_skip_count(self):
         """The info log counts prompts a resume will skip."""
@@ -425,7 +674,7 @@ class TestCheckpoint:
             # 2 still buffered: a resume skips the remaining 2.
             buffer.num_samples_fetched = 8
             for group_id in range(8):
-                buffer.issue_group(group_id)
+                buffer.issue_group(group_id, None)
             for group_id in range(4):
                 buffer.record_result(
                     _result(group_id), _result(group_id).group_metadata()
@@ -461,7 +710,7 @@ class TestCheckpoint:
             buffer = first.buffer
             buffer.num_samples_fetched = 8
             for group_id in range(8):
-                buffer.issue_group(group_id)
+                buffer.issue_group(group_id, None)
             for group_id in range(4):
                 buffer.record_result(
                     _result(group_id), _result(group_id).group_metadata()
@@ -487,7 +736,7 @@ class TestCheckpoint:
             next(data_iter)
             second.buffer.num_samples_fetched = 4
             for group_id in range(4):
-                second.buffer.issue_group(group_id)
+                second.buffer.issue_group(group_id, None)
             for group_id in (0, 1):
                 second.buffer.drop_group(
                     group_id, "stale", 1000, already_buffered=False
@@ -519,15 +768,15 @@ class TestWorkerResident:
         async def run():
             worker = _make_worker(rollout_batch_size=2)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
-                # The initial budget of one batch issues both prompts.
+                # The initial capacity issues both prompts.
                 request = await asyncio.wait_for(
                     dataloader_channel._queue.get(), timeout=5
                 )
@@ -539,8 +788,8 @@ class TestWorkerResident:
                 assert request.n == 2 and len(request.input_ids) == 1
 
                 # Results come back; the batch is not released until asked.
-                input_channel.put(_result(group_id=0))
-                input_channel.put(_result(group_id=1))
+                agent_output_channel.put(_result(group_id=0))
+                agent_output_channel.put(_result(group_id=1))
                 await asyncio.sleep(0.05)
                 assert rollout_channel._queue.empty()
 
@@ -563,22 +812,22 @@ class TestWorkerResident:
         async def run():
             worker = _make_worker(rollout_batch_size=2)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
                 await worker.release_batch(version=0)
-                input_channel.put(_result(group_id=0))
+                agent_output_channel.put(_result(group_id=0))
                 await asyncio.sleep(0.05)
                 # Only one group back: the release is still held.
                 assert rollout_channel._queue.empty()
-                input_channel.put(_result(group_id=1))
+                agent_output_channel.put(_result(group_id=1))
                 released = [
                     await asyncio.wait_for(rollout_channel._queue.get(), timeout=5)
                     for _ in range(2)
@@ -596,11 +845,11 @@ class TestWorkerResident:
         async def run():
             worker = _make_worker(rollout_batch_size=2)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
@@ -625,86 +874,58 @@ class TestWorkerResident:
         async def run():
             worker = _make_worker(rollout_batch_size=2)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                input_channel.put(_result(group_id=None))
+                agent_output_channel.put(_result(group_id=None))
                 with pytest.raises(ValueError, match="without a group id"):
                     await asyncio.wait_for(resident, timeout=5)
-                assert worker.buffer.buffer == {}
+                assert worker.buffer._buffered_groups() == 0
             finally:
                 await worker.stop()
 
         asyncio.run(run())
 
-    def test_new_versions_admit_more_prompts(self):
-        """set_loaded_versions wakes admission for the next batch."""
+    def test_inflight_limit_pauses_and_results_resume_issuing(self):
+        """Issuing stops at the in-flight limit and resumes on results."""
 
         async def run():
-            worker = self._make_worker(rollout_batch_size=2, num_samples=8)
+            worker = self._make_worker(
+                rollout_batch_size=2, max_inflight_groups=2, num_samples=8
+            )
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                # Budget spent; admission now waits on the event. The
-                # second batch is already fetched (4 samples) but none
-                # of it is issued yet.
+                # In-flight at the limit; admission waits. The second
+                # batch is already fetched (4 samples) but none of it is
+                # issued yet.
                 await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
                 assert worker.buffer.num_samples_fetched == 4
+                # A version update does not unblock admission.
                 await worker.set_loaded_versions({0: 1, 1: 1})
-                for _ in range(2):
-                    await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                # Third batch fetched once the budget is spent again.
                 await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
-                assert worker.buffer.num_samples_fetched == 6
-            finally:
-                await worker.stop()
-                await asyncio.wait_for(resident, timeout=5)
-
-        asyncio.run(run())
-
-    def test_wake_without_budget_growth_issues_nothing(self):
-        """A threshold update that frees no slot admits no prompt."""
-
-        async def run():
-            worker = self._make_worker(rollout_batch_size=2, staleness_threshold=0)
-            dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
-            rollout_channel = _QueueChannel()
-            resident = asyncio.create_task(
-                worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
-                )
-            )
-            try:
-                # The initial budget of 2 is spent on the first batch.
-                for _ in range(2):
-                    await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                # Rewriting the same threshold wakes admission without
-                # freeing a slot; nothing may be issued.
-                await worker.set_staleness_threshold(0)
-                await asyncio.sleep(0.1)
+                # A result frees in-flight capacity; issuing resumes.
+                agent_output_channel.put(_result(group_id=0))
+                await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
-                # A version bump frees slots and the next batch follows.
-                await worker.set_loaded_versions({0: 1, 1: 1})
-                for _ in range(2):
-                    await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)
@@ -732,26 +953,25 @@ class TestWorkerResident:
 class TestDiscard:
     """Dropping a finished group returns its admission slot."""
 
-    def test_drop_returns_the_admission_slot(self):
+    def test_drop_returns_the_admission_capacity(self):
         """After a drop the same number of prompts may be issued again."""
-        buffer = _BufferFixture.make(rollout_batch_size=2)
+        buffer = _BufferFixture.make(max_inflight_groups=2)
         for _ in range(2):
-            buffer.issue_group(0)
-        assert buffer._prompts_to_issue() == 0
+            buffer.issue_group(0, None)
+        assert buffer._admission_block_reason() == "inflight_limit"
         buffer.drop_group(0, "equal_reward", 1000, already_buffered=False)
-        assert buffer._prompts_to_issue() == 1
+        assert buffer._admission_block_reason() is None
         assert buffer.inflight_groups() == 1
 
     def test_drop_never_reissues_the_group(self):
         """A dropped group is not buffered and not released."""
         buffer = _BufferFixture.make(rollout_batch_size=2)
-        for _ in range(2):
-            buffer.issue_group(0)
-        buffer.drop_group(0, "stale", 1000, already_buffered=False)
-        assert 0 not in buffer.buffer
-        buffer.record_result(_result(1), _result(1).group_metadata())
+        first, second = (buffer.issue_group(sample, None)[0] for sample in range(2))
+        buffer.drop_group(first, "stale", 1000, already_buffered=False)
+        assert first not in _task_state(buffer, None)["buffer"]
+        buffer.record_result(_result(second), _result(second).group_metadata())
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == [1]
+        assert [result.group_id for result in released] == [second]
 
     def test_discarded_group_record_takes_the_receive_path(self):
         """A DiscardedGroup from the agent loop wakes admission."""
@@ -759,23 +979,23 @@ class TestDiscard:
         async def run():
             worker = _make_worker(rollout_batch_size=2)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                input_channel.put(DiscardedGroup(group_id=0, reason="task_rule"))
+                agent_output_channel.put(DiscardedGroup(group_id=0, reason="task_rule"))
                 # The freed slot admits the next prompt (dataset sample 2).
                 request = await asyncio.wait_for(
                     dataloader_channel._queue.get(), timeout=5
                 )
                 assert request.group_ids == [2]
-                assert 0 not in worker.buffer.buffer
+                assert worker.buffer._buffered_groups() == 0
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)
@@ -786,7 +1006,7 @@ class TestDiscard:
         """The same dataset sample dropped twice enters the metric."""
         buffer = _BufferFixture.make(rollout_batch_size=4)
         for sample_idx in (3, 7, 3):
-            group_id = buffer.issue_group(sample_idx)[0]
+            group_id = buffer.issue_group(sample_idx, None)[0]
             buffer.drop_group(group_id, "stale", 1000, already_buffered=False)
         metrics = buffer.get_step_metrics()
         assert metrics["dropped_groups"] == 3
@@ -797,22 +1017,25 @@ class TestDiscard:
         """Dropping over the limit between releases fails the resident."""
         buffer = _BufferFixture.make(rollout_batch_size=2)
         for group_id in (0, 1):
-            buffer.issue_group(0)
+            buffer.issue_group(0, None)
             buffer.drop_group(group_id, "stale", 2, already_buffered=False)
         # Two drops sit at the limit; the third crosses it.
-        buffer.issue_group(0)
+        buffer.issue_group(0, None)
         with pytest.raises(RuntimeError, match="stale: 3"):
             buffer.drop_group(2, "stale", 2, already_buffered=False)
 
     def test_drop_limit_resets_after_a_release(self):
         """A release clears the between-release drop window."""
         buffer = _BufferFixture.make(rollout_batch_size=2)
-        buffer.drop_group(0, "stale", 1, already_buffered=False)
-        buffer.record_result(_result(1), _result(1).group_metadata())
-        buffer.record_result(_result(2), _result(2).group_metadata())
+        first = buffer.issue_group(0, None)[0]
+        buffer.drop_group(first, "stale", 1, already_buffered=False)
+        for sample in (1, 2):
+            group_id = buffer.issue_group(sample, None)[0]
+            buffer.record_result(_result(group_id), _result(group_id).group_metadata())
         buffer.release_groups()
         # The window restarts at zero: one more drop stays under it.
-        buffer.drop_group(3, "stale", 1, already_buffered=False)
+        fourth = buffer.issue_group(3, None)[0]
+        buffer.drop_group(fourth, "stale", 1, already_buffered=False)
 
 
 class TestRejectEqualReward:
@@ -850,20 +1073,22 @@ class TestRejectEqualReward:
         async def run():
             worker = _make_worker(rollout_batch_size=2, reject_equal_reward=True)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                input_channel.put(_result(group_id=0, rewards=[1.0, 1.0]))
+                agent_output_channel.put(_result(group_id=0, rewards=[1.0, 1.0]))
                 await asyncio.sleep(0.05)
-                assert 0 not in worker.buffer.buffer
-                assert worker.buffer.num_dropped_groups == {"equal_reward": 1}
+                assert worker.buffer._buffered_groups() == 0
+                assert _task_state(worker.buffer, None)["num_dropped_groups"] == {
+                    "equal_reward": 1
+                }
                 # The freed slot admits the next prompt.
                 await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
             finally:
@@ -877,15 +1102,21 @@ class TestRejectEqualReward:
 
         async def run():
             worker = _make_worker(rollout_batch_size=2, reject_equal_reward=True)
-            input_channel = _QueueChannel()
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
-                worker.run_continuously(input_channel, _QueueChannel(), rollout_channel)
+                worker.run_continuously(
+                    agent_output_channel, dataloader_channel, rollout_channel
+                )
             )
             try:
-                input_channel.put(_result(group_id=0, rewards=[0.0, 1.0]))
+                # The admission issues one group; its result carries a
+                # reward spread and buffers.
+                await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                agent_output_channel.put(_result(group_id=0, rewards=[0.0, 1.0]))
                 await asyncio.sleep(0.05)
-                assert 0 in worker.buffer.buffer
+                assert _task_state(worker.buffer, None)["buffer"]
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)
@@ -902,11 +1133,11 @@ class TestStalenessDrops:
         async def run():
             worker = _make_worker(rollout_batch_size=2, max_actor_accept_staleness=1)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
@@ -914,10 +1145,12 @@ class TestStalenessDrops:
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
                 await worker.set_loaded_versions({0: 4, 1: 4})
                 # version 4 loaded, earliest generate version 0: gap 4 > 1.
-                input_channel.put(_result(group_id=0, earliest_version=0))
+                agent_output_channel.put(_result(group_id=0, earliest_version=0))
                 await asyncio.sleep(0.05)
-                assert 0 not in worker.buffer.buffer
-                assert worker.buffer.num_dropped_groups == {"stale": 1}
+                assert worker.buffer._buffered_groups() == 0
+                assert _task_state(worker.buffer, None)["num_dropped_groups"] == {
+                    "stale": 1
+                }
                 await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
             finally:
                 await worker.stop()
@@ -930,26 +1163,30 @@ class TestStalenessDrops:
 
         async def run():
             worker = _make_worker(
-                rollout_batch_size=2, max_actor_accept_staleness=1, num_samples=16
+                rollout_batch_size=2,
+                max_inflight_groups=3,
+                max_buffered_groups=8,
+                max_actor_accept_staleness=1,
+                num_samples=16,
             )
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
-                for _ in range(2):
+                for _ in range(3):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
                 # No versions loaded yet: the receive-time pass cannot
                 # judge, so all three groups buffer.
-                input_channel.put(_result(group_id=0, earliest_version=0))
-                input_channel.put(_result(group_id=1, earliest_version=1))
-                input_channel.put(_result(group_id=2, earliest_version=1))
+                agent_output_channel.put(_result(group_id=0, earliest_version=0))
+                agent_output_channel.put(_result(group_id=1, earliest_version=1))
+                agent_output_channel.put(_result(group_id=2, earliest_version=1))
                 await asyncio.sleep(0.05)
-                assert set(worker.buffer.buffer) == {0, 1, 2}
+                assert set(_task_state(worker.buffer, None)["buffer"]) == {0, 1, 2}
                 # The release batch runs under version 2: group 0
                 # (earliest 0) is 2 versions stale, the others only 1.
                 await worker.release_batch(version=2)
@@ -958,11 +1195,16 @@ class TestStalenessDrops:
                     for _ in range(2)
                 ]
                 assert [r.group_id for r in released] == [1, 2]
-                assert worker.buffer.num_dropped_groups == {"stale": 1}
+                assert _task_state(worker.buffer, None)["num_dropped_groups"] == {
+                    "stale": 1
+                }
                 # The dropped group was already counted finished by
                 # record_result; a release-time drop must not count it
-                # twice.
-                assert worker.buffer.inflight_groups() == 0
+                # twice: the three results account for all three groups
+                # (two released, one dropped, none still buffered).
+                task = _task_state(worker.buffer, None)
+                assert task["num_finished_groups"] == 3
+                assert len(task["buffer"]) == 0
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)
@@ -975,18 +1217,18 @@ class TestStalenessDrops:
         async def run():
             worker = _make_worker(rollout_batch_size=2, max_actor_accept_staleness=0)
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
                 for _ in range(2):
                     await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
-                input_channel.put(_result(group_id=0, earliest_version=0))
-                input_channel.put(_result(group_id=1, earliest_version=0))
+                agent_output_channel.put(_result(group_id=0, earliest_version=0))
+                agent_output_channel.put(_result(group_id=1, earliest_version=0))
                 await asyncio.sleep(0.05)
                 await worker.release_batch(version=3)
                 # Both groups are 3 versions stale under a threshold of
@@ -996,8 +1238,8 @@ class TestStalenessDrops:
                 assert worker.buffer.pending_release_version == 3
                 # Fresh replacements arrive and the pending release goes
                 # out under the original version.
-                input_channel.put(_result(group_id=2, earliest_version=3))
-                input_channel.put(_result(group_id=3, earliest_version=3))
+                agent_output_channel.put(_result(group_id=2, earliest_version=3))
+                agent_output_channel.put(_result(group_id=3, earliest_version=3))
                 released = [
                     await asyncio.wait_for(rollout_channel._queue.get(), timeout=5)
                     for _ in range(2)
@@ -1019,11 +1261,11 @@ class TestIssuedRequestTaskName:
         async def run():
             worker = _make_worker(rollout_batch_size=2, task_name="searchr1")
             dataloader_channel = _QueueChannel()
-            input_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
             rollout_channel = _QueueChannel()
             resident = asyncio.create_task(
                 worker.run_continuously(
-                    input_channel, dataloader_channel, rollout_channel
+                    agent_output_channel, dataloader_channel, rollout_channel
                 )
             )
             try:
@@ -1037,3 +1279,45 @@ class TestIssuedRequestTaskName:
                 await asyncio.wait_for(resident, timeout=5)
 
         asyncio.run(run())
+
+    def test_task_name_and_limits_are_read_from_cfg(self):
+        """The real __init__ reads agentloop.task_name and the buffer caps."""
+
+        async def run():
+            cfg = _cfg(
+                rollout_batch_size=2,
+                max_inflight_groups=3,
+                max_buffered_groups=4,
+                task_name="searchr1",
+            )
+            with mock.patch.object(Worker, "__init__", return_value=None):
+                worker = RolloutBufferWorker(cfg, _ToyDataset(num_samples=8))
+            assert worker.task_name == "searchr1"
+            assert worker.max_actor_accept_staleness is None
+            assert worker.buffer.max_inflight_groups == 3
+            assert worker.buffer.max_buffered_groups == 4
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    agent_output_channel, dataloader_channel, rollout_channel
+                )
+            )
+            try:
+                request = await asyncio.wait_for(
+                    dataloader_channel._queue.get(), timeout=5
+                )
+                assert request.task_names == ["searchr1"]
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+    def test_max_actor_accept_staleness_is_read_from_agentloop(self):
+        """The staleness cap moved from algorithm to agentloop."""
+        cfg = _cfg(rollout_batch_size=2, max_actor_accept_staleness=3)
+        with mock.patch.object(Worker, "__init__", return_value=None):
+            worker = RolloutBufferWorker(cfg, _ToyDataset(num_samples=8))
+        assert worker.max_actor_accept_staleness == 3

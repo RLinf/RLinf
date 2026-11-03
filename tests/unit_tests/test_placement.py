@@ -18,7 +18,7 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from rlinf.scheduler import (
     FlexiblePlacementStrategy,
@@ -951,16 +951,23 @@ class TestSearchr1AsyncPauseModeDefaults:
                 "agentloop": {
                     "is_dynamic_rollout_batch": True,
                     "agentic_tokenizer": "default",
+                    "task_name": "searchr1",
                 },
-                "algorithm": {"recompute_logprobs": False},
+                "algorithm": {
+                    "recompute_logprobs": False,
+                    "group_size": 2,
+                },
                 "rollout": {
                     "return_logprobs": True,
                     "sglang": {"tool_call_parser": None},
+                    "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
                 "data": {},
             }
         )
+        with open_dict(cfg):
+            cfg.data.rollout_batch_size = 4
         if pause_mode is not None:
             cfg.rollout.pause_mode = pause_mode
         return cfg
@@ -970,6 +977,8 @@ class TestSearchr1AsyncPauseModeDefaults:
 
         placement = MagicMock()
         placement.is_collocated = True
+        placement.rollout_num_model_instances = 1
+        placement.actor_dp_size = 4
         with mock.patch.object(
             cfg_mod, "ModelParallelComponentPlacement", return_value=placement
         ):
@@ -1017,11 +1026,16 @@ class TestSearchr1AsyncBatchDivisibility:
                 "agentloop": {
                     "is_dynamic_rollout_batch": True,
                     "agentic_tokenizer": "default",
+                    "task_name": "searchr1",
                 },
-                "algorithm": {"recompute_logprobs": False},
+                "algorithm": {
+                    "recompute_logprobs": False,
+                    "group_size": 2,
+                },
                 "rollout": {
                     "return_logprobs": True,
                     "sglang": {"tool_call_parser": None},
+                    "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
                 "data": {"rollout_batch_size": rollout_batch_size},
@@ -1034,6 +1048,7 @@ class TestSearchr1AsyncBatchDivisibility:
 
         placement = MagicMock()
         placement.is_collocated = True
+        placement.rollout_num_model_instances = 1
         placement.actor_dp_size = actor_dp_size
         with mock.patch.object(
             cfg_mod, "ModelParallelComponentPlacement", return_value=placement
@@ -1055,7 +1070,7 @@ class TestSearchr1AsyncDiscardConfig:
 
     @staticmethod
     def _make_cfg(rollout_batch_size=8, algorithm_extra=None, runner_extra=None):
-        algorithm = {"recompute_logprobs": False}
+        algorithm = {"recompute_logprobs": False, "group_size": 2}
         if algorithm_extra:
             algorithm.update(algorithm_extra)
         runner = {"task_type": "reasoning", "async_mode": True}
@@ -1079,11 +1094,13 @@ class TestSearchr1AsyncDiscardConfig:
                 "agentloop": {
                     "is_dynamic_rollout_batch": True,
                     "agentic_tokenizer": "default",
+                    "task_name": "searchr1",
                 },
                 "algorithm": algorithm,
                 "rollout": {
                     "return_logprobs": True,
                     "sglang": {"tool_call_parser": None},
+                    "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
                 "data": {"rollout_batch_size": rollout_batch_size},
@@ -1096,6 +1113,7 @@ class TestSearchr1AsyncDiscardConfig:
         placement = MagicMock()
         placement.is_collocated = True
         placement.actor_dp_size = actor_dp_size
+        placement.rollout_num_model_instances = 1
         with mock.patch.object(
             cfg_mod, "ModelParallelComponentPlacement", return_value=placement
         ):
@@ -1103,21 +1121,13 @@ class TestSearchr1AsyncDiscardConfig:
 
     def test_drop_limit_defaults_to_ten_batches(self):
         cfg = self._validate(self._make_cfg(rollout_batch_size=8))
-        assert cfg.algorithm.max_dropped_groups_per_step == 80
+        assert cfg.rollout_buffer.max_dropped_groups_per_step == 80
 
     def test_drop_limit_below_one_is_rejected(self):
-        cfg = self._make_cfg(algorithm_extra={"max_dropped_groups_per_step": 0})
+        cfg = self._make_cfg(rollout_batch_size=8)
+        with open_dict(cfg):
+            cfg.rollout_buffer = {"max_dropped_groups_per_step": 0}
         with pytest.raises(ValueError, match="max_dropped_groups_per_step"):
-            self._validate(cfg)
-
-    def test_accept_staleness_below_threshold_is_rejected(self):
-        cfg = self._make_cfg(
-            algorithm_extra={
-                "staleness_threshold": 3,
-                "max_actor_accept_staleness": 2,
-            }
-        )
-        with pytest.raises(ValueError, match="max_actor_accept_staleness"):
             self._validate(cfg)
 
     def test_within_group_down_sampling_is_rejected(self):
@@ -1174,7 +1184,7 @@ class TestSearchr1AsyncDiscardConfig:
             runner_extra={"max_steps": 100},
         )
         cfg = self._validate(cfg)
-        assert cfg.algorithm.max_dropped_groups_per_step == 80
+        assert cfg.rollout_buffer.max_dropped_groups_per_step == 80
 
 
 class TestRolloutModelInstanceLayout:
@@ -2167,3 +2177,181 @@ class TestAutoPlacementWorkerForEmbodiment:
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
+
+
+class TestSearchr1AsyncAdmissionCfg:
+    """validate_searchr1_cfg: async admission config (rollout_buffer,
+    agentloop.task_name) and the removal of algorithm.staleness_threshold."""
+
+    @staticmethod
+    def _make_cfg(**overrides):
+        cfg = DictConfig(
+            {
+                "runner": {"task_type": "reasoning", "async_mode": True},
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": "0-1",
+                },
+                "actor": {
+                    "training_backend": "megatron",
+                    "enable_dp_load_balance": True,
+                },
+                "agentloop": {
+                    "is_dynamic_rollout_batch": True,
+                    "agentic_tokenizer": "default",
+                    "task_name": "searchr1",
+                },
+                "algorithm": {
+                    "recompute_logprobs": False,
+                    "group_size": 4,
+                },
+                "rollout": {
+                    "return_logprobs": True,
+                    "sglang": {"tool_call_parser": None},
+                    "max_running_requests": 128,
+                    "pause_mode": "retract",
+                },
+                "reward": {"reward_type": "searchr1"},
+                "data": {"rollout_batch_size": 64},
+            }
+        )
+        with open_dict(cfg):
+            for path, value in overrides.items():
+                keys = path.split(".")
+                node = cfg
+                for key in keys[:-1]:
+                    if node.get(key, None) is None:
+                        node[key] = {}
+                    node = node[key]
+                node[keys[-1]] = value
+        return cfg
+
+    @staticmethod
+    def _validate(cfg):
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        placement.actor_dp_size = 4
+        placement.rollout_num_model_instances = 2
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_defaults_are_derived(self):
+        """Unset caps derive from engine capacity and batch size."""
+        cfg = self._validate(self._make_cfg())
+        # ceil(128 per-instance x 2 instances x 1.2 / group_size 4)
+        assert cfg.rollout_buffer.max_inflight_groups == 77
+        assert cfg.rollout_buffer.max_buffered_groups == 128
+        assert cfg.rollout_buffer.max_dropped_groups_per_step == 640
+
+    def test_default_inflight_sums_over_instances_and_rounds_up(self):
+        """The derivation sums instances and rounds up to whole groups."""
+        cfg = self._make_cfg()
+        cfg.rollout.max_running_requests = 7
+        cfg = self._validate(cfg)
+        # ceil(7 x 2 x 1.2 / 4) = ceil(4.2) = 5
+        assert cfg.rollout_buffer.max_inflight_groups == 5
+
+    def test_user_set_values_are_kept(self):
+        """Values the user set are never overwritten."""
+        cfg = self._validate(
+            self._make_cfg(**{"rollout_buffer.max_inflight_groups": 3})
+        )
+        assert cfg.rollout_buffer.max_inflight_groups == 3
+
+    def test_old_staleness_threshold_errors(self):
+        """algorithm.staleness_threshold is rejected with its replacements."""
+        with pytest.raises(ValueError, match="staleness_threshold is no longer used"):
+            self._validate(self._make_cfg(**{"algorithm.staleness_threshold": 2}))
+
+    def test_missing_task_name_errors(self):
+        """Async training requires agentloop.task_name."""
+        cfg = self._make_cfg()
+        del cfg.agentloop.task_name
+        with pytest.raises(ValueError, match="agentloop.task_name is required"):
+            self._validate(cfg)
+
+    def test_buffered_groups_below_batch_size_errors(self):
+        """A buffer that cannot hold a batch is rejected."""
+        with pytest.raises(ValueError, match="max_buffered_groups"):
+            self._validate(self._make_cfg(**{"rollout_buffer.max_buffered_groups": 32}))
+
+    def test_sync_mode_does_not_require_the_new_fields(self):
+        """Synchronous training needs none of the async admission config."""
+        cfg = self._make_cfg()
+        cfg.runner.async_mode = False
+        del cfg.agentloop.task_name
+        cfg = self._validate(cfg)
+        assert "rollout_buffer" not in cfg
+
+    def test_missing_max_running_requests_without_inflight_errors(self):
+        """The in-flight cap cannot be derived without engine capacity."""
+        cfg = self._make_cfg()
+        del cfg.rollout.max_running_requests
+        with pytest.raises(ValueError, match="max_inflight_groups is not set"):
+            self._validate(cfg)
+
+    def test_explicit_inflight_covers_missing_max_running_requests(self):
+        """A user-set in-flight cap needs no engine capacity to derive."""
+        cfg = self._make_cfg(**{"rollout_buffer.max_inflight_groups": 3})
+        del cfg.rollout.max_running_requests
+        cfg = self._validate(cfg)
+        assert cfg.rollout_buffer.max_inflight_groups == 3
+
+    def test_old_algorithm_max_actor_accept_staleness_errors(self):
+        """algorithm.max_actor_accept_staleness is rejected with its new
+        home."""
+        with pytest.raises(ValueError, match="agentloop.max_actor_accept_staleness"):
+            self._validate(
+                self._make_cfg(**{"algorithm.max_actor_accept_staleness": 2})
+            )
+
+    def test_old_algorithm_max_dropped_groups_errors(self):
+        """algorithm.max_dropped_groups_per_step is rejected with its new
+        home."""
+        with pytest.raises(
+            ValueError, match="rollout_buffer.max_dropped_groups_per_step"
+        ):
+            self._validate(
+                self._make_cfg(**{"algorithm.max_dropped_groups_per_step": 100})
+            )
+
+    def test_negative_max_actor_accept_staleness_errors(self):
+        """A negative staleness cap would drop every group as stale."""
+        with pytest.raises(ValueError, match="max_actor_accept_staleness must be >= 0"):
+            self._validate(
+                self._make_cfg(**{"agentloop.max_actor_accept_staleness": -1})
+            )
+
+    def test_staleness_cap_below_buffer_depth_warns(self, caplog):
+        """A cap tighter than the buffer's depth in steps warns."""
+        import logging as std_logging
+
+        # batch 64, buffered default 128: the oldest buffered group has
+        # waited about 2 steps when training is the bottleneck.
+        with caplog.at_level(std_logging.WARNING, logger="root"):
+            self._validate(
+                self._make_cfg(**{"agentloop.max_actor_accept_staleness": 1})
+            )
+        assert any(
+            "below the buffer's depth in steps" in r.message
+            for r in caplog.records
+            if r.name == "root"
+        )
+
+    def test_staleness_cap_at_buffer_depth_does_not_warn(self, caplog):
+        """A cap covering the buffer's depth in steps stays silent."""
+        import logging as std_logging
+
+        with caplog.at_level(std_logging.WARNING, logger="root"):
+            self._validate(
+                self._make_cfg(**{"agentloop.max_actor_accept_staleness": 2})
+            )
+        assert not any(
+            "below the buffer's depth in steps" in r.message
+            for r in caplog.records
+            if r.name == "root"
+        )

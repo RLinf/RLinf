@@ -1950,41 +1950,125 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "placement unless actor.training_backend is megatron."
             )
     if cfg.runner.get("async_mode", False):
-        # Defaults are set here once; the async runner reads the fields
-        # without further fallbacks.
+        if cfg.algorithm.get("staleness_threshold", None) is not None:
+            raise ValueError(
+                f"algorithm.staleness_threshold is no longer used by async "
+                f"training (found {cfg.algorithm.staleness_threshold}). "
+                "Admission is now controlled by rollout_buffer."
+                "max_inflight_groups and rollout_buffer.max_buffered_groups; "
+                "how stale training data may be is bounded by "
+                "rollout_buffer.max_buffered_groups and agentloop."
+                "max_actor_accept_staleness. Remove the field."
+            )
+        if cfg.algorithm.get("max_actor_accept_staleness", None) is not None:
+            raise ValueError(
+                f"algorithm.max_actor_accept_staleness is no longer used by "
+                f"async training (found "
+                f"{cfg.algorithm.max_actor_accept_staleness}); it moved to "
+                "agentloop.max_actor_accept_staleness. Remove the field."
+            )
+        if cfg.algorithm.get("max_dropped_groups_per_step", None) is not None:
+            raise ValueError(
+                f"algorithm.max_dropped_groups_per_step is no longer used by "
+                f"async training (found "
+                f"{cfg.algorithm.max_dropped_groups_per_step}); it moved to "
+                "rollout_buffer.max_dropped_groups_per_step. Remove the "
+                "field."
+            )
+        task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
+        if task_name is None:
+            raise ValueError(
+                "agentloop.task_name is required in async training: it keys "
+                "the rollout buffer's per-task state and is stamped on "
+                "every rollout request. Set it to the agent task's name "
+                "(e.g. 'searchr1')."
+            )
+        max_actor_accept_staleness = OmegaConf.select(
+            cfg, "agentloop.max_actor_accept_staleness", default=None
+        )
+        if max_actor_accept_staleness is not None and (max_actor_accept_staleness < 0):
+            raise ValueError(
+                f"agentloop.max_actor_accept_staleness must be >= 0, found "
+                f"{max_actor_accept_staleness}: a negative value would drop "
+                "every group as stale."
+            )
+        # Defaults are set here once; the async runner and the rollout
+        # buffer read the fields without further fallbacks.
         with open_dict(cfg):
-            if cfg.algorithm.get("staleness_threshold", None) is None:
-                cfg.algorithm.staleness_threshold = 0
             if cfg.rollout.get("pause_mode", None) is None:
                 cfg.rollout.pause_mode = "retract"
-            if cfg.algorithm.get("max_dropped_groups_per_step", None) is None:
-                rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+            rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+            max_running_requests = cfg.rollout.get("max_running_requests", None)
+            if cfg.get("rollout_buffer", None) is None:
+                cfg.rollout_buffer = {}
+            if cfg.rollout_buffer.get("max_dropped_groups_per_step", None) is None:
                 if rollout_batch_size is not None:
-                    cfg.algorithm.max_dropped_groups_per_step = 10 * rollout_batch_size
-        if cfg.algorithm.staleness_threshold < 0:
+                    cfg.rollout_buffer.max_dropped_groups_per_step = (
+                        10 * rollout_batch_size
+                    )
+            if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+                if rollout_batch_size is not None and max_running_requests is not None:
+                    group_size = cfg.algorithm.group_size
+                    num_instances = component_placement.rollout_num_model_instances
+                    # In-flight groups' trajectories run at about 1.2x the
+                    # engine capacity: the margin covers in-flight groups
+                    # whose trajectories are waiting on tools or on the
+                    # group's slowest member.
+                    cfg.rollout_buffer.max_inflight_groups = math.ceil(
+                        max_running_requests * num_instances * 1.2 / group_size
+                    )
+            if cfg.rollout_buffer.get("max_buffered_groups", None) is None:
+                if rollout_batch_size is not None:
+                    cfg.rollout_buffer.max_buffered_groups = 2 * rollout_batch_size
+        if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
             raise ValueError(
-                f"algorithm.staleness_threshold must be >= 0, found "
-                f"{cfg.algorithm.staleness_threshold}."
+                "rollout_buffer.max_inflight_groups is not set and cannot "
+                "be derived: async training derives it from "
+                "rollout.max_running_requests. Set rollout."
+                "max_running_requests or rollout_buffer.max_inflight_groups."
+            )
+        if cfg.rollout_buffer.max_inflight_groups < 1:
+            raise ValueError(
+                f"rollout_buffer.max_inflight_groups must be >= 1, found "
+                f"{cfg.rollout_buffer.max_inflight_groups}."
+            )
+        rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+        if rollout_batch_size is not None and (
+            cfg.rollout_buffer.max_buffered_groups < rollout_batch_size
+        ):
+            raise ValueError(
+                f"rollout_buffer.max_buffered_groups "
+                f"({cfg.rollout_buffer.max_buffered_groups}) must be >= "
+                f"data.rollout_batch_size ({rollout_batch_size}): a smaller "
+                "buffer can never hold a full training batch."
+            )
+        if cfg.rollout_buffer.max_dropped_groups_per_step < 1:
+            raise ValueError(
+                f"rollout_buffer.max_dropped_groups_per_step must be >= 1, "
+                f"found {cfg.rollout_buffer.max_dropped_groups_per_step}."
             )
         if (
-            cfg.algorithm.get("max_dropped_groups_per_step", None) is not None
-            and cfg.algorithm.max_dropped_groups_per_step < 1
+            max_actor_accept_staleness is not None
+            and rollout_batch_size is not None
+            and max_actor_accept_staleness
+            < math.ceil(cfg.rollout_buffer.max_buffered_groups / rollout_batch_size)
         ):
-            raise ValueError(
-                f"algorithm.max_dropped_groups_per_step must be >= 1, found "
-                f"{cfg.algorithm.max_dropped_groups_per_step}."
-            )
-        max_accept_staleness = cfg.algorithm.get("max_actor_accept_staleness", None)
-        if max_accept_staleness is not None and (
-            max_accept_staleness < cfg.algorithm.staleness_threshold
-        ):
-            raise ValueError(
-                f"algorithm.max_actor_accept_staleness "
-                f"({max_accept_staleness}) must be >= "
-                f"algorithm.staleness_threshold "
-                f"({cfg.algorithm.staleness_threshold}): admitting groups "
-                "staler than the actor accepts would drop every backfilled "
-                "group."
+            # When the actor is the bottleneck, the oldest buffered group
+            # has waited about max_buffered_groups / rollout_batch_size
+            # steps; a stricter staleness cap would systematically drop it
+            # and waste the generate compute behind it.
+            logging.warning(
+                f"agentloop.max_actor_accept_staleness "
+                f"({max_actor_accept_staleness}) is below the buffer's "
+                f"depth in steps (rollout_buffer.max_buffered_groups "
+                f"{cfg.rollout_buffer.max_buffered_groups} / "
+                f"data.rollout_batch_size {rollout_batch_size}). When "
+                "training is the bottleneck, the oldest buffered groups "
+                "have waited about that many steps and will be dropped "
+                "as stale, wasting the generate compute behind them; the "
+                "actor only waits for new groups when so many are dropped "
+                "that the buffer cannot fill a batch. Raise "
+                "max_actor_accept_staleness or lower max_buffered_groups."
             )
         down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
         if down_sampling_cfg.get("do_down_sampling", False):
