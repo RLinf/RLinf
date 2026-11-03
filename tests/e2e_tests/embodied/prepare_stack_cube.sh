@@ -5,9 +5,9 @@
 set -euo pipefail
 : "${STACK_CI_RUN:?Set STACK_CI_RUN to a new CI output directory.}"
 : "${STACK_CUBE_ENV_PYTHON:?Set the SDK interpreter path.}"
-export EMBODICHAIN_DATA_ROOT=/workspace/dataset/embodichain_data
+export EMBODICHAIN_DATA_ROOT="${EMBODICHAIN_DATA_ROOT:-/workspace/dataset/embodichain_data}"
 CUDA_VISIBLE_DEVICES="" "$STACK_CUBE_ENV_PYTHON" -m embodichain.data download --name SimResources
-export STACK_CUBE_SFT_MODEL=/workspace/dataset/lerobot-pi05-base-22c30e5b
+export STACK_CUBE_SFT_MODEL="${STACK_CUBE_SFT_MODEL:-/workspace/dataset/lerobot-pi05-base-22c30e5b}"
 hf download lerobot/pi05_base --revision 22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0 --local-dir "$STACK_CUBE_SFT_MODEL"
 hf download RLinf/IsaacLab-Stack-Cube-Data --repo-type dataset --revision 2e27f04b2e31f293fd020164917e4cce09e108d6 --local-dir "$STACK_CI_RUN/reference"
 python - "$STACK_CI_RUN/reference/source_revision.json" <<'PY'
@@ -22,6 +22,9 @@ export STACK_CUBE_NORM_STATS="$STACK_CI_RUN/split/train/norm_stats.json"
 git clone --filter=blob:none --no-checkout --depth 1 --branch v5.1.0 https://github.com/isaac-sim/IsaacSim.git "$STACK_CI_RUN/isaacsim_source"
 git -C "$STACK_CI_RUN/isaacsim_source" sparse-checkout set source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description
 git -C "$STACK_CI_RUN/isaacsim_source" checkout --detach 47d886f2858d1ceed556b21c88927aa67bc81c12
+# Materialize only the Panda assets in this sparse checkout.
+git -C "$STACK_CI_RUN/isaacsim_source" lfs install --local
+git -C "$STACK_CI_RUN/isaacsim_source" ls-files -z -- source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes | git -C "$STACK_CI_RUN/isaacsim_source" checkout-index --force -z --stdin
 python toolkits/lerobot/prepare_stack_cube_data.py prepare-panda --source "$STACK_CI_RUN/isaacsim_source/source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/robots/panda_arm_hand.urdf" --output "$STACK_CI_RUN/assets"
 export STACK_CUBE_PANDA_URDF="$STACK_CI_RUN/assets/panda.urdf"
 export STACK_CUBE_PPO_TRAIN_REQUESTS="$STACK_CI_RUN/train.json"

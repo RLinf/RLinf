@@ -202,6 +202,8 @@ def _checkpoint_manager(
     checkpoint_format="dcp",
     full_weights=True,
     communication_backend=None,
+    world_size=1,
+    rank=0,
 ):
     cfg = OmegaConf.create(
         {
@@ -216,7 +218,7 @@ def _checkpoint_manager(
             },
         }
     )
-    manager = FSDPModelManager(cfg, world_size=1, rank=0)
+    manager = FSDPModelManager(cfg, world_size=world_size, rank=rank)
     manager.model = torch.nn.Linear(4, 3)
     manager.optimizer = torch.optim.AdamW(manager.model.parameters(), lr=0.01)
     manager.lr_scheduler = torch.optim.lr_scheduler.StepLR(
@@ -657,8 +659,9 @@ def test_a_model_can_keep_its_embeddings_in_the_enclosing_unit(single_rank_env):
 
 @pytest.mark.parametrize("model_type", ["qwen2.5", "openpi"])
 @pytest.mark.parametrize("root_cast", [True, False])
+@pytest.mark.parametrize("sharding", ["no_shard", "shard_grad_op", "full_shard"])
 def test_strategy_passes_wrapper_overrides_and_root_cast_options(
-    monkeypatch, root_cast, model_type
+    monkeypatch, root_cast, model_type, sharding
 ):
     from rlinf.hybrid_engines.fsdp.strategy import fsdp as strategy_module
 
@@ -670,7 +673,7 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
             "cast_root_forward_inputs": root_cast,
         },
         wrap_policy={"module_classes_to_wrap": ["Linear"]},
-        sharding_strategy="no_shard",
+        sharding_strategy=sharding,
         use_orig_params=True,
     )
     actor = validate_fsdp_cfg(
@@ -692,6 +695,7 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
     model = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
     kwargs = strategy_module.FSDPStrategy(actor, 1).wrap_model(model, object())
     assert compatibility_targets == [kwargs]
+    assert kwargs["sharding_strategy"].name.lower() == sharding
     assert kwargs["mixed_precision"].cast_root_forward_inputs is root_cast
     assert kwargs["mixed_precision"].cast_forward_inputs
     plan = kwargs["auto_wrap_policy"]._run_policy(model, set(), kwargs)
@@ -717,6 +721,18 @@ def config(selector="module_names", targets=None, wrap_mode="individual", **kwar
             **kwargs,
         }
     )
+
+
+@pytest.mark.parametrize("sharding", ["shard_grad_op", "full_shard"])
+def test_openpi_sharded_training_requires_fsdp1(sharding):
+    actor = OmegaConf.create(
+        {
+            "model": {"model_type": "openpi"},
+            "fsdp_config": {"strategy": "fsdp2", "sharding_strategy": sharding},
+        }
+    )
+    with pytest.raises(AssertionError, match="openpi sharded training requires"):
+        validate_fsdp_cfg(actor)
 
 
 @pytest.mark.parametrize(
@@ -1399,3 +1415,135 @@ def test_openpi_factory_separates_parameter_and_activation_dtypes(
     assert model.embed_dtype == model.llm.embed_dtype == model.img.dtype_mm == expected
     assert {param.dtype for param in model.parameters()} == {torch.float32}
     torch.testing.assert_close(model.img.stem.weight, source.img.stem.weight)
+
+
+def test_openpi_sft_uses_activation_checkpointing(monkeypatch):
+    from rlinf.models.embodiment.base_policy import ForwardType
+    from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    monkeypatch.setattr(gemma, "PALIGEMMA_VOCAB_SIZE", 32)
+    monkeypatch.setattr(utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(
+        siglip,
+        "_decode_variant",
+        lambda variant: {
+            "width": 32,
+            "depth": 1,
+            "num_heads": 4,
+            "mlp_dim": 64,
+            "patch_size": (14, 14),
+        },
+    )
+    cfg = Pi0Config(
+        dtype="float32",
+        paligemma_variant="dummy",
+        action_expert_variant="dummy",
+        action_horizon=2,
+        max_token_len=4,
+    )
+    model = Pi0(cfg).train()
+    model.gradient_checkpointing_enable({"use_reentrant": False})
+    observation = cfg.fake_obs()
+    checkpoint = torch.utils.checkpoint.checkpoint
+    calls = []
+
+    def record_checkpoint(function, *args, **kwargs):
+        calls.append(function)
+        return checkpoint(function, *args, **kwargs)
+
+    monkeypatch.setattr(torch.utils.checkpoint, "checkpoint", record_checkpoint)
+    loss = model(forward_type=ForwardType.SFT, data=(observation, cfg.fake_act()))
+    loss.backward()
+
+    assert calls
+    assert model.img.stem.weight.grad is not None
+    assert model.llm.layers[0].attn.q_proj[0].weight.grad is not None
+    assert model.action_out_proj.weight.grad is not None
+
+
+def _check_two_rank_checkpoint_resume(rank, root):
+    import random
+
+    import numpy as np
+    from torch.nn.parallel import DistributedDataParallel
+
+    from rlinf.utils.utils import seed_everything
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("LOCAL_RANK", str(rank))
+        patch.setattr(Worker, "torch_device_type", "cpu")
+        patch.setattr(
+            Worker,
+            "torch_platform",
+            SimpleNamespace(
+                set_device=lambda _: None,
+                current_device=lambda: torch.device("cpu"),
+                synchronize=lambda: None,
+                ipc_collect=lambda: None,
+                empty_cache=lambda: None,
+                is_available=lambda: False,
+            ),
+        )
+        dist.init_process_group(
+            "gloo",
+            init_method=f"file://{root}/rendezvous",
+            rank=rank,
+            world_size=2,
+            timeout=timedelta(seconds=90),
+        )
+        try:
+            seed_everything(37)
+            manager = _checkpoint_manager(
+                communication_backend="gloo",
+                full_weights=False,
+                world_size=2,
+                rank=rank,
+            )
+            manager.model = DistributedDataParallel(manager.model)
+            seed_everything(101 + rank)
+            path = str(Path(root) / "checkpoint")
+            manager.save_checkpoint(path, step=1000)
+            default_group = dist.distributed_c10d._get_default_group()
+
+            def update_from_rng():
+                draws = (random.random(), float(np.random.rand()), torch.randn(2, 4))
+                manager.optimizer.zero_grad()
+                manager.model(draws[2] + draws[0] + draws[1]).square().mean().backward()
+                manager.optimizer.step()
+                manager.lr_scheduler.step()
+                return draws
+
+            expected_draws = update_from_rng()
+            expected_weights = {
+                name: value.clone()
+                for name, value in manager.model.state_dict().items()
+            }
+            expected_lr = manager.lr_scheduler.get_last_lr()
+            manager.load_checkpoint(path)
+            actual_draws = update_from_rng()
+            assert actual_draws[:2] == expected_draws[:2]
+            torch.testing.assert_close(
+                actual_draws[2], expected_draws[2], rtol=0, atol=0
+            )
+            for name, value in manager.model.state_dict().items():
+                torch.testing.assert_close(
+                    value, expected_weights[name], rtol=0, atol=0
+                )
+            assert manager.lr_scheduler.get_last_lr() == expected_lr
+            assert dist.distributed_c10d._get_default_group() is default_group
+            torch.save(actual_draws, Path(root) / f"rank_{rank}.pt")
+        finally:
+            dist.destroy_process_group()
+
+
+def test_two_rank_gloo_checkpoint_restores_rank_rng_and_next_update(tmp_path):
+    """Each rank restores its own random streams and the exact next Adam update."""
+    torch.multiprocessing.spawn(
+        _check_two_rank_checkpoint_resume, args=(str(tmp_path),), nprocs=2, join=True
+    )
+    first = torch.load(tmp_path / "rank_0.pt", weights_only=True)
+    second = torch.load(tmp_path / "rank_1.pt", weights_only=True)
+    assert first[:2] != second[:2]
+    assert not torch.equal(first[2], second[2])

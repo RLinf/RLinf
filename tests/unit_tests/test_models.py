@@ -98,6 +98,40 @@ class _ImagePreprocessingPi0(Pi0):
         return suffix
 
 
+@pytest.mark.skipif(
+    not os.environ.get("RLINF_OPENPI_TEST_MODEL_CONFIG"),
+    reason="Set RLINF_OPENPI_TEST_MODEL_CONFIG to an available Pi0.5 model YAML.",
+)
+def test_openpi_full_checkpoint_preserves_fp32_parameters(tmp_path):
+    """A real Pi0.5 checkpoint preserves every exported parameter."""
+    cfg = OmegaConf.load(os.environ["RLINF_OPENPI_TEST_MODEL_CONFIG"])
+    cfg.precision = None
+    cfg.openpi.task = "eval"
+    source = get_model(cfg)
+    parameters = dict(source.named_parameters())
+    for name in (
+        "img.stem.weight",
+        "img.pos_embedding",
+        "llm.layers.0.pre_attention_norms.1.ada_modulation.weight",
+        "action_out_proj.weight",
+    ):
+        parameter = parameters[name]
+        assert parameter.dtype == torch.float32
+        with torch.no_grad():
+            parameter.reshape(-1)[0] = 0.123456789
+
+    checkpoint = tmp_path / "model_state_dict"
+    checkpoint.mkdir()
+    torch.save(source.state_dict(), checkpoint / "full_weights.pt")
+    cfg.model_path = str(tmp_path)
+    restored = get_model(cfg).state_dict()
+    expected = source.state_dict()
+    assert restored.keys() == expected.keys()
+    for name, value in expected.items():
+        assert restored[name].dtype == value.dtype, name
+        torch.testing.assert_close(restored[name], value, rtol=0, atol=0, msg=name)
+
+
 @pytest.mark.parametrize("eval_sft_image_crop", [False, True])
 @pytest.mark.parametrize(
     "device",
@@ -133,9 +167,16 @@ def test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state(
         ),
         tokenized_prompt_mask=torch.ones((1, 20), dtype=torch.bool, device=device),
     )
-    expected = model_module.preprocess_observation(
-        observation, train=eval_sft_image_crop, rng=None
-    )
+    import torchvision.transforms.functional as TF
+
+    expected = model_module.preprocess_observation(observation, train=False)
+    if eval_sft_image_crop:
+        front = image.permute(0, 3, 1, 2) / 2.0 + 0.5
+        front = TF.resize(TF.crop(front, 0, 0, 212, 212), [224, 224], antialias=True)
+        expected.images["base_0_rgb"] = (front * 2.0 - 1.0).permute(0, 2, 3, 1)
+        for key in expected.images:
+            if "wrist" in key:
+                expected.images[key] = (image / 2.0 + 0.5) * 2.0 - 1.0
     model = _ImagePreprocessingPi0(eval_sft_image_crop).to(device).eval()
     before = torch.get_rng_state().clone()
     cuda_before = torch.cuda.get_rng_state(device).clone() if device == "cuda" else None
@@ -1694,7 +1735,8 @@ class _ImageConditionedRLPolicy(Pi0RL):
         self.state_indices = None
         self.eval_sft_image_crop = crop
         self.rl_cfg = Pi0RLConfig(noise_method=noise_method, noise_level=0.5)
-        self.setup_transforms([self.transform], [self.output])
+        self._input_transform_fn = self.transform
+        self._output_transform_fn = self.output
 
     @staticmethod
     def transform(sample):
@@ -1746,7 +1788,7 @@ def test_openpi_rl_training_preserves_sft_pixels_and_replay_logprobs(crop):
     noise = torch.zeros(1, 10, 32)
     ode = _ImageConditionedRLPolicy(crop, "flow_ode").eval()
     expected_obs = preprocess_observation(
-        ode.env_obs_to_observation(env_obs), train=crop, rng=None
+        ode.env_obs_to_observation(env_obs), train=False, deterministic_crop=crop
     )
     signal = (
         expected_obs.images["base_0_rgb"].mean()
@@ -1816,6 +1858,39 @@ def test_openpi_rl_parent_train_preserves_frozen_vision_mode(train_expert_only):
     # Full SFT uses Pi0, whose train semantics continue to enable vision training.
     sft = _ImagePreprocessingPi0(True).eval().train()
     assert sft.training and sft.dropout.training
+
+
+@pytest.mark.parametrize("crop", [False, True])
+def test_openpi_training_augmentation_uses_global_rng_with_inference_crop(crop):
+    from rlinf.models.embodiment.openpi.modules import model as model_module
+
+    image = torch.linspace(-1, 1, 224 * 224 * 3).reshape(1, 224, 224, 3)
+    observation = model_module.Observation(
+        images={key: image.clone() for key in model_module.IMAGE_KEYS},
+        image_masks={
+            key: torch.ones(1, dtype=torch.bool) for key in model_module.IMAGE_KEYS
+        },
+        state=torch.zeros(1, 32),
+    )
+    torch.manual_seed(123)
+    before = torch.get_rng_state().clone()
+    first = model_module.preprocess_observation(
+        observation, train=True, deterministic_crop=crop
+    )
+    assert not torch.equal(before, torch.get_rng_state())
+    torch.manual_seed(123)
+    repeated = model_module.preprocess_observation(
+        observation, train=True, deterministic_crop=crop
+    )
+    torch.manual_seed(456)
+    different = model_module.preprocess_observation(
+        observation, train=True, deterministic_crop=crop
+    )
+    for key in observation.images:
+        torch.testing.assert_close(
+            first.images[key], repeated.images[key], rtol=0, atol=0
+        )
+        assert not torch.equal(first.images[key], different.images[key])
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Interpreter handoff uses POSIX FDs.")

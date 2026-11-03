@@ -35,9 +35,19 @@ PROFILES = (
 
 def prepare_panda(source: Path, output: Path) -> Path:
     """Resolve bundled Panda meshes and add the control TCP to a private copy."""
-    output.mkdir(parents=True, exist_ok=True)
     tree = ET.parse(source)
     package = source.parent.parent
+    for asset in (package / "meshes").rglob("*"):
+        if asset.is_file():
+            with asset.open("rb") as stream:
+                if stream.read(64).startswith(
+                    b"version https://git-lfs.github.com/spec/v1"
+                ):
+                    raise ValueError(
+                        f"Panda asset {asset} is a Git LFS pointer. "
+                        "Run git lfs pull in the asset checkout before preparing it."
+                    )
+    output.mkdir(parents=True, exist_ok=True)
     for mesh in tree.iter("mesh"):
         uri = mesh.attrib["filename"]
         resolved = package / uri.removeprefix("package://franka_description/")

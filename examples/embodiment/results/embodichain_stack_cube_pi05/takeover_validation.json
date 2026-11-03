@@ -1,0 +1,857 @@
+{
+  "date_utc": "2026-10-24",
+  "scope": "Fresh takeover validation on the rebased main-branch series; historical policy-quality measurements retain their own source snapshot.",
+  "main_commit": "30e0236981c6a1dc19202de64116834c12673828",
+  "tested_code": {
+    "runtime": "ee4e820a90b5cad1820b3e57284d6b23d17081e7",
+    "sft": "ca68d177a770e8c0b29a1c37a6fa5209701d393b",
+    "combined_before_asset_guard": "1aec9c27",
+    "asset_guard_and_hydrated_simulation": "2e7b99ea7ebfd185892b39ed82bf346cb2f0e89f"
+  },
+  "hardware": "NVIDIA A100-SXM4-80GB; two policy GPUs for SFT; separate policy and simulator GPUs for PPO; CPU Gloo for checkpoint contracts.",
+  "environment_management": "Isolated uv virtual environments; the fresh integration uses uv-managed CPython, with separate model and SDK interpreters.",
+  "model_environment": {
+    "python": "3.11.14",
+    "torch": "2.7.1+cu128",
+    "cuda": "12.8",
+    "gpu": "NVIDIA A100-SXM4-80GB",
+    "packages": {
+      "rlinf-openpi": "0.1.1",
+      "lerobot": "0.3.3",
+      "transformers": "4.53.2",
+      "rlinf-transformer-openpi": "4.53.2",
+      "peft": "0.21.2",
+      "ray": "2.59.0",
+      "torchcodec": "0.5",
+      "torchdata": "0.11.0"
+    }
+  },
+  "sdk_environment": {
+    "python": "3.11.14",
+    "torch": "2.7.1+cu128",
+    "packages": {
+      "embodichain": "0.3.0",
+      "lerobot": "0.4.4",
+      "tensordict": "0.14.3",
+      "ray": "2.59.0"
+    }
+  },
+  "sdk_source_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+  "native_engine": "dexsim_engine 0.5.1rc1",
+  "install": {
+    "command": "bash requirements/install.sh --torch 2.7.1 --no-root --no-flash-attn embodied --model openpi --env embodichain --venv <temporary-env>",
+    "exit_code": 0,
+    "model_pip_check": "passed (269 packages)",
+    "sdk_pip_check": "passed (353 packages)",
+    "host_setup": "Official Ubuntu FFmpeg shared libraries, libusb and git-lfs were staged under /tmp; --no-root skips the existing system-dependency installer. Flash Attention was intentionally omitted."
+  },
+  "public_inputs": {
+    "base_model": {
+      "repo_id": "lerobot/pi05_base",
+      "revision": "22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0",
+      "size_bytes": 14467165872,
+      "sha256": "0eb11ca9587678c1d2ef8cf32807c29f8ce53a2bfdfc1aa4a4c96f16fca59b0f",
+      "tensor_count": 812,
+      "dtypes": {
+        "F32": 812
+      }
+    },
+    "dataset": {
+      "repo_id": "RLinf/IsaacLab-Stack-Cube-Data",
+      "revision": "2e27f04b2e31f293fd020164917e4cce09e108d6"
+    },
+    "train_episodes": 120,
+    "train_frames": 43148,
+    "validation_episodes": 27,
+    "validation_frames": 10117,
+    "decoded_video_count": 294,
+    "normalization": {
+      "split": "train",
+      "frames": 43148,
+      "action_windows": 43148,
+      "action_horizon": 10,
+      "episode_padding": "repeat_last_action",
+      "norm_stats_sha256": "9b1ca6c38b9b5ceb9da600fc3c611120998cd12a6be880dcf214a847a301cf9c"
+    },
+    "normalization_source_count": 120,
+    "norm_manifest_sha256": "07c31660387c6f6b1f22c784aab0ee5c6493ae3a0108ff450711000409766754",
+    "tokenizer": {
+      "repo_id": "RLinf/openpi_tokenizer",
+      "revision": "befaa248e4f82954b625a421658f933dfd1a97a0",
+      "sha256": "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6"
+    },
+    "panda": {
+      "source_revision": "47d886f2858d1ceed556b21c88927aa67bc81c12",
+      "prepared_urdf_sha256": "bab737f22329c7e0d74084caeeae0771c1416fe5636ae82a95226c7d01d876de",
+      "lfs_payloads": {
+        "source_revision": "47d886f2858d1ceed556b21c88927aa67bc81c12",
+        "method": "git lfs smudge per selected Panda pointer; verified LFS size and SHA256",
+        "assets": [
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/hand.stl",
+            "sha256": "94493e94f30fe940f2c8ca2f155c3bbe67bbff406d3edf5e261670d2f0f6e2ed",
+            "size_bytes": 10084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link7.stl",
+            "sha256": "92ac6afcf7574c034d3170d8a68e95ac9048ab9d0dd5bbd8311b86e551b9ab1c",
+            "size_bytes": 10084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link1.stl",
+            "sha256": "e41a39a94108fcf56aacff603fc91ec80541f4c1af17b51a0de5617f5566e6d2",
+            "size_bytes": 15084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link0.stl",
+            "sha256": "dfc6d94330de8ddb005b311bfdba9f3b8e1aa7c256b71592ee7ff32cb9a9a5aa",
+            "size_bytes": 10084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link6.stl",
+            "sha256": "20b768e99a0e0440b5754dcca108016434e57937cc356acd9c352ccd3cb27f77",
+            "size_bytes": 10084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/finger.stl",
+            "sha256": "eade0765d87446c8833d88511a4c46573baba2e8eacc15b975aecd123d740296",
+            "size_bytes": 2884
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link4.stl",
+            "sha256": "0180ebb5772ec9840cb049750cffb29a9ddc90311752a16ea34757782ef9e48d",
+            "size_bytes": 15084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link3.stl",
+            "sha256": "0a8d638b9349c6c0eefc4e888636ac4838c4b27170f18a51699321118af709c1",
+            "size_bytes": 15084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link5.stl",
+            "sha256": "dd17e688c7870e722283525879643d53a74c0024d328b0e14b034b54c8b6c31a",
+            "size_bytes": 15084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/collision/link2.stl",
+            "sha256": "370f7605a0fae3529db169ded50f52f171024aa792d4d773bc84197301f6a039",
+            "size_bytes": 15084
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link4.dae",
+            "sha256": "9e03d680e3a4a4555d673bcb8cb466e479f5cb069a5fc8a0b0f99c089c50fd63",
+            "size_bytes": 1145491
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link1.dae",
+            "sha256": "9c8b7b7c1217d620a811fc0ee52d1d1b0e1470de955e7453872aac3f15cf7c5e",
+            "size_bytes": 978415
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link0.dae",
+            "sha256": "d9ceaa66bb3a734e3a32f2f737ae57a29e922f4a962ed77b9bb8d8e25cd33159",
+            "size_bytes": 1590896
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link7.dae",
+            "sha256": "71be614f734bd27b2d7dec3e8bb022251cbbfce38b0a12dbfc1b88bc0513822a",
+            "size_bytes": 935952
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link5.dae",
+            "sha256": "0be76681192578a14d6ace89527e4ee418f7395e825e285125e05fd998d24e3e",
+            "size_bytes": 1438169
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/finger.dae",
+            "sha256": "a9d5471e9cdf76f85493df6fe6c76d29810edd21577c204009160496d5b77fbb",
+            "size_bytes": 51123
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link2.dae",
+            "sha256": "c44d0364f0030007e427106a4e842d835ca43902716cc46ee4f3342dab189e12",
+            "size_bytes": 998486
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link6.dae",
+            "sha256": "ed9c57432b079d55b9954775f2ddfe34e8b904f683949b8eb6314238f8afa46e",
+            "size_bytes": 1727767
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/hand.dae",
+            "sha256": "9602bbad114cfefd4bbb0cd0a57f3021bce9efbaaa1604a5e72bfb76926bb019",
+            "size_bytes": 548949
+          },
+          {
+            "path": "source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes/visual/link3.dae",
+            "sha256": "dab39a126153fb82f3650cca6de63a8e978f851aa5020a8e91b3d9d548dbba3d",
+            "size_bytes": 1099651
+          }
+        ]
+      }
+    }
+  },
+  "component_tests": {
+    "environment": "Isolated uv environments using Torch 2.7.0+cu128, except the final Stack Cube data cases, which use the fresh Torch 2.7.1+cu128 install.",
+    "checks": [
+      {
+        "component": "models",
+        "passed": 79,
+        "skipped": 1,
+        "command": "pytest tests/unit_tests/test_models.py -q",
+        "log": "combined-models.log",
+        "log_sha256": "8bb08bd6666d3a0d41a66dd1c5a1c5d70c77e252eab72a6c22b3dc0998b1c6a1"
+      },
+      {
+        "component": "worker contracts",
+        "passed": 37,
+        "command": "pytest tests/unit_tests/test_worker.py -k 'openpi or other_vla_sft or stack_cube' -q",
+        "log": "combined-workers.log",
+        "log_sha256": "e73cf183e7cc99d1b6f9492b9fafa3ba98aa20a5a2eaf7f7d52fc691a38ecefa"
+      },
+      {
+        "component": "FSDP",
+        "passed": 121,
+        "command": "pytest tests/unit_tests/test_fsdp.py -q",
+        "log": "sft-fsdp-final.log",
+        "scope": "Includes two-rank CPU Gloo RNG/next-Adam-update recovery and GPU sharded-gradient coverage.",
+        "log_sha256": "bccd5f7e52e1c419a686fa700d856aa1aa2559f164777b6b48ec3a148a09633e"
+      },
+      {
+        "component": "OpenPI loader",
+        "passed": 18,
+        "command": "pytest tests/unit_tests/test_data.py -k openpi -q",
+        "log": "sft-data-final.log",
+        "log_sha256": "bff9fc8b67aca9ed80525ccb2b2b100d2ff46eec98dec13ffc5f53cfcaf7cfc4"
+      },
+      {
+        "component": "native SDK contracts",
+        "passed": 46,
+        "selection": "Stack Cube environment and reward contract nodes in test_real_env.py",
+        "log": "combined-native-env.log",
+        "log_sha256": "9f642c86ac7bfb6b97f9dd64c57f2b5d80967ab75781a7a257b353d792ccc79f"
+      },
+      {
+        "component": "Stack Cube data",
+        "passed": 17,
+        "command": "pytest tests/unit_tests/test_data.py -k stack_cube -q",
+        "log": "stack-data-lfs-final.log",
+        "scope": "Fresh install; includes real FFmpeg assembly and mesh/texture LFS pointer rejection.",
+        "log_sha256": "19527a24e6a47b1188c9c7917c6fe4ebd3361ac48abc9bdf7845a43f49a7766c"
+      }
+    ],
+    "without_openpi": {
+      "models": "77 passed, 1 skipped",
+      "data": "1 passed, 17 expected skips"
+    }
+  },
+  "real_video_loader": [
+    {
+      "rank": 0,
+      "state_shape": [
+        1,
+        32
+      ],
+      "actions_shape": [
+        1,
+        10,
+        32
+      ],
+      "image_shapes": {
+        "base_0_rgb": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "left_wrist_0_rgb": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "right_wrist_0_rgb": [
+          1,
+          3,
+          224,
+          224
+        ]
+      },
+      "finite": true
+    },
+    {
+      "rank": 1,
+      "state_shape": [
+        1,
+        32
+      ],
+      "actions_shape": [
+        1,
+        10,
+        32
+      ],
+      "image_shapes": {
+        "base_0_rgb": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "left_wrist_0_rgb": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "right_wrist_0_rgb": [
+          1,
+          3,
+          224,
+          224
+        ]
+      },
+      "finite": true
+    }
+  ],
+  "fresh_nccl_probe": {
+    "torch": "2.7.1+cu128",
+    "gpu": "NVIDIA A100-SXM4-80GB",
+    "world_size": 2,
+    "modes": {
+      "default": "passed",
+      "socket": "passed"
+    }
+  },
+  "native_simulation": {
+    "gpu": "NVIDIA A100-SXM4-80GB",
+    "num_envs": 2,
+    "control_steps": 10,
+    "observation_shapes": {
+      "states": [
+        2,
+        8
+      ],
+      "main_images": [
+        2,
+        256,
+        256,
+        3
+      ],
+      "wrist_images": [
+        2,
+        256,
+        256,
+        3
+      ]
+    },
+    "reward": [
+      0.0,
+      0.0
+    ],
+    "reset_and_step": "passed"
+  },
+  "fresh_expert": {
+    "request": {
+      "request_id": "smoke-val-20000",
+      "seed": 20000,
+      "split": "val",
+      "profile": "smoke",
+      "objects": {
+        "blue": {
+          "position": [
+            0.40026789426980874,
+            0.004019985475588724,
+            0.0234
+          ],
+          "yaw_rad": 0.0
+        },
+        "red": {
+          "position": [
+            0.5452366084719276,
+            0.051864165423024994,
+            0.0234
+          ],
+          "yaw_rad": 0.0
+        },
+        "green": {
+          "position": [
+            0.6018432329333961,
+            -0.10342800382597231,
+            0.0234
+          ],
+          "yaw_rad": 0.0
+        }
+      },
+      "arm_joint_offsets": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "visual": null
+    },
+    "frames": 380,
+    "stable_completion_step": 342,
+    "qualified_completion_step": 380,
+    "passed_450": true,
+    "report_sha256": "db89ee91519823916257bfa3b2945c8e4c9714cc1a7f89ab03170a2fd7bbd066",
+    "measurements_sha256": "251d901836d6cbcee054a21891bdcf5d0be8f441bc072ffeb463b16fca537711",
+    "audit": {
+      "split": "val",
+      "requested": 1,
+      "accepted": 1,
+      "frames": 380,
+      "manifest_sha256": "fb8852d8f4937f59393ccb9db291afb5844dc6f32acc2528e56b0901274274e9",
+      "attempts": [
+        {
+          "request_id": "smoke-val-20000",
+          "seed": 20000,
+          "accepted": true,
+          "report_path": "/tmp/rlinf-pr-takeover/integration-run/expert-smoke-hydrated/episode_000/report.json",
+          "frames": 380,
+          "video_sha256": {
+            "front": "918efd7e5a2fa11e21a5a1873271e2fdb027c6edbee3c3dcefbf1baec1f43228",
+            "wrist": "adc186f48e7ede2c57c733da9a39c9541d990285a7ef5043cec428683153b984"
+          },
+          "initial_position_max_error_m": 2.0947513501567983e-08,
+          "first_step_max_xy_displacement_m": 2.9802322387695312e-08
+        }
+      ],
+      "normalization_source_allowed": false
+    },
+    "replay": {
+      "frames": 380,
+      "stable_completion_step": 342,
+      "qualified_completion_step": 380,
+      "passed_450": true
+    },
+    "scope": "One frozen smoke validation request; this is not a formal-cohort or policy-quality evaluation."
+  },
+  "asset_failure_and_fix": {
+    "before": "Unresolved Git LFS mesh pointers produced a 600-step failed collection. That run and the interrupted PPO attempt are excluded from passing results.",
+    "after": "All 20 mesh payloads were materialized with git lfs smudge and verified against pointer sizes/SHA256, then the same request was rerun. Setup now fetches LFS assets and preparation rejects unresolved mesh or texture pointers."
+  },
+  "sft_integration": {
+    "1": {
+      "checkpoint_metadata": {
+        "step": 1,
+        "save_training_state": true,
+        "checkpoint_format": "dcp",
+        "complete": true
+      },
+      "consumed_batches_per_rank": [
+        1,
+        1
+      ],
+      "optimizer_step_histogram": {
+        "1": 665,
+        "0": 2
+      },
+      "optimizer_parameter_count": 667,
+      "data_rng_hashes_valid": true
+    },
+    "2": {
+      "checkpoint_metadata": {
+        "step": 2,
+        "save_training_state": true,
+        "checkpoint_format": "dcp",
+        "complete": true
+      },
+      "consumed_batches_per_rank": [
+        2,
+        2
+      ],
+      "optimizer_step_histogram": {
+        "2": 665,
+        "0": 2
+      },
+      "optimizer_parameter_count": 667,
+      "data_rng_hashes_valid": true
+    },
+    "export": {
+      "tensor_count": 667,
+      "parameters": 3353433872,
+      "size_bytes": 6946527306,
+      "all_finite": true,
+      "sha256": "2c684741164228ae0775c9cd786f058efb650ad90be12868d165f6a0a6caf226"
+    }
+  },
+  "sft_command": "REPO_PATH=<checkout> STACK_CI_RUN=<run> bash tests/e2e_tests/sft/run_stack_cube_resume.sh",
+  "ppo_integration": {
+    "config": "embodichain_stack_cube_ppo_openpi_pi05",
+    "epochs": 1,
+    "num_envs": 8,
+    "rollout_epochs": 2,
+    "control_steps_per_rollout_epoch": 450,
+    "chunks": 1440,
+    "global_batch_size": 32,
+    "optimizer_step_histogram": {
+      "45": 198
+    },
+    "checkpoint": "integration-run/ppo/ci-test/checkpoints/global_step_1/actor",
+    "weights": {
+      "tensor_count": 675,
+      "parameters": 3356188433,
+      "all_finite": true,
+      "size_bytes": 6957548034,
+      "sha256": "7f07f1cc25835f748bf4c02d67ebe9bad2626812d1b8e07103c9003d81dd5c31"
+    },
+    "scalar_tags": 49,
+    "all_scalars_finite": true,
+    "scalars": {
+      "env/success_once": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "env/baseline_success_at_end": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "env/success_at_end": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "env/fail_once": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "env/episode_len": [
+        {
+          "step": 0,
+          "value": 450.0
+        }
+      ],
+      "env/return": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "env/reward": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "env/num_trajectories": [
+        {
+          "step": 0,
+          "value": 16.0
+        }
+      ],
+      "rollout/loss_mask_fraction": [
+        {
+          "step": 0,
+          "value": 1.0
+        }
+      ],
+      "rollout/rewards": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "rollout/advantages_mean": [
+        {
+          "step": 0,
+          "value": -7.61614913358244e-08
+        }
+      ],
+      "rollout/advantages_max": [
+        {
+          "step": 0,
+          "value": 3.86126971244812
+        }
+      ],
+      "rollout/advantages_min": [
+        {
+          "step": 0,
+          "value": -2.0877931118011475
+        }
+      ],
+      "rollout/returns_mean": [
+        {
+          "step": 0,
+          "value": -0.8205337524414062
+        }
+      ],
+      "rollout/returns_max": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "rollout/returns_min": [
+        {
+          "step": 0,
+          "value": -1.0896916389465332
+        }
+      ],
+      "time/sync_weights": [
+        {
+          "step": 0,
+          "value": 3.696955442428589
+        }
+      ],
+      "time/generate_rollouts": [
+        {
+          "step": 0,
+          "value": 482.5818176269531
+        }
+      ],
+      "time/cal_adv_and_returns": [
+        {
+          "step": 0,
+          "value": 0.034497737884521484
+        }
+      ],
+      "time/actor_training": [
+        {
+          "step": 0,
+          "value": 108.78096771240234
+        }
+      ],
+      "time/step": [
+        {
+          "step": 0,
+          "value": 622.186279296875
+        }
+      ],
+      "time/env/env/bootstrap_step": [
+        {
+          "step": 0,
+          "value": 0.5332717299461365
+        }
+      ],
+      "time/env/env_interact_step": [
+        {
+          "step": 0,
+          "value": 368.3307189941406
+        }
+      ],
+      "time/env/run_interact_once": [
+        {
+          "step": 0,
+          "value": 477.38720703125
+        }
+      ],
+      "time/env/interact": [
+        {
+          "step": 0,
+          "value": 477.38739013671875
+        }
+      ],
+      "time/rollout/sync_model_from_actor": [
+        {
+          "step": 0,
+          "value": 3.6923813819885254
+        }
+      ],
+      "time/rollout/predict": [
+        {
+          "step": 0,
+          "value": 99.2892074584961
+        }
+      ],
+      "time/rollout/generate_one_epoch": [
+        {
+          "step": 0,
+          "value": 474.0726623535156
+        }
+      ],
+      "time/rollout/rollout/generate": [
+        {
+          "step": 0,
+          "value": 482.5022277832031
+        }
+      ],
+      "time/actor/actor/sync_model_to_rollout": [
+        {
+          "step": 0,
+          "value": 3.33583664894104
+        }
+      ],
+      "time/actor/actor/recv_traj": [
+        {
+          "step": 0,
+          "value": 478.9266357421875
+        }
+      ],
+      "time/actor/actor/compute_adv": [
+        {
+          "step": 0,
+          "value": 0.029510606080293655
+        }
+      ],
+      "time/actor/run_training": [
+        {
+          "step": 0,
+          "value": 108.77700805664062
+        }
+      ],
+      "train/actor/approx_kl": [
+        {
+          "step": 0,
+          "value": 0.006395702715963125
+        }
+      ],
+      "train/actor/clip_fraction": [
+        {
+          "step": 0,
+          "value": 0.03750000149011612
+        }
+      ],
+      "train/actor/clipped_ratio": [
+        {
+          "step": 0,
+          "value": 0.9983447194099426
+        }
+      ],
+      "train/actor/dual_cliped_ratio": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "train/actor/entropy_loss": [
+        {
+          "step": 0,
+          "value": 0.0
+        }
+      ],
+      "train/actor/grad_norm": [
+        {
+          "step": 0,
+          "value": 21.09296989440918
+        }
+      ],
+      "train/actor/lr": [
+        {
+          "step": 0,
+          "value": 4.999999873689376e-06
+        }
+      ],
+      "train/actor/policy_loss": [
+        {
+          "step": 0,
+          "value": 0.0020363577641546726
+        }
+      ],
+      "train/actor/policy_loss_abs": [
+        {
+          "step": 0,
+          "value": 0.7494415640830994
+        }
+      ],
+      "train/actor/ratio": [
+        {
+          "step": 0,
+          "value": 0.9995865821838379
+        }
+      ],
+      "train/actor/ratio_abs": [
+        {
+          "step": 0,
+          "value": 0.0678974986076355
+        }
+      ],
+      "train/actor/total_loss": [
+        {
+          "step": 0,
+          "value": 0.017411701381206512
+        }
+      ],
+      "train/critic/lr": [
+        {
+          "step": 0,
+          "value": 9.999999747378752e-05
+        }
+      ],
+      "train/critic/value_clip_ratio": [
+        {
+          "step": 0,
+          "value": 0.7680555582046509
+        }
+      ],
+      "train/critic/value_loss": [
+        {
+          "step": 0,
+          "value": 0.06761044263839722
+        }
+      ],
+      "train/critic/explained_variance": [
+        {
+          "step": 0,
+          "value": -0.32050347328186035
+        }
+      ]
+    },
+    "scope": "Training execution from a two-update public-reference SFT export; no policy-quality qualification."
+  },
+  "ppo_command": "STACK_CUBE_SFT_MODEL=<run>/sft/ci-test/checkpoints/global_step_2 REPO_PATH=<checkout> bash tests/e2e_tests/embodied/run.sh embodichain_stack_cube_ppo_openpi_pi05",
+  "reward_comparison": {
+    "scalar_rewards": 4095,
+    "maximum_absolute_error": 0.0,
+    "drop_and_reset_match": true,
+    "isaaclab_commit": "4246b6b4f4a3e74ee20e002ed7536b1c788d39f4",
+    "scope": "Pinned-source numerical comparison with frozen measurements; no IsaacLab physics launch."
+  },
+  "wheel": {
+    "wheel_sha256": "6ff52c779664ba6659cb7778a9225e556df169cd55e233f35e0d5167d9fd41b7",
+    "resources": [
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml",
+      "rlinf/envs/sim/embodichain/configs/components/execution_policies/stack_cube.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.formal_expert.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/program.yaml"
+    ],
+    "wrapper": "StackCubeEnv",
+    "imported_from_installed_wheel": true
+  },
+  "local_gates": {
+    "pre_commit": "passed",
+    "ci_filter_coverage": {
+      "changed_files": 93,
+      "ci_relevant_files": 52,
+      "uncovered_files": [],
+      "scope": "Local glob coverage check using the workflow filters; remote CI remains pending."
+    },
+    "package_layout": "passed",
+    "docs": "English and Chinese builds passed with zero warnings using the docs-only harness, which filters unavailable autodoc imports."
+  },
+  "limitations": [
+    "The original V2 dataset and trained task SFT/PPO checkpoints are unavailable. Historical policy scores were not reproduced.",
+    "Short public-input training validates execution and recovery; it does not establish task quality, independent test/OOD performance or multiple-seed stability.",
+    "Docker is unavailable on this host; the target was reviewed but not built. Remote CI remains pending.",
+    "The pinned SDK emits kinematic-body and initial OptiX mesh warnings; these tests do not claim pixel equivalence with IsaacLab."
+  ],
+  "local_evidence_root": "/tmp/rlinf-pr-takeover",
+  "logs_sha256": {
+    "resume-install-2.log": "24f407b1876a176d558ff4d19b28072bdee6a967872751fe09f94f3d7c5d3345",
+    "sft-resume-integration.log": "a197d21fc21e8cb0dcf6850c7901f998761d5041a7d8d73370e4f89b7d6739cf",
+    "ppo-integration-final.log": "2ecc8416e64a433b9d49a1b61ee6a6b3018cda90b03c79d129233c79b9508141",
+    "public-loader-check-final.log": "8026ecf29181d3010878a5dad1821a1ded965f8b29302c5bdac30a521e277ebb",
+    "simulator-smoke-hydrated.log": "440c74d65be9065a8fd6059488a4246d0756f0e55fa243b41ff5d33b85addea7",
+    "expert-collection-hydrated.log": "89bf4ff8d32d283dd2b15add4b6ac169124fce80f1de6bbd637f91c2377a147f",
+    "expert-replay.log": "0aed3b407254272e465313cbe78ec0d378836c9a039c5cd65d3998cbebb7f15a",
+    "expert-assembly.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "public-data-preparation.log": "07c31660387c6f6b1f22c784aab0ee5c6493ae3a0108ff450711000409766754",
+    "combined-precommit-final.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+    "combined-docs-final.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1"
+  },
+  "ai_assistance": true
+}

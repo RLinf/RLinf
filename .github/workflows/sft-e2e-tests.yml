@@ -24,8 +24,8 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          export STACK_CUBE_ENV_PYTHON="$REPO_PATH/.venv-embodichain/bin/python"
-          export STACK_CUBE_MODEL_PYTHON="$REPO_PATH/.venv/bin/python"
+          export STACK_CUBE_ENV_PYTHON="${VIRTUAL_ENV}-embodichain/bin/python"
+          export STACK_CUBE_MODEL_PYTHON="$VIRTUAL_ENV/bin/python"
           export STACK_CI_RUN=$(mktemp -d "${RUNNER_TEMP:-/tmp}/embodichain-stack-cube-sft.XXXXXX")
           echo "STACK_CI_RUN=$STACK_CI_RUN" >> "$GITHUB_ENV"
           export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 JAX_PLATFORMS=cpu

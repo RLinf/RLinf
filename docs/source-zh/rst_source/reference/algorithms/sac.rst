@@ -4,7 +4,7 @@ Soft Actor-Critic (SAC)
 1. 引言
 ---------------
 
-Soft Actor-Critic (SAC) 是目前应用最广泛的强化学习 (RL) 算法之一。
+Soft Actor-Critic (SAC) 是目前应用最广泛的强化学习 (RL) 算法之一。  
 它包含两个核心部分：  
 
 - Actor （策略模型）: 根据当前状态生成动作。  

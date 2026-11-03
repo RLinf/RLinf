@@ -3,3 +3,6 @@ lerobot==0.4.4
 packaging>=24.2,<26
 # Ray accepts this version; virtualenv21 requires packaging>=26.3.
 virtualenv==20.35.4
+
+# The SDK indexes joint features through TensorDict.
+tensordict>=0.6,<0.15

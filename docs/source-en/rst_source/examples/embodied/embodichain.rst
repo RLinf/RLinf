@@ -292,6 +292,10 @@ simulator:
    git -C "$STACK_ASSET_SOURCE" sparse-checkout set \
      source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description
    git -C "$STACK_ASSET_SOURCE" checkout --detach 47d886f2858d1ceed556b21c88927aa67bc81c12
+   git -C "$STACK_ASSET_SOURCE" lfs install --local
+   git -C "$STACK_ASSET_SOURCE" ls-files -z -- \
+     source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/meshes | \
+     git -C "$STACK_ASSET_SOURCE" checkout-index --force -z --stdin
    export STACK_PANDA_URDF="$STACK_ASSET_SOURCE/source/extensions/isaacsim.asset.importer.urdf/data/urdf/robots/franka_description/robots/panda_arm_hand.urdf"
    python toolkits/lerobot/prepare_stack_cube_data.py prepare-panda \
      --source "$STACK_PANDA_URDF" --output "$STACK_RUN/assets"
@@ -443,9 +447,12 @@ it is separate from the immutable dataset/statistics audit.
 This recipe trains 1,000 optimizer steps from base with global batch 32,
 micro batch 1, learning rate ``2.5e-5``, and 100 warmup steps. It supervises the
 full H10×32 tensor, executes C5 during inference, and uses five denoising steps.
-The Stack Cube SFT and evaluation recipes enable ``eval_sft_image_crop: true``:
-only the front image receives the SFT-compatible 95% top-left crop and resize.
-The wrist image is preserved. This differs from the default of unrelated recipes.
+The Stack Cube recipes enable ``eval_sft_image_crop: true`` for inference:
+only the front image receives the 95% top-left crop and resize; the wrist image
+keeps its full view. SFT training uses random crop, rotation, and color jitter
+from the seeded PyTorch RNG. The inference option does not change training
+augmentation. Historical results below used the earlier fixed-crop training
+implementation and do not qualify this updated training path.
 
 Weights are exported every 100 steps; recoverable optimizer/RNG state is saved
 at step 1,000. Wait for ``actor/checkpoint_metadata.json`` to contain
@@ -505,10 +512,16 @@ These commands freeze qualification requests and the first 120/27 formal
 train/validation allocation; they do not establish expert feasibility.
 Record unsuccessful requests and their spatial coverage before deciding how
 to acquire the target number of successful demonstrations. The corresponding
-training config is ``embodichain_stack_cube_sft_openpi_pi05``: at most 30,000
-steps, 1,000 warmup steps, and exports every 1,000 steps. Run seeds 0, 1, and 2
-from the same base checkpoint, subject to measured GPU time and checkpoint
-storage requirements.
+training config is ``embodichain_stack_cube_sft_openpi_pi05``: stop at 15,000
+optimizer steps, retain the 30,000-step learning-rate schedule and 1,000-step
+warmup, and export every 1,000 steps. The reference-data recipe inherits these
+limits. Start with ``actor.seed=0``; assess additional seeds separately before
+claiming stability across training runs.
+
+To use an existing complete step-15,000 export, point ``STACK_CHECKPOINT`` to
+that checkpoint and run the evaluation commands above. The runner limit does
+not require another SFT run or modify saved weights. Keeping the learning-rate
+schedule unchanged preserves the settings used by the measured checkpoint.
 
 For the broader layouts, select the formal expert deployment explicitly with
 ``--task-config``. It applies the same 90° rotation about each cube's local
@@ -884,6 +897,67 @@ The report records source and input hashes, reward error and drop-predicate
 agreement. This executes pinned manager and predicate source with lightweight
 scene objects; native IsaacLab physics and policy transfer are separate checks.
 
+Takeover Stack Cube Validation
+----------------------------------------
+
+Use the selected SFT step-15,000 checkpoint as the current measured baseline.
+The takeover compares new EmbodiChain expert demonstrations on 32 fixed
+validation requests, with 450 physical steps, H10/C5, 10 denoising steps and a
+20-step final stability requirement. The exported parameters are loaded with
+the FP32-preserving loader and each result passes an independent physical
+execution audit.
+
+.. list-table:: Takeover validation, one training seed
+   :header-rows: 1
+   :widths: 55 25 20
+
+   * - Model
+     - Final Stable Success
+     - Rate
+   * - SFT, step 15,000
+     - 26/32
+     - 81.25%
+   * - SFT, step 25,000
+     - 21/32
+     - 65.625%
+   * - SFT, step 27,000
+     - 24/32
+     - 75.00%
+   * - Best audited PPO v4, iteration 10
+     - 25/32
+     - 78.125%
+   * - Best audited stable-hold PPO v5
+     - 24/32
+     - 75.00%
+   * - Fresh PPO v6 from SFT step 15,000, iteration 1
+     - 26/32
+     - 81.25%
+
+PPO v5 resumes v4 iteration 10 and changes the reward, post-success update mask
+and batch settings together. None of its five audited checkpoints exceeds the
+selected SFT model. These experiments establish pipeline execution and measured
+validation performance; they have not demonstrated PPO improvement.
+
+The fresh PPO stage starts directly from the corrected SFT step-15,000 policy.
+Its first saved iteration scores 26/32, with two gains and two regressions
+relative to SFT on the same requests. Training stopped at that complete
+checkpoint and its independent evaluation finished. Keep the SFT model as the
+selected baseline; the fresh PPO result has not improved its success count.
+
+.. figure:: ../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.png
+   :align: center
+   :width: 90%
+
+   Audited takeover validation counts. The fresh PPO stage starts its own iteration counter at zero.
+
+Inspect :download:`the quality report <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality.json>`
+and :download:`the curve data <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.csv>`
+for checkpoint, cohort, normalization and audit hashes. This study uses new data
+and a different cohort from the historical comparison below. The 32 requests
+were reused for selection, one training seed was assessed, and the final
+100-request test remains unused. The demonstrations and trained checkpoints
+are retained locally and have no public release in this change.
+
 Historical Stack Cube Validation
 ----------------------------------------
 
@@ -925,6 +999,6 @@ Reproduction Status and Limits
 
 The model, reference dataset, SDK and Panda sources have pinned download or checkout instructions above. The measured V2 dataset contains 120 episodes and 45,600 pre-action frames: 380 expert commands per episode, followed during collection by 70 hold steps excluded from SFT. Its production renderer roles comprise 64 train-world and 56 eval-world episodes; both use training requests. The fresh collector documented above is a separate recipe and does not recreate these V2 images.
 
-The selected SFT weights, exact V2 dataset and trained PPO weights are staged locally but have no public download URLs yet. To run PPO now, supply your own task-qualified SFT checkpoint and its matching normalization; the checked-in evidence statistics alone do not replace its training dataset. Docker build and remote CI execution remain pending; the image target and workflow wiring are included for review. Independent test/OOD evaluation, the remaining source/seed arms and the native IsaacLab comparison remain pending.
+The original author has not published the selected SFT weights, exact V2 dataset or trained PPO weights. Those assets are unavailable in this checkout, so the historical policy scores cannot be reproduced from this branch alone. To run PPO now, supply your own task-qualified SFT checkpoint and its matching normalization; the checked-in evidence statistics alone do not replace its training dataset. Docker build and remote CI execution remain pending; the image target and workflow wiring are included for review. Independent test/OOD evaluation, the remaining source/seed arms and the native IsaacLab comparison remain pending.
 
 The recipe's 6/27 qualification threshold and any experiment-specific improvement target are experiment choices, not RLinf PR merge requirements. The 1,000-epoch setting is a training budget; the results table reports only the completed 50-epoch stages. This example does not claim equivalent renderer pixels, native automatic-reset behavior, SOTA performance or multi-seed improvement.

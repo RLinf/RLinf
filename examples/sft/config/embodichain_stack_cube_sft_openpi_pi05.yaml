@@ -4,7 +4,7 @@ defaults:
 runner:
   logger:
     experiment_name: embodichain_stack_cube_pi05
-  max_steps: 30000
+  max_steps: 15000
   save_interval: 1000
 data:
   stateful_loader: true
