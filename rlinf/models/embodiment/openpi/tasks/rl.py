@@ -68,6 +68,7 @@ class Pi0RL(EnvIO, Pi0):
         rl_cfg: Pi0RLConfig,
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
+        eval_sft_image_crop: bool = False,
     ):
         super().__init__(
             config,
@@ -76,6 +77,7 @@ class Pi0RL(EnvIO, Pi0):
             action_chunk=action_chunk,
             config_name=config_name or rl_cfg.config_name,
             state_indices=state_indices,
+            eval_sft_image_crop=eval_sft_image_crop,
         )
         self.model_action_dim = self.action_dim
         self.rl_cfg = rl_cfg
@@ -131,6 +133,14 @@ class Pi0RL(EnvIO, Pi0):
     def set_global_step(self, global_step: int) -> None:
         self.global_step = int(global_step)
 
+    def train(self, mode: bool = True) -> Pi0RL:
+        """Keep frozen vision on the same attention path as rollout inference."""
+        super().train(mode)
+        if self.rl_cfg.train_expert_only:
+            # Attention kernels depend on train/eval mode even with zero dropout.
+            self.img.eval()
+        return self
+
     def _build_prefix_cache_for_actor(self, observation: Observation):
         """Prefix KV for actor recompute.
 
@@ -185,7 +195,10 @@ class Pi0RL(EnvIO, Pi0):
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
-        observation = preprocess_observation(observation, train=False)
+        # Stochastic rollout and actor replay must see identical pixels.
+        observation = preprocess_observation(
+            observation, train=False, deterministic_crop=self.eval_sft_image_crop
+        )
         B = observation.state.shape[0]
         num_steps = self.num_steps
 
@@ -406,7 +419,9 @@ class Pi0RL(EnvIO, Pi0):
                 tokenized_prompt=forward_inputs["tokenized_prompt"],
                 tokenized_prompt_mask=forward_inputs["tokenized_prompt_mask"],
             )
-        return preprocess_observation(observation, train=False)
+        return preprocess_observation(
+            observation, train=False, deterministic_crop=self.eval_sft_image_crop
+        )
 
     def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:

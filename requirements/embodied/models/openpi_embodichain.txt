@@ -1,0 +1,8 @@
+# The simulator SDK is installed in a separate venv by install.sh.
+rlinf-openpi==0.1.1
+lerobot==0.3.3
+transformers==4.53.2
+# LeRobot v2.1 data uses NumPy1; Arrow26 requires NumPy2.
+pyarrow<26
+# Ray's current virtualenv dependency requires this minimum.
+packaging>=26.3

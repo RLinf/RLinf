@@ -1,0 +1,109 @@
+# Use the orthogonal cube-face grasp across all formal initial poses.
+integration_id: rlinf_stack_cube_v1
+program_id: rlinf_stack_cube
+requires:
+  scene_contract: rlinf_stack_cube_scene
+  embodiment_contract: single_arm_parallel_gripper
+scene_binding:
+  contract_id: rlinf_stack_cube_scene
+  registry_id: rlinf_stack_cube
+  rigid_objects:
+  - entity_id: blue
+    simulation_uid: blue
+    dynamics: dynamic
+    semantic_type: cube
+    affordances:
+    - entity_id: blue_grasp
+      kind: antipodal_grasp
+    - entity_id: blue_top
+      kind: support_surface
+      native_name: top
+      object_target_pose:
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 1
+      - 0.0518
+      - 0
+      - 0
+      - 0
+      - 1
+      is_default: true
+  - entity_id: red
+    simulation_uid: red
+    dynamics: dynamic
+    semantic_type: cube
+    affordances:
+    - entity_id: red_grasp
+      kind: antipodal_grasp
+    - entity_id: red_top
+      kind: support_surface
+      native_name: top
+      object_target_pose:
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 1
+      - 0.0518
+      - 0
+      - 0
+      - 0
+      - 1
+      is_default: true
+  - entity_id: green
+    simulation_uid: green
+    dynamics: dynamic
+    semantic_type: cube
+    affordances:
+    - entity_id: green_grasp
+      kind: antipodal_grasp
+profile:
+  defaults:
+    pick_up:
+      primary: primary_manipulator
+    place:
+      primary: primary_manipulator
+  action_options:
+    pick:
+      kind: pick_up
+      fixed_object_to_eef:
+      - 0
+      - 1
+      - 0
+      - 0
+      - 1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 0
+      - -1
+      - 0
+      - 0
+      - 0
+      - 0
+      - 1
+      hand_interp_steps: 8
+      grasp_settle_steps: 10
+      pre_grasp_distance: 0.1
+      lift_height: 0.1
+    place:
+      kind: place
+      hand_interp_steps: 8
+      release_settle_steps: 10
+      lift_height: 0.1
+  effect_monitors: {}

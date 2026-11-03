@@ -1,0 +1,21 @@
+policy_id: rlinf_stack_cube_trajectory
+preset_id: trajectory
+requires:
+  embodiment_contract: single_arm_parallel_gripper
+motion:
+  strategy: ik_interp
+  velocity_targets: auto
+  sample_count: 80
+  dynamic_collision_mode: 'off'
+tracking:
+  kind: timed
+recovery:
+  max_replans: 0
+  max_action_retries: 0
+workflow_recovery:
+  max_recovery_attempts: 0
+runner:
+  minimum_cycle_time: 0.0
+  hold_on_completion: false
+  hold_during_effect_verification: false
+effect_assurance: projected

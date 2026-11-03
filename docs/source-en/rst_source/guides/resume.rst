@@ -146,3 +146,44 @@ Resuming training
    To verify resumption, look for the log line.  
    If the next training step starts at 30, then the resume is working well!
 
+
+Control FSDP SFT Save Costs
+----------------------------------------------------------------
+
+When frequent policy exports are useful but saving optimizer state each time
+is too costly, set ``actor.fsdp_config.training_state_save_interval`` to a
+positive integer. ``runner.save_interval`` still schedules exports; training
+state is included at export steps divisible by the new interval. Leaving the
+new field unset preserves full training-state saves on every checkpoint.
+Choose aligned intervals, for example:
+
+.. code-block:: yaml
+
+   runner:
+     save_interval: 100
+   actor:
+     fsdp_config:
+       save_full_model_weights: true
+       training_state_save_interval: 1000
+       checkpoint_format: dcp
+       checkpoint_communication_backend: gloo
+
+This exports weights every 100 steps and saves recoverable training state at
+every 1,000-step export. The SFT runner forces training state at a final save
+or an early-stop save when checkpointing is enabled. Between those saves,
+``save_full_model_weights: true`` is required because only inference weights
+are written. For this opt-in SFT path, ``actor/checkpoint_metadata.json`` is
+published with ``complete: false`` before saving and ``complete: true`` after
+the worker finishes. A checkpoint with ``save_training_state: false`` cannot
+resume training; select an earlier complete checkpoint containing state.
+
+The optional ``checkpoint_communication_backend: gloo`` creates a temporary
+CPU group for DCP and RNG/data object collectives. It requires
+``checkpoint_format: dcp``; leaving it unset uses the existing process group.
+It does not replace the training communication backend. Model-state extraction
+and the surrounding training barriers may still use the training group.
+
+For OpenPI, enable ``data.stateful_loader`` from the start to restore the data
+stream as well as model, optimizer and RNG state. Its loader manifest is an
+additional completion requirement; see
+:doc:`OpenPI SFT <../examples/embodied/sft_openpi>`.

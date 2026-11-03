@@ -1,0 +1,247 @@
+{
+  "scope": "Official draft integration checks; historical learned-policy results retain their earlier source snapshot.",
+  "unit_tests": {
+    "suites": {
+      "models.xml": {
+        "passed": 24,
+        "skipped": 2,
+        "failed": 0
+      },
+      "gpu_crop.xml": {
+        "passed": 4,
+        "skipped": 0,
+        "failed": 0
+      },
+      "fsdp.xml": {
+        "passed": 108,
+        "skipped": 1,
+        "failed": 0
+      },
+      "gpu_fsdp.xml": {
+        "passed": 1,
+        "skipped": 0,
+        "failed": 0
+      },
+      "sdk_final.xml": {
+        "passed": 42,
+        "skipped": 0,
+        "failed": 0
+      },
+      "data.xml": {
+        "passed": 60,
+        "skipped": 0,
+        "failed": 0
+      },
+      "worker.xml": {
+        "passed": 31,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    "distinct_passed": 268,
+    "remaining_skips": []
+  },
+  "gpu_expert_replay": {
+    "passed": true,
+    "num_envs": 8,
+    "steps": 380,
+    "stable_at_end": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "episode_returns": [
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0,
+      58.0
+    ],
+    "requests_sha256": "853c8ae5fb1c7d40f5d7ac252e369217e605b8b2fe6079796a116cade7bd7978",
+    "source_sha256": {
+      "rlinf/envs/sim/embodichain/stack_cube.py": "73c05314d40d88b4cd83064ca2599c7f0479de3d2272987ebcd447e23bd2d85b",
+      "rlinf/envs/sim/embodichain/stack_cube_env.py": "a87d055b54e64b6053c43eca3d997d13c9ccd0ff67c181db6c105fe15469ee1f",
+      "rlinf/envs/sim/embodichain/embodichain_env.py": "f5922fba421d742940c945229559a654a9a345689c2c11c10181b17bb7d1decb",
+      "rlinf/envs/sim/embodichain/stack_cube_metrics.py": "c9e3e48dc943b10bc4d72787afbf7a42c5af8b7aee9a66216a794f4c88ecc693",
+      "rlinf/models/embodiment/openpi/tasks/rl.py": "52a8a54f2dea8cb5a99251faa37a1d0d0610604da2b07996cf19d72e1b3dd8be",
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml": "14d34e2b471b6f908af85cb45bb60179f795e0c4b9638113df04e68998e7fa6d",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml": "c419be0f2fa18bb8d0264e01160b8111b394c53ea9c0d8755dc127f1d964f86a"
+    }
+  },
+  "source_reward_comparison": {
+    "scalar_rewards_compared": 4095,
+    "maximum_absolute_error": 0.0,
+    "reference_source_sha256": {
+      "source/isaaclab/isaaclab/managers/manager_base.py": "4c843c5faf37f27cdf026099c5c41ee5228e61b6d2d48eb714df62a99ebb8bc8",
+      "source/isaaclab/isaaclab/managers/reward_manager.py": "5d41d6a376cfb456849d861c3232694ea5662cc38970e2e2c7e5152f156d88d7",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/mdp/terminations.py": "0a4dd136b304f7f16ff33cd3538799d4f30bd9743bcb7f0e40a0a139a89b5c52",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/config/franka/stack_ik_rel_visumotor_rewarded_env_cfg.py": "f3c9bb5f049debcf51ab9ff733a7c5ac7c55dc5817cb372c06d773376d20d7b7",
+      "source/isaaclab/isaaclab/envs/mdp/terminations.py": "d56d6e3fe9d5a8479e83c3601cc3f59aae62c6e293bc33ff28749e6a84c0552b",
+      "source/isaaclab_tasks/isaaclab_tasks/manager_based/manipulation/stack/stack_env_cfg.py": "3cbec7e26b3ec661136e6edf288ede19b983e933da27f86e99f6a05e95f2dcad"
+    },
+    "traces": [
+      {
+        "trace_sha256": "a5d809770c9616c3eb9ac4b74bcdbff58cf3b4e3b48aca2d2c2e815ce57bacf9",
+        "scalar_rewards_compared": 1055,
+        "nonzero_rewards": 44,
+        "maximum_absolute_error": 0.0,
+        "drop_predicate_match": true,
+        "manager_reset_verified": true
+      },
+      {
+        "trace_sha256": "2a960e5594e6b1617ee28467b15e446617b8df0f15ee16286ab61fccbee52bdf",
+        "scalar_rewards_compared": 3040,
+        "nonzero_rewards": 464,
+        "maximum_absolute_error": 0.0,
+        "drop_predicate_match": true,
+        "manager_reset_verified": true
+      }
+    ]
+  },
+  "sft_resume": {
+    "passed": true,
+    "world_size": 2,
+    "nccl_transport": "socket fallback",
+    "vision_stem_wrap_with_parent": true,
+    "checkpoint_steps": [
+      1,
+      2
+    ],
+    "data_and_rng_hashes_verified": true,
+    "losses": [
+      {
+        "tag": "train/loss",
+        "step": 1,
+        "value": 0.091778963804245
+      },
+      {
+        "tag": "train/loss",
+        "step": 0,
+        "value": 0.15567155182361603
+      }
+    ],
+    "full_weights_export_bytes": 6946527306
+  },
+  "ppo_from_resumed_sft": {
+    "passed": true,
+    "scope": "One PPO epoch initialized from the two-update public-reference SFT export; no trained-policy success claim.",
+    "optimizer_state_tensors": 198,
+    "optimizer_steps_per_tensor": 45,
+    "finite_logged_scalars": true,
+    "selected_metrics": {
+      "train/actor/total_loss": [
+        {
+          "step": 0,
+          "value": 0.01858164742588997
+        }
+      ],
+      "train/actor/grad_norm": [
+        {
+          "step": 0,
+          "value": 21.731740951538086
+        }
+      ],
+      "train/critic/value_loss": [
+        {
+          "step": 0,
+          "value": 0.06891857832670212
+        }
+      ],
+      "env/num_trajectories": [
+        {
+          "step": 0,
+          "value": 16.0
+        }
+      ]
+    }
+  },
+  "compatibility": {
+    "vision_stem_wrap_with_parent_default": false,
+    "stack_cube_recipe_opt_in": true,
+    "shared_wrapper_has_no_stack_cube_branches": true,
+    "inference_crop_uses_explicit_deterministic_mode": true
+  },
+  "wheel": {
+    "sha256": "a3de1bc080ea0bfb4ae7eea3a97cd99cf3d8db1c56872a9e0f85506c9274c425",
+    "source_commit": "0c30a66d",
+    "yaml_resources": [
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml",
+      "rlinf/envs/sim/embodichain/configs/components/execution_policies/stack_cube.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.formal_expert.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/program.yaml"
+    ],
+    "dedicated_wrapper_packaged": true
+  },
+  "checks": {
+    "precommit_all_files": "passed",
+    "EN_sphinx_warnings": 0,
+    "ZH_sphinx_warnings": 0,
+    "EN_ZH_code_blocks_match": true,
+    "rst_markup": "passed",
+    "doc_symbols": "passed_with_verified_literals",
+    "model_and_SDK_dependency_checks": "passed"
+  },
+  "runtime_limits": {
+    "default_two_GPU_NCCL_probe": "failed with CUDA illegal memory access independently of RLinf",
+    "socket_transport_probe": "passed",
+    "SFT_two_rank_check": "passed with socket fallback",
+    "Docker_build": "not run: Docker executable/daemon unavailable in this environment",
+    "official_runner_CI": "pending",
+    "native_IsaacLab_physics": "pending first-launch EULA confirmation",
+    "historical_V2_data_and_learned_weights_publication": "pending"
+  },
+  "audit_log_sha256": {
+    "sft_resume.log": "c52270d3a204e4734ae913f7a29c56a19a73d163e65de7c20a24235f58e8d8c0",
+    "ppo_handoff_report.json": "cee017b0b70c04cf54029110259d3d695ef525d18aeac5e03a4101eea72824f2",
+    "sft_step_2_loader.json": "9f648b50fec81f94539697985259e745d2282d10840bc825ce33c01fac4088ca",
+    "sft_resume_socket_failure.log": "21fe7327225af732cf09c4990f086d6a1b32cbfe642c2a2ca63678ba3e6e272c",
+    "gpu_crop.xml": "1d8384e7500d4ce3e632591a00d33c42f7d23b75df6476bed4e931269cb11ef7",
+    "nccl_socket_probe.log": "5df9e8a75fed37fe2b36ee047676787e8f82970cb389aedd1eaaa6329a49a9ec",
+    "sdk.xml": "af04ce6657ca00586fbbd5fefa0668dea37783feed2e6006992ee384911edd13",
+    "ppo_val.json": "b0a885eb286997e1dc1b46a7770913c92f690dae520b605c7c12ee36a4047c4b",
+    "docs_final.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+    "gpu_replay.log": "86ff9ad68a7c8b33f62e657e6c489dc468e300a8f3340fb94784416c4726d052",
+    "sdk.log": "ff0f417acf1acab0a20201bfcf4bcd130694a8fd234bd163308205e1aab21b97",
+    "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+    "models.log": "033157bf0f730f1efc459c5e7eb144daa9b64a12e5acf3e38b1cb0ae740fa69e",
+    "sft_step_1_metadata.json": "86ab8df186a4301865367eaf901a776b1b74bbd2ab1550a60224c196f6be1a11",
+    "models.xml": "faac85bb538e6dafd9e66683177b313551c0ac5114681ccb3dad18f6d8f93418",
+    "docs.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+    "wheel.log": "d54494bedb492bbac85e5c387d515ba7c87f8a12727396ca81649781bf72901a",
+    "ppo_train.json": "fe77a341b542dda70a9623866e80bf927b91a77c31c048b0853181e8964a8ca0",
+    "worker.xml": "7920061d62f8e5639bc777ce3149376ac2be3a6f885483b8fcf42a468c8d5197",
+    "fsdp.xml": "430f2b7ee3af01f5bc990f71e0bc72b72a96441f5a61efca0381b511935f2a47",
+    "sft_resume_nccl_failure.log": "e38a9a4de012370bc7b5935c8dc30068c20c93cf2d15ce2b290f285ede12a7d9",
+    "data.log": "33089163b24e84ea9f9ff74b91f80fba19292c70ad185538f6dbb104d0a84c51",
+    "sft_resume_report.json": "b9b29fe76cea4a2b80998513f482eff645dad3749830d67a9ca4450195a89707",
+    "precommit_final.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+    "fsdp.log": "edd56578a69ec2fb3d578f302477a9bdc3e7aab25072900dde3722e55f985f31",
+    "data.xml": "6531140fabf42b30440fc5d051c666d59ddc34774d78ac8226f4eff260331306",
+    "ppo_handoff.log": "3024d4eb303215fb57825528a8b0c71e43321d2eef8bfe4a7be0befa9b1d74cc",
+    "reward_parity.json": "b87e57cdbd7859c3d9fb9f06bbbc7a3422027a9dd0a95a42b207b93b7ec6513d",
+    "sft_step_2_metadata.json": "5b905cefc4239b01e7f06c33be371f642c989b1f9ef1683a5d04da902460e77d",
+    "worker.log": "91829c3fa18cf6b5c6842e8f76646fdd12998b00e0e5a03e61e117bff768ea38",
+    "gpu_crop.log": "e0849a003f63fa38a941dfd6d4954732257bbe8ebf3ace82170201f034078b3f",
+    "nccl_host_probe.log": "f3429b9ffc586add6e14a732ede0c6b41f19638d63cde365e64804a1378dedbe",
+    "install_dry_run.log": "607eb0c86ff5a6cc20a3e8f364b0bdbeb2122326444c83ce88770591220228cb",
+    "install_resolve.log": "56863068da6b4101efcc08c6558154172435fdbaa4a3026c72c78c4468a9be9c",
+    "sdk_final.log": "c1098bcbfadb735ff5d95a32897b18a642acb193f5ca91c37b457e8c2837cc46",
+    "nccl_probe.log": "61ce8b30e6114da79fddb792dba04e7947e09a9e8d31a248fc42e5b390e2e90a",
+    "sdk_final.xml": "d80231726287cddc84713f3bb9925f66259a953b0b8ebf5bd3375dd10819274d",
+    "sft_step_1_loader.json": "22a173a0d31a37066d766145c42aa4c3e450a5beb5e5abae9d0e0e51d7fb56a1",
+    "reward_parity_final.json": "b87e57cdbd7859c3d9fb9f06bbbc7a3422027a9dd0a95a42b207b93b7ec6513d",
+    "gpu_fsdp.xml": "4d279a7f9cda2f8519e13c01a0c24394850295724e87225927d45f8fdf19a99e"
+  }
+}

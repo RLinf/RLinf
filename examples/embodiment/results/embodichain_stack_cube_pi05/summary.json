@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "recorded_utc": "2026-10-13T03:19:18.878066+00:00",
+  "task": "red_on_blue_then_green_on_red",
+  "metric": {
+    "name": "final_stable_success",
+    "control_steps": 450,
+    "consecutive_final_stable_steps": 20,
+    "released_fingers": true,
+    "max_linear_speed_m_per_s": 0.02,
+    "max_angular_speed_rad_per_s": 0.5
+  },
+  "evaluation_scope": "One seed on the original27development requests used for checkpoint qualification; no independent test/OOD or multi-seed conclusion.",
+  "initial_SFT": {
+    "base_model": "lerobot/pi05_base",
+    "base_revision": "22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0",
+    "step": 3000,
+    "learning_rate_horizon": 30000,
+    "warmup_steps": 1000,
+    "weights_sha256": "a9c688976d91e2b314beca596a94f0dbbc7a2ce926073c90c6db233af02cc813",
+    "norm_stats_sha256": "fef20aef4b0c67001aa3f6ef152defb45e1c25fd850d6695150fb78af6a47ae4",
+    "training_data": {
+      "version": "render_layout_v2",
+      "episodes": 120,
+      "frames": 45600,
+      "renderer_role_counts": {
+        "train_world32": 64,
+        "eval_world27": 56
+      },
+      "teacher_prefix_frames_per_episode": 380,
+      "collection_attempts": 123,
+      "failed_attempts_retained": 3,
+      "exact_dataset_public_URL": null,
+      "fresh_V2_collection_recipe_available": false
+    }
+  },
+  "PPO_configuration": {
+    "config": "examples/embodiment/config/embodichain_franka_stack_cube_ppo_openpi_pi05.yaml",
+    "max_epochs": 1000,
+    "measured_stop_epoch": 50,
+    "train_envs": 32,
+    "eval_envs": 27,
+    "rollout_epochs": 2,
+    "steps_per_rollout": 450,
+    "PPO_update_passes": 3,
+    "micro_batch_size": 32,
+    "global_batch_size": 128,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_lr": 5e-06,
+    "value_lr": 0.0001,
+    "flow_sde_noise": 0.5,
+    "action_horizon": 10,
+    "action_chunk": 5,
+    "denoising_steps": 5
+  },
+  "hardware": {
+    "nodes": 1,
+    "allocated_GPUs": 2,
+    "model": "NVIDIA RTX PRO 5000 72GB Blackwell",
+    "experiment_physical_indices": [
+      1,
+      3
+    ],
+    "actor_and_rollout_GPU": 1,
+    "simulation_GPU": 3
+  },
+  "reference_configuration_difference": {
+    "train_envs": 128,
+    "global_batch_size": 256,
+    "documented_GPUs": 8,
+    "note": "The task contract is aligned, while resource and reset protocols differ as documented. Epoch counts do not imply equal sample budgets."
+  },
+  "runs": [
+    {
+      "runtime": "custom_native",
+      "SDK_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+      "torch": "2.7.0+cu128",
+      "native_library_sha256": "398e678ca7ebe2f1c05da2abd05b0d3618077c2fd5ab6c3fa32b0fb4ce5cb341",
+      "runner_epochs": 50,
+      "actual_Adam_updates": 6750,
+      "seed": 0,
+      "initial_SFT_successes": 11,
+      "PPO_successes": 16,
+      "episodes": 27,
+      "difference_percentage_points": 18.51851851851852,
+      "paired_changes": {
+        "gained": 7,
+        "lost": 2,
+        "same_success": 9,
+        "same_failure": 9
+      },
+      "weights_sha256": "a665baf3c9261de8fd715913725cf326c1481df6b731f919581f5b2bbbd4d479",
+      "Adam_state_entries": 198,
+      "frozen_parameter_tensors_unchanged": 477,
+      "all_exported_policy_and_critic_tensors_finite": true,
+      "source_report_sha256": {
+        "checkpoint50_audit.json": "bd2375939e8dfcc773dda2ae8fbc316fd73f22acb2cd9b7635d48b8b4a88730b",
+        "paired_production_comparison.json": "ba11caf6e9784862e4fb76ca028d6dedae4c9a4679d96c92c248dd51ef26760d",
+        "paired_production_episode_audit.json": "2459cd2b9ba1d85dbe512ab9906c537ad1902b88b40e91a71800e6167cff55a0"
+      },
+      "physics_audit": {
+        "sampled_boundaries_per_report": 90,
+        "sampled_stride_control_steps": 5,
+        "continuous_dwell_independently_recomputed": false
+      },
+      "video_sha256": [
+        "ecc4e8eede80ece5df3bbee007e06ec7fc9861811817c4ff1fa5d7e08ebb2cbf",
+        "4ff00a21ed912542e08e70fb3bdd566f0bb892f62a6b9981363869dd40dc5bc9"
+      ]
+    },
+    {
+      "runtime": "public_pinned",
+      "SDK_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+      "torch": "2.7.1+cu128",
+      "native_library_sha256": "658d5cc49999d3ffca2255af5ed9fbee49d75b503d14011533e5afb99de11f52",
+      "runner_epochs": 50,
+      "actual_Adam_updates": 6750,
+      "seed": 0,
+      "initial_SFT_successes": 11,
+      "PPO_successes": 12,
+      "episodes": 27,
+      "difference_percentage_points": 3.7037037037037037,
+      "paired_changes": {
+        "gained": 7,
+        "lost": 6,
+        "same_success": 5,
+        "same_failure": 9
+      },
+      "weights_sha256": "0da90eb089dd05b35e92d1d3542b3e761711377cc356eb4dc7f5a1fed905b0ac",
+      "Adam_state_entries": 198,
+      "frozen_parameter_tensors_unchanged": 477,
+      "all_exported_policy_and_critic_tensors_finite": true,
+      "source_report_sha256": {
+        "checkpoint50_audit.json": "429ceec19ef1902c958d02ab922e3d52b300f490e1d9767b888a72811df166b1",
+        "paired_production_comparison.json": "f81990b1bc72802bbe3325002419e6cbf2b87615eb6da9e1391541c44e130636",
+        "paired_production_episode_audit.json": "3c1ac0b657bad2e89bcdef2df21f726e54261a463f282e3a339d6940140aa557"
+      },
+      "physics_audit": {
+        "sampled_boundaries_per_report": 90,
+        "sampled_stride_control_steps": 5,
+        "continuous_dwell_independently_recomputed": false
+      },
+      "video_sha256": [
+        "ecc4e8eede80ece5df3bbee007e06ec7fc9861811817c4ff1fa5d7e08ebb2cbf",
+        "2b11b1081d86cb089c09354fac01c0bbb901c90ac8d5559416fc28a9291f8502"
+      ]
+    }
+  ],
+  "integration_e2e": {
+    "runtime": "public_pinned",
+    "base_model_used": true,
+    "actual_Adam_updates": 45,
+    "passed": true,
+    "weights_sha256": "a6989239b71e14bd4168835e22380689e6ff96a6f8cc6dcfa9d31bcadf2967ea",
+    "scope": "Installation and rollout/reward/actor-update integration; not learned-policy effectiveness."
+  },
+  "release_status": {
+    "selected_SFT_model_URL": null,
+    "selected_SFT_dataset_URL": null,
+    "PPO50_model_URL": null,
+    "Docker_image_built": false,
+    "remote_CI_executed": false,
+    "note": "Weights and exactV2dataset are staged locally but unpublished. This evidence bundle includes no weights or videos. The fresh collection recipe is distinct from the measuredV2data."
+  },
+  "reference_dataset": {
+    "repo_id": "RLinf/IsaacLab-Stack-Cube-Data",
+    "revision": "2e27f04b2e31f293fd020164917e4cce09e108d6",
+    "exact_producer_initial_state_distribution_known": false
+  }
+}

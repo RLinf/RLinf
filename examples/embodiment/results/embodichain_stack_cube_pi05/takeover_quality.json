@@ -1,0 +1,461 @@
+{
+  "recorded_utc": "2026-10-27T03:56:25.022052+00:00",
+  "purpose": "Takeover quality measurements on a fixed development-validation cohort; checkpoint selection only.",
+  "source_commit": "793ee603d19f75ab25a3d007c3313e92a57bd3fe",
+  "original_training_source_commit": "289e74bf10aad2008cba6717146a87a9d08775ce",
+  "hardware": "NVIDIA A100-SXM4-80GB",
+  "model_torch_version": "2.7.1+cu128",
+  "training_seed": 0,
+  "training_dataset": {
+    "source": "New EmbodiChain expert demonstrations collected for the takeover",
+    "episodes": 256,
+    "frames": 97280,
+    "fps": 20,
+    "training_request_sha256": "17aa5ebe50eb3a2802ba77f00b176481d0932c7be249845609911b9d5b9e75ca",
+    "normalization_sha256": "23d3d26e1245ba79b47d233b281877eef5a77469c9a65348dddf6d33a0940e97",
+    "normalization_computed_from_training_only": true,
+    "public_release_available": false
+  },
+  "validation": {
+    "request_sha256": "3d6575182d82ce8f7d2f595abba181844fa05a076f5b9468140e90baad7811c5",
+    "norm_stats_sha256": "23d3d26e1245ba79b47d233b281877eef5a77469c9a65348dddf6d33a0940e97",
+    "preprocessing_protocol": {
+      "config_name": "pi05_isaaclab_stack_cube",
+      "action_horizon": 10,
+      "action_chunk": 5,
+      "denoising_steps": 10,
+      "eval_sft_image_crop": true,
+      "front_crop": {
+        "origin": [
+          0,
+          0
+        ],
+        "size": [
+          212,
+          212
+        ],
+        "resize": [
+          224,
+          224
+        ]
+      },
+      "wrist_crop": null,
+      "sensor_image_layout": "HWC RGB uint8",
+      "model_image_resolution": [
+        224,
+        224
+      ],
+      "state_encoding": "eef_xyz_euler_xyz_signed_fingers",
+      "discrete_state_input": false,
+      "phase_input": false,
+      "image_mask": {
+        "base_0_rgb": true,
+        "left_wrist_0_rgb": true,
+        "right_wrist_0_rgb": false
+      }
+    },
+    "criterion": "450 physical control steps; released fingers and 20 consecutive final stable steps; no early stopping or auto reset",
+    "protocol": "Native isaaclab batch API with ignore_terminations=true; final physical stability evaluated independently of PPO reward",
+    "noise": "independent persistent CUDA generator seeded per request, explicit [1,10,32] draws per row each inference",
+    "batch_size": 8,
+    "inference_noise_seed_offset": 0,
+    "evaluator_sha256": "ce8ab4b3c7ae9db2cc4dceb712e7f65bc76e347cdf24851ee3417de851e2a6d5"
+  },
+  "models": [
+    {
+      "kind": "sft",
+      "step": 15000,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 27,
+        "full_stack_at_end": 26,
+        "stable_once": 27,
+        "stable_at_end": 26
+      },
+      "requests": 32,
+      "stable_success_rate": 0.8125,
+      "source_sft_step": 15000,
+      "weights_sha256": "b3ad8d9c0c463c9ee7f1dddf2eadd56a6319f66ffafa7769bd3d90fa9c1219cd",
+      "loaded_policy_sha256": "4cf54d2e6b81c3bd54765e28c1296d40cdb119819cc97a4c6d38942549412f28",
+      "summary_sha256": "6c85e9f3cef7dcf3e0dc1857a39a97aadccf0050e0f44ae751d356f73af45a09",
+      "run_manifest_sha256": "34850102d14257630f1c72f142479a70661ef5e9a144674ecfb147db4c2762a5",
+      "physical_audit_sha256": "52f07adcbd1304bfab13ab06ceea226720c371db55e417b904ae0374d85f37e7",
+      "local_evidence_directory": "ppo/native-ppo-from-sft15000-v4/sft-precision-recheck/evaluation",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "sft",
+      "step": 25000,
+      "counts": {
+        "first_layer_once": 32,
+        "full_stack_once": 25,
+        "full_stack_at_end": 22,
+        "stable_once": 23,
+        "stable_at_end": 21
+      },
+      "requests": 32,
+      "stable_success_rate": 0.65625,
+      "source_sft_step": 25000,
+      "weights_sha256": "2fac6f9f83e00ab542097873c4848454a3f6676ecb70145101c29bbf3ce2ba0f",
+      "loaded_policy_sha256": "282a77e31f91aed0c9c35f5bb12d84df7922ea4e3bbc69d9b324d4567411222a",
+      "summary_sha256": "22c66eeabdbacec31ead8313748d2ed2021fbf6e30826238e00c030b9a16a52a",
+      "run_manifest_sha256": "a1d1ea0920a43d8e371acf28ff741f4b17766feddee8800088a2f28bc5dff61f",
+      "physical_audit_sha256": "251bdf5d402f6e3ab07d8aeb8b9565453d5e0ca218add44d2517e62b0ac5824b",
+      "local_evidence_directory": "ppo/late-sft-checkpoints/evaluations/step_25000",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "sft",
+      "step": 27000,
+      "counts": {
+        "first_layer_once": 32,
+        "full_stack_once": 28,
+        "full_stack_at_end": 25,
+        "stable_once": 25,
+        "stable_at_end": 24
+      },
+      "requests": 32,
+      "stable_success_rate": 0.75,
+      "source_sft_step": 27000,
+      "weights_sha256": "953d9ffd81dcb7078e3a124ff527ef4c40cd1d0bead8b25d4686cb1ef5e60e5c",
+      "loaded_policy_sha256": "9c1b3f9c2eee3b2e26dcd98f0a2e421587718f19dbdc0f3e451ac4260cd07a24",
+      "summary_sha256": "05606fd6f8ee0dc030aaeea4d2b2b9bad1e46297fbc0e2db7cb3f045e1cb474a",
+      "run_manifest_sha256": "5e9c59ea5f4eb85cd682256cc6c7929d25583d525c246ab4cff4787a8762cc1e",
+      "physical_audit_sha256": "6946ab83cd080a739d5f3f0f92a96b53a833f133ebba04a235142a08fab85db0",
+      "local_evidence_directory": "ppo/late-sft-checkpoints/evaluations/step_27000",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v4",
+      "step": 5,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 28,
+        "full_stack_at_end": 25,
+        "stable_once": 28,
+        "stable_at_end": 23
+      },
+      "requests": 32,
+      "stable_success_rate": 0.71875,
+      "source_sft_step": 15000,
+      "weights_sha256": "ec0de34300b420f9d67d2975f8be862fc4063266319bf254ba1c70d0a2ee2e86",
+      "loaded_policy_sha256": "279f9c9ffe00fc67387a21df5a18faf9032431a0a5594099893139aa0603f1d2",
+      "summary_sha256": "afa59a2de450600ea3b859e13e572d91dc6e6d5b97c81411e6d141bf2d299c59",
+      "run_manifest_sha256": "02a57952ca1056cd2051116733aa27b2794adf53a0ec0c6fa909c0ec8d53f8a8",
+      "physical_audit_sha256": "5d0935f4df21998953d6db2ac386963f12924e83eea685606f20ea15068bb67a",
+      "local_evidence_directory": "ppo/native-ppo-from-sft15000-v4/exact-validation/evaluations/iteration_5",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v4",
+      "step": 10,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 26,
+        "full_stack_at_end": 25,
+        "stable_once": 25,
+        "stable_at_end": 25
+      },
+      "requests": 32,
+      "stable_success_rate": 0.78125,
+      "source_sft_step": 15000,
+      "weights_sha256": "c02e9446b2b56879c8fb37adae472717899415a866526a4218d7c2b71bf82499",
+      "loaded_policy_sha256": "1ca54ce91e471ef81a7e496366b8f868cd365ad5f211a92070c15c42b0a4d7e1",
+      "summary_sha256": "955f07743b028797eb33d89bd88233946b78f7fbf388f115a9d2e7806428b3c3",
+      "run_manifest_sha256": "a9bbc4a29b25abcf9af957a5a6ffa7406f3bd5fa73369b04d29d6f63755e24c7",
+      "physical_audit_sha256": "a89a73244d1712274dee9d4c227088a4f18a8d572d468e12a23c0bd63f1516e5",
+      "local_evidence_directory": "ppo/native-ppo-from-sft15000-v4/exact-validation/evaluations/iteration_10",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v4",
+      "step": 15,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 24,
+        "full_stack_at_end": 21,
+        "stable_once": 22,
+        "stable_at_end": 21
+      },
+      "requests": 32,
+      "stable_success_rate": 0.65625,
+      "source_sft_step": 15000,
+      "weights_sha256": "b8c926020c13febdaf61eef7ad1636c121287a7dce6af3aa6d3e88ebf64a4b8f",
+      "loaded_policy_sha256": "56e0c416e14d23118ff5bb1a61119d309ba9b83dcaee4fbe49c26e02895b41ca",
+      "summary_sha256": "09499138f22133774585bd44fb4981e3d7fc136a2ca58c0f81e4dfa024cf2fbf",
+      "run_manifest_sha256": "dc4f982dbee87be43a0926eefe4330079c74e666673281d8572ca0dd71fb4236",
+      "physical_audit_sha256": "564f309f1a719a957ca94e8c587f83dc58e94a52a4f8257b8aa86cf247c5a812",
+      "local_evidence_directory": "ppo/native-ppo-from-sft15000-v4/exact-validation/evaluations/iteration_15",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v5",
+      "step": 11,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 26,
+        "full_stack_at_end": 24,
+        "stable_once": 24,
+        "stable_at_end": 23
+      },
+      "requests": 32,
+      "stable_success_rate": 0.71875,
+      "source_sft_step": 15000,
+      "weights_sha256": "8d6b60b39168f73a9812adb6d94e3a915331e9d81a416d6b51248bd29e97de37",
+      "loaded_policy_sha256": "326780f12c48f2bb35415a987ffa9a8cb8ae03b248a0d12c05a91621245628a6",
+      "summary_sha256": "536acd86a312120a964030cbdb7906b012318bce7f59e5cecc10db400d435537",
+      "run_manifest_sha256": "6390973fc0ac2cc4fd11c8a7dea1f54847021a49c01a785d2e9fe1e897bb1ec9",
+      "physical_audit_sha256": "d653955f873fc4fc533e2034750fe5b5463bd18d2a19160a5d658571a0cceb1c",
+      "local_evidence_directory": "ppo/native-ppo-sft15000-v5-stablehold/evaluations/iteration_11",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v5",
+      "step": 12,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 26,
+        "full_stack_at_end": 24,
+        "stable_once": 23,
+        "stable_at_end": 22
+      },
+      "requests": 32,
+      "stable_success_rate": 0.6875,
+      "source_sft_step": 15000,
+      "weights_sha256": "b41523c05d471681b013865472d12b9610c553c6218473aed16ec9d3e2a9ce8c",
+      "loaded_policy_sha256": "ad2a9113d73b01430009c656439726616fe021ff423624d9274ac1ec6d413572",
+      "summary_sha256": "cac850bc1d6c0a81593c7e8b97a52495e5734cc1f46af2063cde198b093911a0",
+      "run_manifest_sha256": "10bc5b3ab78f2ada79700f93c3d0d8bc1167611e58b7acc09e8274bff5928bbc",
+      "physical_audit_sha256": "1fc0c2b7ee7999f2b5b31bacd15b82d1222f93f606c28048f6f85eec9223e380",
+      "local_evidence_directory": "ppo/native-ppo-sft15000-v5-stablehold/evaluations/iteration_12",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v5",
+      "step": 13,
+      "counts": {
+        "first_layer_once": 30,
+        "full_stack_once": 27,
+        "full_stack_at_end": 26,
+        "stable_once": 25,
+        "stable_at_end": 24
+      },
+      "requests": 32,
+      "stable_success_rate": 0.75,
+      "source_sft_step": 15000,
+      "weights_sha256": "9658b293cd0c487aec6364b82ccbed81018801e67b436abb900f498ddebd408d",
+      "loaded_policy_sha256": "41cd840f95ea360be00fc5e8d2db117532e122356071bceda3dc60cfa9901f3d",
+      "summary_sha256": "fa35ae0a2b005bca9d1857b5f3b4e20b0c141a7b5e5556fd211dd9632bce8d80",
+      "run_manifest_sha256": "1ce300237a6fd5aed2202e3d3254d5ea899966175df18186a3d78593ca34360a",
+      "physical_audit_sha256": "75f0c7f3e0522822c2f5e8dc64b059c87166173d3c88cf3046dfa51340021a0e",
+      "local_evidence_directory": "ppo/native-ppo-sft15000-v5-stablehold/evaluations/iteration_13",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v5",
+      "step": 14,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 26,
+        "full_stack_at_end": 24,
+        "stable_once": 25,
+        "stable_at_end": 24
+      },
+      "requests": 32,
+      "stable_success_rate": 0.75,
+      "source_sft_step": 15000,
+      "weights_sha256": "02dfd55a4f39db8d3b89ea7c6ef864070d60fd5628680ba3ac4d8863b0305cf7",
+      "loaded_policy_sha256": "ced18625c9246f53e9fce5ec09dda51dc2b03d717874829c4b3b64de4a190cca",
+      "summary_sha256": "869df6e52a9ba9261e5686156b18264bad049602e492b6f027a9ef75fa5962d7",
+      "run_manifest_sha256": "4befae396174ef443e6f63552e73f9705204d2b3ffb52639cc8b78e3934952b5",
+      "physical_audit_sha256": "ebf6f48a9f500be1f470fc3582448b51d2687a01de5b910cc6b3e0cbabda0ddd",
+      "local_evidence_directory": "ppo/native-ppo-sft15000-v5-stablehold/evaluations/iteration_14",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v5",
+      "step": 15,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 26,
+        "full_stack_at_end": 24,
+        "stable_once": 25,
+        "stable_at_end": 24
+      },
+      "requests": 32,
+      "stable_success_rate": 0.75,
+      "source_sft_step": 15000,
+      "weights_sha256": "4128786e5ef020404e6ac72ec4b293d214570ceb969dde8e8fa263c45ea5d70a",
+      "loaded_policy_sha256": "8167bc41cb5b672c6df67010904f1169142b58462bc119d3e757d891a04a9bda",
+      "summary_sha256": "3fc914c8d692ae512729b518137b3ec7e677502c4bfefb29e3395d875bac5b06",
+      "run_manifest_sha256": "8e487b50666d3e17df6c9c0e958c00b6f0741a1f699568b1ac39b4f311adc294",
+      "physical_audit_sha256": "df75584de60eb6a7cc34ebd0b8fce4e81076fd063b6392160940e6f095142cef",
+      "local_evidence_directory": "ppo/native-ppo-sft15000-v5-stablehold/evaluations/iteration_15",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    },
+    {
+      "kind": "ppo_v6",
+      "step": 1,
+      "counts": {
+        "first_layer_once": 31,
+        "full_stack_once": 28,
+        "full_stack_at_end": 26,
+        "stable_once": 26,
+        "stable_at_end": 26
+      },
+      "requests": 32,
+      "stable_success_rate": 0.8125,
+      "source_sft_step": 15000,
+      "weights_sha256": "b7868cab5c359479431d77fbf9d43a15e49ca1cb756663633135628024ad936e",
+      "loaded_policy_sha256": "5c4b9f1f5a6185579aaacb42bdae94aea4d7c60bb92836e716debeccda506853",
+      "summary_sha256": "ec7dd7be6ff626d93dc08f5d7b23426ecd09179945237857de8e4733408b37ac",
+      "run_manifest_sha256": "987718695f2629fb1844d7a5698102fa3cd76400102627d7cefbc2af73275a99",
+      "physical_audit_sha256": "2d9bda89ddecaa454d61f6c8d4d18e4211dfc2f8086f86de7db06e1293f3b337",
+      "local_evidence_directory": "ppo/native-ppo-sft15000-v6-fresh/evaluations/iteration_1",
+      "physical_steps_per_request": 450,
+      "commands_equal_saved_predictions": true,
+      "geometry_and_speed_predicates_recomputed": true
+    }
+  ],
+  "selected": {
+    "kind": "sft",
+    "step": 15000,
+    "successes": 26,
+    "requests": 32,
+    "stable_success_rate": 0.8125,
+    "selection_basis": "Highest measured final stable success among all completed audited candidates."
+  },
+  "sft_schedule": {
+    "selected_optimizer_step": 15000,
+    "learning_rate_schedule_steps": 30000,
+    "warmup_steps": 1000,
+    "default_runner_max_steps": 15000,
+    "config_commit": "3b184ef656a83461055426dc262270073c2f1a1a"
+  },
+  "ppo_v4": {
+    "starting_sft_step": 15000,
+    "policy_lr": 1e-06,
+    "critic_lr": 0.0001,
+    "training_scenes": 32,
+    "micro_batch_size": 16,
+    "global_batch_size": 128,
+    "rollout_epochs": 2,
+    "update_epochs": 3,
+    "reward": "One baseline stacking success transition",
+    "ignore_terminations": false,
+    "best_audited_iteration": 10,
+    "best_successes": 25,
+    "inherited_frozen_precision": "The old initialization serialized BF16-rounded values in 40 frozen FP32 tensors; corrected loading reads those saved values exactly. Task-quality causality is unproven.",
+    "frozen_precision_audit_sha256": "a8290053dfe6a3a31115e3bfcd0f7586a72e4d26a8600b7839354adf12d73ffc"
+  },
+  "ppo_v5": {
+    "parent": "ppo_v4 iteration10",
+    "iterations": [
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "policy_lr": 1e-06,
+    "critic_lr": 0.0001,
+    "training_scenes": 128,
+    "micro_batch_size": 64,
+    "global_batch_size": 256,
+    "rollout_epochs": 2,
+    "update_epochs": 3,
+    "reward": "0.01 per independently measured stable-hold frame",
+    "ignore_terminations": true,
+    "best_successes": 24,
+    "scope": "Several training settings changed together; this is not a single-factor attribution experiment."
+  },
+  "status": {
+    "ppo_improvement_demonstrated": false,
+    "near_100_percent_goal_achieved": false,
+    "final_test_used": false,
+    "final_test_requests": 100,
+    "additional_sft_updates_for_late_weight_evaluation": 0,
+    "fresh_ppo_stage": "Stopped after the first complete PPO iteration; its independently audited validation result is 26/32, equal to the selected SFT model. Both training and validation processes have exited."
+  },
+  "limitations": [
+    "One training seed and32 validation requests reused for selection; these scores are not independent final-test estimates.",
+    "Demonstrations, checkpoints, trajectories and full logs are retained locally and are not published by this commit.",
+    "The exact batched evaluator and physical audit were local experiment helpers; their hashes and retained output identities are recorded here.",
+    "These measurements use a different dataset and cohort from the original author historical27-request results."
+  ],
+  "prepared_with_ai_assistance": true,
+  "fresh_ppo_update": {
+    "ppo_iteration": 1,
+    "source_sft_step": 15000,
+    "initial_policy_matches_audited_sft": true,
+    "policy_update_verified": true,
+    "critic_update_verified": true,
+    "all_exported_tensors_finite": true,
+    "exported_tensor_count": 675,
+    "parameter_dtype_changes": [],
+    "frozen_tensors_unchanged": 477,
+    "changed_policy_tensors": 190,
+    "optimizer_states_read_independently_from_dcp": 198,
+    "adam_step_values": [
+      225.0
+    ],
+    "expected_actor_optimizer_updates": 270,
+    "critic_warmup_updates": 45,
+    "adam_counter_scope": "The critic-only optimizer is replaced after45 updates; saved Adam counters belong to the post-warmup optimizer.",
+    "typed_hashes": {
+      "initial_policy": "4cf54d2e6b81c3bd54765e28c1296d40cdb119819cc97a4c6d38942549412f28",
+      "updated_policy": "5c4b9f1f5a6185579aaacb42bdae94aea4d7c60bb92836e716debeccda506853",
+      "updated_critic": "e2a4c23bb20477f125f320f104aac2f48cdf0b2375c0b5a1776ac4cfccb8f825"
+    },
+    "weights_sha256": "b7868cab5c359479431d77fbf9d43a15e49ca1cb756663633135628024ad936e",
+    "status": "stopped_at_checkpoint",
+    "policy_quality_pending": false,
+    "audit_sha256": "27a6b458b4ae928cf07b066210fb3e64860ec0d6a770eb00e5227d5aacec67e2",
+    "local_evidence_directory": "ppo/native-ppo-sft15000-v6-fresh"
+  },
+  "ppo_v6": {
+    "starting_policy": "Corrected SFT15000 deployment",
+    "completed_iterations": 1,
+    "stable_successes": 26,
+    "requests": 32,
+    "paired_outcomes_vs_sft15000": {
+      "retained_success": 24,
+      "remaining_failure": 4,
+      "new_success": 2,
+      "regression": 2
+    },
+    "policy_lr": 1e-06,
+    "critic_lr": 0.0001,
+    "critic_warmup_updates": 45,
+    "training_scenes": 128,
+    "micro_batch_size": 64,
+    "global_batch_size": 256,
+    "reward": "0.01 per stable-hold frame",
+    "ignore_terminations": true,
+    "training_stopped_by_user": true,
+    "additional_training_authorized": false,
+    "quality_scope": "One updated checkpoint on the same 32 selection requests; equal success count does not establish an improvement."
+  }
+}

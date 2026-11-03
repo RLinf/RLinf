@@ -43,6 +43,7 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import seed_everything
 
 
 class MultiStepRolloutWorker(Worker):
@@ -158,6 +159,14 @@ class MultiStepRolloutWorker(Worker):
         # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
+        openpi_seed = None
+        if SupportedModel(rollout_model_config.model_type) == SupportedModel.OPENPI:
+            base_seed = self.cfg.rollout.get("seed")
+            if base_seed is None:
+                base_seed = OmegaConf.select(self.cfg, "actor.seed", default=0)
+            openpi_seed = int(base_seed) + self._rank
+            seed_everything(openpi_seed)
+
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
@@ -205,6 +214,10 @@ class MultiStepRolloutWorker(Worker):
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
+
+        if openpi_seed is not None:
+            # Model construction must not consume the rollout sampling stream.
+            seed_everything(openpi_seed)
 
     def setup_sample_params(self):
         # sampling parameters for rollout
