@@ -49,12 +49,15 @@ Keep enable_offload false: this adapter exposes terminal offload, not suspend/re
 import json
 import os
 from typing import Any
+from uuid import uuid4
 
 import gymnasium as gym
 import numpy as np
+import ray
 import torch
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from rlinf.envs.utils import (
     center_crop_image,
@@ -82,6 +85,43 @@ def _is_unstable_scene(exc: BaseException) -> bool:
     re-raises it as a ``RuntimeError`` that carries the traceback text.
     """
     return type(exc).__name__ == "UnStableError" or "UnStableError" in str(exc)
+
+
+@ray.remote(
+    num_cpus=1, num_gpus=0, max_concurrency=1, max_restarts=0, max_task_retries=0
+)
+class RoboDojoProcess:
+    """Own a RoboDojo bridge on a synchronous Ray actor's main thread.
+
+    The runtime builds an in-process Isaac application when ``n_envs == 1``,
+    which must be created and torn down on the interpreter's main thread. An
+    EnvWorker is an async Ray actor, so it cannot host the bridge directly.
+    """
+
+    def __init__(self, task_config: dict, n_envs: int, env_seeds: list[int]):
+        from robodojo_runtime.bridge import VectorEnv
+
+        self.venv = VectorEnv(
+            task_config=task_config, n_envs=n_envs, env_seeds=env_seeds
+        )
+
+    def ready(self) -> None:
+        """Confirm construction without touching the scene."""
+
+    def reset(self, env_idx: Any = None, env_seeds: list[int] | None = None) -> None:
+        self.venv.reset(env_idx=env_idx, env_seeds=env_seeds)
+
+    def get_obs(self) -> list[dict]:
+        return self.venv.get_obs()
+
+    def step(self, actions: np.ndarray) -> tuple:
+        return self.venv.step(actions)
+
+    def check_seeds(self, seeds: list[int]) -> list[bool]:
+        return self.venv.check_seeds(seeds)
+
+    def close(self, clear_cache: bool = True) -> None:
+        self.venv.close(clear_cache)
 
 
 def state_action_permutations(action_order: str, action_dims):
@@ -171,7 +211,7 @@ class RoboDojoEnv(gym.Env):
         )
         self.record_metrics = record_metrics
         self._is_start = True
-        self._closed = False
+        self._process = None
         self._generator = torch.Generator().manual_seed(self.seed)
         self.success_seeds = None
         self._current_seed_index = 0
@@ -203,15 +243,48 @@ class RoboDojoEnv(gym.Env):
         self._init_env()
 
     def _init_env(self) -> None:
+        env_vars = {
+            key: os.environ[key]
+            for key in (
+                "CUDA_VISIBLE_DEVICES",
+                "NVIDIA_VISIBLE_DEVICES",
+                "ROBODOJO_ASSETS_ROOT",
+                "OMNI_KIT_ACCEPT_EULA",
+                "ISAAC_PATH",
+                "EXP_PATH",
+                "CARB_APP_PATH",
+            )
+            if key in os.environ
+        }
         if self.cfg.get("assets_path") is not None:
-            os.environ["ROBODOJO_ASSETS_ROOT"] = str(self.cfg.assets_path)
-        from robodojo_runtime.bridge import VectorEnv
-
-        self.venv = VectorEnv(
-            task_config=OmegaConf.to_container(self.cfg.task_config, resolve=True),
-            n_envs=self.num_envs,
-            env_seeds=self.reset_state_ids.tolist(),
+            env_vars["ROBODOJO_ASSETS_ROOT"] = str(self.cfg.assets_path)
+        # RLinf assigns GPU visibility independently of Ray GPU resources.
+        env_vars["RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"] = "1"
+        self._process = RoboDojoProcess.options(
+            name=f"RoboDojoProcess-{uuid4().hex}",
+            scheduling_strategy=NodeAffinitySchedulingStrategy(
+                node_id=ray.get_runtime_context().get_node_id(), soft=False
+            ),
+            runtime_env={"env_vars": env_vars},
+        ).remote(
+            OmegaConf.to_container(self.cfg.task_config, resolve=True),
+            self.num_envs,
+            self.reset_state_ids.tolist(),
         )
+        try:
+            ray.get(self._process.ready.remote())
+        except BaseException:
+            # The bridge may have partially created simulator resources.
+            self._kill_process()
+            raise
+
+    def _kill_process(self) -> None:
+        process, self._process = self._process, None
+        if process is not None and ray.is_initialized():
+            try:
+                ray.kill(process, no_restart=True)
+            except ray.exceptions.RayActorError:
+                pass
 
     @property
     def elapsed_steps(self) -> torch.Tensor:
@@ -294,7 +367,7 @@ class RoboDojoEnv(gym.Env):
         seeds = self.reset_state_ids.tolist() if env_seeds is None else list(env_seeds)
         for attempt in range(UNSTABLE_RESET_ATTEMPTS):
             try:
-                self.venv.reset(env_idx=env_idx, env_seeds=seeds)
+                ray.get(self._process.reset.remote(env_idx=env_idx, env_seeds=seeds))
                 break
             except Exception as exc:
                 if (
@@ -308,7 +381,7 @@ class RoboDojoEnv(gym.Env):
                 if env_seeds is None:
                     self.update_reset_state_ids(env_idx)
                     seeds = self.reset_state_ids.tolist()
-        observations = self._extract_obs_image(self.venv.get_obs())
+        observations = self._extract_obs_image(ray.get(self._process.get_obs.remote()))
         self._reset_metrics(env_idx)
         self._is_start = False
         return observations, {}
@@ -334,7 +407,9 @@ class RoboDojoEnv(gym.Env):
             )
         if self._action_perm is not None:
             actions = actions[..., self._action_perm]
-        raw_obs, reward, terminated, truncated, info_list = self.venv.step(actions)
+        raw_obs, reward, terminated, truncated, info_list = ray.get(
+            self._process.step.remote(actions)
+        )
         obs = self._extract_obs_image(raw_obs)
         infos = list_of_dict_to_dict_of_list(info_list)
         terminated = (
@@ -427,10 +502,19 @@ class RoboDojoEnv(gym.Env):
 
     def check_seeds(self, seeds: list[int]) -> list[bool]:
         """Delegate seed validity checks to the runtime."""
-        return self.venv.check_seeds(seeds)
+        return ray.get(self._process.check_seeds.remote(seeds))
 
     def offload(self, clear_cache: bool = True) -> None:
         """Release the owned bridge once; repeated calls are harmless."""
-        if not self._closed:
-            self.venv.close(clear_cache)
-            self._closed = True
+        if self._process is None:
+            return
+        process, self._process = self._process, None
+        try:
+            ray.get(process.close.remote(clear_cache))
+        except ray.exceptions.RayActorError:
+            pass
+        finally:
+            try:
+                ray.kill(process, no_restart=True)
+            except ray.exceptions.RayActorError:
+                pass
