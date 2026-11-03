@@ -9,7 +9,8 @@ It is different from ``total_num_envs``, which runs many parallel copies of one
 env configuration, and from :doc:`hetero`, which decides which machines the
 workers run on. You'll first see how heterogeneous envs run, then configure
 them, decide which env workers run which env, balance training across them,
-handle different observations, and read the results of each env.
+handle different observations and action statistics, and read the results of
+each env.
 
 How It Works
 ------------
@@ -31,7 +32,9 @@ before it trains on all trajectories together.
 Two things about the batch are worth knowing up front. Every env worker runs the
 same number of parallel envs, which RLinf arranges for you. Observations, on the
 other hand, may differ between env configurations: rollout runs the policy once
-per observation format, so each forward pass sees inputs of one shape.
+per observation format, so each forward pass sees inputs of one shape. Env
+configurations that turn the policy's output into actions with different
+statistics also get separate forward passes.
 
 Configure Heterogeneous Envs
 ----------------------------
@@ -210,10 +213,36 @@ leave ``image_size`` out when the image sizes already match. ``policy_obs`` does
 not resize robot states, so env configurations whose states differ in size keep
 separate formats.
 
-Actions go the other way without extra settings: each env worker converts its
-share of the policy's actions for its own env. The policy still has one action
-format and one action normalization (one ``unnorm_key`` for OpenVLA-OFT), so all
-env configurations must accept the same kind of action.
+Handle Different Action Statistics
+----------------------------------
+
+Actions go the other way: each env worker converts its share of the policy's
+actions for its own env, so the policy keeps one action format. OpenVLA-OFT
+also turns its normalized output into robot actions with the statistics of one
+training dataset, named by ``actor.model.unnorm_key``. When an env
+configuration's robot comes from a dataset with other statistics, set
+``unnorm_key`` on that env configuration, in both train and eval:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       envs:
+         maniskill:
+           unnorm_key: bridge_orig
+     eval:
+       envs:
+         maniskill:
+           unnorm_key: bridge_orig
+
+ManiSkill actions now use the Bridge statistics, and env configurations without
+``unnorm_key`` keep ``actor.model.unnorm_key``. Rollout runs env configurations
+with different keys in separate forward passes, as it does for different
+observation formats. Training is unchanged, because OpenVLA-OFT computes log
+probabilities on its normalized action tokens.
+
+Only OpenVLA-OFT reads a per-env ``unnorm_key``; RLinf stops at startup when
+another policy would ignore it.
 
 Read Per-Env Results
 --------------------
@@ -255,8 +284,8 @@ needs its assets, as described in :doc:`../examples/embodied/maniskill`.
 Limitations
 -----------
 
-- The policy has one action format and one action normalization, and it does not
-  know which env a sample came from.
+- The policy has one action format and does not know which env a sample came
+  from. Only OpenVLA-OFT can unnormalize actions per env configuration.
 - NFT training needs every env configuration to send one observation format;
   use ``policy_obs`` to make them match.
 - The training pipeline (``runner.use_training_pipeline``) and online LeRobot

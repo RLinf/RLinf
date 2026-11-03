@@ -170,6 +170,11 @@ EMBODIED_MODEL = set(
     }
 )
 
+# The models whose predict_action_batch reads each of EnvSpec.POLICY_FIELDS.
+POLICY_FIELD_MODELS: dict[str, frozenset] = {
+    "unnorm_key": frozenset({SupportedModel.OPENVLA_OFT}),
+}
+
 
 SUPPORTED_ROLLOUT_BACKENDS = ["sglang", "vllm"]
 SUPPORTED_TASK_TYPE = [
@@ -1095,6 +1100,22 @@ def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -
         )
 
 
+def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
+    """Check that the policy reads every ``EnvSpec.POLICY_FIELDS`` an env config sets."""
+    model_type = SupportedModel(model_cfg.model_type)
+    for mode in ("train", "eval"):
+        for path, env_cfg in EnvLayout.env_cfgs(
+            cfg.env.get(mode, None), f"env.{mode}"
+        ).items():
+            for field in EnvSpec.POLICY_FIELDS:
+                readers = POLICY_FIELD_MODELS[field]
+                assert env_cfg.get(field) is None or model_type in readers, (
+                    f"{path}.{field} is read by model_type "
+                    f"{sorted(model.value for model in readers)}, got "
+                    f"{model_type.value!r}."
+                )
+
+
 def validate_env_training_cfg(
     cfg: DictConfig, layout: EnvLayout, *, stage_num: int, actor_world_size: int
 ) -> None:
@@ -1177,6 +1198,7 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    validate_env_policy_fields(cfg, model_cfg)
     if model_type == SupportedModel.LINGBOTVLAV2:
         # V2 always computes in bf16; only the FSDP actor stores fp32 weights,
         # because the rollout has no FSDP cast to bring them back to bf16.

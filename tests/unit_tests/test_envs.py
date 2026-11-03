@@ -20,7 +20,11 @@ import torch
 from omegaconf import OmegaConf
 
 import rlinf.workers.env.env_worker as env_worker_module
-from rlinf.config import resolve_env_mode_cfg, validate_env_training_cfg
+from rlinf.config import (
+    resolve_env_mode_cfg,
+    validate_env_policy_fields,
+    validate_env_training_cfg,
+)
 from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.envs.layout import EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
@@ -368,6 +372,37 @@ def test_config_needs_each_env_split_evenly_across_actors_in_whole_groups():
     validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
     with pytest.raises(AssertionError, match=r"4 shards of whole groups of 4"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=4)
+
+
+@pytest.mark.parametrize(
+    ("model_type", "accepted"), [("openvla_oft", True), ("openpi", False)]
+)
+def test_config_gives_per_env_action_statistics_only_to_a_policy_that_reads_them(
+    model_type, accepted
+):
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "train": {
+                    "envs": {
+                        "libero": _env("libero", 8),
+                        "maniskill": _env("maniskill", 8, unnorm_key="bridge_orig"),
+                    }
+                }
+            }
+        }
+    )
+    model_cfg = OmegaConf.create({"model_type": model_type})
+
+    if accepted:
+        validate_env_policy_fields(cfg, model_cfg)
+        return
+    with pytest.raises(
+        AssertionError,
+        match=r"maniskill.unnorm_key is read by model_type \['openvla_oft'\], "
+        r"got 'openpi'",
+    ):
+        validate_env_policy_fields(cfg, model_cfg)
 
 
 def test_config_keeps_smooth_intervention_to_a_homogeneous_mode():

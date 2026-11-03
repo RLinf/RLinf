@@ -87,6 +87,7 @@ env:
         max_episode_steps: 16
         max_steps_per_rollout_epoch: 16
         group_size: ${algorithm.group_size}
+        unnorm_key: bridge_orig
   eval:
     rollout_epoch: 1
     policy_obs:
@@ -109,6 +110,7 @@ env:
         total_num_envs: 4
         max_episode_steps: 8
         max_steps_per_rollout_epoch: 8
+        unnorm_key: bridge_orig
         # The eval template fixes the simulator's own horizon at 80 steps.
         init_params:
           max_episode_steps: 8

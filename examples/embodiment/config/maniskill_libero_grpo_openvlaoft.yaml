@@ -1,6 +1,6 @@
 # One OpenVLA-OFT policy co-trains with GRPO on LIBERO-Goal and a ManiSkill
 # scene. The two env configurations keep their own horizons and rollout epochs:
-# LIBERO-Goal runs two 320-step epochs per step, ManiSkill four 80-step epochs.
+# LIBERO-Goal runs eight 320-step epochs per step, ManiSkill four 80-step epochs.
 defaults:
   - env/libero_goal@env.train.envs.libero_goal
   - env/maniskill_put_on_plate_in_scene_25_main@env.train.envs.maniskill
@@ -80,7 +80,7 @@ env:
     envs:
       libero_goal:
         total_num_envs: 32
-        rollout_epoch: 2
+        rollout_epoch: 8
         max_episode_steps: 320
         max_steps_per_rollout_epoch: 320
         group_size: ${algorithm.group_size}
@@ -94,6 +94,9 @@ env:
         max_episode_steps: 80
         max_steps_per_rollout_epoch: 80
         group_size: ${algorithm.group_size}
+        # ManiSkill actions use the Bridge action statistics, LIBERO-Goal the
+        # model's unnorm_key.
+        unnorm_key: bridge_orig
   eval:
     policy_obs:
       keys: [main_images, task_descriptions]
@@ -117,6 +120,7 @@ env:
         ignore_terminations: True
         max_episode_steps: 80
         max_steps_per_rollout_epoch: 80
+        unnorm_key: bridge_orig
         video_cfg:
           save_video: False
           video_base_dir: ${runner.logger.log_path}/video/eval
@@ -143,10 +147,10 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  # Each actor gets 640 LIBERO-Goal and 320 ManiSkill samples per step, so a
-  # step makes three optimizer steps of 320 samples per actor.
+  # Each actor gets 2560 LIBERO-Goal and 320 ManiSkill samples per step, so a
+  # step makes three optimizer steps of 960 samples per actor.
   micro_batch_size: 32
-  global_batch_size: 1280
+  global_batch_size: 3840
   seed: 1234
   enable_offload: True
 

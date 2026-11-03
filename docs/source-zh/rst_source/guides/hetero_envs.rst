@@ -3,7 +3,7 @@
 
 本页介绍如何在一次运行中，让同一个 policy 在多种不同的环境配置上训练或评估，例如 ManiSkill 与 LIBERO、两个 LIBERO 任务集，或仿真环境与真机。RLinf 把这种用法称为异构环境。
 
-它与 ``total_num_envs`` 不同， ``total_num_envs`` 是把同一份环境配置并行运行多份；它也不同于 :doc:`hetero` ，后者决定各个 worker 运行在哪些机器上。下面先说明异构环境如何运行，再依次介绍如何配置、如何决定哪些 env worker 运行哪个环境、如何在各环境之间平衡训练、如何处理不同的观测，以及如何查看每个环境的结果。
+它与 ``total_num_envs`` 不同， ``total_num_envs`` 是把同一份环境配置并行运行多份；它也不同于 :doc:`hetero` ，后者决定各个 worker 运行在哪些机器上。下面先说明异构环境如何运行，再依次介绍如何配置、如何决定哪些 env worker 运行哪个环境、如何在各环境之间平衡训练、如何处理不同的观测和动作统计量，以及如何查看每个环境的结果。
 
 运行方式
 --------
@@ -12,7 +12,7 @@
 
 每份环境配置还保留自己的循环设置：一个 rollout epoch 走多少步、一个训练 step 跑几个 epoch、episode 何时结束。rollout 把所有 env worker 的观测收集成一个 batch，运行一次 policy，再把每个 worker 对应的动作发回去。每个 worker 把动作转换成自己的仿真器或机器人能接受的格式，然后推进环境。某份环境配置提前跑完自己的 epoch 后，它的 worker 就退出 batch；所有环境配置都跑完时，这个训练 step 结束。actor 先按每份环境配置自己的设置计算它的 advantage，再用全部轨迹一起训练。
 
-关于这个 batch，有两点需要先了解。每个 env worker 运行的并行环境数相同，这一点由 RLinf 自动安排。观测则可以因环境配置而不同：rollout 会按观测格式分别运行 policy，因此每次前向计算看到的输入都是同一种形状。
+关于这个 batch，有两点需要先了解。每个 env worker 运行的并行环境数相同，这一点由 RLinf 自动安排。观测则可以因环境配置而不同：rollout 会按观测格式分别运行 policy，因此每次前向计算看到的输入都是同一种形状。如果几份环境配置用不同的统计量把 policy 的输出还原成动作，它们也会分开做前向计算。
 
 配置异构环境
 ------------
@@ -124,7 +124,26 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 
 被改动的只是发给 policy 的那一份观测，奖励模型、视频录制和数据采集看到的仍是环境的原始观测。缩放在每一步都会消耗时间，所以图像尺寸本来一致时，不要设置 ``image_size`` 。 ``policy_obs`` 不会缩放机器人状态，状态维度不同的环境配置会保持各自的格式。
 
-动作方向不需要额外设置：每个 env worker 会把属于自己的那部分动作转换成自己环境的格式。不过 policy 只有一种动作格式和一套动作归一化（对 OpenVLA-OFT 来说是一个 ``unnorm_key`` ），所以所有环境配置都必须接受同一类动作。
+处理不同的动作统计量
+--------------------
+
+动作的方向正好相反：每个 env worker 把属于自己的那部分动作转换成自己环境的格式，所以 policy 只需要一种动作格式。OpenVLA-OFT 还要用某个训练数据集的统计量把归一化的输出还原成机器人动作，这个数据集由 ``actor.model.unnorm_key`` 指定。如果某份环境配置的机器人来自统计量不同的数据集，就在这份环境配置上设置 ``unnorm_key`` ，训练和评估都要设置：
+
+.. code-block:: yaml
+
+   env:
+     train:
+       envs:
+         maniskill:
+           unnorm_key: bridge_orig
+     eval:
+       envs:
+         maniskill:
+           unnorm_key: bridge_orig
+
+这样 ManiSkill 的动作会使用 Bridge 数据集的统计量，没有设置 ``unnorm_key`` 的环境配置仍使用 ``actor.model.unnorm_key`` 。与观测格式不同时一样，rollout 会把 ``unnorm_key`` 不同的环境配置放在不同的前向计算中。训练不受影响，因为 OpenVLA-OFT 的 log probability 是在归一化后的动作 token 上计算的。
+
+只有 OpenVLA-OFT 会读取每份环境配置的 ``unnorm_key`` ；如果换成会忽略它的 policy，RLinf 会在启动阶段停止。
 
 查看各环境的结果
 ----------------
@@ -156,7 +175,7 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 限制
 ----
 
-- policy 只有一种动作格式和一套动作归一化，也无法得知某个样本来自哪个环境。
+- policy 只有一种动作格式，也无法得知某个样本来自哪个环境。只有 OpenVLA-OFT 能按环境配置分别还原动作。
 - NFT 训练要求各份环境配置发送同一种观测格式，请用 ``policy_obs`` 让它们一致。
 - training pipeline（ ``runner.use_training_pipeline`` ）和 DAgger 的在线 LeRobot 采集需要单份环境配置。
 - PPO 和 SAC 在各环境配置之间共享一个 critic；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``reward_scale`` 。SAC 为每份环境配置分别调节 entropy temperature，但与 demo buffer 混合采样的样本使用各 temperature 的平均值。

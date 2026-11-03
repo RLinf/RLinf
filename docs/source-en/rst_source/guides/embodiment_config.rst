@@ -213,6 +213,9 @@ env
    * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
      - Observation keys and image size sent to the policy, so envs with different
        cameras share one batch. See :doc:`hetero_envs`.
+   * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
+     - Action statistics OpenVLA-OFT unnormalizes this env configuration's
+       actions with, instead of ``actor.model.unnorm_key``. See :doc:`hetero_envs`.
 
 rollout
 ~~~~~~~~~~~~~~~

@@ -16,7 +16,7 @@ import asyncio
 import copy
 import gc
 import time
-from typing import Any, Callable, Collection, Literal, Optional
+from typing import Any, Callable, Collection, Iterable, Literal, Optional
 
 import numpy as np
 import torch
@@ -527,8 +527,19 @@ class MultiStepRolloutWorker(Worker):
 
     @Worker.timer("predict")
     def predict(
-        self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
+        self,
+        env_obs: dict[str, Any],
+        mode: Literal["train", "eval"] = "train",
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Act on one batch of observations.
+
+        Args:
+            env_obs: Observations of envs that share their policy fields.
+            mode: Whether the batch comes from training or evaluation envs.
+            policy_kwargs: The envs' :attr:`EnvSpec.POLICY_FIELDS`, passed to
+                the policy's ``predict_action_batch``.
+        """
         kwargs = (
             self._train_sampling_params
             if mode == "train"
@@ -558,6 +569,8 @@ class MultiStepRolloutWorker(Worker):
                 kwargs["mode"] = mode
             else:
                 kwargs = {"mode": mode}
+        if policy_kwargs:
+            kwargs = {**kwargs, **policy_kwargs}
 
         if model_type in [
             SupportedModel.CNN_POLICY,
@@ -624,6 +637,7 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
         rlt_switch_flags: torch.Tensor | None = None,
         intervene_requested: torch.Tensor | None = None,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.rlt_feature_model is not None:
             return predict_rlt_actions(
@@ -638,7 +652,7 @@ class MultiStepRolloutWorker(Worker):
                 intervene_requested=intervene_requested,
                 expert_model=self.expert_model,
             )
-        return self.predict(env_obs, mode=mode)
+        return self.predict(env_obs, mode=mode, policy_kwargs=policy_kwargs)
 
     def _build_policy_output(
         self, actions: torch.Tensor, result: dict[str, Any]
@@ -896,9 +910,9 @@ class MultiStepRolloutWorker(Worker):
     ) -> None:
         """Answer one round of policy requests and publish their trajectory parts.
 
-        Requests whose observations share a format share one forward pass, so
-        the model never sees two formats in one batch. The actions go back in
-        request order.
+        Requests share one forward pass when their observations share a format
+        and their envs share policy fields, so the model never sees two of
+        either in one batch. The actions go back in request order.
 
         Args:
             requests: Decompressed requests that each need actions, in route order.
@@ -910,11 +924,17 @@ class MultiStepRolloutWorker(Worker):
         """
         groups: dict[Any, list[int]] = {}
         for index, request in enumerate(requests):
-            groups.setdefault(batch_format(request.obs), []).append(index)
+            policy_fields = self._env_policy_fields(
+                self.train_layout,
+                {source.key.env_rank for source in request.sources},
+            )
+            groups.setdefault((batch_format(request.obs), policy_fields), []).append(
+                index
+            )
 
         request_actions: list[torch.Tensor | None] = [None] * len(requests)
         published = []
-        for indices in groups.values():
+        for (_, policy_fields), indices in groups.items():
             policy_input = PolicyInput.merge([requests[index] for index in indices])
             if not policy_input.requires_inference:
                 actions = policy_input.external_actions
@@ -925,6 +945,7 @@ class MultiStepRolloutWorker(Worker):
                     policy_input.obs,
                     rlt_switch_flags=policy_input.rlt_switch_flags,
                     intervene_requested=policy_input.intervene_flags,
+                    policy_kwargs=dict(policy_fields),
                 )
                 forward_inputs = result.get("forward_inputs")
                 policy_output = self._build_policy_output(actions, result)
@@ -1025,6 +1046,43 @@ class MultiStepRolloutWorker(Worker):
             for stage_id in range(self.num_pipeline_stages)
         }
 
+    @staticmethod
+    def _env_policy_fields(
+        layout: EnvLayout, env_ranks: Iterable[int]
+    ) -> tuple[tuple[str, Any], ...]:
+        """Return the policy fields shared by the envs of ``env_ranks``.
+
+        Args:
+            layout: Env layout of the mode being served.
+            env_ranks: Env worker ranks whose observations form one batch.
+
+        Returns:
+            The envs' :attr:`EnvSpec.policy_kwargs` as sorted items, which a
+            batch can be grouped by.
+
+        Raises:
+            ValueError: If the envs set different policy fields.
+        """
+        fields = {
+            tuple(sorted(layout.spec_of_rank(rank).policy_kwargs.items()))
+            for rank in env_ranks
+        }
+        if len(fields) > 1:
+            raise ValueError(
+                "Expected the envs of one batch to set the same policy fields, "
+                f"got {sorted(fields)} from env ranks {sorted(env_ranks)}."
+            )
+        return next(iter(fields), ())
+
+    def _group_env_ranks(
+        self, layout: EnvLayout, env_ranks: Iterable[int]
+    ) -> dict[tuple[tuple[str, Any], ...], list[int]]:
+        """Group ``env_ranks`` by their envs' policy fields, keeping their order."""
+        groups: dict[tuple[tuple[str, Any], ...], list[int]] = {}
+        for rank in env_ranks:
+            groups.setdefault(self._env_policy_fields(layout, [rank]), []).append(rank)
+        return groups
+
     @Worker.timer("serve_step")
     async def _serve_step(
         self,
@@ -1119,31 +1177,38 @@ class MultiStepRolloutWorker(Worker):
         if self.env_decoupled_mode:
             while True:
                 (
-                    env_output,
+                    shards,
                     split_sizes,
                 ) = await self.recv_from_and_record_batch_routes_with_timeout(
                     group_name=self.cfg.env.group_name,
                     channel=input_channel,
                     tag="rollout_results",
                     batch_size=self.eval_batch_size,
-                    merge_fn=self._merge_obs_batches,
+                    merge_fn=list,
                     infer_batch_size_fn=self._infer_env_batch_size,
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
-                actions, _ = self._predict_rollout_actions(
-                    env_output["obs"],
-                    mode="eval",
-                    final_obs=env_output.get("final_obs", None),
-                    rlt_switch_flags=env_output.get("rlt_switch_flags", None),
-                    intervene_requested=env_output.get("intervene_flags", None),
-                )
-                if isinstance(actions, torch.Tensor):
-                    actions = actions.detach().cpu().contiguous()
+                # The recorded routes are this call's shards, in order.
+                groups: dict[tuple[tuple[str, Any], ...], list[int]] = {}
+                for index, route in enumerate(self.batch_router["rollout_results"]):
+                    sender, _, _, _ = split_channel_message(route)
+                    groups.setdefault(
+                        self._env_policy_fields(self.eval_layout, [sender]), []
+                    ).append(index)
+                shard_actions: list[torch.Tensor | None] = [None] * len(shards)
+                for policy_fields, indices in groups.items():
+                    actions = self._predict_eval_actions(
+                        self._merge_obs_batches([shards[index] for index in indices]),
+                        policy_fields,
+                    )
+                    sizes = [split_sizes[index] for index in indices]
+                    for index, shard in zip(indices, torch.split(actions, sizes)):
+                        shard_actions[index] = shard
                 self.send_to_recorded_batch_routes(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
-                    data=actions,
+                    data=torch.cat(shard_actions, dim=0),
                     tag="rollout_results",
                     split_sizes=split_sizes,
                 )
@@ -1159,43 +1224,52 @@ class MultiStepRolloutWorker(Worker):
             while any(any(left.values()) for left in requests_left.values()):
                 for stage_id, left in requests_left.items():
                     peers = [rank for rank, count in left.items() if count > 0]
-                    if not peers:
-                        continue
-                    env_output = await self.recv_from(
-                        group_name=self.cfg.env.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id,
-                        async_op=True,
-                        batch_size=self.eval_batch_size,
-                        merge_fn=self._merge_obs_batches,
-                        infer_batch_size_fn=self._infer_env_batch_size,
-                        peer_ranks=peers,
-                    ).async_wait()
-                    actions, _ = self._predict_rollout_actions(
-                        env_output["obs"],
-                        mode="eval",
-                        final_obs=env_output.get("final_obs", None),
-                        rlt_switch_flags=env_output.get("rlt_switch_flags", None),
-                        intervene_requested=env_output.get("intervene_flags", None),
-                    )
-                    if isinstance(actions, torch.Tensor):
-                        actions = actions.detach().cpu().contiguous()
-                    self.send_to(
-                        group_name=self.cfg.env.group_name,
-                        channel=output_channel,
-                        data=actions,
-                        tag="eval_rollout_results",
-                        route_key=stage_id,
-                        async_op=True,
-                        batch_size=self.eval_batch_size,
-                        peer_ranks=peers,
-                    )
+                    groups = self._group_env_ranks(self.eval_layout, peers)
+                    for policy_fields, group in groups.items():
+                        env_output = await self.recv_from(
+                            group_name=self.cfg.env.group_name,
+                            channel=input_channel,
+                            tag="eval_rollout_results",
+                            route_key=stage_id,
+                            async_op=True,
+                            batch_size=self.eval_batch_size,
+                            merge_fn=self._merge_obs_batches,
+                            infer_batch_size_fn=self._infer_env_batch_size,
+                            peer_ranks=group,
+                        ).async_wait()
+                        self.send_to(
+                            group_name=self.cfg.env.group_name,
+                            channel=output_channel,
+                            data=self._predict_eval_actions(env_output, policy_fields),
+                            tag="eval_rollout_results",
+                            route_key=stage_id,
+                            async_op=True,
+                            batch_size=self.eval_batch_size,
+                            peer_ranks=group,
+                        )
                     for rank in peers:
                         left[rank] -= 1
 
             if self.enable_offload:
                 self.offload_model()
+
+    def _predict_eval_actions(
+        self,
+        env_output: dict[str, Any],
+        policy_fields: tuple[tuple[str, Any], ...],
+    ) -> torch.Tensor:
+        """Return the CPU actions for one merged batch of eval observations."""
+        actions, _ = self._predict_rollout_actions(
+            env_output["obs"],
+            mode="eval",
+            final_obs=env_output.get("final_obs", None),
+            rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+            intervene_requested=env_output.get("intervene_flags", None),
+            policy_kwargs=dict(policy_fields),
+        )
+        if isinstance(actions, torch.Tensor):
+            actions = actions.detach().cpu().contiguous()
+        return actions
 
     def offload_model(self):
         if self.enable_cuda_graph:

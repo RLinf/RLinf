@@ -2999,7 +2999,7 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 def _serve_one_source(rollout, *policy_inputs):
     """Wire ``rollout`` to serve one fixed-route source that sends ``policy_inputs``."""
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="env"))
-    rollout.train_layout = None
+    rollout.train_layout = EnvLayout(OmegaConf.create({}), 1, "env.train")
     rollout.train_batch_size = 1
     rollout._source_budgets = Mock(return_value={0: {0: 1}})
     rollout.recv_from = Mock(
@@ -3108,6 +3108,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_runs_one_forward_pass_per_observation_format():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.train_layout = EnvLayout(OmegaConf.create({}), 3, "env.train")
     rollout.collect_transitions = False
     rollout.enable_rlt = False
     rollout._send_actions = Mock()
@@ -3139,6 +3140,146 @@ def test_rollout_runs_one_forward_pass_per_observation_format():
     assert sorted(batch_sizes) == [2, 4]
     actions = rollout._send_actions.call_args.args[1]
     assert actions.squeeze(-1).tolist() == [2.0, 3.0, 3.0, 2.0, 2.0, 2.0]
+
+
+def _policy_field_layout(path: str) -> EnvLayout:
+    """Env rank 0 hosts LIBERO with the model's action statistics, rank 1 ManiSkill with its own."""
+    return EnvLayout(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "libero": {"env_type": "libero", "total_num_envs": 1},
+                    "maniskill": {
+                        "env_type": "maniskill",
+                        "total_num_envs": 1,
+                        "unnorm_key": "bridge_orig",
+                    },
+                }
+            }
+        ),
+        2,
+        path,
+    )
+
+
+def _record_predictions(calls: list):
+    """Act with each sample's first state and record each call's batch and policy fields."""
+
+    def predict(obs, policy_kwargs=None, **kwargs):
+        calls.append((obs["states"].shape[0], policy_kwargs))
+        return obs["states"][:, :1].clone(), {}
+
+    return Mock(side_effect=predict)
+
+
+def test_rollout_keeps_envs_with_different_policy_fields_in_separate_forward_passes():
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.train_layout = _policy_field_layout("env.train")
+    rollout.collect_transitions = False
+    rollout.enable_rlt = False
+    rollout._send_actions = Mock()
+    rollout._publish_env_parts = Mock()
+    rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    requests = [
+        PolicyInput(
+            obs={"states": torch.full((batch, 2), float(rank))},
+            sources=[TrajectorySource(TrajectoryKey(0, 0, rank, 0, 0), batch)],
+            env_parts=[None],
+            request_sizes=[batch],
+        )
+        for rank, batch in [(0, 1), (1, 2), (0, 3)]
+    ]
+
+    rollout._serve_policy_inputs(
+        requests, Mock(), Mock(), stage_id=0, peer_ranks=[0, 1]
+    )
+
+    # Same observation format, but only the two LIBERO requests share a pass.
+    assert sorted(calls, key=lambda call: call[0]) == [
+        (2, {"unnorm_key": "bridge_orig"}),
+        (4, {}),
+    ]
+    actions = rollout._send_actions.call_args.args[1]
+    assert actions.squeeze(-1).tolist() == [0.0, 1.0, 1.0, 0.0, 0.0, 0.0]
+
+
+class _StopServing(Exception):
+    pass
+
+
+def _eval_rollout(decoupled: bool) -> MultiStepRolloutWorker:
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.eval_layout = _policy_field_layout("env.eval")
+    rollout.env_decoupled_mode = decoupled
+    rollout.enable_offload = False
+    rollout.enable_rlt = False
+    rollout.rlt_feature_model = None
+    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="env"))
+    rollout.eval_batch_size = 3
+    rollout.rollout_queue_size = 0
+    return rollout
+
+
+def _unwrapped_evaluate():
+    evaluate = MultiStepRolloutWorker.evaluate
+    while hasattr(evaluate, "__wrapped__"):
+        evaluate = evaluate.__wrapped__
+    return evaluate
+
+
+def test_decoupled_eval_runs_one_forward_pass_per_env_policy_fields():
+    rollout = _eval_rollout(decoupled=True)
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    shards = [
+        {"obs": {"states": torch.full((size, 2), float(rank))}}
+        for rank, size in [(1, 1), (0, 2)]
+    ]
+    rollout.batch_router = {
+        "rollout_results": ["1_0_eval_rollout_results", "0_0_eval_rollout_results"]
+    }
+    rollout.recv_from_and_record_batch_routes_with_timeout = AsyncMock(
+        side_effect=[(shards, [1, 2]), _StopServing()]
+    )
+    rollout.send_to_recorded_batch_routes = Mock()
+
+    with pytest.raises(_StopServing):
+        asyncio.run(_unwrapped_evaluate()(rollout, Mock(), Mock()))
+
+    assert calls == [(1, {"unnorm_key": "bridge_orig"}), (2, {})]
+    sent = rollout.send_to_recorded_batch_routes.call_args.kwargs
+    # Actions go back in shard order, matching the recorded routes.
+    assert sent["data"].squeeze(-1).tolist() == [1.0, 0.0, 0.0]
+    assert sent["split_sizes"] == [1, 2]
+
+
+def test_eval_receives_envs_with_different_policy_fields_separately():
+    rollout = _eval_rollout(decoupled=False)
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    rollout._source_budgets = Mock(return_value={0: {0: 1, 1: 1}})
+    rollout.recv_from = Mock(
+        side_effect=lambda **kwargs: SimpleNamespace(
+            async_wait=AsyncMock(
+                return_value={
+                    "obs": {"states": torch.zeros(len(kwargs["peer_ranks"]), 2)}
+                }
+            )
+        )
+    )
+    rollout.send_to = Mock()
+
+    asyncio.run(_unwrapped_evaluate()(rollout, Mock(), Mock()))
+
+    received = [call.kwargs["peer_ranks"] for call in rollout.recv_from.call_args_list]
+    sent = [call.kwargs["peer_ranks"] for call in rollout.send_to.call_args_list]
+    assert received == sent == [[0], [1]]
+    assert [policy_kwargs for _, policy_kwargs in calls] == [
+        {},
+        {"unnorm_key": "bridge_orig"},
+    ]
 
 
 def test_rollout_routes_external_input_without_model_inference():
