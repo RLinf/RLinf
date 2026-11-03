@@ -77,6 +77,18 @@ class WorldModelEnv:
 
         self.auto_reset = getattr(cfg, "auto_reset", True)
         self.ignore_terminations = getattr(cfg, "ignore_terminations", False)
+        # True when max_episode_steps is the task's own horizon, so nothing is earned
+        # after it: the limit is then a termination and is not bootstrapped. Keep False
+        # when the limit cuts a longer task short (for example short rollouts from KIR
+        # keyframes), where bootstrapping the truncated value is correct.
+        self.terminate_at_max_episode_steps = cfg.get(
+            "terminate_at_max_episode_steps", False
+        )
+        if self.terminate_at_max_episode_steps and not self.auto_reset:
+            raise ValueError(
+                "terminate_at_max_episode_steps requires auto_reset: True; without "
+                "auto_reset nothing is bootstrapped at the limit."
+            )
         self.use_rel_reward = getattr(cfg, "use_rel_reward", False)
 
         self._is_start = True
@@ -624,25 +636,34 @@ class WorldModelEnv:
         raw_chunk_terminations = torch.zeros(
             self.num_envs, self.chunk, dtype=torch.bool, device=self.device
         )
-        raw_chunk_terminations[:, -1] = estimated_success
+        if not self.ignore_terminations:
+            raw_chunk_terminations[:, -1] = estimated_success
 
         raw_chunk_truncations = torch.zeros(
             self.num_envs, self.chunk, dtype=torch.bool, device=self.device
         )
-        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        reached_limit = self.elapsed_steps >= self.cfg.max_episode_steps
 
-        if truncations.any():
-            raw_chunk_truncations[:, -1] = truncations
+        if reached_limit.any():
+            if self.terminate_at_max_episode_steps:
+                raw_chunk_terminations[:, -1] |= reached_limit
+            else:
+                raw_chunk_truncations[:, -1] = (
+                    reached_limit & ~raw_chunk_terminations[:, -1]
+                )
 
         past_terminations = raw_chunk_terminations.any(dim=1)
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         # Before auto reset, as in LiberoEnv: reset() zeroes the per-slot accumulators,
-        # so elapsed_steps read afterwards is the restarted slot's zero.
+        # so elapsed_steps read afterwards is the restarted slot's zero. Success comes
+        # from the reward alone; a termination at the episode limit is not a success.
         infos = self._record_metrics(
-            chunk_rewards_tensors.sum(dim=1), past_terminations, {}
+            chunk_rewards_tensors.sum(dim=1), estimated_success, {}
         )
+        if self.ignore_terminations:
+            infos["episode"]["success_at_end"] = estimated_success.clone()
 
         if past_dones.any() and self.auto_reset:
             episode_info = infos["episode"]

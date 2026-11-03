@@ -2616,6 +2616,100 @@ def test_decoupled_policy_route_round_trip():
     )
 
 
+class _HangingGet:
+    def __init__(self, future: asyncio.Future):
+        self._future = future
+
+    async def async_wait(self):
+        return await self._future
+
+
+class _PartialGatherChannel:
+    """First get is ready. Later gets stay pending until the test releases them."""
+
+    def __init__(self):
+        self.gets = 0
+        self.futures: list[asyncio.Future] = []
+
+    def get(self, key, async_op=True):
+        del key, async_op
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self.futures.append(future)
+        self.gets += 1
+        if self.gets == 1:
+            future.set_result({"batch_index": "0_0_train_policy", "batch": {"n": 1}})
+        return _HangingGet(future)
+
+
+def test_decoupled_gather_returns_a_partial_batch_at_the_deadline():
+    """A shard still in flight at the deadline is the next gather's first shard."""
+    route_key = ("route",)
+    plan = SimpleNamespace(entries=[SimpleNamespace(key=route_key)] * 3)
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_router = {"policy": []}
+    rollout._world_size = 2
+    rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
+    rollout._manager_proxy = None
+    channel = _PartialGatherChannel()
+
+    async def _gather():
+        return await asyncio.wait_for(
+            rollout.recv_from_and_record_batch_routes_with_timeout(
+                "EnvGroup",
+                channel,
+                tag="policy",
+                batch_size=8,
+                merge_fn=lambda items: items,
+                infer_batch_size_fn=lambda item: 1,
+                timeout_time=0.05,
+                recv_queue_size=3,
+            ),
+            timeout=1.0,
+        )
+
+    async def run():
+        started = time.monotonic()
+        merged, sizes = await _gather()
+        elapsed = time.monotonic() - started
+
+        assert 0.03 <= elapsed < 1.0
+        assert merged == [{"n": 1}]
+        assert sizes == [1]
+        assert channel.gets == 2
+        assert rollout.batch_router["policy"] == ["0_0_train_policy"]
+
+        async def _release_late_shard():
+            await asyncio.sleep(0.01)
+            channel.futures[1].set_result(
+                {"batch_index": "1_0_train_policy", "batch": {"n": 2}}
+            )
+
+        release = asyncio.create_task(_release_late_shard())
+        merged, sizes = await _gather()
+        await release
+
+        assert merged == [{"n": 2}]
+        assert sizes == [1]
+        assert channel.gets == 3
+        assert rollout.batch_router["policy"] == [
+            "0_0_train_policy",
+            "1_0_train_policy",
+        ]
+        for future in channel.futures:
+            if not future.done():
+                future.set_result(
+                    {"batch_index": "2_0_train_policy", "batch": {"n": 3}}
+                )
+        await asyncio.sleep(0)
+
+    with (
+        patch("rlinf.scheduler.decoupled_build_recv_plan", return_value=plan),
+        patch("rlinf.scheduler.get_group_world_size", return_value=2),
+    ):
+        asyncio.run(run())
+
+
 def test_env_uses_mode_qualified_decoupled_response_tag():
     env = object.__new__(EnvWorker)
     env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
@@ -2772,6 +2866,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
@@ -3084,6 +3179,7 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3138,6 +3234,7 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(
