@@ -20,7 +20,6 @@ import numpy as np
 import torch
 
 from rlinf.models.embodiment.openpi.env_io import EnvIO
-from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
 from rlinf.models.embodiment.openpi.pi0 import Pi0
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
@@ -42,6 +41,7 @@ class Pi0Eval(EnvIO, Pi0):
         rtc_enabled: bool = False,
         rtc_guidance_mode: str = "approx",
         rtc_guidance_clip: float = 5.0,
+        eval_sft_image_crop: bool = False,
     ):
         super().__init__(
             config,
@@ -51,6 +51,7 @@ class Pi0Eval(EnvIO, Pi0):
             config_name=config_name,
             state_indices=state_indices,
             rlt_cfg=rlt_cfg,
+            eval_sft_image_crop=eval_sft_image_crop,
         )
         self.rtc_enabled = rtc_enabled
         self.rtc_guidance_mode = rtc_guidance_mode
@@ -124,7 +125,7 @@ class Pi0Eval(EnvIO, Pi0):
         self._require_rlt()
         observation = self.env_obs_to_observation(env_obs)
 
-        prepared_observation = preprocess_observation(observation, train=False)
+        prepared_observation = self._preprocess_eval_observation(observation)
         prefix_output, prefix_mask, kv_cache = self.build_prefix_cache(
             prepared_observation
         )

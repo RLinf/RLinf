@@ -57,6 +57,7 @@ from rlinf.utils.utils import (
     clear_memory,
     get_loss_agg_func,
     masked_mean,
+    seed_everything,
 )
 
 
@@ -114,11 +115,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Initialize the actor worker. build the model and use corresponding training backend,
         if needed, offload model parameters and optimizer states to CPU.
         """
+        openpi_seed = None
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+            openpi_seed = int(self.cfg.actor.seed)
+            # All actor ranks must initialize the new critic identically.
+            seed_everything(openpi_seed)
         self.setup_model_and_optimizer()
 
         if self.enable_offload:
             self.offload_param_and_grad()
             self.offload_optimizer()
+
+        if openpi_seed is not None:
+            # Checkpoint loading follows initialization and restores saved RNGs.
+            seed_everything(openpi_seed + self._rank)
 
     def model_provider_func(self) -> nn.Module:
         model = get_model(self.cfg.actor.model)

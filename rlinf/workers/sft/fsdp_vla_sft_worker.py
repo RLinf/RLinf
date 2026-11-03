@@ -28,11 +28,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 
-    def init_worker(self):
-        # SFT forwards draw augmentation, noise and time from the global RNGs;
-        # seed them per rank so runs follow actor.seed.
-        seed_everything(self.cfg.actor.seed + self._rank)
+    def init_worker(self) -> None:
+        """Seed OpenPI initialization together and training streams per rank."""
+        seed = int(self.cfg.actor.seed)
+        if SupportedModel(self.cfg.actor.model.model_type) != SupportedModel.OPENPI:
+            seed_everything(seed + self._rank)
+            super().init_worker()
+            return
+        seed_everything(seed)
         super().init_worker()
+        seed_everything(seed + self._rank)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
