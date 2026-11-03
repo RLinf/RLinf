@@ -3284,7 +3284,6 @@ def test_eval_receives_envs_with_different_policy_fields_separately():
     ]
 
 
-
 def test_eval_skips_the_rest_of_an_epoch_an_env_worker_ended_early():
     rollout = _eval_rollout(decoupled=False)
     rollout.eval_layout = EnvLayout(
@@ -3317,6 +3316,7 @@ def test_eval_skips_the_rest_of_an_epoch_an_env_worker_ended_early():
     assert rollout.recv_from.call_count == len(done_flags)
     # The early-stop marker gets no actions.
     assert rollout.send_to.call_count == len(calls) == 6
+
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
