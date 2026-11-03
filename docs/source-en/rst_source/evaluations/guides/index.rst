@@ -31,6 +31,9 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    * - SIMPLE
      - Whole-body humanoid evaluation with Psi0
      - :doc:`simple`
+   * - LADDER
+     - Long-horizon manipulation benchmark (SimplerEnv-Long, RobotArena-∞-Long, RoboLab-Long)
+     - :doc:`ladder`
 
 .. note::
 
@@ -47,3 +50,4 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    polaris
    robotwin
    simple
+   ladder

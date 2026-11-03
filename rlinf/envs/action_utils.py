@@ -347,21 +347,41 @@ def prepare_actions_for_ladder(
     num_action_chunks,
     action_dim,
     action_scale: float = 1.0,
-    policy: str = "widowx_bridge",
+    policy: str | None = "widowx_bridge",
     model_type=None,
+    env_cfg=None,
 ) -> torch.Tensor:
-    if action_dim == 7 and policy in ("widowx_bridge", "panda_wristcam"):
-        return prepare_actions_for_maniskill(
+    from scipy.spatial.transform import Rotation as R
+
+    suite = None
+    if env_cfg is not None:
+        init_params = getattr(env_cfg, "init_params", None)
+        if init_params is not None:
+            suite = getattr(init_params, "suite", None) or (
+                init_params.get("suite") if hasattr(init_params, "get") else None
+            )
+
+    if suite == "robolab" or action_dim == 8:
+        return prepare_actions_for_polaris(
             raw_chunk_actions=raw_chunk_actions,
-            num_action_chunks=num_action_chunks,
-            action_dim=action_dim,
-            action_scale=action_scale,
-            policy=policy,
+            model_type=model_type,
         )
-    return prepare_actions_for_polaris(
-        raw_chunk_actions=raw_chunk_actions,
-        model_type=model_type,
+
+    reshaped = np.asarray(raw_chunk_actions, dtype=np.float32).reshape(-1, action_dim)
+    world_vector = reshaped[:, :3] * float(action_scale)
+    euler_xyz = np.asarray(reshaped[:, 3:6], dtype=np.float64)
+    rot_axangle = R.from_euler("xyz", euler_xyz).as_rotvec().astype(np.float32) * float(
+        action_scale
     )
+    open_gripper = reshaped[:, 6:7]
+    # Map [0, 1] gripper probability (StarVLA / OpenVLA) to {-1.0, +1.0}; preserve already-signed values.
+    if np.all((open_gripper >= 0.0) & (open_gripper <= 1.0)):
+        gripper = np.where(open_gripper > 0.5, 1.0, -1.0).astype(np.float32)
+    else:
+        gripper = np.where(open_gripper > 0.0, 1.0, -1.0).astype(np.float32)
+
+    actions = np.concatenate([world_vector, rot_axangle, gripper], axis=-1)
+    return torch.from_numpy(actions).reshape(-1, num_action_chunks, action_dim)
 
 
 def prepare_actions(
@@ -481,6 +501,7 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
             model_type=model_type,
+            env_cfg=env_cfg,
         )
     else:
         chunk_actions = raw_chunk_actions

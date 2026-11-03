@@ -26,6 +26,9 @@ setup_sim_env() {
     # POLARIS dataset
     export POLARIS_DATA_PATH="${POLARIS_DATA_PATH:-/path/to/dataset/PolaRiS-Hub}"
 
+    # LADDER root
+    export LADDER_ROOT="${LADDER_ROOT:-/path/to/ladder}"
+
     export ROBOTWIN_PATH="${ROBOTWIN_PATH:-/path/to/RoboTwin}"
     export PYTHONPATH="${REPO_PATH}:${ROBOTWIN_PATH}:${PYTHONPATH}"
 
@@ -50,6 +53,7 @@ infer_benchmark() {
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
         simple_*|simple-* ) echo "simple" ;;
+        ladder_*|ladder-* ) echo "ladder" ;;
         * )
             echo "unknown"
             ;;
