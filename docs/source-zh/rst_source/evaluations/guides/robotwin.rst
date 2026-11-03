@@ -112,7 +112,13 @@ Dream SDK 使用 Python 3.11–3.13。按上方「环境准备」克隆 RoboTwin
 
    bash requirements/install.sh embodied --env robotwin
    source .venv/bin/activate
-   pip install -e '.[dream]'
+   uv pip install "numpy<2" pandas opencv-python scipy zarr
+   uv venv --python "$(command -v python)" .venv-dream
+   export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
+   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e '.[dream]' \
+     "ray==$(python -c 'import ray; print(ray.__version__)')"
+
+RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DREAM_ROLLOUT_PYTHON`` 启动 rollout worker，RoboTwin 仍在 ``.venv`` 中运行。
 
 在 rollout worker 的环境中设置 ``DREAM_API_KEY``。``ROBOTWIN_PATH`` 应指向包含 ``assets/`` 目录的 RoboTwin 仓库根目录。通过 ``DREAM_IK_ARM_FILE`` 指定所选机器人的 Dream SDK 机械臂描述文件，确认其 URDF、关节顺序、base 坐标系和 TCP 与仿真机器人一致。
 

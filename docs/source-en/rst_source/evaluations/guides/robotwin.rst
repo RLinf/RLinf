@@ -111,7 +111,13 @@ Use Python 3.11–3.13 for the Dream SDK. Prepare the RoboTwin repository and as
 
    bash requirements/install.sh embodied --env robotwin
    source .venv/bin/activate
-   pip install -e '.[dream]'
+   uv pip install "numpy<2" pandas opencv-python scipy zarr
+   uv venv --python "$(command -v python)" .venv-dream
+   export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
+   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e '.[dream]' \
+     "ray==$(python -c 'import ray; print(ray.__version__)')"
+
+RoboTwin uses NumPy 1 with MPLib; the Dream SDK requires NumPy 2. RLinf runs the rollout worker with ``DREAM_ROLLOUT_PYTHON`` and keeps RoboTwin in ``.venv``.
 
 Set ``DREAM_API_KEY`` in the rollout worker's environment and point ``ROBOTWIN_PATH`` to the RoboTwin repository root, which contains the ``assets/`` directory. For each robot, use a matching Dream SDK arm specification in ``DREAM_IK_ARM_FILE``. Its URDF, joint order, base frame and TCP must agree with the simulated robot.
 
