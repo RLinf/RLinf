@@ -241,9 +241,16 @@ collector cleanly. The runtime user must be able to read the selected Linux
 input device. Set ``RLINF_KEYBOARD_DEVICE`` to a stable
 ``/dev/input/by-id/...`` path when the machine exposes more than one keyboard.
 
-The dataset is written below the run's ``collected_data`` directory. Set its
-direct LeRobot dataset root (the directory containing ``meta/info.json``) in
-the SFT YAML before training.
+The dataset is written below the run's ``collected_data`` directory. One
+dataset root can contain multiple episodes; collecting more episodes into that
+root does not require an extra preparation step. Separate runs can produce
+separate LeRobot dataset roots. To train on episodes from several roots, first
+combine them into one LeRobot dataset, preserving each episode's frames and
+task description. Then set ``data.train_data_paths`` in the SFT YAML to the
+combined dataset root (the directory containing ``meta/info.json``). SFT reads
+one prepared dataset and does not merge collection runs automatically. Compute
+normalization statistics from that same
+combined dataset, not from one of its source runs.
 
 SO-101 state and action vectors use one canonical six-value format throughout
 collection, storage, SFT, and evaluation: the first five values are absolute

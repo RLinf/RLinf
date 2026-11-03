@@ -176,7 +176,7 @@ follower 折叠到初始姿态后，将 leader 放到相同姿态，再输入 ``
 
 keyboard wrapper 使用 ``a`` 开始或放弃录制，使用 ``b`` 切换 segment，使用 ``c`` 保存成功 episode，使用 ``q`` 安全停止采集。运行账号必须有权读取选定的 Linux input device；如果主机上有多个键盘设备，请将 ``RLINF_KEYBOARD_DEVICE`` 设为稳定的 ``/dev/input/by-id/...`` 路径。
 
-数据会写入本次运行目录下的 ``collected_data``。训练前，将其中直接包含 ``meta/info.json`` 的 LeRobot dataset 根目录填入 SFT YAML。
+数据会写入本次运行目录下的 ``collected_data``。同一个 LeRobot dataset 根目录可以包含多条 episode，继续向其中采集无需额外整理。不同运行可能产生不同的 dataset 根目录；如果要一起训练，先把这些数据合并成一个 LeRobot dataset，并保留每条 episode 的帧数据和任务描述。然后将合并后直接包含 ``meta/info.json`` 的根目录填入 SFT YAML 的 ``data.train_data_paths``。SFT 读取一个已准备好的 dataset，不会自动合并多次采集的运行目录。norm stats 也必须从这个合并后的 dataset 计算，不能只使用其中一次采集的数据。
 
 SO-101 的 state 和 action 在采集、存储、SFT 与评测中统一使用六维数据格式：前 5 维是绝对关节位置，单位为弧度；第 6 维是夹爪开度，``0`` 表示关闭，``1`` 表示张开。norm stats 也必须从这套表示计算。
 
