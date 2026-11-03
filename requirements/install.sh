@@ -117,9 +117,9 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -145,8 +145,9 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
-    --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
-                           (default: sglang). One venv holds one engine -- they pin the
+    --engine <name>        Rollout engine: sglang or vllm for target=agentic (default: sglang),
+                           or phyai for target=embodied (requires --model openpi --env libero).
+                           One venv holds one engine -- they pin the
                            same kernel libraries to different versions, so run install.sh
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
@@ -350,6 +351,39 @@ validate_python_version() {
     local mm="${py_major}.${py_minor}"
     if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
         echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
+    fi
+}
+
+validate_engine() {
+    [ -z "$ENGINE" ] && return 0
+
+    if [ "$TARGET" = "embodied" ]; then
+        if [ "$ENGINE" != "phyai" ]; then
+            echo "target=embodied supports only --engine phyai." >&2
+            exit 1
+        fi
+        if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
+            echo "--engine phyai currently requires --model openpi --env libero." >&2
+            exit 1
+        fi
+        if [ "$PLATFORM" != "nvidia" ]; then
+            echo "--engine phyai currently requires --platform nvidia." >&2
+            exit 1
+        fi
+        local py_major py_minor _py_patch
+        IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+        if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
+            echo "--engine phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
+            exit 1
+        fi
+    elif [ "$TARGET" = "agentic" ]; then
+        if [ "$ENGINE" = "phyai" ]; then
+            echo "--engine phyai is supported only with target=embodied." >&2
+            exit 1
+        fi
+    else
+        echo "--engine is not supported when target=${TARGET}." >&2
+        exit 1
     fi
 }
 
@@ -1055,6 +1089,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        simple) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -1467,7 +1502,7 @@ agentic_cuda_line() {
 }
 
 agentic_requirements_file() {
-    # $1 = engine (sglang|vllm), $2 = version
+    # $1 = engine (sglang|vllm|phyai), $2 = version
     local line path
     line=$(agentic_cuda_line)
     path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
@@ -2617,6 +2652,112 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_phyai_runtime() {
+    local phyai_version="0.2.0rc1"
+    local cuda_line expected_cuda_major cudart_lib
+    cuda_line=$(agentic_cuda_line)
+    case "$cuda_line" in
+        cu12)
+            expected_cuda_major=12
+            cudart_lib=libcudart.so.12
+            ;;
+        cu13)
+            expected_cuda_major=13
+            cudart_lib=libcudart.so.13
+            ;;
+        *)
+            echo "[install.sh] ERROR: unsupported PhyAI CUDA line: ${cuda_line}." >&2
+            exit 1
+            ;;
+    esac
+    local torch_before transformers_before version_output
+    version_output=$(python - "$cuda_line" "$expected_cuda_major" <<'PYEOF'
+import sys
+
+import torch
+import transformers
+
+expected_line, expected_major = sys.argv[1:]
+torch_cuda = torch.version.cuda
+actual_major = torch_cuda.split(".", 1)[0] if torch_cuda else None
+if actual_major != expected_major:
+    raise SystemExit(
+        "PhyAI CUDA line mismatch: "
+        f"expected {expected_line}, but torch.version.cuda={torch_cuda!r}."
+    )
+print(torch.__version__, transformers.__version__)
+PYEOF
+) || exit 1
+    read -r torch_before transformers_before <<< "$version_output"
+
+    install_engine_requirements "$(agentic_requirements_file phyai "$phyai_version")"
+    env -u UV_TORCH_BACKEND uv pip install --no-deps \
+        "phyai==${phyai_version}" \
+        "phyai-kernel==${phyai_version}" \
+        "phyai-ext==${phyai_version}" \
+        --index https://mingti-org.github.io/phyai/simple/
+
+    export CUDNN_FRONTEND_CUDART_LIB_NAME="$cudart_lib"
+    if grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i "s|^export CUDNN_FRONTEND_CUDART_LIB_NAME=.*|export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}|" "$VENV_DIR/bin/activate"
+    else
+        echo "export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}" >> "$VENV_DIR/bin/activate"
+    fi
+
+    python - "$torch_before" "$transformers_before" <<'PYEOF'
+import sys
+from importlib.metadata import version
+
+import torch
+import transformers
+from phyai.engine import Engine, EngineArgs
+from phyai.models.pi05.main_pi05 import PI05Args
+from phyai.models.pi05.scheduler_pi05 import PI05Request, PI05RolloutRequest
+
+expected_torch, expected_transformers = sys.argv[1:]
+if torch.__version__ != expected_torch:
+    raise SystemExit(
+        f"PhyAI installation changed Torch: {expected_torch} -> {torch.__version__}."
+    )
+if transformers.__version__ != expected_transformers:
+    raise SystemExit(
+        "PhyAI installation changed Transformers: "
+        f"{expected_transformers} -> {transformers.__version__}."
+    )
+assert all((Engine, EngineArgs, PI05Args, PI05Request, PI05RolloutRequest))
+print(
+    "[install.sh] PhyAI import smoke passed; "
+    f"phyai={version('phyai')}, phyai-kernel={version('phyai-kernel')}, "
+    f"phyai-ext={version('phyai-ext')}, torch={torch.__version__}, "
+    f"transformers={transformers.__version__}."
+)
+PYEOF
+}
+
+install_psi0_model() {
+    case "$ENV_NAME" in
+        simple)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_simple_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Psi0 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local psi0_dir
+    psi0_dir=$(clone_or_reuse_repo PSI0_PATH "$VENV_DIR/Psi0" https://github.com/physical-superintelligence-lab/Psi0.git)
+    if [ -z "${PSI0_PATH:-}" ]; then
+        git -C "$psi0_dir" checkout a32e57a3fabb8590c80677f9cd3d1fc3db60eb06 >&2
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/models/psi0.txt"
+    uv pip install -e "$psi0_dir" --no-deps
+    install_flash_attn
+}
+
 install_pi0_fast_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -2884,6 +3025,28 @@ install_lingbot_vla_model() {
             ;;
     esac
     uv pip uninstall pynvml || true
+}
+
+install_lingbot_vla_v2_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+    # The RLinf fork's rlinf branch adds the checkpoint metadata and PPO MoE hooks.
+    local vla2_path
+    vla2_path=$(clone_or_reuse_repo LINGBOT_VLA_V2_PATH "$VENV_DIR/lingbot-vla-v2" "${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla-v2.git" -b rlinf)
+    uv pip install -e "$vla2_path" --no-deps
+
+    case "$ENV_NAME" in
+        robotwin)
+            install_robotwin_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for LingBot-VLA V2." >&2
+            exit 1
+            ;;
+    esac
+    # Model pins go last so the env install cannot move them.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/lingbotvlav2.txt"
+    install_flash_attn
 }
 
 install_abot_m0_model() {
@@ -3156,7 +3319,7 @@ install_franka_ros_realworld_env() {
 }
 
 install_env_only() {
-    if [ "$ENV_NAME" = "d4rl" ]; then
+    if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
     fi
     create_and_sync_venv
@@ -3213,6 +3376,10 @@ install_env_only() {
             ;;
         polaris)
             install_polaris_env
+            ;;
+        simple)
+            install_common_embodied_deps
+            install_simple_env
             ;;
         libero|maniskill_libero)
             install_common_embodied_deps
@@ -3513,6 +3680,34 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_simple_env() {
+    local simple_dir
+    simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    # Checkout the fixed parent revision before initializing its gitlink-pinned
+    # submodules; this avoids ever resolving submodules from a moving default branch.
+    if [ -z "${SIMPLE_PATH:-}" ]; then
+        git -C "$simple_dir" checkout 5e3d6f84e85343e34e9bca8d157f0d7813231185 >&2
+        git -C "$simple_dir" submodule update --init --recursive
+    fi
+
+    # Isaac Sim resolves its shared extension tree through real file paths.
+    UV_LINK_MODE=hardlink uv pip install -r "$SCRIPT_DIR/embodied/envs/simple.txt"
+    uv pip install -e "$simple_dir/third_party/unitree_sdk2_python"
+    uv pip install -e "$simple_dir/third_party/gear_sonic[sim]"
+    uv pip install -e "$simple_dir/third_party/decoupled_wbc[full]"
+    uv pip install -e "$simple_dir" --no-deps
+
+    # cuRobo's Git-derived version can change after submodule initialization.
+    # Avoid stale wheels; copies survive removal of uv's temporary cache.
+    UV_NO_CACHE=1 UV_LINK_MODE=copy \
+        UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
+        bash "$simple_dir/scripts/install_curobo.sh"
 }
 
 install_isaaclab_env() {
@@ -4160,6 +4355,7 @@ install_docs() {
 main() {
     parse_args "$@"
     validate_python_version
+    validate_engine
     apply_model_default_torch
     apply_env_default_torch
     apply_agentic_torch_default
@@ -4197,6 +4393,9 @@ main() {
                 openpi)
                     install_openpi_model
                     ;;
+                psi0)
+                    install_psi0_model
+                    ;;
                 pi0_fast)
                     install_pi0_fast_model
                     ;;
@@ -4217,6 +4416,9 @@ main() {
                     ;;
                 dexbotic)
                     install_dexbotic_model
+                    ;;
+                lingbotvlav2)
+                    install_lingbot_vla_v2_model
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
@@ -4249,6 +4451,9 @@ main() {
                     install_env_only
                     ;;
             esac
+            if [ "$ENGINE" = "phyai" ]; then
+                install_phyai_runtime
+            fi
             ;;
         agentic)
             # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
