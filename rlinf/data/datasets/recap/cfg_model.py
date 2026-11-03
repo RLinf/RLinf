@@ -134,15 +134,15 @@ class CFGDataLoaderImpl(BaseDataLoaderImpl):
     """DataLoader wrapper that yields CFG training tuples."""
 
     def __iter__(self) -> Iterator[tuple[Any, Any, torch.Tensor]]:
-        for batch in self._data_loader:
-            observation = CFGObservation.from_dict(batch)
-            actions = batch["actions"]
+        return map(self._convert_batch, iter(self._data_loader))
 
-            advantage = batch["advantage"]
-            if not isinstance(advantage, torch.Tensor):
-                advantage = torch.tensor(advantage, dtype=torch.bool)
-
-            yield observation, actions, advantage
+    @staticmethod
+    def _convert_batch(batch: dict) -> tuple[Any, Any, torch.Tensor]:
+        observation = CFGObservation.from_dict(batch)
+        advantage = batch["advantage"]
+        if not isinstance(advantage, torch.Tensor):
+            advantage = torch.tensor(advantage, dtype=torch.bool)
+        return observation, batch["actions"], advantage
 
 
 @dataclasses.dataclass(frozen=True)

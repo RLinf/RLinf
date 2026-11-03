@@ -42,6 +42,14 @@ class BaseDataLoaderImpl:
         self._data_config = data_config
         self._data_loader = data_loader
 
+    def state_dict(self) -> dict[str, Any]:
+        """Return the wrapped training loader's consumed position."""
+        return self._data_loader.state_dict()
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore the wrapped training loader's consumed position."""
+        self._data_loader.load_state_dict(state)
+
     def data_config(self) -> Any:
         return self._data_config
 
@@ -103,6 +111,28 @@ class ReCapMixtureDataset(Dataset):
         self._epoch = 0
         self._log_initialization()
 
+    def state_dict(self) -> dict[str, Any]:
+        """Snapshot the mixture epoch and stateful child datasets."""
+        return {
+            "epoch": self._epoch,
+            "datasets": [
+                ds.state_dict() if hasattr(ds, "state_dict") else None
+                for ds in self.datasets
+            ],
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore the mixture and its children."""
+        if len(state["datasets"]) != len(self.datasets):
+            raise ValueError(
+                f"Mixture dataset count differs: configured {len(self.datasets)}, "
+                f"saved {len(state['datasets'])}."
+            )
+        self.set_epoch(state["epoch"])
+        for ds, saved in zip(self.datasets, state["datasets"]):
+            if saved is not None:
+                ds.load_state_dict(saved)
+
     def _log_initialization(self) -> None:
         logger.info(f"{self.mixture_name} initialized:")
         logger.info(f"  Datasets: {len(self.datasets)}")
@@ -122,6 +152,12 @@ class ReCapMixtureDataset(Dataset):
 
     def set_epoch(self, epoch: int) -> None:
         self._epoch = epoch
+
+    def set_seed(self, seed: int) -> None:
+        """Seed private child generators independently within each worker."""
+        for index, dataset in enumerate(self.datasets):
+            if hasattr(dataset, "set_seed"):
+                dataset.set_seed(safe_hash((seed, index)))
 
     def __len__(self) -> int:
         primary_lengths = self._dataset_lengths[self._primary_indices]

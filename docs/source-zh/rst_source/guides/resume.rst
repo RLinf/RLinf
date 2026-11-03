@@ -92,6 +92,18 @@ DCP 将训练状态保存到一组分布式检查点文件（``.distcp``）中�
 每个文件保存对应 rank 的模型分片、优化器状态、scheduler 状态和 RNG 状态。FSDP2 会将文件中的局部张量恢复到当前模型的分布式参数中，也支持各 rank 分片大小不等的参数。恢复时必须保持模型、FSDP 版本、world size、分片配置以及 rank 与分片的对应关系一致；``local_shard`` 不会为不同拓扑重新分配分片。请保留所有 rank 的文件，使用相同的启动脚本和配置，并按下文设置 ``runner.resume_dir``；worker 会自动选择对应的检查点格式。
 
 
+从下一个训练 batch 恢复 SFT
+-----------------------------
+
+RECAP value、CFG 和 STEAM 的 checkpoint 会随模型保存训练 loader。每个 ``actor/data_rank_<rank>.pt`` 记录下一个要消费的 batch、数据 worker 的 RNG 快照及 rank 自身的 RNG，其中包括预取中的随机变换和 STEAM 时间跨度采样。STEAM 的采样 generator 由训练 loader 设置 seed，不同 rank 和数据 worker 使用不同随机流。
+
+恢复时保持训练数据、模型预处理、seed、batch size、数据 worker 数和预取配置一致。创建迭代器前会恢复 sampler 和 dataset 的 epoch，也支持常驻数据 worker。验证集路径及验证 worker 数可以单独修改。
+
+所有 rank 快照和模型附属文件保存完成后，worker 才发布 ``actor/data_state.json``，记录 world size 及各数据快照的校验和。恢复时先检查所有 rank 的文件，再加载模型状态；缺失、损坏或保存中断会让所有 rank 一起报错。请随模型 checkpoint 一起保留 ``actor/data_state.json`` 和全部 ``actor/data_rank_<rank>.pt``。
+
+旧 checkpoint 仍可恢复模型训练状态。由于其中没有已消费 batch 的位置，worker 会在日志中说明训练样本从头开始读取。
+
+
 恢复训练
 -----------------
 

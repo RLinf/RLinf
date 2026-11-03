@@ -114,6 +114,32 @@ use the same launcher and configuration with ``runner.resume_dir`` as below;
 the worker selects the corresponding checkpoint format automatically.
 
 
+Resume SFT from the next training batch
+---------------------------------------
+
+RECAP value, CFG, and STEAM checkpoints save the training loader alongside the
+model. Each ``actor/data_rank_<rank>.pt`` records the next consumed batch,
+worker RNG snapshots, and rank-local RNG. This includes prefetched random
+transforms and STEAM's temporal-stride generator. STEAM seeds that generator
+from the training loader, with separate streams for ranks and data workers.
+
+Keep the training datasets, model preprocessing, seed, batch sizes, worker
+count, and prefetch settings unchanged. Sampler and dataset epochs are restored
+before the iterator is created, including when you use persistent workers.
+You can change validation paths and validation worker counts independently.
+
+The worker publishes ``actor/data_state.json`` after all rank snapshots and
+model assets finish saving. It records the world size and a checksum for each
+data snapshot. Resume checks every rank's files before loading model state;
+a missing, corrupted, or interrupted snapshot fails on every rank. Preserve
+``actor/data_state.json`` and all ``actor/data_rank_<rank>.pt`` files together
+with the model checkpoint.
+
+Older checkpoints without data snapshots still restore model training state.
+The worker logs that samples restart from the beginning, because those
+checkpoints contain no consumed-batch position.
+
+
 Resuming training
 -----------------
 

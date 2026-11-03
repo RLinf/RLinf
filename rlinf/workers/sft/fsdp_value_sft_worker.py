@@ -28,6 +28,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
+from rlinf.data.datasets.common.stateful import TrainingDataLoader
 from rlinf.data.datasets.recap.utils import (
     load_return_stats_from_dataset,
 )
@@ -39,9 +40,10 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict
+from rlinf.workers.sft.data_checkpoint import SFTDataCheckpointMixin
 
 
-class FSDPValueSftWorker(FSDPModelManager, Worker):
+class FSDPValueSftWorker(SFTDataCheckpointMixin, FSDPModelManager, Worker):
     """FSDP worker for value model SFT training.
 
     Reads ``data.train_data_paths`` list from config (single dataset = list of one).
@@ -361,9 +363,10 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
             )
 
         train_loader_worker_kwargs = _loader_worker_kwargs(train_num_workers)
-        torch_loader = torch.utils.data.DataLoader(
+        torch_loader = TrainingDataLoader(
             dataset,
             batch_size=self.cfg.actor.micro_batch_size,
+            seed=int(self.cfg.actor.get("seed", 42)) + self._rank,
             shuffle=(sampler is None),
             sampler=sampler,
             drop_last=True,

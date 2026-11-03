@@ -688,6 +688,8 @@ class PairDataset(_BasePairDataset):
                     "length-scaled multi-bin labels."
                 )
         self._rng: np.random.Generator | None = None
+        self._rng_pid: int | None = None
+        self._seed: int | None = None
         self.source_name = str(dataset_path)
         if dataset_type is None:
             raise ValueError(
@@ -836,9 +838,30 @@ class PairDataset(_BasePairDataset):
         is_positive = (idx % 2) == 0
         return pair_position, is_positive
 
+    def state_dict(self) -> dict[str, Any]:
+        """Snapshot the worker's random temporal-stride generator."""
+        return {"rng": self._rng_for_worker().bit_generator.state}
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore temporal-stride sampling at the consumed batch."""
+        self._rng = None
+        if state["rng"] is not None:
+            self._rng_for_worker().bit_generator.state = state["rng"]
+
+    def set_seed(self, seed: int) -> None:
+        """Set the rank-local seed before starting training workers."""
+        self._seed = seed
+        self._rng = None
+
     def _rng_for_worker(self) -> np.random.Generator:
-        if self._rng is None:
-            self._rng = np.random.default_rng()
+        if self._rng is None or self._rng_pid != os.getpid():
+            worker = torch.utils.data.get_worker_info()
+            if worker is not None:
+                seed = [worker.seed, self._seed or 0]
+            else:
+                seed = self._seed if self._seed is not None else torch.initial_seed()
+            self._rng = np.random.default_rng(seed)
+            self._rng_pid = os.getpid()
         return self._rng
 
     def _build_sample(

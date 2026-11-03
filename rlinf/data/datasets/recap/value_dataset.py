@@ -394,7 +394,7 @@ class ValueDataLoaderImpl(BaseDataLoaderImpl):
     """Lightweight wrapper that yields batches and exposes data_config()."""
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
-        yield from self._data_loader
+        return iter(self._data_loader)
 
 
 class ValueMixtureDataset(ReCapMixtureDataset):

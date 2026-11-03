@@ -45,6 +45,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
+from rlinf.workers.sft.data_checkpoint import SFTDataCheckpointMixin
 
 # The timeout a bare init_process_group() installs is backend-specific -- 30
 # minutes for NCCL and Gloo, 3636 seconds for HCCL on Ascend -- so no test here
@@ -1223,3 +1224,418 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert output.dtype == torch.bfloat16
     assert after.dtype == torch.float32
     assert (after != before).all()
+
+
+class _ResumeDataset(torch.utils.data.Dataset):
+    def __len__(self):
+        return 32
+
+    def __getitem__(self, index):
+        x = torch.tensor([index / 32, (index + 1) / 32])
+        return {"inputs": x, "target": x.sum().reshape(1)}
+
+
+class _LocalModelCheckpoint:
+    """CPU model serialization at the checkpoint mixin's parent boundary."""
+
+    def save_checkpoint(self, path, step=0):
+        torch.save(
+            {
+                "model": self.model.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "scheduler": self.scheduler.state_dict(),
+            },
+            os.path.join(path, f"model_rank_{self._rank}.pt"),
+        )
+        if getattr(self, "fail_save", False):
+            raise OSError("injected model checkpoint write failure")
+
+    def load_checkpoint(self, path):
+        self.parent_loaded = True
+        state = torch.load(
+            os.path.join(path, f"model_rank_{self._rank}.pt"), weights_only=True
+        )
+        self.model.load_state_dict(state["model"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        self.scheduler.load_state_dict(state["scheduler"])
+
+
+class _DataResumeWorker(SFTDataCheckpointMixin, _LocalModelCheckpoint):
+    def __init__(self, workers=0, rank=0, world_size=1):
+        from rlinf.data.datasets.common.stateful import TrainingDataLoader
+        from rlinf.data.datasets.recap.value_dataset import ValueDataLoaderImpl
+
+        torch.manual_seed(20 + rank)
+        self.cfg = OmegaConf.create(
+            {
+                "data": {"source": "synthetic", "num_workers": workers},
+                "actor": {
+                    "seed": 20,
+                    "global_batch_size": 4 * world_size,
+                    "micro_batch_size": 4,
+                    "model": {"name": "tiny"},
+                },
+            }
+        )
+        self._rank, self._world_size = rank, world_size
+        self.model = nn.Sequential(nn.Linear(2, 8), nn.Dropout(0.25), nn.Linear(8, 1))
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(
+            self.optimizer, step_size=3, gamma=0.5
+        )
+        dataset = _ResumeDataset()
+        sampler = torch.utils.data.DistributedSampler(
+            dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=20
+        )
+        loader = TrainingDataLoader(
+            dataset, seed=20 + rank, sampler=sampler, batch_size=4, num_workers=workers
+        )
+        self.data_loader = ValueDataLoaderImpl(None, loader)
+        self._current_epoch = 0
+        self.data_iter = iter(self.data_loader)
+        self.parent_loaded = False
+
+    def _save_checkpoint_assets(self, path):
+        from pathlib import Path
+
+        Path(path, f"assets_rank_{self._rank}.json").write_text("{}")
+        if getattr(self, "fail_assets", False):
+            raise OSError("injected model asset write failure")
+
+    def log_warning(self, message):
+        logging.getLogger(__name__).warning(message)
+
+    def train_steps(self, count):
+        for _ in range(count):
+            try:
+                batch = next(self.data_iter)
+            except StopIteration:
+                self._current_epoch += 1
+                self.data_loader.set_epoch(self._current_epoch)
+                self.data_iter = iter(self.data_loader)
+                batch = next(self.data_iter)
+            self.optimizer.zero_grad()
+            loss = (self.model(batch["inputs"]) - batch["target"]).square().mean()
+            loss.backward()
+            self.optimizer.step()
+            self.scheduler.step()
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.parametrize("steps", [3, 8, 11])
+def test_sft_data_checkpoint_matches_continuous_dropout_training(
+    tmp_path, workers, steps
+):
+    import copy
+
+    from rlinf.utils.utils import get_rng_state
+
+    worker = _DataResumeWorker(workers)
+    worker.train_steps(steps)
+    rng = get_rng_state()
+    worker.save_checkpoint(str(tmp_path), steps)
+    assert torch.equal(torch.get_rng_state(), rng["cpu"])
+    assert not (tmp_path / "data_state.incomplete").exists()
+    worker.train_steps(5)
+    expected_model = copy.deepcopy(worker.model.state_dict())
+    expected_optimizer = copy.deepcopy(worker.optimizer.state_dict())
+    expected_scheduler = worker.scheduler.state_dict()
+
+    resumed = _DataResumeWorker(workers)
+    resumed.load_checkpoint(str(tmp_path))
+    resumed.train_steps(5)
+    for key, tensor in expected_model.items():
+        torch.testing.assert_close(
+            tensor, resumed.model.state_dict()[key], rtol=0, atol=0
+        )
+    for key, values in expected_optimizer["state"].items():
+        for name, tensor in values.items():
+            torch.testing.assert_close(
+                tensor,
+                resumed.optimizer.state_dict()["state"][key][name],
+                rtol=0,
+                atol=0,
+            )
+    assert resumed.scheduler.state_dict() == expected_scheduler
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_rank",
+        "missing_manifest",
+        "incomplete",
+        "changed_config",
+        "world_size",
+        "corrupt_rank",
+    ],
+)
+def test_sft_data_checkpoint_rejects_invalid_state_before_model_load(tmp_path, damage):
+    import json
+
+    worker = _DataResumeWorker()
+    worker.train_steps(2)
+    worker.save_checkpoint(str(tmp_path), 2)
+    if damage == "missing_rank":
+        (tmp_path / "data_rank_0.pt").unlink()
+    elif damage == "missing_manifest":
+        (tmp_path / "data_state.json").unlink()
+    elif damage == "incomplete":
+        (tmp_path / "data_state.incomplete").touch()
+    elif damage == "world_size":
+        path = tmp_path / "data_state.json"
+        state = json.loads(path.read_text())
+        state["world_size"] = 2
+        path.write_text(json.dumps(state))
+    elif damage == "corrupt_rank":
+        (tmp_path / "data_rank_0.pt").write_bytes(b"truncated")
+    resumed = _DataResumeWorker()
+    if damage == "changed_config":
+        resumed.cfg.actor.micro_batch_size = 2
+    with pytest.raises(ValueError, match="SFT data checkpoint load failed"):
+        resumed.load_checkpoint(str(tmp_path))
+    assert not resumed.parent_loaded
+
+
+def test_sft_data_checkpoint_legacy_weights_still_load(tmp_path, caplog):
+    worker = _DataResumeWorker()
+    _LocalModelCheckpoint.save_checkpoint(worker, str(tmp_path))
+    resumed = _DataResumeWorker()
+    resumed.load_checkpoint(str(tmp_path))
+    assert resumed.parent_loaded
+    assert "no training data state" in caplog.text
+
+
+def _distributed_sft_data_checkpoint(rank, rendezvous, checkpoint_path, scenario):
+    import copy
+    from pathlib import Path
+
+    torch.set_num_threads(1)
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=40),
+    )
+    try:
+        worker = _DataResumeWorker(rank=rank, world_size=2)
+        worker.train_steps(3)
+        worker.save_checkpoint(checkpoint_path, 3)
+        if scenario in ("save_failure", "asset_failure"):
+            worker.train_steps(1)
+            worker.fail_save = scenario == "save_failure" and rank == 1
+            worker.fail_assets = scenario == "asset_failure" and rank == 0
+            with pytest.raises(RuntimeError, match="injected model .*write failure"):
+                worker.save_checkpoint(checkpoint_path, 4)
+            assert Path(checkpoint_path, "data_state.incomplete").exists()
+        else:
+            worker.train_steps(4)
+            expected = copy.deepcopy(worker.model.state_dict())
+            if scenario == "corrupt_rank" and rank == 1:
+                Path(checkpoint_path, "data_rank_1.pt").write_bytes(b"truncated")
+            dist.barrier()
+            resumed = _DataResumeWorker(rank=rank, world_size=2)
+            if scenario == "corrupt_rank":
+                with pytest.raises(
+                    ValueError, match="SFT data checkpoint load failed.*rank 1"
+                ):
+                    resumed.load_checkpoint(checkpoint_path)
+                assert not resumed.parent_loaded
+            else:
+                resumed.load_checkpoint(checkpoint_path)
+                resumed.train_steps(4)
+                for key, tensor in expected.items():
+                    torch.testing.assert_close(
+                        tensor, resumed.model.state_dict()[key], rtol=0, atol=0
+                    )
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    "scenario", ["resume", "corrupt_rank", "save_failure", "asset_failure"]
+)
+def test_sft_data_checkpoint_coordinates_all_ranks(tmp_path, scenario):
+    torch.multiprocessing.spawn(
+        _distributed_sft_data_checkpoint,
+        args=(str(tmp_path / "rendezvous"), str(tmp_path / "checkpoint"), scenario),
+        nprocs=2,
+        join=True,
+    )
+
+
+def test_sft_data_checkpoint_accepts_integer_keys_and_changed_eval_path(tmp_path):
+    worker = _DataResumeWorker()
+    worker.cfg.data.label_map = {1: "success", 0: "failure"}
+    worker.cfg.data.eval_data_paths = ["old-validation"]
+    worker.save_checkpoint(str(tmp_path), 0)
+    resumed = _DataResumeWorker()
+    resumed.cfg.data.label_map = {1: "success", 0: "failure"}
+    resumed.cfg.data.eval_data_paths = ["new-validation"]
+    resumed.load_checkpoint(str(tmp_path))
+    assert resumed.parent_loaded
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.parametrize("split_step", [3, 8])
+def test_sft_data_checkpoint_new_process_training(tmp_path, workers, split_step):
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    code = textwrap.dedent("""
+        import sys, torch
+        from pathlib import Path
+        from test_fsdp import _DataResumeWorker
+        mode, directory, workers, split_step = sys.argv[1:]
+        workers, split_step = int(workers), int(split_step)
+        directory = Path(directory)
+        directory.mkdir(exist_ok=True)
+        worker = _DataResumeWorker(workers)
+        if mode == 'resume':
+            worker.load_checkpoint(str(directory / 'checkpoint'))
+        worker.train_steps(split_step if mode == 'split' else 13 - split_step if mode == 'resume' else 13)
+        if mode == 'split':
+            worker.save_checkpoint(str(directory / 'checkpoint'), split_step)
+        else:
+            torch.save({'model': worker.model.state_dict(), 'optimizer': worker.optimizer.state_dict(), 'scheduler': worker.scheduler.state_dict()}, directory / 'result.pt')
+    """)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(Path(__file__).parent),
+            str(Path(__file__).parents[2]),
+            env.get("PYTHONPATH", ""),
+        ]
+    )
+    for mode, directory in [
+        ("full", tmp_path / "full"),
+        ("split", tmp_path / "split"),
+        ("resume", tmp_path / "split"),
+    ]:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                code,
+                mode,
+                str(directory),
+                str(workers),
+                str(split_step),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    expected = torch.load(tmp_path / "full/result.pt", weights_only=True)
+    restored = torch.load(tmp_path / "split/result.pt", weights_only=True)
+    for key, value in expected["model"].items():
+        torch.testing.assert_close(value, restored["model"][key], rtol=0, atol=0)
+    for key, values in expected["optimizer"]["state"].items():
+        for name, value in values.items():
+            torch.testing.assert_close(
+                value, restored["optimizer"]["state"][key][name], rtol=0, atol=0
+            )
+    assert expected["scheduler"] == restored["scheduler"]
+
+
+class _CompletedSftCall:
+    """Synchronous result at the local actor RPC boundary."""
+
+    def __init__(self, value=None):
+        self.value = value
+
+    def wait(self):
+        return self.value
+
+    def consume_duration(self):
+        return 0.0
+
+
+class _RunnerDataActor:
+    def __init__(self):
+        self.worker = _DataResumeWorker()
+
+    def get_max_steps_per_epoch(self):
+        return _CompletedSftCall([8])
+
+    def init_worker(self):
+        return _CompletedSftCall()
+
+    def run_training(self):
+        self.worker.model.train()
+        self.worker.train_steps(1)
+        return _CompletedSftCall([{"optimizer_step": self.worker.scheduler.last_epoch}])
+
+    def run_eval(self):
+        self.worker.model.eval()
+        loss = 0.0
+        with torch.no_grad():
+            for batch in torch.utils.data.DataLoader(_ResumeDataset(), batch_size=8):
+                loss += (
+                    (self.worker.model(batch["inputs"]) - batch["target"])
+                    .square()
+                    .mean()
+                    .item()
+                )
+        return _CompletedSftCall([{"val_loss": loss / 4}])
+
+    def save_checkpoint(self, path, step):
+        self.worker.save_checkpoint(path, step)
+        return _CompletedSftCall()
+
+    def load_checkpoint(self, path):
+        self.worker.load_checkpoint(path)
+        return _CompletedSftCall()
+
+
+def _sft_runner_data_resume_probe(root, runner_class):
+    from pathlib import Path
+
+    def build(name, steps, resume=None):
+        cfg = OmegaConf.create(
+            {
+                "runner": {
+                    "max_steps": steps,
+                    "val_check_interval": 1,
+                    "save_interval": 1,
+                    "resume_dir": str(resume) if resume else None,
+                    "logger": {
+                        "log_path": str(root),
+                        "experiment_name": name,
+                        "logger_backends": [],
+                    },
+                }
+            }
+        )
+        runner = runner_class(cfg, _RunnerDataActor())
+        runner.init_workers()
+        return runner
+
+    continuous = build("full", 5)
+    continuous.run()
+    first = build("split", 3)
+    first.run()
+    resumed = build("split", 5, Path(root, "split/checkpoints/global_step_3"))
+    resumed.run()
+    for key, value in continuous.actor.worker.model.state_dict().items():
+        torch.testing.assert_close(
+            value, resumed.actor.worker.model.state_dict()[key], rtol=0, atol=0
+        )
+    expected = continuous.actor.worker.optimizer.state_dict()
+    actual = resumed.actor.worker.optimizer.state_dict()
+    for key, values in expected["state"].items():
+        for name, value in values.items():
+            torch.testing.assert_close(
+                value, actual["state"][key][name], rtol=0, atol=0
+            )
+
+
+def test_sft_data_checkpoint_runner_saves_after_eval(tmp_path):
+    from rlinf.runners.sft_runner import SFTRunner
+
+    _sft_runner_data_resume_probe(tmp_path, SFTRunner)

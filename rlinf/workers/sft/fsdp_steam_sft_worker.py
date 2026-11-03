@@ -43,10 +43,12 @@ logging.getLogger("av").setLevel(logging.ERROR)
 import torch  # noqa: E402
 from omegaconf import DictConfig, open_dict  # noqa: E402
 
+from rlinf.data.datasets.common.stateful import TrainingDataLoader  # noqa: E402
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager  # noqa: E402
 from rlinf.models import get_model  # noqa: E402
 from rlinf.scheduler import Worker  # noqa: E402
 from rlinf.utils.distributed import all_reduce_dict  # noqa: E402
+from rlinf.workers.sft.data_checkpoint import SFTDataCheckpointMixin  # noqa: E402
 
 
 class _PairDataLoaderImpl:
@@ -54,6 +56,12 @@ class _PairDataLoaderImpl:
 
     def __init__(self, data_loader: torch.utils.data.DataLoader):
         self._data_loader = data_loader
+
+    def state_dict(self) -> dict[str, Any]:
+        return self._data_loader.state_dict()
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self._data_loader.load_state_dict(state)
 
     def __len__(self) -> int:
         return len(self._data_loader)
@@ -67,7 +75,7 @@ class _PairDataLoaderImpl:
             dataset.set_epoch(epoch)
 
     def __iter__(self):
-        yield from self._data_loader
+        return iter(self._data_loader)
 
 
 def _pair_dataset_camera_shapes(dataset) -> dict[str, tuple[int, ...] | None]:
@@ -140,7 +148,7 @@ def _collect_non_finite_tensor_paths(value: Any, prefix: str) -> list[str]:
     return []
 
 
-class FSDPSteamSftWorker(FSDPModelManager, Worker):
+class FSDPSteamSftWorker(SFTDataCheckpointMixin, FSDPModelManager, Worker):
     """FSDP worker for the STEAM value critic.
 
     Reads ``data.train_data_paths`` (list of LeRobot dataset entries) and
@@ -201,10 +209,8 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 self.cfg.actor.model.ensemble_head_seed_base = int(self.cfg.actor.seed)
         return get_model(self.cfg.actor.model)
 
-    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
-        """Save weights plus lightweight checkpoint-side model assets."""
-        super().save_checkpoint(save_path, step)
-
+    def _save_checkpoint_assets(self, save_path: str) -> None:
+        """Save model and processor assets before checkpoint completion."""
         if self._rank == 0:
             from rlinf.models.embodiment.value_model.steam import (
                 save_steam_checkpoint_assets,
@@ -215,9 +221,6 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 cfg=self.cfg.actor.model,
                 processor=getattr(self, "processor", None),
             )
-
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.barrier()
 
     # ------------------------------------------------------------------
     # Dataloader
@@ -509,9 +512,10 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 shuffle=True,
                 drop_last=True,
             )
-        train_loader = torch.utils.data.DataLoader(
+        train_loader = TrainingDataLoader(
             train_dataset,
             batch_size=train_loader_batch_size,
+            seed=int(self.cfg.actor.get("seed", 42)) + self._rank,
             shuffle=(train_sampler is None),
             sampler=train_sampler,
             drop_last=True,
