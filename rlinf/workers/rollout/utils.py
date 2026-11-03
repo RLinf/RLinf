@@ -248,6 +248,46 @@ class DisaggRankMapper(RankMapper):
         return result_map
 
 
+def instance_ids_to_entry_process_ranks(dst, placement):
+    """Convert RankMapper output into worker send addresses.
+
+    The scheduler child workers of model instance i register under
+    ``[i * nnodes, tp_rank]``: their parent is the instance's entry process
+    (node_rank == 0), the only process that issues ``init_rlinf_worker``. A
+    raw instance id therefore matches the address-path first segment only
+    while every instance sits on one node (entry rank == instance id);
+    once an instance spans nodes the two diverge.
+
+    Args:
+        dst: RankMapper output for one actor rank - a ``(engine_id,
+            rank_in_engine)`` tuple (collocated) or a list of such tuples
+            (disaggregated).
+        placement: The component placement providing
+            ``rollout_model_instance_entry_process_rank``.
+
+    Returns:
+        The same structure with the first segment replaced by the model
+        instance's entry process rank. RankMapper's own semantics are
+        unchanged: its inverse map is used on the scheduler side as
+        ``rollout_key = (model_instance_id, tp_rank)``, so the instance id
+        and the address-path first segment must stay two concepts converted
+        exactly here.
+    """
+    if isinstance(dst, tuple):
+        engine_id, rank_in_engine = dst
+        return (
+            placement.rollout_model_instance_entry_process_rank(engine_id),
+            rank_in_engine,
+        )
+    return [
+        (
+            placement.rollout_model_instance_entry_process_rank(engine_id),
+            rank_in_engine,
+        )
+        for engine_id, rank_in_engine in dst
+    ]
+
+
 SUPPORTED_LLM_ROLLOUT_BACKENDS = ["vllm", "sglang"]
 
 
