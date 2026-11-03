@@ -24,7 +24,7 @@ developer terms in English when an unusual translation would obscure the code.
    - `system/` – placement, scheduling, system demos  
    Path pattern: `docs/source-en/rst_source/examples/<category>/<name>.rst`  
    - Example (embodied): `docs/source-en/rst_source/examples/embodied/dexbotic.rst`  
-   - Example (agentic): `docs/source-en/rst_source/examples/agentic/searchr1.rst`  
+   - Example (agentic): `docs/source-en/rst_source/examples/agentic/searchr1/qwen2.5.rst`  
    Follow `docs/STYLE_GUIDE.md` first, then use current examples in the same category
    for category-specific details (see [reference.md](reference.md)).
 
@@ -80,7 +80,7 @@ developer terms in English when an unusual translation would obscure the code.
 - **Quick Start**: exact commands and key YAML/config snippets.
 - **Evaluation** (if applicable): eval command and config notes.
 
-Use existing examples in the same category (e.g. `embodied/libero.rst`, `embodied/pi0.rst`, `agentic/searchr1.rst`) as templates; see [reference.md](reference.md) for a minimal template.
+Use existing examples in the same category (e.g. `embodied/libero.rst`, `embodied/pi0.rst`, `agentic/searchr1/qwen2.5.rst`) as templates; see [reference.md](reference.md) for a minimal template.
 
 ---
 

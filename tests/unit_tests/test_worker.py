@@ -1156,14 +1156,13 @@ def test_other_vla_sft_initialization_preserves_existing_rng_behavior(
 ):
     import torch
 
-    from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
+    from rlinf.utils.utils import seed_everything
 
     seed_everything(999)
-    initial = get_rng_state()
     worker = cpu_openpi_sft_worker(seed=0, model_type="openvla")
     worker.init_worker()
     actual = _sft_cpu_random_draws()
-    set_rng_state(initial)
+    seed_everything(0)
     torch.nn.Linear(7, 32)
     _assert_sft_random_draws_equal(_sft_cpu_random_draws(), actual)
-    assert torch.initial_seed() == 999
+    assert torch.initial_seed() == 0

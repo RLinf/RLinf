@@ -97,8 +97,12 @@ BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配方设置 ``precision: 
 使用 FP32。该配方保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
 RLT Stage 1 配方还让 ``rlt_module`` 使用 FP32。
 
-OpenPI 使用 ``no_shard`` 和 ``use_orig_params: true``，每个 rank 持有完整参数、
-梯度和优化器状态。BEHAVIOR / RoboTwin 配方使用 ``openpi_cosine`` 学习率调度。
+OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
+均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
+``shard_grad_op`` 对梯度和优化器状态分片；``full_shard`` 还在模块执行之间对参数分片。
+选择分片模式可降低每个 rank 的显存占用。设置 ``gradient_checkpointing: true`` 和
+``gradient_checkpointing_use_reentrant: false`` 可进一步降低激活显存。
+BEHAVIOR / RoboTwin 配方使用 ``openpi_cosine`` 学习率调度。
 
 .. code:: yaml
 
@@ -138,6 +142,8 @@ Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 
      - LIBERO
    * - ``pi0_realworld``
      - 真机 Franka
+   * - ``pi05_yam_joint``
+     - 真机双臂 YAM
    * - ``pi0_aloha_robotwin``
      - RoboTwin（ALOHA）
    * - ``pi05_behavior``
@@ -286,7 +292,7 @@ YAML 中的 ``/path/to/...`` 是占位路径，请替换为服务器上的实际
    gcloud storage cp --recursive \
      gs://openpi-assets/checkpoints/pi05_base /path/to/checkpoints/jax/
 
-先准备当前任务的 ``norm_stats.json``（见上文归一化统计），再转换。以下以 BEHAVIOR 的
+先准备当前任务的 ``norm_stats.json``\ （见上文归一化统计），再转换。以下以 BEHAVIOR 的
 32-step horizon 为例；``--input-model`` 应指向包含 ``params/`` 的父目录：
 
 .. code:: bash
@@ -426,7 +432,7 @@ SFT 会把 ``full_weights.pt`` 写到 ``.../checkpoints/global_step_<N>/actor/mo
 OpenPI 训练与推理设置
 ---------------------
 
-评估导出的 OpenPI policy 和重新计算 PPO logprobs 时，保持相同的图像预处理设置。仅对使用固定前视图裁剪训练的 checkpoint 启用 ``actor.model.openpi.eval_sft_image_crop: true``：前视图取左上角 95% 区域后缩放，腕部图像保留完整视野。该选项默认为 ``false``，不消耗 augmentation RNG。启用后，独立采样要求先调用 ``model.eval()``；PPO sampler 和 actor replay 在各自模式下应用相同裁剪。
+评估导出的 OpenPI policy 和重新计算 PPO logprobs 时，保持相同的图像预处理设置。仅对使用固定前视图裁剪训练的 checkpoint 启用 ``actor.model.openpi.eval_sft_image_crop: true``：前视图取左上角 95% 区域后缩放，腕部图像保留完整视野。该选项默认为 ``false``，不消耗 augmentation RNG。启用后，独立采样要求先调用 ``model.eval()``；PPO sampler 和 actor replay 在各自模式下应用相同裁剪。SFT 仍使用随机裁剪、旋转和 color jitter，启用此推理选项也不会改变训练增强；未显式传入 generator 时，训练从 PyTorch 全局 RNG 取样。
 
 新的 OpenPI SFT 和 embodied FSDP actor 训练在构造模型前使用 ``actor.seed`` 初始化 Python、NumPy 和 PyTorch，使各 actor rank 新初始化的参数一致；初始化结束后，各 rank 使用 ``actor.seed + rank``。Rollout 使用 ``rollout.seed + rank``，未设置时依次回退到 ``actor.seed`` 和 0，并在模型构造后重新设置随机流。加载 checkpoint 时，在初始化之后恢复已保存的 RNG。这些规则会改变现有 OpenPI recipe 从头启动时的随机流。
 

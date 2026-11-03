@@ -241,6 +241,16 @@ The top-level file dynamically assembles the environment and model via Hydra, an
         noise_level: 0.5
         action_env_dim: 14
 
+.. note::
+
+   To limit host-memory retention by glibc during long RoboTwin runs, the LingbotVLA GRPO examples default to ``env.train.malloc_trim_reset_interval: 8`` (Linux/glibc only). This attempts to reclaim unused heap memory every 8 resets per RoboTwin environment instance. Set it to ``0`` to disable; the default remains ``0`` when unset. Automatic resets are counted; evaluation remains disabled unless configured. This targets host RSS, not GPU memory.
+
+   .. code-block:: yaml
+
+      env:
+        train:
+          malloc_trim_reset_interval: 8
+
 Launch Commands
 ~~~~~~~~~~~~~~~
 

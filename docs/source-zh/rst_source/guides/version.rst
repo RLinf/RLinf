@@ -46,7 +46,7 @@ torch 版本即使在 CUDA 13 主机上也会留在 cu12 分支。
    bash requirements/install.sh agentic --engine sglang
    bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
 
-reason Docker 镜像同时提供两者：``reason``（SGLang，默认激活）与 ``reason-vllm``。
+reason Docker 镜像同时提供两者：``reason``\ （SGLang，默认激活）与 ``reason-vllm``。
 
 切换版本
 -------------------------

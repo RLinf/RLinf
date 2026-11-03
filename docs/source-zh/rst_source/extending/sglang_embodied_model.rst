@@ -84,7 +84,7 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
      model:
        model_type: "<your_model>"
 
-注意 ``rollout.sglang.server_type`` 与 ``rollout.model.model_type`` 是两个**正交**
+注意 ``rollout.sglang.server_type`` 与 ``rollout.model.model_type`` 是两个\ **正交**
 字段，名字不同、职责不同：
 
 - ``rollout.sglang.server_type`` 决定 **server 子进程走哪条 sglang 分派分支**
@@ -323,13 +323,13 @@ DreamZero 在 ``rlinf/config.py`` 中的注册如下：
 Adapter 适配
 ~~~~~~~~~~~~~~~~~
 
-``sglang_adapter.py`` 用**一个类** ``DreamZeroSGLangAdapter`` 承载全部 DreamZero
+``sglang_adapter.py`` 用\ **一个类** ``DreamZeroSGLangAdapter`` 承载全部 DreamZero
 适配逻辑（观测/动作变换 + 请求组装 + 响应解析）：
 
 1. ``__init__(cfg, rank)`` 复用训练数据变换（``build_dreamzero_composed_transform``）
    完成观测转换与动作反变换的准备；不加载大模型、不建 HTTP client；
 2. ``build_request(env_obs, mode)`` 把 env observation 转成 server 请求 payload，
-   并返回一份 ``state``（转换后的 observation）供 ``parse_response`` 复用；
+   并返回一份 ``state``\ （转换后的 observation）供 ``parse_response`` 复用；
 3. ``parse_response(resp, state)`` 从响应里取出归一化动作，反归一化为环境尺度动作；
 4. ``action_path`` 声明动作端点 ``/v1/actions/generations``。
 
@@ -434,7 +434,7 @@ worker 从以下位置读取 Server 返回的归一化动作，并交给 ``parse
    response["data"][0]["action"]["values"]
 
 该动作仍处于 DreamZero 的归一化、补齐后的动作空间，不能直接发送给环境，必须经过
-``DreamZeroSGLangAdapter._unapply``（在 ``parse_response`` 内部调用）。
+``DreamZeroSGLangAdapter._unapply``\ （在 ``parse_response`` 内部调用）。
 
 
 Server 参数和 Pipeline 配置

@@ -183,6 +183,8 @@ jobs:
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
+              # test_data.py loads this script to test reward split preprocessing.
+              - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
