@@ -950,13 +950,17 @@ def test_env_output_composes_one_transition_object():
 
 
 @pytest.mark.parametrize("with_diagnostics", [False, True])
-def test_env_output_preserves_optional_art_diagnostics_through_policy_transport(
+@pytest.mark.parametrize("with_reset_mask", [False, True])
+def test_env_output_preserves_optional_fields_through_policy_transport(
     with_diagnostics,
+    with_reset_mask,
 ):
     obs = {"states": torch.zeros(4, 3)}
     if with_diagnostics:
         obs["art_sim_state_error"] = torch.tensor([0.0, 0.0, 0.01, 0.01])
         obs["art_state_id"] = torch.tensor([13, 13, 21, 21])
+    if with_reset_mask:
+        obs["reset_mask"] = torch.tensor([True, False, False, True])
     output = EnvOutput(obs=obs, final_obs=obs)
     env_worker = object.__new__(EnvWorker)
     policy_input = env_worker._build_policy_input(output)
@@ -971,9 +975,9 @@ def test_env_output_preserves_optional_art_diagnostics_through_policy_transport(
         output.to_dict()["final_obs"],
         merged.obs,
     ):
-        assert ("art_sim_state_error" in prepared) == with_diagnostics
-        if with_diagnostics:
-            for key in ("art_sim_state_error", "art_state_id"):
+        for key in ("art_sim_state_error", "art_state_id", "reset_mask"):
+            assert (key in prepared) == (key in obs)
+            if key in obs:
                 torch.testing.assert_close(prepared[key], obs[key])
 
 
@@ -2896,6 +2900,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
@@ -3211,6 +3216,7 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3265,6 +3271,7 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(

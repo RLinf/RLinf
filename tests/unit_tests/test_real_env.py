@@ -4830,3 +4830,40 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
 
     assert selected_seed_0 == selected_seed_0_again
     assert selected_seed_0 != selected_seed_1
+
+
+def test_record_video_skips_frames_a_chunk_did_not_render(tmp_path):
+    from rlinf.envs.wrappers.record_video import RecordVideo
+
+    chunk_size = 4
+
+    def observation(value):
+        return {
+            "main_images": torch.full((1, 8, 8, 3), value, dtype=torch.uint8),
+            "wrist_images": None,
+        }
+
+    class ChunkEnv(gym.Env):
+        num_envs = 1
+        seed = 0
+
+        def chunk_step(self, actions):
+            # SIMPLE renders only the last observation of a non-terminal chunk.
+            return (
+                [None] * (chunk_size - 1) + [observation(7)],
+                torch.zeros((1, chunk_size)),
+                torch.zeros((1, chunk_size), dtype=torch.bool),
+                torch.zeros((1, chunk_size), dtype=torch.bool),
+                [{} for _ in range(chunk_size)],
+            )
+
+    env = RecordVideo(
+        ChunkEnv(),
+        OmegaConf.create({"video_base_dir": str(tmp_path), "info_on_video": False}),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        env.chunk_step(None)
+
+    assert len(env.render_images) == 1
+    assert np.all(env.render_images[0] == 7)
