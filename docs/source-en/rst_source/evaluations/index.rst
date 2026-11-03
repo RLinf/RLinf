@@ -38,6 +38,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - RoboCasa365
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - SIMPLE
+     - ``G1WholebodyOpenOvenTeleop-v0``
+     - ``simple/simple_psi0_eval.yaml``
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 
@@ -84,6 +87,8 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - RoboLab evaluation through RLinf environment workers and the evaluation runner.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
+   * - :doc:`SIMPLE <guides/simple>`
+     - Psi0 whole-body humanoid evaluation.
 
 Reference
 ---------

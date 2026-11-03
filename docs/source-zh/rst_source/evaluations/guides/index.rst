@@ -31,6 +31,9 @@ Benchmark 指南
    * - RoboTwin
      - 双臂操作仿真，多任务场景
      - :doc:`robotwin`
+   * - SIMPLE
+     - 使用 Psi0 的人形机器人全身评测
+     - :doc:`simple`
 
 .. note::
 
@@ -47,3 +50,4 @@ Benchmark 指南
    polaris
    robolab
    robotwin
+   simple

@@ -50,6 +50,7 @@ infer_benchmark() {
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
         robolab_*|robolab-* ) echo "robolab" ;;
+        simple_*|simple-* ) echo "simple" ;;
         * )
             echo "unknown"
             ;;

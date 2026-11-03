@@ -85,6 +85,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robolab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
@@ -516,6 +517,17 @@ ENV OMNI_KIT_ACCEPT_EULA=YES
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robolab
 
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: Psi0 + SIMPLE
+##################################################################################################
+FROM embodied-common-image AS embodied-simple-image
+
+ENV OMNI_KIT_ACCEPT_EULA=YES
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+    embodied --venv psi0 --model psi0 --env simple
+
+RUN echo "source ${UV_PATH}/psi0/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: Genesis
