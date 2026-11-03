@@ -3483,9 +3483,10 @@ install_dummy_env() {
 # package with copied files so both agree.
 materialize_package_files() {
     local dist="$1" ver
+    shift
     ver=$(uv pip show "$dist" 2>/dev/null | sed -n 's/^Version: //p')
     [ -n "$ver" ] || return 0
-    UV_LINK_MODE=copy uv pip install --force-reinstall --no-deps "${dist}==${ver}"
+    UV_LINK_MODE=copy uv pip install --force-reinstall --no-deps "$@" "${dist}==${ver}"
 }
 
 reset_libero_config() {
@@ -4080,6 +4081,12 @@ install_robodojo_env() {
     uv pip install --no-config --prerelease=allow \
         --overrides "$override_file" "${index_args[@]}" \
         "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
+    # isaacsim-kernel owns isaacsim/__init__.py, which finds the Isaac Sim root
+    # with realpath(__file__); under CI's UV_LINK_MODE=symlink that resolves
+    # into the uv cache archive, where the extensions sibling wheels install
+    # beside it are missing. Copy just this package so the lookup stays in
+    # site-packages.
+    materialize_package_files isaacsim-kernel --no-config "${index_args[@]}"
     # RLinf and RoboDojo resolve different OpenCV distributions. Keep one GUI
     # wheel so cv2 cannot be silently replaced by an ABI-incompatible variant.
     use_opencv_gui_wheel
