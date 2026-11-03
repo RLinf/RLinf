@@ -240,6 +240,20 @@ class TestAdmissionByCapacity:
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
         assert buffer._admission_block_reason() == "buffer_full"
 
+    def test_inflight_groups_count_toward_the_buffer_cap(self):
+        """Groups still in flight block admission once the total reaches
+        the buffer cap, even with the buffer itself below it."""
+        buffer = _BufferFixture.make(max_inflight_groups=8, max_buffered_groups=4)
+        for group_id in range(2):
+            buffer.issue_group(group_id, None)
+        buffer.record_result(_result(0), _result(0).group_metadata())
+        # 1 in flight + 1 buffered: two more fit, the third is blocked.
+        assert buffer._admission_block_reason() is None
+        for group_id in (2, 3):
+            buffer.issue_group(group_id, None)
+        assert buffer._buffered_groups() == 1
+        assert buffer._admission_block_reason() == "buffer_full"
+
     def test_one_result_at_the_limit_frees_one_slot(self):
         """A single result at the in-flight limit admits exactly one group."""
 
@@ -926,6 +940,87 @@ class TestWorkerResident:
                 await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
                 await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
+            finally:
+                await worker.stop()
+                await asyncio.wait_for(resident, timeout=5)
+
+        asyncio.run(run())
+
+    def test_training_bottleneck_keeps_total_within_the_buffer_cap(self):
+        """Results arriving faster than releases keep inflight + buffered
+        under the buffer cap, and a release re-issues exactly the missing
+        amount.
+
+        In-flight groups enter the buffer on completion, so admission
+        counts them toward max_buffered_groups; the buffer size alone can
+        never exceed it.
+        """
+
+        async def run():
+            worker = _make_worker(
+                rollout_batch_size=2,
+                max_inflight_groups=8,
+                max_buffered_groups=4,
+                num_samples=64,
+            )
+            buffer = worker.buffer
+            dataloader_channel = _QueueChannel()
+            agent_output_channel = _QueueChannel()
+            rollout_channel = _QueueChannel()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    agent_output_channel, dataloader_channel, rollout_channel
+                )
+            )
+
+            def check_invariant():
+                # Strict: admission runs before each issue, so the running
+                # total only reaches the cap once an issue is in flight.
+                assert buffer.inflight_groups() + buffer._buffered_groups() <= 4
+                assert buffer._buffered_groups() <= 4
+
+            try:
+                # Training is the bottleneck: nothing is released while
+                # the engine finishes every group it is given. Each
+                # result frees in-flight capacity, so issuing runs ahead
+                # of this loop until the in-flight + buffered total
+                # reaches the cap: exactly four groups are issued.
+                for _ in range(4):
+                    request = await asyncio.wait_for(
+                        dataloader_channel._queue.get(), timeout=5
+                    )
+                    check_invariant()
+                    agent_output_channel.put(_result(group_id=request.group_ids[0]))
+                    await asyncio.sleep(0.05)
+                    check_invariant()
+                # Total at the cap: admission is blocked by the buffer
+                # condition and the buffer alone holds every group.
+                assert buffer._admission_block_reason() == "buffer_full"
+                assert buffer._buffered_groups() == 4
+                assert buffer.inflight_groups() == 0
+                await asyncio.sleep(0.05)
+                assert dataloader_channel._queue.empty()
+
+                # A release hands one training batch over: two groups
+                # leave, and exactly two are issued to top the total back
+                # up to the cap.
+                await worker.release_batch(version=0)
+                released = [
+                    await asyncio.wait_for(rollout_channel._queue.get(), timeout=5)
+                    for _ in range(2)
+                ]
+                assert [r.group_id for r in released] == [0, 1]
+                refilled = [
+                    await asyncio.wait_for(dataloader_channel._queue.get(), timeout=5)
+                    for _ in range(2)
+                ]
+                await asyncio.sleep(0.05)
+                assert [r.group_ids for r in refilled] == [[4], [5]]
+                assert dataloader_channel._queue.empty()
+                check_invariant()
+                assert buffer.inflight_groups() == 2
+                assert buffer._buffered_groups() == 2
+                assert buffer._admission_block_reason() == "buffer_full"
             finally:
                 await worker.stop()
                 await asyncio.wait_for(resident, timeout=5)

@@ -34,10 +34,19 @@
 #     x 1.2 / algorithm.group_size) - the in-flight trajectories run at
 #     about 1.2x the engine capacity, the margin covering groups waiting
 #     on tools or on their slowest trajectory.
-#   - rollout_buffer.max_buffered_groups: how many finished groups may
-#     wait for a release; bounds both the buffer memory and how stale
-#     training data can get. Default: 2 x data.rollout_batch_size; must
-#     be >= data.rollout_batch_size.
+#   - rollout_buffer.max_buffered_groups: the theoretical maximum number
+#     of buffered groups. Admission counts in-flight groups toward it
+#     (they enter the buffer on completion), so the buffer size never
+#     exceeds it; it bounds both the buffer memory and how stale training
+#     data can get. Default: 2 x data.rollout_batch_size; must be >=
+#     data.rollout_batch_size. When generation is the bottleneck, keep it
+#     >= max_inflight_groups + rollout_batch_size, or the buffer cap
+#     crowds out in-flight groups at the end of each step and starves the
+#     engine; when training is the bottleneck, keep it at least 2 x
+#     rollout_batch_size so generation overlaps training: at 1 x, the
+#     next batch can only start generating after the hand-off, and every
+#     step waits for a whole batch (including its slowest group) to
+#     generate, in exchange for a staleness of about 1.
 #   - rollout.pause_mode: how the rollout is paused for a weight sync;
 #     "retract" returns in-flight requests to the queue and continues
 #     generating with the new weights after the sync, keeping the tokens

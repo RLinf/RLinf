@@ -40,8 +40,10 @@ class RolloutBuffer:
 
     Admission is by capacity, in two conditions: the number of in-flight
     groups (issued minus finished, tracked per task) stays below
-    `max_inflight_groups`, and the number of buffered groups below
-    `max_buffered_groups`. The issued count is incremented before the
+    `max_inflight_groups`, and the number of in-flight plus buffered
+    groups below `max_buffered_groups`. In-flight groups are counted
+    because they enter the buffer on completion, so the buffer size never
+    exceeds that limit. The issued count is incremented before the
     prompt is awaited onto the dataloader channel, so a prompt holds its
     slot from the moment it is issued; a result, a discard record, or a
     release to the actor returns capacity and wakes admission.
@@ -199,11 +201,16 @@ class RolloutBuffer:
 
         Checked again after every wake-up: a wake does not imply a slot
         freed. Reports the in-flight limit first so a caller blocked by
-        both learns the capacity reason.
+        both learns the capacity reason. The second condition counts
+        in-flight groups too: they enter the buffer on completion, so
+        `buffer_full` means the buffer would be full once every in-flight
+        group finishes.
         """
         if self.inflight_groups() >= self._inflight_group_limit():
             return "inflight_limit"
-        if self._buffered_groups() >= self.max_buffered_groups:
+        if self.inflight_groups() + self._buffered_groups() >= (
+            self.max_buffered_groups
+        ):
             return "buffer_full"
         return None
 
