@@ -117,9 +117,13 @@ and vision embeddings in FP32. The profile preserves FP32 action/time inputs
 and adaptive-norm conditioning while the backbone computes in BF16.
 RLT Stage 1 recipes also keep ``rlt_module`` in FP32.
 
-Use ``no_shard`` and ``use_orig_params: true`` for OpenPI. Each rank holds
-complete parameters, gradients, and optimizer states. BEHAVIOR / RoboTwin
-recipes use the ``openpi_cosine`` learning rate schedule.
+OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
+``use_orig_params: true``. ``no_shard`` replicates all training state;
+``shard_grad_op`` shards gradients and optimizer state; ``full_shard`` also
+shards parameters between module executions. Select either sharded mode to
+reduce per-rank memory. Enable ``gradient_checkpointing: true`` with
+``gradient_checkpointing_use_reentrant: false`` to reduce activation memory.
+BEHAVIOR / RoboTwin recipes use the ``openpi_cosine`` learning rate schedule.
 
 .. code:: yaml
 
@@ -160,6 +164,8 @@ Select the data format with ``actor.model.openpi.config_name``:
      - LIBERO
    * - ``pi0_realworld``
      - Real-world Franka
+   * - ``pi05_yam_joint``
+     - Real-world Dual YAM
    * - ``pi0_aloha_robotwin``
      - RoboTwin (ALOHA)
    * - ``pi05_behavior``
@@ -465,6 +471,11 @@ eval can load that ``.pt`` (or the ``global_step_<N>`` directory) directly:
 wrapper / FSDP prefixes are stripped in memory, and the eval YAML supplies the
 model shape. You do **not** need to convert to ``model.safetensors`` first.
 
+Loading ``full_weights.pt`` with ``precision: null`` or ``precision: bf16``
+uses BF16 backbone weights and retains saved FP32 Gemma normalization and
+image embedding parameters. Keep parameter storage and activation precision
+consistent with training when checking export parity.
+
 Do not copy training ``openpi.task: sft`` into eval. Eval configs must use
 ``task: eval`` (that selects ``Pi0Eval`` and observation transforms). Keep
 ``config_name`` and ``num_action_chunks`` aligned with training.
@@ -510,6 +521,9 @@ with the deterministic 95% top-left front-image crop. The wrist image keeps
 its full field of view. This option defaults to ``false`` and does not consume
 augmentation RNG. Standalone sampling with this option requires ``model.eval()``;
 the PPO sampler and actor replay apply the same crop in their respective modes.
+SFT keeps its random crop, rotation, and color jitter, including when this
+inference option is enabled. Training draws use the global PyTorch RNG unless
+an explicit generator is supplied.
 
 For fresh OpenPI SFT and embodied FSDP actor runs, ``actor.seed`` initializes
 Python, NumPy and PyTorch before constructing the model, so actor ranks start

@@ -441,6 +441,35 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
+Before deploying any of the reward methods below, warm up the MLP policy with
+ManiSkill's dense environment reward using ``maniskill_ppo_mlp`` with
+``reward.use_reward_model: false``. This is a shared prerequisite for local
+VLM Trend, local Success + Potential, and SGLang API inference. Evaluate saved
+checkpoints on the same 1,024 fixed reset states over 50-step episodes, and
+select one with ``eval/success_at_end`` around 50% before starting reward-model
+PPO:
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+This command saves and evaluates checkpoints every 5 PPO steps. Extend
+``runner.max_steps`` if needed to reach the target; select the checkpoint by
+its measured success rate rather than its training step. Set the selected
+policy weights for the deployment commands below:
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+The Trend launch commands pass this path through ``runner.ckpt_path``. For
+Success + Potential, set ``vlm_trend_paths.policy_checkpoint`` to the same path.
+
 Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
 ``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
 Potential recipe uses ``model_type: shaped_vlm`` for local inference. API inference
@@ -508,24 +537,12 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
-
-Warm up the MLP policy with the existing dense ManiSkill reward. This reuses
-``maniskill_ppo_mlp`` unchanged; do not enable the reward overlay during warmup.
-Evaluate saved checkpoints on the same 1,024 fixed reset states and select one
-with a non-zero ``success_once`` near 5% (roughly 3--7%). Do not start formal
-PPO from a zero-success checkpoint:
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp \
-     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
-     env.eval.total_num_envs=1024
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
-Then launch the dual-output branch with the selected checkpoint and the three
+For Success + Potential, use the warmup checkpoint selected above and the three
 reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
 1,024 environments, evaluates every 5 PPO steps, disables environment reward,
 and runs 160 steps by default:
@@ -537,7 +554,7 @@ The runtime fields reference this YAML section directly:
 .. code-block:: yaml
 
    vlm_trend_paths:
-     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
      model_path: /path/to/Qwen3-VL-4B-Instruct
      success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
      potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
@@ -625,7 +642,10 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 4. Summary
 ^^^^^^^^^^

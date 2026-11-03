@@ -35,7 +35,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。
 下载完成后，请将 ``env.eval.assets_path``
-设置为 ``/path/to/RoboTwin``（即 ``assets/`` 的上一级目录）。
+设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
 **环境变量**
 

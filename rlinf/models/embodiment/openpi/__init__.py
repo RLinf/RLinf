@@ -35,9 +35,10 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
     ``cfg.model_path`` may point at either a new-format base checkpoint
-    containing ``model.safetensors`` or an RLinf FSDP SFT checkpoint containing
-    ``full_weights.pt``. Model shape comes from YAML; no checkpoint
-    ``config.json`` is read. ``cfg.openpi.task`` selects ``Pi0`` (SFT) or a
+    containing ``model.safetensors`` or ``model.safetensors.index.json``, or an
+    RLinf FSDP SFT checkpoint containing ``full_weights.pt``. Model shape comes
+    from YAML; no checkpoint ``config.json`` is read.
+    ``cfg.openpi.task`` selects ``Pi0`` (SFT) or a
     task subclass; omitted ``task`` defaults to SFT.
 
     ``cfg.precision`` controls parameter storage. ``cfg.openpi.embed_dtype``
@@ -73,14 +74,15 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     if safetensors_path is None and full_weights_path is None:
         raise FileNotFoundError(
             "openpi checkpoint not found. Expected either "
-            f"{model_path}/model.safetensors or one of "
+            f"{model_path}/model.safetensors, "
+            f"{model_path}/model.safetensors.index.json, or one of "
             f"{[str(model_path / rel) for rel in FULL_WEIGHTS_CANDIDATES]}."
         )
     if full_weights_path is not None and safetensors_path is not None:
         logger.warning(
             "openpi: both %s and %s exist; loading full_weights (RLinf "
-            "resume) and ignoring model.safetensors. Remove the leftover file "
-            "if that is not what you intended.",
+            "resume) and ignoring the safetensors checkpoint. Remove the "
+            "leftover file if that is not what you intended.",
             full_weights_path,
             safetensors_path,
         )
@@ -253,6 +255,8 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
 
     if full_weights_path is not None:
+        # Set storage dtypes first so saved FP32 parameters retain their values.
+        _apply_openpi_param_dtypes(model, target_dtype)
         load_full_weights(
             model,
             full_weights_path,
@@ -261,9 +265,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
     elif safetensors_path is not None:
         load_base_safetensors(model, safetensors_path)
+        _apply_openpi_param_dtypes(model, target_dtype)
 
     _freeze_after_load(model, task)
-    _apply_openpi_param_dtypes(model, target_dtype)
 
     n_params = sum(param.numel() for param in model.parameters())
     source = full_weights_path if full_weights_path is not None else safetensors_path
@@ -303,7 +307,7 @@ def _freeze_after_load(model, task: str) -> None:
 
 
 def _apply_openpi_param_dtypes(model, target_dtype) -> None:
-    """Apply OpenPI's selective mixed precision after checkpoint load.
+    """Apply OpenPI's selective parameter storage dtypes.
 
     YAML ``precision: null`` (OpenPI default) and ``bf16`` both mean: Gemma /
     SigLIP weights in bf16, RMSNorm + vision stem + action/value heads in fp32.

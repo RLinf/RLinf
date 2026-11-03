@@ -32,11 +32,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().__init__(cfg)
 
     def init_worker(self) -> None:
-        """Seed OpenPI model initialization, then each rank's training stream."""
+        """Seed OpenPI initialization together and training streams per rank."""
+        seed = int(self.cfg.actor.seed)
         if SupportedModel(self.cfg.actor.model.model_type) != SupportedModel.OPENPI:
+            seed_everything(seed + self._rank)
             super().init_worker()
             return
-        seed = int(self.cfg.actor.seed)
         seed_everything(seed)
         super().init_worker()
         seed_everything(seed + self._rank)

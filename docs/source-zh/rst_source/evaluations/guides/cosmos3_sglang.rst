@@ -42,7 +42,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 
 .. note::
 
-   评测**不需要**联网拉 HuggingFace 或 Qwen3-VL 缓存：转换时 tokenizer 已拷进 ``model_diffusers/text_tokenizer/``，server 直接从该目录读。
+   评测\ **不需要**\ 联网拉 HuggingFace 或 Qwen3-VL 缓存：转换时 tokenizer 已拷进 ``model_diffusers/text_tokenizer/``，server 直接从该目录读。
 
 运行 LIBERO-Spatial
 ----------------------------------------

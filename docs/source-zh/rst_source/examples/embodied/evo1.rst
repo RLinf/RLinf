@@ -127,11 +127,11 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 ~~~~~~~~
 
 * **SFT（监督微调）**：
-  ``examples/sft/config/libero_sft_evo1.yaml``（用 ``examples/sft/run_vla_sft.sh`` 运行）
+  ``examples/sft/config/libero_sft_evo1.yaml``\ （用 ``examples/sft/run_vla_sft.sh`` 运行）
 * **GRPO（强化学习）**：
   ``examples/embodiment/config/libero_spatial_grpo_evo1.yaml``
 * **独立评测**：
-  ``evaluations/libero/libero_spatial_evo1_eval.yaml``（用 ``evaluations/run_eval.sh`` 运行）
+  ``evaluations/libero/libero_spatial_evo1_eval.yaml``\ （用 ``evaluations/run_eval.sh`` 运行）
 
 关键配置片段（GRPO）
 ^^^^^^^^^^^^^^^^^^^^
@@ -174,7 +174,7 @@ SDE 采样与 GRPO 的核心参数。
     export ROBOT_PLATFORM="LIBERO"
     bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
 
-若你自行 clone 了 Evo-1 仓库，请把 ``actor.model.evo1.repo_path``（或环境变量
+若你自行 clone 了 Evo-1 仓库，请把 ``actor.model.evo1.repo_path``\ （或环境变量
 ``EVO1_REPO_PATH``）指向仓库根目录。
 
 如需快速复现单任务上的 RL 效果，可用 ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``
