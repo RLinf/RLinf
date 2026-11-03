@@ -560,6 +560,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
+            SupportedModel.PSI0,
             SupportedModel.LINGBOTVLAV2,
         ]:
             if self.enable_dagger:
@@ -797,14 +798,17 @@ class MultiStepRolloutWorker(Worker):
                 raise ValueError(
                     "Terminal inference requires a post-action observation."
                 )
-            _, result = self._predict_rollout_actions(next_obs)
-            values = result.get("prev_values")
+            if self.model_cfg.model_type == SupportedModel.PSI0.value:
+                values = self.hf_model.predict_value_batch(next_obs)
+            else:
+                _, result = self._predict_rollout_actions(next_obs)
+                values = result.get("prev_values")
+                if self.enable_rlt:
+                    next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                        result.get("forward_inputs"), transition=True
+                    )
             if values is not None:
                 final_prev_values = values.cpu().contiguous()
-            if self.enable_rlt:
-                next_rlt_obs = extract_rlt_obs_from_forward_inputs(
-                    result.get("forward_inputs"), transition=True
-                )
         # Republish environment-owned data here to keep one Actor-channel writer.
         actor_channel.put(
             env_part.complete(
@@ -1237,6 +1241,15 @@ class MultiStepRolloutWorker(Worker):
                             infer_batch_size_fn=self._infer_env_batch_size,
                             peer_ranks=group,
                         ).async_wait()
+                        if env_output["eval_epoch_done"]:
+                            # The env workers ended this epoch early and await no
+                            # actions; they owe only their remaining whole epochs.
+                            for rank in group:
+                                epoch = self.eval_layout.spec_of_rank(rank).chunk_steps(
+                                    self.model_cfg.num_action_chunks
+                                )
+                                left[rank] = (left[rank] - 1) // epoch * epoch
+                            continue
                         self.send_to(
                             group_name=self.cfg.env.group_name,
                             channel=output_channel,
@@ -1247,8 +1260,8 @@ class MultiStepRolloutWorker(Worker):
                             batch_size=self.eval_batch_size,
                             peer_ranks=group,
                         )
-                    for rank in peers:
-                        left[rank] -= 1
+                        for rank in group:
+                            left[rank] -= 1
 
             if self.enable_offload:
                 self.offload_model()
@@ -1369,6 +1382,9 @@ class MultiStepRolloutWorker(Worker):
             ),
             "intervene_flags": self._merge_optional_flag_tensors(
                 obs_dicts, intervene_flags_list
+            ),
+            "eval_epoch_done": any(
+                bool(obs_batch.get("eval_epoch_done")) for obs_batch in obs_batches
             ),
         }
 

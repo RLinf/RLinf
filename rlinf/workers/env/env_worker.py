@@ -504,6 +504,7 @@ class EnvWorker(Worker):
                 intervene_actions=intervene_actions,
                 intervene_flags=intervene_flags,
                 rlt_switch_flags=rlt_switch_flags,
+                executed_mask=infos.get("executed_mask"),
             ),
         )
         chunk_step_payload = {
@@ -577,7 +578,12 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
-            transition=EnvTransition(rlt_switch_flags=rlt_switch_flags),
+            transition=EnvTransition(
+                dones=chunk_dones,
+                terminations=chunk_terminations,
+                truncations=chunk_truncations,
+                rlt_switch_flags=rlt_switch_flags,
+            ),
         )
         return env_output, env_info
 
@@ -1272,6 +1278,7 @@ class EnvWorker(Worker):
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
+        early_stop_on_done = self.eval_assignment.cfg.get("early_stop_on_done", False)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.eval_assignment.cfg.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
@@ -1301,6 +1308,7 @@ class EnvWorker(Worker):
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
+            eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
                     policy_output = self.recv_from(
@@ -1330,6 +1338,27 @@ class EnvWorker(Worker):
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)
 
+                    if (
+                        early_stop_on_done
+                        and env_output.dones is not None
+                        and env_output.dones.any()
+                        and eval_step < self.n_eval_chunk_steps - 1
+                    ):
+                        env_batch = self._build_rollout_input_data(env_output.to_dict())
+                        env_batch["eval_epoch_done"] = True
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=env_batch,
+                            split_fn=self._obs_split_fn,
+                            mode="eval",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                        eval_epoch_done = True
+                        break
+
                     if self.eval_assignment.cfg.auto_reset:
                         if (
                             eval_rollout_epoch == self.eval_rollout_epoch - 1
@@ -1350,6 +1379,9 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+
+                if eval_epoch_done:
+                    break
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):

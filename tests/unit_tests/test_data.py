@@ -3021,6 +3021,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
@@ -3264,7 +3265,8 @@ def test_eval_receives_envs_with_different_policy_fields_separately():
         side_effect=lambda **kwargs: SimpleNamespace(
             async_wait=AsyncMock(
                 return_value={
-                    "obs": {"states": torch.zeros(len(kwargs["peer_ranks"]), 2)}
+                    "obs": {"states": torch.zeros(len(kwargs["peer_ranks"]), 2)},
+                    "eval_epoch_done": False,
                 }
             )
         )
@@ -3281,6 +3283,40 @@ def test_eval_receives_envs_with_different_policy_fields_separately():
         {"unnorm_key": "bridge_orig"},
     ]
 
+
+
+def test_eval_skips_the_rest_of_an_epoch_an_env_worker_ended_early():
+    rollout = _eval_rollout(decoupled=False)
+    rollout.eval_layout = EnvLayout(
+        OmegaConf.create({"max_steps_per_rollout_epoch": 4}), 1, "env.eval"
+    )
+    rollout.model_cfg = SimpleNamespace(num_action_chunks=1)
+    # Two epochs of four chunk steps from env rank 0.
+    rollout._source_budgets = Mock(return_value={0: {0: 8}})
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    # Epoch 0 ends after two answered requests; epoch 1 runs all four steps.
+    done_flags = [False, False, True, False, False, False, False]
+    rollout.recv_from = Mock(
+        side_effect=[
+            SimpleNamespace(
+                async_wait=AsyncMock(
+                    return_value={
+                        "obs": {"states": torch.zeros(1, 2)},
+                        "eval_epoch_done": done,
+                    }
+                )
+            )
+            for done in done_flags
+        ]
+    )
+    rollout.send_to = Mock()
+
+    asyncio.run(_unwrapped_evaluate()(rollout, Mock(), Mock()))
+
+    assert rollout.recv_from.call_count == len(done_flags)
+    # The early-stop marker gets no actions.
+    assert rollout.send_to.call_count == len(calls) == 6
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
@@ -3484,6 +3520,7 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3538,6 +3575,7 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(
