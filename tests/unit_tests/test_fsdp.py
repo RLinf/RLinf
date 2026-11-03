@@ -48,7 +48,11 @@ from rlinf.hybrid_engines.fsdp.strategy.checkpoint import (
     validate_checkpoint_communication_backend,
     validate_checkpoint_format,
 )
-from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
+from rlinf.hybrid_engines.fsdp.utils import (
+    apply_fsdp2_to_model,
+    clip_grad_by_total_norm_,
+    create_device_mesh,
+)
 from rlinf.models.embodiment.openpi.checkpoint import resolve_full_weights
 from rlinf.runners.sft_runner import SFTRunner
 from rlinf.scheduler import Worker
@@ -599,6 +603,51 @@ def test_gradients_reduce_over_the_sharding_dimension(single_rank_env):
     replicated_only = init_device_mesh("cpu", (1,), mesh_dim_names=["ddp"])
     with pytest.raises(KeyError):
         gradient_reduction_group(replicated_only)
+
+
+@pytest.mark.parametrize("grad_dtype", [torch.bfloat16, torch.float32])
+def test_clip_grad_scales_gradients_in_place_in_their_own_dtype(grad_dtype):
+    """The clip scales ``p.grad`` itself, not a cast of it.
+
+    Megatron clips fp32 main grads, so its pre-clip cast was free; here grads
+    stay in the mixed-precision reduce dtype, and casting before ``mul_`` would
+    scale a temporary and leave every gradient unclipped.
+    """
+    # Keep the parameter in the grad dtype: torch requires ``p.grad`` to match
+    # ``p.dtype``, and under FSDP2 mixed precision both carry the low dtype.
+    weight = nn.Linear(2, 2, dtype=grad_dtype).weight
+    weight.grad = torch.full((2, 2), 2.0, dtype=grad_dtype)
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=1.0, total_norm=4.0)
+
+    assert weight.grad.dtype is grad_dtype
+    torch.testing.assert_close(weight.grad, torch.full((2, 2), 0.5, dtype=grad_dtype))
+
+
+def test_clip_grad_leaves_gradients_untouched_below_the_max_norm():
+    weight = nn.Linear(2, 2).weight
+    weight.grad = torch.full((2, 2), 2.0)
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=4.0, total_norm=3.0)
+
+    torch.testing.assert_close(weight.grad, torch.full((2, 2), 2.0))
+
+
+def test_clip_grad_scales_dtensor_shards_in_place(single_rank_env):
+    """FSDP2 gradients are DTensors, so scaling the local shard must reach ``p.grad``."""
+    from torch.distributed.tensor import DTensor, Shard
+
+    mesh = create_device_mesh(1)
+    weight = nn.Linear(2, 2, dtype=torch.bfloat16).weight
+    weight.grad = DTensor.from_local(
+        torch.full((2, 2), 2.0, dtype=torch.bfloat16), mesh, [Shard(0)]
+    )
+
+    clip_grad_by_total_norm_(weight, max_grad_norm=1.0, total_norm=4.0)
+
+    torch.testing.assert_close(
+        weight.grad.to_local(), torch.full((2, 2), 0.5, dtype=torch.bfloat16)
+    )
 
 
 class _DomainTable(torch.nn.Module):
@@ -1547,3 +1596,67 @@ def test_two_rank_gloo_checkpoint_restores_rank_rng_and_next_update(tmp_path):
     second = torch.load(tmp_path / "rank_1.pt", weights_only=True)
     assert first[:2] != second[:2]
     assert not torch.equal(first[2], second[2])
+
+
+class _MixedBlock(torch.nn.Module):
+    """A frozen bf16 layer and a trainable fp32 layer in one FSDP unit."""
+
+    def __init__(self):
+        super().__init__()
+        self.backbone = torch.nn.Linear(8, 8).to(torch.bfloat16).requires_grad_(False)
+        self.head = torch.nn.Linear(8, 8)
+
+    def forward(self, x):
+        return self.head(self.backbone(x))
+
+
+class _MixedPolicy(torch.nn.Module):
+    _no_split_modules = ["_MixedBlock"]
+
+    def __init__(self):
+        super().__init__()
+        self.block = _MixedBlock()
+
+    def forward(self, x):
+        return self.block(x)
+
+
+def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
+    single_rank_env,
+):
+    """A step far below bf16 resolution still lands on fp32 trainable shards.
+
+    LingBot-VLA V2 trains its action expert this way next to a frozen bf16
+    backbone; with bf16 storage, AdamW steps this small round back to the old
+    weights.
+    """
+    from packaging.version import Version
+
+    if Version(torch.__version__) < Version("2.8.0"):
+        pytest.skip(
+            "FSDP2 mixed frozen/trainable parameter dtypes require PyTorch >= 2.8"
+        )
+
+    torch.manual_seed(0)
+    policy = _MixedPolicy()
+    before = policy.block.head.weight.detach().clone()
+    policy = apply_fsdp2_to_model(
+        policy,
+        {},
+        create_device_mesh(1),
+        MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.float32),
+        OffloadPolicy(),
+        reshard_after_forward=True,
+    )
+    optimizer = torch.optim.AdamW(
+        [p for p in policy.parameters() if p.requires_grad], lr=1e-6
+    )
+
+    output = policy(torch.randn(4, 8, dtype=torch.bfloat16))
+    output.float().square().mean().backward()
+    optimizer.step()
+
+    after = policy.block.head.weight.full_tensor()
+    assert output.dtype == torch.bfloat16
+    assert after.dtype == torch.float32
+    assert (after != before).all()

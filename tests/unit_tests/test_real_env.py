@@ -5707,3 +5707,40 @@ def test_stack_cube_ppo_workers_partition_rotating_requests(stack_cube_ppo_adapt
         assert second_obs["states"][:, 0].tolist() == list(range(start + 3, start + 6))
         first.update_reset_state_ids()
         second.update_reset_state_ids()
+
+
+def test_record_video_skips_frames_a_chunk_did_not_render(tmp_path):
+    from rlinf.envs.wrappers.record_video import RecordVideo
+
+    chunk_size = 4
+
+    def observation(value):
+        return {
+            "main_images": torch.full((1, 8, 8, 3), value, dtype=torch.uint8),
+            "wrist_images": None,
+        }
+
+    class ChunkEnv(gym.Env):
+        num_envs = 1
+        seed = 0
+
+        def chunk_step(self, actions):
+            # SIMPLE renders only the last observation of a non-terminal chunk.
+            return (
+                [None] * (chunk_size - 1) + [observation(7)],
+                torch.zeros((1, chunk_size)),
+                torch.zeros((1, chunk_size), dtype=torch.bool),
+                torch.zeros((1, chunk_size), dtype=torch.bool),
+                [{} for _ in range(chunk_size)],
+            )
+
+    env = RecordVideo(
+        ChunkEnv(),
+        OmegaConf.create({"video_base_dir": str(tmp_path), "info_on_video": False}),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        env.chunk_step(None)
+
+    assert len(env.render_images) == 1
+    assert np.all(env.render_images[0] == 7)
