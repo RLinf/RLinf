@@ -48,6 +48,7 @@ Keep enable_offload false: this adapter exposes terminal offload, not suspend/re
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -55,6 +56,7 @@ import gymnasium as gym
 import numpy as np
 import ray
 import torch
+import yaml
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
@@ -85,6 +87,52 @@ def _is_unstable_scene(exc: BaseException) -> bool:
     re-raises it as a ``RuntimeError`` that carries the traceback text.
     """
     return type(exc).__name__ == "UnStableError" or "UnStableError" in str(exc)
+
+
+def _curobo_config_resolves(config: Path) -> bool:
+    """Whether a curobo config's asset root and URDF exist on this machine."""
+    try:
+        kinematics = yaml.safe_load(config.read_text())["robot_cfg"]["kinematics"]
+        asset_root = kinematics["asset_root_path"]
+        urdf_path = kinematics["urdf_path"]
+    except (OSError, KeyError, TypeError, yaml.YAMLError):
+        return False
+    return os.path.isdir(asset_root) and os.path.isfile(urdf_path)
+
+
+def _create_curobo_configs(assets_path: str) -> None:
+    """Make each robot's ``curobo.yml`` readable by the runtime.
+
+    The dataset publishes ``curobo_tmp.yml`` templates whose ``${ASSETS_PATH}``
+    placeholder the runtime does not expand, while the runtime opens
+    ``curobo.yml`` directly. Render a missing file, and rerender one whose paths
+    do not resolve (for example after moving the asset tree); keep a usable file
+    because it may carry local edits.
+    """
+    for robot in sorted((Path(assets_path) / "Assets" / "Robots").iterdir()):
+        if not robot.is_dir():
+            continue
+        config = robot / "curobo.yml"
+        if config.is_file() and _curobo_config_resolves(config):
+            continue
+        template = robot / "curobo_tmp.yml"
+        if not template.is_file():
+            raise FileNotFoundError(
+                f"{robot} has no usable curobo.yml and no curobo_tmp.yml "
+                "template; the RoboDojo runtime cannot build its motion planner."
+            )
+        content = template.read_text().replace("${ASSETS_PATH}", assets_path)
+        temporary = config.with_name(f".{config.name}.{os.getpid()}.tmp")
+        temporary.write_text(content)
+        if config.exists():
+            os.replace(temporary, config)
+        else:
+            try:
+                os.link(temporary, config)
+            except FileExistsError:
+                pass
+            finally:
+                temporary.unlink()
 
 
 @ray.remote(
@@ -243,6 +291,11 @@ class RoboDojoEnv(gym.Env):
         self._init_env()
 
     def _init_env(self) -> None:
+        assets_root = self.cfg.get("assets_path") or os.environ.get(
+            "ROBODOJO_ASSETS_ROOT"
+        )
+        if assets_root is not None:
+            _create_curobo_configs(str(assets_root))
         env_vars = {
             key: os.environ[key]
             for key in (
