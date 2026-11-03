@@ -1,0 +1,75 @@
+defaults:
+  - env/robotwin_click_bell@env.eval
+  - model/lingbotvlav2@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout: 0
+    env: 1
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: robotwin_lingbotvlav2_eval
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  max_steps: -1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  # Optional RLinf actor/model_state_dict/full_weights.pt, loaded strictly.
+  ckpt_path: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 2
+    auto_reset: true
+    ignore_terminations: true
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 400
+    reward_coef: 1.0
+    group_size: 1
+    use_fixed_reset_state_ids: true
+    is_eval: true
+    assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
+    center_crop: false
+    video_cfg:
+      save_video: true
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    task_config:
+      embodiment: [aloha-agilex]
+      camera:
+        collect_wrist_camera: true
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        clean_background_rate: 1
+        random_head_camera_dis: 0
+        random_table_height: 0
+        random_light: false
+        crazy_random_light_rate: 0
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  # Retain the value head so RLinf PPO checkpoints reload without key changes.
+  model:
+    add_value_head: true
