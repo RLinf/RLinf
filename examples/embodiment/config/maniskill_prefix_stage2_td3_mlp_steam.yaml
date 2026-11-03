@@ -245,7 +245,7 @@ rollout:
 
   prefix_feature_model:
     model_type: "openpi"
-    model_path: "/mnt/public2/xiekaizhi/openpi-rlt-sim/tests/RLinf-dev/logs/step1000new/global_step_1000/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/step1000new/global_step_1000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: ${actor.model.action_dim}
@@ -317,7 +317,7 @@ rollout:
   # The simulation expert is invoked by the learned actor-to-expert gate.
   expert_model:
     model_type: "openpi"
-    model_path: "/mnt/public2/xiekaizhi/openpi-rlt-sim/tests/RLinf-dev/logs/step3000new/global_step_3000/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/step3000new/global_step_3000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: 8

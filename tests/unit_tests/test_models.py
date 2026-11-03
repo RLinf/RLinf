@@ -2066,8 +2066,16 @@ def test_steam_presets_use_each_checkpoint_for_normalization(monkeypatch, config
     assert expert_cfg.openpi_data.norm_stats_path is None
     assert feature_cfg.openpi_data.repo_id == "maniskill_peginsertionside_joint"
     assert expert_cfg.openpi_data.repo_id == feature_cfg.openpi_data.repo_id
-    assert Path(feature_cfg.model_path).parts[-2:] == ("global_step_1000", "actor")
-    assert Path(expert_cfg.model_path).parts[-2:] == ("global_step_3000", "actor")
+    checkpoint_root = Path("/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs")
+    assert Path(feature_cfg.model_path) == (
+        checkpoint_root / "step1000new/global_step_1000/actor"
+    )
+    assert Path(expert_cfg.model_path) == (
+        checkpoint_root / "step3000new/global_step_3000/actor"
+    )
+    assert Path(cfg.rollout.routing_gate.model.model_path).is_relative_to(
+        checkpoint_root / "steam_sft"
+    )
     assert feature_cfg.prefix.pool == "masked_mean"
     assert feature_cfg.prefix.image_only is True
 
