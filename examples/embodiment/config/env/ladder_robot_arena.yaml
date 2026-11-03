@@ -1,0 +1,29 @@
+env_type: ladder
+
+seed: 0
+total_num_envs: 8
+group_size: 1
+
+auto_reset: False
+ignore_terminations: False
+use_fixed_reset_state_ids: False
+
+max_steps_per_rollout_epoch: 500
+max_episode_steps: 500
+
+use_rel_reward: True
+reward_coef: 1.0
+reward_mode: subgoal_progress
+is_eval: True
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  suite: robot_arena
+  task_name: scene54_1goal
+  prompt_mode: flat
+  action_mode: delta_ee
+  raytracer: False

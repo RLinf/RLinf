@@ -342,6 +342,28 @@ def prepare_actions_for_simple(raw_chunk_actions) -> np.ndarray:
     return np.ascontiguousarray(chunk_actions)
 
 
+def prepare_actions_for_ladder(
+    raw_chunk_actions,
+    num_action_chunks,
+    action_dim,
+    action_scale: float = 1.0,
+    policy: str = "widowx_bridge",
+    model_type=None,
+) -> torch.Tensor:
+    if action_dim == 7 and policy in ("widowx_bridge", "panda_wristcam"):
+        return prepare_actions_for_maniskill(
+            raw_chunk_actions=raw_chunk_actions,
+            num_action_chunks=num_action_chunks,
+            action_dim=action_dim,
+            action_scale=action_scale,
+            policy=policy,
+        )
+    return prepare_actions_for_polaris(
+        raw_chunk_actions=raw_chunk_actions,
+        model_type=model_type,
+    )
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -451,6 +473,15 @@ def prepare_actions(
         )
     elif env_type == SupportedEnvType.SIMPLE:
         chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
+    elif env_type == SupportedEnvType.LADDER:
+        chunk_actions = prepare_actions_for_ladder(
+            raw_chunk_actions=raw_chunk_actions,
+            num_action_chunks=num_action_chunks,
+            action_dim=action_dim,
+            action_scale=action_scale,
+            policy=policy,
+            model_type=model_type,
+        )
     else:
         chunk_actions = raw_chunk_actions
 
