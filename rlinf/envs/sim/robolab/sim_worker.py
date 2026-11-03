@@ -16,35 +16,14 @@
 
 from __future__ import annotations
 
-import pickle
 import socket
-import struct
 import sys
 import traceback
 
+from rlinf.envs.sim.robolab.protocol import receive, send
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
-
-
-def _receive(sock: socket.socket) -> dict:
-    header = sock.recv(8, socket.MSG_WAITALL)
-    if len(header) != 8:
-        raise EOFError
-    size = struct.unpack("!Q", header)[0]
-    parts = []
-    while size:
-        part = sock.recv(min(size, 1024 * 1024))
-        if not part:
-            raise EOFError
-        parts.append(part)
-        size -= len(part)
-    return pickle.loads(b"".join(parts))
-
-
-def _send(sock: socket.socket, value: dict) -> None:
-    payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-    sock.sendall(struct.pack("!Q", len(payload)) + payload)
 
 
 def main() -> None:
@@ -58,7 +37,7 @@ def main() -> None:
     app = None
     env = None
     try:
-        message = _receive(sock)
+        message = receive(sock)
         if message["command"] != "init":
             raise ValueError("Expected RoboLab simulator init command")
         settings = message["settings"]
@@ -118,6 +97,10 @@ def main() -> None:
                 episode_open = False
 
         def pack_obs(raw):
+            active_mask = np.zeros(num_envs, dtype=bool)
+            active_mask[env.active_env_ids] = True
+            # RLinf can impose an earlier time limit than the native task.
+            active_mask &= ~finished
             images = raw["image_obs"]
             proprio = raw["proprio_obs"]
             main_images = images["over_shoulder_left_camera"].detach().cpu().numpy()
@@ -143,12 +126,12 @@ def main() -> None:
                     axis=-1,
                 ).astype(np.float32),
                 "task_descriptions": [prompt] * num_envs,
-                "active_mask": ~finished.copy(),
+                "active_mask": active_mask,
             }
 
-        _send(sock, {"ready": True})
+        send(sock, {"ready": True})
         while True:
-            message = _receive(sock)
+            message = receive(sock)
             command = message["command"]
             if command == "close":
                 finish_episode()
@@ -169,16 +152,12 @@ def main() -> None:
                 finished[:] = False
                 success[:] = 0
                 score[:] = 0
-                _send(sock, pack_obs(last_obs))
+                send(sock, pack_obs(last_obs))
                 continue
             if command != "chunk_step":
                 raise ValueError(f"Unknown RoboLab simulator command: {command}")
 
-            actions = (
-                np.frombuffer(message["action_bytes"], dtype=np.float32)
-                .reshape(message["action_shape"])
-                .copy()
-            )
+            actions = message["actions"]
             horizon = actions.shape[1]
             rewards = np.zeros((num_envs, horizon), dtype=np.float32)
             terminations = np.zeros((num_envs, horizon), dtype=bool)
@@ -228,7 +207,7 @@ def main() -> None:
             }
             if enable_subtask:
                 episode["score"] = score.copy()
-            _send(
+            send(
                 sock,
                 {
                     "observation": pack_obs(last_obs),
@@ -242,7 +221,7 @@ def main() -> None:
         pass
     except BaseException:
         try:
-            _send(sock, {"error": traceback.format_exc()})
+            send(sock, {"error": traceback.format_exc()})
         except OSError:
             logger.exception("Failed to send RoboLab simulator error to the adapter")
     finally:

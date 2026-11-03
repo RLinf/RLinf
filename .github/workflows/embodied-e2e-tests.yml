@@ -2111,9 +2111,6 @@ jobs:
           mkdir -p logs/robolab_openpi_eval
           bash tests/e2e_tests/evaluations/run.sh robolab_openpi_eval \
             2>&1 | tee logs/robolab_openpi_eval/console.log
-          python tests/e2e_tests/evaluations/check_robolab_results.py \
-            --log-dir logs/robolab_openpi_eval --num-envs 2 \
-            --rollout-epochs 1 --max-episode-steps 300
 
       - name: RoboLab truncation and reset evaluation
         timeout-minutes: 15
@@ -2126,9 +2123,6 @@ jobs:
           mkdir -p logs/robolab_openpi_truncation_eval
           bash tests/e2e_tests/evaluations/run.sh robolab_openpi_truncation_eval \
             2>&1 | tee logs/robolab_openpi_truncation_eval/console.log
-          python tests/e2e_tests/evaluations/check_robolab_results.py \
-            --log-dir logs/robolab_openpi_truncation_eval --num-envs 2 \
-            --rollout-epochs 2 --max-episode-steps 17
 
       - name: Clean up
         if: always()

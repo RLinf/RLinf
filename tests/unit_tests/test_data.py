@@ -3610,3 +3610,57 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+@pytest.mark.parametrize("mask", [[True, False, True], [False, False, False]])
+def test_env_output_preserves_active_mask_through_rollout_routing(mask):
+    from rlinf.scheduler.worker.routing import split_batch
+    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+    active_mask = torch.tensor(mask, dtype=torch.bool)
+    obs = {"states": torch.zeros(3, 8), "active_mask": active_mask}
+    payload = EnvOutput(obs=obs, final_obs=obs).to_dict()
+    shards = split_batch(payload, [1, 2])
+    worker = object.__new__(MultiStepRolloutWorker)
+    merged = worker._merge_obs_batches(shards)
+    for key in ("obs", "final_obs"):
+        assert merged[key]["active_mask"].dtype == torch.bool
+        assert merged[key]["active_mask"].shape == (3,)
+        torch.testing.assert_close(merged[key]["active_mask"], active_mask)
+
+
+def test_env_output_omits_absent_active_mask():
+    payload = EnvOutput(obs={"states": torch.zeros(2, 8)}).to_dict()
+    assert "active_mask" not in payload["obs"]
+
+
+@pytest.mark.parametrize("only_eval", [True, False])
+@pytest.mark.parametrize("reset_fails", [True, False])
+def test_env_worker_closes_standalone_evaluation_envs(only_eval, reset_fails):
+    class Simulator:
+        def __init__(self):
+            self.closed = False
+
+        def reset(self):
+            raise RuntimeError("simulator reset failed")
+
+        def close(self):
+            self.closed = True
+
+    envs = [Simulator(), Simulator()]
+    worker = object.__new__(EnvWorker)
+    worker.only_eval = only_eval
+    worker.eval_env_list = envs
+    worker.eval_rollout_epoch = int(reset_fails)
+    worker.stage_num = len(envs)
+    worker.eval_enable_offload = False
+    worker.cfg = OmegaConf.create({"env": {"eval": {"auto_reset": False}}})
+    worker.eval_prev_done = [None] * len(envs)
+    worker.eval_num_envs_per_stage = 1
+    evaluate = inspect.unwrap(EnvWorker.evaluate)
+    if reset_fails:
+        with pytest.raises(RuntimeError, match="simulator reset failed"):
+            evaluate(worker, None, None)
+    else:
+        assert evaluate(worker, None, None) == {}
+    assert all(env.closed == only_eval for env in envs)

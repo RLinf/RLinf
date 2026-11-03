@@ -1698,13 +1698,16 @@ class EnvOutput:
             else None
         )
 
-        return {
+        observations = {
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
             "states": states,
             "task_descriptions": task_descriptions,
         }
+        if obs.get("active_mask") is not None:
+            observations["active_mask"] = obs["active_mask"]
+        return observations
 
     def to_dict(self) -> dict[str, Any]:
         return {

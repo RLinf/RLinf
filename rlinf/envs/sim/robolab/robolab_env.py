@@ -18,9 +18,8 @@ from __future__ import annotations
 
 import json
 import os
-import pickle
+import signal
 import socket
-import struct
 import subprocess
 import sys
 import time
@@ -33,25 +32,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-
-def _receive(sock: socket.socket) -> dict:
-    header = sock.recv(8, socket.MSG_WAITALL)
-    if len(header) != 8:
-        raise ConnectionError("RoboLab simulator closed the connection")
-    size = struct.unpack("!Q", header)[0]
-    parts = []
-    while size:
-        part = sock.recv(min(size, 1024 * 1024))
-        if not part:
-            raise ConnectionError("RoboLab simulator closed the connection")
-        parts.append(part)
-        size -= len(part)
-    return pickle.loads(b"".join(parts))
-
-
-def _send(sock: socket.socket, value) -> None:
-    payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-    sock.sendall(struct.pack("!Q", len(payload)) + payload)
+from rlinf.envs.sim.robolab.protocol import receive, send
 
 
 class RoboLabEnv:
@@ -139,6 +120,7 @@ class RoboLabEnv:
                 ],
                 cwd=robolab_dir,
                 env=env,
+                start_new_session=True,
             )
             deadline = time.monotonic() + 300
             while time.monotonic() < deadline:
@@ -160,8 +142,8 @@ class RoboLabEnv:
             listener.close()
 
     def _request(self, message):
-        _send(self._socket, message)
-        result = _receive(self._socket)
+        send(self._socket, message)
+        result = receive(self._socket)
         if isinstance(result, dict) and "error" in result:
             raise RuntimeError(f"RoboLab simulator error:\n{result['error']}")
         return result
@@ -194,13 +176,7 @@ class RoboLabEnv:
             raise ValueError(
                 f"RoboLab expects actions [num_envs, horizon, 8], found {actions.shape}"
             )
-        result = self._request(
-            {
-                "command": "chunk_step",
-                "action_shape": actions.shape,
-                "action_bytes": actions.tobytes(),
-            }
-        )
+        result = self._request({"command": "chunk_step", "actions": actions})
 
         observation = self._observation(result["observation"])
         return (
@@ -228,7 +204,8 @@ class RoboLabEnv:
         self._closed = True
         if self._socket is not None:
             try:
-                _send(self._socket, {"command": "close"})
+                self._socket.settimeout(1)
+                send(self._socket, {"command": "close"})
             except OSError:
                 pass
             self._socket.close()
@@ -236,12 +213,11 @@ class RoboLabEnv:
             try:
                 self._process.wait(timeout=30)
             except subprocess.TimeoutExpired:
-                self._process.terminate()
                 try:
-                    self._process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait()
+                    os.killpg(self._process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self._process.wait()
 
     def __del__(self):
         self.close()
