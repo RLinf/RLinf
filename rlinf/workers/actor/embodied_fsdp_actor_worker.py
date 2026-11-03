@@ -681,7 +681,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     train_micro_batch[idx] = None
                     del batch
 
-                self.torch_platform.empty_cache()
+                # Concurrent environment bootstrap may need the cached blocks.
+                if self.cfg.runner.get("overlap_env_bootstrap", False):
+                    self.torch_platform.empty_cache()
 
                 grad_norm, lr_list = self.optimizer_step()
                 data = {
