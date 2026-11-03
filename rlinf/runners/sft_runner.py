@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
 from typing import TYPE_CHECKING, Optional, Union
@@ -68,7 +69,43 @@ class SFTRunner:
         if resume_dir is None:
             return
 
-        self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
+        if os.path.exists(os.path.join(resume_dir, "runner_state.incomplete")):
+            raise ValueError(
+                f"SFT checkpoint save is incomplete: found runner_state.incomplete in {resume_dir}. "
+                "Resume from an earlier completed checkpoint."
+            )
+        state_path = os.path.join(resume_dir, "runner_state.json")
+        if os.path.isfile(state_path):
+            with open(state_path) as stream:
+                state = json.load(stream)
+            if state["version"] != 1:
+                raise ValueError(
+                    f"Unsupported SFT runner state version: {state['version']}."
+                )
+            step = state["global_step"]
+            if not isinstance(step, int) or step < 0:
+                raise ValueError(f"Saved global_step must be non-negative, got {step}.")
+            if os.path.basename(os.path.normpath(resume_dir)) != "best_model":
+                path_step = parse_global_step_from_checkpoint_path(resume_dir)
+                if path_step != step:
+                    raise ValueError(
+                        f"Checkpoint directory step {path_step} differs from saved step {step}."
+                    )
+            if self.early_stop is not None:
+                if state["early_stop"] is not None:
+                    self.early_stop.load_state_dict(state["early_stop"])
+                else:
+                    logger.warning(
+                        "Checkpoint has no early-stop state; starting fresh."
+                    )
+            self.global_step = step
+        else:
+            self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
+            if self.early_stop is not None:
+                logger.warning(
+                    "Checkpoint has no runner_state.json; early stopping starts fresh. "
+                    "The first finite validation value will replace best_model."
+                )
         actor_checkpoint_path = os.path.join(resume_dir, "actor")
         assert os.path.exists(actor_checkpoint_path), (
             f"resume_dir {actor_checkpoint_path} does not exist."
@@ -76,6 +113,10 @@ class SFTRunner:
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
 
     def run(self) -> None:
+        if self.early_stop is not None and self.early_stop.should_stop:
+            logger.info("Checkpoint has already reached early-stop patience.")
+            self.metric_logger.finish()
+            return
         start_step = self.global_step
         global_pbar = tqdm(
             initial=start_step,
@@ -103,20 +144,18 @@ class SFTRunner:
                     run_time_exceeded=False,
                 )
 
-                if save_model:
-                    self._save_checkpoint()
-
                 should_stop = False
                 if eval_model:
                     eval_handle: Handle = self.actor.run_eval()
                     eval_metrics = eval_handle.wait()
 
                     if self.early_stop is not None:
-                        should_stop, best_val_acc_improved = self.early_stop.update(
-                            eval_metrics[0]
-                        )
-                        if best_val_acc_improved:
+                        should_stop, improved = self.early_stop.update(eval_metrics[0])
+                        if improved:
                             self._save_checkpoint(is_best=True)
+
+                if save_model or (should_stop and self.cfg.runner.save_interval > 0):
+                    self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
             time_metrics["training"] = actor_handle.consume_duration()
@@ -148,9 +187,11 @@ class SFTRunner:
             if should_stop:
                 break
 
-        if self.early_stop is not None and self.early_stop.best_val_acc > 0:
+        global_pbar.close()
+        if self.early_stop is not None and self.early_stop.should_stop:
             logger.info(
-                f"Early stopping triggered! Best val_acc: {self.early_stop.best_val_acc:.4f}"
+                f"Early stopping triggered! Best {self.early_stop.monitor}: "
+                f"{self.early_stop.best_value}"
             )
         self.metric_logger.finish()
 
@@ -191,10 +232,29 @@ class SFTRunner:
             )
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
+        incomplete_path = os.path.join(base_output_dir, "runner_state.incomplete")
+        with open(incomplete_path, "w") as stream:
+            stream.write(str(self.global_step))
         self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        state = {
+            "version": 1,
+            "global_step": self.global_step,
+            "early_stop": self.early_stop.state_dict() if self.early_stop else None,
+        }
+        state_path = os.path.join(base_output_dir, "runner_state.json")
+        temporary = state_path + ".tmp"
+        try:
+            with open(temporary, "w") as stream:
+                json.dump(state, stream, allow_nan=False)
+            os.replace(temporary, state_path)
+            os.unlink(incomplete_path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
         if is_best and self.early_stop is not None:
             logger.info(
-                f"Saved best model (val_acc={self.early_stop.best_val_acc:.4f}) to {base_output_dir}"
+                f"Saved best model ({self.early_stop.monitor}="
+                f"{self.early_stop.best_value:.4f}) to {base_output_dir}"
             )
 
     def set_max_steps(self) -> None:

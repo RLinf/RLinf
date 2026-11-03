@@ -594,3 +594,123 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+@pytest.mark.parametrize(
+    "monitor,mode,values,best",
+    [
+        ("val_loss", "min", [1.0, 0.5, 0.5, 0.49], 0.5),
+        ("val_accuracy", "max", [0.0, 0.5, 0.5, 0.51], 0.5),
+        ("value_spearman", "max", [-0.8, -0.4, -0.4, -0.39], -0.4),
+        ("custom", "min", [-1.0, -2.0, -2.0, -2.01], -2.0),
+    ],
+)
+def test_early_stop_tracks_configured_metric(monitor, mode, values, best):
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    controller = EarlyStopController(
+        {
+            "enabled": True,
+            "monitor": monitor,
+            "mode": mode,
+            "patience": 2,
+            "min_delta": 0.05,
+        }
+    )
+    results = [controller.update({monitor: value}) for value in values]
+    assert results == [(False, True), (False, True), (False, False), (True, False)]
+    assert controller.best_value == best
+
+
+@pytest.mark.parametrize("monitor,mode", [("val_loss", "min"), ("val_accuracy", "max")])
+def test_early_stop_legacy_default_mode(monitor, mode):
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    controller = EarlyStopController({"monitor": monitor})
+    assert controller.mode == mode
+
+
+def test_early_stop_disabled_still_selects_best():
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    controller = EarlyStopController({"enabled": False, "patience": 1})
+    assert controller.update({"val_loss": 1.0}) == (False, True)
+    assert controller.update({"val_loss": 2.0}) == (False, False)
+    assert controller.counter == 0
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize("mode", ["min", "max"])
+def test_early_stop_nonfinite_values_do_not_select_best(value, mode):
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    controller = EarlyStopController({"enabled": True, "mode": mode, "patience": 2})
+    assert controller.update({"val_loss": value}) == (False, False)
+    assert controller.best_value is None
+    assert controller.update({"val_loss": 0.0}) == (False, True)
+    assert controller.update({"val_loss": value}) == (False, False)
+    assert controller.update({"val_loss": value}) == (True, False)
+    assert controller.best_value == 0.0
+
+
+def test_early_stop_requires_monitored_metric():
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    controller = EarlyStopController({"monitor": "value_spearman", "mode": "max"})
+    with pytest.raises(KeyError, match="value_spearman.*available metrics.*val_loss"):
+        controller.update({"val_loss": 1.0})
+    assert controller.counter == 0
+
+
+@pytest.mark.parametrize(
+    "config,match",
+    [
+        ({"mode": "auto"}, "mode"),
+        ({"patience": 0}, "patience"),
+        ({"min_delta": -1.0}, "min_delta"),
+        ({"min_delta": float("nan")}, "min_delta"),
+        ({"min_delta": float("inf")}, "min_delta"),
+    ],
+)
+def test_early_stop_rejects_invalid_config(config, match):
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    with pytest.raises(ValueError, match=match):
+        EarlyStopController(config)
+
+
+def test_early_stop_state_roundtrip():
+    import json
+
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    cfg = {"enabled": True, "monitor": "value_spearman", "mode": "max", "patience": 2}
+    controller = EarlyStopController(cfg)
+    controller.update({"value_spearman": -0.5})
+    controller.update({"value_spearman": -0.6})
+    resumed = EarlyStopController(cfg)
+    resumed.load_state_dict(
+        json.loads(json.dumps(controller.state_dict(), allow_nan=False))
+    )
+    assert resumed.update({"value_spearman": -0.7}) == (True, False)
+    assert resumed.best_value == -0.5
+
+
+@pytest.mark.parametrize(
+    "change,match",
+    [
+        ({"monitor": "other"}, "monitor"),
+        ({"mode": "max"}, "mode"),
+        ({"min_delta": 0.5}, "min_delta"),
+        ({"best_value": float("nan")}, "best_value"),
+        ({"counter": -1}, "counter"),
+        ({"counter": 0.5}, "counter"),
+    ],
+)
+def test_early_stop_rejects_incompatible_state(change, match):
+    from rlinf.utils.runner_utils import EarlyStopController
+
+    controller = EarlyStopController({})
+    state = controller.state_dict() | change
+    with pytest.raises(ValueError, match=match):
+        controller.load_state_dict(state)

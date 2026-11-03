@@ -217,9 +217,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 训练日志会保存到新建的 ``logs/<timestamp>-reward_training`` 目录下。
 
 训练的 checkpoint 保存在 ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/`` 下：
-每隔 ``runner.save_interval`` 步保存一次 ``global_step_<N>/``，验证集准确率提升时更新
-``best_model/``\ （需要配置 ``runner.early_stop``）。在 RL 中使用训练好的模型时，
-将 ``reward.model.model_path`` 设为权重文件，例如：
+每隔 ``runner.save_interval`` 步保存一次 ``global_step_<N>/``，``runner.early_stop.monitor`` 指定的指标改善时更新 ``best_model/``。用 ``runner.early_stop.mode`` 配置优化方向，详见 :doc:`../guides/resume`。在 RL 中使用训练好的模型时，将 ``reward.model.model_path`` 设为权重文件，例如：
 
 .. code-block:: text
 

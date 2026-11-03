@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 import tempfile
 from typing import Any, Union
@@ -87,55 +88,88 @@ def local_mkdir_safe(path):
 
 
 class EarlyStopController:
-    """Track validation metrics and decide whether to stop early."""
+    """Select the best checkpoint and stop after consecutive failed checks."""
 
     def __init__(self, cfg: Any) -> None:
         self.enabled = cfg.get("enabled", False)
         self.patience = cfg.get("patience", 5)
         self.min_delta = cfg.get("min_delta", 0.001)
         self.monitor = cfg.get("monitor", "val_loss")
+        self.mode = cfg.get("mode", "max" if self.monitor == "val_accuracy" else "min")
+        if self.mode not in ("min", "max"):
+            raise ValueError(
+                f"early_stop.mode must be 'min' or 'max', got {self.mode!r}."
+            )
+        if self.patience < 1:
+            raise ValueError(
+                f"early_stop.patience must be positive, got {self.patience}."
+            )
+        if not math.isfinite(self.min_delta) or self.min_delta < 0:
+            raise ValueError(
+                f"early_stop.min_delta must be finite and non-negative, got {self.min_delta}."
+            )
 
         self.counter = 0
-        self.best_val_loss = float("inf")
-        self.best_val_acc = 0.0
+        self.best_value: float | None = None
+
+    @property
+    def should_stop(self) -> bool:
+        """Whether the configured patience has been exhausted."""
+        return self.enabled and self.counter >= self.patience
 
     def update(self, metrics: dict[str, float]) -> tuple[bool, bool]:
-        """Return (should_stop, best_val_acc_improved)."""
-        improved_for_monitor = False
-        best_val_acc_improved = False
+        """Return (should_stop, improved) for the configured metric.
 
-        if "val_loss" in metrics:
-            val_loss = metrics["val_loss"]
-            if val_loss < self.best_val_loss - self.min_delta:
-                self.best_val_loss = val_loss
-                if self.monitor == "val_loss":
-                    improved_for_monitor = True
-
-        if "val_accuracy" in metrics:
-            val_acc = metrics["val_accuracy"]
-            if val_acc > self.best_val_acc + self.min_delta:
-                self.best_val_acc = val_acc
-                best_val_acc_improved = True
-                if self.monitor == "val_accuracy":
-                    improved_for_monitor = True
-
-        if not self.enabled:
-            return False, best_val_acc_improved
-
-        has_monitored_metrics = "val_loss" in metrics or "val_accuracy" in metrics
-        if not has_monitored_metrics:
-            return False, best_val_acc_improved
-
-        if improved_for_monitor:
+        Non-finite values count as failed checks and never select a checkpoint.
+        Best-model selection remains active when early stopping is disabled.
+        """
+        if self.monitor not in metrics:
+            raise KeyError(
+                f"Monitored metric {self.monitor!r} is missing; "
+                f"available metrics: {sorted(metrics)}."
+            )
+        value = float(metrics[self.monitor])
+        improved = math.isfinite(value) and (
+            self.best_value is None
+            or (self.mode == "min" and value < self.best_value - self.min_delta)
+            or (self.mode == "max" and value > self.best_value + self.min_delta)
+        )
+        if improved:
+            self.best_value = value
             self.counter = 0
-        else:
+        elif self.enabled:
             self.counter += 1
             logger.info(f"Early stop counter: {self.counter}/{self.patience}")
 
-        if self.counter >= self.patience:
-            logger.info(
-                f"Early stopping triggered! No improvement for {self.patience} checks."
-            )
-            return True, best_val_acc_improved
+        return self.should_stop, improved
 
-        return False, best_val_acc_improved
+    def state_dict(self) -> dict[str, Any]:
+        """Return the metric definition, best value, and patience counter."""
+        return {
+            "monitor": self.monitor,
+            "mode": self.mode,
+            "min_delta": self.min_delta,
+            "best_value": self.best_value,
+            "counter": self.counter,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore progress with the same metric definition."""
+        for key in ("monitor", "mode", "min_delta"):
+            if state[key] != getattr(self, key):
+                raise ValueError(
+                    f"early_stop.{key} differs from the checkpoint: "
+                    f"configured {getattr(self, key)!r}, saved {state[key]!r}."
+                )
+        best_value = state["best_value"]
+        counter = state["counter"]
+        if best_value is not None and not math.isfinite(best_value):
+            raise ValueError(
+                f"Saved early-stop best_value must be finite, got {best_value}."
+            )
+        if not isinstance(counter, int) or counter < 0:
+            raise ValueError(
+                f"Saved early-stop counter must be non-negative, got {counter}."
+            )
+        self.best_value = best_value
+        self.counter = counter
