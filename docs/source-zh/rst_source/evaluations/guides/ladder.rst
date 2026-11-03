@@ -1,11 +1,11 @@
 LADDER 评测
 ===========
 
-`LADDER <https://ladderrobotics.ai>`__ （`论文 <https://arxiv.org/abs/2610.18053>`__，`代码 <https://github.com/insait-institute/ladder>`__）是长程机器人操作评测基准，包含三大仿真套件共 **145 个任务**（每个任务含 1 至 10 个子目标）：
+`LADDER <https://ladderrobotics.ai>`__ （`论文 <https://arxiv.org/abs/2610.18053>`__，`代码 <https://github.com/insait-institute/ladder>`__）是长程机器人操作评测基准，包含三大仿真套件共 **145 个任务** （每个任务含 1 至 10 个子目标）：
 
-- ``simpler`` （**SimplerEnv-Long**）：基于 SAPIEN 3 / ManiSkill 3 的 54 个 WidowX 任务（每任务 24 个并行环境）。
-- ``robot_arena`` （**RobotArena-∞-Long**）：基于 Genesis 的 47 个 WidowX 任务（每任务 8 个并行环境）。
-- ``robolab`` （**RoboLab-Long**）：基于 Isaac Sim 6 / Isaac Lab 3 的 44 个 Franka DROID 任务（每任务 8 个并行环境）。
+- ``simpler`` （SimplerEnv-Long）：基于 SAPIEN 3 / ManiSkill 3 的 54 个 WidowX 任务（每任务 24 个并行环境）。
+- ``robot_arena`` （RobotArena-∞-Long）：基于 Genesis 的 47 个 WidowX 任务（每任务 8 个并行环境）。
+- ``robolab`` （RoboLab-Long）：基于 Isaac Sim 6 / Isaac Lab 3 的 44 个 Franka DROID 任务（每任务 8 个并行环境）。
 
 RLinf 同时输出完整任务成功率（``eval/success_once``）与子目标完成进度（``eval/subgoal_progress``）。
 
