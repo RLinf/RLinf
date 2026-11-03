@@ -1218,7 +1218,7 @@ def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
     model_type = SupportedModel(model_cfg.model_type)
     for mode in ("train", "eval"):
         for path, env_cfg in EnvLayout.env_cfgs(
-            cfg.env.get(mode, None), f"env.{mode}"
+            OmegaConf.select(cfg, f"env.{mode}", default=None), f"env.{mode}"
         ).items():
             for field in EnvSpec.POLICY_FIELDS:
                 readers = POLICY_FIELD_MODELS[field]
