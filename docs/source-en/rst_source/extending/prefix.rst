@@ -370,7 +370,7 @@ The built-in ``ac`` uses a stochastic actor and Q1 aggregation; ``algorithm.acto
 Training and Running
 --------------------
 
-The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. It uses masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Supply the four checkpoints at ``rollout.prefix_feature_model.model_path``, ``rollout.routing_gate.actor_switch.phase_head_path``, ``rollout.routing_gate.model.model_path``, and ``rollout.expert_model.model_path``. Their paths are placeholders; match the OpenPI ``repo_id``, ``norm_stats_path``, and environment assets to your checkpoints, then run:
+The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. It uses masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Supply the four checkpoints at ``rollout.prefix_feature_model.model_path``, ``rollout.routing_gate.actor_switch.phase_head_path``, ``rollout.routing_gate.model.model_path``, and ``rollout.expert_model.model_path``. Set these local paths, the OpenPI ``repo_id``, and the environment assets to match your checkpoints. With ``norm_stats_path: null``, each OpenPI model loads ``<model_path>/<repo_id>/norm_stats.json`` from its own checkpoint. Then run:
 
 .. code:: bash
 
@@ -378,16 +378,23 @@ The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3
 
 The frozen feature model explicitly uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Its ``z_rl`` pools only VLM image tokens; language still conditions the reference actions. STEAM routing selects among the base VLA, Stage 2 actor, and expert during rollout; the Prefix runtime still owns the heads and algorithm. ``rollout.routing_gate.cameras`` maps each STEAM processor camera key to the env observation key that supplies it.
 
-To calibrate routing on recorded episodes, set
-``rollout.routing_gate.actor_switch.collect_phase_features: true`` and
-``algorithm.rlt_gate_calibration.enable: true`` while collecting rollouts.
-The learner writes features and gate diagnostics to ``algorithm.rlt_gate_calibration.save_path`` under ``rank_<rank>/trace_*.pt``. After collection, run the offline tool:
+For a first calibration without a phase head, use the collection preset:
 
 .. code:: bash
 
-   python toolkits/rlt/calibrate_steam_gates.py /path/to/gate_calibration --device cpu
+   STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
 
-The tool writes ``steam_phase_head.pt`` and ``steam_gate_recommendation.yaml`` in that directory. Copy the recommendation's ``rollout.routing_gate`` settings into your run config, including the phase-head path and calibrated thresholds. Set both collection flags back to false for normal training; the calibration tool runs separately from training updates.
+This preset clears the phase-head path, routes with the environment geometry gate, and puts expert takeover in shadow mode. It enables ``rollout.routing_gate.actor_switch.collect_phase_features`` and ``algorithm.rlt_gate_calibration.enable``. The learner writes features, geometry labels, and gate diagnostics to ``/data/steam_peg/gate_calibration/rank_<rank>/trace_*.pt``. Use a separate trace directory for each collection run.
+
+The 20 rollout rounds check collection and can supply an initial phase head if both geometry labels occur. They do not complete the preset's 30,000-update warmup; calibrate deployment expert thresholds on later, actor-controlled episodes. To fit the initial head, run the offline tool without a minimum-version filter:
+
+.. code:: bash
+
+   python toolkits/rlt/calibrate_steam_gates.py /data/steam_peg/gate_calibration \
+     --phase-head-output /data/steam_peg/steam_phase_head.pt \
+     --yaml-output /data/steam_peg/steam_gate_recommendation.yaml --device cpu
+
+Copy the recommendation's ``rollout.routing_gate`` settings into the training preset, including the phase-head path and calibrated thresholds. Use the training preset for normal runs; its collection flags remain false and routing returns to the rollout gate. The calibration tool runs separately from training updates.
 
 Stage 2 replay uses a fixed observation contract:
 

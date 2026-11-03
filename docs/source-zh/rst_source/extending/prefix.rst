@@ -370,7 +370,7 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
 训练与运行
 ----------
 
-仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。该配置使用 masked-mean VLM Prefix 特征、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。先在 ``rollout.prefix_feature_model.model_path``、``rollout.routing_gate.actor_switch.phase_head_path``、``rollout.routing_gate.model.model_path`` 和 ``rollout.expert_model.model_path`` 填入四个 checkpoint。示例中的路径都是占位符；将 OpenPI ``repo_id``、``norm_stats_path`` 和环境资产与 checkpoint 对齐后运行：
+仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。该配置使用 masked-mean VLM Prefix 特征、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。先在 ``rollout.prefix_feature_model.model_path``、``rollout.routing_gate.actor_switch.phase_head_path``、``rollout.routing_gate.model.model_path`` 和 ``rollout.expert_model.model_path`` 填入四个 checkpoint。请按 checkpoint 设置这些本地路径、OpenPI 的 ``repo_id`` 和环境资源。设置 ``norm_stats_path: null`` 时，每个 OpenPI 模型会从各自 checkpoint 的 ``<model_path>/<repo_id>/norm_stats.json`` 加载归一化统计量。然后运行：
 
 .. code:: bash
 
@@ -378,16 +378,23 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
 
 冻结的特征模型显式设置 ``prefix.pool: masked_mean``、``prefix.image_only: true`` 和 ``use_rlt: false``。``z_rl`` 只对 VLM 图像 token 做 pooling；语言仍用于生成 reference action。STEAM routing 只负责 base VLA、Stage 2 actor 与 expert 的 rollout route，head 和 algorithm 仍由 Prefix runtime 负责。``rollout.routing_gate.cameras`` 将每个 STEAM processor camera key 映射到提供该图像的 env observation key。
 
-要用已记录的 episode 校准路由，在采集 rollout 时设置
-``rollout.routing_gate.actor_switch.collect_phase_features: true`` 和
-``algorithm.rlt_gate_calibration.enable: true``。
-learner 会在 ``algorithm.rlt_gate_calibration.save_path`` 下的 ``rank_<rank>/trace_*.pt`` 中写入特征与 gate 诊断信息。采集完成后运行离线工具：
+首次校准、还没有 phase head 时，使用采集 preset：
 
 .. code:: bash
 
-   python toolkits/rlt/calibrate_steam_gates.py /path/to/gate_calibration --device cpu
+   STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
 
-工具会在该目录生成 ``steam_phase_head.pt`` 和 ``steam_gate_recommendation.yaml``。将推荐文件的 ``rollout.routing_gate`` 设置复制到运行配置，包括 phase-head 路径与校准后的阈值。正常训练时将两个采集开关恢复为 false；校准工具与训练更新分开运行。
+该 preset 清空 phase-head 路径，使用环境几何 gate 路由，并将 expert takeover 设为 shadow 模式。同时启用 ``rollout.routing_gate.actor_switch.collect_phase_features`` 和 ``algorithm.rlt_gate_calibration.enable``，由 learner 将特征、几何标签和 gate 诊断信息写入 ``/data/steam_peg/gate_calibration/rank_<rank>/trace_*.pt``。每次采集使用独立的 trace 目录。
+
+20 轮 rollout 用于验证采集流程；正负几何标签都出现时，可以拟合初版 phase head。它们不足以完成 preset 的 30,000 次更新 warmup，部署用的 expert 阈值需要用后续 actor 实际控制的 episode 校准。拟合初版 head 时，不设置 minimum-version 过滤：
+
+.. code:: bash
+
+   python toolkits/rlt/calibrate_steam_gates.py /data/steam_peg/gate_calibration \
+     --phase-head-output /data/steam_peg/steam_phase_head.pt \
+     --yaml-output /data/steam_peg/steam_gate_recommendation.yaml --device cpu
+
+将推荐文件的 ``rollout.routing_gate`` 设置复制到训练 preset，包括 phase-head 路径与校准后的阈值。正常运行时使用训练 preset；它的采集开关保持 false，路由恢复由 rollout gate 控制。校准工具与训练更新分开运行。
 
 Stage 2 replay 的 observation 固定为：
 

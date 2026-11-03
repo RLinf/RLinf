@@ -2045,6 +2045,74 @@ def test_prefix_configs_resolve_pool_from_prefix_block(
     assert rlt_cfg.prefix_image_only is expected_image_only
 
 
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "maniskill_prefix_stage2_td3_mlp_steam",
+        "maniskill_prefix_stage2_td3_mlp_steam_calibration",
+    ],
+)
+def test_steam_presets_use_each_checkpoint_for_normalization(monkeypatch, config_name):
+    from rlinf.algorithms.expert import build_expert_model_config
+
+    cfg = _compose_prefix_config(monkeypatch, "examples/embodiment/config", config_name)
+    OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    feature_cfg = cfg.rollout.prefix_feature_model
+    expert_cfg = build_expert_model_config(
+        cfg, cfg.rollout.model, prefix_feature_model_config=feature_cfg
+    )
+
+    assert feature_cfg.openpi_data.norm_stats_path is None
+    assert expert_cfg.openpi_data.norm_stats_path is None
+    assert feature_cfg.openpi_data.repo_id == "maniskill_peginsertionside_joint"
+    assert expert_cfg.openpi_data.repo_id == feature_cfg.openpi_data.repo_id
+    assert Path(feature_cfg.model_path).parts[-2:] == ("global_step_1000", "actor")
+    assert Path(expert_cfg.model_path).parts[-2:] == ("global_step_3000", "actor")
+    assert feature_cfg.prefix.pool == "masked_mean"
+    assert feature_cfg.prefix.image_only is True
+
+
+def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+
+    cfg = _compose_prefix_config(
+        monkeypatch,
+        "examples/embodiment/config",
+        "maniskill_prefix_stage2_td3_mlp_steam_calibration",
+    )
+    gate = SteamRoutingGate(_FakeSteamCritic(), cfg.rollout.routing_gate)
+    assert gate.phase_head is None
+    assert not gate.controls_actor_routing
+    assert gate.emit_phase_features
+    assert gate.expert_mode == "shadow"
+    assert cfg.runner.max_steps == 20
+    assert cfg.runner.val_check_interval == cfg.runner.save_interval == -1
+    assert cfg.algorithm.rlt_gate_calibration.enable
+    assert (
+        cfg.algorithm.rlt_gate_calibration.save_path
+        == "/data/steam_peg/gate_calibration"
+    )
+    assert cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 30000
+    for mode in ("train", "eval"):
+        switch = cfg.env[mode].rlt_policy_switch
+        assert switch.routing_source == "environment"
+        assert not switch.expert_takeover.enable
+        assert switch.expert_takeover.oracle_metrics.enable
+
+    training_cfg = _compose_prefix_config(
+        monkeypatch,
+        "examples/embodiment/config",
+        "maniskill_prefix_stage2_td3_mlp_steam",
+    )
+    assert training_cfg.rollout.routing_gate.actor_switch.enable
+    assert training_cfg.rollout.routing_gate.actor_switch.phase_head_path == (
+        "/data/steam_peg/steam_phase_head.pt"
+    )
+    assert training_cfg.rollout.routing_gate.expert_takeover.mode == "active"
+    assert training_cfg.env.train.rlt_policy_switch.routing_source == "rollout"
+    assert not training_cfg.algorithm.rlt_gate_calibration.enable
+
+
 def test_prefix_e2e_config_builds_current_policy_and_algorithm(monkeypatch):
     cfg = _compose_prefix_config(
         monkeypatch, "tests/e2e_tests/embodied", "maniskill_rlt_stage2_ac_mlp"

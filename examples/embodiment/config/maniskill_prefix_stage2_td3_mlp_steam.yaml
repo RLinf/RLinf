@@ -3,14 +3,13 @@ defaults:
   - env/maniskill_rlt@env.eval
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
+  - _self_
   - override hydra/job_logging: stdout
 
 hydra:
   run:
     dir: .
   output_subdir: null
-  searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
@@ -246,7 +245,7 @@ rollout:
 
   prefix_feature_model:
     model_type: "openpi"
-    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
+    model_path: "/mnt/public2/xiekaizhi/openpi-rlt-sim/tests/RLinf-dev/logs/step1000new/global_step_1000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: ${actor.model.action_dim}
@@ -260,7 +259,8 @@ rollout:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
-      norm_stats_path: "/path/to/maniskill_peginsertionside_joint/norm_stats.json"
+      # Load stats from each checkpoint's <repo_id>/norm_stats.json.
+      norm_stats_path: null
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
@@ -287,7 +287,7 @@ rollout:
     actor_switch:
       enable: True
       mode: active
-      phase_head_path: "/path/to/steam_phase_head.pt"
+      phase_head_path: "/data/steam_peg/steam_phase_head.pt"
       enter_threshold: 0.941209
       patience_chunks: 1
       # Enable only while collecting traces for phase-head calibration.
@@ -311,13 +311,13 @@ rollout:
       latch_until_done: True
     model:
       model_type: "steam_value_model"
-      model_path: "/path/to/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor"
+      model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/steam_sft/rlt_steam_value_model_sft-20260917-08:54:50/rlt_steam_value_model_sft/checkpoints/global_step_5000"
       precision: bf16
 
   # The simulation expert is invoked by the learned actor-to-expert gate.
   expert_model:
     model_type: "openpi"
-    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor"
+    model_path: "/mnt/public2/xiekaizhi/openpi-rlt-sim/tests/RLinf-dev/logs/step3000new/global_step_3000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: 8
