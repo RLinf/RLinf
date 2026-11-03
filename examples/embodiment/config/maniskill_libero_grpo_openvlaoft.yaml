@@ -140,7 +140,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/"
     precision: ${actor.model.precision}
 
 actor:
@@ -155,9 +155,16 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/"
     model_type: "openvla_oft"
     unnorm_key: libero_10_no_noops
+    # Base-Main is a LIBERO-10 policy, and the ManiSkill LoRA was trained on it.
+    # Folding in half of the LoRA gives one policy that succeeds sometimes on
+    # both envs (about 0.2 on LIBERO-10 and 0.09 on ManiSkill), so GRPO has a
+    # signal in each.
+    merged_loras:
+      - path: /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+        scale: 0.5
     max_prompt_length: 128
     # A fresh LoRA adapter keeps the 7B policy, both simulators and rollout on
     # 4 GPUs.

@@ -385,6 +385,8 @@ actor
      - LoRA 低秩适配的秩。
    * - ``actor.model.lora_path``
      - LoRA 权重路径。
+   * - ``actor.model.merged_loras``
+     - 加载时合并进基础权重的 LoRA adapter 列表，每项为 ``{path, scale}`` ， ``scale`` 是合并的 adapter 更新量所占的比例。可训练的 LoRA（ ``is_lora`` ）加在合并后的权重之上。
    * - ``actor.model.num_images_in_input``
      - 模型输入中的图像数量。
    * - ``actor.model.attn_implementation``

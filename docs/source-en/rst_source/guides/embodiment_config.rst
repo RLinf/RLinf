@@ -405,6 +405,10 @@ actor
      - LoRA rank for low-rank adaptation.
    * - ``actor.model.lora_path``
      - Path to LoRA weights.
+   * - ``actor.model.merged_loras``
+     - LoRA adapters folded into the base weights at load, each ``{path, scale}``;
+       ``scale`` is the fraction of the adapter's update to merge. A trainable
+       LoRA (``is_lora``) is added on top of the merged weights.
    * - ``actor.model.num_images_in_input``
      - Number of images in the model input.
    * - ``actor.model.attn_implementation``

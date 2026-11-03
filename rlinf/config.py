@@ -1312,6 +1312,11 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     validate_env_policy_fields(cfg, model_cfg)
+    for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
+        assert adapter.get("path"), (
+            f"Expected merged_loras[{index}] of the model config to set path, "
+            f"got {adapter!r}."
+        )
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "

@@ -107,6 +107,50 @@ def test_custom_model_registration_smoke():
     assert received["torch_dtype"] == torch.float32
 
 
+class _TinyProjModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = torch.nn.Linear(4, 3)
+
+
+def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
+    peft = pytest.importorskip("peft")
+    torch.manual_seed(0)
+    base = _TinyProjModel()
+    adapted = peft.get_peft_model(
+        _clone_module(base),
+        peft.LoraConfig(
+            r=2, lora_alpha=4, target_modules=["proj"], init_lora_weights=False
+        ),
+    )
+    adapted.save_pretrained(tmp_path)
+    proj = adapted.base_model.model.proj
+    update = (proj.lora_B["default"].weight @ proj.lora_A["default"].weight) * (4 / 2)
+    model_type = f"custom_model_merged_lora_{int(time.time() * 1000)}"
+    register_model(model_type, lambda cfg, torch_dtype: _clone_module(base))
+
+    model = get_model(
+        OmegaConf.create(
+            {
+                "model_type": model_type,
+                "precision": "fp32",
+                "is_lora": False,
+                "load_to_device": False,
+                "merged_loras": [{"path": str(tmp_path), "scale": 0.5}],
+            }
+        )
+    )
+
+    assert torch.allclose(model.proj.weight, base.proj.weight + 0.5 * update, atol=1e-6)
+    assert not any("lora" in name for name, _ in model.named_parameters())
+
+
+def _clone_module(module: torch.nn.Module) -> torch.nn.Module:
+    clone = type(module)()
+    clone.load_state_dict(module.state_dict())
+    return clone
+
+
 def test_custom_model_registration_with_fsdp_wrap_policy():
     model_type = f"custom_model_fsdp_{int(time.time() * 1000)}"
 

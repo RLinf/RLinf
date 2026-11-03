@@ -378,6 +378,30 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
+def merge_lora(model, path: str, scale: float):
+    """Fold a saved LoRA adapter, scaled by ``scale``, into ``model``'s weights.
+
+    Each adapted weight becomes ``W + scale * (lora_alpha / r) * B @ A``. The
+    returned model has no adapter modules, so a trainable LoRA can be added on
+    top as for any base model.
+
+    Args:
+        model: The base model the adapter was trained on.
+        path: Directory of the adapter, as written by ``save_pretrained``.
+        scale: Fraction of the adapter's update to merge.
+
+    Returns:
+        ``model`` with the scaled update merged into its weights.
+    """
+    from peft import PeftModel
+
+    peft_model = PeftModel.from_pretrained(model, path)
+    for name, param in peft_model.named_parameters():
+        if "lora_B" in name:
+            param.data.mul_(scale)
+    return peft_model.merge_and_unload()
+
+
 def get_model(cfg: DictConfig):
     model_type = str(cfg.model_type)
     model_builder = _MODEL_REGISTRY.get(model_type)
@@ -393,6 +417,9 @@ def get_model(cfg: DictConfig):
         and cfg.get("load_to_device", True)
     ):
         model = model.to(Worker.torch_device_type)
+
+    for adapter in cfg.get("merged_loras", None) or []:
+        model = merge_lora(model, adapter.path, adapter.get("scale", 1.0))
 
     if cfg.is_lora:
         from peft import (
