@@ -1832,8 +1832,15 @@ def _bucket_header(total_buckets, version):
     }
 
 
-def test_phyai_weight_sync_loads_every_bucket_in_phyai_layout(monkeypatch):
+@pytest.mark.parametrize("has_accelerator", [False, True])
+def test_phyai_weight_sync_loads_every_bucket_in_phyai_layout(
+    monkeypatch, has_accelerator
+):
     worker, engine = _phyai_worker_with_engine(monkeypatch)
+    empty_cache = MagicMock()
+    worker.torch_platform = (
+        SimpleNamespace(empty_cache=empty_cache) if has_accelerator else None
+    )
     qkv = torch.arange(18, dtype=torch.float32).reshape(6, 3)
     gating = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
     value_bias = torch.ones(4)
@@ -1870,6 +1877,10 @@ def test_phyai_weight_sync_loads_every_bucket_in_phyai_layout(monkeypatch):
     assert torch.equal(weights[f"{expert_prefix}.gate_proj.weight"], gating[0].T)
     assert torch.equal(weights[f"{expert_prefix}.up_proj.weight"], gating[1].T)
     assert weights["value_head.mlp.0.bias"] is value_bias
+    if has_accelerator:
+        empty_cache.assert_called_once_with()
+    else:
+        empty_cache.assert_not_called()
 
 
 def test_phyai_weight_sync_aborts_and_keeps_the_version_when_a_bucket_fails(

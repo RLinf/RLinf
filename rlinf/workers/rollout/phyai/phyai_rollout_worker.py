@@ -1127,7 +1127,8 @@ class PhyAIRolloutWorker(Worker):
             f"version={self.version}, loaded={len(report.loaded)}."
         )
         gc.collect()
-        self.torch_platform.empty_cache()
+        if self.torch_platform is not None:
+            self.torch_platform.empty_cache()
 
     def set_global_step(self, global_step: int) -> None:
         """Ignore the step; PhyAI sampling has no step-dependent schedule.
