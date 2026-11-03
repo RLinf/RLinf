@@ -43,7 +43,7 @@
       :link: rollout-engines/index
       :link-type: doc
 
-      启动 sglang server 与 router，向外暴露统一的推理入口。
+      启动 SGLang server 与 router，或使用 PhyAI 作为进程内的具身 rollout 后端。
 
 .. toctree::
    :hidden:
