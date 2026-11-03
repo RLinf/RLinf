@@ -14,6 +14,8 @@ notes for a supported RL algorithm.
      - Proximal Policy Optimization.
    * - :doc:`GRPO <grpo>`
      - Group Relative Policy Optimization.
+   * - :doc:`DRPO <drpo>`
+     - Decouple correctness and length rewards for reasoning.
    * - :doc:`DAPO <dapo>`
      - Decoupled-clip and dynamic-sampling policy optimization.
    * - :doc:`Reinforce++ <reinforce>`
@@ -34,6 +36,7 @@ notes for a supported RL algorithm.
 
    PPO <ppo>
    GRPO <grpo>
+   DRPO <drpo>
    DAPO <dapo>
    Reinforce++ <reinforce>
    SAC <sac>
