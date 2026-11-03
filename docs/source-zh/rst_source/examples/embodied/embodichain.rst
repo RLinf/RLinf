@@ -210,7 +210,9 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
    export STACK_CUBE_MODEL_PYTHON="$STACK_CUBE_MODEL_VENV/bin/python"
    export STACK_CUBE_ENV_PYTHON="${STACK_CUBE_MODEL_VENV}-embodichain/bin/python"
 
-安装器创建模型 venv，以及带 ``-embodichain`` 后缀的仿真 venv。模型环境包含 ``rlinf-openpi==0.1.1``、``lerobot==0.3.3``、``datasets==3.6.0`` 与 ``pyarrow<26``；仿真环境固定到 EmbodiChain commit ``21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3`` 和 ``dexsim-engine==0.5.1rc1``。PPO 的 node group 通过 ``STACK_CUBE_MODEL_PYTHON`` 和 ``STACK_CUBE_ENV_PYTHON`` 选择对应 interpreter。
+安装器创建模型 venv，以及带 ``-embodichain`` 后缀的仿真 venv。模型环境包含 ``rlinf-openpi==0.1.1``、``lerobot==0.3.3``、``datasets==3.6.0`` 与 ``pyarrow<26``；仿真环境固定到 EmbodiChain commit ``d2251d2303112f767c016c7c88be40637791f785`` 和 ``dexsim-engine==0.5.1rc1``。PPO 的 node group 通过 ``STACK_CUBE_MODEL_PYTHON`` 和 ``STACK_CUBE_ENV_PYTHON`` 选择对应 interpreter。
+
+SDK 固定到 2026 年 11 月 3 日的 main 快照。该 Torch 2.7.1 recipe 使用 Python 3.11；Python 3.12 对应另一套 SDK 依赖。下文历史质量报告仍对应其原始 SDK 与训练源码。两种任务部署分别使用 ``RLinf-StackCube-Expert-v1`` 和 ``RLinf-StackCube-FormalExpert-v1``，支持在同一进程中注册。
 
 数据转换、normalization 和 SFT 使用模型 venv；专家采集使用仿真 interpreter。闭环评估也由仿真环境启动，并通过 ``--model-python`` 选择独立的模型进程。
 

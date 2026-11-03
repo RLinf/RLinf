@@ -5037,7 +5037,12 @@ def test_embodichain_package_config_resolves_away_from_cwd(
     selected = adapter._resolve_gym_config_path(relative)
     assert selected == (expected_root / suffix).resolve()
     payload = OmegaConf.load(selected)
-    assert payload.id == "RLinf-StackCube-Expert-v1"
+    expected_id = (
+        "RLinf-StackCube-FormalExpert-v1"
+        if deployment == "task.panda.formal_expert.yaml"
+        else "RLinf-StackCube-Expert-v1"
+    )
+    assert payload.id == expected_id
     assert (selected.parent / payload.environment.component).is_file()
     assert (selected.parent / payload.embodiment.component).is_file()
 
@@ -5285,7 +5290,22 @@ def test_embodichain_task_wrapper_dispatch(embodichain_reward_sdk, tmp_path):
         / _EMBODICHAIN_CONFIG_PREFIX
         / "tasks/manipulation/stack_cube/task.panda.yaml"
     )
-    assert get_env_cls("embodichain", {"gym_config_path": str(path)}) is StackCubeEnv
+    from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
+    from embodichain.utils.utility import load_config
+
+    # Distinct integrations must coexist in the SDK's process-local registry.
+    ids = set()
+    for deployment in (path, path.with_name("task.panda.formal_expert.yaml")):
+        config = load_config(deployment)
+        config_to_cfg(
+            config, manager_modules=get_manager_modules(), source_path=deployment
+        )
+        ids.add(config["id"])
+        assert (
+            get_env_cls("embodichain", {"gym_config_path": str(deployment)})
+            is StackCubeEnv
+        )
+    assert len(ids) == 2
     generic = tmp_path / "generic.json"
     generic.write_text('{"id": "generic-task"}')
     assert (
@@ -5303,6 +5323,8 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_reward_sdk):
     native_name = "rlinf.envs.sim.embodichain.stack_cube"
     previous_native = sys.modules.get(native_name)
     native = importlib.import_module(native_name)
+    from embodichain.lab.gym.envs.episode_context import EpisodeContext
+
     from rlinf.envs.sim.embodichain import StackCubeEnv
     from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
 
@@ -5310,6 +5332,7 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_reward_sdk):
         def __init__(self, cfg, *, protocol=None, **kwargs):
             self.cfg = cfg
             self._num_envs = cfg.num_envs
+            self.episode_context = EpisodeContext(cfg.num_envs, "cpu")
             self.max_episode_steps = cfg.max_episode_steps
             self.sim = SimpleNamespace(
                 device=torch.device("cpu"), render_frame=lambda: nullcontext()

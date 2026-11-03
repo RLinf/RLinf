@@ -1,4 +1,4 @@
-id: RLinf-StackCube-Expert-v1
+id: RLinf-StackCube-FormalExpert-v1
 environment:
   component: env.yaml
 task_program:

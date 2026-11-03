@@ -17,7 +17,10 @@ from typing import Any
 from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv
 from rlinf.envs.sim.embodichain.stack_cube_env import StackCubeEnv
 
-REGISTER_EMBODICHAIN_ENVS = {"RLinf-StackCube-Expert-v1": StackCubeEnv}
+REGISTER_EMBODICHAIN_ENVS = {
+    "RLinf-StackCube-Expert-v1": StackCubeEnv,
+    "RLinf-StackCube-FormalExpert-v1": StackCubeEnv,
+}
 
 
 def get_embodichain_env_cls(env_cfg: Any = None) -> type[EmbodiChainEnv]:

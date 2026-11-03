@@ -231,9 +231,15 @@ stack uses LeRobot 0.4.4 and NumPy 2. Select the CUDA 12.8 build of Torch 2.7.1:
 The installer creates the model venv and a sibling with the
 ``-embodichain`` suffix. The model contains ``rlinf-openpi==0.1.1``,
 ``lerobot==0.3.3``, ``datasets==3.6.0`` and ``pyarrow<26``. The simulator uses
-EmbodiChain commit ``21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3`` and
+EmbodiChain commit ``d2251d2303112f767c016c7c88be40637791f785`` and
 ``dexsim-engine==0.5.1rc1``. PPO's node groups select these interpreters using
 ``STACK_CUBE_MODEL_PYTHON`` and ``STACK_CUBE_ENV_PYTHON``.
+
+The SDK pin is the November 3, 2026 main snapshot. Use Python 3.11 with
+this Torch 2.7.1 recipe; Python 3.12 selects a different SDK dependency profile.
+Historical quality reports below retain their original SDK and training sources.
+The two task deployments use distinct IDs, ``RLinf-StackCube-Expert-v1`` and
+``RLinf-StackCube-FormalExpert-v1``, so both can be registered in one process.
 
 Run conversion, normalization and SFT from the model venv. Launch expert
 collection with the simulator interpreter. Closed-loop evaluation also starts
