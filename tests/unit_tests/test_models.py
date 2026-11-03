@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
+import logging
+import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -30,7 +34,7 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, validate_embodied_cfg
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
@@ -40,6 +44,7 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
+from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -49,6 +54,8 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
+from rlinf.workers.rollout.phyai import phyai_rollout_worker
+from rlinf.workers.rollout.phyai.phyai_rollout_worker import PhyAIRolloutWorker
 
 
 class _DummyModel:
@@ -1454,6 +1461,731 @@ def test_apxinf_a_missing_apxinf_robo_names_what_to_install(monkeypatch):
         OpenPIApxInfAdapter(
             _apxinf_model_cfg(), "cpu", processor=_FakeApxInfProcessor()
         )
+
+
+# PhyAI rollout backend. Workers are built through their constructor; only Ray
+# placement, the weight-sync transport, and the PhyAI engine are faked.
+
+_PHYAI_INSTALLED = importlib.util.find_spec("phyai") is not None
+_requires_phyai = pytest.mark.skipif(
+    not _PHYAI_INSTALLED, reason="PhyAI is not installed"
+)
+
+
+def _phyai_cfg(
+    *,
+    only_eval=False,
+    openpi=None,
+    phyai=None,
+    algorithm=None,
+    collect_transitions=False,
+    rollout_model=None,
+    ckpt_path=None,
+):
+    model = {
+        "model_type": "openpi",
+        "model_path": "/checkpoint",
+        "precision": "bf16",
+        "num_action_chunks": 5,
+        "action_dim": 7,
+        "num_steps": 3,
+        "add_value_head": True,
+        "openpi": {
+            "config_name": "pi05_libero",
+            "action_horizon": 10,
+            "model_action_dim": 32,
+            "max_token_len": 200,
+            "num_images_in_input": 2,
+            "value_after_vlm": True,
+            **(openpi or {}),
+        },
+    }
+    env = {"rollout_epoch": 1, "total_num_envs": 2, "max_steps_per_rollout_epoch": 10}
+    cfg = {
+        "runner": {
+            "only_eval": only_eval,
+            "val_check_interval": -1,
+            "ckpt_path": ckpt_path,
+        },
+        "env": {"group_name": "EnvGroup", "train": env, "eval": dict(env)},
+        "actor": {"group_name": "ActorGroup", "model": model},
+        "rollout": {
+            "group_name": "RolloutGroup",
+            "pipeline_stage_num": 1,
+            "collect_transitions": collect_transitions,
+            "model": {**model, **(rollout_model or {})},
+            "phyai": {"plugin": "pi05", **(phyai or {})},
+        },
+        "weight_syncer": {
+            "type": "bucket",
+            "bucket": {
+                "bucket_size": 1 << 20,
+                "bucket_dtype": None,
+                "bucket_device": "cpu",
+            },
+        },
+    }
+    if algorithm is not None:
+        cfg["algorithm"] = algorithm
+    cfg = OmegaConf.create(cfg)
+    # Hydra-composed configs are in struct mode, so missing keys raise.
+    OmegaConf.set_struct(cfg, True)
+    return cfg
+
+
+class _OneGpuPlacement:
+    def __init__(self, cfg, cluster):
+        del cfg, cluster
+
+    def get_world_size(self, component):
+        del component
+        return 1
+
+
+def _build_phyai_worker(monkeypatch, cfg):
+    """Build rank 0 of a one-GPU PhyAI rollout group without starting Ray."""
+
+    def init_scheduler_side(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "RolloutGroup"
+        worker.global_accelerator_ids = [0]
+        worker._logger = logging.getLogger("phyai-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler_side)
+    monkeypatch.setattr(phyai_rollout_worker, "Cluster", lambda: None)
+    monkeypatch.setattr(
+        phyai_rollout_worker, "HybridComponentPlacement", _OneGpuPlacement
+    )
+    return PhyAIRolloutWorker(cfg)
+
+
+class _FakePhyAIEngine:
+    """Records what the worker asks of a PhyAI engine and returns ``result``."""
+
+    def __init__(self, args=None):
+        self.args = args
+        self.kernel_env = os.environ.get("PHYAI_KERNEL_CONFIG")
+        self.result = None
+        self.requests = []
+        self.events = []
+
+    def step(self, request):
+        self.requests.append(request)
+        return self.result
+
+    def rollout_step(self, request):
+        self.requests.append(request)
+        return self.result
+
+    def begin_weight_update(self):
+        self.events.append("begin")
+
+    def update_weights(self, state_dict):
+        self.events.append(("update", state_dict))
+
+    def finish_weight_update(self, version=None):
+        self.events.append(("finish", version))
+        return SimpleNamespace(loaded=[])
+
+    def abort_weight_update(self):
+        self.events.append("abort")
+
+
+def _phyai_input_transform(sample):
+    base = np.asarray(sample["observation/image"], dtype=np.uint8)
+    wrist = np.asarray(sample["observation/wrist_image"], dtype=np.uint8)
+    state = np.asarray(sample["observation/state"], dtype=np.float64) / 10
+    prompt_length = min(len(sample["prompt"]), 8)
+    return {
+        "image": {
+            IMAGE_KEYS[0]: base,
+            IMAGE_KEYS[1]: wrist,
+            IMAGE_KEYS[2]: np.zeros_like(base),
+        },
+        "image_mask": {
+            IMAGE_KEYS[0]: np.bool_(True),
+            IMAGE_KEYS[1]: np.bool_(True),
+            IMAGE_KEYS[2]: np.bool_(False),
+        },
+        "state": state,
+        "tokenized_prompt": np.arange(8, dtype=np.int64),
+        "tokenized_prompt_mask": np.arange(8) < prompt_length,
+    }
+
+
+def _phyai_output_transform(sample):
+    return {"actions": sample["actions"][..., :7] + sample["state"][0]}
+
+
+def _phyai_env_obs(batch_size=2):
+    image_size = batch_size * 224 * 224 * 3
+    main_images = torch.arange(image_size, dtype=torch.int64)
+    wrist_images = torch.arange(image_size, dtype=torch.int64).flip(0)
+    return {
+        "main_images": main_images.remainder(251)
+        .to(torch.uint8)
+        .view(batch_size, 224, 224, 3),
+        "wrist_images": wrist_images.remainder(251)
+        .to(torch.uint8)
+        .view(batch_size, 224, 224, 3),
+        "states": torch.arange(batch_size * 8, dtype=torch.float32).view(batch_size, 8),
+        "task_descriptions": ["pick", "place"][:batch_size],
+    }
+
+
+def _phyai_rollout_result(batch_size=2):
+    return SimpleNamespace(
+        actions=torch.arange(batch_size * 10 * 32, dtype=torch.float32).view(
+            batch_size, 10, 32
+        ),
+        chains=torch.arange(batch_size * 4 * 10 * 32, dtype=torch.float32).view(
+            batch_size, 4, 10, 32
+        ),
+        transition_logprobs=torch.arange(
+            batch_size * 3 * 10 * 32, dtype=torch.float32
+        ).view(batch_size, 3, 10, 32),
+        raw_values=torch.tensor([[1.0], [2.0]]),
+    )
+
+
+def _init_phyai_worker(monkeypatch, cfg):
+    """Build a PhyAI worker and run ``init_worker`` against a fake engine."""
+    import phyai.engine
+    import phyai.engine_config
+    import phyai.models.pi05.main_pi05
+
+    engines = []
+
+    def make_engine(args):
+        engines.append(_FakePhyAIEngine(args))
+        return engines[-1]
+
+    # Record the constructor arguments instead of validating them on a CPU host.
+    for module, name in [
+        (phyai.engine_config, "RuntimeConfig"),
+        (phyai.engine_config, "DeviceConfig"),
+        (phyai.engine_config, "EngineConfig"),
+        (phyai.models.pi05.main_pi05, "PI05Args"),
+        (phyai.engine, "EngineArgs"),
+    ]:
+        monkeypatch.setattr(module, name, SimpleNamespace)
+    monkeypatch.setattr(phyai.engine, "Engine", make_engine)
+
+    transform_calls = []
+
+    def build_transforms(model_path, config_name, data_kwargs=None):
+        transform_calls.append((model_path, config_name, data_kwargs))
+        return [_phyai_input_transform], [_phyai_output_transform]
+
+    # The real builder reads normalization stats from the checkpoint directory.
+    monkeypatch.setattr(
+        phyai_rollout_worker, "build_openpi_transforms", build_transforms
+    )
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    worker = _build_phyai_worker(monkeypatch, cfg)
+    worker.init_worker()
+    return worker, engines[0], transform_calls
+
+
+def test_phyai_worker_rejects_an_unknown_engine_plugin(monkeypatch):
+    with pytest.raises(NotImplementedError, match="pi05"):
+        _build_phyai_worker(monkeypatch, _phyai_cfg(phyai={"plugin": "unknown"}))
+
+
+def test_phyai_eval_worker_accepts_a_config_without_algorithm(monkeypatch):
+    # Standalone evaluation configs have no algorithm section.
+    worker = _build_phyai_worker(monkeypatch, _phyai_cfg(only_eval=True))
+
+    assert worker.only_eval
+    assert not worker.enable_rlt
+    assert worker.weight_syncer is None
+
+
+@pytest.mark.parametrize(
+    ("collect_transitions", "loss_type", "expected"),
+    [
+        (False, "actor_critic", False),
+        (True, "actor_critic", True),
+        (True, "rlt_ac", False),
+    ],
+)
+def test_phyai_worker_sends_raw_transition_obs_only_when_the_actor_reads_them(
+    monkeypatch, collect_transitions, loss_type, expected
+):
+    cfg = _phyai_cfg(
+        collect_transitions=collect_transitions,
+        algorithm={"loss_type": loss_type},
+    )
+    worker = _build_phyai_worker(monkeypatch, cfg)
+
+    assert worker.collect_raw_transition_obs is expected
+
+
+def test_phyai_evaluate_routes_each_pipeline_stage_through_the_env_channel(
+    monkeypatch,
+):
+    class _AsyncResult:
+        def __init__(self, value):
+            self.value = value
+
+        async def async_wait(self):
+            return self.value
+
+    cfg = _phyai_cfg(only_eval=True)
+    cfg.rollout.pipeline_stage_num = 2
+    cfg.env.eval.total_num_envs = 4
+    cfg.env.eval.max_steps_per_rollout_epoch = 5
+    worker = _build_phyai_worker(monkeypatch, cfg)
+
+    recv_calls = []
+    send_calls = []
+    predict_calls = []
+
+    def recv_from(**kwargs):
+        recv_calls.append(kwargs)
+        stage_id = kwargs["route_key"]
+        chunks = [
+            {
+                "obs": {
+                    "states": torch.tensor([[stage_id * 2 + offset]]),
+                    "task_descriptions": [f"stage-{stage_id}-{offset}"],
+                },
+                "final_obs": {"states": torch.tensor([[99]])},
+                "rlt_switch_flags": torch.ones(1, dtype=torch.bool),
+                "intervene_flags": torch.ones(1, dtype=torch.bool),
+            }
+            for offset in range(2)
+        ]
+        assert all(kwargs["infer_batch_size_fn"](chunk) == 1 for chunk in chunks)
+        merged = kwargs["merge_fn"](chunks)
+        assert set(merged) == {"obs"}
+        return _AsyncResult(merged)
+
+    def predict(obs, mode):
+        predict_calls.append((obs, mode))
+        return torch.zeros(2, 1, 1), {}
+
+    # The channel transport and inference are out of scope here.
+    monkeypatch.setattr(worker, "recv_from", recv_from)
+    monkeypatch.setattr(worker, "send_to", lambda **kwargs: send_calls.append(kwargs))
+    monkeypatch.setattr(worker, "predict", predict)
+
+    asyncio.run(inspect.unwrap(PhyAIRolloutWorker.evaluate)(worker, "input", "output"))
+
+    assert [call["route_key"] for call in recv_calls] == [0, 1]
+    assert all(call["group_name"] == "EnvGroup" for call in recv_calls)
+    assert all(call["channel"] == "input" for call in recv_calls)
+    assert all(call["tag"] == "eval_rollout_results" for call in recv_calls)
+    assert all(call["batch_size"] == 2 for call in recv_calls)
+    assert len(predict_calls) == 2
+    for stage_id, (obs, mode) in enumerate(predict_calls):
+        assert mode == "eval"
+        assert torch.equal(
+            obs["states"], torch.tensor([[stage_id * 2], [stage_id * 2 + 1]])
+        )
+        assert obs["task_descriptions"] == [
+            f"stage-{stage_id}-0",
+            f"stage-{stage_id}-1",
+        ]
+    assert [call["route_key"] for call in send_calls] == [0, 1]
+    assert all(call["group_name"] == "EnvGroup" for call in send_calls)
+    assert all(call["channel"] == "output" for call in send_calls)
+    assert all(call["tag"] == "eval_rollout_results" for call in send_calls)
+    assert all(call["batch_size"] == 2 for call in send_calls)
+    assert all(call["data"].device.type == "cpu" for call in send_calls)
+    assert all(call["data"].is_contiguous() for call in send_calls)
+
+
+def _phyai_worker_with_engine(monkeypatch):
+    worker = _build_phyai_worker(monkeypatch, _phyai_cfg())
+    engine = _FakePhyAIEngine()
+    # Stands in for init_worker, which needs the PhyAI package.
+    worker._engine = engine
+    worker._weight_target = phyai_rollout_worker._PhyAIWeightTarget(engine)
+    return worker, engine
+
+
+def _broadcast_buckets(monkeypatch, worker, buckets):
+    """Deliver ``buckets`` in order through the worker's weight broadcast."""
+
+    class _Pending:
+        def __init__(self, value):
+            self.value = value
+
+        async def async_wait(self):
+            if isinstance(self.value, Exception):
+                raise self.value
+            return self.value
+
+    pending = iter(buckets)
+    monkeypatch.setattr(
+        worker, "broadcast", lambda *args, **kwargs: _Pending(next(pending))
+    )
+
+
+def _bucket_header(total_buckets, version):
+    return {
+        "total_buckets": torch.tensor(total_buckets),
+        "syncer_version": torch.tensor(version),
+    }
+
+
+@pytest.mark.parametrize("has_accelerator", [False, True])
+def test_phyai_weight_sync_loads_every_bucket_in_phyai_layout(
+    monkeypatch, has_accelerator
+):
+    worker, engine = _phyai_worker_with_engine(monkeypatch)
+    empty_cache = MagicMock()
+    worker.torch_platform = (
+        SimpleNamespace(empty_cache=empty_cache) if has_accelerator else None
+    )
+    qkv = torch.arange(18, dtype=torch.float32).reshape(6, 3)
+    gating = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+    value_bias = torch.ones(4)
+    _broadcast_buckets(
+        monkeypatch,
+        worker,
+        [
+            {
+                **_bucket_header(total_buckets=2, version=7),
+                "model.img.encoder.layers.0.attn.in_proj_weight": qkv,
+            },
+            {
+                "model.llm.layers.0.mlps.1.w_gating": gating,
+                "value_head.mlp.0.bias": value_bias,
+            },
+        ],
+    )
+
+    asyncio.run(inspect.unwrap(PhyAIRolloutWorker.sync_model_from_actor)(worker))
+
+    assert engine.events[0] == "begin"
+    assert [event[0] for event in engine.events[1:3]] == ["update", "update"]
+    assert engine.events[3] == ("finish", 7)
+    assert worker.version == 7
+    weights = {**engine.events[1][1], **engine.events[2][1]}
+    vision_prefix = (
+        "paligemma_with_expert.paligemma.model.vision_tower.vision_model."
+        "encoder.layers.0.self_attn"
+    )
+    assert torch.equal(weights[f"{vision_prefix}.q_proj.weight"], qkv[:2])
+    assert torch.equal(weights[f"{vision_prefix}.k_proj.weight"], qkv[2:4])
+    assert torch.equal(weights[f"{vision_prefix}.v_proj.weight"], qkv[4:])
+    expert_prefix = "paligemma_with_expert.gemma_expert.model.layers.0.mlp"
+    assert torch.equal(weights[f"{expert_prefix}.gate_proj.weight"], gating[0].T)
+    assert torch.equal(weights[f"{expert_prefix}.up_proj.weight"], gating[1].T)
+    assert weights["value_head.mlp.0.bias"] is value_bias
+    if has_accelerator:
+        empty_cache.assert_called_once_with()
+    else:
+        empty_cache.assert_not_called()
+
+
+def test_phyai_weight_sync_aborts_and_keeps_the_version_when_a_bucket_fails(
+    monkeypatch,
+):
+    worker, engine = _phyai_worker_with_engine(monkeypatch)
+    _broadcast_buckets(
+        monkeypatch,
+        worker,
+        [
+            {
+                **_bucket_header(total_buckets=2, version=7),
+                "value_head.mlp.0.bias": torch.ones(4),
+            },
+            ConnectionError("actor rank 0 went away"),
+        ],
+    )
+
+    with pytest.raises(ConnectionError, match="went away"):
+        asyncio.run(inspect.unwrap(PhyAIRolloutWorker.sync_model_from_actor)(worker))
+
+    assert [
+        event if isinstance(event, str) else event[0] for event in engine.events
+    ] == [
+        "begin",
+        "update",
+        "abort",
+    ]
+    assert worker.version == 0
+
+
+@_requires_phyai
+@pytest.mark.parametrize("only_eval", [False, True])
+@pytest.mark.parametrize(
+    "kernel_config",
+    [
+        None,
+        "~/phyai-kernel.yaml",
+        {
+            "schema": "phyai.kernel/v1",
+            "profile": "static",
+            "defaults": {"fallback": "error"},
+            "overrides": [],
+        },
+    ],
+)
+def test_phyai_init_builds_the_engine_from_the_model_config(
+    monkeypatch, tmp_path, only_eval, kernel_config
+):
+    monkeypatch.setenv("PHYAI_KERNEL_CONFIG", "/environment/kernel.yaml")
+    trained_weight = torch.ones(4, 4)
+    ckpt_path = tmp_path / "trained.pt"
+    torch.save({"model.state_proj.weight": trained_weight}, ckpt_path)
+    cfg = _phyai_cfg(
+        only_eval=only_eval,
+        ckpt_path=str(ckpt_path),
+        phyai={"params_dtype": "bf16", "kernel_config": kernel_config},
+        rollout_model={"model_path": "/rollout-checkpoint", "num_action_chunks": 10},
+    )
+
+    worker, engine, transform_calls = _init_phyai_worker(monkeypatch, cfg)
+
+    # An inline kernel policy hides the environment override from the engine only.
+    assert engine.kernel_env == (
+        None if isinstance(kernel_config, dict) else "/environment/kernel.yaml"
+    )
+    assert os.environ["PHYAI_KERNEL_CONFIG"] == "/environment/kernel.yaml"
+    engine_args = engine.args
+    if isinstance(kernel_config, dict):
+        assert engine_args.config.kernel.policy_config == kernel_config
+        assert engine_args.config.kernel.config_path is None
+    else:
+        expected_path = str(Path(kernel_config).expanduser()) if kernel_config else None
+        assert engine_args.config.kernel.config_path == expected_path
+        assert engine_args.config.kernel.policy_config is None
+    plugin_args = engine_args.plugin_args
+    plugin_cfg = plugin_args.config
+    assert engine_args.config.device.params_dtype is torch.bfloat16
+    assert plugin_args.checkpoint_dir == "/rollout-checkpoint"
+    assert plugin_cfg.chunk_size == 10
+    assert plugin_cfg.max_action_dim == 32
+    assert plugin_cfg.num_inference_steps == 3
+    assert plugin_cfg.critic_action_chunk is None
+    assert plugin_cfg.add_value_head
+    assert plugin_cfg.value_after_vlm
+    # Training keeps the actor's model and takes only the path from rollout.model.
+    assert worker.model_cfg.num_action_chunks == (10 if only_eval else 5)
+    assert transform_calls == [("/rollout-checkpoint", "pi05_libero", None)]
+    assert engine.events[0] == "begin"
+    assert engine.events[1][0] == "update"
+    assert torch.equal(engine.events[1][1]["state_proj.weight"], trained_weight)
+    assert engine.events[2] == ("finish", None)
+
+
+@_requires_phyai
+def test_phyai_eval_sends_the_preprocessed_observation_to_the_engine(monkeypatch):
+    worker, engine, _ = _init_phyai_worker(monkeypatch, _phyai_cfg(only_eval=True))
+    env_obs = _phyai_env_obs()
+    engine.result = _phyai_rollout_result().actions
+
+    actions, result = inspect.unwrap(PhyAIRolloutWorker.predict)(
+        worker, env_obs, mode="eval"
+    )
+
+    (request,) = engine.requests
+    assert torch.equal(request.input_ids, torch.arange(8).expand(2, -1))
+    assert torch.equal(request.lang_lens, torch.tensor([4, 5]))
+    assert request.pixel_values.shape[1] == 2
+    assert request.pixel_values.dtype is torch.float32
+    assert request.pixel_values.is_contiguous()
+    for index, images in enumerate((env_obs["main_images"], env_obs["wrist_images"])):
+        normalized = images.to(torch.float32) / 255 * 2 - 1
+        assert torch.equal(
+            request.pixel_values[:, index], normalized.permute(0, 3, 1, 2)
+        )
+    normalized_state = env_obs["states"] / 10
+    assert torch.equal(
+        actions, engine.result[:, :5, :7] + normalized_state[:, :1, None]
+    )
+    assert result["prev_logprobs"] is None
+    assert result["prev_values"] is None
+
+
+@_requires_phyai
+def test_phyai_train_predict_returns_the_actor_replay_contract(monkeypatch):
+    batch_size = 2
+    cfg = _phyai_cfg(
+        openpi={"noise_method": "flow_sde", "noise_level": 0.5, "ignore_last": True}
+    )
+    worker, engine, _ = _init_phyai_worker(monkeypatch, cfg)
+    env_obs = _phyai_env_obs(batch_size)
+    rollout_result = _phyai_rollout_result(batch_size)
+    engine.result = rollout_result
+
+    def select_denoise_step(low, high):
+        # ignore_last leaves the final of the three steps out of the draw.
+        assert (low, high) == (0, 1)
+        return 1
+
+    monkeypatch.setattr(phyai_rollout_worker.random, "randint", select_denoise_step)
+
+    actions, result = inspect.unwrap(PhyAIRolloutWorker.predict)(
+        worker, env_obs, mode="train"
+    )
+
+    normalized_state = env_obs["states"] / 10
+    model_actions = rollout_result.actions
+    expected_actions = model_actions[:, :5, :7] + normalized_state[:, :1, None]
+    (request,) = engine.requests
+    assert request.pixel_values.dtype is torch.float32
+    assert request.noise is None
+    assert request.step_noise is None
+    torch.testing.assert_close(
+        request.sigmas, torch.tensor([[0.0, math.sqrt(0.5), 0.0]]).expand(2, -1)
+    )
+    assert actions.shape == (batch_size, 5, 7)
+    assert torch.equal(actions, expected_actions)
+    assert torch.equal(
+        result["prev_logprobs"], rollout_result.transition_logprobs[:, 1, :5, :7]
+    )
+    assert torch.equal(result["prev_values"], torch.tensor([[1.0], [2.0]]))
+    forward_inputs = result["forward_inputs"]
+    assert torch.equal(forward_inputs["chains"], rollout_result.chains)
+    assert forward_inputs["denoise_inds"].eq(1).all()
+    assert torch.equal(
+        forward_inputs["obs_state"],
+        torch.nn.functional.pad(normalized_state, (0, 24)),
+    )
+    assert torch.equal(
+        forward_inputs["tokenized_prompt"], torch.arange(8).expand(2, -1)
+    )
+    assert torch.equal(
+        forward_inputs["tokenized_prompt_mask"],
+        torch.arange(8)[None] < torch.tensor([[4], [5]]),
+    )
+    assert torch.equal(forward_inputs["action"], actions.reshape(batch_size, -1))
+    assert torch.equal(
+        forward_inputs["model_action"], model_actions.reshape(batch_size, -1)
+    )
+    for key, image in zip(
+        IMAGE_KEYS,
+        (
+            env_obs["main_images"],
+            env_obs["wrist_images"],
+            torch.zeros_like(env_obs["main_images"]),
+        ),
+        strict=True,
+    ):
+        assert torch.equal(
+            forward_inputs[f"obs_image__{key}"], image.to(torch.float32) / 255 * 2 - 1
+        )
+        assert torch.equal(
+            forward_inputs[f"obs_image_mask__{key}"],
+            torch.full((batch_size,), key != IMAGE_KEYS[2]),
+        )
+
+
+@_requires_phyai
+def test_phyai_train_predict_defaults_to_deterministic_denoising(monkeypatch):
+    worker, engine, _ = _init_phyai_worker(monkeypatch, _phyai_cfg())
+    engine.result = _phyai_rollout_result()
+
+    inspect.unwrap(PhyAIRolloutWorker.predict)(worker, _phyai_env_obs(), mode="train")
+
+    (request,) = engine.requests
+    assert request.sigmas.eq(0).all()
+
+
+@pytest.fixture
+def phyai_example_cfg(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        return compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+
+
+def test_phyai_example_config_validates_and_shares_the_actor_checkpoint(
+    phyai_example_cfg,
+):
+    validate_embodied_cfg(phyai_example_cfg)
+
+    assert (
+        phyai_example_cfg.rollout.model.model_path
+        == phyai_example_cfg.actor.model.model_path
+    )
+
+
+def test_phyai_training_requires_bucket_weight_sync(phyai_example_cfg):
+    phyai_example_cfg.weight_syncer.type = "patch"
+
+    with pytest.raises(AssertionError, match="weight_syncer.type='bucket'.*'patch'"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("algorithm.loss_type", "embodied_dagger"),
+        ("algorithm.loss_type", "rlt_ac"),
+        ("algorithm.loss_type", "rlt_td3"),
+        ("algorithm.adv_type", "opd"),
+    ],
+)
+def test_phyai_training_rejects_unsupported_algorithms(phyai_example_cfg, path, value):
+    if path == "algorithm.adv_type":
+        phyai_example_cfg.algorithm.recompute_logprobs = False
+    OmegaConf.update(phyai_example_cfg, path, value)
+
+    with pytest.raises(AssertionError, match=f"rollout_backend='phyai', got '{value}'"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        ("actor.model.add_value_head", False, "add_value_head=True"),
+        ("actor.model.openpi.value_after_vlm", False, "value_after_vlm=True"),
+        ("actor.model.openpi.value_vlm_mode", "last_token", "'last_token'"),
+        ("actor.model.openpi.joint_logprob", True, "joint_logprob=False"),
+        ("actor.model.openpi.noise_method", "flow_noise", "got 'flow_noise'"),
+        ("actor.model.openpi.noise_level", -0.1, "noise_level.*got -0.1"),
+        ("actor.model.openpi.noise_level", float("nan"), "noise_level.*got nan"),
+        ("actor.model.openpi.num_images_in_input", 1, "num_images_in_input=2"),
+    ],
+)
+def test_phyai_training_validates_the_actor_model(
+    phyai_example_cfg, path, value, message
+):
+    OmegaConf.update(phyai_example_cfg, path, value)
+
+    with pytest.raises(AssertionError, match=message):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        ("pi05", False, "model.pi05=True"),
+        ("openpi.paligemma_variant", "gemma_3b", "paligemma_variant='gemma_2b'"),
+        (
+            "openpi.action_expert_variant",
+            "gemma_1b",
+            "action_expert_variant='gemma_300m'",
+        ),
+        ("openpi.num_images_in_input", 4, "num_images_in_input in \\[1, 3\\]"),
+    ],
+)
+def test_phyai_eval_validates_the_engine_plugin_model(
+    phyai_example_cfg, path, value, message
+):
+    phyai_example_cfg.runner.only_eval = True
+    OmegaConf.update(phyai_example_cfg.rollout.model, path, value)
+
+    with pytest.raises(AssertionError, match=message):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+def test_phyai_eval_requires_a_nonempty_openpi_config_name(phyai_example_cfg):
+    phyai_example_cfg.runner.only_eval = True
+    phyai_example_cfg.rollout.model.openpi.config_name = ""
+
+    with pytest.raises(ValueError, match="rollout.model.openpi.config_name"):
+        validate_embodied_cfg(phyai_example_cfg)
 
 
 def _cosmos3_sglang_cfg(batching_max_size=None):
