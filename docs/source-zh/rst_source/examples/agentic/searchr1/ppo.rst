@@ -1,7 +1,7 @@
 Search-R1 的同步 PPO 训练
 =============================
 
-使用同步 PPO 和独立 critic 训练 Qwen2.5-3B-Instruct。先按 :doc:`index` 配置检索服务，下载模型和问答数据集，再选择本页的 GPU 布局。GRPO 配置见 :doc:`qwen2.5`。
+使用同步 PPO 和独立 critic 训练 Qwen2.5-3B-Instruct。先按 :doc:`index` 配置检索服务，下载模型和问答数据集，再启动本页配置。GRPO 配置见 :doc:`qwen2.5`。
 
 概述
 --------
@@ -77,7 +77,7 @@ PPO 复用已有的多轮 agent 和搜索工具接口。每个训练 step 先完
    bash requirements/install.sh agentic --engine sglang
    source .venv/bin/activate
 
-PPO 当前要求 Megatron TP=PP=CP=1，提供的配置使用 SGLang TP=PP=1。检索服务的资源与八张训练 GPU 分开管理，配置步骤见 :doc:`index`。
+PPO 当前要求 Megatron TP=PP=CP=1，提供的配置使用 SGLang HTTP server backend，TP=PP=1。检索服务的资源与八张训练 GPU 分开管理，配置步骤见 :doc:`index`。
 
 下载模型
 ------------
@@ -89,49 +89,28 @@ PPO 当前要求 Megatron TP=PP=CP=1，提供的配置使用 SGLang TP=PP=1。�
    hf download Qwen/Qwen2.5-3B-Instruct --local-dir /path/to/model/Qwen2.5-3B-Instruct
    hf download RLinf/Search-R1-Data --repo-type dataset --local-dir /path/to/data/searchr1
 
-将 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中的 ``rollout.model.model_path`` 和 ``data.train_data_paths`` 设置为模型目录和训练 JSONL 文件。各布局配置继承这些路径。将 ``tools.search.server_addr`` 设置为检索服务的可访问地址。
+将 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中的 ``rollout.model.model_path`` 和 ``data.train_data_paths`` 设置为模型目录和训练 JSONL 文件。将 ``tools.search.server_addr`` 设置为检索服务的可访问地址。
 
 运行
 --------
 
 向启动脚本传入不带 ``.yaml`` 的配置名，后续参数作为 Hydra 覆盖项。
 
-.. list-table:: 同步 PPO 布局
-   :header-rows: 1
-   :widths: 43 19 19 19
-
-   * - 配置
-     - Rollout GPU
-     - Actor GPU
-     - Critic GPU
-   * - ``train_qwen2.5_ppo_shared``
-     - 0–7
-     - 0–7
-     - 0–7
-   * - ``train_qwen2.5_ppo_split``
-     - 0–3
-     - 4–7
-     - 4–7
-   * - ``train_qwen2.5_ppo_separate``
-     - 0–3
-     - 4–5
-     - 6–7
-
-例如，运行 shared PPO，最多训练 200 个 batch：
+该配置让 rollout、actor 和 critic 共用 GPU 0–7，并设置 ``rollout.sglang.backend_type: server``。Runner 在角色切换时 offload 模型状态。运行以下命令，最多训练 200 个 batch：
 
 .. code-block:: bash
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_shared \
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo \
      runner.max_steps=200 runner.max_epochs=200
 
-覆盖 epoch 数使 dataloader 能提供足够的 batch。不使用这些覆盖项时，配置默认训练一个数据集 epoch，每 25 个 batch 及最后一个 batch 保存 checkpoint。使用 ``train_qwen2.5_ppo_split`` 或 ``train_qwen2.5_ppo_separate`` 选择其他布局。
+覆盖 epoch 数使 dataloader 能提供足够的 batch。不使用这些覆盖项时，配置默认训练一个数据集 epoch，每 25 个 batch 及最后一个 batch 保存 checkpoint。
 
 Rollout 与训练顺序
 ~~~~~~~~~~~~~~~~~~~~~~
 
-每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。Rollout 与训练共享 GPU 时，在 critic inference 前 offload rollout 引擎。Critic 预测 old values，GAE 再沿 episode 的 action token 计算固定 returns 和全局归一化的 advantages。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。
+每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。Rollout 与训练共享 GPU 时，在 critic inference 前 offload rollout 引擎。Critic 预测 old values，注册在算法接口中的 ``gae_dynamic`` 沿 episode 的 action token 计算固定 returns，并在整个 rollout batch 的 action token 上归一化 advantages。Critic worker 在更新模型前计算这些目标，通过 DP 归约汇总 action 统计量完成归一化，再将固定目标传给 actor。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。
 
-Actor 与 critic 共享 GPU 时，runner 先训练 critic，将其状态 offload 后，再执行 actor inference 和训练。Shared 配置对两个角色都开启 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer``，分别控制角色切换时哪些状态移到 CPU。Actor 与 critic 使用独立 GPU 时，两者的 inference 和训练可以并行执行。所有布局都会先等待当前 rollout batch 完成，再开始更新。
+Runner 先训练 critic，将其状态 offload 后，再执行 actor inference 和训练。配置对两个角色都开启 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer``，分别控制角色切换时哪些状态移到 CPU。训练结束时，runner 停止 SGLang server 进程。
 
 Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``algorithm.n_minibatches=1`` 时，每个 rollout batch 分别产生一次 actor 和 critic optimizer update，Megatron microbatch 在每次更新内部累积梯度。Actor 学习率为 ``1e-6``；critic 学习率为 ``5e-6``，使用 10 次更新的 warmup。``critic.value_head_init`` 支持独立 value head 的 ``normal`` 或 ``zero`` 初始化。
 
@@ -164,11 +143,3 @@ Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``a
 ------------------
 
 在 TensorBoard 中查看 ``rollout/reward_scores_traj``。``Global Step`` 每完成一个 rollout batch 增加一次，训练指标使用 optimizer step 编号。只有一个 minibatch 时，两种计数一致。通用指标说明见 :doc:`/rst_source/reference/metrics`。
-
-CI 配置使用 Qwen2.5-1.5B 验证三种布局。在具备所需模型、数据集和检索资源的机器上，逐个运行：
-
-.. code-block:: bash
-
-   REPO_PATH="$PWD" bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-shared
-   REPO_PATH="$PWD" bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-split
-   REPO_PATH="$PWD" bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-separate

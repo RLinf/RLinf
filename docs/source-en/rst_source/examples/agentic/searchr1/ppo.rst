@@ -3,7 +3,7 @@ Synchronous PPO for Search-R1
 
 Train Qwen2.5-3B-Instruct with synchronous PPO and an independent critic. Prepare
 the retrieval service in :doc:`index`, download the model and question dataset,
-then choose a GPU layout below. The GRPO recipes are described in :doc:`qwen2.5`.
+then launch the configuration below. The GRPO recipes are described in :doc:`qwen2.5`.
 
 Overview
 ------------
@@ -84,7 +84,8 @@ Install the Megatron training stack with SGLang following
    bash requirements/install.sh agentic --engine sglang
    source .venv/bin/activate
 
-PPO currently requires Megatron TP=PP=CP=1. The supplied recipes use SGLang TP=PP=1.
+PPO currently requires Megatron TP=PP=CP=1. The configuration uses SGLang's HTTP
+server backend with TP=PP=1.
 Manage retrieval resources separately from the eight training GPUs; see
 :doc:`index` for retrieval setup.
 
@@ -100,7 +101,7 @@ Download the actor/critic initialization model and training dataset:
 
 Set ``rollout.model.model_path`` and ``data.train_data_paths`` in
 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` to the model directory and
-training JSONL file. The placement recipes inherit those paths. Set
+training JSONL file. Set
 ``tools.search.server_addr`` to the retrieval service's reachable address.
 
 Run It
@@ -109,55 +110,35 @@ Run It
 Pass a configuration name without ``.yaml`` to the launcher. Additional arguments
 are Hydra overrides.
 
-.. list-table:: Synchronous PPO Placement
-   :header-rows: 1
-   :widths: 43 19 19 19
-
-   * - Configuration
-     - Rollout GPUs
-     - Actor GPUs
-     - Critic GPUs
-   * - ``train_qwen2.5_ppo_shared``
-     - 0–7
-     - 0–7
-     - 0–7
-   * - ``train_qwen2.5_ppo_split``
-     - 0–3
-     - 4–7
-     - 4–7
-   * - ``train_qwen2.5_ppo_separate``
-     - 0–3
-     - 4–5
-     - 6–7
-
-For example, run shared PPO for up to 200 training batches:
+The configuration shares GPUs 0–7 between rollout, actor, and critic. Rollout uses
+``rollout.sglang.backend_type: server``; the runner offloads model state between
+roles. Run up to 200 training batches:
 
 .. code-block:: bash
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo_shared \
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo \
      runner.max_steps=200 runner.max_epochs=200
 
 The epoch override allows the dataloader to provide enough batches. Without these
-overrides, the recipes train for one dataset epoch. They save checkpoints every
-25 batches and at the final batch. Use ``train_qwen2.5_ppo_split`` or
-``train_qwen2.5_ppo_separate`` to select another layout.
+overrides, the configuration trains for one dataset epoch. It saves checkpoints
+every 25 batches and at the final batch.
 
 Rollout and Training Order
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 At each step, the runner publishes actor weights and waits for all episodes in the
 batch to finish. With shared rollout/training GPUs, it offloads the rollout engine
-before critic inference. The critic predicts old values; GAE then computes fixed
-returns and globally normalized advantages across the episode's action tokens.
+before critic inference. The critic predicts old values; the registered ``gae_dynamic`` algorithm computes fixed
+returns and normalizes advantages over all action tokens in the rollout batch.
+The critic worker computes these targets before updating its model and passes them
+to the actor. Normalization reduces action statistics across critic DP ranks.
 Tool text and padding are excluded, and the terminal answer reward is applied once.
 Turn and token limits also terminate the episode with zero future value.
 
-When actor and critic share GPUs, the runner trains the critic first and offloads
-its state before actor inference and training. The shared recipes enable
-``offload_weight``, ``offload_grad``, and ``offload_optimizer`` on both roles. These
-flags control which state moves to CPU between roles. With separate actor and
-critic GPUs, their inference and training can run in parallel. Every layout waits
-for the current rollout batch before updating.
+The runner trains the critic first and offloads its state before actor inference
+and training. The configuration enables ``offload_weight``, ``offload_grad``, and
+``offload_optimizer`` on both roles. These flags control which state moves to CPU
+between roles. The runner stops the SGLang server processes when training ends.
 
 The actor uses PPO clipping and the critic uses clipped Huber loss. With
 ``algorithm.n_minibatches=1``, each rollout batch produces one actor optimizer
@@ -176,8 +157,8 @@ Preserve Generated Tokens
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``agentloop.truncate_response`` defaults to ``true`` and trims the generated token
-prefix at the closing search tag using the model-aware tokenizer. The PPO recipes
-select ``false`` to retain the generated sequence and its behavior logprobs:
+prefix at the closing search tag using the model-aware tokenizer. The PPO configuration
+selects ``false`` to retain the generated sequence and its behavior logprobs:
 
 .. code-block:: yaml
 
@@ -213,12 +194,3 @@ Monitor ``rollout/reward_scores_traj`` in TensorBoard. ``Global Step`` advances 
 per completed rollout batch; training metrics use optimizer-step indices. With one
 minibatch these counts match. See :doc:`/rst_source/reference/metrics` for the shared
 metric conventions.
-
-The CI recipes exercise the three layouts with Qwen2.5-1.5B. On a machine with the
-required model, dataset, and retrieval assets, run one recipe at a time:
-
-.. code-block:: bash
-
-   REPO_PATH="$PWD" bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-shared
-   REPO_PATH="$PWD" bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-split
-   REPO_PATH="$PWD" bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-separate

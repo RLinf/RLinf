@@ -1954,13 +1954,16 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             raise ValueError(
                 "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
             )
+        if "sglang" not in cfg.rollout:
+            cfg.rollout.sglang = {}
+        cfg.rollout.sglang.setdefault("backend_type", "server")
         if (
-            cfg.algorithm.adv_type != "actor_gae"
+            cfg.algorithm.adv_type != "gae_dynamic"
             or cfg.algorithm.kl_beta != 0
             or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
         ):
             raise ValueError(
-                "SearchR1 PPO requires actor_gae and zero KL reward/loss coefficients."
+                "SearchR1 PPO requires gae_dynamic and zero KL reward/loss coefficients."
             )
         if cfg.algorithm.group_size != 1:
             raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")

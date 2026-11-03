@@ -18,9 +18,7 @@ from typing import Any
 
 from tqdm import tqdm
 
-from rlinf.data.schema.agent_trajectory import prepare_agent_ppo_targets
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.logging import get_logger
 from rlinf.utils.runner_utils import check_progress
@@ -34,17 +32,12 @@ class AgentPPORunner(AgentRunner):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         placement = self.component_placement
-        actor_gpus = set(placement.get_hardware_ranks("actor"))
-        critic_gpus = set(placement.get_hardware_ranks("critic"))
-        rollout_gpus = set(placement.get_hardware_ranks("rollout"))
-        self.shared_training = bool(actor_gpus & critic_gpus)
-        self.release_rollout = bool(rollout_gpus & (actor_gpus | critic_gpus))
-
-        self.rollout_output_channels = [self.rollout_channel]
-        if not self.shared_training and self.recompute_logprobs:
-            self.actor_rollout_channel = Channel.create("ActorRollout")
-            self.rollout_output_channels.append(self.actor_rollout_channel)
-        self.training_channel = Channel.create("PPOTraining")
+        training_gpus = set(placement.get_hardware_ranks("actor")) | set(
+            placement.get_hardware_ranks("critic")
+        )
+        self.release_rollout = bool(
+            training_gpus & set(placement.get_hardware_ranks("rollout"))
+        )
 
     def init_rollout_workers(self) -> None:
         """Reuse agent initialization and convert the independent critic checkpoint."""
@@ -79,6 +72,7 @@ class AgentPPORunner(AgentRunner):
         """Run complete rollout, prediction, update, and synchronization stages."""
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0 or self.global_steps >= self.max_steps:
+            self._stop_rollouts()
             return
 
         global_pbar = tqdm(
@@ -107,73 +101,41 @@ class AgentPPORunner(AgentRunner):
                         # Rollout: finish the whole batch before using training GPUs.
                         rollout_handle: Handle = self.agent_loop.run_agentloop_rollout(
                             input_channel=self.dataloader_channel,
-                            output_channel=self.rollout_output_channels,
+                            output_channel=self.rollout_channel,
                         )
                         agent_metrics = rollout_handle.wait()[0]
                         if self.release_rollout:
                             self.rollout.offload_engine().wait()
 
-                        # Old predictions: independent devices can infer in parallel.
                         critic_infer_handle: Handle = self.critic.run_inference(
                             input_channel=self.rollout_channel,
                             output_channel=self.value_channel,
                             do_offload=False,
                         )
+                        critic_infer_handle.wait()
+
+                        # The critic computes fixed targets before updating its model.
+                        critic_handle: Handle = self.critic.run_training(
+                            input_channel=self.value_channel,
+                            output_channel=self.critic_output_channel,
+                            compute_rollout_metrics=False,
+                        )
+                        critic_metrics = critic_handle.wait()
+                        critic_training_metrics = critic_metrics[0][1]
+
+                        actor_input_channel = self.critic_output_channel
                         actor_infer_handle = None
-                        if not self.shared_training and self.recompute_logprobs:
-                            actor_infer_handle: Handle = self.actor.run_inference(
-                                input_channel=self.actor_rollout_channel,
+                        if self.recompute_logprobs:
+                            actor_infer_handle = self.actor.run_inference(
+                                input_channel=actor_input_channel,
                                 output_channel=self.actor_inference_channel,
                                 compute_ref_logprobs=False,
                             )
                             actor_infer_handle.wait()
-                        critic_infer_handle.wait()
-
-                        # GAE: fix globally normalized targets for every minibatch.
-                        with self.timer("advantages"):
-                            prepare_agent_ppo_targets(
-                                input_channel=self.value_channel,
-                                output_channel=[
-                                    self.training_channel,
-                                    self.critic_output_channel,
-                                ],
-                                batch_size=self.cfg.data.rollout_batch_size,
-                                gamma=self.cfg.algorithm.gamma,
-                                gae_lambda=self.cfg.algorithm.gae_lambda,
-                                normalize_advantages=self.cfg.algorithm.normalize_advantages,
-                                logprob_channel=(
-                                    None
-                                    if self.shared_training
-                                    or not self.recompute_logprobs
-                                    else self.actor_inference_channel
-                                ),
-                            )
-
-                        # Updates: serialize shared devices; otherwise train in parallel.
-                        critic_handle: Handle = self.critic.run_training(
-                            input_channel=self.critic_output_channel,
-                            compute_rollout_metrics=False,
+                            actor_input_channel = self.actor_inference_channel
+                        actor_handle: Handle = self.actor.run_training(
+                            input_channel=actor_input_channel,
                         )
-                        if not self.shared_training:
-                            actor_handle: Handle = self.actor.run_training(
-                                input_channel=self.training_channel,
-                            )
-                        critic_metrics = critic_handle.wait()
-                        critic_training_metrics = critic_metrics[0][1]
-
-                        if self.shared_training:
-                            actor_input_channel = self.training_channel
-                            if self.recompute_logprobs:
-                                actor_infer_handle = self.actor.run_inference(
-                                    input_channel=self.training_channel,
-                                    output_channel=self.actor_inference_channel,
-                                    compute_ref_logprobs=False,
-                                )
-                                actor_infer_handle.wait()
-                                actor_input_channel = self.actor_inference_channel
-                            actor_handle: Handle = self.actor.run_training(
-                                input_channel=actor_input_channel,
-                            )
                         actor_metrics = actor_handle.wait()
                         actor_rollout_metrics = actor_metrics[0][0]
                         actor_training_metrics = actor_metrics[0][1]
@@ -243,12 +205,15 @@ class AgentPPORunner(AgentRunner):
                         logger.info(
                             f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
                         )
+                        self._stop_rollouts()
                         return
                     if run_time_exceeded:
                         logger.info(
                             f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
                         )
+                        self._stop_rollouts()
                         return
+            self._stop_rollouts()
         finally:
             for tool_worker in self.tool_workers:
                 tool_worker.stop_server()

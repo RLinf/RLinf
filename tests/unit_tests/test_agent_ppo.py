@@ -27,8 +27,6 @@ from rlinf.algorithms.losses import (
     compute_ppo_actor_loss,
     compute_ppo_critic_loss,
 )
-from rlinf.algorithms.registry import get_adv_and_returns
-from rlinf.data.schema.agent_trajectory import prepare_agent_ppo_targets
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel, Cluster
 from rlinf.scheduler.channel.channel_worker import LocalChannel
@@ -122,19 +120,44 @@ def test_searchr1_response_config_defaults_and_raw_logprobs(truncate, recompute)
 
 
 def _prepare_targets(results, gamma, gae_lambda, normalize_advantages):
-    input_channel, output_channel = _local_channel(), _local_channel()
-    for result in results:
-        input_channel.put(result)
-    prepare_agent_ppo_targets(
-        input_channel,
-        output_channel,
-        len(results),
-        gamma,
-        gae_lambda,
-        normalize_advantages,
+    from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
+
+    worker = object.__new__(MAMegatronCritic)
+    worker.cfg = SimpleNamespace(
+        runner=SimpleNamespace(task_type="reasoning"),
+        algorithm=SimpleNamespace(
+            adv_type="gae_dynamic",
+            group_size=results[0].group_size,
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+            normalize_advantages=normalize_advantages,
+        ),
     )
+    batches = []
     for result in results:
-        assert output_channel.get() is result
+        _, mask, _ = DynamicRolloutResult._get_attention_masks_and_position_ids(
+            torch.tensor(result.prompt_lengths),
+            torch.tensor(result.response_lengths),
+            result.values.shape[1],
+        )
+        batches.append(
+            {
+                "values": result.values,
+                "rewards": torch.as_tensor(result.rewards),
+                "response_mask": mask,
+                "idx_to_traj": result.idx_to_traj,
+            }
+        )
+    batch = DynamicRolloutResult.merge_batches(batches, results[0].group_size)
+    worker.compute_advantages_and_returns(batch)
+    sizes = [result.num_sequence for result in results]
+    for result, advantages, returns in zip(
+        results,
+        batch["advantages"].split(sizes),
+        batch["returns"].split(sizes),
+        strict=True,
+    ):
+        result.advantages, result.returns = advantages, returns
 
 
 @pytest.mark.parametrize("weight_init", [None, "normal", "zero"])
@@ -203,25 +226,6 @@ def test_checkpoint_context_keeps_resident_state_trainable(tmp_path):
     assert not torch.equal(model.weight, saved["weight"])
 
 
-def test_masked_gae_carries_across_observations_and_bootstraps_truncation():
-    values = torch.tensor([[0.2, 0.1], [99.0, 0.3], [0.4, 99.0]])
-    rewards = torch.tensor([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0]])
-    mask = torch.tensor([[True, True], [False, True], [True, False]])
-    advantages, returns = get_adv_and_returns("actor_gae")(
-        rewards,
-        values=values,
-        step_mask=mask,
-        bootstrap_values=torch.tensor([0.0, 0.5]),
-        normalize_advantages=False,
-    )
-    torch.testing.assert_close(
-        advantages, torch.tensor([[0.8, 0.4], [0.0, 0.2], [0.6, 0.0]])
-    )
-    torch.testing.assert_close(
-        returns, torch.tensor([[1.0, 0.5], [0.0, 0.5], [1.0, 0.0]])
-    )
-
-
 def test_legacy_gae_preserves_terminal_contract():
     advantages, returns = compute_gae_advantages_and_returns(
         torch.tensor([[0.0], [1.0]]),
@@ -231,20 +235,6 @@ def test_legacy_gae_preserves_terminal_contract():
     )
     torch.testing.assert_close(advantages, torch.tensor([[0.8], [0.6]]))
     torch.testing.assert_close(returns, torch.ones(2, 1))
-
-
-def test_masked_gae_discounts_actions_without_discounting_observations():
-    advantages, returns = get_adv_and_returns("actor_gae")(
-        torch.tensor([[0.0], [0.0], [1.0]]),
-        values=torch.tensor([[0.2], [99.0], [0.4]]),
-        step_mask=torch.tensor([[True], [False], [True]]),
-        bootstrap_values=torch.zeros(1),
-        gamma=0.9,
-        gae_lambda=0.8,
-        normalize_advantages=False,
-    )
-    torch.testing.assert_close(advantages, torch.tensor([[0.592], [0.0], [0.6]]))
-    torch.testing.assert_close(returns, torch.tensor([[0.792], [0.0], [1.0]]))
 
 
 @pytest.mark.parametrize("role", ["actor", "critic"])
@@ -372,86 +362,6 @@ def make_result():
             [[0.0, 0.2, 0.3, 0, 0, 0], [0, 0, 0, 0, 0, 0.4], [0, 0.1, 0.2, 0, 0, 0]]
         ),
     )
-
-
-def test_ppo_targets_fan_out_complete_batches_without_reordering():
-    input_channel, actor_channel, critic_channel = (
-        _local_channel(),
-        _local_channel(),
-        _local_channel(),
-    )
-    results = [make_result() for _ in range(3)]
-    for index, result in enumerate(results):
-        result.input_ids[0][0] -= index
-    for order in (results, list(reversed(results))):
-        for result in order:
-            input_channel.put(result)
-        prepare_agent_ppo_targets(
-            input_channel, [actor_channel, critic_channel], 3, 1.0, 1.0, True
-        )
-        for channel in (actor_channel, critic_channel):
-            for result in order:
-                received = channel.get()
-                assert received is result
-                assert received.advantages is not None and received.returns is not None
-            assert channel.empty()
-        assert input_channel.empty()
-
-
-@pytest.mark.parametrize("duplicate_turns", [False, True])
-def test_ppo_targets_join_parallel_predictions_and_preserve_fixed_values(
-    duplicate_turns,
-):
-    results = DynamicRolloutResult.split_results(make_result(), [2, 1])
-    if duplicate_turns:
-        results[1] = copy.deepcopy(results[0])
-    for result in results:
-        result.group_size = 1
-        result.idx_to_traj = [0] * result.num_sequence
-    input_channel, output_channel, logprob_channel = (
-        _local_channel(),
-        _local_channel(),
-        _local_channel(),
-    )
-    old_values = [result.values.clone() for result in results]
-    for result in reversed(results):
-        input_channel.put(result)
-    for index, result in enumerate(results):
-        prediction = copy.deepcopy(result)
-        prediction.recomputed_logprobs = torch.full_like(result.values, -index - 1.0)
-        logprob_channel.put(prediction)
-    prepare_agent_ppo_targets(
-        input_channel, output_channel, 2, 1.0, 1.0, False, logprob_channel
-    )
-    for index in range(2):
-        received = output_channel.get()
-        torch.testing.assert_close(received.values, old_values[1 - index])
-        prediction_index = index if duplicate_turns else 1 - index
-        torch.testing.assert_close(
-            received.recomputed_logprobs,
-            torch.full_like(received.values, -prediction_index - 1.0),
-        )
-        assert received.advantages is not None
-        assert received.returns is not None
-    assert input_channel.empty() and logprob_channel.empty() and output_channel.empty()
-
-
-def test_ppo_targets_reject_mismatched_parallel_predictions():
-    input_channel, output_channel, logprob_channel = (
-        _local_channel(),
-        _local_channel(),
-        _local_channel(),
-    )
-    result = make_result()
-    prediction = copy.deepcopy(result)
-    prediction.input_ids[0][0] += 1
-    input_channel.put(result)
-    logprob_channel.put(prediction)
-    with pytest.raises(ValueError, match="same agent turns"):
-        prepare_agent_ppo_targets(
-            input_channel, output_channel, 1, 1.0, 1.0, False, logprob_channel
-        )
-    assert output_channel.empty()
 
 
 @pytest.mark.parametrize("synchronous", [False, True])
@@ -636,7 +546,9 @@ def test_agent_advantage_normalization_is_global_over_actions():
         ]
     )
     torch.testing.assert_close(valid.mean(), torch.tensor(0.0), atol=1e-6, rtol=0)
-    torch.testing.assert_close(valid.var(unbiased=False), torch.tensor(1.0))
+    torch.testing.assert_close(
+        valid.var(unbiased=False), torch.tensor(1.0), atol=1e-4, rtol=0
+    )
 
 
 def test_agent_targets_reject_an_episode_without_generated_turns():
@@ -876,7 +788,7 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
                 },
             },
             "algorithm": {
-                "adv_type": "actor_gae",
+                "adv_type": "gae_dynamic",
                 "group_size": 1,
                 "kl_beta": 0,
                 "recompute_logprobs": True,
@@ -910,22 +822,139 @@ def test_rollout_config_needs_only_the_selected_backend(backend):
     assert unused_backend not in validated
 
 
-@pytest.mark.parametrize(
-    "config_name",
-    [
-        "qwen2.5-1.5b-ppo-shared",
-        "qwen2.5-1.5b-ppo-split",
-        "qwen2.5-1.5b-ppo-separate",
-    ],
-)
-def test_searchr1_ci_recipes_validate(config_name):
-    from hydra import compose, initialize_config_dir
+@pytest.mark.parametrize("backend_type", [None, "server", "engine"])
+def test_searchr1_ppo_recipe_uses_server_by_default(backend_type):
+    from omegaconf import OmegaConf
 
     from rlinf.config import validate_searchr1_cfg
 
-    config_dir = Path(__file__).resolve().parents[1] / "e2e_tests/agent/searchr1"
-    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
-        cfg = compose(config_name=config_name)
+    cfg = OmegaConf.load(
+        Path(__file__).resolve().parents[2]
+        / "examples/agent/searchr1/config/train_qwen2.5_ppo.yaml"
+    )
+    assert cfg.rollout.sglang.backend_type == "server"
+    if backend_type is None:
+        cfg.rollout.sglang.pop("backend_type")
+    else:
+        cfg.rollout.sglang.backend_type = backend_type
     validate_searchr1_cfg(cfg)
+    assert cfg.rollout.sglang.backend_type == (backend_type or "server")
     assert cfg.algorithm.n_minibatches == 1
     assert cfg.runner.synchronous
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+@pytest.mark.parametrize("gamma,gae_lambda", [(1.0, 1.0), (0.9, 0.8)])
+def test_multiturn_gae_registry_matches_complete_episode_targets(
+    normalize, gamma, gae_lambda
+):
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    values = torch.tensor(
+        [
+            [99.0, 0.2, 0.3, 99.0],
+            [99.0, 0.5, 99.0, 99.0],
+            [99.0, 99.0, 0.4, 0.6],
+        ]
+    )
+    mask = torch.tensor(
+        [
+            [False, True, True, False],
+            [False, True, False, False],
+            [False, False, True, True],
+        ]
+    )
+    # Interleaved turns: episode 0 finishes on row 2, episode 1 on row 1.
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="gae_dynamic",
+        rewards=torch.tensor([1.0, -0.5, 1.0]),
+        values=values,
+        loss_mask=mask,
+        idx_to_traj=[0, 1, 0],
+        gamma=gamma,
+        gae_lambda=gae_lambda,
+        normalize_advantages=normalize,
+    )
+    expected_advantages = torch.zeros_like(values)
+    expected_returns = torch.zeros_like(values)
+    for rows, reward in [([0, 2], 1.0), ([1], -0.5)]:
+        indices = [
+            (row, token) for row in rows for token in range(4) if mask[row, token]
+        ]
+        gae, next_value = 0.0, 0.0
+        for step in reversed(range(len(indices))):
+            row, token = indices[step]
+            value = values[row, token]
+            delta = (
+                (reward if step == len(indices) - 1 else 0.0)
+                + gamma * next_value
+                - value
+            )
+            gae = delta + gamma * gae_lambda * gae
+            expected_advantages[row, token] = gae
+            expected_returns[row, token] = gae + value
+            next_value = value
+    if normalize:
+        valid = expected_advantages[mask]
+        expected_advantages[mask] = (valid - valid.mean()) / valid.std(unbiased=False)
+    torch.testing.assert_close(advantages, expected_advantages)
+    torch.testing.assert_close(returns, expected_returns)
+    assert torch.isfinite(advantages).all()
+
+
+def _critic_advantage_dp_rank(rank, init_file, output_dir):
+    from unittest.mock import patch
+
+    from megatron.core import parallel_state
+
+    torch.distributed.init_process_group(
+        "gloo", init_method=Path(init_file).as_uri(), rank=rank, world_size=2
+    )
+    try:
+        result = make_result()
+        if rank == 1:
+            result = DynamicRolloutResult.split_results(result, [2, 1])[0]
+            result.group_size = 1
+            result.rewards = [2.0, 2.0]
+        _prepare_targets([result], 0.9, 0.8, False)
+        raw = result.advantages.clone()
+        result.advantages = result.returns = None
+        with patch.object(
+            parallel_state,
+            "get_data_parallel_group",
+            return_value=torch.distributed.group.WORLD,
+        ):
+            _prepare_targets([result], 0.9, 0.8, True)
+        _, mask, _ = DynamicRolloutResult._get_attention_masks_and_position_ids(
+            torch.tensor(result.prompt_lengths),
+            torch.tensor(result.response_lengths),
+            result.values.shape[1],
+        )
+        torch.save(
+            {
+                "raw": raw[mask],
+                "advantages": result.advantages[mask],
+                "returns": result.returns,
+                "values": result.values,
+            },
+            Path(output_dir) / f"rank-{rank}.pt",
+        )
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_critic_advantages_normalize_across_unequal_dp_action_counts(tmp_path):
+    torch.multiprocessing.spawn(
+        _critic_advantage_dp_rank,
+        args=(str(tmp_path / "dp-init"), str(tmp_path)),
+        nprocs=2,
+        join=True,
+    )
+    outputs = [
+        torch.load(tmp_path / f"rank-{rank}.pt", weights_only=True) for rank in range(2)
+    ]
+    raw = torch.cat([out["raw"] for out in outputs]).double()
+    normalized = torch.cat([out["advantages"] for out in outputs])
+    expected = ((raw - raw.mean()) / (raw.var(unbiased=False) + 1e-5).sqrt()).float()
+    torch.testing.assert_close(normalized, expected)
