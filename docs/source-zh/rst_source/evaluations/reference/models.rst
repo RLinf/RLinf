@@ -39,7 +39,7 @@
      - ``libero_10_pi0_fast_eval``
    * - OpenWAM
      - ``openwam``
-     - ``libero_spatial_openwam_eval``、``libero_object_openwam_eval``、``libero_goal_openwam_eval``、``libero_10_openwam_eval``、``robotwin_adjust_bottle_openwam_eval``、``robotwin_click_bell_openwam_eval``\ （``toolkits/openwam/gen_robotwin_eval_recipes.py --all`` 可生成全部 50 个 RoboTwin 任务）
+     - ``libero_spatial_openwam_eval``、``libero_object_openwam_eval``、``libero_goal_openwam_eval``、``libero_10_openwam_eval``、``robotwin_adjust_bottle_openwam_eval``、``robotwin_click_bell_openwam_eval``\ （``toolkits/openwam/gen_robotwin_eval_recipes.py --all`` 可生成 RLinf 支持的 46 个 RoboTwin 任务）
 
 模型路径设置
 ------------

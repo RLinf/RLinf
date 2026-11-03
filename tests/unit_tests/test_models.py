@@ -1878,11 +1878,12 @@ def test_openwam_robotwin_eval_recipes_validate(openwam_eval_recipe, name):
 def test_openwam_robotwin_recipe_generator_covers_all_tasks(
     openwam_eval_recipe, tmp_path
 ):
-    """The committed recipes match the generator, which renders all 50 tasks."""
+    """The committed recipes match the generator, which renders all supported tasks."""
     from rlinf.config import validate_cfg
     from toolkits.openwam.gen_robotwin_eval_recipes import (
         COMMITTED_TASKS,
         STEP_LIMITS,
+        UNSUPPORTED_TASKS,
         render_recipes,
         rounded_steps,
     )
@@ -1904,16 +1905,22 @@ def test_openwam_robotwin_recipe_generator_covers_all_tasks(
     assert rounded_steps(400) == 416 and rounded_steps(512) == 512
     with pytest.raises(ValueError, match="Unknown RoboTwin tasks"):
         render_recipes(repo, ["not_a_task"])
+    # The RoboTwin guides list these tasks as not supported by RLinf.
+    assert set(UNSUPPORTED_TASKS) <= set(STEP_LIMITS)
+    with pytest.raises(ValueError, match="does not support"):
+        render_recipes(repo, ["place_fan"])
 
     # Every generated recipe composes and validates, not just the committed ones.
+    supported = sorted(set(STEP_LIMITS) - set(UNSUPPORTED_TASKS))
+    assert len(supported) == 46
     rendered = render_recipes(repo)
-    assert len(rendered) == 51
+    assert len(rendered) == 1 + len(supported)
     out_dir = tmp_path / "robotwin"
     out_dir.mkdir()
     for path, text in rendered.items():
         if path.parent.name == "robotwin":
             (out_dir / path.name).write_text(text)
-    for task in STEP_LIMITS:
+    for task in supported:
         cfg = openwam_eval_recipe(f"robotwin_{task}_openwam_eval", subdir=str(out_dir))
         cfg.runner.task_type = "embodied_eval"
         cfg = validate_cfg(cfg)
@@ -1995,6 +2002,12 @@ def test_robotwin_env_eef_proprio_and_action_type_binding():
         def get_right_gripper_val(self):
             return np.array([0.75])
 
+        def left_plan_path(self, target_pose):
+            return {"status": "Success"}
+
+        def right_plan_path(self, target_pose):
+            return {"status": "Success"}
+
     class _Task:
         def __init__(self, succeed_at=None, step_lim=8):
             self.robot = _Robot()
@@ -2072,6 +2085,55 @@ def test_robotwin_env_eef_proprio_and_action_type_binding():
         bind_robotwin_action_type(venv, "eef")
 
 
+def test_robotwin_ee_chunk_treats_planner_errors_as_failed_plans():
+    """An mplib timing error takes RoboTwin's failed-plan branch; others surface."""
+    from rlinf.envs.sim.robotwin.robotwin_env import execute_robotwin_ee_chunk
+
+    class _Robot:
+        def __init__(self):
+            self.left_calls = 0
+
+        def left_plan_path(self, target_pose):
+            self.left_calls += 1
+            if self.left_calls == 1:
+                raise RuntimeError("Fail to parameterize path")
+            return {"status": "Success"}
+
+        def right_plan_path(self, target_pose):
+            return {"status": "Success"}
+
+    class _Task:
+        # Like take_action(action_type="ee"): count the step, then plan each arm.
+        def __init__(self):
+            self.robot = _Robot()
+            self.take_action_cnt = 0
+            self.step_lim = 100
+            self.eval_success = False
+            self.statuses = []
+
+        def take_action(self, action, action_type="qpos"):
+            self.take_action_cnt += 1
+            left = self.robot.left_plan_path(action[:7])
+            right = self.robot.right_plan_path(action[8:15])
+            self.statuses.append((left["status"], right["status"]))
+
+    task = _Task()
+    _, _, _, infos = execute_robotwin_ee_chunk(task, np.zeros((3, 16)))
+    assert task.statuses == [("Fail", "Success")] + [("Success", "Success")] * 2
+    assert task.take_action_cnt == 3 and infos["success"] is False
+    # A reset after close_env brings a new robot, which is guarded as well.
+    task.robot, task.statuses = _Robot(), []
+    execute_robotwin_ee_chunk(task, np.zeros((1, 16)))
+    assert task.statuses == [("Fail", "Success")]
+
+    class _BrokenTask(_Task):
+        def take_action(self, action, action_type="qpos"):
+            raise AttributeError("'open_laptop' object has no attribute 'arm_tag'")
+
+    with pytest.raises(AttributeError, match="arm_tag"):
+        execute_robotwin_ee_chunk(_BrokenTask(), np.zeros((1, 16)))
+
+
 @pytest.mark.parametrize("representation", [None, "absolute_eef20"])
 @pytest.mark.parametrize("skip_renders", [None, True, False])
 def test_robotwin_chunk_observations_preserve_controller(
@@ -2088,6 +2150,8 @@ def test_robotwin_chunk_observations_preserve_controller(
             self.robot = SimpleNamespace(
                 get_left_gripper_val=lambda: 0.25,
                 get_right_gripper_val=lambda: 0.75,
+                left_plan_path=lambda target_pose: {"status": "Success"},
+                right_plan_path=lambda target_pose: {"status": "Success"},
             )
 
         def get_arm_pose(self, arm):

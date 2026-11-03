@@ -20,9 +20,11 @@ and the step budget. The budget is RoboTwin's ``task_config/_eval_step_limit.yml
 rounded up to a multiple of the 32-step action chunk. Tasks that have RLinf eval
 seeds use them; the others fall back to RoboTwinEnv's random seeds.
 
-The repository ships the preset and the recipes for ``COMMITTED_TASKS``. Run
-from the repository root to rewrite those, or pass ``--all`` (or task names)
-to write the recipes for every task (or the named ones)::
+RLinf does not support the RoboTwin tasks in ``UNSUPPORTED_TASKS`` (see the
+RoboTwin evaluation guide), so no recipe is written for them. The repository
+ships the preset and the recipes for ``COMMITTED_TASKS``. Run from the
+repository root to rewrite those, or pass ``--all`` (or task names) to write
+the recipes for every supported task (or the named ones)::
 
     python toolkits/openwam/gen_robotwin_eval_recipes.py
     python toolkits/openwam/gen_robotwin_eval_recipes.py --all
@@ -38,6 +40,13 @@ CHUNK = 32
 CHECKPOINT = "/path/to/openwam-robotwin-checkpoint"
 # Recipes kept in evaluations/robotwin/; the others are generated on demand.
 COMMITTED_TASKS = ("adjust_bottle", "click_bell")
+# RoboTwin tasks RLinf does not support yet, as listed in the RoboTwin guides.
+UNSUPPORTED_TASKS = (
+    "open_laptop",
+    "place_fan",
+    "place_object_scale",
+    "put_object_cabinet",
+)
 
 # RoboTwin 2.0 ``task_config/_eval_step_limit.yml`` (RLinf_support branch).
 STEP_LIMITS = {
@@ -275,13 +284,20 @@ def rounded_steps(limit: int, chunk: int = CHUNK) -> int:
 def render_recipes(repo: Path, tasks=None) -> dict[Path, str]:
     """Return the env preset and the task recipes keyed by their repo path.
 
-    ``tasks`` defaults to every task in ``STEP_LIMITS``.
+    ``tasks`` defaults to every task in ``STEP_LIMITS`` that RLinf supports.
     """
-    tasks = sorted(STEP_LIMITS if tasks is None else tasks)
+    if tasks is None:
+        tasks = set(STEP_LIMITS) - set(UNSUPPORTED_TASKS)
+    tasks = sorted(tasks)
     unknown = sorted(set(tasks) - set(STEP_LIMITS))
     if unknown:
         raise ValueError(
             f"Unknown RoboTwin tasks {unknown}; expected names in STEP_LIMITS."
+        )
+    unsupported = sorted(set(tasks) & set(UNSUPPORTED_TASKS))
+    if unsupported:
+        raise ValueError(
+            f"RLinf does not support the RoboTwin tasks {unsupported} yet."
         )
     files = {
         repo / "examples/embodiment/config/env/robotwin_openwam_aloha.yaml": PRESET
@@ -312,7 +328,9 @@ def main() -> None:
         "tasks", nargs="*", help="Task names (default: the committed tasks)."
     )
     parser.add_argument(
-        "--all", action="store_true", help="Write the recipes for every task."
+        "--all",
+        action="store_true",
+        help="Write the recipes for every supported task.",
     )
     args = parser.parse_args()
     if args.all and args.tasks:

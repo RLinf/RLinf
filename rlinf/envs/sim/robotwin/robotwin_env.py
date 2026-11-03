@@ -37,6 +37,7 @@ __all__ = ["RoboTwinEnv"]
 
 
 _ACTION_TYPE_MARKER = "_rlinf_robotwin_action_type"
+_PLAN_GUARD_MARKER = "_rlinf_ee_plan_failure_as_status"
 
 
 def robotwin_task_eef20_proprio(task: Any) -> np.ndarray:
@@ -77,6 +78,31 @@ def robotwin_task_eef20_proprio(task: Any) -> np.ndarray:
     return proprio
 
 
+def report_ee_plan_errors_as_failed_plans(robot: Any) -> None:
+    """Turn mplib planning errors on ``robot`` into failed-plan results.
+
+    ``take_action(action_type="ee")`` keeps an arm in place for the step when
+    its plan status is not ``"Success"``. mplib instead raises
+    ``RuntimeError("Fail to parameterize path")`` when it cannot time a planned
+    path, which would end the whole evaluation; RoboTwin's joint-space path
+    already catches that error. Wrap the robot's per-arm planners so the error
+    returns ``{"status": "Fail"}``. Idempotent per robot instance.
+    """
+    if robot is None or getattr(robot, _PLAN_GUARD_MARKER, False):
+        return
+    for name in ("left_plan_path", "right_plan_path"):
+        plan = getattr(robot, name)
+
+        def guarded(*args, _plan=plan, **kwargs):
+            try:
+                return _plan(*args, **kwargs)
+            except RuntimeError:
+                return {"status": "Fail"}
+
+        setattr(robot, name, guarded)
+    setattr(robot, _PLAN_GUARD_MARKER, True)
+
+
 def execute_robotwin_ee_chunk(task: Any, chunk_actions: Any):
     """Run a chunk of 16-D ``ee`` actions on a RoboTwin task, one target at a time.
 
@@ -113,6 +139,8 @@ def execute_robotwin_ee_chunk(task: Any, chunk_actions: Any):
         raise ValueError(
             f"RoboTwin ee control expects 16-D actions per step, got {actions.shape}"
         )
+    # A reset after close_env builds a new robot, so guard the current one.
+    report_ee_plan_errors_as_failed_plans(getattr(task, "robot", None))
     for action in actions:
         if (
             getattr(task, "eval_success", False)
