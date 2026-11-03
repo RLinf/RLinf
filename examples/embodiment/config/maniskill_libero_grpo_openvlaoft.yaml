@@ -1,10 +1,10 @@
-# One OpenVLA-OFT policy co-trains with GRPO on LIBERO-Goal and a ManiSkill
+# One OpenVLA-OFT policy co-trains with GRPO on LIBERO-10 and a ManiSkill
 # scene. The two env configurations keep their own horizons and rollout epochs:
-# LIBERO-Goal runs eight 320-step epochs per step, ManiSkill four 80-step epochs.
+# LIBERO-10 runs eight 512-step epochs per step, ManiSkill four 80-step epochs.
 defaults:
-  - env/libero_goal@env.train.envs.libero_goal
+  - env/libero_10@env.train.envs.libero_10
   - env/maniskill_put_on_plate_in_scene_25_main@env.train.envs.maniskill
-  - env/libero_goal@env.eval.envs.libero_goal
+  - env/libero_10@env.eval.envs.libero_10
   - env/maniskill_put_on_plate_in_scene_25_main@env.eval.envs.maniskill
   - model/openvla_oft@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
@@ -75,14 +75,14 @@ env:
     policy_obs:
       keys: [main_images, task_descriptions]
       image_size: [256, 256]
-    # Override the default values in env/libero_goal and
+    # Override the default values in env/libero_10 and
     # env/maniskill_put_on_plate_in_scene_25_main.
     envs:
-      libero_goal:
+      libero_10:
         total_num_envs: 32
         rollout_epoch: 8
-        max_episode_steps: 320
-        max_steps_per_rollout_epoch: 320
+        max_episode_steps: 512
+        max_steps_per_rollout_epoch: 512
         group_size: ${algorithm.group_size}
         reward_coef: 5.0
         use_fixed_reset_state_ids: True
@@ -94,7 +94,7 @@ env:
         max_episode_steps: 80
         max_steps_per_rollout_epoch: 80
         group_size: ${algorithm.group_size}
-        # ManiSkill actions use the Bridge action statistics, LIBERO-Goal the
+        # ManiSkill actions use the Bridge action statistics, LIBERO-10 the
         # model's unnorm_key.
         unnorm_key: bridge_orig
   eval:
@@ -102,12 +102,12 @@ env:
       keys: [main_images, task_descriptions]
       image_size: [256, 256]
     envs:
-      libero_goal:
+      libero_10:
         total_num_envs: 32
         auto_reset: True
         ignore_terminations: True
-        max_episode_steps: 320
-        max_steps_per_rollout_epoch: 320
+        max_episode_steps: 512
+        max_steps_per_rollout_epoch: 512
         use_fixed_reset_state_ids: True
         reset_gripper_open: False
         is_eval: True
@@ -140,24 +140,24 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero-goal-traj1/"
+    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
     precision: ${actor.model.precision}
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  # Each actor gets 2560 LIBERO-Goal and 320 ManiSkill samples per step, so a
-  # step makes three optimizer steps of 960 samples per actor.
+  # Each actor gets 4096 LIBERO-10 and 320 ManiSkill samples per step, so a
+  # step makes three optimizer steps of 1472 samples per actor.
   micro_batch_size: 32
-  global_batch_size: 3840
+  global_batch_size: 5888
   seed: 1234
   enable_offload: True
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero-goal-traj1/"
+    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
     model_type: "openvla_oft"
-    unnorm_key: libero_goal_no_noops
+    unnorm_key: libero_10_no_noops
     max_prompt_length: 128
     # A fresh LoRA adapter keeps the 7B policy, both simulators and rollout on
     # 4 GPUs.
