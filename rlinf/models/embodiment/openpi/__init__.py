@@ -118,6 +118,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "num_steps": num_steps,
         "action_env_dim": action_env_dim,
         "action_chunk": action_chunk,
+        "eval_sft_image_crop": bool(
+            OmegaConf.select(model_cfg, "eval_sft_image_crop", default=False)
+        ),
     }
 
     task = OmegaConf.select(model_cfg, "task", default="sft")
@@ -126,9 +129,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     if task == "sft":
         model = Pi0(
             pi0_config,
-            num_steps=num_steps,
-            action_env_dim=action_env_dim,
-            action_chunk=action_chunk,
+            **runtime,
             rlt_cfg=rlt_cfg,
         )
     elif task == "eval":
@@ -254,6 +255,8 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
 
     if full_weights_path is not None:
+        # Set storage dtypes first so saved FP32 parameters retain their values.
+        _apply_openpi_param_dtypes(model, target_dtype)
         load_full_weights(
             model,
             full_weights_path,
@@ -262,9 +265,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
     elif safetensors_path is not None:
         load_base_safetensors(model, safetensors_path)
+        _apply_openpi_param_dtypes(model, target_dtype)
 
     _freeze_after_load(model, task)
-    _apply_openpi_param_dtypes(model, target_dtype)
 
     n_params = sum(param.numel() for param in model.parameters())
     source = full_weights_path if full_weights_path is not None else safetensors_path
@@ -304,7 +307,7 @@ def _freeze_after_load(model, task: str) -> None:
 
 
 def _apply_openpi_param_dtypes(model, target_dtype) -> None:
-    """Apply OpenPI's selective mixed precision after checkpoint load.
+    """Apply OpenPI's selective parameter storage dtypes.
 
     YAML ``precision: null`` (OpenPI default) and ``bf16`` both mean: Gemma /
     SigLIP weights in bf16, RMSNorm + vision stem + action/value heads in fp32.

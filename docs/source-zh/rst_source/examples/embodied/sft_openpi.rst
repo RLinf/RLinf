@@ -407,6 +407,8 @@ Pi0 + RoboTwin
 
 SFT 会把 ``full_weights.pt`` 写到 ``.../checkpoints/global_step_<N>/actor/model_state_dict/``。``openpi`` 评测可以直接加载这个 ``.pt``\ （或 ``global_step_<N>`` 目录）：加载时会剥掉 FSDP / wrapper 前缀，模型形状来自评测 YAML，不必先转成 ``model.safetensors``。
 
+使用 ``precision: null`` 或 ``precision: bf16`` 加载 ``full_weights.pt`` 时，主干参数使用 BF16，Gemma 归一化层和图像嵌入中保存的 FP32 参数保持原值。检查导出前后的 policy 一致性时，参数存储和激活精度设置应与训练一致。
+
 不要把训练的 ``openpi.task: sft`` 带到评测里——评测配置必须是 ``task: eval``\ （才会走 ``Pi0Eval`` 和观测 transform）。``config_name``、``num_action_chunks`` 与训练对齐。
 
 归一化统计也\ **不会**\ 跟着 ``full_weights.pt`` 走。现成评测 YAML 常把 ``openpi_data.norm_stats_path`` 插值成 ``${rollout.model.model_path}/.../norm_stats.json``，那是给「权重和统计在同一目录」的转换产物用的。只改 ``model_path`` 指到 SFT checkpoint 时，必须\ **另外**\ 把统计指回训练用的那份（RoboTwin：基础权重旁的 ``physical-intelligence/robotwin/<task>/norm_stats.json``；BEHAVIOR：训练时的 ``openpi_data.norm_stats_path``）。
@@ -428,3 +430,21 @@ SFT 会把 ``full_weights.pt`` 写到 ``.../checkpoints/global_step_<N>/actor/mo
 .. code:: bash
 
    tensorboard --logdir ./logs
+
+OpenPI 训练与推理设置
+---------------------
+
+评估导出的 OpenPI policy 和重新计算 PPO logprobs 时，保持相同的图像预处理设置。仅对使用固定前视图裁剪训练的 checkpoint 启用 ``actor.model.openpi.eval_sft_image_crop: true``：前视图取左上角 95% 区域后缩放，腕部图像保留完整视野。该选项默认为 ``false``，不消耗 augmentation RNG。启用后，独立采样要求先调用 ``model.eval()``；PPO sampler 和 actor replay 在各自模式下应用相同裁剪。SFT 仍使用随机裁剪、旋转和 color jitter，启用此推理选项也不会改变训练增强；未显式传入 generator 时，训练从 PyTorch 全局 RNG 取样。
+
+新的 OpenPI SFT 和 embodied FSDP actor 训练在构造模型前使用 ``actor.seed`` 初始化 Python、NumPy 和 PyTorch，使各 actor rank 新初始化的参数一致；初始化结束后，各 rank 使用 ``actor.seed + rank``。Rollout 使用 ``rollout.seed + rank``，未设置时依次回退到 ``actor.seed`` 和 0，并在模型构造后重新设置随机流。加载 checkpoint 时，在初始化之后恢复已保存的 RNG。这些规则会改变现有 OpenPI recipe 从头启动时的随机流。
+
+当 ``actor.model.openpi.train_expert_only: true`` 冻结视觉编码器时，actor 切换到训练模式仍使该编码器保持 evaluation 模式，以便与 rollout inference 使用一致的 attention 路径。
+
+恢复 OpenPI 数据进度
+---------------------
+
+若要在重启后从下一批已消费数据继续，首次启动时就启用 ``data.stateful_loader: true``。该 loader 为 map-style OpenPI 数据集保存 sampler 进度和 worker 已预取的数据状态，不支持 RLDS。它要求至少两个 actor rank，且每个 rank 至少包含一个完整 batch。恢复时保持 rank 分配、batch size、``data.num_workers``、``actor.seed``、shuffle 设置和数据集长度一致。数据内容、normalization 和预处理版本仍需单独保持一致，数据集长度不能证明这些内容相同。
+
+可恢复的 actor checkpoint 除模型和 optimizer 状态外，还包含 ``data.pt``、``rng.pt`` 和 ``openpi_loader_state.json``。Loader manifest 在数据和 RNG 保存完成后发布，恢复时校验文件 hash 和 loader 设置。将 ``runner.resume_dir`` 指向外层 ``global_step_N`` 目录。仅有推理权重导出不能恢复训练。导出频率和 CPU checkpoint 通信设置见 :doc:`检查点恢复 <../../guides/resume>`。
+
+本地 ``data.train_data_paths`` 必须直接指向包含 ``meta/info.json`` 的 LeRobot 数据集根目录。Loader 还会检查 action horizon、模型 action 维度和 discrete-state conditioning 是否匹配选定的 OpenPI 训练配置。显式设置的 ``openpi_data.norm_stats_path`` 必须能加载对应 statistics。

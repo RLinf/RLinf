@@ -208,6 +208,7 @@ def preprocess_observation(
     image_keys: Sequence[str] = IMAGE_KEYS,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
     rng: torch.Generator | None = None,
+    deterministic_crop: bool = False,
 ) -> Observation:
     """Preprocess observations with optional image augmentations.
 
@@ -216,8 +217,8 @@ def preprocess_observation(
 
     Random draws use ``rng`` when provided; when ``rng`` is ``None`` (the
     default for every training caller) they fall back to the global torch
-    RNG, matching upstream openpi. The eval path (``train=False``) applies
-    no augmentation and is unaffected.
+    RNG, matching upstream openpi. During inference, ``deterministic_crop``
+    applies a top-left crop without rotation, jitter, or random draws.
     """
     if not set(image_keys).issubset(observation.images):
         raise ValueError(
@@ -239,7 +240,7 @@ def preprocess_observation(
         if image.shape[1:3] != image_resolution:
             image = resize_with_pad_torch(image, *image_resolution)
 
-        if train:
+        if train or deterministic_crop:
             import torchvision.transforms.functional as TF
 
             # Convert from [-1, 1] to [0, 1] for augmentations
@@ -256,24 +257,34 @@ def preprocess_observation(
                     # Random crop (95% of size) then resize back
                     h, w = aug_image.shape[1], aug_image.shape[2]
                     crop_h, crop_w = int(h * 0.95), int(w * 0.95)
-                    # generator=None draws from the global torch RNG
-                    top = torch.randint(0, h - crop_h + 1, (1,), generator=rng).item()
-                    left = torch.randint(0, w - crop_w + 1, (1,), generator=rng).item()
+                    top = (
+                        torch.randint(0, h - crop_h + 1, (1,), generator=rng).item()
+                        if train
+                        else 0
+                    )
+                    left = (
+                        torch.randint(0, w - crop_w + 1, (1,), generator=rng).item()
+                        if train
+                        else 0
+                    )
                     aug_image = TF.crop(aug_image, top, left, crop_h, crop_w)
                     aug_image = TF.resize(aug_image, [h, w], antialias=True)
 
                     # Random rotation (-5 to 5 degrees)
-                    angle = torch.rand(1, generator=rng).item() * 10 - 5
+                    angle = (
+                        (torch.rand(1, generator=rng).item() * 10 - 5) if train else 0.0
+                    )
                     aug_image = TF.rotate(aug_image, angle, fill=0)
 
                 # Color jitter
                 # Simulate augmax ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5)
-                b = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.3
-                c = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.4
-                s = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.5
-                aug_image = TF.adjust_brightness(aug_image, 1.0 + b)
-                aug_image = TF.adjust_contrast(aug_image, 1.0 + c)
-                aug_image = TF.adjust_saturation(aug_image, 1.0 + s)
+                if train:
+                    b = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.3
+                    c = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.4
+                    s = (torch.rand(1, generator=rng).item() * 2 - 1) * 0.5
+                    aug_image = TF.adjust_brightness(aug_image, 1.0 + b)
+                    aug_image = TF.adjust_contrast(aug_image, 1.0 + c)
+                    aug_image = TF.adjust_saturation(aug_image, 1.0 + s)
 
                 aug_image = aug_image.permute(1, 2, 0)  # back to (H, W, C)
                 augmented.append(aug_image)

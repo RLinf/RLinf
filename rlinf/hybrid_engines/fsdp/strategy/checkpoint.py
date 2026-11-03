@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterable
+import json
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Union
 
 import torch
@@ -30,6 +33,86 @@ from rlinf.hybrid_engines.fsdp.utils import FSDPVersion, to_local_if_dtensor
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import get_rng_state, set_rng_state
 
+_CHECKPOINT_FORMATS = frozenset(("dcp", "local_shard"))
+
+
+def validate_checkpoint_format(checkpoint_format: str) -> str:
+    """Validate and normalize the FSDP checkpoint serialization format."""
+    normalized = str(checkpoint_format).strip().lower()
+    if normalized not in _CHECKPOINT_FORMATS:
+        raise ValueError(
+            "Unsupported FSDP checkpoint format "
+            f"{checkpoint_format!r}; expected one of "
+            f"{sorted(_CHECKPOINT_FORMATS)}."
+        )
+    return normalized
+
+
+def should_save_training_state(
+    step: int,
+    interval: int | None = None,
+    *,
+    force: bool = False,
+) -> bool:
+    """Select resumable saves; a null interval preserves every save."""
+    if interval is not None and (
+        isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0
+    ):
+        raise ValueError(
+            "training_state_save_interval must be null or a positive integer."
+        )
+    return interval is None or force or step % interval == 0
+
+
+def validate_checkpoint_for_resume(load_path: str) -> None:
+    """Reject unfinished or inference-only checkpoints before loading state."""
+    metadata_path = Path(load_path) / "checkpoint_metadata.json"
+    if not metadata_path.is_file():
+        return
+    metadata = json.loads(metadata_path.read_text())
+    if not metadata.get("complete", False):
+        raise ValueError(
+            f"Checkpoint {load_path} is incomplete; cannot resume training."
+        )
+    if not metadata.get("save_training_state", False):
+        raise ValueError(
+            f"Checkpoint {load_path} contains inference weights only; "
+            "cannot resume training without model, optimizer and RNG state."
+        )
+
+
+def validate_checkpoint_communication_backend(
+    backend: str | None, checkpoint_format: str = "dcp"
+) -> str | None:
+    """Allow an opt-in CPU communication group for DCP checkpoints."""
+    if backend is None:
+        return None
+    if not isinstance(backend, str) or backend.strip().lower() != "gloo":
+        raise ValueError("checkpoint_communication_backend must be null or 'gloo'.")
+    if validate_checkpoint_format(checkpoint_format) != "dcp":
+        raise ValueError("checkpoint_communication_backend='gloo' requires DCP.")
+    return "gloo"
+
+
+@contextmanager
+def checkpoint_communication_group(
+    backend: str | None, checkpoint_format: str = "dcp"
+) -> Iterator[torch.distributed.ProcessGroup | None]:
+    """Own a checkpoint-only group; the existing group is never replaced."""
+    backend = validate_checkpoint_communication_backend(backend, checkpoint_format)
+    if backend is None:
+        yield None
+        return
+    from rlinf.scheduler import Cluster
+
+    group = torch.distributed.new_group(
+        backend=backend, timeout=Cluster.get_collective_timeout()
+    )
+    try:
+        yield group
+    finally:
+        torch.distributed.destroy_process_group(group)
+
 
 class Checkpoint(Stateful):
     """Training state; DCP state dictionaries must be built on every rank."""
@@ -42,6 +125,7 @@ class Checkpoint(Stateful):
         opts: StateDictOptions,
         fsdp_version: FSDPVersion,
         checkpoint_format: str = "dcp",
+        process_group: torch.distributed.ProcessGroup | None = None,
     ):
         self.model = model
         self.optimizers = optimizers
@@ -52,8 +136,9 @@ class Checkpoint(Stateful):
         )
         self.opts = opts
         self.fsdp_version = fsdp_version
-        self.checkpoint_format = checkpoint_format
+        self.checkpoint_format = validate_checkpoint_format(checkpoint_format)
         self.legacy_rng_state = False
+        self.process_group = process_group
 
     def _get_local_optim_state_dicts(self):
         if isinstance(self.optimizers, Optimizer):
@@ -111,8 +196,12 @@ class Checkpoint(Stateful):
             if not self.legacy_rng_state:
                 all_rng_states = [rng_state]
                 if torch.distributed.is_initialized():
-                    all_rng_states = [None] * torch.distributed.get_world_size()
-                    torch.distributed.all_gather_object(all_rng_states, rng_state)
+                    all_rng_states = [None] * torch.distributed.get_world_size(
+                        self.process_group
+                    )
+                    torch.distributed.all_gather_object(
+                        all_rng_states, rng_state, group=self.process_group
+                    )
                 # DCP deduplicates replicated values. Give every rank the same
                 # complete set. Tuples are serialized as one DCP value, keeping
                 # the saved world size intact when loading with a new topology.
@@ -131,8 +220,12 @@ class Checkpoint(Stateful):
         rng_state = state.get("rng")
         if isinstance(rng_state, tuple):
             distributed = torch.distributed.is_initialized()
-            world_size = torch.distributed.get_world_size() if distributed else 1
-            rank = torch.distributed.get_rank() if distributed else 0
+            world_size = (
+                torch.distributed.get_world_size(self.process_group)
+                if distributed
+                else 1
+            )
+            rank = torch.distributed.get_rank(self.process_group) if distributed else 0
             if len(rng_state) != world_size and rank == 0:
                 get_logger().warning(
                     f"RNG world size mismatch: checkpoint has {len(rng_state)} ranks, "
